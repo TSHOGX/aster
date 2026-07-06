@@ -3,6 +3,7 @@ docs/doris-connection.md
 **/*.env
 **/secrets/
 **/.secrets/
+config/auth-users.yaml
 
 # gVisor / sandbox 产物
 sandbox-image/rootfs/
@@ -15,8 +16,13 @@ bundle/checkpoints/
 
 # 构建产物
 orchestrator/orchestrator
+orchestrator/bin/
+orchestrator/authhash
 schema-pack/
 .scratch/
+
+# 备份文件
+*.bak
 
 # 通用
 .DS_Store
