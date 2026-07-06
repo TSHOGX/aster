@@ -1920,6 +1920,67 @@ WHERE g.generation_id = ?`, allocation.GenerationID).Scan(
 	}
 }
 
+func TestReleaseIdleGenerationRetiresSandboxWithoutImage(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	now := time.Now().UTC()
+	allocation := createAutoCheckpointGeneration(t, ctx, st, cfg, "sess_release", GenerationLeaseOwner(owner.UUID), now)
+
+	if err := st.ReleaseIdleGeneration(ctx, "sess_release", allocation.GenerationID, allocation.Owner, now); err != nil {
+		t.Fatalf("release idle generation: %v", err)
+	}
+
+	var generationStatus, sessionStatus, errorClass, networkState, resourceState, sessionCheckpointPath string
+	var checkpointBundle sql.NullString
+	if err := st.db.QueryRowContext(ctx, `
+SELECT g.status, s.status, COALESCE(g.error_class, ''), n.allocation_state, r.resource_state,
+       COALESCE(s.checkpoint_path, ''), g.checkpoint_bundle_digest
+FROM runtime_generations g
+JOIN sessions s ON s.active_generation_id = g.generation_id
+JOIN network_profiles n ON n.generation_id = g.generation_id
+JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
+WHERE g.generation_id = ?`, allocation.GenerationID).Scan(
+		&generationStatus, &sessionStatus, &errorClass, &networkState, &resourceState, &sessionCheckpointPath, &checkpointBundle,
+	); err != nil {
+		t.Fatalf("query released state: %v", err)
+	}
+	// Generation failed (so wake cold-starts), session checkpointed (released,
+	// wake-me-later), resources reclaimable so the reaper frees the slot, and no
+	// checkpoint image was produced.
+	if generationStatus != "failed" ||
+		sessionStatus != string(sessionstate.Checkpointed) ||
+		errorClass != ReleaseIdleGenerationErrorClass ||
+		networkState != "reclaimable" ||
+		resourceState != "reclaimable" ||
+		sessionCheckpointPath != "" ||
+		checkpointBundle.Valid {
+		t.Fatalf("unexpected released state: generation=%s session=%s err=%s network=%s resource=%s sessionCkpt=%q bundle=%v",
+			generationStatus, sessionStatus, errorClass, networkState, resourceState, sessionCheckpointPath, checkpointBundle)
+	}
+}
+
+func TestReleaseIdleGenerationRejectsInflightTurn(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	now := time.Now().UTC()
+	allocation := createAutoCheckpointGeneration(t, ctx, st, cfg, "sess_release_busy", GenerationLeaseOwner(owner.UUID), now)
+	if _, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{
+		SessionID: "sess_release_busy",
+		Content:   "still working",
+		Now:       now,
+	}); err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+
+	// A session mid-turn is running_active, and release only fires from
+	// running_idle, so the CAS must fail rather than tear down a busy sandbox.
+	if err := st.ReleaseIdleGeneration(ctx, "sess_release_busy", allocation.GenerationID, allocation.Owner, now); err == nil {
+		t.Fatal("release should fail while a turn is in flight")
+	}
+}
+
 func TestGenerationCheckpointAbortRestoresIdleState(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)

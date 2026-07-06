@@ -1989,6 +1989,65 @@ ORDER BY s.last_activity_at ASC`, formatTime(cutoff), owner, formatTime(now))
 	return candidates, nil
 }
 
+// ListIdleReleaseCandidates lists idle sessions whose sandbox should be
+// released (torn down) to free compute. Unlike ListAutoCheckpointCandidates it
+// does not require any checkpoint-image artifacts (checkpoint_path, manifest or
+// bundle digests): releasing takes no runsc checkpoint, so the only
+// requirements are an idle, auto-checkpoint-enabled generation that still owns
+// a live resource, holds a valid lease, and has no in-flight turn.
+func (s *Store) ListIdleReleaseCandidates(ctx context.Context, owner string, now time.Time, idleThreshold time.Duration) ([]CheckpointCandidate, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if strings.TrimSpace(owner) == "" {
+		return nil, fmt.Errorf("owner is required")
+	}
+	if idleThreshold < 0 {
+		return nil, fmt.Errorf("idle threshold must be >= 0")
+	}
+	cutoff := now.Add(-idleThreshold)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT s.id, g.generation_id, r.bridge_dir_path
+FROM sessions s
+JOIN runtime_generations g ON g.generation_id = s.active_generation_id
+  AND g.session_id = s.id
+JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
+JOIN runtime_resource_instances ri ON ri.generation_id = g.generation_id
+  AND ri.session_id = g.session_id
+WHERE s.status = 'running_idle'
+  AND s.auto_checkpoint_enabled = 1
+  AND s.last_activity_at IS NOT NULL
+  AND s.last_activity_at <= ?
+  AND g.status = 'idle'
+  AND g.auto_checkpoint_enabled = 1
+  AND g.lease_owner = ?
+  AND g.lease_expires_at > ?
+  AND r.resource_state = 'live'
+  AND ri.state = 'live'
+  AND NOT EXISTS (
+    SELECT 1 FROM turns t
+    WHERE t.session_id = s.id
+      AND t.status IN ('queued', 'leased', 'running')
+  )
+ORDER BY s.last_activity_at ASC`, formatTime(cutoff), owner, formatTime(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var candidates []CheckpointCandidate
+	for rows.Next() {
+		var candidate CheckpointCandidate
+		if err := rows.Scan(&candidate.SessionID, &candidate.GenerationID, &candidate.BridgeDirPath); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return candidates, nil
+}
+
 func (s *Store) BeginGenerationCheckpoint(ctx context.Context, sessionID, generationID, owner string, now time.Time) error {
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -2238,6 +2297,131 @@ WHERE id = ?
 		return err
 	} else if affected != 1 {
 		return fmt.Errorf("session checkpoint complete CAS failed")
+	}
+	return tx.Commit()
+}
+
+// ReleaseIdleGenerationErrorClass marks generations whose sandbox was released
+// after an idle timeout. The generation is failed (not checkpointed) so the
+// existing failed -> cold-start wake path brings the session back up from its
+// persisted workspace/agent-home; no checkpoint image is ever produced.
+const ReleaseIdleGenerationErrorClass = "sandbox_released_idle"
+
+// ReleaseIdleGeneration retires an idle session's sandbox without taking a
+// runsc checkpoint. The session moves to 'checkpointed' (its logical
+// "released, wake me later" state, with checkpoint_path left NULL to signal
+// there is no hot-restore image), while the generation is failed and its
+// network/resource slots are marked reclaimable so the reaper frees the
+// compute and the concurrency slot. Waking the session allocates a fresh
+// generation and cold-starts against the retained agent-home.
+//
+// This is the CAS-guarded counterpart to BeginGenerationCheckpoint: it only
+// fires for an idle, auto-checkpoint-enabled generation that still owns a live
+// resource and has no in-flight turn.
+func (s *Store) ReleaseIdleGeneration(ctx context.Context, sessionID, generationID, owner string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("session id is required")
+	}
+	if strings.TrimSpace(generationID) == "" {
+		return fmt.Errorf("generation id is required")
+	}
+	if strings.TrimSpace(owner) == "" {
+		return fmt.Errorf("owner is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE runtime_generations
+SET status = 'failed',
+    error_class = ?,
+    failure_reason = 'sandbox released after idle timeout',
+    ended_at = ?,
+    lease_owner = NULL,
+    lease_expires_at = NULL,
+    last_seen_at = ?
+WHERE generation_id = ?
+  AND session_id = ?
+  AND status = 'idle'
+  AND lease_owner = ?
+  AND lease_expires_at > ?
+  AND EXISTS (
+    SELECT 1 FROM sessions
+    WHERE id = ?
+      AND active_generation_id = ?
+      AND status = 'running_idle'
+  )
+  AND EXISTS (
+    SELECT 1 FROM runtime_generation_resources r
+    WHERE r.generation_id = runtime_generations.generation_id
+      AND r.resource_state = 'live'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM turns
+    WHERE session_id = ?
+      AND status IN ('queued', 'leased', 'running')
+  )`, ReleaseIdleGenerationErrorClass, formatTime(now), formatTime(now),
+		generationID, sessionID, owner, formatTime(now), sessionID, generationID, sessionID)
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return fmt.Errorf("generation idle release CAS failed")
+	}
+
+	res, err = tx.ExecContext(ctx, `
+UPDATE network_profiles
+SET allocation_state = 'reclaimable'
+WHERE generation_id = ?
+  AND session_id = ?
+  AND allocation_state = 'live'`, generationID, sessionID)
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return fmt.Errorf("network idle release CAS failed")
+	}
+
+	res, err = tx.ExecContext(ctx, `
+UPDATE runtime_generation_resources
+SET resource_state = 'reclaimable'
+WHERE generation_id = ?
+  AND resource_state = 'live'`, generationID)
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return fmt.Errorf("resource idle release CAS failed")
+	}
+
+	res, err = tx.ExecContext(ctx, `
+UPDATE sessions
+SET status = 'checkpointed',
+    checkpoint_path = NULL,
+    restore_ms = NULL,
+    updated_at = ?
+WHERE id = ?
+  AND status = 'running_idle'
+  AND active_generation_id = ?`, formatTime(now), sessionID, generationID)
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return fmt.Errorf("session idle release CAS failed")
 	}
 	return tx.Commit()
 }

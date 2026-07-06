@@ -443,7 +443,6 @@ func TestDriverManifestInputDigestsUseSourceConfigAndImageManifest(t *testing.T)
 func TestAgentsCatalogIsOperatorOnly(t *testing.T) {
 	srv := &Server{cfg: config.Config{CookieName: "sid"}, runtime: runtime.New(runtime.Config{})}
 	productReq := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
-	productReq.AddCookie(&http.Cookie{Name: "sid", Value: srv.signCookie(labUserID)})
 	productRec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(productRec, productReq)
 	if productRec.Code != http.StatusNotFound {
@@ -475,26 +474,26 @@ func TestAgentsCatalogIsOperatorOnly(t *testing.T) {
 func TestCreateSessionSoftLimitUsesPoolExhaustedEnvelope(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	st, err := store.Open(ctx, filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	createServerTestSession(t, ctx, st, dir, "sess_existing", string(sessionstate.Created), time.Now().UTC(), nil)
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	cfg := testServerConfig(dir)
+	cfg.MaxSessions = 1
+	cfg.Harness.MaxSessions = 1
+
+	// The ceiling counts sessions holding a live sandbox. A session that is
+	// merely idle with its sandbox still live occupies a slot, so the next
+	// create must be rejected.
+	session := createServerTestSession(t, ctx, st, dir, "sess_existing", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
+	prepareServerIdleGeneration(t, ctx, st, cfg, owner.UUID, session.ID)
 
 	srv := &Server{
-		cfg: config.Config{
-			SessionsRoot:     dir,
-			SessionRetention: time.Hour,
-			MaxSessions:      1,
-			DefaultAgent:     "claude_code",
-		},
+		cfg:     cfg,
 		store:   st,
 		runtime: runtime.New(runtime.Config{}),
-		watcher: newServerTestWatcher(t, dir, st, events.NewHub()),
+		watcher: newServerTestWatcher(t, cfg.SessionsRoot, st, events.NewHub()),
 		hub:     events.NewHub(),
 		log:     slog.Default(),
 	}
+	srv.SetOwnerUUID(owner.UUID)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"mode":"agent"}`))
 	rec := httptest.NewRecorder()
@@ -512,14 +511,47 @@ func TestCreateSessionSoftLimitUsesPoolExhaustedEnvelope(t *testing.T) {
 	}
 }
 
+func TestCreateSessionSoftLimitIgnoresCheckpointedSessions(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	cfg := testServerConfig(dir)
+	cfg.MaxSessions = 1
+	cfg.Harness.MaxSessions = 1
+
+	// A checkpointed session has released its sandbox compute, so it must not
+	// count against the concurrent-sandbox ceiling: creating a new session is
+	// allowed even though a checkpointed session already exists.
+	session := createServerTestSession(t, ctx, st, dir, "sess_checkpointed", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
+	allocation := prepareServerIdleGeneration(t, ctx, st, cfg, owner.UUID, session.ID)
+	markServerGenerationCheckpointed(t, ctx, st, session.ID, allocation.GenerationID, time.Now().UTC())
+	if err := st.UpdateSessionStatus(ctx, session.ID, string(sessionstate.Checkpointed), nil); err != nil {
+		t.Fatalf("mark session checkpointed: %v", err)
+	}
+
+	srv := &Server{
+		cfg:     cfg,
+		store:   st,
+		runtime: runtime.New(runtime.Config{}),
+		watcher: newServerTestWatcher(t, cfg.SessionsRoot, st, events.NewHub()),
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"mode":"agent"}`))
+	rec := httptest.NewRecorder()
+	srv.createSession(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201 (checkpointed session should not hold a slot), got %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCloseSessionReleasesSoftLimitWithoutDeletingHistory(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	st, err := store.Open(ctx, filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
+	st, owner := openServerOwnedStore(t, ctx, dir)
 
 	cfg := testServerConfig(dir)
 	cfg.SessionRetention = 0
@@ -558,15 +590,30 @@ func TestCloseSessionReleasesSoftLimitWithoutDeletingHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert artifact: %v", err)
 	}
+	// Give the session a live sandbox so it occupies a slot against the ceiling.
+	allocation, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
+		SessionID: oldSession.ID,
+		Owner:     store.GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    serverTestAllocatorConfig(cfg, oldSession.Agent),
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, oldSession.ID, allocation.GenerationID, allocation.Owner, now.Add(time.Second)); err != nil {
+		t.Fatalf("mark generation live: %v", err)
+	}
 
 	srv := &Server{
 		cfg:     cfg,
 		store:   st,
-		runtime: runtime.New(runtime.Config{}),
+		runtime: &recordingRuntime{},
 		watcher: newServerTestWatcher(t, cfg.SessionsRoot, st, events.NewHub()),
 		hub:     events.NewHub(),
 		log:     slog.Default(),
 	}
+	srv.SetOwnerUUID(owner.UUID)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"mode":"agent"}`))
 	rec := httptest.NewRecorder()
@@ -967,27 +1014,17 @@ func TestBridgeCheckpointReadyRequiresFreshHeartbeatAndMarker(t *testing.T) {
 	}
 }
 
-func TestMonitorIdleSessionsCheckpointsEligibleGeneration(t *testing.T) {
+func TestMonitorIdleSessionsReleasesEligibleGeneration(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	st, owner := openServerOwnedStore(t, ctx, dir)
-	session := createServerTestSession(t, ctx, st, dir, "sess_auto_checkpoint", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
+	session := createServerTestSession(t, ctx, st, dir, "sess_auto_release", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
 	enableSessionAutoCheckpoint(t, ctx, st, session.ID)
 	cfg := testServerConfig(dir)
 	cfg.Harness.Checkpoint.AutoEnabled = true
 	cfg.Harness.Checkpoint.IdleThreshold = config.Duration{Duration: time.Nanosecond}
 	cfg.Harness.Checkpoint.MonitorInterval = config.Duration{Duration: time.Hour}
 	allocation := prepareServerIdleGeneration(t, ctx, st, cfg, owner.UUID, session.ID)
-	details, err := st.GetRuntimeGenerationDetails(ctx, session.ID, allocation.GenerationID)
-	if err != nil {
-		t.Fatalf("get generation details: %v", err)
-	}
-	if err := bridge.TouchHeartbeat(details.BridgeDirPath, bridge.BridgeHeartbeatFile, time.Now().UTC()); err != nil {
-		t.Fatalf("touch heartbeat: %v", err)
-	}
-	if err := bridge.TouchCheckpointReady(details.BridgeDirPath, time.Now().UTC()); err != nil {
-		t.Fatalf("touch ready: %v", err)
-	}
 	rt := &recordingRuntime{}
 	runCtx, cancel := context.WithCancel(ctx)
 	srv := &Server{
@@ -1009,96 +1046,105 @@ func TestMonitorIdleSessionsCheckpointsEligibleGeneration(t *testing.T) {
 		t.Fatalf("monitor exit err=%v, want context canceled", err)
 	}
 
-	checkpoints := rt.checkpointRequests()
-	if len(checkpoints) != 1 {
-		t.Fatalf("checkpoint requests=%d want 1: %+v", len(checkpoints), checkpoints)
+	// Release must not take a runsc checkpoint; it tears the sandbox down.
+	if checkpoints := rt.checkpointRequests(); len(checkpoints) != 0 {
+		t.Fatalf("release should not checkpoint, got %+v", checkpoints)
 	}
-	if checkpoints[0].SessionID != session.ID ||
-		checkpoints[0].GenerationID != allocation.GenerationID ||
-		checkpoints[0].CheckpointPath != details.CheckpointPath ||
-		checkpoints[0].Generation.GenerationID != allocation.GenerationID ||
-		checkpoints[0].Generation.RunscContainerID != details.RunscContainerID ||
-		checkpoints[0].Generation.RunscOverlay2 != details.RunscOverlay2 {
-		t.Fatalf("unexpected checkpoint request: %+v details=%+v", checkpoints[0], details)
+	if destroys := rt.destroyGenerationRequests(); len(destroys) != 1 || destroys[0].GenerationID != allocation.GenerationID {
+		t.Fatalf("release should tear down the generation sandbox, got %+v", destroys)
 	}
-	var generationStatus, networkState, resourceState, checkpointPath, checkpointBundle, checkpointRuntimeConfig, checkpointManifest string
+
+	var generationStatus, errorClass, networkState, resourceState, sessionCheckpointPath string
 	if err := st.DBForTest().QueryRowContext(ctx, `
-SELECT g.status, n.allocation_state, r.resource_state, COALESCE(r.checkpoint_path, ''),
-       COALESCE(g.checkpoint_bundle_digest, ''), COALESCE(g.checkpoint_runtime_config_digest, ''), COALESCE(g.checkpoint_control_manifest_digest, '')
+SELECT g.status, COALESCE(g.error_class, ''), n.allocation_state, r.resource_state, COALESCE(s.checkpoint_path, '')
 FROM runtime_generations g
 JOIN network_profiles n ON n.generation_id = g.generation_id
 JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
+JOIN sessions s ON s.id = g.session_id
 WHERE g.generation_id = ?`, allocation.GenerationID).Scan(
-		&generationStatus, &networkState, &resourceState, &checkpointPath,
-		&checkpointBundle, &checkpointRuntimeConfig, &checkpointManifest,
+		&generationStatus, &errorClass, &networkState, &resourceState, &sessionCheckpointPath,
 	); err != nil {
-		t.Fatalf("query checkpointed generation: %v", err)
+		t.Fatalf("query released generation: %v", err)
 	}
-	if generationStatus != "checkpointed" ||
-		networkState != "reserved_checkpointed" ||
-		resourceState != "reserved_checkpointed" ||
-		checkpointPath != details.CheckpointPath ||
-		checkpointBundle != "bundle_digest" ||
-		checkpointRuntimeConfig != "runtime_config_digest" ||
-		checkpointManifest != "projected_manifest_digest" {
-		t.Fatalf("unexpected checkpoint metadata: generation=%s network=%s resource=%s path=%s bundle=%s runtime=%s manifest=%s",
-			generationStatus, networkState, resourceState, checkpointPath, checkpointBundle, checkpointRuntimeConfig, checkpointManifest)
+	// Generation is failed (cold-start on wake), no checkpoint image, resources
+	// destroyed so the slot is freed.
+	if generationStatus != "failed" ||
+		errorClass != store.ReleaseIdleGenerationErrorClass ||
+		networkState != "destroyed" ||
+		resourceState != "destroyed" ||
+		sessionCheckpointPath != "" {
+		t.Fatalf("unexpected released state: generation=%s err=%s network=%s resource=%s sessionCkpt=%q",
+			generationStatus, errorClass, networkState, resourceState, sessionCheckpointPath)
 	}
 }
 
-func TestMonitorIdleSessionsAbortsFailedCheckpoint(t *testing.T) {
+func TestMonitorIdleSessionsSkipsGenerationWithInflightTurn(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	st, owner := openServerOwnedStore(t, ctx, dir)
-	session := createServerTestSession(t, ctx, st, dir, "sess_auto_checkpoint_fail", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
+	session := createServerTestSession(t, ctx, st, dir, "sess_release_busy", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
 	enableSessionAutoCheckpoint(t, ctx, st, session.ID)
 	cfg := testServerConfig(dir)
 	cfg.Harness.Checkpoint.AutoEnabled = true
 	cfg.Harness.Checkpoint.IdleThreshold = config.Duration{Duration: time.Nanosecond}
 	cfg.Harness.Checkpoint.MonitorInterval = config.Duration{Duration: time.Hour}
 	allocation := prepareServerIdleGeneration(t, ctx, st, cfg, owner.UUID, session.ID)
-	details, err := st.GetRuntimeGenerationDetails(ctx, session.ID, allocation.GenerationID)
+	// An in-flight turn must block release (the sandbox is still working).
+	if _, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{
+		SessionID: session.ID,
+		Content:   "still working",
+		Now:       time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+
+	candidates, err := st.ListIdleReleaseCandidates(ctx, store.GenerationLeaseOwner(owner.UUID), time.Now().UTC(), time.Nanosecond)
+	if err != nil {
+		t.Fatalf("list idle release candidates: %v", err)
+	}
+	for _, c := range candidates {
+		if c.GenerationID == allocation.GenerationID {
+			t.Fatalf("generation with in-flight turn must not be a release candidate: %+v", candidates)
+		}
+	}
+}
+
+func testDriveCheckpoint(t *testing.T, ctx context.Context, srv *Server, st *store.Store, sessionID, generationID, owner string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := st.BeginGenerationCheckpoint(ctx, sessionID, generationID, owner, now); err != nil {
+		t.Fatalf("begin checkpoint: %v", err)
+	}
+	details, err := st.GetRuntimeGenerationDetails(ctx, sessionID, generationID)
 	if err != nil {
 		t.Fatalf("get generation details: %v", err)
 	}
-	if err := bridge.TouchHeartbeat(details.BridgeDirPath, bridge.BridgeHeartbeatFile, time.Now().UTC()); err != nil {
-		t.Fatalf("touch heartbeat: %v", err)
+	if err := srv.runtime.Checkpoint(ctx, runtime.CheckpointRequest{
+		SessionID:      sessionID,
+		GenerationID:   generationID,
+		CheckpointPath: details.CheckpointPath,
+		Generation:     details,
+	}); err != nil {
+		t.Fatalf("runtime checkpoint: %v", err)
 	}
-	if err := bridge.TouchCheckpointReady(details.BridgeDirPath, time.Now().UTC()); err != nil {
-		t.Fatalf("touch ready: %v", err)
+	if err := st.CompleteGenerationCheckpoint(ctx, store.CompleteCheckpointParams{
+		SessionID:                       sessionID,
+		GenerationID:                    generationID,
+		Owner:                           owner,
+		CheckpointPath:                  details.CheckpointPath,
+		RunscPlatform:                   details.RunscPlatform,
+		RunscVersion:                    details.RunscVersion,
+		RunscBinaryPath:                 details.RunscBinaryPath,
+		RunscBinaryDigest:               details.RunscBinaryDigest,
+		CheckpointBundleDigest:          details.BundleDigest,
+		CheckpointRuntimeConfigDigest:   details.RuntimeConfigDigest,
+		CheckpointControlManifestDigest: details.ProjectedControlManifestDigest,
+		Now:                             time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("complete checkpoint: %v", err)
 	}
-	rt := &recordingRuntime{checkpointErr: errors.New("checkpoint boom")}
-	runCtx, cancel := context.WithCancel(ctx)
-	srv := &Server{
-		cfg:     cfg,
-		store:   st,
-		runtime: rt,
-		hub:     events.NewHub(),
-		log:     slog.Default(),
-	}
-	srv.SetOwnerUUID(owner.UUID)
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.MonitorIdleSessions(runCtx)
-	}()
-	waitForCheckpointRequests(t, ctx, rt, 1)
-	waitForGenerationStatus(t, ctx, st, allocation.GenerationID, "idle")
-	cancel()
-	if err := <-errCh; !errors.Is(err, context.Canceled) {
-		t.Fatalf("monitor exit err=%v, want context canceled", err)
-	}
-	var generationStatus, networkState, resourceState string
-	if err := st.DBForTest().QueryRowContext(ctx, `
-SELECT g.status, n.allocation_state, r.resource_state
-FROM runtime_generations g
-JOIN network_profiles n ON n.generation_id = g.generation_id
-JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
-WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&generationStatus, &networkState, &resourceState); err != nil {
-		t.Fatalf("query aborted generation: %v", err)
-	}
-	if generationStatus != "idle" || networkState != "live" || resourceState != "live" {
-		t.Fatalf("checkpoint failure should return generation live idle, got generation=%s network=%s resource=%s", generationStatus, networkState, resourceState)
+	if err := srv.reserveRuntimeResourceCheckpoint(ctx, generationID); err != nil {
+		t.Fatalf("reserve runtime resource checkpoint: %v", err)
 	}
 }
 
@@ -2222,6 +2268,49 @@ WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&generationStatus, &ge
 	}
 }
 
+func TestReleasedIdleSessionColdStartsOnWake(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_released_wake", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
+	enableSessionAutoCheckpoint(t, ctx, st, session.ID)
+	cfg := testServerConfig(dir)
+	cfg.Harness.Network.CIDRPool = config.CIDRPrefix{Prefix: netip.MustParsePrefix("10.243.0.0/28")}
+	allocation := prepareServerIdleGeneration(t, ctx, st, cfg, owner.UUID, session.ID)
+
+	// Release the idle sandbox (no checkpoint image).
+	if err := st.ReleaseIdleGeneration(ctx, session.ID, allocation.GenerationID, store.GenerationLeaseOwner(owner.UUID), time.Now().UTC()); err != nil {
+		t.Fatalf("release idle generation: %v", err)
+	}
+
+	released, err := st.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get released session: %v", err)
+	}
+	if released.Status != string(sessionstate.Checkpointed) {
+		t.Fatalf("released session status=%s want checkpointed", released.Status)
+	}
+
+	srv := &Server{
+		cfg:     cfg,
+		store:   st,
+		runtime: &recordingRuntime{},
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+
+	// Waking a released session must cold-start a fresh generation, never a
+	// checkpoint restore (there is no image).
+	ensured, err := srv.ensureActiveGeneration(ctx, released, store.GenerationLeaseOwner(owner.UUID))
+	if err != nil {
+		t.Fatalf("ensure active generation on wake: %v", err)
+	}
+	if !ensured.IsNew || ensured.RestoreFromCheckpoint || ensured.Allocation.GenerationID == allocation.GenerationID {
+		t.Fatalf("wake should cold-start a replacement generation: %+v old=%s", ensured, allocation.GenerationID)
+	}
+}
+
 func TestEnsureActiveGenerationColdStartsAfterCheckpointRetirement(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -2949,12 +3038,7 @@ func TestRuntimeResourceInstanceCheckpointRestoreTransitions(t *testing.T) {
 	if err := st.UpdateSessionStatusAndActivity(ctx, session.ID, string(sessionstate.RunningIdle), nil, time.Now().UTC()); err != nil {
 		t.Fatalf("mark session idle: %v", err)
 	}
-	if err := srv.checkpointGeneration(ctx, store.CheckpointCandidate{
-		SessionID:    session.ID,
-		GenerationID: allocation.GenerationID,
-	}, allocation.Owner, time.Now().UTC()); err != nil {
-		t.Fatalf("checkpoint generation: %v", err)
-	}
+	testDriveCheckpoint(t, ctx, srv, st, session.ID, allocation.GenerationID, allocation.Owner)
 	instance, err := st.GetRuntimeResourceInstance(ctx, allocation.GenerationID)
 	if err != nil {
 		t.Fatalf("get checkpointed runtime resource: %v", err)
@@ -4233,7 +4317,7 @@ func TestEventsStreamReplaysDurableEventsAfterLastEventID(t *testing.T) {
 		t.Fatalf("parse last_event_id: id=%d ok=%v err=%v", lastEventID, ok, err)
 	}
 	rec := httptest.NewRecorder()
-	replayedThrough, err := srv.writeSSEReplay(req.Context(), rec, rec, "", lastEventID)
+	replayedThrough, err := srv.writeSSEReplay(req.Context(), rec, rec, "", lastEventID, labUserID)
 	if err != nil {
 		t.Fatalf("write replay: %v", err)
 	}
@@ -4257,7 +4341,7 @@ func TestEventsStreamReplaysDurableEventsAfterLastEventID(t *testing.T) {
 	}
 
 	filtered := httptest.NewRecorder()
-	replayedThrough, err = srv.writeSSEReplay(req.Context(), filtered, filtered, "sess_a", firstID)
+	replayedThrough, err = srv.writeSSEReplay(req.Context(), filtered, filtered, "sess_a", firstID, labUserID)
 	if err != nil {
 		t.Fatalf("write filtered replay: %v", err)
 	}
@@ -4289,7 +4373,7 @@ func TestEventsStreamReplaysDurableEventsAfterLastEventID(t *testing.T) {
 	}
 
 	gap := httptest.NewRecorder()
-	replayedThrough, err = srv.writeSSEReplay(req.Context(), gap, gap, "", 0)
+	replayedThrough, err = srv.writeSSEReplay(req.Context(), gap, gap, "", 0, labUserID)
 	if err != nil {
 		t.Fatalf("write gap replay: %v", err)
 	}
@@ -4310,7 +4394,7 @@ func TestEventsStreamReplaysDurableEventsAfterLastEventID(t *testing.T) {
 	}
 
 	filteredGap := httptest.NewRecorder()
-	replayedThrough, err = srv.writeSSEReplay(req.Context(), filteredGap, filteredGap, "sess_a", 0)
+	replayedThrough, err = srv.writeSSEReplay(req.Context(), filteredGap, filteredGap, "sess_a", 0, labUserID)
 	if err != nil {
 		t.Fatalf("write filtered gap replay: %v", err)
 	}

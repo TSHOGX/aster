@@ -29,19 +29,19 @@ harness:
       provider_id: local_runsc
       profile_id: local_runsc_default
 
-  run_dir: /var/lib/harness/run
+  run_dir: /var/lib/harness-publish/run
   session_retention: 0s
   max_sessions: 30
   model_proxy:
-    bind_url: http://0.0.0.0:8082
-    sandbox_base_url: http://harness-model-proxy.internal:8082
+    bind_url: http://0.0.0.0:8083
+    sandbox_base_url: http://harness-model-proxy.internal:8083
   sandbox_identity:
     uid: 65534
     gid: 65534
     supplemental_gids: []
 
   network:
-    cidr_pool: 10.200.0.0/16
+    cidr_pool: 10.201.0.0/16
     egress:
       doris_fe_hosts:
         - 172.16.0.138
@@ -79,8 +79,13 @@ harness:
     reconnect_grace: 30s
 
   checkpoint:
-    auto_enabled: false
-    idle_threshold: 30m
+    # auto_enabled now gates automatic idle *release*: when a session is idle
+    # past idle_threshold, the monitor tears down its sandbox to free the
+    # compute/slot (no runsc checkpoint image is taken). The next message
+    # cold-starts a fresh generation from the persisted agent-home + workspace.
+    # See docs/phase7/checkpoint-restore.md (Idle Release Path).
+    auto_enabled: true
+    idle_threshold: 2h
     monitor_interval: 5m
 
   reaper:

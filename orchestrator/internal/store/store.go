@@ -211,6 +211,29 @@ WHERE status IN (`+placeholders+`)`, args...).Scan(&count)
 	return count, err
 }
 
+// CountSandboxOccupyingSessions counts sessions that currently hold (or are in
+// the middle of bringing up) a live sandbox, i.e. sessions that occupy compute
+// resources against the concurrent-sandbox ceiling.
+//
+// This is deliberately narrower than CountActiveSessions: a session that has
+// been checkpointed (resource_state 'reserved_checkpointed') has released its
+// sandbox compute and is not counted, and neither is a 'created' session that
+// has not spun up a sandbox yet nor an idle session whose sandbox was already
+// reclaimed. Only the compute-occupying resource states count: 'allocating',
+// 'ready', 'live', and 'recreating' (a checkpoint being restored).
+func (s *Store) CountSandboxOccupyingSessions(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(DISTINCT s.id)
+FROM sessions s
+JOIN runtime_generations g ON g.generation_id = s.active_generation_id
+  AND g.session_id = s.id
+JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
+WHERE s.status NOT IN ('failed', 'destroyed')
+  AND r.resource_state IN ('allocating', 'ready', 'live', 'recreating')`).Scan(&count)
+	return count, err
+}
+
 func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string, restoreMS *int64) error {
 	if err := sessionstate.Validate(status); err != nil {
 		return err
@@ -230,6 +253,56 @@ WHERE id = ?`
 	}
 	_, err := s.db.ExecContext(ctx, query, args...)
 	return err
+}
+
+// AlignAutoCheckpointEnabled reconciles the per-session auto_checkpoint flag
+// (and the flag on each session's active generation) with the process-wide
+// configured default. The flag is otherwise snapshotted only at session-create
+// time, so sessions created before a config change would keep the old value
+// forever. Calling this at startup lets an operator flip
+// harness.checkpoint.auto_enabled and have it take effect on existing
+// sessions after a restart.
+//
+// Only non-terminal sessions that are not mid-turn are touched: busy states
+// (running_active, checkpointing) are left alone so we never race an
+// in-flight checkpoint or turn. Returns the number of sessions updated.
+func (s *Store) AlignAutoCheckpointEnabled(ctx context.Context, enabled bool) (int64, error) {
+	flag := boolInt(enabled)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE sessions
+SET auto_checkpoint_enabled = ?
+WHERE status IN ('created', 'running_idle', 'checkpointed')
+  AND auto_checkpoint_enabled <> ?`, flag, flag)
+	if err != nil {
+		return 0, err
+	}
+	updated, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_generations
+SET auto_checkpoint_enabled = ?
+WHERE auto_checkpoint_enabled <> ?
+  AND generation_id IN (
+    SELECT active_generation_id FROM sessions
+    WHERE status IN ('created', 'running_idle', 'checkpointed')
+      AND active_generation_id IS NOT NULL
+  )`, flag, flag); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return updated, nil
 }
 
 func (s *Store) DestroySession(ctx context.Context, id string, now time.Time) (DestroySessionResult, error) {

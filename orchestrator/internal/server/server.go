@@ -457,7 +457,9 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getQuota(w http.ResponseWriter, r *http.Request) {
-	activeSessions, err := s.store.CountActiveSessions(r.Context())
+	// Report the same count the create-gate enforces: sessions holding a live
+	// sandbox, not every non-terminal session.
+	activeSessions, err := s.store.CountSandboxOccupyingSessions(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -537,13 +539,17 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	count, err := s.store.CountActiveSessions(r.Context())
+	// The ceiling limits concurrent sandboxes, not total sessions. Idle and
+	// checkpointed sessions have released their sandbox compute (their
+	// resources are reclaimed or reserved_checkpointed) and must not count,
+	// otherwise auto-checkpoint frees a sandbox but never frees a slot.
+	count, err := s.store.CountSandboxOccupyingSessions(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if count >= s.cfg.MaxSessions {
-		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "active session limit reached")
+		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "active sandbox limit reached")
 		return
 	}
 
@@ -3709,24 +3715,17 @@ func (s *Server) MonitorIdleSessions(ctx context.Context) error {
 	if idleThreshold < 0 {
 		idleThreshold = idleCheckpointThreshold
 	}
-	heartbeatInterval := s.cfg.Harness.Bridge.HeartbeatInterval.Duration
-	if heartbeatInterval <= 0 {
-		heartbeatInterval = 30 * time.Second
-	}
 	tick := func(now time.Time) {
-		candidates, err := s.store.ListAutoCheckpointCandidates(ctx, owner, now, idleThreshold)
+		candidates, err := s.store.ListIdleReleaseCandidates(ctx, owner, now, idleThreshold)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				s.log.Warn("failed to list auto checkpoint candidates", "error", err)
+				s.log.Warn("failed to list idle release candidates", "error", err)
 			}
 			return
 		}
 		for _, candidate := range candidates {
-			if !bridgeCheckpointReady(candidate.BridgeDirPath, now, heartbeatInterval) {
-				continue
-			}
-			if err := s.checkpointGeneration(ctx, candidate, owner, now); err != nil && !errors.Is(err, context.Canceled) {
-				s.log.Warn("auto checkpoint failed", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "error", err)
+			if err := s.releaseIdleGeneration(ctx, candidate, owner, now); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("idle sandbox release failed", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "error", err)
 			}
 		}
 	}
@@ -3744,54 +3743,22 @@ func (s *Server) MonitorIdleSessions(ctx context.Context) error {
 	}
 }
 
-func (s *Server) checkpointGeneration(ctx context.Context, candidate store.CheckpointCandidate, owner string, now time.Time) error {
-	if err := s.store.BeginGenerationCheckpoint(ctx, candidate.SessionID, candidate.GenerationID, owner, now); err != nil {
+// releaseIdleGeneration tears down an idle session's sandbox to free compute,
+// without taking a runsc checkpoint. The session moves to 'checkpointed' (its
+// logical "released, wake me later" state with no hot-restore image) and the
+// generation's compute/network slots are reclaimed and destroyed. Waking the
+// session (next message) allocates a fresh generation and cold-starts against
+// the retained workspace/agent-home.
+func (s *Server) releaseIdleGeneration(ctx context.Context, candidate store.CheckpointCandidate, owner string, now time.Time) error {
+	if err := s.store.ReleaseIdleGeneration(ctx, candidate.SessionID, candidate.GenerationID, owner, now); err != nil {
 		return err
 	}
-	details, err := s.store.GetRuntimeGenerationDetails(ctx, candidate.SessionID, candidate.GenerationID)
-	if err != nil {
-		abortNow := time.Now().UTC()
-		if abortErr := s.store.AbortGenerationCheckpoint(ctx, candidate.SessionID, candidate.GenerationID, owner, abortNow); abortErr != nil {
-			s.log.Warn("failed to abort generation checkpoint after metadata load failure", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "error", abortErr)
-		}
-		return err
-	}
-	checkpointCtx, cancel := context.WithTimeout(ctx, checkpointTimeout)
-	defer cancel()
-	err = s.runtime.Checkpoint(checkpointCtx, runtime.CheckpointRequest{
-		SessionID:      candidate.SessionID,
-		GenerationID:   candidate.GenerationID,
-		CheckpointPath: details.CheckpointPath,
-		Generation:     details,
-	})
-	if err != nil {
-		abortNow := time.Now().UTC()
-		if abortErr := s.store.AbortGenerationCheckpoint(ctx, candidate.SessionID, candidate.GenerationID, owner, abortNow); abortErr != nil {
-			s.log.Warn("failed to abort generation checkpoint", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "error", abortErr)
-		} else {
-			s.hub.Publish(events.Event{Type: "session." + string(sessionstate.RunningIdle), SessionID: candidate.SessionID, GenerationID: candidate.GenerationID, Payload: map[string]string{"checkpoint_error": err.Error()}})
-		}
-		return err
-	}
-	completeNow := time.Now().UTC()
-	if err := s.store.CompleteGenerationCheckpoint(ctx, store.CompleteCheckpointParams{
-		SessionID:                       candidate.SessionID,
-		GenerationID:                    candidate.GenerationID,
-		Owner:                           owner,
-		CheckpointPath:                  details.CheckpointPath,
-		RunscPlatform:                   details.RunscPlatform,
-		RunscVersion:                    details.RunscVersion,
-		RunscBinaryPath:                 details.RunscBinaryPath,
-		RunscBinaryDigest:               details.RunscBinaryDigest,
-		CheckpointBundleDigest:          details.BundleDigest,
-		CheckpointRuntimeConfigDigest:   details.RuntimeConfigDigest,
-		CheckpointControlManifestDigest: details.ProjectedControlManifestDigest,
-		Now:                             completeNow,
-	}); err != nil {
-		return err
-	}
-	if err := s.reserveRuntimeResourceCheckpoint(ctx, candidate.GenerationID); err != nil {
-		return err
+	// The generation is now failed with reclaimable resources; tear down the
+	// sandbox and mark resources destroyed via the shared cleanup path.
+	if err := s.cleanupGenerationResources(ctx, candidate.SessionID, candidate.GenerationID, time.Now().UTC()); err != nil {
+		// The DB transition already succeeded and resources are reclaimable, so
+		// the reaper will finish teardown; surface the error but do not roll back.
+		s.log.Warn("idle release sandbox teardown deferred to reaper", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "error", err)
 	}
 	s.hub.Publish(events.Event{Type: "session." + string(sessionstate.Checkpointed), SessionID: candidate.SessionID, GenerationID: candidate.GenerationID})
 	return nil

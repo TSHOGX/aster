@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -462,6 +463,68 @@ func TestCountActiveSessionsUsesCanonicalStatuses(t *testing.T) {
 	}
 }
 
+func TestCountSandboxOccupyingSessionsExcludesReleasedSandboxes(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	// Widen the pool: several generations are allocated concurrently below and
+	// checkpointed/reclaimable ones keep holding their network slot.
+	cfg.CIDRPool = netip.MustParsePrefix("10.240.0.0/24")
+
+	// Each resource_state maps to whether the session still occupies a sandbox.
+	// allocating/ready/live/recreating hold compute; reserved_checkpointed and
+	// reclaimable have released it; a session with no generation holds nothing.
+	cases := []struct {
+		id            string
+		resourceState string // "" means no generation allocated
+		occupies      bool
+	}{
+		{"sess_allocating", "allocating", true},
+		{"sess_ready", "ready", true},
+		{"sess_live", "live", true},
+		{"sess_recreating", "recreating", true},
+		{"sess_reserved", "reserved_checkpointed", false},
+		{"sess_reclaimable", "reclaimable", false},
+		{"sess_no_gen", "", false},
+	}
+
+	wantCount := 0
+	for _, tc := range cases {
+		createStoreSession(t, ctx, st, tc.id)
+		if tc.occupies {
+			wantCount++
+		}
+		if tc.resourceState == "" {
+			continue
+		}
+		alloc, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
+			SessionID: tc.id,
+			Owner:     GenerationLeaseOwner(owner.UUID),
+			LeaseTTL:  time.Minute,
+			Now:       time.Now().UTC(),
+			Config:    cfg,
+		})
+		if err != nil {
+			t.Fatalf("allocate %s: %v", tc.id, err)
+		}
+		// AllocateGeneration links active_generation_id itself; just move the
+		// resource into the state under test.
+		if _, err := st.db.ExecContext(ctx,
+			`UPDATE runtime_generation_resources SET resource_state = ? WHERE generation_id = ?`,
+			tc.resourceState, alloc.GenerationID); err != nil {
+			t.Fatalf("set resource state %s: %v", tc.id, err)
+		}
+	}
+
+	count, err := st.CountSandboxOccupyingSessions(ctx)
+	if err != nil {
+		t.Fatalf("count sandbox occupying sessions: %v", err)
+	}
+	if count != wantCount {
+		t.Fatalf("want %d sandbox-occupying sessions, got %d", wantCount, count)
+	}
+}
+
 func TestDeleteArtifactPathDeletesFileAndDescendants(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
@@ -523,5 +586,72 @@ func TestDeleteArtifactPathDeletesFileAndDescendants(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Path != "dir2/a.txt" {
 		t.Fatalf("unexpected artifacts after file delete: %+v", got)
+	}
+}
+
+func TestAlignAutoCheckpointEnabled(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Now().UTC()
+	// idle + created + checkpointed are eligible; running_active (busy) and
+	// destroyed (terminal) must be left untouched. All start with the flag off.
+	sessions := []Session{
+		{ID: "sess_idle", Status: string(sessionstate.RunningIdle)},
+		{ID: "sess_created", Status: string(sessionstate.Created)},
+		{ID: "sess_ckpt", Status: string(sessionstate.Checkpointed)},
+		{ID: "sess_active", Status: string(sessionstate.RunningActive)},
+		{ID: "sess_destroyed", Status: string(sessionstate.Destroyed)},
+	}
+	for _, s := range sessions {
+		s.UserID = "lab"
+		s.Agent = "claude_code"
+		s.Workspace = dir
+		s.RestoreID = "restore-" + s.ID
+		s.CreatedAt = now
+		s.UpdatedAt = now
+		s.AutoCheckpointEnabled = false
+		if err := st.CreateSession(ctx, s); err != nil {
+			t.Fatalf("create %s: %v", s.ID, err)
+		}
+	}
+
+	aligned, err := st.AlignAutoCheckpointEnabled(ctx, true)
+	if err != nil {
+		t.Fatalf("align: %v", err)
+	}
+	if aligned != 3 {
+		t.Fatalf("aligned: want 3, got %d", aligned)
+	}
+
+	want := map[string]bool{
+		"sess_idle":      true,
+		"sess_created":   true,
+		"sess_ckpt":      true,
+		"sess_active":    false,
+		"sess_destroyed": false,
+	}
+	for id, expect := range want {
+		got, err := st.GetSession(ctx, id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if got.AutoCheckpointEnabled != expect {
+			t.Errorf("%s auto_checkpoint_enabled: want %v, got %v", id, expect, got.AutoCheckpointEnabled)
+		}
+	}
+
+	// Idempotent: a second run with the same value updates nothing.
+	aligned, err = st.AlignAutoCheckpointEnabled(ctx, true)
+	if err != nil {
+		t.Fatalf("align (second): %v", err)
+	}
+	if aligned != 0 {
+		t.Fatalf("second align: want 0, got %d", aligned)
 	}
 }

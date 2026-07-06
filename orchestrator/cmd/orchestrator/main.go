@@ -118,6 +118,12 @@ func main() {
 	if startup.ClearedActiveSessionExpiries > 0 {
 		log.Info("cleared active session expiry", "sessions", startup.ClearedActiveSessionExpiries)
 	}
+	if aligned, err := db.AlignAutoCheckpointEnabled(ctx, cfg.Harness.Checkpoint.AutoEnabled); err != nil {
+		log.Error("failed to align auto checkpoint flag", "error", err)
+		os.Exit(1)
+	} else if aligned > 0 {
+		log.Info("aligned auto checkpoint flag on existing sessions", "sessions", aligned, "enabled", cfg.Harness.Checkpoint.AutoEnabled)
+	}
 	ownerHeartbeatErr := db.StartOwnerHeartbeat(ctx, owner)
 	if err := db.EnsureUser(ctx, "lab", "Lab User"); err != nil {
 		log.Error("failed to ensure lab user", "error", err)

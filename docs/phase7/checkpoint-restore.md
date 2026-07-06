@@ -12,6 +12,21 @@ Physical resume:
 
 The target architecture treats logical resume as required for correctness and physical resume as an optimization.
 
+> **Current behavior note (publish branch, 2026-07-06).** The automatic
+> idle path no longer takes a physical checkpoint. When a session passes
+> `harness.checkpoint.idle_threshold`, the idle monitor **releases** the
+> sandbox (tears it down to free the `/30` slot and compute) instead of
+> running `runsc checkpoint`; no checkpoint image is produced. Waking the
+> session (next user message) always cold-starts a fresh generation and
+> relies on logical resume (persisted agent-home + workspace + transcript).
+> See [Idle Release Path](#idle-release-path). The physical checkpoint/restore
+> machinery documented below (Restore Path, Checkpoint Policy, digest rules)
+> remains implemented and tested but is no longer auto-triggered; it can be
+> re-enabled or driven manually. This choice reflects that `runsc restore`
+> cannot reliably reconnect the long-lived stdin turn channel, so cold
+> fallback was already the de-facto workhorse, and idle sessions have no
+> in-flight work whose memory state is worth preserving.
+
 Current reading note: this is the Phase 7 checkpoint/restore design. The active
 Phase 8 baseline removes sandbox-mounted provider secrets and keeps upstream
 credentials host/proxy-side. The strict/regenerable digest rule still applies,
@@ -55,6 +70,55 @@ turn queued or leased but not started
 
 This fallback is what makes the system reliable; the user should not be blocked on perfect `runsc restore` behavior. Retry eligibility is governed by the [turn ledger restart recovery rules](./schema.md#turns) — `ack_started_at` turns are never auto-replayed.
 
+## Idle Release Path
+
+This is the active automatic idle behavior on the publish branch. It replaces
+the automatic checkpoint path: an idle session's sandbox is released (not
+checkpointed) to free the `/30` slot and compute, and the next message
+cold-starts.
+
+```text
+session idle past harness.checkpoint.idle_threshold
+  -> idle monitor lists release candidates (idle generation, live resource,
+     auto_checkpoint_enabled, valid lease, no in-flight turn)
+  -> ReleaseIdleGeneration transition:
+       generation idle -> failed (error_class = sandbox_released_idle)
+       network + resource live -> reclaimable
+       session running_idle -> checkpointed (checkpoint_path stays NULL)
+  -> sandbox torn down via the shared cleanup path (resources -> destroyed)
+  -> slot + compute freed; reaper needs nothing further
+```
+
+Wake is the ordinary cold-start path — no new branch:
+
+```text
+user sends message to a released (checkpointed) session
+  -> CanAcceptInput(checkpointed) == true
+  -> ensureActiveGeneration sees generation status = failed
+  -> allocate a fresh generation N+1 (IsNew), cold start from bundle
+     with same ClaudeSessionUUID / resume flag
+  -> logical resume from persisted agent-home + workspace + transcript
+  -> session checkpointed -> running_active on EnqueueTurnMessage
+```
+
+Design notes:
+
+- Wake routing is driven by **generation** status, not session status. A
+  released session is `checkpointed` (session) + `failed` (generation) +
+  `checkpoint_path` NULL; the `failed`-generation branch of
+  `ensureActiveGeneration` already cold-starts, so no restore is attempted and
+  no image is required.
+- This is the same resting state the checkpoint-image *retirement* path
+  produces when an image expires, so the two converge on one cold-start wake
+  path.
+- `checkpointed` here means "released, wake me later" (no hot-restore image),
+  distinct from the Phase 7 meaning of "has a physical checkpoint image".
+- The concurrency ceiling counts only sessions holding a live sandbox
+  (`allocating`/`ready`/`live`/`recreating` resources), so a released session
+  frees its slot immediately.
+- Store/runtime primitives: `Store.ReleaseIdleGeneration`,
+  `Store.ListIdleReleaseCandidates`, `Server.releaseIdleGeneration`.
+
 ## User-Visible Recovery For `unknown_after_ack_started`
 
 A generation crash or bridge outage while a turn is `running` with `ack_started_at` set is the one case the orchestrator cannot resolve unilaterally — the prompt may already be billed and partially answered. The default action is **await reconnect** for `ack_started_grace` (default 90 s) after the turn/generation lease expires.
@@ -70,6 +134,11 @@ A reconnect during `ack_started_grace` uses the standard `hello` → `hello_ack`
 `unknown_after_ack_started` is written only when `ack_started_grace` expires or the user explicitly abandons/resubmits. That transaction marks the turn `failed`, fences the generation with `error_class = unknown_after_ack_started`, and only then allows cold fallback N+1. A late reconnect after that fence is rejected as stale. Resubmit creates a brand-new `turn_id`; the original remains failed for audit and is never auto-replayed.
 
 ## Checkpoint Policy
+
+> Applies to the physical checkpoint path, which is no longer auto-triggered on
+> the publish branch (see the current-behavior note at the top and the
+> [Idle Release Path](#idle-release-path)). These predicates remain the
+> contract if checkpointing is driven manually or re-enabled.
 
 Checkpoint should be allowed only when all of these are true:
 
