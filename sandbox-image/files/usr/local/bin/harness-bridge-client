@@ -29,6 +29,7 @@ PI_SESSION_DIR = f"{PI_CODING_AGENT_DIR}/sessions"
 PI_MODELS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/models.json"
 PI_SETTINGS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/settings.json"
 PI_HARNESS_PROXY_PROVIDER = "harness_anthropic_proxy"
+PI_SYSTEM_PROMPT_PATH = "/usr/local/share/harness/pi-system-prompt.md"
 DRIVER_STATE_DIGEST_PREFIX = b"driver_state_digest_v1\n"
 
 
@@ -557,6 +558,32 @@ def pi_config_writable_by_sandbox_uid(st):
     )
 
 
+def read_pi_system_prompt():
+    path = Path(PI_SYSTEM_PROMPT_PATH)
+    reject_symlink_path_components(path, "pi system prompt")
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return ""
+    except OSError as err:
+        raise RuntimeError(f"pi system prompt stat failed: {path}") from err
+    if not path.is_file():
+        raise RuntimeError(f"pi system prompt is not a regular file: {path}")
+    if pi_config_writable_by_sandbox_uid(st):
+        raise RuntimeError(f"pi system prompt is writable by sandbox uid/gid: {path}")
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError as err:
+        raise RuntimeError(f"pi system prompt read failed: {path}") from err
+
+
+def pi_event_stop_reason(event):
+    message = event.get("message")
+    if isinstance(message, dict):
+        return str(message.get("stopReason") or message.get("stop_reason") or "")
+    return str(event.get("stopReason") or event.get("stop_reason") or "")
+
+
 def reject_symlink_path_components(path, label):
     current = Path(path)
     for _ in range(4):
@@ -622,6 +649,9 @@ class PiRPCTurnRunner:
             "--session-dir",
             pi_runtime_env["PI_CODING_AGENT_SESSION_DIR"],
         ]
+        system_prompt = read_pi_system_prompt()
+        if system_prompt:
+            pi_command.extend(["--append-system-prompt", system_prompt])
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "HOME": "/agent-home",
@@ -725,14 +755,16 @@ class PiRPCTurnRunner:
         turn_id = int(self.current_grant.get("turn_id") or 0)
         self._restore_session_if_needed(turn_id)
         prompt_id = f"harness-turn-{turn_id or int(time.time_ns())}"
-        self._write_rpc({"id": prompt_id, "type": "prompt", "message": content})
+        self._write_rpc({"id": prompt_id, "type": "prompt", "message": content or ""})
         status = "completed"
         error_class = ""
         error = ""
         while True:
             stripped, event = self._read_rpc()
-            emit("stdout", stripped)
             event_type = event.get("type")
+            if event_type in {"turn_end", "agent_end"} and pi_event_stop_reason(event) in {"toolUse", "tool_use"}:
+                continue
+            emit("stdout", stripped)
             if event_type == "response" and event.get("id") == prompt_id and not event.get("success", False):
                 status = "failed"
                 error_class = "agent_prompt_rejected"

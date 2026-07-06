@@ -334,6 +334,10 @@ func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput)
 	case "tool_execution_start", "tool_execution_update", "tool_execution_end":
 		p.publish("agent.output", event)
 	case "turn_end", "agent_end":
+		if piEventStopReason(event) == "toolUse" {
+			p.publish("system.status", event)
+			return
+		}
 		p.publish("system.status", event)
 		p.flush()
 		p.complete()
@@ -361,6 +365,8 @@ func (p *streamParser) handlePiMessageUpdate(event map[string]any) {
 	assistantEventType, _ := assistantEvent["type"].(string)
 	switch assistantEventType {
 	case "text_start", "text_end":
+		p.publish("agent.output", event)
+	case "toolcall_start", "toolcall_delta", "toolcall_end":
 		p.publish("agent.output", event)
 	case "text_delta":
 		text, _ := assistantEvent["delta"].(string)
@@ -405,6 +411,13 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 	p.dropPending(id)
 	p.dropPending("pi_assistant_pending")
 	p.persistAssistant(text)
+}
+
+func piEventStopReason(event map[string]any) string {
+	if message, ok := event["message"].(map[string]any); ok {
+		return stringFromMap(message, "stopReason")
+	}
+	return stringFromMap(event, "stopReason")
 }
 
 func messageRole(value any) string {

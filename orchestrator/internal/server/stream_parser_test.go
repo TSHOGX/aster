@@ -335,6 +335,38 @@ func TestPiOutputNormalizerAcceptsRetryLifecycleEvents(t *testing.T) {
 	}
 }
 
+func TestPiOutputNormalizerDoesNotCompleteOnToolUseTurnEnd(t *testing.T) {
+	srv, st := newParserTestServer(t)
+	parser := newStreamParser(srv, "sess_1", "pi")
+
+	lines := []string{
+		`{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1}}`,
+		`{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":""},{"type":"toolCall","name":"read"}],"stopReason":"toolUse"}}`,
+		`{"type":"message_update","messageId":"msg_2","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"done"}}`,
+		`{"type":"message_end","messageId":"msg_2","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}`,
+		`{"type":"turn_end","status":"completed"}`,
+	}
+	for _, line := range lines {
+		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+	}
+
+	select {
+	case <-parser.Done():
+	case <-time.After(time.Second):
+		t.Fatal("parser did not complete after final turn_end")
+	}
+	if err := parser.Err(); err != nil {
+		t.Fatalf("tool-use turn_end should not fail parser: %v", err)
+	}
+	messages, err := st.ListMessages(context.Background(), "sess_1")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Role != "assistant" || messages[0].Content != "done" {
+		t.Fatalf("unexpected pi messages: %+v", messages)
+	}
+}
+
 func TestPiOutputNormalizerToleratesUnknownType(t *testing.T) {
 	srv, st := newParserTestServer(t)
 	parser := newStreamParser(srv, "sess_1", "pi")
