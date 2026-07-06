@@ -6,10 +6,10 @@ import { ChevronDown, Loader2, LogOut, Plus, RotateCw, Trash2 } from "lucide-rea
 import { useHarness } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
 import { StatusDot, statusTone } from "@/components/ui/badge";
-import { newSessionOptions, sessionModeLabel } from "@/lib/agents";
+import { sessionModeLabel } from "@/lib/agents";
 import { formatRelative, isTerminal, statusLabel } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import type { ApiSession, SessionMode } from "@/lib/types";
+import type { ApiSession } from "@/lib/types";
 
 type SessionRowProps = {
   session: ApiSession;
@@ -65,18 +65,17 @@ export function Sidebar() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [endedOpen, setEndedOpen] = useState(false);
 
   const activeSessions = state.sessions.filter((session) => !isTerminal(session.status));
   const endedSessions = state.sessions.filter((session) => isTerminal(session.status));
-  const sessionOptions = newSessionOptions(state.capabilities);
+  const agentCapability = state.capabilities?.session_modes.find((mode) => mode.mode === "agent");
+  const agentCreateDisabled = agentCapability ? !agentCapability.create_enabled : false;
 
-  const handleCreate = async (mode: SessionMode) => {
-    setPickerOpen(false);
+  const handleCreate = async () => {
     setCreating(true);
     setCreateError(null);
-    const res = await createSession(mode);
+    const res = await createSession("agent");
     setCreating(false);
     if (!res.ok) setCreateError(res.error ?? "Failed to create session");
   };
@@ -131,29 +130,13 @@ export function Sidebar() {
           variant="primary"
           size="lg"
           className="w-full justify-start gap-2"
-          onClick={() => setPickerOpen((v) => !v)}
-          disabled={creating}
+          onClick={() => void handleCreate()}
+          disabled={creating || agentCreateDisabled}
+          title={agentCapability?.disabled_reason ?? undefined}
         >
           {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           New session
-          <ChevronDown className="ml-auto h-4 w-4" />
         </Button>
-        {pickerOpen ? (
-          <div className="absolute left-3 right-3 top-[calc(100%-0.25rem)] z-10 rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-background)] p-1 shadow-lg">
-            {sessionOptions.map((opt) => (
-              <button
-                key={opt.value}
-                className="flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void handleCreate(opt.value)}
-                disabled={!opt.createEnabled}
-                title={opt.disabledReason ?? undefined}
-              >
-                <opt.icon className="h-4 w-4 shrink-0 text-[var(--color-foreground-muted)]" />
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
         {createError ? (
           <p className="mt-2 text-xs text-[var(--color-danger)]">{createError}</p>
         ) : null}
