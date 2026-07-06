@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Loader2, Plus, RotateCw, Trash2 } from "lucide-react";
+import { ChevronDown, Loader2, LogOut, Plus, RotateCw, Trash2 } from "lucide-react";
 
 import { useHarness } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
@@ -60,7 +60,7 @@ function SessionRow({ session, selected, closing, onSelect, onClose }: SessionRo
 }
 
 export function Sidebar() {
-  const { state, selectSession, createSession, destroySession, refresh } = useHarness();
+  const { state, selectSession, createSession, destroySession, refresh, logout } = useHarness();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -108,6 +108,23 @@ export function Sidebar() {
           <RotateCw className="h-4 w-4" />
         </Button>
       </div>
+
+      {state.auth.required && state.auth.userId ? (
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
+          <span className="truncate text-xs text-[var(--color-foreground-muted)]">
+            Signed in as <span className="text-[var(--color-foreground)]">{state.auth.userId}</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void logout()}
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
+      ) : null}
 
       <div className="relative shrink-0 px-3 pb-2">
         <Button

@@ -17,10 +17,12 @@ import {
   fetchArtifacts,
   fetchDeploymentCapabilities,
   fetchHealth,
+  fetchMe,
   fetchMessages,
   fetchSession,
   fetchSessions,
   interruptSession as apiInterruptSession,
+  logout as apiLogout,
   postMessage as apiPostMessage
 } from "@/lib/api";
 import { reduceSessionEvent } from "@/lib/session-events";
@@ -44,6 +46,12 @@ type ConversationState = {
   loading: boolean;
 };
 
+type AuthState = {
+  checked: boolean;
+  required: boolean;
+  userId: string | null;
+};
+
 type HarnessState = {
   ready: boolean;
   bootError: string | null;
@@ -53,6 +61,7 @@ type HarnessState = {
   selectedId: string | null;
   conversations: Record<string, ConversationState>;
   artifacts: Record<string, ApiArtifact[]>;
+  auth: AuthState;
 };
 
 type HarnessApi = {
@@ -63,6 +72,8 @@ type HarnessApi = {
   interruptSession: (id: string) => Promise<{ ok: boolean; error?: string }>;
   sendMessage: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
   refresh: () => Promise<void>;
+  onLogin: (userId: string) => void;
+  logout: () => Promise<void>;
 };
 
 const HarnessContext = createContext<HarnessApi | null>(null);
@@ -75,7 +86,8 @@ const initialState: HarnessState = {
   sessions: [],
   selectedId: null,
   conversations: {},
-  artifacts: {}
+  artifacts: {},
+  auth: { checked: false, required: false, userId: null }
 };
 
 const RUNNING_STATUSES = new Set<SessionStatus>(["running_active"]);
@@ -452,6 +464,19 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     handleEventRef.current = handleEvent;
   }, [handleEvent]);
 
+  const handleUnauthorized = useCallback(() => {
+    aliveRef.current = false;
+    setState((p) => ({
+      ...p,
+      auth: { checked: true, required: true, userId: null },
+      sessions: [],
+      conversations: {},
+      artifacts: {},
+      selectedId: null,
+      connection: "down"
+    }));
+  }, []);
+
   const refresh = useCallback(async () => {
     const health = await fetchHealth();
     if (!health.ok) {
@@ -460,6 +485,10 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     }
     const sessions = await fetchSessions();
     if (!sessions.ok) {
+      if (sessions.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       setState((p) => ({ ...p, ready: true, bootError: sessions.error, sessions: [] }));
       return;
     }
@@ -489,9 +518,51 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         void pollConversation(selectedId);
       }
     }
-  }, [loadSessionDetails, pollConversation]);
+  }, [loadSessionDetails, pollConversation, handleUnauthorized]);
+
+  // Determine auth state on boot before connecting any streams.
+  const authReady = state.auth.checked && (!state.auth.required || state.auth.userId !== null);
 
   useEffect(() => {
+    let cancelled = false;
+    void fetchMe().then((res) => {
+      if (cancelled) return;
+      if (!res.ok) {
+        // /api/me should never 401; treat failure as backend-unreachable.
+        setState((p) => ({ ...p, auth: { checked: true, required: false, userId: null } }));
+        return;
+      }
+      setState((p) => ({
+        ...p,
+        auth: {
+          checked: true,
+          required: res.data.auth_required,
+          userId: res.data.user_id || null
+        }
+      }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onLogin = useCallback((userId: string) => {
+    aliveRef.current = true;
+    lastEventIDRef.current = null;
+    setState((p) => ({
+      ...p,
+      auth: { checked: true, required: true, userId },
+      connection: "connecting"
+    }));
+  }, []);
+
+  const logout = useCallback(async () => {
+    await apiLogout();
+    handleUnauthorized();
+  }, [handleUnauthorized]);
+
+  useEffect(() => {
+    if (!authReady) return;
     aliveRef.current = true;
     let cleanedUp = false;
     connectedOnceRef.current = false;
@@ -570,7 +641,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       }
       source.close();
     };
-  }, [refresh]);
+  }, [refresh, authReady]);
 
   const selectSession = useCallback(
     (id: string | null) => {
@@ -653,8 +724,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<HarnessApi>(
-    () => ({ state, selectSession, createSession, destroySession, interruptSession, sendMessage, refresh }),
-    [state, selectSession, createSession, destroySession, interruptSession, sendMessage, refresh]
+    () => ({ state, selectSession, createSession, destroySession, interruptSession, sendMessage, refresh, onLogin, logout }),
+    [state, selectSession, createSession, destroySession, interruptSession, sendMessage, refresh, onLogin, logout]
   );
 
   return <HarnessContext.Provider value={value}>{children}</HarnessContext.Provider>;

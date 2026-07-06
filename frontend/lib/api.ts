@@ -34,6 +34,22 @@ export async function fetchHealth() {
   return request<{ status: string }>("/api/healthz");
 }
 
+export async function fetchMe() {
+  return request<{ auth_required: boolean; user_id: string }>("/api/me");
+}
+
+export async function login(username: string, password: string) {
+  return request<{ user_id: string }>("/api/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+}
+
+export async function logout() {
+  return request<{ status: string }>("/api/logout", { method: "POST" });
+}
+
 export async function fetchSessions() {
   return request<{ sessions: ApiSession[] }>("/api/sessions");
 }

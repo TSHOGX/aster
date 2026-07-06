@@ -4,9 +4,18 @@ import { HarnessProvider, useHarness } from "@/components/harness-provider";
 import { Sidebar } from "@/components/workbench/sidebar";
 import { Conversation } from "@/components/workbench/conversation";
 import { ArtifactPane } from "@/components/workbench/artifact-pane";
+import { LoginScreen } from "@/components/workbench/login-screen";
 
 function Shell() {
-  const { state } = useHarness();
+  const { state, onLogin } = useHarness();
+  // Hold the screen until /api/me resolves; otherwise the main workbench
+  // renders for one frame before we know auth is required (login flash).
+  if (!state.auth.checked) {
+    return <div className="h-dvh bg-[var(--color-background)]" />;
+  }
+  if (state.auth.required && !state.auth.userId) {
+    return <LoginScreen onSuccess={onLogin} />;
+  }
   if (state.bootError) {
     return (
       <div className="flex h-dvh overflow-hidden items-center justify-center bg-[var(--color-background)] p-8 text-center">
