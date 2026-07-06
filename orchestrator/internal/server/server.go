@@ -30,6 +30,7 @@ import (
 
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/artifacts"
+	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
@@ -69,9 +70,23 @@ type Server struct {
 	upgrader  websocket.Upgrader
 	ownerUUID string
 
+	authUsers    map[string]config.AuthUser
+	authEnabled  bool
+	loginLimiter *auth.RateLimiter
+
+	sessionOwnerMu    sync.Mutex
+	sessionOwnerCache map[string]sessionOwnerEntry
+
 	bridgeParserMu sync.Mutex
 	bridgeParsers  map[bridgeStreamParserKey]*streamParser
 }
+
+type sessionOwnerEntry struct {
+	userID    string
+	expiresAt time.Time
+}
+
+type userContextKey struct{}
 
 type runtimeDriver interface {
 	Start(context.Context, runtime.StartRequest, func(runtime.Output)) runtime.Result
@@ -120,13 +135,21 @@ func New(
 	hub *events.Hub,
 	log *slog.Logger,
 ) *Server {
+	authUsers := make(map[string]config.AuthUser, len(cfg.AuthUsers))
+	for _, user := range cfg.AuthUsers {
+		authUsers[user.Username] = user
+	}
 	return &Server{
-		cfg:     cfg,
-		store:   store,
-		runtime: runtime,
-		watcher: watcher,
-		hub:     hub,
-		log:     log,
+		cfg:               cfg,
+		store:             store,
+		runtime:           runtime,
+		watcher:           watcher,
+		hub:               hub,
+		log:               log,
+		authUsers:         authUsers,
+		authEnabled:       cfg.AuthEnabled(),
+		loginLimiter:      auth.NewRateLimiter(5, 15*time.Minute),
+		sessionOwnerCache: make(map[string]sessionOwnerEntry),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -141,6 +164,8 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("POST /api/login", s.login)
+	mux.HandleFunc("GET /api/me", s.me)
+	mux.Handle("POST /api/logout", s.requireAuth(http.HandlerFunc(s.logout)))
 	mux.Handle("/api/", s.requireAuth(http.HandlerFunc(s.api)))
 	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.downloadArtifact)))
 	return mux
@@ -260,26 +285,112 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if !s.authEnabled {
+		// Open mode: issue a session for the default lab user so the cookie
+		// flow is uniform, but no credentials are required.
+		s.issueAuthSession(w, r, labUserID)
+		writeJSON(w, http.StatusOK, map[string]string{"user_id": labUserID})
+		return
+	}
 	var req struct {
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if s.cfg.SharedSecret != "" && !hmac.Equal([]byte(req.Password), []byte(s.cfg.SharedSecret)) {
-		writeError(w, http.StatusUnauthorized, "invalid password")
+	username := strings.TrimSpace(req.Username)
+	rateKey := username + "|" + clientIP(r)
+	if !s.loginLimiter.Allowed(rateKey) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts, try again later")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     s.cfg.CookieName,
-		Value:    s.signCookie(labUserID),
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(24 * time.Hour),
-	})
-	writeJSON(w, http.StatusOK, map[string]string{"user_id": labUserID})
+
+	if userID, ok := s.verifyCredentials(username, req.Password); ok {
+		s.loginLimiter.RecordSuccess(rateKey)
+		s.issueAuthSession(w, r, userID)
+		writeJSON(w, http.StatusOK, map[string]string{"user_id": userID})
+		return
+	}
+
+	if locked := s.loginLimiter.RecordFailure(rateKey); locked {
+		writeError(w, http.StatusTooManyRequests, "too many attempts, try again later")
+		return
+	}
+	writeError(w, http.StatusUnauthorized, "invalid username or password")
+}
+
+// verifyCredentials validates a username/password against configured users or
+// the single shared-password fallback. It always performs hashing work even
+// when the user is unknown, to avoid leaking account existence via timing.
+func (s *Server) verifyCredentials(username, password string) (string, bool) {
+	if len(s.authUsers) > 0 {
+		user, ok := s.authUsers[username]
+		if !ok {
+			// Run a dummy verify to equalize timing for unknown users.
+			auth.VerifyPassword("pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", password)
+			return "", false
+		}
+		if auth.VerifyPassword(user.PasswordHash, password) {
+			return user.Username, true
+		}
+		return "", false
+	}
+	// Shared-password fallback (legacy single-user lab mode).
+	if s.cfg.SharedSecret != "" && hmac.Equal([]byte(password), []byte(s.cfg.SharedSecret)) {
+		return labUserID, true
+	}
+	return "", false
+}
+
+// issueAuthSession creates a server-side login session and sets the cookie.
+func (s *Server) issueAuthSession(w http.ResponseWriter, r *http.Request, userID string) {
+	token, err := newAuthToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
+	now := time.Now().UTC()
+	ttl := s.cfg.AuthSessionTTL
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	expiresAt := now.Add(ttl)
+	if err := s.store.CreateAuthSession(r.Context(), store.AuthSession{
+		TokenHash: hashAuthToken(token),
+		UserID:    userID,
+		CreatedAt: now,
+		ExpiresAt: expiresAt,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	http.SetCookie(w, s.authCookie(r, token, expiresAt))
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(s.cookieName(r)); err == nil && cookie.Value != "" {
+		if err := s.store.RevokeAuthSession(r.Context(), hashAuthToken(cookie.Value), time.Now().UTC()); err != nil {
+			s.log.Warn("failed to revoke auth session on logout", "error", err)
+		}
+	}
+	http.SetCookie(w, s.expireCookie(r))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	if !s.authEnabled {
+		writeJSON(w, http.StatusOK, map[string]any{"auth_required": false, "user_id": labUserID})
+		return
+	}
+	userID := ""
+	if cookie, err := r.Cookie(s.cookieName(r)); err == nil && cookie.Value != "" {
+		if id, err := s.store.LookupAuthSession(r.Context(), hashAuthToken(cookie.Value), time.Now().UTC()); err == nil {
+			userID = id
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auth_required": true, "user_id": userID})
 }
 
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +448,7 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.store.ListSessions(r.Context())
+	sessions, err := s.store.ListSessionsByUser(r.Context(), userIDFromContext(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -445,7 +556,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	session := store.Session{
 		ID:                    id,
-		UserID:                labUserID,
+		UserID:                userIDFromContext(r.Context()),
 		Status:                string(sessionstate.Created),
 		Agent:                 string(driverID),
 		Mode:                  mode,
@@ -473,14 +584,29 @@ func (s *Server) driverForMode(mode string) (agents.ID, error) {
 	return resolution.DriverID, nil
 }
 
-func (s *Server) getSession(w http.ResponseWriter, r *http.Request, sessionID string) {
+// authorizeSession loads a session and confirms it belongs to the caller. On a
+// missing session or an owner mismatch it writes a 404 (indistinguishable, so
+// callers cannot probe for sessions owned by others) and returns ok=false.
+func (s *Server) authorizeSession(w http.ResponseWriter, r *http.Request, sessionID string) (store.Session, bool) {
 	session, err := s.store.GetSession(r.Context(), sessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "session not found")
-		return
+		return store.Session{}, false
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return store.Session{}, false
+	}
+	if session.UserID != userIDFromContext(r.Context()) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return store.Session{}, false
+	}
+	return session, true
+}
+
+func (s *Server) getSession(w http.ResponseWriter, r *http.Request, sessionID string) {
+	session, ok := s.authorizeSession(w, r, sessionID)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, publicSession(session))
@@ -505,6 +631,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if session.UserID != userIDFromContext(r.Context()) {
+		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 	if !sessionstate.CanAcceptInput(session.Status) {
@@ -1346,11 +1476,7 @@ func cidrPool30Capacity(prefix netip.Prefix) int {
 }
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if _, err := s.store.GetSession(r.Context(), sessionID); errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if _, ok := s.authorizeSession(w, r, sessionID); !ok {
 		return
 	}
 	messages, err := s.store.ListMessages(r.Context(), sessionID)
@@ -2511,6 +2637,10 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		if _, err := s.store.SweepExpiredSessions(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
 			s.log.Warn("expired-session sweep failed", "error", err)
 		}
+		if _, err := s.store.SweepExpiredAuthSessions(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
+			s.log.Warn("expired auth-session sweep failed", "error", err)
+		}
+		s.loginLimiter.GC()
 		if _, err := s.store.CancelTerminalSessionPendingTurns(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
 			s.log.Warn("terminal-session turn cleanup failed", "error", err)
 		}
@@ -2943,13 +3073,8 @@ func unixPeerCredentials(conn net.Conn) (proxyPeerCredentials, error) {
 }
 
 func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessionID string) {
-	session, err := s.store.GetSession(r.Context(), sessionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	session, ok := s.authorizeSession(w, r, sessionID)
+	if !ok {
 		return
 	}
 	if session.Status != string(sessionstate.RunningActive) {
@@ -2968,13 +3093,8 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 }
 
 func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionID string) {
-	session, err := s.store.GetSession(r.Context(), sessionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	session, ok := s.authorizeSession(w, r, sessionID)
+	if !ok {
 		return
 	}
 	if session.ActiveGenerationID != "" && session.Status != string(sessionstate.Checkpointed) {
@@ -3006,6 +3126,9 @@ func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionI
 }
 
 func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if _, ok := s.authorizeSession(w, r, sessionID); !ok {
+		return
+	}
 	items, err := s.store.ListArtifacts(r.Context(), sessionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -3020,7 +3143,7 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid artifact path")
 		return
 	}
-	file, info, status, message := s.openArtifactFile(r.Context(), parts[0], parts[1])
+	file, info, status, message := s.openArtifactFile(r.Context(), parts[0], parts[1], userIDFromContext(r.Context()))
 	if file == nil {
 		writeError(w, status, message)
 		return
@@ -3031,7 +3154,7 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
-func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath string) (*os.File, os.FileInfo, int, string) {
+func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath, userID string) (*os.File, os.FileInfo, int, string) {
 	if !safePathSegment(sessionID) || artifactPath == "" || strings.Contains(artifactPath, `\`) {
 		return nil, nil, http.StatusBadRequest, "invalid artifact path"
 	}
@@ -3044,6 +3167,13 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath s
 	cleanPath := pathpkg.Clean(artifactPath)
 	if cleanPath == "." || strings.HasPrefix(cleanPath, "../") || cleanPath == ".." {
 		return nil, nil, http.StatusBadRequest, "invalid artifact path"
+	}
+
+	// Enforce session ownership before exposing any file metadata or content.
+	if session, err := s.store.GetSession(ctx, sessionID); errors.Is(err, sql.ErrNoRows) || (err == nil && session.UserID != userID) {
+		return nil, nil, http.StatusNotFound, "artifact not found"
+	} else if err != nil {
+		return nil, nil, http.StatusInternalServerError, err.Error()
 	}
 
 	volumeConfig, err := s.dataVolumeProvisionerConfig()
@@ -3154,17 +3284,25 @@ func isPathInside(root, candidate string) bool {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromContext(r.Context())
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID != "" && !s.sessionVisibleTo(r.Context(), sessionID, userID) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
 
-	sessionID := r.URL.Query().Get("session_id")
 	ch, cancel := s.hub.Subscribe(sessionID)
 	defer cancel()
 
 	for event := range ch {
+		if !s.eventVisibleTo(r.Context(), event, userID) {
+			continue
+		}
 		if err := conn.WriteJSON(publicEvent(event)); err != nil {
 			return
 		}
@@ -3178,6 +3316,13 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID := userIDFromContext(r.Context())
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID != "" && !s.sessionVisibleTo(r.Context(), sessionID, userID) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
 	header := w.Header()
 	header.Set("Content-Type", "text/event-stream")
 	header.Set("Cache-Control", "no-cache, no-transform")
@@ -3185,7 +3330,6 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 	header.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	sessionID := r.URL.Query().Get("session_id")
 	lastEventID, cursorProvided, err := parseLastEventID(r)
 	if err != nil {
 		writeSSEError(w, flusher, "invalid_last_event_id", err.Error())
@@ -3201,7 +3345,7 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 
 	replayedThrough := lastEventID
 	if cursorProvided {
-		if nextAfter, err := s.writeSSEReplay(r.Context(), w, flusher, sessionID, lastEventID); err != nil {
+		if nextAfter, err := s.writeSSEReplay(r.Context(), w, flusher, sessionID, lastEventID, userID); err != nil {
 			s.log.Warn("failed to replay stream events", "session_id", sessionID, "last_event_id", lastEventID, "error", err)
 			return
 		} else if nextAfter > replayedThrough {
@@ -3228,6 +3372,12 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 			if event.EventID != 0 && event.EventID <= replayedThrough {
 				continue
 			}
+			if !s.eventVisibleTo(r.Context(), event, userID) {
+				if event.EventID > replayedThrough {
+					replayedThrough = event.EventID
+				}
+				continue
+			}
 			if err := writeSSEEvent(w, event); err != nil {
 				return
 			}
@@ -3239,7 +3389,56 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, lastEventID int64) (int64, error) {
+// eventVisibleTo decides whether an event may be delivered to userID. Events
+// not tied to a session (global/system) are always visible; session-scoped
+// events require ownership.
+func (s *Server) eventVisibleTo(ctx context.Context, event events.Event, userID string) bool {
+	if strings.TrimSpace(event.SessionID) == "" {
+		return true
+	}
+	return s.sessionVisibleTo(ctx, event.SessionID, userID)
+}
+
+// sessionVisibleTo reports whether sessionID is owned by userID, using a short
+// TTL cache to avoid a DB hit per streamed event. In open mode every session is
+// owned by labUserID, so this still holds.
+func (s *Server) sessionVisibleTo(ctx context.Context, sessionID, userID string) bool {
+	owner, ok := s.cachedSessionOwner(sessionID)
+	if !ok {
+		session, err := s.store.GetSession(ctx, sessionID)
+		if err != nil {
+			// Unknown/deleted session: don't leak; allow only if not auth-gated.
+			return !s.authEnabled
+		}
+		owner = session.UserID
+		s.storeSessionOwner(sessionID, owner)
+	}
+	return owner == userID
+}
+
+func (s *Server) cachedSessionOwner(sessionID string) (string, bool) {
+	s.sessionOwnerMu.Lock()
+	defer s.sessionOwnerMu.Unlock()
+	entry, ok := s.sessionOwnerCache[sessionID]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return "", false
+	}
+	return entry.userID, true
+}
+
+func (s *Server) storeSessionOwner(sessionID, userID string) {
+	s.sessionOwnerMu.Lock()
+	defer s.sessionOwnerMu.Unlock()
+	if s.sessionOwnerCache == nil {
+		s.sessionOwnerCache = make(map[string]sessionOwnerEntry)
+	}
+	s.sessionOwnerCache[sessionID] = sessionOwnerEntry{
+		userID:    userID,
+		expiresAt: time.Now().Add(30 * time.Second),
+	}
+}
+
+func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, lastEventID int64, userID string) (int64, error) {
 	replayAfter := lastEventID
 	if oldest, ok, err := s.store.OldestEventID(ctx, sessionID); err != nil {
 		return replayAfter, err
@@ -3274,6 +3473,10 @@ func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flus
 	replayedThrough := replayAfter
 	for _, record := range records {
 		event := eventFromRecord(record)
+		if !s.eventVisibleTo(ctx, event, userID) {
+			replayedThrough = record.EventID
+			continue
+		}
 		if err := writeSSEEvent(w, event); err != nil {
 			return replayedThrough, err
 		}
@@ -3352,31 +3555,114 @@ func writeSSEError(w http.ResponseWriter, flusher http.Flusher, errorClass, mess
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.SharedSecret == "" {
-			next.ServeHTTP(w, r)
+		s.applyHSTS(w, r)
+		if !s.authEnabled {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, labUserID)))
 			return
 		}
-		cookie, err := r.Cookie(s.cfg.CookieName)
-		if err != nil || !s.verifyCookie(cookie.Value) {
+		cookie, err := r.Cookie(s.cookieName(r))
+		if err != nil || cookie.Value == "" {
 			writeError(w, http.StatusUnauthorized, "login required")
 			return
 		}
-		next.ServeHTTP(w, r)
+		userID, err := s.store.LookupAuthSession(r.Context(), hashAuthToken(cookie.Value), time.Now().UTC())
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "login required")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, userID)))
 	})
 }
 
-func (s *Server) signCookie(userID string) string {
-	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-	mac.Write([]byte(userID))
-	return userID + "." + hex.EncodeToString(mac.Sum(nil))
+// userIDFromContext returns the authenticated user id injected by requireAuth.
+// In open mode this is labUserID.
+func userIDFromContext(ctx context.Context) string {
+	if userID, ok := ctx.Value(userContextKey{}).(string); ok && userID != "" {
+		return userID
+	}
+	return labUserID
 }
 
-func (s *Server) verifyCookie(value string) bool {
-	parts := strings.SplitN(value, ".", 2)
-	if len(parts) != 2 {
-		return false
+// requestIsHTTPS reports whether the original client request used TLS, honoring
+// a trusted X-Forwarded-Proto from a TLS-terminating reverse proxy.
+func (s *Server) requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
 	}
-	return hmac.Equal([]byte(value), []byte(s.signCookie(parts[0])))
+	if s.cfg.TrustForwardedProto {
+		return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+	}
+	return false
+}
+
+func (s *Server) applyHSTS(w http.ResponseWriter, r *http.Request) {
+	if s.requestIsHTTPS(r) {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	}
+}
+
+// cookieName uses the __Host- prefix when cookies are Secure (which requires
+// Secure + Path=/ + no Domain), and a plain name otherwise (e.g. local http).
+func (s *Server) cookieName(r *http.Request) string {
+	if s.useSecureCookie(r) {
+		return "__Host-" + s.cfg.CookieName
+	}
+	return s.cfg.CookieName
+}
+
+func (s *Server) useSecureCookie(r *http.Request) bool {
+	return s.cfg.CookieSecure && s.requestIsHTTPS(r)
+}
+
+func (s *Server) authCookie(r *http.Request, token string, expiresAt time.Time) *http.Cookie {
+	return &http.Cookie{
+		Name:     s.cookieName(r),
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.useSecureCookie(r),
+		SameSite: http.SameSiteStrictMode,
+		Expires:  expiresAt,
+	}
+}
+
+func (s *Server) expireCookie(r *http.Request) *http.Cookie {
+	return &http.Cookie{
+		Name:     s.cookieName(r),
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.useSecureCookie(r),
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	}
+}
+
+func newAuthToken() (string, error) {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
+}
+
+func hashAuthToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func clientIP(r *http.Request) string {
+	if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); fwd != "" {
+		if comma := strings.IndexByte(fwd, ','); comma >= 0 {
+			return strings.TrimSpace(fwd[:comma])
+		}
+		return fwd
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func newID(prefix string) string {

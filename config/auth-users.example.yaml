@@ -1,0 +1,21 @@
+# Auth users for the workbench login gate.
+#
+# Copy this file to config/auth-users.yaml (which is gitignored) and replace the
+# hashes. Generate a hash with:
+#
+#   echo -n 'your-password' | go run ./orchestrator/cmd/authhash
+#
+# Notes:
+#  - usernames may contain only letters, digits, "_" and "-" (1-64 chars).
+#  - passwords are stored ONLY as PBKDF2-SHA256 hashes, never in plaintext.
+#  - the "lab" user inherits the existing sessions created before login was
+#    added; keep it if you want to see that history.
+#  - point the orchestrator at a different file with HARNESS_AUTH_USERS_PATH.
+#  - if this file is absent the orchestrator runs open (single "lab" user, no
+#    login required) — only safe for local development.
+
+users:
+  - username: lab
+    password_hash: "pbkdf2-sha256$600000$REPLACE_WITH_REAL_SALT$REPLACE_WITH_REAL_HASH"
+  - username: alice
+    password_hash: "pbkdf2-sha256$600000$REPLACE_WITH_REAL_SALT$REPLACE_WITH_REAL_HASH"

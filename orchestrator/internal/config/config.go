@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,10 @@ type Config struct {
 	Addr                 string
 	SharedSecret         string
 	CookieName           string
+	AuthUsers            []AuthUser
+	AuthSessionTTL       time.Duration
+	CookieSecure         bool
+	TrustForwardedProto  bool
 	SessionRetention     time.Duration
 	RepoRoot             string
 	RunscRoot            string
@@ -302,10 +307,22 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("HARNESS_DEFAULT_AGENT: %w", err)
 	}
 	maxSessions := intEnv("HARNESS_MAX_SESSIONS", projectConfig.Harness.MaxSessions)
+	authUsers, err := loadAuthUsers(getenv("HARNESS_AUTH_USERS_PATH", filepath.Join(repoRoot, "config", "auth-users.yaml")))
+	if err != nil {
+		return Config{}, err
+	}
+	authSessionTTL, err := authSessionTTLEnv(24 * time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:                 getenv("HARNESS_ORCHESTRATOR_ADDR", ":8090"),
 		SharedSecret:         os.Getenv("HARNESS_LAB_PASSWORD"),
 		CookieName:           getenv("HARNESS_COOKIE_NAME", "harness_auth"),
+		AuthUsers:            authUsers,
+		AuthSessionTTL:       authSessionTTL,
+		CookieSecure:         !boolEnvDefault("HARNESS_COOKIE_INSECURE", false),
+		TrustForwardedProto:  boolEnvDefault("HARNESS_TRUST_FORWARDED_PROTO", true),
 		SessionRetention:     sessionRetention,
 		RepoRoot:             getenv("HARNESS_REPO_ROOT", repoRoot),
 		RunscRoot:            getenv("RUNSC_ROOT", "/var/lib/harness/runsc"),
@@ -1404,6 +1421,81 @@ func boolEnv(key string) (bool, bool) {
 		return false, false
 	}
 	return parsed, true
+}
+
+// AuthUser is a single login credential loaded from the auth users file. The
+// password is stored only as a PBKDF2 hash, never in plaintext.
+type AuthUser struct {
+	Username     string `yaml:"username"`
+	PasswordHash string `yaml:"password_hash"`
+}
+
+var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// AuthEnabled reports whether credential-based login is active. Login is
+// required when any users are configured or a shared password is set.
+func (c Config) AuthEnabled() bool {
+	return len(c.AuthUsers) > 0 || strings.TrimSpace(c.SharedSecret) != ""
+}
+
+// loadAuthUsers reads and validates the auth users file. A missing file is not
+// an error: it simply yields no users (open / single-password fallback).
+func loadAuthUsers(path string) ([]AuthUser, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read auth users %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil
+	}
+	var doc struct {
+		Users []AuthUser `yaml:"users"`
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("parse auth users %s: %w", path, err)
+	}
+	seen := map[string]struct{}{}
+	users := make([]AuthUser, 0, len(doc.Users))
+	for i, user := range doc.Users {
+		username := strings.TrimSpace(user.Username)
+		if !authUsernamePattern.MatchString(username) {
+			return nil, fmt.Errorf("auth users %s: entry %d has invalid username (allowed: letters, digits, _ and -, 1-64 chars)", path, i)
+		}
+		if _, ok := seen[username]; ok {
+			return nil, fmt.Errorf("auth users %s: duplicate username %q", path, username)
+		}
+		seen[username] = struct{}{}
+		hash := strings.TrimSpace(user.PasswordHash)
+		if !strings.HasPrefix(hash, "pbkdf2-sha256$") {
+			return nil, fmt.Errorf("auth users %s: user %q password_hash must be a pbkdf2-sha256 hash (use the authhash tool)", path, username)
+		}
+		users = append(users, AuthUser{Username: username, PasswordHash: hash})
+	}
+	return users, nil
+}
+
+func authSessionTTLEnv(fallback time.Duration) (time.Duration, error) {
+	value, ok := os.LookupEnv("HARNESS_AUTH_SESSION_TTL")
+	if !ok {
+		return fallback, nil
+	}
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("invalid HARNESS_AUTH_SESSION_TTL duration %q", value)
+	}
+	return duration, nil
+}
+
+func boolEnvDefault(key string, fallback bool) bool {
+	if value, ok := boolEnv(key); ok {
+		return value
+	}
+	return fallback
 }
 
 func sessionRetentionEnv(fallback time.Duration) (time.Duration, error) {
