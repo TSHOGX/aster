@@ -278,7 +278,7 @@ Examples:
 - Good memory only:
   "Many users ask about battery charging analysis."
 - Good skill:
-  "When asked for charging analysis in Doris, inspect schema-pack first, use these candidate tables, run this metadata query, then produce CSV/PNG/report.md."
+  "When asked for charging analysis in Doris, list tables/columns via information_schema, judge the right table from live metadata, run this metadata query, then produce CSV/PNG/report.md."
 
 Suggested threshold for the first implementation:
 

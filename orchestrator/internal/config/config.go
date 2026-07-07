@@ -223,7 +223,6 @@ type IsolationRoots struct {
 	PreparedBundleRoot     string
 	RootFSPath             string
 	DBPath                 string
-	SchemaPackRoot         string
 	DataVolumeEvidenceRoot string
 	ProxyInternalRoot      string
 	ProviderCredentialRoot string
@@ -237,7 +236,6 @@ type CanonicalIsolationRoots struct {
 	PreparedBundleRoot     string
 	RootFSPath             string
 	DBStateRoot            string
-	SchemaPackRoot         string
 	DataVolumeEvidenceRoot string
 	ProxyInternalRoot      string
 	ProviderCredentialRoot string
@@ -668,10 +666,6 @@ func ValidateProxyServiceIdentity(identity ProxyServiceIdentity) error {
 }
 
 func (c Config) IsolationRoots() IsolationRoots {
-	schemaPackRoot := filepath.Join(c.RepoRoot, "schema-pack")
-	if _, err := os.Stat(schemaPackRoot); err != nil {
-		schemaPackRoot = ""
-	}
 	return IsolationRoots{
 		SessionsRoot:           c.SessionsRoot,
 		AgentHomesRoot:         c.AgentHomesRoot,
@@ -680,7 +674,6 @@ func (c Config) IsolationRoots() IsolationRoots {
 		PreparedBundleRoot:     c.BundleRoot,
 		RootFSPath:             c.RootFSPath,
 		DBPath:                 c.DBPath,
-		SchemaPackRoot:         schemaPackRoot,
 		DataVolumeEvidenceRoot: filepath.Join(filepath.Dir(c.DBPath), "volume-evidence"),
 		ProxyInternalRoot:      filepath.Join(c.Harness.RunDir, "proxy-internal"),
 	}
@@ -712,12 +705,6 @@ func ValidateIsolationRoots(roots IsolationRoots) (CanonicalIsolationRoots, erro
 		return CanonicalIsolationRoots{}, err
 	}
 	canonical.DBStateRoot = filepath.Dir(dbPath)
-	if strings.TrimSpace(roots.SchemaPackRoot) != "" {
-		canonical.SchemaPackRoot, err = canonicalIsolationRoot("schema pack root", roots.SchemaPackRoot)
-		if err != nil {
-			return CanonicalIsolationRoots{}, err
-		}
-	}
 	if strings.TrimSpace(roots.DataVolumeEvidenceRoot) != "" {
 		canonical.DataVolumeEvidenceRoot, err = canonicalIsolationRoot("data volume evidence root", roots.DataVolumeEvidenceRoot)
 		if err != nil {
@@ -749,9 +736,6 @@ func ValidateIsolationRoots(roots IsolationRoots) (CanonicalIsolationRoots, erro
 		{label: "prepared bundle root", path: canonical.PreparedBundleRoot},
 		{label: "rootfs path", path: canonical.RootFSPath},
 		{label: "db state root", path: canonical.DBStateRoot},
-	}
-	if canonical.SchemaPackRoot != "" {
-		topLevel = append(topLevel, isolationRoot{label: "schema pack root", path: canonical.SchemaPackRoot})
 	}
 	if canonical.ProviderCredentialRoot != "" {
 		topLevel = append(topLevel, isolationRoot{label: "provider credential root", path: canonical.ProviderCredentialRoot})
@@ -854,9 +838,6 @@ func validateReservedHostRoot(label, path string, roots CanonicalIsolationRoots,
 		{label: "run control root", path: filepath.Join(roots.RunDir, "control")},
 		{label: "run bridge root", path: filepath.Join(roots.RunDir, "bridge")},
 		{label: "run network root", path: filepath.Join(roots.RunDir, "network")},
-	}
-	if roots.SchemaPackRoot != "" {
-		sandboxBindable = append(sandboxBindable, isolationRoot{label: "schema pack root", path: roots.SchemaPackRoot})
 	}
 	for _, root := range sandboxBindable {
 		if isolationRootsOverlap(path, root.path) {

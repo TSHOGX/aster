@@ -18,7 +18,6 @@ bundle/checkpoints/
 orchestrator/orchestrator
 orchestrator/bin/
 orchestrator/authhash
-schema-pack/
 .scratch/
 
 # 备份文件

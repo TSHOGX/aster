@@ -1080,7 +1080,6 @@ func isolationRootsForTest(t *testing.T) IsolationRoots {
 		PreparedBundleRoot:     filepath.Join(base, "prepared-bundles"),
 		RootFSPath:             filepath.Join(base, "rootfs"),
 		DBPath:                 filepath.Join(base, "state", "orchestrator.db"),
-		SchemaPackRoot:         filepath.Join(base, "schema-pack"),
 		DataVolumeEvidenceRoot: filepath.Join(base, "state", "volume-evidence"),
 		ProxyInternalRoot:      filepath.Join(base, "run", "proxy-internal"),
 	}
@@ -1092,7 +1091,6 @@ func isolationRootsForTest(t *testing.T) IsolationRoots {
 		roots.PreparedBundleRoot,
 		roots.RootFSPath,
 		filepath.Dir(roots.DBPath),
-		roots.SchemaPackRoot,
 	} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatalf("mkdir isolation test root %s: %v", path, err)

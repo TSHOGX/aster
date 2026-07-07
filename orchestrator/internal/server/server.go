@@ -2468,7 +2468,6 @@ func (s *Server) runtimeResourceRootPrefixes() map[string]string {
 		"prepared_bundle_root":      roots.PreparedBundleRoot,
 		"rootfs_path":               roots.RootFSPath,
 		"db_path":                   roots.DBPath,
-		"schema_pack_root":          roots.SchemaPackRoot,
 		"data_volume_evidence_root": roots.DataVolumeEvidenceRoot,
 		"proxy_internal_root":       roots.ProxyInternalRoot,
 		"provider_credential_root":  roots.ProviderCredentialRoot,

@@ -1720,14 +1720,6 @@ func (r *Runtime) rootFSPath() string {
 	return filepath.Join(r.repoRoot(), "sandbox-image", "rootfs")
 }
 
-func (r *Runtime) schemaPackPath() string {
-	path := filepath.Join(r.repoRoot(), "schema-pack")
-	if _, err := os.Stat(path); err == nil {
-		return path
-	}
-	return ""
-}
-
 func (r *Runtime) repoRoot() string {
 	if strings.TrimSpace(r.cfg.BundleRoot) == "" {
 		wd, err := os.Getwd()

@@ -39,9 +39,6 @@ func TestBuildSandboxMountPlanUsesExactSandboxSurface(t *testing.T) {
 		t.Fatalf("host heartbeat must remain host-only, not mounted into sandbox: %+v", mounts)
 	}
 	assertMount(t, mounts, "/etc/hosts", filepath.Join(dir, "run", "network", "gen-1", "hosts"), "ro", true)
-	if mountByDestination(mounts, "/schema-pack") != nil {
-		t.Fatalf("sandbox v2 mount plan must not auto-mount schema-pack: %+v", mounts)
-	}
 
 	forbidden := []string{"/sessions", "/agent-homes", "/harness-secrets"}
 	for _, destination := range forbidden {

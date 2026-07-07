@@ -31,7 +31,6 @@ type SandboxMountPlanInputs struct {
 	WorkspaceHostPath string
 	AgentHomeHostPath string
 	NetworkHostsPath  string
-	SchemaPackPath    string
 }
 
 type allowedMountPlanSurface struct {
