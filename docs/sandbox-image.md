@@ -119,10 +119,12 @@ rules: only `SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN`; prefer metadata, `COUNT(*)`, s
 `LIMIT`; never `SELECT *` on wide/raw tables; stream CSV exports with `fetchmany` +
 atomic rename. It is injected into Pi via `--append-system-prompt`.
 
-The **doris-query** skill (`SKILL.md` + `references/vhr-data-schema.md`) documents the
-read-only Doris connection and the `vhr_data` table guide. Note: `SKILL.md` embeds
-live DB connection details — treat it as sensitive local material and keep egress
-locked to the Doris host (see [security.md](./security.md)).
+The **doris-query** skill (`SKILL.md`) documents the read-only Doris connection and
+instructs the agent to discover the current `vhr_data` schema live via
+`information_schema` every session, rather than relying on a fixed table/column
+list — the schema changes over time. Note: `SKILL.md` embeds live DB connection
+details — treat it as sensitive local material and keep egress locked to the Doris
+host (see [security.md](./security.md)).
 
 ## Tests (`tests/test_harness_bridge_client.py`)
 
