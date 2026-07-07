@@ -139,11 +139,13 @@ server {
 
 ```text
 agent-runtime-platform/
-├── config/             # runtime / proxy / lab 配置
-├── docs/               # 架构、路线图、阶段记录和设计文档
+├── config/             # harness.yaml、登录用户等配置
+├── docs/               # 架构与设计文档（见 docs/README.md 索引）
 ├── orchestrator/       # Go control plane
 ├── frontend/           # Next.js workbench
-├── sandbox-image/      # rootfs 构建脚本、OCI 模板和 sandbox entrypoint
-├── bundle/             # runsc bundle/checkpoint 辅助脚本
-└── schema-pack/        # sandbox 可挂载的 schema/documentation pack
+└── sandbox-image/      # rootfs 构建脚本、OCI 模板、entrypoint、bridge client、skills
 ```
+
+完整文档从 [`docs/README.md`](docs/README.md) 入手；架构总览见
+[`docs/architecture.md`](docs/architecture.md)，部署运维见
+[`docs/operations.md`](docs/operations.md)。

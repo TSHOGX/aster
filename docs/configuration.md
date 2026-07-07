@@ -1,0 +1,127 @@
+# Configuration Reference
+
+> Primary config is `config/harness.yaml` under a strict `harness:` schema; env vars
+> override selected values. Loader: `orchestrator/internal/config/config.go`
+> (`KnownFields(true)` — unknown keys fail startup; only the `harness:` document is
+> decoded). Login users are in `config/auth-users.yaml` — see [security.md](./security.md).
+
+## `config/harness.yaml` (checked-in lab profile)
+
+```yaml
+harness:
+  default_agent: pi
+  agents:
+    claude_code: { enabled: true, driver_id: claude_code, model_profile: anthropic_default, runtime_provider: local_runsc, disable_nonessential_traffic: true }
+    sh:          { enabled: true, driver_id: sh, runtime_provider: local_runsc }
+    pi:          { enabled: true, driver_id: pi, model_profile: anthropic_default, runtime_provider: local_runsc, disable_nonessential_traffic: true }
+  model_profiles:
+    anthropic_default: { enabled: true, provider: anthropic_messages, model: sonnet, proxy_ref: model_proxy }
+  runtime_providers:
+    local_runsc: { enabled: true, provider_id: local_runsc, profile_id: local_runsc_default }
+
+  run_dir: /var/lib/harness-publish/run
+  session_retention: 0s
+  max_sessions: 30
+  model_proxy:
+    bind_url: http://0.0.0.0:8083
+    sandbox_base_url: http://harness-model-proxy.internal:8083
+  sandbox_identity: { uid: 65534, gid: 65534, supplemental_gids: [] }
+
+  network:
+    cidr_pool: 10.201.0.0/16
+    egress:
+      doris_fe_hosts: [172.16.0.138]
+      doris_be_hosts: [172.16.0.138]
+      doris_ports: [9030]
+      dns_policy: hostnames_only
+
+  events:      { retention_window: 24h, retention_rows: 1000000, emit_output_batch_max_rows: 64, emit_output_batch_max_age: 100ms }
+  probe:       { accept_status: { get_healthz: [200], post_v1_messages: { unauthorized: [401], malformed_authenticated: [400] } },
+                 pre_start_attempts: 3, pre_start_interval: 500ms, post_start_attempts: 5, post_start_interval: 1s }
+  bridge:      { lease_ttl: 60s, heartbeat_interval: 30s, poll_interval: 5ms, ack_started_grace: 90s, reconnect_grace: 30s }
+  checkpoint:  { auto_enabled: true, idle_threshold: 2h, monitor_interval: 5m }
+  reaper:      { failed_retention: 10m, checkpoint_image_retention: 720h }
+```
+
+## Key knobs
+
+| Key | Meaning |
+|---|---|
+| `default_agent` | driver the product `agent` mode resolves to (checked-in: `pi`) |
+| `agents.<id>` | per-driver deployment entry: `enabled`, `driver_id`, `model_profile`, `runtime_provider`, `disable_nonessential_traffic` |
+| `model_profiles.<id>` | `enabled`, `provider`, `model`, `proxy_ref` (must be `model_proxy` for model-access drivers) |
+| `runtime_providers.<id>` | `enabled`, `provider_id`, `profile_id` (only `local_runsc` ships) |
+| `run_dir` | root for control/bridge/logs/proxy socket |
+| `session_retention` | `0s` = sessions/history/workspace never auto-expire |
+| `max_sessions` | soft ceiling on non-terminal sessions (independent of `/30` pool) |
+| `model_proxy.bind_url` | host listener for the proxy (host must be unspecified, port explicit) |
+| `model_proxy.sandbox_base_url` | sandbox-visible alias; its port must match `bind_url` |
+| `sandbox_identity` | non-root uid/gid the sandbox runs as (must be `>0`; default `65534`) |
+| `network.cidr_pool` | IPv4 `/≤30` pool carved into per-generation `/30`s |
+| `network.egress` | Doris FE/BE hosts + ports; `dns_policy` = `off`\|`hostnames_only`\|`always` |
+| `events` | durable-event retention + `emit_output` batching |
+| `probe` | accepted proxy statuses + pre/post-start attempt counts and intervals |
+| `bridge` | lease TTL, heartbeat/poll intervals, ack-started grace, reconnect grace |
+| `checkpoint.auto_enabled` | enable automatic **idle release** (see below) |
+| `checkpoint.idle_threshold` | idle time before release (checked-in `2h`) |
+| `reaper.failed_retention` | how long failed generations linger before physical cleanup |
+| `reaper.checkpoint_image_retention` | how long a `checkpointed` session keeps its slot |
+
+### Idle release semantics
+
+`checkpoint.auto_enabled: true` enables automatic **idle release**, not `runsc`
+checkpoint images: after `idle_threshold` the monitor tears down the idle sandbox to
+free the compute slot, the session becomes `checkpointed` (logical "released"), and
+the next message cold-starts a fresh generation from the retained workspace +
+agent-home. See [sandbox-runtime.md](./sandbox-runtime.md).
+
+## Environment variables (`config.go`)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `HARNESS_ORCHESTRATOR_ADDR` | `:8090` | HTTP bind |
+| `HARNESS_LOG_LEVEL` | info | `debug` raises log level |
+| `HARNESS_LAB_PASSWORD` | (empty) | shared-secret login fallback |
+| `HARNESS_COOKIE_NAME` | `harness_auth` | auth cookie name (`__Host-` prefixed over HTTPS) |
+| `HARNESS_COOKIE_INSECURE` | false | set `1` to allow non-Secure cookie (local http only) |
+| `HARNESS_TRUST_FORWARDED_PROTO` | true | trust `X-Forwarded-Proto` to detect HTTPS |
+| `HARNESS_AUTH_USERS_PATH` | `<repo>/config/auth-users.yaml` | login users file |
+| `HARNESS_AUTH_SESSION_TTL` | 24h | login session TTL |
+| `HARNESS_SESSION_RETENTION` | config `0s` | session expiry (0 = never); invalid values fail startup |
+| `HARNESS_SESSION_TTL` | — | **obsolete; fatal if set** |
+| `HARNESS_DEFAULT_AGENT` | config `pi` | product Agent driver |
+| `HARNESS_MAX_SESSIONS` | 30 | soft session ceiling |
+| `HARNESS_AUTO_CHECKPOINT_ENABLED` | config | override idle-release policy for new sessions |
+| `HARNESS_SESSIONS_ROOT` | `/var/lib/harness/sessions` | session workspaces root |
+| `HARNESS_AGENT_HOMES_ROOT` | `/var/lib/harness/agent-homes` | agent-home root |
+| `HARNESS_CHECKPOINTS_ROOT` | `/var/lib/harness/checkpoints` | checkpoint images root |
+| `HARNESS_BUNDLE_ROOT` | `<repo>/bundle/out` | OCI bundle root |
+| `HARNESS_ROOTFS_PATH` | `<repo>/sandbox-image/rootfs` | rootfs template |
+| `HARNESS_AGENT_IMAGE_MANIFEST_PATH` | `<rootfs>/etc/harness-image/agents.json` | driver manifest |
+| `HARNESS_DB_PATH` | `/var/lib/harness/state/orchestrator.db` | SQLite path |
+| `HARNESS_REPO_ROOT` | detected | repo root |
+| `RUNSC_ROOT` | `/var/lib/harness/runsc` | runsc state root |
+
+Hardcoded in the loaded config: `RunscNetwork=sandbox`, `RunscOverlay2=none`,
+`RequireAgentManifest=true`. `IsolationRoots`/`ValidateIsolationRoots` require every
+data root to be absolute, non-`/`, symlink-resolved, and mutually disjoint.
+
+## Rejected / legacy keys
+
+- `HARNESS_SESSION_TTL` and `harness.session_ttl` — replaced by
+  `session_retention` (see [decisions/session-lifetime.md](./decisions/session-lifetime.md)).
+- Top-level `runtime:` / `claude:` docs and `harness.secrets.*` — rejected; model
+  proxy settings live only under `harness.model_proxy`, and credentials stay
+  host-side.
+
+## Ports
+
+| Component | Checked-in default | Publish deployment |
+|---|---|---|
+| Orchestrator HTTP | `:8090` | `:9090` |
+| Frontend | `PORT=8000` | `127.0.0.1:9001` (behind nginx TLS) |
+| Model proxy | `:8083` | `:8083` |
+
+The publish deployment overrides are set in the systemd units and documented in
+[operations.md](./operations.md). Two orchestrators cannot share the default
+`:8090` on one host — hence the publish `:9090`.

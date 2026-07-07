@@ -1,322 +1,215 @@
-# Agent Runtime Platform Architecture
+# Agent Runtime Platform — Architecture
 
-> Last updated: 2026-05-30
+> Rewritten 2026-07-06 from the `publish/` codebase. This is the single source of
+> truth for how the system works today. Deep-dive documents are linked per section.
 
-## Overview
+## What this is
 
-This project is an Agent Runtime Platform for long-lived, sandboxed AI agent
-sessions. The host-side control plane runs one AI data-analysis agent per
-gVisor sandbox session. The orchestrator owns durable session state, starts
-per-generation sandboxes, routes user turns through the Agent Bridge claim/ack
-protocol, correlates model proxy requests, records artifacts, and publishes
-events to the frontend workbench.
+The Agent Runtime Platform runs each long-lived AI agent session inside its own
+gVisor (`runsc`) sandbox, managed by a Go control plane and driven by a Next.js
+workbench in the browser.
 
-Architecturally, `runtime` is the execution and isolation layer; `control
-plane` is the durable state, scheduling, policy, and observability layer.
+- **Control plane** (`orchestrator/`): owns durable session/turn state, allocates
+  and reconciles per-generation sandbox runtimes, routes turns through a file-queue
+  bridge, correlates model-proxy requests, records artifact metadata, and streams
+  events to the browser.
+- **Sandbox runtime** (`sandbox-image/` + `orchestrator/internal/runtime/`):
+  launches `runsc` directly with a read-only rootfs, an exact mount plan, a
+  per-generation network namespace, and the selected agent driver.
+- **Workbench** (`frontend/`): a Next.js single-page app that proxies same-origin
+  to the orchestrator, drives sessions, and renders live output + an artifact tree.
 
-Detailed phase records live in:
+Three agent drivers ship: **Pi** (the default product Agent), **Claude Code**, and
+a **PTY shell**. A deployment selects which driver each product mode resolves to.
 
-- [phase7/README.md](./phase7/README.md) for the checkpoint-safe control plane.
-- [phase8/README.md](./phase8/README.md) for the runtime-isolation boundary.
-- [current-status.md](./current-status.md) for live baseline and qualification
-  evidence.
-
-## Component Model
+## Component diagram
 
 ```text
 Browser
-  | HTTP + SSE
-  v
-Next.js frontend
-  | same-origin route handlers
-  v
-Go orchestrator
-  |-- HTTP API / lab auth
-  |-- SQLite store
-  |-- durable event hub
-  |-- artifact watcher
-  |-- proxy correlation UDS
-  `-- runtime manager
-        |-- generation/resource reconciler
-        |-- bridge processor
-        `-- runsc run / restore / checkpoint / delete
-              |
-              v
-        gVisor sandbox
-          |-- harness-agent-entrypoint
-          |-- harness-bridge-client
-          |-- Claude Code, Pi, or PTY shell agent
-          |-- /workspace exact bind
-          `-- /agent-home exact bind
+  │  HTTPS (same-origin)
+  ▼
+Next.js workbench (frontend/)
+  │  server-side route handlers proxy /api/* and /artifacts/*
+  ▼
+Go orchestrator (orchestrator/)  ──────────────────────────────────┐
+  ├─ HTTP API + auth (:8090)                                        │
+  ├─ SQLite store (WAL, single writer)                              │
+  ├─ durable event hub  ── SSE /api/events/stream ──► browser       │
+  ├─ artifact watcher (fsnotify over /workspace)                    │
+  ├─ proxy-correlation server (Unix socket, SO_PEERCRED)  ◄── model proxy
+  └─ runtime manager
+        ├─ generation / resource reconciler + reaper
+        ├─ bridge processor (file-queue claim/ack)
+        └─ runsc run / restore / checkpoint / delete
+              │
+              ▼
+        gVisor sandbox (per generation)
+          ├─ harness-agent-entrypoint (PID 1 shim)
+          ├─ harness-bridge-client  ── file queue ─► control plane
+          ├─ pi | claude | harness-shell-agent
+          ├─ /workspace   (exact rw bind)
+          ├─ /agent-home  (exact rw bind)
+          └─ /harness-control (ro) + bridge (rw)
 ```
 
-The browser talks to the frontend origin. Frontend route handlers proxy API and
-artifact requests to the orchestrator. Live browser events use same-origin SSE:
+The model proxy is a **separate process** (not in this repo; deployed as
+`claude-code-proxy`). It translates the sandbox's Anthropic-style requests to the
+upstream provider and calls back into the orchestrator's Unix socket to authorize
+each request against live turn context. See [security.md](./security.md) and
+[operations.md](./operations.md).
 
-```text
-GET /api/events/stream -> orchestrator GET /api/events/stream
-```
+## Runtime vs control plane
 
-The orchestrator still exposes `/api/events` as a WebSocket compatibility and
-manual-debug endpoint.
+**Runtime** is the execution substrate: `runsc`, the sandbox process, rootfs,
+mounts, network namespace, bridge client, the selected driver, and
+checkpoint/restore mechanics. Its concerns are isolation, resource shape, and
+recovery. See [sandbox-runtime.md](./sandbox-runtime.md).
 
-## Runtime Vs Control Plane
-
-Runtime is the execution substrate: gVisor `runsc`, the sandbox process,
-rootfs, mounts, network namespace, bridge client, selected agent driver, and
-checkpoint/restore mechanics. Its concerns are isolation, resource shape,
-execution compatibility, and recovery behavior.
-
-Control plane is the host-side manager: session and turn state, generation
-allocation, resource reconciliation, control manifest rendering, bridge
+**Control plane** is the host-side manager: session and turn state, generation
+allocation, resource reconciliation, control-manifest rendering, bridge
 claim/ack processing, event persistence, artifact metadata, proxy correlation,
-quota, retention, and policy. Its concerns are correctness, durable state,
-governance, observability, and operational scale.
+quota, and retention. Its concerns are correctness, durable state, and
+observability. See [control-plane.md](./control-plane.md).
 
-## Sandbox Boundary
+The invariant that separates the two — sessions/history/workspace persist
+independently of live runtime resources — is a durable contract documented in
+[decisions/session-lifetime.md](./decisions/session-lifetime.md).
 
-The active runtime boundary is `sandbox-isolation-v1`, with Phase 9 sandbox
-contract v2 metadata for driver/provider identity, credential policy, runtime
-capabilities, DataVolume evidence, driver-state fences, source deployment
-config digests, and image agent-manifest digests.
+## Session lifecycle
 
-- gVisor uses `runsc` with the `systrap` platform.
-- The runtime launches `runsc` directly with sandbox networking and
-  `overlay2=none`.
-- Each generation receives an immutable sandbox contract and rendered OCI spec,
-  control manifest, bridge dir, resource identity, and network profile.
-- New allocations require the selected driver to be enabled in deployment
-  config and present in the current rootfs `/etc/harness-image/agents.json`
-  manifest or host-visible equivalent.
-- Workspace and agent HOME are provisioned through host-trusted DataVolume rows
-  and mounted as exact `/workspace` and `/agent-home` binds.
-- Parent `/sessions` and `/agent-homes` mounts are forbidden.
-- `/harness-secrets` is absent; legacy sandbox secret config keys are rejected.
-- Rootfs is read-only; writable surfaces are explicit binds or scratch mounts.
-- Agent processes run as the configured non-root sandbox identity.
-- Provider credentials remain host/proxy-side. The sandbox sees only the
-  configured stable model proxy alias
-  (`harness.model_proxy.sandbox_base_url`) when model access is enabled.
-
-Normal model dispatch requires active turn context, source-IP/resource/contract
-match, driver entitlement, and proxy correlation through the authenticated
-host-side UDS. Sandbox-sent source-IP claims are diagnostics, not authority.
-
-## Session State
-
-Canonical statuses:
+Canonical session statuses (`orchestrator/internal/sessionstate/state.go`):
 
 ```text
-created
-running_active
-running_idle
-checkpointing
-checkpointed
-failed
-destroyed
+created  running_active  running_idle  checkpointing  checkpointed  failed  destroyed
 ```
 
-Input is accepted only in `created`, `running_idle`, and `checkpointed`.
-`running_active` and `checkpointing` are busy states. `failed` and `destroyed`
-are terminal states. The older `running`, `idle`, and `completed` names are not
-current API statuses.
+- **Accepts input**: `created`, `running_idle`, `checkpointed`.
+- **Busy**: `running_active`, `checkpointing`.
+- **Terminal**: `failed`, `destroyed`.
 
-`DELETE /api/sessions/{id}` moves a session to `destroyed` and reclaims runtime
-resources while preserving retained history and workspace state.
+A **generation** is one sandbox attempt for a session. At most one non-terminal
+generation exists per session. `POST /api/sessions/{id}/messages` ensures an active
+generation (reuse the live one, cold-restore a `checkpointed` one, or cold-start a
+new one), enqueues the turn, and flips the session to `running_active`. The
+sandbox's bridge then claims the turn, acks start, streams output, and acks
+completion; the session returns to `running_idle`.
 
-## Runtime And Turns
+`DELETE /api/sessions/{id}` moves the session to `destroyed` and reclaims runtime
+resources while preserving messages, artifacts, workspace, and agent-home.
 
-`Runtime.Start()` takes one of three paths:
+## Turn execution via the bridge
 
-1. Reuse the active live generation.
-2. Restore a `checkpointed` generation after metadata/resource validation.
-3. Cold-start a new generation by allocating resources, rendering artifacts,
-   probing the proxy/bridge path, and starting `runsc`.
-
-Turns are stored before execution. The bridge claims queued turns, acks start,
-emits output, and acks completion with CAS fencing so bridge clients, turn
-runners, and sandboxes can restart at turn boundaries.
-
-Agent mode selects the enabled `harness.default_agent` driver after provider
-capability and image-manifest validation. Claude Code runs with stream-json
-input. Pi runs as a long-lived RPC process through the model-proxy boundary,
-emits normalized Pi events, and persists logical restore state through the
-generic driver-state sidecar after successful completed turns. Shell is exposed
-only when `sh` is enabled and present in the selected image manifest; the shell
-shim emits `harness.shell_output` and `harness.turn_done`; shell sessions
-support `POST /api/sessions/{id}/interrupt`.
-
-Claude logical sessions are stored in `/agent-home`. Once a Claude UUID exists,
-later turns must use Claude Code `--resume`; correctness cannot depend only on
-an in-memory "first turn" flag.
-
-## Events And Output
-
-Runtime stdout/stderr is fanned out through a per-container `OutputHub`; the
-current turn subscriber receives only its own output. Publishing is
-non-blocking, so slow UI subscribers may drop log lines.
-
-Durable events are written before in-memory publish. Important event names:
-
-- `session.created`
-- `session.running_active`
-- `session.running_idle`
-- `session.checkpointing`
-- `session.checkpointed`
-- `session.failed`
-- `session.destroyed`
-- `agent.delta`
-- `agent.message`
-- `agent.output`
-- `system.status`
-- `artifact.updated`
-- `artifact.deleted`
-
-The frontend keeps an SSE connection open and also refetches session, messages,
-and artifacts after message submission so missed frames do not permanently
-desynchronize the UI.
-
-## API Surface
-
-HTTP routes:
-
-- `GET /healthz`
-- `POST /api/login`
-- `GET /api/quota`
-- `GET /api/deployment-capabilities`
-- `GET /api/sessions`
-- `POST /api/sessions`
-- `GET /api/sessions/{id}`
-- `DELETE /api/sessions/{id}`
-- `GET /api/sessions/{id}/messages`
-- `POST /api/sessions/{id}/messages`
-- `POST /api/sessions/{id}/interrupt`
-- `GET /api/sessions/{id}/artifacts`
-- `GET /artifacts/{session_id}/{path}`
-
-Event routes:
-
-- `GET /api/events/stream?session_id=<id>` - SSE
-- `GET /api/events?session_id=<id>` - WebSocket compatibility
-
-Typed runtime/control-plane failures generally return:
-
-```json
-{"error_class":"...","error":"..."}
-```
-
-Generic validation and not-found handlers may still return `{"error":"..."}`.
-
-## Persistence And Config
-
-SQLite stores sessions, messages, turns, durable events, proxy request context,
-runtime generations, runtime resource instances, network profiles, sandbox
-contracts, Phase 9 input evidence, DataVolume rows, and artifact metadata.
-
-Primary project config is `config/harness.yaml` under the `harness:` schema.
-The config loader decodes only that top-level `harness:` document with strict
-known-field validation, so unknown top-level or nested keys fail startup.
-The checked-in lab profile currently sets:
-
-- `default_agent: pi`
-- enabled `agents.pi`, `agents.claude_code`, and `agents.sh` entries
-- `model_profiles.anthropic_default` with `proxy_ref: model_proxy`
-- `runtime_providers.local_runsc`
-- `run_dir: /var/lib/harness/run`
-- `session_retention: 0s`
-- `max_sessions: 30`
-- `model_proxy.bind_url: http://0.0.0.0:8082`
-- `model_proxy.sandbox_base_url: http://harness-model-proxy.internal:8082`
-- `sandbox_identity: 65534:65534`
-- `network.cidr_pool: 10.200.0.0/16`
-- Doris egress allow-list: `172.16.0.138:9030`
-- bridge poll interval: `5ms`
-- automatic checkpointing: `false`
-- failed resource retention: `10m`
-- checkpoint image retention: `720h`
-
-The active rootfs image manifest is an operational artifact, not only source
-config. The checked-in lab default selects Pi for `Agent` and exposes `Shell`,
-so the selected rootfs must include `pi` and `sh` entries in
-`/etc/harness-image/agents.json`. `claude_code` remains configured for explicit
-overrides and smokes, but any deployment that selects it must use a manifest
-containing `claude_code`.
-
-Important environment overrides:
-
-- `HARNESS_ORCHESTRATOR_ADDR`
-- `HARNESS_LAB_PASSWORD`
-- `HARNESS_DEFAULT_AGENT`
-- `HARNESS_SESSION_RETENTION`
-- `HARNESS_MAX_SESSIONS`
-- `HARNESS_SESSIONS_ROOT`
-- `HARNESS_AGENT_HOMES_ROOT`
-- `HARNESS_CHECKPOINTS_ROOT`
-- `HARNESS_ROOTFS_PATH`
-- `HARNESS_DB_PATH`
-- `RUNSC_ROOT`
-
-`HARNESS_SESSION_TTL` is obsolete and fails startup if present. Legacy top-level
-`runtime:` / `claude:` config no longer loads, and legacy
-`claude.proxy_bind_url` / `claude.sandbox_base_url` settings no longer map into
-the active schema. Configure model proxy settings only under
-`harness.model_proxy`. Obsolete `harness.session_ttl` and legacy
-`harness.secrets.*` keys are rejected.
-
-With `session_retention: 0s`, sessions, messages, artifacts, workspaces, and
-agent homes do not expire automatically. `harness.max_sessions` counts
-non-terminal sessions, not live gVisor resources; `/api/quota` reports session
-and live-pool ceilings separately.
-
-## Network And Checkpointing
-
-Each generation owns a persisted `/30`, netns/veth pair, host gateway,
-sandbox IP, and static lab egress policy. The runtime recreates those host
-resources before start/restore, runs a host-side proxy probe, and renders the
-generation's network namespace into the OCI spec.
-
-Checkpoint/restore remains policy-gated. The checked-in lab config disables
-automatic idle checkpointing, but the restore path is still available for
-validated `checkpointed` generations:
+Turns are stored in SQLite before execution. The in-sandbox `harness-bridge-client`
+talks to the control plane over a **crash-safe file queue** on a shared bind mount
+(`/harness-control/bridge`) — never a socket. Protocol `harness_bridge_v2`:
 
 ```text
-running_idle -> checkpointing -> checkpointed -> restore -> running_idle
+hello → hello_ack        (identity, resume boundary)
+heartbeat                (liveness)
+probe_network            (proxy reachability)
+claim_next_turn → grant  (lease a queued turn + driver state)
+ack_turn_started         (opens the model-proxy authorization window)
+emit_output …            (streamed, sequence-numbered)
+ack_turn_completed       (durable turn outcome + driver-state update)
 ```
 
-Operators should enable automatic checkpointing only after restore behavior,
-resource retention, and SLOs are acceptable for the deployment.
+Full message and state-machine detail: [control-plane.md](./control-plane.md).
 
-## Artifacts
+## Drivers and product modes
 
-Artifacts are metadata-backed records for files under the verified session
-workspace. Downloads reject traversal, symlink components, symlink escape,
-directories, and non-regular files. The watcher records create/write metadata
-as `artifact.updated` and remove/rename cleanup as `artifact.deleted`.
+The browser only ever picks a **product mode** (`agent` or `shell`), never a raw
+driver id. `GET /api/deployment-capabilities` reports which modes are creatable.
+Mode → driver resolution (`orchestrator/internal/server/deployment.go`):
 
-The UI presents a read-only live file tree. File creation, deletion, and rename
-operations happen through the agent or shell path, then the UI reflects the
-metadata events.
+- `agent` → `harness.default_agent` (checked-in: **pi**), must be an agent-kind driver.
+- `shell` → `sh`, a shell-kind driver.
 
-## Current Limitations
+Resolution succeeds only if the driver is enabled in `harness.agents`, its runtime
+provider supports the driver's capabilities, a model profile is enabled for
+model-access drivers, and the driver is present in the rootfs image manifest
+(`/etc/harness-image/agents.json`) with matching, digest-verified facts. Details:
+[drivers.md](./drivers.md).
 
-- Supported agent paths are Claude Code, Pi, and the shell shim. Other adapters
-  must enter through the Phase 9 driver/provider contracts.
-- The artifact UI is read-only.
-- The output hub is appropriate for UI streaming but not an audit log.
-- Automatic checkpointing is disabled by default.
-- Legacy `workspace`, `agent_home_path`, and `restore_id` columns remain
-  internal compatibility storage; public DTOs omit them.
-- Tenant authz, credential storage/rotation/GC, tenant egress policy, resource
-  limits, observability, and multi-orchestrator HA are Phase 11 work.
+## Events and output
 
-## Source Map
+Runtime stdout/stderr is fanned out per container through an `OutputHub` (blocking
+backpressure — output is part of the turn protocol). The bridge's `emit_output` is
+parsed per driver (`stream_parser.go`) into normalized events, persisted to the
+durable `events` table, then published through the event hub (non-blocking fan-out).
 
-- `orchestrator/internal/server/`: HTTP API, auth, turn orchestration.
-- `orchestrator/internal/runtime/`: runsc rendering and lifecycle.
-- `orchestrator/internal/bridge/`: bridge claim/ack processing.
-- `orchestrator/internal/store/`: SQLite schema and control-plane mutations.
-- `orchestrator/internal/artifacts/`: host-side artifact scanning.
-- `frontend/`: Next.js workbench and same-origin proxy routes.
-- `sandbox-image/files/usr/local/bin/`: sandbox entrypoint, bridge client, and
-  shell agent.
-- `config/harness.yaml`: checked-in lab profile.
+Notable event types: `session.created` / `session.<status>`, `generation.error`,
+`agent.delta`, `agent.message`, `agent.output`, `system.status`, `artifact.updated`,
+`artifact.deleted`, plus proxy-correlation events. Two delivery endpoints:
+`GET /api/events/stream` (SSE, with `Last-Event-ID` replay) and `GET /api/events`
+(WebSocket compatibility). Full list: [api.md](./api.md).
+
+## Sandbox boundary and security
+
+The boundary is `sandbox-isolation-v1` with a schema-v2 sandbox contract per
+generation. Key properties:
+
+- Read-only rootfs; writable surfaces are only explicit binds (`/workspace`,
+  `/agent-home`, bridge) or scratch tmpfs.
+- Exact `/workspace` and `/agent-home` binds; parent `/sessions` / `/agent-homes`
+  mounts are forbidden; `/harness-secrets` is absent.
+- Non-root agent (uid/gid `65534`), empty capabilities, `noNewPrivileges`.
+- Per-generation network namespace with default-drop egress; the only allowed
+  egress is Doris (`172.16.0.138:9030`) and the model-proxy alias.
+- **Model credentials never enter the sandbox.** The sandbox reaches the model
+  proxy via a hostname alias; the proxy authorizes each request over an
+  SO_PEERCRED-authenticated Unix socket against live turn context. Secret mounts
+  are rejected at generation validation.
+- Public API/event payloads are scrubbed of internal ids and host paths
+  (`event_dto.go`, `session_dto.go`).
+
+Full detail: [security.md](./security.md).
+
+## Persistence and configuration
+
+State lives in a single SQLite database (WAL, one writer). ~20 tables cover
+sessions, messages, turns, durable events, proxy request context, runtime
+generations, runtime resource instances, network profiles, sandbox contracts and
+input evidence, data volumes, driver state, and artifact metadata. See the table
+reference in [control-plane.md](./control-plane.md).
+
+Primary config is `config/harness.yaml` under a strict `harness:` schema (unknown
+keys fail startup), plus `HARNESS_*` env overrides. Full reference:
+[configuration.md](./configuration.md). Checked-in lab defaults: orchestrator
+`:8090`, model proxy `:8083`, CIDR pool `10.201.0.0/16`, `default_agent: pi`,
+`session_retention: 0s`, `max_sessions: 30`, automatic idle release enabled after
+2h.
+
+## Checkpoint / idle release
+
+`harness.checkpoint.auto_enabled: true` enables automatic **idle release**: after
+`idle_threshold` (2h), the monitor tears down an idle sandbox to free the compute
+slot — it does **not** take a `runsc` checkpoint image. The session moves to
+`checkpointed` (logical "released, cold-restore later"), and the next message
+cold-starts a fresh generation from the retained workspace + agent-home. True
+`runsc` checkpoint/restore also exists and is gated by strict metadata-digest
+matching, but is separate from idle release. Background:
+[decisions/runsc-checkpoint-research.md](./decisions/runsc-checkpoint-research.md).
+
+## Source map
+
+| Area | Path | Doc |
+|---|---|---|
+| HTTP API, auth, turn orchestration | `orchestrator/internal/server/` | [api.md](./api.md), [control-plane.md](./control-plane.md) |
+| runsc rendering & lifecycle | `orchestrator/internal/runtime/` | [sandbox-runtime.md](./sandbox-runtime.md) |
+| bridge claim/ack | `orchestrator/internal/bridge/` | [control-plane.md](./control-plane.md) |
+| SQLite schema & mutations | `orchestrator/internal/store/` | [control-plane.md](./control-plane.md) |
+| drivers / provider registry | `orchestrator/internal/agents/` | [drivers.md](./drivers.md) |
+| artifact scanning | `orchestrator/internal/artifacts/` | [control-plane.md](./control-plane.md) |
+| rootfs, entrypoint, bridge client, skills | `sandbox-image/` | [sandbox-image.md](./sandbox-image.md) |
+| workbench + proxy routes | `frontend/` | [frontend.md](./frontend.md) |
+| verification / tests | `*/testdata/`, `*_test.go`, `sandbox-image/tests/` | [verification.md](./verification.md) |
+| checked-in config | `config/harness.yaml` | [configuration.md](./configuration.md) |
+
+## Known limitations
+
+- Supported drivers are Pi, Claude Code, and the PTY shell. New adapters must enter
+  through the driver/provider contract in [drivers.md](./drivers.md).
+- The artifact UI is read-only; files are created only by the agent/shell.
+- The event hub is for UI streaming, not an audit log; the durable `events` table is.
+- Single orchestrator per data root (flock + DB owner heartbeat). Multi-orchestrator
+  HA, tenant authz, credential rotation, and resource limits are future work.

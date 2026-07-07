@@ -83,7 +83,7 @@ harness:
     # past idle_threshold, the monitor tears down its sandbox to free the
     # compute/slot (no runsc checkpoint image is taken). The next message
     # cold-starts a fresh generation from the persisted agent-home + workspace.
-    # See docs/phase7/checkpoint-restore.md (Idle Release Path).
+    # See docs/sandbox-runtime.md (Idle release and checkpoint/restore).
     auto_enabled: true
     idle_threshold: 2h
     monitor_interval: 5m
