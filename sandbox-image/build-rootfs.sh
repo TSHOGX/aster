@@ -20,6 +20,8 @@ PI_EVENT_SCHEMA="pi_rpc_events_v1.0"
 APT_PACKAGES=(
   ca-certificates
   curl
+  fonts-wqy-microhei
+  fonts-wqy-zenhei
   git
   nodejs
   npm
