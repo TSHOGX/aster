@@ -218,7 +218,7 @@ func TestProjectedControlManifestDigestRejectsHostOnlyFields(t *testing.T) {
 }
 
 func TestCanonicalManifestDigestMatchesSandboxProjectionFixture(t *testing.T) {
-	data := mustReadFile(t, filepath.Join("..", "..", "..", "docs", "phase8", "fixtures", "control-manifest-payload.json"))
+	data := mustReadFile(t, filepath.Join("testdata", "control-manifest-payload.json"))
 	var payload any
 	if err := json.Unmarshal(data, &payload); err != nil {
 		t.Fatalf("read canonical manifest fixture: %v", err)
