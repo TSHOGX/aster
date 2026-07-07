@@ -22,6 +22,7 @@ source of truth for how the system works today. Start with
 | [security.md](./security.md) | Threat model, isolation, host-only credentials, proxy correlation, auth |
 | [verification.md](./verification.md) | How to verify a change: test commands, live smoke, platform notes |
 | [operations.md](./operations.md) | Publish deployment & operations runbook (中文；systemd/nginx/proxy) |
+| [parallel-development.md](./parallel-development.md) | Parallel dev on `publish` via `git worktree` (中文) |
 
 ## Decisions & roadmap (`decisions/`)
 
