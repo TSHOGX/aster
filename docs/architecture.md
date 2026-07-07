@@ -19,8 +19,8 @@ workbench in the browser.
 - **Workbench** (`frontend/`): a Next.js single-page app that proxies same-origin
   to the orchestrator, drives sessions, and renders live output + an artifact tree.
 
-Three agent drivers ship: **Pi** (the default product Agent), **Claude Code**, and
-a **PTY shell**. A deployment selects which driver each product mode resolves to.
+Two agent drivers ship: **Pi** (the default product Agent) and a **PTY shell**.
+A deployment selects which driver each product mode resolves to.
 
 ## Component diagram
 
@@ -46,17 +46,17 @@ Go orchestrator (orchestrator/)  ───────────────�
         gVisor sandbox (per generation)
           ├─ harness-agent-entrypoint (PID 1 shim)
           ├─ harness-bridge-client  ── file queue ─► control plane
-          ├─ pi | claude | harness-shell-agent
+          ├─ pi | harness-shell-agent
           ├─ /workspace   (exact rw bind)
           ├─ /agent-home  (exact rw bind)
           └─ /harness-control (ro) + bridge (rw)
 ```
 
 The model proxy is a **separate process** (not in this repo; deployed as
-`claude-code-proxy`). It translates the sandbox's Anthropic-style requests to the
-upstream provider and calls back into the orchestrator's Unix socket to authorize
-each request against live turn context. See [security.md](./security.md) and
-[operations.md](./operations.md).
+`claude-code-proxy`, the historical service name). It translates the sandbox's
+Anthropic-style requests to the upstream provider and calls back into the
+orchestrator's Unix socket to authorize each request against live turn context.
+See [security.md](./security.md) and [operations.md](./operations.md).
 
 ## Runtime vs control plane
 
@@ -207,7 +207,7 @@ matching, but is separate from idle release. Background:
 
 ## Known limitations
 
-- Supported drivers are Pi, Claude Code, and the PTY shell. New adapters must enter
+- Supported drivers are Pi and the PTY shell. New adapters must enter
   through the driver/provider contract in [drivers.md](./drivers.md).
 - The artifact UI is read-only; files are created only by the agent/shell.
 - The event hub is for UI streaming, not an audit log; the durable `events` table is.

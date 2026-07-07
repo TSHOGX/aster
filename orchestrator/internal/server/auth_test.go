@@ -25,7 +25,7 @@ func newAuthTestServer(t *testing.T, dir string, st *store.Store, users []config
 		SessionsRoot:     dir,
 		SessionRetention: time.Hour,
 		MaxSessions:      10,
-		DefaultAgent:     "claude_code",
+		DefaultAgent:     "pi",
 		CookieName:       "harness_auth",
 		AuthUsers:        users,
 		AuthSessionTTL:   time.Hour,
@@ -153,7 +153,7 @@ func TestSessionIsolationAcrossUsers(t *testing.T) {
 	now := time.Now().UTC()
 	aliceSession := store.Session{
 		ID: "sess_alice", UserID: "alice", Status: string(sessionstate.Created),
-		Agent: "claude_code", Mode: "agent", Workspace: dir, RestoreID: "r1",
+		Agent: "pi", Mode: "agent", Workspace: dir, RestoreID: "r1",
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := st.CreateSession(ctx, aliceSession); err != nil {

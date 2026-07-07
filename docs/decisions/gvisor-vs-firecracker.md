@@ -96,7 +96,7 @@ my-sandbox/
 
 ## 6. 真正的代价与已知风险
 
-1. **`io_uring` 等新 syscall gVisor 实现不全**：Claude Code / Node 18+ 默认 epoll，不踩这个坑；要留意 Python 库不要用 `aio_uring`。Phase 1 用 `runsc --strace` 留一次完整 trace 提前发现 ENOSYS。
+1. **`io_uring` 等新 syscall gVisor 实现不全**：Claude Code / Node 18+ 默认 epoll，不踩这个坑（Claude Code 驱动本身已于后续变更中移除，仅保留 pi / sh，但 epoll 优先的技术前提同样适用于 pi 的 Node 运行时）；要留意 Python 库不要用 `aio_uring`。Phase 1 用 `runsc --strace` 留一次完整 trace 提前发现 ENOSYS。
 2. **vsock 协议方案废弃**：原 PLAN.md 的"双 vsock 通道"重写为 stdio + bind-mount，整体复杂度反而降低。
 3. **没有 overlayfs**：要装 `fuse-overlayfs` 或换 rootfs 目录复制方案（btrfs subvol / rsync）。
 4. **`runsc` 是 Google 一家维护**：偶有 corner case，但 GKE Sandbox / Cloud Run gen1 是大规模生产用户，长期可信。

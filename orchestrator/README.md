@@ -65,11 +65,6 @@ harness:
       driver_id: pi
       model_profile: anthropic_default
       runtime_provider: local_runsc
-    claude_code:
-      enabled: true
-      driver_id: claude_code
-      model_profile: anthropic_default
-      runtime_provider: local_runsc
     sh:
       enabled: true
       driver_id: sh
@@ -155,8 +150,7 @@ Use `FORCE=1` with the same driver set when the existing rootfs lacks a
 selected driver CLI; the non-`FORCE` path only syncs the overlay and regenerates
 the manifest. If the manifest is missing `pi`, Agent session
 creation/allocation fails before runtime start; if it is missing `sh`, Shell is
-hidden or rejected. `claude_code` remains configured for explicit
-overrides/smokes; include it in `SANDBOX_AGENT_DRIVERS` before selecting it.
+hidden or rejected.
 
 With `session_retention: 0s`, retained non-terminal sessions keep counting toward `max_sessions` even after runtime resources are retired. The `/api/quota` response reports the session ceiling and live `/30` pool ceiling separately. Use `DELETE /api/sessions/<id>` to close sessions and free session quota; close preserves messages, artifacts, workspace, and agent-home paths while reclaiming runtime resources.
 
@@ -239,7 +233,5 @@ Artifact downloads are read-only and limited to regular files under the session 
 ## Notes
 
 - Product `Agent` resolves to Pi in the checked-in lab config.
-- Claude Code remains available for deployments or smokes that select it and
-  use an image manifest containing `claude_code`.
 - `sh` is the interactive shell session path; it is still useful for smoke tests and shell-style debugging.
 - Checkpoint/restore is generation-aware. Automatic checkpointing remains default-off in the checked-in lab config, and should be enabled only for lab profiles or explicit test environments.

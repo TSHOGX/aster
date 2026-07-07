@@ -16,18 +16,19 @@ is creatable, and a disabled reason code if not.
 | `agent` | `harness.default_agent` (checked-in: **pi**) | must be agent-kind |
 | `shell` | `sh` | must be shell-kind |
 
+Pi is the only agent-kind driver that ships today.
+
 `resolveModeDeployment("agent")` uses `cfg.DefaultAgent`; `"shell"` always uses
 `sh`. Raw `agent` input to `POST /api/sessions` is rejected — only `{"mode": ...}`.
 
-## The three drivers
+## The two drivers
 
 | Driver id | Label | Kind | Output schema | Model access | Interrupt | Compaction | Binary |
 |---|---|---|---|---|---|---|---|
-| `claude_code` | Claude Code | agent | `claude_stream_json_v1` | yes | no | yes | `/usr/local/bin/claude` |
 | `pi` | Pi | agent | `pi_rpc_events_v1.0` | yes | no | no | `/usr/local/bin/pi` |
 | `sh` | Shell | shell | `shell_pty_v1` | **no** | yes | no | `/usr/local/bin/harness-shell-agent` |
 
-All three use bridge protocol `harness_bridge_v2` (version 2) and turn input schema
+Both use bridge protocol `harness_bridge_v2` (version 2) and turn input schema
 `RunTurn`, and require the same runtime capabilities (`exec_stream`, `filesystem_rw`,
 `kill`, `logs`, `network_policy`, `snapshot_disk`, `stdin`).
 
@@ -50,18 +51,6 @@ All three use bridge protocol `harness_bridge_v2` (version 2) and turn input sch
 - **Restore**: driver state is a `pi_session` sidecar digest; when it changes, the
   runner issues `switch_session` (verified via `get_session_stats`) before the
   prompt. Restore state advances only after a successful completed turn.
-
-### Claude Code
-
-- Bundled `@anthropic-ai/claude-code` (name pinned, version recorded as "bundled").
-- Runs `claude --bare --permission-mode bypassPermissions -p --model sonnet
-  --input-format stream-json --output-format stream-json --include-partial-messages
-  --replay-user-messages --verbose`.
-- Session selection is driven purely by driver state: `--session-id <uuid>` on the
-  first turn, `--resume <uuid>` afterward. Correctness never depends on an in-memory
-  "first turn" flag — once a Claude UUID exists it must be resumed.
-- A stream `{"type":"error"}` → `failed/agent_execution_failed`; nonzero exit →
-  `failed/agent_exit_nonzero`.
 
 ### Shell (`sh`)
 

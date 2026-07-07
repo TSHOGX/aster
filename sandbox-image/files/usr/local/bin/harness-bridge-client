@@ -21,9 +21,6 @@ TMP = "tmp"
 BRIDGE_HEARTBEAT = "bridge"
 HOST_HEARTBEAT = "host"
 CHECKPOINT_READY = "checkpoint-ready"
-HOST_ONLY_DUMMY_API_KEY = "harness-model-proxy-dummy-key"
-CLAUDE_MARKER_DIR = ".harness"
-CLAUDE_SESSION_MARKER = "claude-session-initialized.json"
 PI_CODING_AGENT_DIR = "/agent-home/.pi/agent"
 PI_SESSION_DIR = f"{PI_CODING_AGENT_DIR}/sessions"
 PI_MODELS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/models.json"
@@ -96,58 +93,6 @@ def write_control_file(root, dirname, name, suffix):
             tmp_path.unlink()
         except FileNotFoundError:
             pass
-
-
-def claude_session_marker_path(agent_home):
-    return Path(agent_home) / CLAUDE_MARKER_DIR / CLAUDE_SESSION_MARKER
-
-
-def claude_session_state_exists(agent_home, session_uuid):
-    projects = Path(agent_home) / ".claude" / "projects"
-    if not projects.is_dir():
-        return False
-    try:
-        for path in projects.glob(f"**/{session_uuid}.jsonl"):
-            if path.is_file() and path.stat().st_size > 0:
-                return True
-    except OSError:
-        return False
-    return False
-
-
-def mark_claude_session_initialized(agent_home, session_uuid):
-    marker = claude_session_marker_path(agent_home)
-    marker_dir = marker.parent
-    marker_dir.mkdir(parents=True, exist_ok=True)
-    tmp_path = marker_dir / f".{uuid.uuid4()}.tmp"
-    payload = {
-        "claude_session_uuid": session_uuid,
-        "marked_at_ns": time.time_ns(),
-    }
-    data = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-    with open(tmp_path, "xb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    try:
-        os.replace(tmp_path, marker)
-        fsync_dir(marker_dir)
-    finally:
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
-
-
-def try_mark_claude_session_initialized(agent_home, session_uuid):
-    try:
-        mark_claude_session_initialized(agent_home, session_uuid)
-    except OSError:
-        pass
-
-
-def payload_mentions_claude_session(payload, session_uuid):
-    return payload.get("session_id") == session_uuid or payload.get("sessionId") == session_uuid
 
 
 def canonical_json_bytes(payload):
@@ -389,130 +334,6 @@ class ShellTurnRunner:
             pass
 
 
-class ClaudeTurnRunner:
-    def __init__(self):
-        self.current_grant = {}
-
-    def set_turn_context(self, grant):
-        self.current_grant = dict(grant or {})
-
-    def _grant_driver_state_payload(self):
-        token = self.current_grant.get("driver_state") or {}
-        if token.get("driver_id") != "claude_code":
-            return {}
-        payload = token.get("state_payload") or {}
-        if isinstance(payload, dict):
-            return payload
-        return {}
-
-    def run_turn(self, content, emit):
-        state_payload = self._grant_driver_state_payload()
-        session_uuid = str(state_payload.get("claude_session_uuid") or "").strip()
-        if not session_uuid:
-            raise RuntimeError("claude driver_state claude_session_uuid is required")
-        agent_home = os.environ.get("HARNESS_AGENT_HOME", "")
-        if not agent_home:
-            raise RuntimeError("HARNESS_AGENT_HOME is required for claude agent")
-        claude_command = [
-            "/usr/local/bin/claude",
-            "--bare",
-            "--permission-mode",
-            "bypassPermissions",
-            "-p",
-            "--model",
-            os.environ.get("CLAUDE_MODEL", "sonnet"),
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            os.environ.get("CLAUDE_OUTPUT_FORMAT", "stream-json"),
-            "--include-partial-messages",
-            "--replay-user-messages",
-            "--verbose",
-        ]
-        state_initialized = bool(state_payload.get("initialized"))
-        if state_initialized:
-            claude_command.extend(["--resume", session_uuid])
-        else:
-            claude_command.extend(["--session-id", session_uuid])
-
-        env = {
-            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            "HOME": agent_home,
-            "USER": "harness",
-            "LOGNAME": "harness",
-            "HARNESS_AGENT_HOME": agent_home,
-            "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", ""),
-            "ANTHROPIC_API_KEY": HOST_ONLY_DUMMY_API_KEY,
-        }
-        for optional_name in ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "LANG", "TMPDIR"):
-            optional_value = os.environ.get(optional_name)
-            if optional_value:
-                env[optional_name] = optional_value
-        target_uid = os.environ.get("HARNESS_AGENT_UID", "65534")
-        target_gid = os.environ.get("HARNESS_AGENT_GID", "65534")
-        if str(os.geteuid()) == target_uid and str(os.getegid()) == target_gid:
-            command = claude_command
-        else:
-            command = [
-                "setpriv",
-                "--reuid",
-                target_uid,
-                "--regid",
-                target_gid,
-                "--clear-groups",
-                "env",
-                f"HOME={agent_home}",
-                "USER=harness",
-                "LOGNAME=harness",
-                *claude_command,
-            ]
-        frame = json.dumps(
-            {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": content}]}},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        proc = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env,
-        )
-        proc.stdin.write(frame + "\n")
-        proc.stdin.close()
-        status = "completed"
-        error_class = ""
-        error = ""
-        saw_session = False
-        for line in proc.stdout:
-            stripped = line.rstrip("\n")
-            if stripped:
-                emit("stdout", stripped)
-                try:
-                    payload = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if payload_mentions_claude_session(payload, session_uuid):
-                    saw_session = True
-                if payload.get("type") == "error":
-                    status = "failed"
-                    error_class = "agent_execution_failed"
-                    error = payload.get("message") or payload.get("error") or "claude stream error"
-        rc = proc.wait()
-        if rc != 0 and status == "completed":
-            status = "failed"
-            error_class = "agent_exit_nonzero"
-            error = f"claude exited with status {rc}"
-        if saw_session or claude_session_state_exists(agent_home, session_uuid):
-            try_mark_claude_session_initialized(agent_home, session_uuid)
-        return status, error_class, error
-
-    def close(self):
-        pass
-
-
 def validate_pi_runtime_environment():
     required = {
         "PI_CODING_AGENT_DIR": PI_CODING_AGENT_DIR,
@@ -637,7 +458,7 @@ class PiRPCTurnRunner:
         validate_pi_config_materialization()
         if self.proc is not None and self.proc.poll() is None:
             return
-        model = os.environ.get("PI_MODEL") or os.environ.get("CLAUDE_MODEL") or "sonnet"
+        model = os.environ.get("PI_MODEL") or "sonnet"
         pi_command = [
             os.environ.get("PI_BIN", "/usr/local/bin/pi"),
             "--mode",
@@ -880,7 +701,6 @@ class NativeEventsProbeRunner:
 
 
 RUNNER_FACTORIES = {
-    "claude_code": ClaudeTurnRunner,
     "pi": PiRPCTurnRunner,
     "sh": ShellTurnRunner,
     "native_events_probe": NativeEventsProbeRunner,
@@ -943,7 +763,7 @@ def run_probe(args):
     client = BridgeClient(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
     client.heartbeat()
     client.hello(timeout=args.timeout)
-    if driver_id == "claude_code":
+    if driver_id == "pi":
         run_network_probe(
             args.base_url,
             parse_statuses(args.healthz_statuses, {200}),
@@ -1029,7 +849,7 @@ def run_claim_loop(args, runner=None):
     client = BridgeClient(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
     client.heartbeat()
     client.hello(timeout=args.timeout)
-    if driver_id == "claude_code":
+    if driver_id == "pi":
         run_network_probe(
             args.base_url,
             parse_statuses(args.healthz_statuses, {200}),

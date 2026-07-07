@@ -17,7 +17,7 @@ Control plane for long-lived, sandboxed AI agent sessions.
 - **Backend**: Go orchestrator, SQLite, HTTP API, SSE/WebSocket event endpoints
 - **Frontend**: Next.js, TypeScript, same-origin API proxy, live artifact browser
 - **Runtime**: gVisor `runsc`, OCI bundle/rootfs, per-generation sandbox resources
-- **Agent paths**: Pi, Claude Code, and PTY-backed shell; deployment config selects the product `Agent` default
+- **Agent paths**: Pi and PTY-backed shell; deployment config selects the product `Agent` default
 - **Control protocol**: Agent Bridge file-queue claim/ack protocol
 - **Artifacts**: host-side metadata watcher with safe read-only downloads/previews
 

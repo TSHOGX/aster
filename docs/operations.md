@@ -117,7 +117,7 @@ sudo systemctl restart nginx     # 换证书 / 改监听端口时用 restart
 
 ### model proxy（`claude-code-proxy`，systemd 管理）
 
-model proxy 把 sandbox 里的 agent（Pi / Claude Code）发出的 `anthropic-messages`
+model proxy 把 sandbox 里的 agent（Pi）发出的 `anthropic-messages`
 请求翻译成上游 OpenAI-compatible 调用（当前上游 `https://api.modelarts-maas.com/openai/v1`，
 模型 `glm-5.1`）。**Pi 也必须走这个 proxy**：Pi 的 provider 被硬编码成
 `anthropic-messages` + 指向 `harness-model-proxy.internal:8083` + 一个 dummy key

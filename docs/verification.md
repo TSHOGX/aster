@@ -33,7 +33,7 @@ Test fixtures live next to their tests:
   replay reduce identically and that non-terminal errors don't mark a session
   failed.
 - **bridge-client unittests** — the in-sandbox protocol: file-queue ordering,
-  hello/claim/ack/emit, Claude and Pi runner command lines and env hygiene, Pi
+  hello/claim/ack/emit, the Pi runner command line and env hygiene, Pi
   config-materialization rejection, and entrypoint invariants (required uid/gid,
   secret-mount rejection).
 
@@ -50,8 +50,6 @@ lifecycle, run an end-to-end smoke on a real gVisor host:
 3. Create an `agent` session (resolves to Pi), send a message, and confirm the turn
    completes: `ack_turn_started` → streamed output → `ack_turn_completed`, and the
    model proxy logs `started` / `200 OK` / `finished` for the turn.
-4. For Claude-specific changes, use a rootfs/manifest that includes `claude_code`
-   and verify a two-turn session runs under the same Claude session UUID.
 
 ## Platform note
 

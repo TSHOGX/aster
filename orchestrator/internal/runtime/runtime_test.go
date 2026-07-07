@@ -22,7 +22,7 @@ import (
 )
 
 func TestRuntimeStartRejectsUnsupportedAgent(t *testing.T) {
-	rt := New(Config{DefaultAgent: "claude_code"})
+	rt := New(Config{DefaultAgent: "pi"})
 	res := rt.Start(context.Background(), StartRequest{
 		SessionID: "sess_1",
 		Agent:     "opencode",
@@ -54,7 +54,7 @@ func TestPathIsMountPointDetectsRootAndTempDir(t *testing.T) {
 
 func TestRuntimeStartRequiresGenerationDetailsForColdPath(t *testing.T) {
 	rt := New(Config{
-		DefaultAgent:    "claude_code",
+		DefaultAgent:    "pi",
 		SessionsRoot:    filepath.Join(t.TempDir(), "sessions"),
 		AgentHomesRoot:  filepath.Join(t.TempDir(), "agent-homes"),
 		CheckpointsRoot: filepath.Join(t.TempDir(), "checkpoints"),
@@ -63,7 +63,7 @@ func TestRuntimeStartRequiresGenerationDetailsForColdPath(t *testing.T) {
 	})
 	res := rt.Start(context.Background(), StartRequest{
 		SessionID: "sess_1",
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Done:      closedDone(),
 	}, nil)
 	if res.Err == nil {
@@ -101,10 +101,10 @@ func TestResolveCheckpointPathPrefersGenerationPath(t *testing.T) {
 }
 
 func TestRuntimeStartRestoreRequiresCheckpointPath(t *testing.T) {
-	rt := New(Config{DefaultAgent: "claude_code"})
+	rt := New(Config{DefaultAgent: "pi"})
 	res := rt.Start(context.Background(), StartRequest{
 		SessionID:             "sess_missing_checkpoint",
-		Agent:                 "claude_code",
+		Agent:                 "pi",
 		RestoreFromCheckpoint: true,
 		Generation: store.RuntimeGenerationDetails{
 			SessionID:    "sess_missing_checkpoint",
@@ -130,14 +130,14 @@ func TestRuntimeStartRestoreRequiresStoredArtifacts(t *testing.T) {
 	checkpointPath := filepath.Join(dir, "checkpoint")
 	writeCheckpointFiles(t, checkpointPath)
 	runner := &recordingCommandRunner{}
-	rt := New(Config{DefaultAgent: "claude_code", CommandRunner: runner})
+	rt := New(Config{DefaultAgent: "pi", CommandRunner: runner})
 	details := testGenerationDetails(dir, "gen_restore_missing_artifacts")
 	details.CheckpointPath = checkpointPath
 
 	res := rt.Start(context.Background(), StartRequest{
 		SessionID:             details.SessionID,
 		GenerationID:          details.GenerationID,
-		Agent:                 "claude_code",
+		Agent:                 "pi",
 		RestoreFromCheckpoint: true,
 		Generation:            details,
 	}, nil)
@@ -343,7 +343,7 @@ func TestRuntimeStartRestoreRejectsMetadataBeforeRunscRestore(t *testing.T) {
 		},
 	}
 	rt := New(Config{
-		DefaultAgent:   "claude_code",
+		DefaultAgent:   "pi",
 		SessionsRoot:   filepath.Join(dir, "sessions"),
 		AgentHomesRoot: filepath.Join(dir, "agent-homes"),
 		RootFSPath:     filepath.Join(dir, "rootfs"),
@@ -404,7 +404,7 @@ func TestRuntimeStartRejectsRunscPinMismatchBeforeRunscRun(t *testing.T) {
 		},
 	}
 	rt := New(Config{
-		DefaultAgent:  "claude_code",
+		DefaultAgent:  "pi",
 		CommandRunner: runner,
 	})
 	details := testGenerationDetails(dir, "gen_start_pin_mismatch")
@@ -428,7 +428,7 @@ func TestRuntimeStartRejectsRunscPinMismatchBeforeRunscRun(t *testing.T) {
 	res := rt.Start(context.Background(), StartRequest{
 		SessionID:         details.SessionID,
 		GenerationID:      details.GenerationID,
-		Agent:             "claude_code",
+		Agent:             "pi",
 		Generation:        details,
 		PreparedArtifacts: artifacts,
 	}, nil)
@@ -456,7 +456,7 @@ func TestRuntimeStartRestoreRejectsRunscBinaryMismatchBeforeRunscRestore(t *test
 		},
 	}
 	rt := New(Config{
-		DefaultAgent:   "claude_code",
+		DefaultAgent:   "pi",
 		SessionsRoot:   filepath.Join(dir, "sessions"),
 		AgentHomesRoot: filepath.Join(dir, "agent-homes"),
 		RootFSPath:     filepath.Join(dir, "rootfs"),
@@ -481,7 +481,7 @@ func TestRuntimeStartRestoreRejectsRunscBinaryMismatchBeforeRunscRestore(t *test
 	res := rt.Start(context.Background(), StartRequest{
 		SessionID:             details.SessionID,
 		GenerationID:          details.GenerationID,
-		Agent:                 "claude_code",
+		Agent:                 "pi",
 		RestoreFromCheckpoint: true,
 		Generation:            details,
 		PreparedArtifacts:     artifacts,
@@ -562,14 +562,14 @@ func TestCleanupExitedContainerDoesNotRemoveReplacement(t *testing.T) {
 }
 
 func TestRuntimeStartDoesNotReuseContainerForDifferentGeneration(t *testing.T) {
-	rt := New(Config{DefaultAgent: "claude_code"})
+	rt := New(Config{DefaultAgent: "pi"})
 	stdin := &recordingWriteCloser{}
 	canceled := make(chan struct{})
 	rt.containers["sess_1"] = &Container{
 		SessionID:        "sess_1",
 		GenerationID:     "gen_old",
 		RunscContainerID: "harness-gen-gen_old",
-		Agent:            "claude_code",
+		Agent:            "pi",
 		Stdin:            stdin,
 		OutputHub:        NewOutputHub(),
 		Cancel:           func() { close(canceled) },
@@ -578,7 +578,7 @@ func TestRuntimeStartDoesNotReuseContainerForDifferentGeneration(t *testing.T) {
 	res := rt.Start(context.Background(), StartRequest{
 		SessionID:    "sess_1",
 		GenerationID: "gen_new",
-		Agent:        "claude_code",
+		Agent:        "pi",
 		FirstMessage: "hello stale generation",
 		WaitForTurn:  true,
 		Done:         closedDone(),
@@ -711,7 +711,7 @@ func TestCheckpointRequiresGenerationScopedPath(t *testing.T) {
 
 func TestSendMessageDoesNotReconfigureLiveSandboxNetwork(t *testing.T) {
 	rt := New(Config{
-		DefaultAgent: "claude_code",
+		DefaultAgent: "pi",
 		RunscNetwork: "sandbox",
 	})
 	hub := NewOutputHub()
@@ -719,7 +719,7 @@ func TestSendMessageDoesNotReconfigureLiveSandboxNetwork(t *testing.T) {
 	container := &Container{
 		SessionID:        "sess_1",
 		RunscContainerID: "harness-gen-gen_a",
-		Agent:            "claude_code",
+		Agent:            "pi",
 		Stdin:            stdin,
 		OutputHub:        hub,
 	}
@@ -1385,7 +1385,7 @@ func TestRenderRuntimeSpecUsesGenerationNetnsPath(t *testing.T) {
 	spec, _, err := rt.renderRuntimeSpec(withDataVolumePathsForTest(dir, StartRequest{
 		SessionID:    "sess_1",
 		GenerationID: details.GenerationID,
-		Agent:        "claude_code",
+		Agent:        "pi",
 		Generation:   details,
 	}))
 	if err != nil {
@@ -1474,68 +1474,6 @@ func installFakeRunsc(t *testing.T, dir, label string) (string, string) {
 	return path, "sha256:" + digest
 }
 
-func TestWriteUserTurnClaudeJSONLFraming(t *testing.T) {
-	var buf bytes.Buffer
-	if err := writeUserTurn(&buf, "claude_code", "hello world"); err != nil {
-		t.Fatalf("writeUserTurn: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.HasSuffix(out, "\n") {
-		t.Fatalf("expected trailing newline for JSONL framing, got %q", out)
-	}
-	if strings.Count(out, "\n") != 1 {
-		t.Fatalf("expected exactly one JSONL frame, got %q", out)
-	}
-
-	var frame struct {
-		Type    string `json:"type"`
-		Message struct {
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSuffix(out, "\n")), &frame); err != nil {
-		t.Fatalf("invalid JSON frame %q: %v", out, err)
-	}
-	if frame.Type != "user" || frame.Message.Role != "user" {
-		t.Fatalf("unexpected frame: %+v", frame)
-	}
-	if len(frame.Message.Content) != 1 {
-		t.Fatalf("expected one content block, got %+v", frame.Message.Content)
-	}
-	if frame.Message.Content[0].Type != "text" || frame.Message.Content[0].Text != "hello world" {
-		t.Fatalf("unexpected content block: %+v", frame.Message.Content[0])
-	}
-}
-
-func TestWriteUserTurnClaudeEscapesNewlines(t *testing.T) {
-	// Multi-line user input must stay on a single JSONL line.
-	var buf bytes.Buffer
-	if err := writeUserTurn(&buf, "claude_code", "line1\nline2"); err != nil {
-		t.Fatalf("writeUserTurn: %v", err)
-	}
-	if strings.Count(buf.String(), "\n") != 1 {
-		t.Fatalf("multi-line input must produce one JSONL frame, got %q", buf.String())
-	}
-	var frame struct {
-		Message struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSuffix(buf.String(), "\n")), &frame); err != nil {
-		t.Fatalf("invalid JSON frame %q: %v", buf.String(), err)
-	}
-	if len(frame.Message.Content) != 1 || frame.Message.Content[0].Text != "line1\nline2" {
-		t.Fatalf("unexpected multi-line content: %+v", frame.Message.Content)
-	}
-}
-
 func TestWriteUserTurnShellJSONFraming(t *testing.T) {
 	var buf bytes.Buffer
 	if err := writeUserTurn(&buf, "sh", "ls -la"); err != nil {
@@ -1585,10 +1523,8 @@ func TestWriteUserTurnRejectsUnsupportedAgent(t *testing.T) {
 }
 
 func TestPrepareGenerationWritesPerGenerationSpecManifestAndIsolatedRuntime(t *testing.T) {
-	t.Setenv("HARNESS_CLAUDE_BASE_URL", "http://bad.invalid")
 	t.Setenv("HARNESS_ANTHROPIC_BASE_URL", "http://bad.invalid")
 	t.Setenv("ANTHROPIC_BASE_URL", "http://bad.invalid")
-	t.Setenv("HARNESS_CLAUDE_API_KEY", "bad")
 	t.Setenv("HARNESS_ANTHROPIC_API_KEY", "bad")
 
 	dir := t.TempDir()
@@ -1599,20 +1535,14 @@ func TestPrepareGenerationWritesPerGenerationSpecManifestAndIsolatedRuntime(t *t
 		RootFSPath:         filepath.Join(dir, "rootfs"),
 		BridgeHeartbeat:    20 * time.Second,
 		BridgePollInterval: 5 * time.Millisecond,
-		Claude: ClaudeConfig{
-			ProxyBindURL:               "http://0.0.0.0:8082",
-			Model:                      "sonnet",
-			OutputFormat:               "stream-json",
-			DisableNonessentialTraffic: true,
-		},
 	})
 	details := testGenerationDetails(dir, "gen_a")
 
-	workspacePath, agentHomePath := dataVolumePathsForTest(dir, "sess_1", "claude_code")
+	workspacePath, agentHomePath := dataVolumePathsForTest(dir, "sess_1", "pi")
 	artifacts, err := rt.PrepareGeneration(context.Background(), withDataVolumePathsForTest(dir, StartRequest{
 		SessionID:    "sess_1",
 		GenerationID: details.GenerationID,
-		Agent:        "claude_code",
+		Agent:        "pi",
 		Generation:   details,
 	}))
 	if err != nil {
@@ -1659,11 +1589,8 @@ func TestPrepareGenerationWritesPerGenerationSpecManifestAndIsolatedRuntime(t *t
 	if strings.Contains(string(data), `"anthropic_api_key":`) || strings.Contains(string(data), `"anthropic_auth_token":`) {
 		t.Fatalf("manifest must not contain plaintext credential fields: %s", data)
 	}
-	if manifest.DriverRuntime["claude_code_disable_nonessential_traffic"] != true {
-		t.Fatalf("expected nonessential traffic to be disabled: %+v", manifest.DriverRuntime)
-	}
-	if manifest.Model != "sonnet" || manifest.OutputFormat != "stream-json" {
-		t.Fatalf("unexpected Claude defaults: %+v", manifest)
+	if manifest.Model != "sonnet" || manifest.OutputFormat != agents.PiEventSchemaVersion {
+		t.Fatalf("unexpected driver defaults: %+v", manifest)
 	}
 	assertControlManifestOmitsHostOnlyFields(t, data, controlManifestForbiddenHostValues(details)...)
 
@@ -1742,7 +1669,7 @@ func TestPrepareGenerationWritesPerGenerationSpecManifestAndIsolatedRuntime(t *t
 	if _, ok := env["HARNESS_PROBE_MESSAGE_STATUSES"]; ok {
 		t.Fatalf("runtime spec must not configure pre-turn model endpoint probes: %+v", env)
 	}
-	if env["HARNESS_DRIVER_ID"] != "claude_code" ||
+	if env["HARNESS_DRIVER_ID"] != "pi" ||
 		env["HARNESS_AGENT_UID"] != fmt.Sprint(testSandboxUID()) ||
 		env["HARNESS_AGENT_GID"] != fmt.Sprint(testSandboxGID()) ||
 		env["SESSION_WORKSPACE"] != "/workspace" ||
@@ -1794,7 +1721,7 @@ func TestPrepareGenerationWritesPerGenerationSpecManifestAndIsolatedRuntime(t *t
 	}
 }
 
-func TestPrepareClaudeHostOnlyGenerationHasNoSecretMount(t *testing.T) {
+func TestPrepareHostOnlyGenerationHasNoSecretMount(t *testing.T) {
 	dir := t.TempDir()
 	rt := New(Config{
 		SessionsRoot:       filepath.Join(dir, "sessions"),
@@ -1803,12 +1730,6 @@ func TestPrepareClaudeHostOnlyGenerationHasNoSecretMount(t *testing.T) {
 		RootFSPath:         filepath.Join(dir, "rootfs"),
 		BridgeHeartbeat:    20 * time.Second,
 		BridgePollInterval: 5 * time.Millisecond,
-		Claude: ClaudeConfig{
-			ProxyBindURL:               "http://0.0.0.0:8082",
-			Model:                      "sonnet",
-			OutputFormat:               "stream-json",
-			DisableNonessentialTraffic: true,
-		},
 	})
 	details := testGenerationDetails(dir, "gen_host_only")
 	details.RequiresSecretDrop = false
@@ -1822,10 +1743,10 @@ func TestPrepareClaudeHostOnlyGenerationHasNoSecretMount(t *testing.T) {
 	if _, err := rt.PrepareGeneration(context.Background(), withDataVolumePathsForTest(dir, StartRequest{
 		SessionID:    "sess_1",
 		GenerationID: details.GenerationID,
-		Agent:        "claude_code",
+		Agent:        "pi",
 		Generation:   details,
 	})); err != nil {
-		t.Fatalf("prepare host-only claude generation: %v", err)
+		t.Fatalf("prepare host-only generation: %v", err)
 	}
 
 	manifestData := mustReadFile(t, details.ControlManifestPath)
@@ -1875,12 +1796,6 @@ func TestPreparePiGenerationMaterializesReadOnlyConfig(t *testing.T) {
 		RootFSPath:         filepath.Join(dir, "rootfs"),
 		BridgeHeartbeat:    20 * time.Second,
 		BridgePollInterval: 5 * time.Millisecond,
-		Claude: ClaudeConfig{
-			ProxyBindURL:               "http://0.0.0.0:8082",
-			Model:                      "sonnet",
-			OutputFormat:               "stream-json",
-			DisableNonessentialTraffic: true,
-		},
 	})
 	details := testGenerationDetails(dir, "gen_pi_config")
 	details.SessionID = "sess_pi"
@@ -2168,10 +2083,6 @@ func TestPrepareGenerationConcurrentSessionsUseDistinctControlManifests(t *testi
 		AgentHomesRoot: filepath.Join(dir, "agent-homes"),
 		BundleRoot:     filepath.Join(dir, "bundle", "out"),
 		RootFSPath:     filepath.Join(dir, "rootfs"),
-		Claude: ClaudeConfig{
-			APIKey:    "123",
-			AuthToken: "123",
-		},
 	})
 	type prepareCase struct {
 		sessionID string
@@ -2194,7 +2105,7 @@ func TestPrepareGenerationConcurrentSessionsUseDistinctControlManifests(t *testi
 			_, err := rt.PrepareGeneration(context.Background(), withDataVolumePathsForTest(dir, StartRequest{
 				SessionID:    tc.sessionID,
 				GenerationID: tc.details.GenerationID,
-				Agent:        "claude_code",
+				Agent:        "pi",
 				Generation:   tc.details,
 			}))
 			if err != nil {
@@ -2326,7 +2237,7 @@ func TestPrepareShellGenerationHasNoSecretMount(t *testing.T) {
 		t.Fatalf("shell manifest must use isolated sandbox paths: %+v", manifestFile.Payload)
 	}
 	if manifestFile.Payload.SandboxModelProxyBaseURL != "" {
-		t.Fatalf("shell manifest must not require Claude base URL: %+v", manifestFile.Payload)
+		t.Fatalf("shell manifest must not require model proxy base URL: %+v", manifestFile.Payload)
 	}
 	assertControlManifestOmitsHostOnlyFields(t, mustReadFile(t, details.ControlManifestPath), controlManifestForbiddenHostValues(details)...)
 }
@@ -2410,7 +2321,7 @@ func TestPrepareSandboxGenerationRejectsSecretReferences(t *testing.T) {
 		agent        string
 		outputFormat string
 	}{
-		{name: "claude", sessionID: "sess_claude", generationID: "gen_claude_bad", agent: "claude_code", outputFormat: "stream-json"},
+		{name: "pi", sessionID: "sess_pi", generationID: "gen_pi_bad", agent: "pi", outputFormat: agents.PiEventSchemaVersion},
 		{name: "shell", sessionID: "sess_shell", generationID: "gen_shell_bad", agent: "sh", outputFormat: "shell_pty"},
 	}
 	for _, tc := range tests {
@@ -2456,16 +2367,12 @@ func TestPrepareGenerationRejectsMismatchedIdentity(t *testing.T) {
 		AgentHomesRoot: filepath.Join(dir, "agent-homes"),
 		BundleRoot:     filepath.Join(dir, "bundle", "out"),
 		RootFSPath:     filepath.Join(dir, "rootfs"),
-		Claude: ClaudeConfig{
-			APIKey:    "123",
-			AuthToken: "123",
-		},
 	})
 
 	_, err := rt.PrepareGeneration(context.Background(), StartRequest{
 		SessionID:    "sess_wrong",
 		GenerationID: details.GenerationID,
-		Agent:        "claude_code",
+		Agent:        "pi",
 		Generation:   details,
 	})
 	if err == nil {
@@ -2517,9 +2424,9 @@ func testGenerationDetails(dir, generationID string) store.RuntimeGenerationDeta
 		NetnsName:                  "harness-gen-" + generationID,
 		NftTableName:               hostEgressTableName(generationID),
 		EgressPolicyDigest:         "egress_digest",
-		Agent:                      "claude_code",
+		Agent:                      "pi",
 		Model:                      "sonnet",
-		OutputFormat:               "stream-json",
+		OutputFormat:               agents.PiEventSchemaVersion,
 		DisableNonessentialTraffic: true,
 		SandboxUID:                 testSandboxUID(),
 		SandboxGID:                 testSandboxGID(),
@@ -2641,14 +2548,14 @@ func testControlManifest() controlManifest {
 		AttemptID:                "attempt-1",
 		NetworkProfileID:         "net_a",
 		AgentRuntimeProfileID:    "arp_a",
-		DriverID:                 "claude_code",
+		DriverID:                 "pi",
 		BridgeProtocolVersion:    2,
 		TurnInputSchema:          "RunTurn",
 		RunscPlatform:            "systrap",
 		RunscVersion:             "runsc test",
 		SandboxModelProxyBaseURL: "http://harness-model-proxy.internal:8082",
 		Model:                    "sonnet",
-		OutputFormat:             "stream-json",
+		OutputFormat:             agents.PiEventSchemaVersion,
 		WorkspacePath:            "/workspace",
 		AgentHomePath:            "/agent-home",
 		BundleDigest:             "bundle_digest",
@@ -2657,7 +2564,7 @@ func testControlManifest() controlManifest {
 		EgressPolicyDigest:       "egress_digest",
 		ManifestVersion:          1,
 		DriverRuntime: map[string]any{
-			"claude_code_disable_nonessential_traffic": true,
+			"pi_offline": true,
 		},
 	}
 }

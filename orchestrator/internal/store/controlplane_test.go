@@ -1420,7 +1420,7 @@ func assertColumnExists(t *testing.T, db *sql.DB, table, column string) {
 
 func createStoreSession(t *testing.T, ctx context.Context, st *Store, id string) {
 	t.Helper()
-	createStoreSessionWithAgent(t, ctx, st, id, "claude_code")
+	createStoreSessionWithAgent(t, ctx, st, id, "pi")
 }
 
 func createStoreSessionWithAgent(t *testing.T, ctx context.Context, st *Store, id, agent string) {
@@ -1493,7 +1493,7 @@ INSERT INTO agent_runtime_profiles (
   sandbox_supplemental_gids, requires_secret_drop, model_access_allowed,
   manifest_model_proxy_base_url, model_proxy_api_key_secret_id,
   model_proxy_auth_token_secret_id, secret_version, created_at
-) VALUES (?, 'claude_code', NULL, 'stream-json', 1, 65534, 65534, '[]', 0, 1,
+) VALUES (?, 'pi', NULL, 'pi_rpc_events_v1.0', 1, 65534, 65534, '[]', 0, 1,
   'http://harness-model-proxy.internal:8082',
   'anthropic_proxy_api_key',
   'anthropic_proxy_auth_token',
@@ -1509,7 +1509,7 @@ INSERT INTO runtime_generations (
 		generationID, sessionID, networkProfileID, agentRuntimeProfileID, SandboxContractVersion, owner, formatTime(expires), formatTime(now)); err != nil {
 		t.Fatalf("insert generation: %v", err)
 	}
-	payload, digest, err := canonicalBootstrapDriverState("claude_code", "bootstrap-"+sessionID)
+	payload, digest, err := canonicalBootstrapDriverState("pi")
 	if err != nil {
 		t.Fatalf("build driver state: %v", err)
 	}
@@ -1517,7 +1517,7 @@ INSERT INTO runtime_generations (
 INSERT INTO session_driver_states (
   session_id, driver_id, state_payload, state_digest, state_version,
   updated_generation_id, updated_turn_id, updated_at
-) VALUES (?, 'claude_code', ?, ?, 1, ?, NULL, ?)
+) VALUES (?, 'pi', ?, ?, 1, ?, NULL, ?)
 ON CONFLICT(session_id, driver_id) DO NOTHING`,
 		sessionID, string(payload), digest, generationID, formatTime(now)); err != nil {
 		t.Fatalf("insert driver state: %v", err)

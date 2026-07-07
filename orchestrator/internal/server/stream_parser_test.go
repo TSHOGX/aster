@@ -32,7 +32,7 @@ func newParserTestServer(t *testing.T) (*Server, *store.Store) {
 		ID:        "sess_1",
 		UserID:    "lab",
 		Status:    string(sessionstate.RunningActive),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: t.TempDir(),
 		RestoreID: "phase3-sess_1",
 		CreatedAt: now,
@@ -48,58 +48,12 @@ func newParserTestServer(t *testing.T) (*Server, *store.Store) {
 	}, st
 }
 
-func TestStreamParserCompletesOnClaudeResultWithoutDuplicate(t *testing.T) {
-	srv, st := newParserTestServer(t)
-	parser := newStreamParser(srv, "sess_1", "claude_code")
-
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"hi"}]}}`})
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"result","subtype":"success","result":"hi"}`})
-
-	select {
-	case <-parser.Done():
-	case <-time.After(time.Second):
-		t.Fatal("parser did not complete after result event")
-	}
-
-	messages, err := st.ListMessages(context.Background(), "sess_1")
-	if err != nil {
-		t.Fatalf("list messages: %v", err)
-	}
-	if len(messages) != 1 {
-		t.Fatalf("expected one assistant message, got %d: %+v", len(messages), messages)
-	}
-	if messages[0].Role != "assistant" || messages[0].Content != "hi" {
-		t.Fatalf("unexpected assistant message: %+v", messages[0])
-	}
-}
-
-func TestStreamParserPersistsResultWhenAssistantMessageIsMissing(t *testing.T) {
-	srv, st := newParserTestServer(t)
-	parser := newStreamParser(srv, "sess_1", "claude_code")
-
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"result","subtype":"success","result":"hi"}`})
-
-	select {
-	case <-parser.Done():
-	case <-time.After(time.Second):
-		t.Fatal("parser did not complete after result event")
-	}
-
-	messages, err := st.ListMessages(context.Background(), "sess_1")
-	if err != nil {
-		t.Fatalf("list messages: %v", err)
-	}
-	if len(messages) != 1 || messages[0].Content != "hi" {
-		t.Fatalf("expected result text to be persisted, got %+v", messages)
-	}
-}
-
 func TestBridgeOutputReusesParserAcrossTurn(t *testing.T) {
 	srv, st := newParserTestServer(t)
 	turnID := int64(7)
 	generationID := "gen_1"
-	assistantLine := `{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"hi"}]}}`
-	resultLine := `{"type":"result","subtype":"success","result":"hi"}`
+	assistantLine := `{"type":"message_update","messageId":"msg_1","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"hi"}}`
+	resultLine := `{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`
 
 	srv.handleBridgeOutput(context.Background(), bridge.Envelope{
 		Type:         bridge.TypeEmitOutput,
@@ -139,43 +93,6 @@ func TestBridgeOutputReusesParserAcrossTurn(t *testing.T) {
 	}
 }
 
-func TestStreamParserIgnoresClaudeThinkingAndToolDeltas(t *testing.T) {
-	srv, _ := newParserTestServer(t)
-	parser := newStreamParser(srv, "sess_1", "claude_code")
-	ch, cancel := srv.hub.Subscribe("sess_1")
-	defer cancel()
-
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking files"},"message":{"id":"msg_1"}}}`})
-	assertNoParserEvent(t, ch)
-
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\""},"message":{"id":"msg_1"}}}`})
-	assertNoParserEvent(t, ch)
-}
-
-func TestStreamParserDoesNotFailSessionOnClaudeExecutionError(t *testing.T) {
-	srv, st := newParserTestServer(t)
-	parser := newStreamParser(srv, "sess_1", "claude_code")
-
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"result","subtype":"error_during_execution"}`})
-
-	select {
-	case <-parser.Done():
-	case <-time.After(time.Second):
-		t.Fatal("parser did not complete after error result event")
-	}
-	if err := parser.Err(); err != nil {
-		t.Fatalf("claude turn execution error should not fail the session: %v", err)
-	}
-
-	messages, err := st.ListMessages(context.Background(), "sess_1")
-	if err != nil {
-		t.Fatalf("list messages: %v", err)
-	}
-	if len(messages) != 1 || messages[0].Content != "Claude turn ended with error_during_execution." {
-		t.Fatalf("expected turn error message to be persisted, got %+v", messages)
-	}
-}
-
 func bridgeOutputPayload(t *testing.T, sequence int64, line string) json.RawMessage {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{
@@ -189,30 +106,6 @@ func bridgeOutputPayload(t *testing.T, sequence int64, line string) json.RawMess
 		t.Fatalf("marshal bridge output: %v", err)
 	}
 	return payload
-}
-
-func TestStreamParserPersistsNonSuccessResultText(t *testing.T) {
-	srv, st := newParserTestServer(t)
-	parser := newStreamParser(srv, "sess_1", "claude_code")
-
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"result","subtype":"error_during_execution","result":"API Error: 400 {\"detail\":\"Erro\"}"}`})
-
-	select {
-	case <-parser.Done():
-	case <-time.After(time.Second):
-		t.Fatal("parser did not complete after error result event")
-	}
-	if err := parser.Err(); err != nil {
-		t.Fatalf("claude turn execution error should not fail the session: %v", err)
-	}
-
-	messages, err := st.ListMessages(context.Background(), "sess_1")
-	if err != nil {
-		t.Fatalf("list messages: %v", err)
-	}
-	if len(messages) != 1 || messages[0].Content != `API Error: 400 {"detail":"Erro"}` {
-		t.Fatalf("expected result error text to be persisted, got %+v", messages)
-	}
 }
 
 func TestStreamParserPersistsShellOutputAndCompletesOnTurnDone(t *testing.T) {
@@ -544,14 +437,5 @@ func TestNativeEventsOutputNormalizerRejectsUnknownType(t *testing.T) {
 	}
 	if err := parser.Err(); err == nil || err.Error() != `unsupported native event type "agent.future"` {
 		t.Fatalf("unexpected native parser error: %v", err)
-	}
-}
-
-func assertNoParserEvent(t *testing.T, ch <-chan events.Event) {
-	t.Helper()
-	select {
-	case event := <-ch:
-		t.Fatalf("expected no parser event, got %+v", event)
-	case <-time.After(20 * time.Millisecond):
 	}
 }

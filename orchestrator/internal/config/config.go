@@ -47,20 +47,9 @@ type Config struct {
 	Agents               map[string]AgentConfig
 	ModelProfiles        map[string]ModelProfileConfig
 	RuntimeProviders     map[string]RuntimeProviderConfig
-	Claude               ClaudeConfig
 	ModelProxy           ModelProxyConfig
 	Harness              HarnessConfig
 	Warnings             []string
-}
-
-type ClaudeConfig struct {
-	ProxyBindURL               string `yaml:"proxy_bind_url"`
-	SandboxBaseURL             string `yaml:"sandbox_base_url"`
-	APIKey                     string `yaml:"api_key"`
-	AuthToken                  string `yaml:"auth_token"`
-	Model                      string `yaml:"model"`
-	OutputFormat               string `yaml:"output_format"`
-	DisableNonessentialTraffic bool   `yaml:"disable_nonessential_traffic"`
 }
 
 type ModelProxyConfig struct {
@@ -336,7 +325,6 @@ func Load() (Config, error) {
 		MaxSessions:          maxSessions,
 		RunscNetwork:         "sandbox",
 		RunscOverlay2:        "none",
-		Claude:               projectConfig.Claude,
 		ModelProxy:           projectConfig.Harness.ModelProxy,
 		Harness:              projectConfig.Harness,
 	}
@@ -354,9 +342,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.ModelProxy = cfg.Harness.ModelProxy
-	cfg.Claude = normalizeClaudeConfig(cfg.Claude)
-	cfg.Claude = syncClaudeModelProxy(cfg.Claude, cfg.ModelProxy)
-	cfg.Claude = syncClaudeDeploymentConfig(cfg.Claude, cfg.Harness)
 	cfg.Warnings = harnessConfigWarnings(cfg.Harness)
 	return cfg, nil
 }
@@ -377,13 +362,11 @@ func validateDefaultAgentDriver(driverID agents.ID, agentConfigs map[string]Agen
 
 type projectConfig struct {
 	Harness HarnessConfig
-	Claude  ClaudeConfig
 }
 
 func loadProjectConfig(path string) (projectConfig, error) {
 	cfg := projectConfig{
 		Harness: defaultHarnessConfig(),
-		Claude:  defaultClaudeConfig(),
 	}
 
 	data, err := os.ReadFile(path)
@@ -412,7 +395,6 @@ func loadProjectConfig(path string) (projectConfig, error) {
 }
 
 func finalizeProjectConfig(path string, cfg projectConfig) (projectConfig, error) {
-	cfg.Claude = normalizeClaudeConfig(cfg.Claude)
 	cfg.Harness = normalizeHarnessConfig(cfg.Harness)
 	if err := validateDeploymentConfig(cfg.Harness); err != nil {
 		return cfg, fmt.Errorf("load %s: %w", path, err)
@@ -420,16 +402,14 @@ func finalizeProjectConfig(path string, cfg projectConfig) (projectConfig, error
 	if err := validateModelProxyConfig(cfg.Harness.ModelProxy); err != nil {
 		return cfg, fmt.Errorf("load %s: %w", path, err)
 	}
-	cfg.Claude = syncClaudeModelProxy(cfg.Claude, cfg.Harness.ModelProxy)
-	cfg.Claude = syncClaudeDeploymentConfig(cfg.Claude, cfg.Harness)
 	return cfg, nil
 }
 
 func defaultHarnessConfig() HarnessConfig {
 	return HarnessConfig{
-		DefaultAgent:     string(agents.ClaudeCode),
-		Agents:           defaultAgentConfigs(defaultClaudeConfig()),
-		ModelProfiles:    defaultModelProfileConfigs(defaultClaudeConfig()),
+		DefaultAgent:     string(agents.Pi),
+		Agents:           defaultAgentConfigs(),
+		ModelProfiles:    defaultModelProfileConfigs(),
 		RuntimeProviders: defaultRuntimeProviderConfigs(),
 		RunDir:           "/var/lib/harness/run",
 		SessionRetention: Duration{Duration: 0},
@@ -495,12 +475,12 @@ func defaultHarnessConfig() HarnessConfig {
 }
 
 func normalizeHarnessConfig(cfg HarnessConfig) HarnessConfig {
-	cfg.DefaultAgent = defaultString(cfg.DefaultAgent, string(agents.ClaudeCode))
+	cfg.DefaultAgent = defaultString(cfg.DefaultAgent, string(agents.Pi))
 	if canonical, err := agents.CanonicalDriverID(cfg.DefaultAgent); err == nil {
 		cfg.DefaultAgent = string(canonical)
 	}
-	cfg.Agents = normalizeAgentConfigs(cfg.Agents, defaultClaudeConfig())
-	cfg.ModelProfiles = normalizeModelProfileConfigs(cfg.ModelProfiles, defaultClaudeConfig())
+	cfg.Agents = normalizeAgentConfigs(cfg.Agents)
+	cfg.ModelProfiles = normalizeModelProfileConfigs(cfg.ModelProfiles)
 	cfg.RuntimeProviders = normalizeRuntimeProviderConfigs(cfg.RuntimeProviders)
 	cfg.SandboxIdentity = NormalizeSandboxIdentity(cfg.SandboxIdentity)
 	cfg.ModelProxy = normalizeModelProxyConfig(cfg.ModelProxy)
@@ -895,28 +875,8 @@ func validateHosts(field string, values []string) error {
 	return nil
 }
 
-func defaultClaudeConfig() ClaudeConfig {
-	return ClaudeConfig{
-		ProxyBindURL:               defaultModelProxyBindURL,
-		SandboxBaseURL:             defaultSandboxModelProxyBaseURL,
-		APIKey:                     "123",
-		AuthToken:                  "123",
-		Model:                      "sonnet",
-		OutputFormat:               "stream-json",
-		DisableNonessentialTraffic: true,
-	}
-}
-
-func defaultAgentConfigs(claude ClaudeConfig) map[string]AgentConfig {
-	claude = normalizeClaudeConfig(claude)
+func defaultAgentConfigs() map[string]AgentConfig {
 	return map[string]AgentConfig{
-		string(agents.ClaudeCode): {
-			Enabled:                    boolPtr(true),
-			DriverID:                   string(agents.ClaudeCode),
-			ModelProfile:               defaultModelProfileID,
-			RuntimeProvider:            "local_runsc",
-			DisableNonessentialTraffic: boolPtr(claude.DisableNonessentialTraffic),
-		},
 		string(agents.Shell): {
 			Enabled:         boolPtr(true),
 			DriverID:        string(agents.Shell),
@@ -927,14 +887,14 @@ func defaultAgentConfigs(claude ClaudeConfig) map[string]AgentConfig {
 			DriverID:                   string(agents.Pi),
 			ModelProfile:               defaultModelProfileID,
 			RuntimeProvider:            "local_runsc",
-			DisableNonessentialTraffic: boolPtr(claude.DisableNonessentialTraffic),
+			DisableNonessentialTraffic: boolPtr(true),
 		},
 	}
 }
 
-// Default model-access identifiers. The legacy Claude migration, the
-// model-profile validator, and the server-side deployment resolver all
-// reference these, so they must stay in sync.
+// Default model-access identifiers. The model-profile validator and the
+// server-side deployment resolver both reference these, so they must stay in
+// sync.
 const (
 	defaultModelProfileID = "anthropic_default"
 	defaultModelProvider  = "anthropic_messages"
@@ -944,13 +904,12 @@ const (
 	DefaultModelProxyRef = "model_proxy"
 )
 
-func defaultModelProfileConfigs(claude ClaudeConfig) map[string]ModelProfileConfig {
-	claude = normalizeClaudeConfig(claude)
+func defaultModelProfileConfigs() map[string]ModelProfileConfig {
 	return map[string]ModelProfileConfig{
 		defaultModelProfileID: {
 			Enabled:  boolPtr(true),
 			Provider: defaultModelProvider,
-			Model:    claude.Model,
+			Model:    "sonnet",
 			ProxyRef: DefaultModelProxyRef,
 		},
 	}
@@ -966,8 +925,8 @@ func defaultRuntimeProviderConfigs() map[string]RuntimeProviderConfig {
 	}
 }
 
-func normalizeAgentConfigs(raw map[string]AgentConfig, claude ClaudeConfig) map[string]AgentConfig {
-	defaults := defaultAgentConfigs(claude)
+func normalizeAgentConfigs(raw map[string]AgentConfig) map[string]AgentConfig {
+	defaults := defaultAgentConfigs()
 	if len(raw) == 0 {
 		return cloneAgentConfigs(defaults)
 	}
@@ -1009,8 +968,8 @@ func normalizeAgentConfigs(raw map[string]AgentConfig, claude ClaudeConfig) map[
 	return normalized
 }
 
-func normalizeModelProfileConfigs(raw map[string]ModelProfileConfig, claude ClaudeConfig) map[string]ModelProfileConfig {
-	defaults := defaultModelProfileConfigs(claude)
+func normalizeModelProfileConfigs(raw map[string]ModelProfileConfig) map[string]ModelProfileConfig {
+	defaults := defaultModelProfileConfigs()
 	if len(raw) == 0 {
 		return cloneModelProfileConfigs(defaults)
 	}
@@ -1134,18 +1093,6 @@ func validateDeploymentConfig(cfg HarnessConfig) error {
 	return nil
 }
 
-func syncClaudeDeploymentConfig(claude ClaudeConfig, harness HarnessConfig) ClaudeConfig {
-	if _, agentCfg, ok := EnabledAgentConfigForDriver(harness.Agents, string(agents.ClaudeCode)); ok {
-		if agentCfg.DisableNonessentialTraffic != nil {
-			claude.DisableNonessentialTraffic = *agentCfg.DisableNonessentialTraffic
-		}
-		if profile, ok := harness.ModelProfiles[agentCfg.ModelProfile]; ok && strings.TrimSpace(profile.Model) != "" {
-			claude.Model = strings.TrimSpace(profile.Model)
-		}
-	}
-	return claude
-}
-
 // EnabledAgentConfigForDriver returns the agent-config key and config of the
 // first enabled agent (in sorted key order) whose canonical driver matches
 // driverID.
@@ -1173,11 +1120,11 @@ func EnabledAgentConfigForDriver(agentConfigs map[string]AgentConfig, driverID s
 }
 
 func (c Config) DeploymentAgents() map[string]AgentConfig {
-	return normalizeAgentConfigs(c.Agents, c.Claude)
+	return normalizeAgentConfigs(c.Agents)
 }
 
 func (c Config) DeploymentModelProfiles() map[string]ModelProfileConfig {
-	return normalizeModelProfileConfigs(c.ModelProfiles, c.Claude)
+	return normalizeModelProfileConfigs(c.ModelProfiles)
 }
 
 func (c Config) DeploymentRuntimeProviders() map[string]RuntimeProviderConfig {
@@ -1241,22 +1188,6 @@ func boolPtr(value bool) *bool {
 	return &value
 }
 
-func normalizeClaudeConfig(cfg ClaudeConfig) ClaudeConfig {
-	cfg.ProxyBindURL = defaultString(cfg.ProxyBindURL, defaultModelProxyBindURL)
-	cfg.SandboxBaseURL = defaultString(cfg.SandboxBaseURL, defaultSandboxModelProxyBaseURLForBindURL(cfg.ProxyBindURL))
-	cfg.APIKey = defaultString(cfg.APIKey, "123")
-	cfg.AuthToken = defaultString(cfg.AuthToken, cfg.APIKey)
-	cfg.Model = defaultString(cfg.Model, "sonnet")
-	cfg.OutputFormat = defaultString(cfg.OutputFormat, "stream-json")
-	return cfg
-}
-
-func syncClaudeModelProxy(claude ClaudeConfig, modelProxy ModelProxyConfig) ClaudeConfig {
-	claude.ProxyBindURL = modelProxy.BindURL
-	claude.SandboxBaseURL = modelProxy.SandboxBaseURL
-	return claude
-}
-
 func normalizeModelProxyConfig(cfg ModelProxyConfig) ModelProxyConfig {
 	cfg.BindURL = defaultString(cfg.BindURL, defaultModelProxyBindURL)
 	if port, err := parseModelProxyBindPort(cfg.BindURL); err == nil {
@@ -1274,14 +1205,6 @@ func validateModelProxyConfig(cfg ModelProxyConfig) error {
 		return err
 	}
 	return validateModelProxySandboxBaseURL(cfg.SandboxBaseURL, bindPort)
-}
-
-func defaultSandboxModelProxyBaseURLForBindURL(bindURL string) string {
-	port, err := parseModelProxyBindPort(bindURL)
-	if err != nil {
-		return defaultSandboxModelProxyBaseURL
-	}
-	return defaultSandboxModelProxyBaseURLForPort(port)
 }
 
 func defaultSandboxModelProxyBaseURLForPort(port int) string {

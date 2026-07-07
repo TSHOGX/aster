@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/sessionstate"
 )
 
@@ -25,12 +26,6 @@ func TestResourceAllocatorConfigModelCredentialDefaultsUseDriverSpec(t *testing.
 		wantAccess   bool
 		wantHostOnly bool
 	}{
-		{
-			name:         "claude default",
-			cfg:          ResourceAllocatorConfig{Agent: "claude_code"},
-			wantAccess:   true,
-			wantHostOnly: true,
-		},
 		{
 			name:         "pi default",
 			cfg:          ResourceAllocatorConfig{Agent: "pi"},
@@ -50,8 +45,8 @@ func TestResourceAllocatorConfigModelCredentialDefaultsUseDriverSpec(t *testing.
 			wantHostOnly: false,
 		},
 		{
-			name:         "explicit claude deny",
-			cfg:          ResourceAllocatorConfig{Agent: "claude_code", ModelAccessAllowed: boolPtr(false)},
+			name:         "explicit pi deny",
+			cfg:          ResourceAllocatorConfig{Agent: "pi", ModelAccessAllowed: boolPtr(false)},
 			wantAccess:   false,
 			wantHostOnly: true,
 		},
@@ -126,7 +121,7 @@ WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&generationStatus, &ne
 		details.AnthropicAPIKeySecretID != "" ||
 		details.AnthropicAuthTokenSecretID != "" ||
 		details.SecretVersion != "" {
-		t.Fatalf("claude generation should not carry sandbox secrets: %+v", details)
+		t.Fatalf("generation should not carry sandbox secrets: %+v", details)
 	}
 	if details.RunscContainerID != "harness-gen-"+allocation.GenerationID {
 		t.Fatalf("runsc container id = %q, want generation-scoped id", details.RunscContainerID)
@@ -166,7 +161,7 @@ WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&generationStatus, &ne
 		t.Fatalf("manifest model proxy base URL = %q, want default alias", details.ManifestAnthropicBaseURL)
 	}
 	if details.NetworkHostsPath == "" {
-		t.Fatalf("claude generation should allocate network hosts alias projection: %+v", details)
+		t.Fatalf("generation should allocate network hosts alias projection: %+v", details)
 	}
 
 	if err := st.MarkGenerationResourcesLive(ctx, "sess_alloc", allocation.GenerationID, allocation.Owner, now.Add(time.Second)); err != nil {
@@ -453,7 +448,7 @@ func TestAllocateGenerationSnapshotsSessionAutoCheckpointPolicy(t *testing.T) {
 		ID:                    "sess_policy",
 		UserID:                "lab",
 		Status:                string(sessionstate.Created),
-		Agent:                 "claude_code",
+		Agent:                 "pi",
 		Workspace:             filepath.Join(t.TempDir(), "sess_policy"),
 		RestoreID:             "phase3-sess_policy",
 		AutoCheckpointEnabled: true,
@@ -919,49 +914,49 @@ func TestAllocateShellGenerationHasNoSecretReferences(t *testing.T) {
 	}
 }
 
-func TestAllocateClaudeHostOnlyGenerationHasNoSecretReferences(t *testing.T) {
+func TestAllocatePiHostOnlyGenerationHasNoSecretReferences(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
-	createStoreSession(t, ctx, st, "sess_claude_host_only")
+	createStoreSession(t, ctx, st, "sess_pi_host_only")
 	cfg := testAllocatorConfig(t)
 	cfg.ProviderCredentialsHostOnly = true
 	cfg.SandboxModelProxyBaseURL = "http://harness-model-proxy.internal:8082"
 
 	allocation, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
-		SessionID: "sess_claude_host_only",
+		SessionID: "sess_pi_host_only",
 		Owner:     GenerationLeaseOwner(owner.UUID),
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
 		Config:    cfg,
 	})
 	if err != nil {
-		t.Fatalf("allocate host-only claude generation: %v", err)
+		t.Fatalf("allocate host-only pi generation: %v", err)
 	}
-	details, err := st.GetRuntimeGenerationDetails(ctx, "sess_claude_host_only", allocation.GenerationID)
+	details, err := st.GetRuntimeGenerationDetails(ctx, "sess_pi_host_only", allocation.GenerationID)
 	if err != nil {
-		t.Fatalf("get host-only claude generation details: %v", err)
+		t.Fatalf("get host-only pi generation details: %v", err)
 	}
-	if details.Agent != "claude_code" ||
+	if details.Agent != "pi" ||
 		details.RequiresSecretDrop ||
 		details.SecretsDirPath != "" ||
 		details.AnthropicAPIKeySecretID != "" ||
 		details.AnthropicAuthTokenSecretID != "" ||
 		details.SecretVersion != "" {
-		t.Fatalf("host-only claude generation should not carry secrets: %+v", details)
+		t.Fatalf("host-only pi generation should not carry secrets: %+v", details)
 	}
 	wantHostsSuffix := filepath.Join("network", "gen-"+allocation.GenerationID, "hosts")
 	if details.NetworkHostsPath == "" || !strings.HasSuffix(details.NetworkHostsPath, wantHostsSuffix) {
-		t.Fatalf("host-only claude generation should carry network hosts projection path ending %q: %+v", wantHostsSuffix, details)
+		t.Fatalf("host-only pi generation should carry network hosts projection path ending %q: %+v", wantHostsSuffix, details)
 	}
 	if !details.ModelAccessAllowed {
-		t.Fatalf("host-only claude generation should allow model access: %+v", details)
+		t.Fatalf("host-only pi generation should allow model access: %+v", details)
 	}
 	if details.ManifestAnthropicBaseURL != "http://harness-model-proxy.internal:8082" {
 		t.Fatalf("manifest base url = %q", details.ManifestAnthropicBaseURL)
 	}
 }
 
-func TestAllocateClaudeRejectsInvalidSandboxModelProxyBaseURL(t *testing.T) {
+func TestAllocatePiRejectsInvalidSandboxModelProxyBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string
 		baseURL string
@@ -1010,7 +1005,7 @@ func TestAllocateClaudeRejectsInvalidSandboxModelProxyBaseURL(t *testing.T) {
 	}
 }
 
-func TestAllocateClaudeRejectsMismatchedSandboxModelProxyPort(t *testing.T) {
+func TestAllocatePiRejectsMismatchedSandboxModelProxyPort(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_invalid_proxy_port")
@@ -1030,7 +1025,7 @@ func TestAllocateClaudeRejectsMismatchedSandboxModelProxyPort(t *testing.T) {
 	}
 }
 
-func TestAllocateClaudeModelAccessDisabledOmitsProxyAliasProjection(t *testing.T) {
+func TestAllocatePiModelAccessDisabledOmitsProxyAliasProjection(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_model_disabled")
@@ -1046,7 +1041,7 @@ func TestAllocateClaudeModelAccessDisabledOmitsProxyAliasProjection(t *testing.T
 		Config:    cfg,
 	})
 	if err != nil {
-		t.Fatalf("allocate model-disabled claude generation: %v", err)
+		t.Fatalf("allocate model-disabled pi generation: %v", err)
 	}
 	details, err := st.GetRuntimeGenerationDetails(ctx, "sess_model_disabled", allocation.GenerationID)
 	if err != nil {
@@ -2314,7 +2309,7 @@ func TestSweepExpiredSessionsDestroysAndRejectsInputState(t *testing.T) {
 		ID:        "sess_expired",
 		UserID:    "lab",
 		Status:    string(sessionstate.Created),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: filepath.Join(t.TempDir(), "sess_expired"),
 		RestoreID: "phase3-sess_expired",
 		CreatedAt: now.Add(-time.Hour),
@@ -2342,7 +2337,7 @@ func TestSweepExpiredSessionsDestroysAndRejectsInputState(t *testing.T) {
 		ID:        "sess_expired_allocated",
 		UserID:    "lab",
 		Status:    string(sessionstate.RunningIdle),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: filepath.Join(t.TempDir(), "sess_expired_allocated"),
 		RestoreID: "phase3-sess_expired_allocated",
 		CreatedAt: now.Add(-time.Hour),
@@ -2393,7 +2388,7 @@ func TestSweepExpiredSessionsIgnoresNullExpiry(t *testing.T) {
 		ID:        "sess_no_expiry",
 		UserID:    "lab",
 		Status:    string(sessionstate.Created),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: filepath.Join(t.TempDir(), "sess_no_expiry"),
 		RestoreID: "phase3-sess_no_expiry",
 		CreatedAt: now.Add(-time.Hour),
@@ -2429,7 +2424,7 @@ func TestClearActiveSessionExpiryClearsOnlyActiveSessions(t *testing.T) {
 			ID:        "sess_active_legacy_expiry",
 			UserID:    "lab",
 			Status:    string(sessionstate.RunningIdle),
-			Agent:     "claude_code",
+			Agent:     "pi",
 			Workspace: filepath.Join(t.TempDir(), "sess_active_legacy_expiry"),
 			RestoreID: "phase3-sess_active_legacy_expiry",
 			CreatedAt: now.Add(-2 * time.Hour),
@@ -2440,7 +2435,7 @@ func TestClearActiveSessionExpiryClearsOnlyActiveSessions(t *testing.T) {
 			ID:        "sess_failed_legacy_expiry",
 			UserID:    "lab",
 			Status:    string(sessionstate.Failed),
-			Agent:     "claude_code",
+			Agent:     "pi",
 			Workspace: filepath.Join(t.TempDir(), "sess_failed_legacy_expiry"),
 			RestoreID: "phase3-sess_failed_legacy_expiry",
 			CreatedAt: now.Add(-2 * time.Hour),
@@ -2451,7 +2446,7 @@ func TestClearActiveSessionExpiryClearsOnlyActiveSessions(t *testing.T) {
 			ID:        "sess_destroyed_legacy_expiry",
 			UserID:    "lab",
 			Status:    string(sessionstate.Destroyed),
-			Agent:     "claude_code",
+			Agent:     "pi",
 			Workspace: filepath.Join(t.TempDir(), "sess_destroyed_legacy_expiry"),
 			RestoreID: "phase3-sess_destroyed_legacy_expiry",
 			CreatedAt: now.Add(-2 * time.Hour),
@@ -2508,7 +2503,7 @@ func TestSweepExpiredSessionsCancelsUnstartedTurnsButPreservesAckStartedLease(t 
 		ID:        "sess_expired_queued",
 		UserID:    "lab",
 		Status:    string(sessionstate.RunningIdle),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: filepath.Join(t.TempDir(), "sess_expired_queued"),
 		RestoreID: "phase3-sess_expired_queued",
 		CreatedAt: now.Add(-time.Hour),
@@ -2526,7 +2521,7 @@ func TestSweepExpiredSessionsCancelsUnstartedTurnsButPreservesAckStartedLease(t 
 		ID:        "sess_expired_ack",
 		UserID:    "lab",
 		Status:    string(sessionstate.RunningActive),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: filepath.Join(t.TempDir(), "sess_expired_ack"),
 		RestoreID: "phase3-sess_expired_ack",
 		CreatedAt: now.Add(-time.Hour),
@@ -2863,7 +2858,7 @@ func createAutoCheckpointGeneration(t *testing.T, ctx context.Context, st *Store
 		ID:                    sessionID,
 		UserID:                "lab",
 		Status:                string(sessionstate.Created),
-		Agent:                 "claude_code",
+		Agent:                 "pi",
 		Workspace:             filepath.Join(t.TempDir(), sessionID),
 		RestoreID:             "phase3-" + sessionID,
 		AutoCheckpointEnabled: true,
@@ -3064,9 +3059,9 @@ func testAllocatorConfig(t *testing.T) ResourceAllocatorConfig {
 		EgressDNSPolicy:            "hostnames_only",
 		HostProxyBindURL:           "http://0.0.0.0:8082",
 		ProxyPort:                  8082,
-		Agent:                      "claude_code",
+		Agent:                      "pi",
 		AgentModel:                 "sonnet",
-		AgentOutputFormat:          "stream-json",
+		AgentOutputFormat:          agents.PiEventSchemaVersion,
 		DisableNonessentialTraffic: true,
 		SandboxUID:                 7000,
 		SandboxGID:                 7001,

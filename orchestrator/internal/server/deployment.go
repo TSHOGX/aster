@@ -56,7 +56,7 @@ func (s *Server) resolveModeDeployment(mode string) (deploymentResolution, *depl
 	case "agent":
 		defaultAgent := strings.TrimSpace(s.cfg.DefaultAgent)
 		if defaultAgent == "" {
-			defaultAgent = string(agents.ClaudeCode)
+			defaultAgent = string(agents.Pi)
 		}
 		driverID, err := agents.CanonicalDriverID(defaultAgent)
 		if err != nil {
@@ -359,8 +359,8 @@ func syntheticManifestDriver(spec agents.DriverSpec) imageManifestDriver {
 
 // manifestPackageVersion reports the version recorded in the agent image
 // manifest for a driver. A pinned version is used verbatim; a named package
-// with no pinned version (e.g. the bundled claude_code driver) is recorded as
-// "bundled"; a driver with no package (e.g. shell) has no version.
+// with no pinned version is recorded as "bundled"; a driver with no package
+// (e.g. shell) has no version.
 func manifestPackageVersion(facts agents.DriverPackageFacts) string {
 	switch {
 	case strings.TrimSpace(facts.Version) != "":
@@ -436,8 +436,8 @@ func validateDriverPackageFacts(driver imageManifestDriver, driverID agents.ID) 
 
 func expectedDriverBinaryPath(driverID agents.ID) string {
 	spec, ok := agents.DriverSpecFor(string(driverID))
-	if !ok || strings.TrimSpace(spec.BinaryPath) == "" {
-		return agents.ClaudeCodeBinaryPath
+	if !ok {
+		return ""
 	}
 	return spec.BinaryPath
 }
@@ -543,7 +543,7 @@ func (s *Server) sandboxContractInputEvidenceFor(session store.Session, driverID
 	}
 	defaultAgent := strings.TrimSpace(s.cfg.DefaultAgent)
 	if defaultAgent == "" {
-		defaultAgent = string(agents.ClaudeCode)
+		defaultAgent = string(agents.Pi)
 	}
 	if canonical, err := agents.CanonicalDriverID(defaultAgent); err == nil {
 		defaultAgent = string(canonical)

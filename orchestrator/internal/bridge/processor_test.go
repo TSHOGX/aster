@@ -54,7 +54,7 @@ func TestProcessorRequiresHelloAndProbeBeforeClaimGrant(t *testing.T) {
 		Type:         TypeHello,
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
-		Payload:      bridgeHelloPayloadForTest("claude_code"),
+		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
 	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
 		t.Fatalf("process hello: %v", err)
@@ -91,7 +91,7 @@ func TestProcessorRequiresHelloAndProbeBeforeClaimGrant(t *testing.T) {
 	if grant.Input.Content != "hello bridge" || grant.TurnID == 0 || grant.Sequence != 1 || grant.TurnInputSchema != "RunTurn" {
 		t.Fatalf("unexpected grant: %+v", grant)
 	}
-	if grant.DriverState == nil || grant.DriverState.DriverID != "claude_code" || grant.DriverState.StateVersion != 1 || !strings.HasPrefix(grant.DriverState.StateDigest, "sha256:") {
+	if grant.DriverState == nil || grant.DriverState.DriverID != "pi" || grant.DriverState.StateVersion != 1 || !strings.HasPrefix(grant.DriverState.StateDigest, "sha256:") {
 		t.Fatalf("grant missing driver state token: %+v", grant.DriverState)
 	}
 }
@@ -103,9 +103,9 @@ func TestProcessorRejectsInvalidV2Hello(t *testing.T) {
 		want    string
 	}{
 		{name: "missing payload", want: "hello requires protocol_version"},
-		{name: "protocol v1", payload: json.RawMessage(`{"protocol_version":1,"driver_id":"claude_code","turn_input_schema":"RunTurn"}`), want: "unsupported bridge protocol_version 1"},
+		{name: "protocol v1", payload: json.RawMessage(`{"protocol_version":1,"driver_id":"pi","turn_input_schema":"RunTurn"}`), want: "unsupported bridge protocol_version 1"},
 		{name: "driver mismatch", payload: json.RawMessage(`{"protocol_version":2,"driver_id":"sh","turn_input_schema":"RunTurn"}`), want: "does not match generation driver"},
-		{name: "schema mismatch", payload: json.RawMessage(`{"protocol_version":2,"driver_id":"claude_code","turn_input_schema":"legacy"}`), want: "unsupported turn_input_schema"},
+		{name: "schema mismatch", payload: json.RawMessage(`{"protocol_version":2,"driver_id":"pi","turn_input_schema":"legacy"}`), want: "unsupported turn_input_schema"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,7 +263,7 @@ WHERE id = ?`, turnID).Scan(&turnStatus, &turnGeneration, &turnOwner); err != ni
 		Type:         TypeHello,
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
-		Payload:      bridgeHelloPayloadForTest("claude_code"),
+		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
 	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
 		t.Fatalf("process restore hello: %v", err)
@@ -573,7 +573,7 @@ WHERE id = ?`, store.GenerationLeaseOwner("previous-owner"), formatStoreTimeForB
 		Type:         TypeHello,
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
-		Payload:      bridgeHelloPayloadForTest("claude_code"),
+		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
 	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
 		t.Fatalf("process hello: %v", err)
@@ -761,7 +761,7 @@ func TestProcessorDedupesMidStreamOutputReplayUnderLoad(t *testing.T) {
 		Type:         TypeHello,
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
-		Payload:      bridgeHelloPayloadForTest("claude_code"),
+		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
 	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
 		t.Fatalf("process reconnect hello: %v", err)
@@ -958,14 +958,16 @@ func TestProcessorFailsGenerationWhenCompletionCommitFailsAfterOutput(t *testing
 		Payload: json.RawMessage(`{
 			"status":"completed",
 			"driver_state_update":{
-				"driver_id":"claude_code",
+				"driver_id":"pi",
 				"previous_state_digest":"sha256:stale",
 				"state_payload":{
 					"schema_version":1,
-					"driver_id":"claude_code",
-					"state_kind":"claude_session",
-					"claude_session_uuid":"driver-state-test-session",
-					"initialized":true,
+					"driver_id":"pi",
+					"state_kind":"pi_session",
+					"session_dir":"/agent-home/.pi/agent/sessions",
+					"selected_session_relpath":"driver-state-test-session.jsonl",
+					"selected_session_file":"/agent-home/.pi/agent/sessions/driver-state-test-session.jsonl",
+					"selected_session_id":"driver-state-test-session",
 					"last_completed_turn_id":"1"
 				},
 				"state_digest":"sha256:not-the-canonical-digest",
@@ -1236,7 +1238,7 @@ func createBridgeSession(t *testing.T, ctx context.Context, st *store.Store, id 
 		ID:        id,
 		UserID:    "lab",
 		Status:    string(sessionstate.Created),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: workspace,
 		RestoreID: "phase3-" + id,
 		CreatedAt: now,
@@ -1262,7 +1264,7 @@ func allocateBridgeGeneration(t *testing.T, ctx context.Context, st *store.Store
 			EgressDNSPolicy:            "hostnames_only",
 			HostProxyBindURL:           "http://0.0.0.0:8082",
 			ProxyPort:                  8082,
-			Agent:                      "claude_code",
+			Agent:                      "pi",
 			AgentModel:                 "sonnet",
 			AgentOutputFormat:          "stream-json",
 			DisableNonessentialTraffic: true,
@@ -1308,12 +1310,32 @@ func createBridgeRuntimeResourceLive(t *testing.T, ctx context.Context, st *stor
 				"bridge_protocol":                      "harness_bridge_v2",
 				"bridge_protocol_version":              2,
 				"turn_input_schema":                    "RunTurn",
-				"output_schema":                        "claude_stream_json_v1",
+				"output_schema":                        "pi_rpc_events_v1.0",
 				"command_argv_digest":                  "sha256:command",
 				"driver_config_digest":                 "sha256:driver-config",
 				"required_runtime_capabilities_digest": "sha256:driver-capabilities",
 				"supports_interrupt":                   false,
-				"supports_compaction":                  true,
+				"supports_compaction":                  false,
+			},
+			"mount_plan": map[string]any{
+				"driver_config_materializations": map[string]any{
+					"models": map[string]any{
+						"type":                           "bind",
+						"mode":                           "ro",
+						"exact":                          true,
+						"source_projection_path":         "/harness-control/driver/pi/models.json",
+						"sandbox_destination":            "/agent-home/.pi/agent/models.json",
+						"destination_mutable_by_sandbox": false,
+					},
+					"settings": map[string]any{
+						"type":                           "bind",
+						"mode":                           "ro",
+						"exact":                          true,
+						"source_projection_path":         "/harness-control/driver/pi/settings.json",
+						"sandbox_destination":            "/agent-home/.pi/agent/settings.json",
+						"destination_mutable_by_sandbox": false,
+					},
+				},
 			},
 			"runtime_provider": map[string]any{
 				"provider_id":              "local_runsc",
@@ -1338,8 +1360,21 @@ func createBridgeRuntimeResourceLive(t *testing.T, ctx context.Context, st *stor
 			"driver_runtime": map[string]any{
 				"driver_home_mount":             "/agent-home",
 				"generated_driver_config_mount": "/harness-control/driver/" + allocation.DriverState.DriverID,
-				"materialized_driver_config":    map[string]any{},
-				"initial_driver_state_digest":   allocation.DriverState.StateDigest,
+				"materialized_driver_config": map[string]any{
+					"models": map[string]any{
+						"source_projection_path":         "/harness-control/driver/pi/models.json",
+						"source_digest":                  "sha256:models",
+						"sandbox_destination":            "/agent-home/.pi/agent/models.json",
+						"destination_mutable_by_sandbox": false,
+					},
+					"settings": map[string]any{
+						"source_projection_path":         "/harness-control/driver/pi/settings.json",
+						"source_digest":                  "sha256:settings",
+						"sandbox_destination":            "/agent-home/.pi/agent/settings.json",
+						"destination_mutable_by_sandbox": false,
+					},
+				},
+				"initial_driver_state_digest": allocation.DriverState.StateDigest,
 			},
 			"input_digests": map[string]any{
 				"runtime_config_digest": "sha256:runtime-config",

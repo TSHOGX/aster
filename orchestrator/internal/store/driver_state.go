@@ -17,7 +17,6 @@ import (
 const (
 	driverStateDigestPrefix            = "driver_state_digest_v1\n"
 	checkpointDriverStatesDigestPrefix = "checkpoint_driver_states_digest_v1\n"
-	claudeDriverStateKind              = "claude_session"
 	emptyDriverStateKind               = "empty"
 )
 
@@ -46,9 +45,7 @@ type driverStateRow struct {
 	UpdatedAt           time.Time
 }
 
-type driverStateBootstrapContext struct {
-	ClaudeSessionUUID string
-}
+type driverStateBootstrapContext struct{}
 
 type driverStateCodec struct {
 	driverID                             agents.ID
@@ -61,24 +58,6 @@ type driverStateCodec struct {
 
 func driverStateCodecRegistry() map[agents.ID]driverStateCodec {
 	return map[agents.ID]driverStateCodec{
-		agents.ClaudeCode: {
-			driverID: agents.ClaudeCode,
-			bootstrap: func(ctx driverStateBootstrapContext) (any, error) {
-				if strings.TrimSpace(ctx.ClaudeSessionUUID) == "" {
-					return nil, fmt.Errorf("claude session uuid is required")
-				}
-				return map[string]any{
-					"schema_version":         1,
-					"driver_id":              string(agents.ClaudeCode),
-					"state_kind":             claudeDriverStateKind,
-					"claude_session_uuid":    strings.TrimSpace(ctx.ClaudeSessionUUID),
-					"initialized":            false,
-					"last_completed_turn_id": nil,
-				}, nil
-			},
-			validatePayload:             validateClaudeDriverStatePayload,
-			synthesizeCompletedUpdateTx: synthesizeClaudeCompletedDriverStateUpdateTx,
-		},
 		agents.Shell: {
 			driverID: agents.Shell,
 			bootstrap: func(driverStateBootstrapContext) (any, error) {
@@ -153,12 +132,12 @@ func CheckpointDriverStatesDigest(generationID string, states []DriverStateToken
 	return "sha256:" + fmt.Sprintf("%x", sum[:]), nil
 }
 
-func canonicalBootstrapDriverState(driverID, claudeSessionUUID string) ([]byte, string, error) {
+func canonicalBootstrapDriverState(driverID string) ([]byte, string, error) {
 	codec, ok := driverStateCodecFor(driverID)
 	if !ok {
 		return nil, "", fmt.Errorf("unsupported driver %q", driverID)
 	}
-	payload, err := codec.bootstrap(driverStateBootstrapContext{ClaudeSessionUUID: claudeSessionUUID})
+	payload, err := codec.bootstrap(driverStateBootstrapContext{})
 	if err != nil {
 		return nil, "", err
 	}
@@ -204,22 +183,6 @@ func validateDriverStatePayload(canonicalPayload []byte, driverID string) error 
 	return codec.validatePayload(object)
 }
 
-func validateClaudeDriverStatePayload(object map[string]any) error {
-	if got, _ := object["state_kind"].(string); got != claudeDriverStateKind {
-		return fmt.Errorf("claude driver state_kind = %q", got)
-	}
-	if strings.TrimSpace(stringValue(object["claude_session_uuid"])) == "" {
-		return fmt.Errorf("claude driver state uuid is required")
-	}
-	if _, ok := object["initialized"].(bool); !ok {
-		return fmt.Errorf("claude driver state initialized is required")
-	}
-	if _, ok := object["last_completed_turn_id"]; !ok {
-		return fmt.Errorf("claude driver state last_completed_turn_id is required")
-	}
-	return nil
-}
-
 func validateEmptyDriverStatePayload(object map[string]any) error {
 	if got, _ := object["state_kind"].(string); got != emptyDriverStateKind {
 		return fmt.Errorf("shell driver state_kind = %q", got)
@@ -237,7 +200,7 @@ func stringValue(value any) string {
 	return ""
 }
 
-func ensureAllocationDriverStateTx(ctx context.Context, tx *sql.Tx, sessionID, generationID, driverID, claudeSessionUUID string, now time.Time) (DriverStateToken, error) {
+func ensureAllocationDriverStateTx(ctx context.Context, tx *sql.Tx, sessionID, generationID, driverID string, now time.Time) (DriverStateToken, error) {
 	row, err := getDriverStateTx(ctx, tx, sessionID, driverID)
 	if err == nil {
 		return DriverStateToken{DriverID: row.DriverID, StateDigest: row.StateDigest, StateVersion: row.StateVersion}, nil
@@ -258,10 +221,7 @@ WHERE g.session_id = ?
 	if priorGenerations != 0 {
 		return DriverStateToken{}, fmt.Errorf("missing driver state for existing %s session", driverID)
 	}
-	if agents.ID(driverID) == agents.ClaudeCode && strings.TrimSpace(claudeSessionUUID) == "" {
-		claudeSessionUUID = "bootstrap-" + strings.TrimSpace(sessionID)
-	}
-	payload, digest, err := canonicalBootstrapDriverState(driverID, claudeSessionUUID)
+	payload, digest, err := canonicalBootstrapDriverState(driverID)
 	if err != nil {
 		return DriverStateToken{}, err
 	}
@@ -493,56 +453,6 @@ WHERE g.session_id = ?
 		return err
 	}
 	return codec.synthesizeCompletedUpdateTx(ctx, tx, p, current)
-}
-
-func synthesizeClaudeCompletedDriverStateUpdateTx(ctx context.Context, tx *sql.Tx, p CompleteTurnParams, current driverStateRow) error {
-	var payload struct {
-		SchemaVersion       int     `json:"schema_version"`
-		DriverID            string  `json:"driver_id"`
-		StateKind           string  `json:"state_kind"`
-		ClaudeSessionUUID   string  `json:"claude_session_uuid"`
-		Initialized         bool    `json:"initialized"`
-		LastCompletedTurnID *string `json:"last_completed_turn_id"`
-	}
-	if err := json.Unmarshal(current.StatePayload, &payload); err != nil {
-		return err
-	}
-	if payload.DriverID != string(agents.ClaudeCode) || payload.StateKind != claudeDriverStateKind {
-		return permanentTurnCompletionf("cannot synthesize claude driver state from %s/%s", payload.DriverID, payload.StateKind)
-	}
-	turnID := fmt.Sprint(p.TurnID)
-	if payload.Initialized && payload.LastCompletedTurnID != nil && *payload.LastCompletedTurnID == turnID {
-		return nil
-	}
-	nextPayload, nextDigest, err := canonicalDriverStatePayload(map[string]any{
-		"schema_version":         1,
-		"driver_id":              string(agents.ClaudeCode),
-		"state_kind":             claudeDriverStateKind,
-		"claude_session_uuid":    payload.ClaudeSessionUUID,
-		"initialized":            true,
-		"last_completed_turn_id": turnID,
-	}, string(agents.ClaudeCode))
-	if err != nil {
-		return err
-	}
-	res, err := tx.ExecContext(ctx, `
-UPDATE session_driver_states
-SET state_payload = ?,
-    state_digest = ?,
-    state_version = ?,
-    updated_generation_id = ?,
-    updated_turn_id = ?,
-    updated_at = ?
-WHERE session_id = ?
-  AND driver_id = ?
-  AND state_digest = ?
-  AND state_version = ?`,
-		string(nextPayload), nextDigest, current.StateVersion+1, p.GenerationID, p.TurnID, formatTime(p.Now),
-		p.SessionID, current.DriverID, current.StateDigest, current.StateVersion)
-	if err != nil {
-		return err
-	}
-	return permanentRequireOneRow(res, "driver state CAS failed")
 }
 
 func driverStateReplayOrStale(ctx context.Context, tx *sql.Tx, p CompleteTurnParams, current driverStateRow, canonical []byte, update DriverStateUpdate) error {

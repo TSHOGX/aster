@@ -98,7 +98,7 @@ func TestCredentialPolicyDigestV1StableForModelProviderGrant(t *testing.T) {
 			"scope":                     "anthropic_messages",
 			"exposure_mode":             "proxy_only",
 			"ttl_seconds":               nil,
-			"allowed_drivers":           []string{"claude_code"},
+			"allowed_drivers":           []string{"pi"},
 			"allowed_runtime_providers": []string{"local_runsc"},
 		}},
 	}
@@ -106,7 +106,7 @@ func TestCredentialPolicyDigestV1StableForModelProviderGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credential policy digest: %v", err)
 	}
-	if digest != "sha256:d016de1bb099d7b6c778c1e0328c0ce69c093b022dd1251f65d3db53cb526529" {
+	if digest != "sha256:997898e9dc1f90e947bbc27862d06caece4c33406288cddc771d46354137cfd6" {
 		t.Fatalf("credential_policy_digest_v1 changed: %s", digest)
 	}
 }
@@ -200,7 +200,7 @@ func TestCredentialPolicyDigestRejectsUnknownGrantRegistryReferences(t *testing.
 			"scope":                     "anthropic_messages",
 			"exposure_mode":             "proxy_only",
 			"ttl_seconds":               nil,
-			"allowed_drivers":           []string{"claude_code"},
+			"allowed_drivers":           []string{"pi"},
 			"allowed_runtime_providers": []string{"unknown_runsc"},
 		}},
 	}
@@ -282,13 +282,13 @@ func TestSandboxContractPiMaterializedConfigSemantics(t *testing.T) {
 }
 
 func TestSandboxContractRejectsUnexpectedMaterializedConfigForNonPiDriver(t *testing.T) {
-	payload := testSandboxContractPayload(t, "sess_claude_materialized", GenerationAllocation{
-		GenerationID:          "gen_claude_materialized",
-		NetworkProfileID:      "net_claude_materialized",
-		AgentRuntimeProfileID: "arp_claude_materialized",
+	payload := testSandboxContractPayload(t, "sess_sh_materialized", GenerationAllocation{
+		GenerationID:          "gen_sh_materialized",
+		NetworkProfileID:      "net_sh_materialized",
+		AgentRuntimeProfileID: "arp_sh_materialized",
 		DriverState: DriverStateToken{
-			DriverID:    "claude_code",
-			StateDigest: "sha256:claude-state",
+			DriverID:    "sh",
+			StateDigest: "sha256:sh-state",
 		},
 	})
 	payload["driver_runtime"].(map[string]any)["materialized_driver_config"] = map[string]any{
@@ -523,7 +523,7 @@ func testSandboxContractPayload(t *testing.T, sessionID string, allocation Gener
 	contractID := "contract_" + allocation.GenerationID
 	driverID := allocation.DriverState.DriverID
 	if driverID == "" {
-		driverID = "claude_code"
+		driverID = "pi"
 	}
 	stateDigest := allocation.DriverState.StateDigest
 	if stateDigest == "" {
@@ -549,7 +549,7 @@ func testSandboxContractPayload(t *testing.T, sessionID string, allocation Gener
 		t.Fatalf("credential digest: %v", err)
 	}
 	credentialPolicy["digest"] = credentialDigest
-	return map[string]any{
+	payload := map[string]any{
 		"runtime_profile_id":       allocation.AgentRuntimeProfileID,
 		"session_id":               sessionID,
 		"network_profile_id":       allocation.NetworkProfileID,
@@ -567,8 +567,8 @@ func testSandboxContractPayload(t *testing.T, sessionID string, allocation Gener
 		"driver": map[string]any{
 			"driver_id":                            driverID,
 			"driver_version":                       "test",
-			"bridge_protocol":                      "claude_stream_json_per_turn",
-			"output_schema":                        "claude_stream_json_v1",
+			"bridge_protocol":                      "harness_bridge_v2",
+			"output_schema":                        agents.PiEventSchemaVersion,
 			"command_argv_digest":                  "sha256:command",
 			"driver_config_digest":                 "sha256:driver-config",
 			"required_runtime_capabilities_digest": "sha256:driver-capabilities",
@@ -625,6 +625,10 @@ func testSandboxContractPayload(t *testing.T, sessionID string, allocation Gener
 			"agent_manifest_digest": "sha256:agent-manifest",
 		},
 	}
+	if driverID == string(agents.Pi) {
+		addPiMaterializedConfigForTest(payload)
+	}
+	return payload
 }
 
 func addPiMaterializedConfigForTest(payload map[string]any) {

@@ -56,28 +56,11 @@ type nativeBridgeEventPayload struct {
 	} `json:"event"`
 }
 
-type claudeOutputNormalizer struct{}
 type piOutputNormalizer struct{}
 type shellOutputNormalizer struct{}
 type nativeEventsOutputNormalizer struct{}
 type unsupportedOutputNormalizer struct {
 	driverID string
-}
-
-type claudeStreamDelta struct {
-	Type        string `json:"type"`
-	Text        string `json:"text,omitempty"`
-	Thinking    string `json:"thinking,omitempty"`
-	PartialJSON string `json:"partial_json,omitempty"`
-}
-
-type claudeStreamEvent struct {
-	Type    string            `json:"type"`
-	Index   int               `json:"index"`
-	Delta   claudeStreamDelta `json:"delta"`
-	Message struct {
-		ID string `json:"id"`
-	} `json:"message"`
 }
 
 func newStreamParser(srv *Server, sessionID, driverID string) *streamParser {
@@ -205,10 +188,9 @@ func outputNormalizerForDriver(driverID string) outputNormalizer {
 }
 
 var outputNormalizers = map[string]outputNormalizerFactory{
-	string(agents.ClaudeCode): func() outputNormalizer { return claudeOutputNormalizer{} },
-	string(agents.Pi):         func() outputNormalizer { return piOutputNormalizer{} },
-	string(agents.Shell):      func() outputNormalizer { return shellOutputNormalizer{} },
-	"native_events_probe":     func() outputNormalizer { return nativeEventsOutputNormalizer{} },
+	string(agents.Pi):     func() outputNormalizer { return piOutputNormalizer{} },
+	string(agents.Shell):  func() outputNormalizer { return shellOutputNormalizer{} },
+	"native_events_probe": func() outputNormalizer { return nativeEventsOutputNormalizer{} },
 }
 
 func (n unsupportedOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput) {
@@ -218,51 +200,6 @@ func (n unsupportedOutputNormalizer) Handle(p *streamParser, output normalizerBr
 		p.err = fmt.Errorf("unsupported driver %q", n.driverID)
 	}
 	p.complete()
-}
-
-func (claudeOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput) {
-	rawLine, ok := output.line()
-	if !ok {
-		return
-	}
-	line := strings.TrimSpace(rawLine)
-	if strings.HasPrefix(line, "{") {
-		var event struct {
-			Type     string          `json:"type"`
-			Subtype  string          `json:"subtype,omitempty"`
-			Event    json.RawMessage `json:"event,omitempty"`
-			Message  json.RawMessage `json:"message,omitempty"`
-			Result   string          `json:"result,omitempty"`
-			Stream   string          `json:"stream,omitempty"`
-			Text     string          `json:"text,omitempty"`
-			Line     string          `json:"line,omitempty"`
-			ExitCode int             `json:"exit_code,omitempty"`
-		}
-		if err := json.Unmarshal([]byte(line), &event); err == nil {
-			switch event.Type {
-			case "stream_event":
-				p.handleStreamEvent(event.Event)
-				return
-			case "assistant":
-				p.handleAssistantMessage(event.Message)
-				return
-			case "result":
-				p.handleResult(event.Subtype, event.Result)
-				return
-			case "error":
-				p.err = fmt.Errorf("claude stream error")
-				p.publish("agent.output", runtime.Output{Stream: output.Stream, Line: rawLine})
-				p.complete()
-				return
-			default:
-				// system/init/user/error/etc.
-				p.publish("agent.output", runtime.Output{Stream: output.Stream, Line: rawLine})
-				return
-			}
-		}
-	}
-	// stdout non-JSON: treat as assistant message for raw-text agents.
-	p.persistAssistant(line)
 }
 
 func (shellOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput) {
@@ -406,8 +343,8 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 		return
 	}
 	// Inline text is authoritative; drop the buffered deltas for both the real
-	// id and the fallback key (mirrors the claude path) so they are neither
-	// re-emitted here nor salvaged again at turn_end.
+	// id and the fallback key so they are neither re-emitted here nor salvaged
+	// again at turn_end.
 	p.dropPending(id)
 	p.dropPending("pi_assistant_pending")
 	p.persistAssistant(text)
@@ -498,104 +435,6 @@ func nativeEventPublicPayload(raw json.RawMessage) any {
 		return map[string]string{"raw": string(raw)}
 	}
 	return payload
-}
-
-func (p *streamParser) handleStreamEvent(raw json.RawMessage) {
-	if len(raw) == 0 {
-		return
-	}
-	var inner claudeStreamEvent
-	if err := json.Unmarshal(raw, &inner); err != nil {
-		return
-	}
-	text := streamDeltaText(inner.Delta)
-	if inner.Type != "content_block_delta" || text == "" {
-		return
-	}
-	if inner.Delta.Type != "text_delta" {
-		return
-	}
-	// Claude stream_event doesn't always nest the message id; use a stable
-	// fallback so the UI can still group deltas.
-	id := inner.Message.ID
-	if id == "" {
-		id = "assistant_pending"
-	}
-	p.bufferPending(id).WriteString(text)
-	p.srv.hub.Publish(events.Event{
-		Type:      "agent.delta",
-		SessionID: p.sessionID,
-		Payload: map[string]any{
-			"message_id": id,
-			"text":       text,
-			"delta_type": inner.Delta.Type,
-			"index":      inner.Index,
-		},
-	})
-}
-
-func streamDeltaText(delta claudeStreamDelta) string {
-	switch delta.Type {
-	case "text_delta":
-		return delta.Text
-	case "thinking_delta":
-		return delta.Thinking
-	case "input_json_delta":
-		return delta.PartialJSON
-	default:
-		return ""
-	}
-}
-
-func (p *streamParser) handleAssistantMessage(raw json.RawMessage) {
-	if len(raw) == 0 {
-		return
-	}
-	var msg struct {
-		ID      string `json:"id"`
-		Role    string `json:"role"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		return
-	}
-	var b strings.Builder
-	for _, part := range msg.Content {
-		if part.Type == "text" {
-			b.WriteString(part.Text)
-		}
-	}
-	text := b.String()
-	if text == "" {
-		return
-	}
-	p.dropPending(msg.ID)
-	p.dropPending("assistant_pending")
-	p.persistAssistant(text)
-}
-
-func (p *streamParser) handleResult(subtype, result string) {
-	if subtype != "" && subtype != "success" {
-		p.publish("system.status", runtime.Output{Stream: "runtime", Line: fmt.Sprintf("claude result subtype %s", subtype)})
-		if strings.TrimSpace(result) != "" {
-			p.persistAssistant(result)
-		} else if len(p.pending) > 0 {
-			p.flush()
-		} else {
-			p.persistAssistant(fmt.Sprintf("Claude turn ended with %s.", subtype))
-		}
-		p.complete()
-		return
-	}
-	if result != "" {
-		p.persistAssistant(result)
-	} else {
-		p.flush()
-	}
-	p.complete()
 }
 
 func (p *streamParser) handleShellOutput(stream, text string) {

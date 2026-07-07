@@ -40,7 +40,6 @@ type Config struct {
 	SandboxUID              int
 	SandboxGID              int
 	SandboxSupplementalGIDs []int
-	Claude                  ClaudeConfig
 	RestoreFromCheckpoint   bool
 	RunDir                  string
 	PreStartProbeAttempts   int
@@ -88,15 +87,6 @@ type execCommandRunner struct{}
 
 func (execCommandRunner) CombinedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
-}
-
-type ClaudeConfig struct {
-	ProxyBindURL               string
-	APIKey                     string
-	AuthToken                  string
-	Model                      string
-	OutputFormat               string
-	DisableNonessentialTraffic bool
 }
 
 type StartRequest struct {
@@ -266,7 +256,6 @@ type Container struct {
 }
 
 func New(cfg Config) *Runtime {
-	cfg.Claude = normalizeClaudeConfig(cfg.Claude)
 	runner := cfg.CommandRunner
 	if runner == nil {
 		runner = execCommandRunner{}
@@ -1465,19 +1454,10 @@ func (r *Runtime) buildGenerationManifest(req StartRequest, runscVersion, bundle
 		EgressPolicyDigest:       details.EgressPolicyDigest,
 		ManifestVersion:          1,
 	}
-	applyDriverRuntimeManifestFields(&manifest, details)
 	if layout, ok := agents.DriverRuntimeLayoutSpecFor(agents.ID(selectedDriver)); ok {
 		applyDriverControlManifestSpec(&manifest, layout.ControlManifest)
 	}
 	return manifest, nil
-}
-
-func applyDriverRuntimeManifestFields(manifest *controlManifest, details store.RuntimeGenerationDetails) {
-	switch agents.ID(strings.TrimSpace(manifest.DriverID)) {
-	case agents.ClaudeCode:
-		ensureDriverRuntimeManifest(manifest)
-		manifest.DriverRuntime["claude_code_disable_nonessential_traffic"] = details.DisableNonessentialTraffic
-	}
 }
 
 func applyDriverControlManifestSpec(manifest *controlManifest, spec agents.DriverRuntimeControlManifestSpec) {
@@ -1604,7 +1584,7 @@ func controlManifestProjectionFields() (map[string]struct{}, map[string]struct{}
 func (r *Runtime) renderRuntimeSpec(req StartRequest) (runtimeSpec, string, error) {
 	selectedDriver := driverID(req)
 	switch selectedDriver {
-	case string(agents.ClaudeCode), string(agents.Pi), string(agents.Shell):
+	case string(agents.Pi), string(agents.Shell):
 		return r.renderSandboxIsolatedRuntimeSpec(req)
 	case "":
 		return runtimeSpec{}, "", fmt.Errorf("agent is required")
@@ -1960,18 +1940,6 @@ func runscBinaryMetadata() (string, string) {
 	return canonical, "sha256:" + digest
 }
 
-func normalizeClaudeConfig(cfg ClaudeConfig) ClaudeConfig {
-	empty := cfg == ClaudeConfig{}
-	cfg.ProxyBindURL = defaultString(cfg.ProxyBindURL, "http://0.0.0.0:8082")
-	cfg.APIKey = defaultString(cfg.APIKey, "123")
-	cfg.AuthToken = defaultString(cfg.AuthToken, cfg.APIKey)
-	cfg.Model = defaultString(cfg.Model, "sonnet")
-	cfg.OutputFormat = defaultString(cfg.OutputFormat, "stream-json")
-	if empty {
-		cfg.DisableNonessentialTraffic = true
-	}
-	return cfg
-}
 
 func defaultString(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
@@ -2160,7 +2128,7 @@ func driverID(req StartRequest) string {
 
 func isSandboxIsolatedRequest(req StartRequest) bool {
 	switch driverID(req) {
-	case string(agents.ClaudeCode), string(agents.Pi), string(agents.Shell):
+	case string(agents.Pi), string(agents.Shell):
 		return true
 	default:
 		return false
@@ -2630,21 +2598,6 @@ func parseAllowedEgressRule(value string) (egressRule, error) {
 	return egressRule{Proto: parts[0], Host: parts[1], Port: port}, nil
 }
 
-type claudeInputFrame struct {
-	Type    string             `json:"type"`
-	Message claudeInputMessage `json:"message"`
-}
-
-type claudeInputMessage struct {
-	Role    string               `json:"role"`
-	Content []claudeContentBlock `json:"content"`
-}
-
-type claudeContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
 type shellInputFrame struct {
 	Type    string `json:"type"`
 	Content string `json:"content,omitempty"`
@@ -2652,33 +2605,13 @@ type shellInputFrame struct {
 
 // writeUserTurn delivers a user message to the agent's stdin.
 //
-// Claude Code runs with `--input-format stream-json`, which expects one JSONL
-// frame per turn and keeps stdin open between turns. Shell runs a JSON turn
-// protocol over a PTY-backed shim. The server holds the session in
-// running_active until the current turn's parser sees a completion event.
+// Shell runs a JSON turn protocol over a PTY-backed shim. The server holds
+// the session in running_active until the current turn's parser sees a
+// completion event.
 func writeUserTurn(stdin io.Writer, agent, message string) error {
 	def, ok := agents.Lookup(agent)
 	if !ok {
 		return fmt.Errorf("unsupported agent %q", agent)
-	}
-	if def.Protocol == agents.ProtocolClaudeStreamJSON {
-		frame := claudeInputFrame{
-			Type: "user",
-			Message: claudeInputMessage{
-				Role: "user",
-				Content: []claudeContentBlock{
-					{Type: "text", Text: message},
-				},
-			},
-		}
-		encoded, err := json.Marshal(frame)
-		if err != nil {
-			return fmt.Errorf("encode user turn: %w", err)
-		}
-		if _, err := stdin.Write(append(encoded, '\n')); err != nil {
-			return err
-		}
-		return nil
 	}
 	if def.Protocol == agents.ProtocolShellPTY {
 		frame := shellInputFrame{

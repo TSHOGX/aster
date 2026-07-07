@@ -47,7 +47,7 @@ func TestCreateSessionRejectsLegacyAgentInput(t *testing.T) {
 			SessionsRoot:     dir,
 			SessionRetention: time.Hour,
 			MaxSessions:      10,
-			DefaultAgent:     "claude_code",
+			DefaultAgent:     "pi",
 		},
 		store:   st,
 		runtime: runtime.New(runtime.Config{}),
@@ -78,9 +78,9 @@ func TestCreateSessionModeMapping(t *testing.T) {
 		wantDriver string
 		wantError  string
 	}{
-		{name: "omitted body", wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "claude_code"},
-		{name: "empty object", body: `{}`, wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "claude_code"},
-		{name: "agent mode", body: `{"mode":"agent"}`, wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "claude_code"},
+		{name: "omitted body", wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "pi"},
+		{name: "empty object", body: `{}`, wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "pi"},
+		{name: "agent mode", body: `{"mode":"agent"}`, wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "pi"},
 		{name: "shell mode", body: `{"mode":"shell"}`, wantStatus: http.StatusCreated, wantMode: "shell", wantDriver: "sh"},
 		{name: "unknown mode", body: `{"mode":"pi"}`, wantStatus: http.StatusBadRequest, wantError: "unsupported mode"},
 	}
@@ -98,7 +98,7 @@ func TestCreateSessionModeMapping(t *testing.T) {
 					SessionsRoot:     dir,
 					SessionRetention: time.Hour,
 					MaxSessions:      10,
-					DefaultAgent:     "claude_code",
+					DefaultAgent:     "pi",
 				},
 				store:   st,
 				runtime: runtime.New(runtime.Config{}),
@@ -235,7 +235,7 @@ func TestCreateSessionAgentModeRejectsShellDefault(t *testing.T) {
 
 func TestDeploymentCapabilitiesAreProductSafe(t *testing.T) {
 	srv := &Server{
-		cfg: config.Config{DefaultAgent: "claude_code"},
+		cfg: config.Config{DefaultAgent: "pi"},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/deployment-capabilities", nil)
 	rec := httptest.NewRecorder()
@@ -244,7 +244,7 @@ func TestDeploymentCapabilitiesAreProductSafe(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, forbidden := range []string{"driver_id", "claude_code", "provider_id", "local_runsc", "host_path", "agent_manifest_digest"} {
+	for _, forbidden := range []string{"driver_id", "provider_id", "local_runsc", "host_path", "agent_manifest_digest"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("capability response exposed %q: %s", forbidden, body)
 		}
@@ -280,7 +280,7 @@ func TestDeploymentCapabilitiesUseImageManifestGate(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	rootfs := filepath.Join(dir, "rootfs")
-	writeServerTestAgentImageManifest(t, rootfs, agents.ClaudeCode)
+	writeServerTestAgentImageManifest(t, rootfs, agents.Pi)
 	st, err := store.Open(ctx, filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -291,7 +291,7 @@ func TestDeploymentCapabilitiesUseImageManifestGate(t *testing.T) {
 			SessionsRoot:         dir,
 			SessionRetention:     time.Hour,
 			MaxSessions:          10,
-			DefaultAgent:         "claude_code",
+			DefaultAgent:         "pi",
 			RootFSPath:           rootfs,
 			RequireAgentManifest: true,
 		},
@@ -373,7 +373,7 @@ func TestCreateSessionFailsClosedWhenRequiredManifestMissing(t *testing.T) {
 			SessionsRoot:         dir,
 			SessionRetention:     time.Hour,
 			MaxSessions:          10,
-			DefaultAgent:         "claude_code",
+			DefaultAgent:         "pi",
 			RootFSPath:           filepath.Join(dir, "missing-rootfs"),
 			RequireAgentManifest: true,
 		},
@@ -402,9 +402,9 @@ func TestCreateSessionFailsClosedWhenRequiredManifestMissing(t *testing.T) {
 func TestDriverManifestInputDigestsUseSourceConfigAndImageManifest(t *testing.T) {
 	dir := t.TempDir()
 	rootfs := filepath.Join(dir, "rootfs")
-	writeServerTestAgentImageManifest(t, rootfs, agents.ClaudeCode, agents.Shell)
+	writeServerTestAgentImageManifest(t, rootfs, agents.Pi, agents.Shell)
 	cfg := config.Config{
-		DefaultAgent:         "claude_code",
+		DefaultAgent:         "sh",
 		RootFSPath:           rootfs,
 		RequireAgentManifest: true,
 	}
@@ -421,7 +421,7 @@ func TestDriverManifestInputDigestsUseSourceConfigAndImageManifest(t *testing.T)
 	if digests.AgentManifestDigest != manifest.Digest {
 		t.Fatalf("agent manifest digest = %s want %s", digests.AgentManifestDigest, manifest.Digest)
 	}
-	if want := runtimeConfigDigest(deployment.runtimeConfigPreimage("claude_code")); digests.RuntimeConfigDigest != want {
+	if want := runtimeConfigDigest(deployment.runtimeConfigPreimage("sh")); digests.RuntimeConfigDigest != want {
 		t.Fatalf("runtime config digest = %s want %s", digests.RuntimeConfigDigest, want)
 	}
 
@@ -463,10 +463,9 @@ func TestAgentsCatalogIsOperatorOnly(t *testing.T) {
 	if err := json.Unmarshal(operatorRec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode operator catalog: %v", err)
 	}
-	if len(payload.Drivers) != 3 ||
-		payload.Drivers[0].DriverID != "claude_code" ||
-		payload.Drivers[1].DriverID != "pi" ||
-		payload.Drivers[2].DriverID != "sh" {
+	if len(payload.Drivers) != 2 ||
+		payload.Drivers[0].DriverID != "pi" ||
+		payload.Drivers[1].DriverID != "sh" {
 		t.Fatalf("unexpected operator catalog: %+v", payload.Drivers)
 	}
 }
@@ -562,11 +561,10 @@ func TestCloseSessionReleasesSoftLimitWithoutDeletingHistory(t *testing.T) {
 		ID:                "sess_retained",
 		UserID:            labUserID,
 		Status:            string(sessionstate.Created),
-		Agent:             "claude_code",
+		Agent:             "pi",
 		Workspace:         filepath.Join(cfg.SessionsRoot, "sess_retained"),
 		AgentHomePath:     filepath.Join(dir, "agent-homes", "sess_retained"),
 		RestoreID:         "phase3-sess_retained",
-		ClaudeSessionUUID: "11111111-2222-3333-4444-555555555555",
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
@@ -681,7 +679,7 @@ func TestCreateSessionUsesNullExpiryWhenSessionRetentionDisabled(t *testing.T) {
 			SessionsRoot:     dir,
 			SessionRetention: 0,
 			MaxSessions:      10,
-			DefaultAgent:     "claude_code",
+			DefaultAgent:     "pi",
 		},
 		store:   st,
 		runtime: runtime.New(runtime.Config{}),
@@ -795,7 +793,7 @@ func TestCreateSessionUsesPublicSessionDTO(t *testing.T) {
 			SessionsRoot:     dir,
 			SessionRetention: time.Hour,
 			MaxSessions:      10,
-			DefaultAgent:     "claude_code",
+			DefaultAgent:     "pi",
 		},
 		store:   st,
 		runtime: runtime.New(runtime.Config{}),
@@ -893,8 +891,8 @@ func TestPublicEventSanitizerStripsRuntimePrivateFields(t *testing.T) {
 			"session_last_activity_at": "2026-05-26T00:30:00Z",
 			"generation_id":            "gen_private",
 			"active_generation_id":     "gen_private",
-			"driver_id":                "claude_code",
-			"agent":                    "claude",
+			"driver_id":                "pi",
+			"agent":                    "pi",
 			"restore_id":               "restore_private",
 			"host_path":                filepath.Join(t.TempDir(), "private"),
 			"driver_state": map[string]any{
@@ -920,7 +918,6 @@ func TestPublicEventSanitizerStripsRuntimePrivateFields(t *testing.T) {
 		`"driver_state"`,
 		`"data_volumes"`,
 		"gen_private",
-		"claude_code",
 		"restore_private",
 	} {
 		if strings.Contains(body, forbidden) {
@@ -960,7 +957,7 @@ func TestMonitorIdleSessionsReEnablesCheckpointedSessionsWhenCheckpointDisabled(
 		ID:        "sess_checkpointed",
 		UserID:    "lab",
 		Status:    string(sessionstate.Checkpointed),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: filepath.Join(dir, "sessions", "sess_checkpointed"),
 		RestoreID: "phase3-sess_checkpointed",
 		CreatedAt: now,
@@ -1306,7 +1303,7 @@ func TestSendMessageColdFallbackAllocatesReplacementGeneration(t *testing.T) {
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate old generation: %v", err)
@@ -1350,8 +1347,7 @@ func TestSendMessageColdFallbackAllocatesReplacementGeneration(t *testing.T) {
 	if gotSession.ActiveGenerationID == "" || gotSession.ActiveGenerationID == old.GenerationID {
 		t.Fatalf("active generation was not replaced: %q old=%q", gotSession.ActiveGenerationID, old.GenerationID)
 	}
-	if gotSession.ClaudeSessionUUID != session.ClaudeSessionUUID ||
-		gotSession.Workspace != session.Workspace ||
+	if gotSession.Workspace != session.Workspace ||
 		gotSession.AgentHomePath == "" {
 		t.Fatalf("session identity not preserved: before=%+v after=%+v", session, gotSession)
 	}
@@ -1413,7 +1409,7 @@ func TestSendMessageRestoresCheckpointedGeneration(t *testing.T) {
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate checkpointed generation: %v", err)
@@ -1504,7 +1500,7 @@ func TestSendMessageFallsBackWhenCheckpointRestoreFails(t *testing.T) {
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate checkpointed generation: %v", err)
@@ -1623,7 +1619,7 @@ func TestSendMessageRestoreFallbackColdStartFailureLeavesSessionRetryable(t *tes
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate checkpointed generation: %v", err)
@@ -1719,7 +1715,7 @@ func TestSendMessageRestoreLiveCASFailureDestroysRunscContainerIDBeforeFallback(
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate checkpointed generation: %v", err)
@@ -1798,7 +1794,7 @@ func TestSendMessageRestoreLiveCASFailureDoesNotRetireWhenDestroyFails(t *testin
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate checkpointed generation: %v", err)
@@ -2019,7 +2015,7 @@ func TestColdFallbackMaintenanceStartsReplacementForQueuedTurn(t *testing.T) {
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate old generation: %v", err)
@@ -2096,7 +2092,7 @@ func TestColdFallbackMaintenanceStartFailureKeepsSessionInputBlocking(t *testing
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate old generation: %v", err)
@@ -2386,9 +2382,9 @@ func TestGetQuotaReportsSessionAndPoolCeilings(t *testing.T) {
 			EgressDNSPolicy:    string(cfg.Harness.Network.Egress.DNSPolicy),
 			HostProxyBindURL:   cfg.ModelProxy.BindURL,
 			ProxyPort:          cfg.ModelProxy.BindPort,
-			Agent:              "claude_code",
-			AgentModel:         cfg.Claude.Model,
-			AgentOutputFormat:  cfg.Claude.OutputFormat,
+			Agent:              "pi",
+			AgentModel:         "sonnet",
+			AgentOutputFormat:  agents.PiEventSchemaVersion,
 		},
 	})
 	if err != nil {
@@ -2439,7 +2435,7 @@ func TestSendMessagePoolExhaustionDoesNotQueueTurn(t *testing.T) {
 		Owner:     store.GenerationLeaseOwner(owner.UUID),
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	}); err != nil {
 		t.Fatalf("allocate pool slot: %v", err)
 	}
@@ -3422,9 +3418,9 @@ func TestRunMaintenancePollsBridgeOutbox(t *testing.T) {
 			EgressDNSPolicy:    string(cfg.Harness.Network.Egress.DNSPolicy),
 			HostProxyBindURL:   cfg.ModelProxy.BindURL,
 			ProxyPort:          cfg.ModelProxy.BindPort,
-			Agent:              "claude_code",
-			AgentModel:         cfg.Claude.Model,
-			AgentOutputFormat:  cfg.Claude.OutputFormat,
+			Agent:              "pi",
+			AgentModel:         "sonnet",
+			AgentOutputFormat:  agents.PiEventSchemaVersion,
 		},
 	})
 	if err != nil {
@@ -3497,7 +3493,7 @@ func TestRunMaintenanceRecoversGenerationThatExpiresAfterStartup(t *testing.T) {
 		Owner:     leaseOwner,
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate generation: %v", err)
@@ -3655,7 +3651,7 @@ func TestDestroyReclaimableGenerationResourcesMarksDestroyedOnlyAfterRuntimeClea
 				Owner:     store.GenerationLeaseOwner(owner.UUID),
 				LeaseTTL:  time.Minute,
 				Now:       now.Add(-time.Minute),
-				Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+				Config:    serverTestAllocatorConfig(cfg, "pi"),
 			})
 			if err != nil {
 				t.Fatalf("allocate generation: %v", err)
@@ -3716,7 +3712,7 @@ func TestDestroyReclaimableGenerationResourcesRemovesFilesystemWithRealRuntime(t
 		Owner:     store.GenerationLeaseOwner(owner.UUID),
 		LeaseTTL:  time.Minute,
 		Now:       now.Add(-time.Minute),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate generation: %v", err)
@@ -3913,7 +3909,7 @@ func TestBridgeFailedCompletionDoesNotFailSession(t *testing.T) {
 		Owner:     store.GenerationLeaseOwner(owner.UUID),
 		LeaseTTL:  time.Minute,
 		Now:       time.Now().UTC(),
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate generation: %v", err)
@@ -4564,9 +4560,9 @@ type instantRuntime struct{}
 
 var instantRuntimePrepareCalls int64
 
-func (instantRuntime) PrepareGeneration(context.Context, runtime.StartRequest) (runtime.GenerationArtifacts, error) {
+func (instantRuntime) PrepareGeneration(_ context.Context, req runtime.StartRequest) (runtime.GenerationArtifacts, error) {
 	atomic.AddInt64(&instantRuntimePrepareCalls, 1)
-	return testGenerationArtifacts(), nil
+	return testGenerationArtifactsForAgent(req.Agent), nil
 }
 
 func (instantRuntime) Start(ctx context.Context, req runtime.StartRequest, output func(runtime.Output)) runtime.Result {
@@ -4626,7 +4622,7 @@ func (r *blockingPrepareRuntime) PrepareGeneration(ctx context.Context, req runt
 	r.startedOnce.Do(func() { close(r.prepareStarted) })
 	select {
 	case <-r.releasePrepare:
-		return testGenerationArtifacts(), nil
+		return testGenerationArtifactsForAgent(req.Agent), nil
 	case <-ctx.Done():
 		return runtime.GenerationArtifacts{}, ctx.Err()
 	}
@@ -4682,7 +4678,7 @@ func (r *recordingRuntime) PrepareGeneration(_ context.Context, req runtime.Star
 	r.mu.Lock()
 	r.prepareRequests = append(r.prepareRequests, req)
 	r.mu.Unlock()
-	return testGenerationArtifacts(), nil
+	return testGenerationArtifactsForAgent(req.Agent), nil
 }
 
 func (r *recordingRuntime) Start(_ context.Context, req runtime.StartRequest, _ func(runtime.Output)) runtime.Result {
@@ -4828,8 +4824,8 @@ type restoreValidationRuntime struct {
 	startRequests []runtime.StartRequest
 }
 
-func (r *restoreValidationRuntime) PrepareGeneration(context.Context, runtime.StartRequest) (runtime.GenerationArtifacts, error) {
-	return testGenerationArtifacts(), nil
+func (r *restoreValidationRuntime) PrepareGeneration(_ context.Context, req runtime.StartRequest) (runtime.GenerationArtifacts, error) {
+	return testGenerationArtifactsForAgent(req.Agent), nil
 }
 
 func (r *restoreValidationRuntime) Start(ctx context.Context, req runtime.StartRequest, output func(runtime.Output)) runtime.Result {
@@ -4906,6 +4902,21 @@ func (f failingRuntime) Checkpoint(context.Context, runtime.CheckpointRequest) e
 }
 
 func testGenerationArtifacts() runtime.GenerationArtifacts {
+	return testGenerationArtifactsForAgent(string(agents.Pi))
+}
+
+func testGenerationArtifactsForAgent(agent string) runtime.GenerationArtifacts {
+	var materialized []runtime.DriverConfigMaterialization
+	for _, spec := range agents.DriverConfigMaterializationSpecsFor(agents.ID(strings.TrimSpace(agent))) {
+		materialized = append(materialized, runtime.DriverConfigMaterialization{
+			Name:                        spec.Name,
+			SourceProjectionPath:        spec.SourceProjectionPath,
+			HostSourcePath:              spec.HostSourcePath("/tmp/control"),
+			SourceDigest:                "sha256:driver-config-" + spec.Name,
+			SandboxDestination:          spec.SandboxDestination,
+			DestinationMutableBySandbox: spec.DestinationMutableBySandbox,
+		})
+	}
 	return runtime.GenerationArtifacts{
 		BundleDir:               "/tmp/bundle",
 		SpecPath:                "/tmp/bundle/config.json",
@@ -4918,6 +4929,7 @@ func testGenerationArtifacts() runtime.GenerationArtifacts {
 		RunscVersion:            "runsc test",
 		RunscBinaryPath:         "/usr/local/bin/runsc-test",
 		RunscBinaryDigest:       "sha256:runsc-test",
+		MaterializedDriverConfig: materialized,
 	}
 }
 
@@ -5130,7 +5142,25 @@ func createServerRuntimeResourceLive(t *testing.T, ctx context.Context, st *stor
 		t.Fatalf("parse sandbox cidr: %v", err)
 	}
 	credentialPolicy := serverCredentialPolicyForTest(t, allocation.DriverState.DriverID)
-	modelAccessAllowed := allocation.DriverState.DriverID == "claude_code"
+	modelAccessAllowed := allocation.DriverState.DriverID == "pi"
+	runtimeMaterialized := map[string]any{}
+	mountMaterialized := map[string]any{}
+	for _, spec := range agents.DriverConfigMaterializationSpecsFor(agents.ID(allocation.DriverState.DriverID)) {
+		runtimeMaterialized[spec.Name] = map[string]any{
+			"source_projection_path":         spec.SourceProjectionPath,
+			"source_digest":                  "sha256:driver-config-" + spec.Name,
+			"sandbox_destination":            spec.SandboxDestination,
+			"destination_mutable_by_sandbox": spec.DestinationMutableBySandbox,
+		}
+		mountMaterialized[spec.Name] = map[string]any{
+			"type":                           spec.MountType,
+			"mode":                           spec.MountMode,
+			"exact":                          spec.MountExact,
+			"source_projection_path":         spec.SourceProjectionPath,
+			"sandbox_destination":            spec.SandboxDestination,
+			"destination_mutable_by_sandbox": spec.DestinationMutableBySandbox,
+		}
+	}
 	if _, err := st.StoreSandboxContract(ctx, store.StoreSandboxContractParams{
 		ContractID:   contractID,
 		SessionID:    sessionID,
@@ -5150,7 +5180,7 @@ func createServerRuntimeResourceLive(t *testing.T, ctx context.Context, st *stor
 				"bridge_protocol":                      "harness_bridge_v2",
 				"bridge_protocol_version":              2,
 				"turn_input_schema":                    "RunTurn",
-				"output_schema":                        "claude_stream_json_v1",
+				"output_schema":                        agents.PiEventSchemaVersion,
 				"command_argv_digest":                  "sha256:command",
 				"driver_config_digest":                 "sha256:driver-config",
 				"required_runtime_capabilities_digest": "sha256:driver-capabilities",
@@ -5180,8 +5210,11 @@ func createServerRuntimeResourceLive(t *testing.T, ctx context.Context, st *stor
 			"driver_runtime": map[string]any{
 				"driver_home_mount":             "/agent-home",
 				"generated_driver_config_mount": "/harness-control/driver/" + allocation.DriverState.DriverID,
-				"materialized_driver_config":    map[string]any{},
+				"materialized_driver_config":    runtimeMaterialized,
 				"initial_driver_state_digest":   allocation.DriverState.StateDigest,
+			},
+			"mount_plan": map[string]any{
+				"driver_config_materializations": mountMaterialized,
 			},
 			"input_digests": map[string]any{
 				"runtime_config_digest": "sha256:runtime-config",
@@ -5271,7 +5304,7 @@ func createServerRuntimeResourceLive(t *testing.T, ctx context.Context, st *stor
 func serverCredentialPolicyForTest(t *testing.T, driverID string) map[string]any {
 	t.Helper()
 	secretGrants := []map[string]any{}
-	if driverID == "claude_code" {
+	if driverID == "pi" {
 		secretGrants = append(secretGrants, map[string]any{
 			"grant_id":                  "model_provider:anthropic_proxy",
 			"domain":                    "model_provider",
@@ -5388,10 +5421,9 @@ func createServerTestSession(t *testing.T, ctx context.Context, st *store.Store,
 		ID:                id,
 		UserID:            labUserID,
 		Status:            status,
-		Agent:             "claude_code",
+		Agent:             "pi",
 		Workspace:         filepath.Join(dir, "sessions", id),
 		RestoreID:         "phase3-" + id,
-		ClaudeSessionUUID: "11111111-2222-3333-4444-555555555555",
 		CreatedAt:         now,
 		UpdatedAt:         now,
 		ExpiresAt:         expiresAt,
@@ -5432,7 +5464,7 @@ func prepareServerIdleGeneration(t *testing.T, ctx context.Context, st *store.St
 		Owner:     store.GenerationLeaseOwner(ownerUUID),
 		LeaseTTL:  time.Minute,
 		Now:       now,
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate generation: %v", err)
@@ -5564,14 +5596,7 @@ func testServerConfig(dir string) config.Config {
 		RepoRoot:         dir,
 		SessionRetention: time.Hour,
 		MaxSessions:      10,
-		DefaultAgent:     "claude_code",
-		Claude: config.ClaudeConfig{
-			ProxyBindURL:               "http://0.0.0.0:8082",
-			SandboxBaseURL:             "http://harness-model-proxy.internal:8082",
-			Model:                      "sonnet",
-			OutputFormat:               "stream-json",
-			DisableNonessentialTraffic: true,
-		},
+		DefaultAgent:     "pi",
 		ModelProxy: config.ModelProxyConfig{
 			BindURL:        "http://0.0.0.0:8082",
 			SandboxBaseURL: "http://harness-model-proxy.internal:8082",
@@ -5632,21 +5657,21 @@ func serverTestSandboxGID() int {
 	return 65534
 }
 
-func TestResourceAllocatorConfigUsesHostOnlyClaudeCredentials(t *testing.T) {
+func TestResourceAllocatorConfigUsesHostOnlyModelCredentials(t *testing.T) {
 	cfg := testServerConfig(t.TempDir())
 	cfg.ModelProxy.SandboxBaseURL = "http://harness-model-proxy.internal:8082"
 	srv := &Server{cfg: cfg}
 
-	claudeConfig := srv.resourceAllocatorConfig("claude_code")
-	if !claudeConfig.ProviderCredentialsHostOnly {
-		t.Fatalf("claude allocator should keep provider credentials host-only: %+v", claudeConfig)
+	agentConfig := srv.resourceAllocatorConfig("pi")
+	if !agentConfig.ProviderCredentialsHostOnly {
+		t.Fatalf("agent allocator should keep provider credentials host-only: %+v", agentConfig)
 	}
-	if claudeConfig.SandboxModelProxyBaseURL != "http://harness-model-proxy.internal:8082" {
-		t.Fatalf("claude sandbox model proxy base url = %q", claudeConfig.SandboxModelProxyBaseURL)
+	if agentConfig.SandboxModelProxyBaseURL != "http://harness-model-proxy.internal:8082" {
+		t.Fatalf("agent sandbox model proxy base url = %q", agentConfig.SandboxModelProxyBaseURL)
 	}
-	if claudeConfig.SandboxUID != cfg.Harness.SandboxIdentity.UID ||
-		claudeConfig.SandboxGID != cfg.Harness.SandboxIdentity.GID {
-		t.Fatalf("claude allocator sandbox identity = %+v", claudeConfig)
+	if agentConfig.SandboxUID != cfg.Harness.SandboxIdentity.UID ||
+		agentConfig.SandboxGID != cfg.Harness.SandboxIdentity.GID {
+		t.Fatalf("agent allocator sandbox identity = %+v", agentConfig)
 	}
 
 	shellConfig := srv.resourceAllocatorConfig("sh")
@@ -5664,7 +5689,7 @@ func TestResourceAllocatorConfigUsesModelProxyPort(t *testing.T) {
 	}
 	srv := &Server{cfg: cfg}
 
-	allocatorConfig := srv.resourceAllocatorConfig("claude_code")
+	allocatorConfig := srv.resourceAllocatorConfig("pi")
 	if allocatorConfig.HostProxyBindURL != "http://0.0.0.0:8083" ||
 		allocatorConfig.ProxyPort != 8083 ||
 		allocatorConfig.SandboxModelProxyBaseURL != "http://harness-model-proxy.internal:8083" {
@@ -5673,8 +5698,8 @@ func TestResourceAllocatorConfigUsesModelProxyPort(t *testing.T) {
 }
 
 func serverTestAllocatorConfig(cfg config.Config, agent string) store.ResourceAllocatorConfig {
-	outputFormat := cfg.Claude.OutputFormat
-	modelAccess := agent == "claude_code"
+	outputFormat := "stream-json"
+	modelAccess := false
 	if spec, ok := agents.DriverSpecFor(agent); ok {
 		outputFormat = spec.OutputFormat
 		modelAccess = spec.ModelAccess
@@ -5689,9 +5714,9 @@ func serverTestAllocatorConfig(cfg config.Config, agent string) store.ResourceAl
 		HostProxyBindURL:            cfg.ModelProxy.BindURL,
 		ProxyPort:                   cfg.ModelProxy.BindPort,
 		Agent:                       agent,
-		AgentModel:                  cfg.Claude.Model,
+		AgentModel:                  "sonnet",
 		AgentOutputFormat:           outputFormat,
-		DisableNonessentialTraffic:  cfg.Claude.DisableNonessentialTraffic,
+		DisableNonessentialTraffic:  true,
 		SandboxUID:                  cfg.Harness.SandboxIdentity.UID,
 		SandboxGID:                  cfg.Harness.SandboxIdentity.GID,
 		SandboxSupplementalGIDs:     cfg.Harness.SandboxIdentity.SupplementalGIDs,
@@ -5878,7 +5903,7 @@ func createServerRunningProxyTurn(t *testing.T, ctx context.Context, st *store.S
 		Owner:     owner,
 		LeaseTTL:  time.Minute,
 		Now:       now,
-		Config:    serverTestAllocatorConfig(cfg, "claude_code"),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
 	})
 	if err != nil {
 		t.Fatalf("allocate generation: %v", err)
@@ -5988,7 +6013,6 @@ func assertPublicSessionJSONOmitsHostFields(t *testing.T, payload []byte) {
 		`"active_generation_id":`,
 		`"restore_id"`,
 		`"checkpoint_path"`,
-		`"claude_session_uuid"`,
 	} {
 		if strings.Contains(body, field) {
 			t.Fatalf("public session payload exposed host-only field %s: %s", field, body)

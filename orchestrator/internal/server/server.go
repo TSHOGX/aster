@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"harness-platform/orchestrator/internal/agents"
@@ -618,7 +617,6 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		Mode:                  mode,
 		Workspace:             filepath.Join(s.cfg.SessionsRoot, id),
 		RestoreID:             "unused-" + id,
-		ClaudeSessionUUID:     uuid.NewString(),
 		AutoCheckpointEnabled: s.cfg.Harness.Checkpoint.AutoEnabled,
 		CreatedAt:             now,
 		UpdatedAt:             now,
@@ -1489,10 +1487,10 @@ func (s *Server) resourceAllocatorConfig(agent string) store.ResourceAllocatorCo
 	}
 	driverSpec, ok := agents.DriverSpecFor(agent)
 	if !ok {
-		driverSpec = agents.DriverSpec{ID: agents.ID(agent), OutputFormat: s.cfg.Claude.OutputFormat}
+		driverSpec = agents.DriverSpec{ID: agents.ID(agent), OutputFormat: "stream-json"}
 	}
-	model := s.cfg.Claude.Model
-	disableNonessentialTraffic := s.cfg.Claude.DisableNonessentialTraffic
+	model := "sonnet"
+	disableNonessentialTraffic := true
 	if _, agentCfg, ok := s.enabledAgentConfigForDriver(agents.ID(agent)); ok {
 		if agentCfg.DisableNonessentialTraffic != nil {
 			disableNonessentialTraffic = *agentCfg.DisableNonessentialTraffic
@@ -1928,7 +1926,7 @@ type driverManifestInputDigests struct {
 func (s *Server) driverManifestInputDigests(deployment deploymentResolution) driverManifestInputDigests {
 	defaultAgent := strings.TrimSpace(s.cfg.DefaultAgent)
 	if defaultAgent == "" {
-		defaultAgent = string(agents.ClaudeCode)
+		defaultAgent = string(agents.Pi)
 	}
 	if canonical, err := agents.CanonicalDriverID(defaultAgent); err == nil {
 		defaultAgent = string(canonical)
@@ -1957,10 +1955,6 @@ func driverInstallDigest(driverID agents.ID) string {
 	var facts agents.DriverPackageFacts
 	if ok {
 		facts = spec.PackageFacts
-	} else {
-		// Preserve the historical default (claude-shaped) payload for any
-		// driver not present in the registry.
-		facts = agents.DriverPackageFacts{Name: agents.ClaudeCodePackageName}
 	}
 	if strings.TrimSpace(facts.Name) != "" {
 		payload["package"] = facts.Name

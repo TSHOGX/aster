@@ -11,7 +11,6 @@
 harness:
   default_agent: pi
   agents:
-    claude_code: { enabled: true, driver_id: claude_code, model_profile: anthropic_default, runtime_provider: local_runsc, disable_nonessential_traffic: true }
     sh:          { enabled: true, driver_id: sh, runtime_provider: local_runsc }
     pi:          { enabled: true, driver_id: pi, model_profile: anthropic_default, runtime_provider: local_runsc, disable_nonessential_traffic: true }
   model_profiles:

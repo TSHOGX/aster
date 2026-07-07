@@ -16,7 +16,6 @@ func TestModeForDriverUsesDriverRegistryKind(t *testing.T) {
 		driverID string
 		want     string
 	}{
-		{driverID: "claude_code", want: "agent"},
 		{driverID: "pi", want: "agent"},
 		{driverID: "sh", want: "shell"},
 		{driverID: "unknown", want: ""},
@@ -43,26 +42,21 @@ func TestListMessagesAndUUID(t *testing.T) {
 
 	now := time.Now().UTC()
 	want := Session{
-		ID:                "sess_1",
-		UserID:            "lab",
-		Status:            string(sessionstate.Created),
-		Agent:             "claude_code",
-		Workspace:         dir,
-		RestoreID:         "phase3-sess_1",
-		ClaudeSessionUUID: "11111111-2222-3333-4444-555555555555",
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:        "sess_1",
+		UserID:    "lab",
+		Status:    string(sessionstate.Created),
+		Agent:     "pi",
+		Workspace: dir,
+		RestoreID: "phase3-sess_1",
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	if err := st.CreateSession(ctx, want); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
-	got, err := st.GetSession(ctx, want.ID)
-	if err != nil {
+	if _, err := st.GetSession(ctx, want.ID); err != nil {
 		t.Fatalf("get session: %v", err)
-	}
-	if got.ClaudeSessionUUID != want.ClaudeSessionUUID {
-		t.Fatalf("uuid: want %q, got %q", want.ClaudeSessionUUID, got.ClaudeSessionUUID)
 	}
 
 	if _, err := st.AddMessage(ctx, want.ID, "user", "hello"); err != nil {
@@ -106,7 +100,7 @@ func TestUpdateSessionStatusAndActivity(t *testing.T) {
 		ID:        "sess_test",
 		UserID:    "lab",
 		Status:    string(sessionstate.Created),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: dir,
 		RestoreID: "phase3-sess_test",
 		CreatedAt: now,
@@ -158,7 +152,7 @@ func TestFailSessionStoresTypedFailure(t *testing.T) {
 		ID:        "sess_fail",
 		UserID:    "lab",
 		Status:    string(sessionstate.Created),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: dir,
 		RestoreID: "phase3-sess_fail",
 		CreatedAt: now,
@@ -209,7 +203,7 @@ func TestEnqueueTurnMessageCreatesQueuedTurnMessageAndActivatesSession(t *testin
 		ID:        "sess_enqueue",
 		UserID:    "lab",
 		Status:    string(sessionstate.Created),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: dir,
 		RestoreID: "phase3-sess_enqueue",
 		CreatedAt: now,
@@ -270,7 +264,7 @@ func TestEnqueueTurnMessageRejectsBusySessionWithoutWrites(t *testing.T) {
 		ID:        "sess_busy_enqueue",
 		UserID:    "lab",
 		Status:    string(sessionstate.RunningActive),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: dir,
 		RestoreID: "phase3-sess_busy_enqueue",
 		CreatedAt: now,
@@ -320,7 +314,7 @@ func TestListSessionsByStatus(t *testing.T) {
 			ID:        "sess_1",
 			UserID:    "lab",
 			Status:    string(sessionstate.RunningIdle),
-			Agent:     "claude_code",
+			Agent:     "pi",
 			Workspace: dir,
 			RestoreID: "phase3-sess_1",
 			CreatedAt: now,
@@ -330,7 +324,7 @@ func TestListSessionsByStatus(t *testing.T) {
 			ID:        "sess_2",
 			UserID:    "lab",
 			Status:    string(sessionstate.RunningActive),
-			Agent:     "claude_code",
+			Agent:     "pi",
 			Workspace: dir,
 			RestoreID: "phase3-sess_2",
 			CreatedAt: now,
@@ -340,7 +334,7 @@ func TestListSessionsByStatus(t *testing.T) {
 			ID:        "sess_3",
 			UserID:    "lab",
 			Status:    string(sessionstate.RunningIdle),
-			Agent:     "claude_code",
+			Agent:     "pi",
 			Workspace: dir,
 			RestoreID: "phase3-sess_3",
 			CreatedAt: now,
@@ -399,7 +393,7 @@ func TestRejectsLegacyStatuses(t *testing.T) {
 		ID:        "sess_legacy",
 		UserID:    "lab",
 		Status:    "idle",
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: dir,
 		RestoreID: "phase3-sess_legacy",
 		CreatedAt: now,
@@ -443,7 +437,7 @@ func TestCountActiveSessionsUsesCanonicalStatuses(t *testing.T) {
 			ID:        id,
 			UserID:    "lab",
 			Status:    string(status),
-			Agent:     "claude_code",
+			Agent:     "pi",
 			Workspace: dir,
 			RestoreID: "phase3-" + id,
 			CreatedAt: now,
@@ -541,7 +535,7 @@ func TestDeleteArtifactPathDeletesFileAndDescendants(t *testing.T) {
 		ID:        "sess_artifacts",
 		UserID:    "lab",
 		Status:    string(sessionstate.Created),
-		Agent:     "claude_code",
+		Agent:     "pi",
 		Workspace: dir,
 		RestoreID: "phase3-sess_artifacts",
 		CreatedAt: now,
@@ -610,7 +604,7 @@ func TestAlignAutoCheckpointEnabled(t *testing.T) {
 	}
 	for _, s := range sessions {
 		s.UserID = "lab"
-		s.Agent = "claude_code"
+		s.Agent = "pi"
 		s.Workspace = dir
 		s.RestoreID = "restore-" + s.ID
 		s.CreatedAt = now

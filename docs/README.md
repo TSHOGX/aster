@@ -15,7 +15,7 @@ source of truth for how the system works today. Start with
 | [control-plane.md](./control-plane.md) | Orchestrator internals: startup, SQLite schema, state machines, bridge, events, auth, reaper |
 | [sandbox-runtime.md](./sandbox-runtime.md) | runsc launch, OCI spec, mount plan, network/egress, idle release, checkpoint |
 | [sandbox-image.md](./sandbox-image.md) | rootfs build, image manifest, entrypoint, bridge client, shell agent, skills |
-| [drivers.md](./drivers.md) | Pi / Claude Code / shell drivers, product-mode resolution, manifest validation |
+| [drivers.md](./drivers.md) | Pi / shell drivers, product-mode resolution, manifest validation |
 | [api.md](./api.md) | HTTP routes, DTOs, event types, proxy-correlation routes |
 | [frontend.md](./frontend.md) | Workbench architecture, same-origin proxy, event handling, auth flow |
 | [notifications.md](./notifications.md) | System notifications (inbox): schema, routes, SSE broadcast, `cmd/notify`, frontend bell |

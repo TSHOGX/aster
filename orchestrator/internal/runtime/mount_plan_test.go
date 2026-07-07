@@ -87,10 +87,10 @@ func TestMountPlanRejectsForbiddenAndRecursiveBinds(t *testing.T) {
 		{
 			name: "unlisted content mount",
 			plan: MountPlan{Content: []MountPlanMount{{
-				Name:        "claude_home",
-				Destination: "/root/.claude",
+				Name:        "agent_home",
+				Destination: "/root/.agent",
 				Type:        "bind",
-				Source:      filepath.Join(dir, "agent-homes", "sess-1", "claude_code"),
+				Source:      filepath.Join(dir, "agent-homes", "sess-1", "pi"),
 				Mode:        "ro",
 				Options:     []string{"bind", "ro"},
 			}}},

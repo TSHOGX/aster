@@ -25,9 +25,8 @@ sandbox-image/
 Produces an Ubuntu (`noble`) OCI rootfs directory. Key env knobs:
 
 - `ROOTFS_DIR` — output dir (default `sandbox-image/rootfs`).
-- `SANDBOX_AGENT_DRIVERS` — CSV of drivers to install (default `claude_code`;
-  `claude`→`claude_code`; accepts `pi`, `sh`). The checked-in lab default needs
-  `SANDBOX_AGENT_DRIVERS=pi,sh`.
+- `SANDBOX_AGENT_DRIVERS` — CSV of drivers to install (default `pi`; accepts `pi`,
+  `sh`). The checked-in lab default needs `SANDBOX_AGENT_DRIVERS=pi,sh`.
 - `FORCE` — `0` (default) reuses an existing rootfs and only re-syncs the overlay +
   regenerates the manifest (no root, no debootstrap); `1` does a full rebuild
   (requires root + `debootstrap`).
@@ -35,8 +34,8 @@ Produces an Ubuntu (`noble`) OCI rootfs directory. Key env knobs:
 Full-build steps: `debootstrap` → apt (`ca-certificates curl fonts-wqy-microhei
 fonts-wqy-zenhei git nodejs npm python3 python3-pip python3-venv xz-utils`) → pip
 (`matplotlib pandas pymysql`) → install a modern Node for Pi if selected → install
-the selected driver CLIs (`claude` via npm, `pi` via npm pinned to 0.77.0, `sh` uses
-the bundled shim) → `rsync` the overlay → generate `/etc/harness-image/agents.json`
+the selected driver CLIs (`pi` via npm pinned to 0.77.0, `sh` uses the bundled
+shim) → `rsync` the overlay → generate `/etc/harness-image/agents.json`
 → sanitize.
 
 The two `fonts-wqy-*` packages (WenQuanYi Zen Hei / Micro Hei) give matplotlib and
@@ -44,9 +43,9 @@ Pillow CJK glyph coverage — without them, Chinese text in generated charts/ima
 renders as tofu boxes. See the **matplotlib-fonts** skill below.
 
 **Sanitize** scrubs any host/session state (`/workspace`, `/agent-home`,
-`/sessions`, `/agent-homes`, `/harness-secrets`, `/root/.claude*`, stray gVisor
-filestore files) and recreates empty `/workspace` and `/agent-home` mount points, so
-the image is a clean template.
+`/sessions`, `/agent-homes`, `/harness-secrets`, stray gVisor filestore files)
+and recreates empty `/workspace` and `/agent-home` mount points, so the image
+is a clean template.
 
 ## Agent image manifest (`/etc/harness-image/agents.json`)
 
@@ -90,7 +89,7 @@ queue under `/harness-control/bridge`:
 - **Transport** (`Queue`): messages are `NN…N.json` files (20-digit sequence),
   written to `tmp/` then `os.link`'d into the queue with an fsync — atomic and
   crash-safe. Heartbeat and `checkpoint-ready` are timestamp files.
-- **`claim-loop`**: heartbeat → hello → (claude only) proxy `/healthz` probe →
+- **`claim-loop`**: heartbeat → hello → proxy `/healthz` probe →
   `probe_network` → mark checkpoint-ready → build the driver runner → loop:
   resume a leased turn (from `hello_ack`) or `claim_next_turn`; on a grant, run the
   driver's `run_turn(content, emit)` where `emit` sends `emit_output`; finish with
@@ -100,10 +99,10 @@ queue under `/harness-control/bridge`:
 `sandbox_source_ip()` reads the first non-loopback address (ignoring any env claim),
 so the host correlates the model proxy by the real sandbox IP.
 
-**Driver runners** (`RUNNER_FACTORIES`): `ClaudeTurnRunner`, `PiRPCTurnRunner`,
-`ShellTurnRunner`, and a `native_events_probe` test runner. Their command lines and
-behaviors are described in [drivers.md](./drivers.md). All model-access runners get
-only `ANTHROPIC_BASE_URL` (the proxy alias) and a dummy API key — never a real
+**Driver runners** (`RUNNER_FACTORIES`): `PiRPCTurnRunner`, `ShellTurnRunner`, and a
+`native_events_probe` test runner. Their command lines and behaviors are described
+in [drivers.md](./drivers.md). All model-access runners get only
+`ANTHROPIC_BASE_URL` (the proxy alias) and a dummy API key — never a real
 credential.
 
 ## Shell agent (`harness-shell-agent`)
@@ -141,7 +140,7 @@ generated charts/images doesn't render as tofu boxes.
 
 Pins: the `FORCE=0` reuse path regenerates the Pi manifest correctly; queue numeric
 ordering and heartbeat/checkpoint-ready markers; the `hello`/claim/ack/emit protocol
-and resume sequence numbering; Claude runner env hygiene and session-selection rules;
-Pi runner command line, config-materialization read-only/symlink rejection, stderr
-handling, and sidecar restore; the manifest digest fixture; and entrypoint invariants
-(required uid/gid, secret-mount rejection, workspace/agent-home ordering).
+and resume sequence numbering; Pi runner command line, config-materialization
+read-only/symlink rejection, stderr handling, and sidecar restore; the manifest
+digest fixture; and entrypoint invariants (required uid/gid, secret-mount
+rejection, workspace/agent-home ordering).

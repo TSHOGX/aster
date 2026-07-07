@@ -9,7 +9,7 @@ UBUNTU_SUITE="${UBUNTU_SUITE:-noble}"
 UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}"
 UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-main,universe}"
 FORCE="${FORCE:-0}"
-SANDBOX_AGENT_DRIVERS="${SANDBOX_AGENT_DRIVERS:-claude_code}"
+SANDBOX_AGENT_DRIVERS="${SANDBOX_AGENT_DRIVERS:-pi}"
 PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-0.77.0}"
 PI_NODE_VERSION="${PI_NODE_VERSION:-24.15.0}"
 PI_PACKAGE="@earendil-works/pi-coding-agent"
@@ -54,8 +54,7 @@ parse_agent_drivers() {
       continue
     fi
     case "${driver}" in
-      claude) canonical="claude_code" ;;
-      claude_code|pi|sh) canonical="${driver}" ;;
+      pi|sh) canonical="${driver}" ;;
       *)
         echo "unsupported SANDBOX_AGENT_DRIVERS entry: ${driver}" >&2
         exit 1
@@ -134,10 +133,6 @@ install_agent_drivers() {
   local driver
   for driver in "${SELECTED_AGENT_DRIVERS[@]}"; do
     case "${driver}" in
-      claude_code)
-        log "installing Claude Code CLI"
-        chroot "${ROOTFS_DIR}" /bin/sh -lc "npm install -g --prefix /usr/local @anthropic-ai/claude-code"
-        ;;
       pi)
         log "installing Pi coding agent ${PI_CODING_AGENT_VERSION}"
         chroot "${ROOTFS_DIR}" /bin/sh -lc "npm install -g --prefix /usr/local '${PI_PACKAGE}@${PI_CODING_AGENT_VERSION}'"
@@ -154,7 +149,6 @@ generate_agent_manifest() {
   drivers="$(selected_agent_drivers_csv)"
   log "generating /etc/harness-image/agents.json for ${drivers}"
   python3 - "${ROOTFS_DIR}" "${drivers}" "${PI_CODING_AGENT_VERSION}" "${PI_PACKAGE}" "${PI_PACKAGE_SHASUM}" "${PI_PACKAGE_INTEGRITY}" "${PI_EVENT_SCHEMA}" "${PI_NODE_VERSION}" <<'PY'
-import glob
 import hashlib
 import json
 import os
@@ -203,20 +197,6 @@ def file_sha256(sandbox_path):
     return "sha256:" + h.hexdigest()
 
 
-def package_version(package_name):
-    candidates = []
-    rel = package_name + "/package.json"
-    for base in ("usr/lib/node_modules", "usr/local/lib/node_modules"):
-        candidates.append(rootfs / base / rel)
-    candidates.extend(pathlib.Path(p) for p in glob.glob(str(rootfs / "opt" / "node-*" / "lib" / "node_modules" / rel)))
-    for path in candidates:
-        if path.is_file():
-            with open(path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            return payload.get("version") or ""
-    raise SystemExit(f"selected package missing package.json: {package_name}")
-
-
 def common(driver_id, label, kind, binary_path, output_schema, model_access):
     return {
         "driver_id": driver_id,
@@ -234,13 +214,7 @@ def common(driver_id, label, kind, binary_path, output_schema, model_access):
 
 entries = []
 for driver in drivers:
-    if driver == "claude_code":
-        entry = common("claude_code", "Claude Code", "agent", "/usr/local/bin/claude", "claude_stream_json_v1", True)
-        entry.update({
-            "package_name": "@anthropic-ai/claude-code",
-            "package_version": package_version("@anthropic-ai/claude-code"),
-        })
-    elif driver == "pi":
+    if driver == "pi":
         entry = common("pi", "Pi", "agent", "/usr/local/bin/pi", pi_event_schema, True)
         entry.update({
             "package_name": pi_package,
@@ -289,9 +263,7 @@ sanitize_isolated_rootfs() {
     "${ROOTFS_DIR}/sessions" \
     "${ROOTFS_DIR}/agent-homes" \
     "${ROOTFS_DIR}/harness-secrets" \
-    "${ROOTFS_DIR}/root/.claude" \
-    "${ROOTFS_DIR}/root/.cache" \
-    "${ROOTFS_DIR}/root/.claude.json"
+    "${ROOTFS_DIR}/root/.cache"
   install -d -m 0755 "${ROOTFS_DIR}/workspace" "${ROOTFS_DIR}/agent-home"
   find "${ROOTFS_DIR}" -maxdepth 1 -type f -name '.gvisor.filestore.*' -delete
 }

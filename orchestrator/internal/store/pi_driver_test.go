@@ -40,23 +40,18 @@ func TestFreshSchemaAcceptsPiDriver(t *testing.T) {
 
 	baseCfg := testAllocatorConfig(t)
 	baseCfg.CIDRPool = netip.MustParsePrefix("10.240.0.0/28")
-	createAllocatedDriverSession(t, ctx, st, owner.UUID, baseCfg, "sess_pi_widen_claude", "claude_code", "stream-json")
 	createAllocatedDriverSession(t, ctx, st, owner.UUID, baseCfg, "sess_pi_widen_shell", "sh", "shell_pty")
-	addDriverUserRows(t, ctx, st, "sess_pi_widen_claude")
 	addDriverUserRows(t, ctx, st, "sess_pi_widen_shell")
 
 	assertForeignKeyCheckClean(t, ctx, st.db)
 
-	for _, sessionID := range []string{"sess_pi_widen_claude", "sess_pi_widen_shell"} {
+	for _, sessionID := range []string{"sess_pi_widen_shell"} {
 		if messages, err := st.ListMessages(ctx, sessionID); err != nil || len(messages) != 1 {
 			t.Fatalf("messages for %s len=%d err=%v", sessionID, len(messages), err)
 		}
 		if artifacts, err := st.ListArtifacts(ctx, sessionID); err != nil || len(artifacts) != 1 {
 			t.Fatalf("artifacts for %s len=%d err=%v", sessionID, len(artifacts), err)
 		}
-	}
-	if state := driverStatePayloadForTest(t, ctx, st, "sess_pi_widen_claude", "claude_code"); !strings.Contains(state, `"driver_id":"claude_code"`) {
-		t.Fatalf("claude driver state was not preserved: %s", state)
 	}
 	if state := driverStatePayloadForTest(t, ctx, st, "sess_pi_widen_shell", "sh"); !strings.Contains(state, `"driver_id":"sh"`) {
 		t.Fatalf("shell driver state was not preserved: %s", state)
@@ -79,7 +74,7 @@ func TestFreshSchemaAcceptsPiDriver(t *testing.T) {
 }
 
 func TestPiDriverStateValidation(t *testing.T) {
-	payload, digest, err := canonicalBootstrapDriverState("pi", "")
+	payload, digest, err := canonicalBootstrapDriverState("pi")
 	if err != nil {
 		t.Fatalf("bootstrap pi state: %v", err)
 	}

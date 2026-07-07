@@ -5,7 +5,6 @@ echo "[entrypoint] starting" >&2
 
 CONTROL_JSON_FILE="/harness-control/session.json"
 POLL_INTERVAL="0.05"
-AGENT_USER="harness"
 AGENT_UID="${HARNESS_AGENT_UID:-}"
 AGENT_GID="${HARNESS_AGENT_GID:-}"
 [ -n "$AGENT_UID" ] || { echo "[entrypoint] HARNESS_AGENT_UID is required" >&2; exit 65; }
@@ -55,9 +54,7 @@ emit("HARNESS_AGENT_HOME", data.get("agent_home_path"))
 emit("HARNESS_DRIVER_ID", data.get("driver_id"))
 emit("HARNESS_BRIDGE_PROTOCOL_VERSION", data.get("bridge_protocol_version"))
 emit("HARNESS_TURN_INPUT_SCHEMA", data.get("turn_input_schema"))
-emit("CLAUDE_MODEL", data.get("model", "sonnet"))
-emit("CLAUDE_OUTPUT_FORMAT", data.get("output_format", "stream-json"))
-emit("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", driver_runtime_value("claude_code_disable_nonessential_traffic"))
+emit("PI_MODEL", data.get("model", "sonnet"))
 emit("ANTHROPIC_BASE_URL", data.get("sandbox_model_proxy_base_url"))
 emit("PI_CODING_AGENT_DIR", driver_runtime_value("pi_coding_agent_dir"))
 emit("PI_CODING_AGENT_SESSION_DIR", driver_runtime_value("pi_coding_agent_session_dir"))
@@ -72,8 +69,6 @@ eval "$CONTROL_EXPORTS"
 
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
-
-[ -n "${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-}" ] && export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
 
 : "${SESSION_ID:?SESSION_ID is required in control file}"
 : "${HARNESS_DRIVER_ID:?HARNESS_DRIVER_ID is required in control file}"
@@ -100,8 +95,8 @@ if [ -n "${SECRET_MOUNT_PATH:-}" ] || [ -n "${ANTHROPIC_API_KEY_SECRET_ID:-}" ] 
 fi
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 
-if [ "$HARNESS_DRIVER_ID" = "claude_code" ]; then
-  : "${ANTHROPIC_BASE_URL:?ANTHROPIC_BASE_URL is required for claude_code driver}"
+if [ "$HARNESS_DRIVER_ID" = "pi" ]; then
+  : "${ANTHROPIC_BASE_URL:?ANTHROPIC_BASE_URL is required for pi driver}"
   export ANTHROPIC_BASE_URL
 fi
 
@@ -110,15 +105,11 @@ if [ "${HARNESS_BRIDGE_MODE:-}" = "probe" ]; then
   exec /usr/local/bin/harness-bridge-client probe
 fi
 
-# Keep the agent's writable HOME outside /workspace so Claude internals do not
+# Keep the agent's writable HOME outside /workspace so agent internals do not
 # appear in the user-visible file tree or artifact list.
 : "${SESSION_WORKSPACE:?SESSION_WORKSPACE is required in control file}"
 : "${HARNESS_AGENT_HOME:?HARNESS_AGENT_HOME is required in control file}"
 AGENT_HOME="$HARNESS_AGENT_HOME"
-
-ensure_agent_user() {
-  chown -R "$AGENT_UID:$AGENT_GID" "$AGENT_HOME" "$SESSION_WORKSPACE" 2>/dev/null || true
-}
 
 if [ "$SESSION_WORKSPACE" != "/workspace" ]; then
   echo "[entrypoint] SESSION_WORKSPACE must be /workspace" >&2
@@ -134,26 +125,7 @@ fi
 
 cd /workspace
 
-if [ "$HARNESS_DRIVER_ID" = "claude_code" ]; then
-  ensure_agent_user
-fi
-
 exec_bridge_client() {
-  if [ "$HARNESS_DRIVER_ID" = "claude_code" ]; then
-    if [ "$(id -u)" = "$AGENT_UID" ] && [ "$(id -g)" = "$AGENT_GID" ]; then
-      exec env HOME="$AGENT_HOME" USER="$AGENT_USER" LOGNAME="$AGENT_USER" \
-        HARNESS_AGENT_HOME="$AGENT_HOME" \
-        HARNESS_DRIVER_ID="$HARNESS_DRIVER_ID" \
-        ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}" \
-        /usr/local/bin/harness-bridge-client "$@"
-    fi
-    exec setpriv --reuid "$AGENT_UID" --regid "$AGENT_GID" --clear-groups \
-      env HOME="$AGENT_HOME" USER="$AGENT_USER" LOGNAME="$AGENT_USER" \
-      HARNESS_AGENT_HOME="$AGENT_HOME" \
-      HARNESS_DRIVER_ID="$HARNESS_DRIVER_ID" \
-      ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}" \
-      /usr/local/bin/harness-bridge-client "$@"
-  fi
   exec /usr/local/bin/harness-bridge-client "$@"
 }
 

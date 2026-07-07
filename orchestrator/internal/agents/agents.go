@@ -13,9 +13,8 @@ import (
 type ID string
 
 const (
-	ClaudeCode ID = "claude_code"
-	Pi         ID = "pi"
-	Shell      ID = "sh"
+	Pi    ID = "pi"
+	Shell ID = "sh"
 )
 
 const (
@@ -34,18 +33,14 @@ const (
 	PiEventSchemaVersion   = "pi_rpc_events_v1.0"
 	PiBinaryPath           = "/usr/local/bin/pi"
 
-	ClaudeCodePackageName = "@anthropic-ai/claude-code"
-	ClaudeCodeBinaryPath  = "/usr/local/bin/claude"
-
 	ShellBinaryPath = "/usr/local/bin/harness-shell-agent"
 )
 
 type Protocol string
 
 const (
-	ProtocolClaudeStreamJSON Protocol = "claude_stream_json"
-	ProtocolPiRPC            Protocol = "pi_rpc"
-	ProtocolShellPTY         Protocol = "shell_pty"
+	ProtocolPiRPC    Protocol = "pi_rpc"
+	ProtocolShellPTY Protocol = "shell_pty"
 )
 
 type DriverKind string
@@ -192,33 +187,6 @@ type SecretGrantSpec struct {
 }
 
 var driverSpecs = map[ID]DriverSpec{
-	ClaudeCode: normalizeDriverSpec(DriverSpec{
-		ID:                    ClaudeCode,
-		Label:                 "Claude Code",
-		Kind:                  DriverKindAgent,
-		BridgeProtocol:        "harness_bridge_v2",
-		BridgeProtocolVersion: 2,
-		TurnInputSchema:       "RunTurn",
-		OutputSchema:          "claude_stream_json_v1",
-		RequiredRuntimeCapabilities: []string{
-			"exec_stream",
-			"filesystem_rw",
-			"kill",
-			"logs",
-			"network_policy",
-			"snapshot_disk",
-			"stdin",
-		},
-		ModelAccess:        true,
-		OutputFormat:       "stream-json",
-		SupportsInterrupt:  false,
-		SupportsCompaction: true,
-		Phase10Support:     []string{"single_driver_turns"},
-		BinaryPath:         ClaudeCodeBinaryPath,
-		PackageFacts: DriverPackageFacts{
-			Name: ClaudeCodePackageName,
-		},
-	}),
 	Pi: normalizeDriverSpec(DriverSpec{
 		ID:                    Pi,
 		Label:                 "Pi",
@@ -374,10 +342,8 @@ func Lookup(value string) (Definition, bool) {
 	if !ok {
 		return Definition{}, false
 	}
-	protocol := ProtocolClaudeStreamJSON
+	protocol := ProtocolPiRPC
 	switch spec.ID {
-	case Pi:
-		protocol = ProtocolPiRPC
 	case Shell:
 		protocol = ProtocolShellPTY
 	}
@@ -456,7 +422,7 @@ func CapabilityDigest(provider RuntimeProviderSpec) string {
 func CanonicalDriverID(value string) (ID, error) {
 	trimmed := strings.TrimSpace(value)
 	switch ID(trimmed) {
-	case ClaudeCode, Pi, Shell:
+	case Pi, Shell:
 		return ID(trimmed), nil
 	default:
 		return "", fmt.Errorf("unsupported driver %q", value)
@@ -465,7 +431,7 @@ func CanonicalDriverID(value string) (ID, error) {
 
 func PublicAgentForDriver(value string) (string, bool) {
 	switch ID(strings.TrimSpace(value)) {
-	case ClaudeCode, Pi, Shell:
+	case Pi, Shell:
 		return strings.TrimSpace(value), true
 	default:
 		return "", false

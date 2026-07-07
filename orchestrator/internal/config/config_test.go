@@ -79,10 +79,6 @@ func TestLoadProjectConfigUsesHarnessSchema(t *testing.T) {
 		harness.ModelProxy.SandboxBaseURL != "http://harness-model-proxy.internal:8083" {
 		t.Fatalf("unexpected model proxy config: %+v", harness.ModelProxy)
 	}
-	if cfg.Claude.ProxyBindURL != harness.ModelProxy.BindURL ||
-		cfg.Claude.SandboxBaseURL != harness.ModelProxy.SandboxBaseURL {
-		t.Fatalf("claude legacy proxy fields not mirrored from model proxy: claude=%+v model_proxy=%+v", cfg.Claude, harness.ModelProxy)
-	}
 	if harness.SessionRetention.Duration != 3*time.Hour || harness.MaxSessions != 10 {
 		t.Fatalf("unexpected retention/max: %s %d", harness.SessionRetention.Duration, harness.MaxSessions)
 	}
@@ -124,8 +120,8 @@ func TestLoadProjectConfigUsesHarnessSchema(t *testing.T) {
 		harness.Checkpoint.MonitorInterval.Duration != 11*time.Second {
 		t.Fatalf("unexpected checkpoint config: %+v", harness.Checkpoint)
 	}
-	if !cfg.Claude.DisableNonessentialTraffic {
-		t.Fatalf("expected default nonessential traffic setting to be true")
+	if agent := harness.Agents["pi"]; agent.DisableNonessentialTraffic == nil || !*agent.DisableNonessentialTraffic {
+		t.Fatalf("expected default pi agent nonessential traffic setting to be true: %+v", agent)
 	}
 }
 
@@ -147,9 +143,6 @@ func TestLoadProjectConfigDerivesModelProxySandboxBaseURLPort(t *testing.T) {
 		cfg.Harness.ModelProxy.SandboxBaseURL != "http://harness-model-proxy.internal:8083" {
 		t.Fatalf("model proxy sandbox base URL was not derived from bind port: %+v", cfg.Harness.ModelProxy)
 	}
-	if cfg.Claude.SandboxBaseURL != "http://harness-model-proxy.internal:8083" {
-		t.Fatalf("legacy claude sandbox base URL was not synchronized: %+v", cfg.Claude)
-	}
 }
 
 func TestLoadProjectConfigUsesGenericDeploymentConfig(t *testing.T) {
@@ -158,12 +151,6 @@ func TestLoadProjectConfigUsesGenericDeploymentConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`harness:
   default_agent: pi
   agents:
-    claude_code:
-      enabled: true
-      driver_id: claude_code
-      model_profile: anthropic_default
-      runtime_provider: local_runsc
-      disable_nonessential_traffic: false
     pi:
       enabled: true
       driver_id: pi
@@ -207,8 +194,8 @@ func TestLoadProjectConfigUsesGenericDeploymentConfig(t *testing.T) {
 		profile.Enabled == nil || !*profile.Enabled {
 		t.Fatalf("unexpected model profile: %+v", profile)
 	}
-	if cfg.Claude.Model != "opus" || cfg.Claude.DisableNonessentialTraffic {
-		t.Fatalf("legacy Claude projection did not mirror generic config: %+v", cfg.Claude)
+	if agent := cfg.Harness.Agents["pi"]; agent.DisableNonessentialTraffic == nil || !*agent.DisableNonessentialTraffic {
+		t.Fatalf("pi agent nonessential traffic setting not mirrored: %+v", agent)
 	}
 }
 
@@ -961,10 +948,6 @@ func TestLoadExposesModelProxyConfig(t *testing.T) {
 		cfg.ModelProxy.SandboxBaseURL != "http://harness-model-proxy.internal:8083" {
 		t.Fatalf("unexpected exposed model proxy config: %+v", cfg.ModelProxy)
 	}
-	if cfg.Claude.ProxyBindURL != cfg.ModelProxy.BindURL ||
-		cfg.Claude.SandboxBaseURL != cfg.ModelProxy.SandboxBaseURL {
-		t.Fatalf("legacy claude proxy fields not synchronized: claude=%+v model_proxy=%+v", cfg.Claude, cfg.ModelProxy)
-	}
 }
 
 func TestLoadRejectsShellDefaultAgent(t *testing.T) {
@@ -1002,11 +985,8 @@ func TestLoadProjectConfigMissingFileUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing config should not fail: %v", err)
 	}
-	if !cfg.Claude.DisableNonessentialTraffic {
-		t.Fatalf("expected default nonessential traffic setting to be true")
-	}
-	if cfg.Claude.SandboxBaseURL != "http://harness-model-proxy.internal:8082" {
-		t.Fatalf("default sandbox base URL = %q", cfg.Claude.SandboxBaseURL)
+	if agent := cfg.Harness.Agents["pi"]; agent.DisableNonessentialTraffic == nil || !*agent.DisableNonessentialTraffic {
+		t.Fatalf("expected default pi agent nonessential traffic setting to be true: %+v", agent)
 	}
 	if cfg.Harness.ModelProxy.BindURL != "http://0.0.0.0:8082" ||
 		cfg.Harness.ModelProxy.BindPort != 8082 ||

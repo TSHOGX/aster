@@ -17,7 +17,7 @@ type dbRunner interface {
 
 func (s *Store) ensureSchema(ctx context.Context) error {
 	statusCheck := sqlStringList(sessionstate.AllStatuses())
-	driverCheck := sqlStringList([]string{string(agents.ClaudeCode), string(agents.Pi), string(agents.Shell)})
+	driverCheck := sqlStringList([]string{string(agents.Pi), string(agents.Shell)})
 	_, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -46,7 +46,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   workspace TEXT NOT NULL,
   restore_id TEXT NOT NULL,
   restore_ms INTEGER,
-  claude_session_uuid TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   expires_at TEXT,

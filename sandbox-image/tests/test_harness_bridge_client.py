@@ -68,7 +68,7 @@ class BridgeClientTest(unittest.TestCase):
 
     def test_hello_records_resume_boundary(self):
         with tempfile.TemporaryDirectory() as root:
-            client = bridge.BridgeClient(root, "sess", "gen", "claude_code", poll_interval=0.001)
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
             response = bridge.Queue(root, bridge.INBOX)
 
             sent = client.send("hello", request_id="req_hello")
@@ -99,7 +99,7 @@ class BridgeClientTest(unittest.TestCase):
 
     def test_hello_sends_bridge_protocol_v2_identity(self):
         with tempfile.TemporaryDirectory() as root:
-            client = bridge.BridgeClient(root, "sess", "gen", "claude_code", poll_interval=0.001)
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
             inbox = bridge.Queue(root, bridge.INBOX)
             original_write = bridge.Queue.write
             sent = {}
@@ -124,12 +124,12 @@ class BridgeClientTest(unittest.TestCase):
 
             self.assertEqual(
                 sent["payload"],
-                {"driver_id": "claude_code", "protocol_version": 2, "turn_input_schema": "RunTurn"},
+                {"driver_id": "pi", "protocol_version": 2, "turn_input_schema": "RunTurn"},
             )
 
     def test_claim_and_lifecycle_messages(self):
         with tempfile.TemporaryDirectory() as root:
-            client = bridge.BridgeClient(root, "sess", "gen", "claude_code", poll_interval=0.001)
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
             inbox = bridge.Queue(root, bridge.INBOX)
 
             sent = client.send("claim_next_turn", request_id="req_claim")
@@ -160,7 +160,7 @@ class BridgeClientTest(unittest.TestCase):
 
     def test_resume_turn_returns_grant_payload(self):
         with tempfile.TemporaryDirectory() as root:
-            client = bridge.BridgeClient(root, "sess", "gen", "claude_code", poll_interval=0.001)
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
 
             sent_request_id = None
             original_send = client.send
@@ -190,7 +190,7 @@ class BridgeClientTest(unittest.TestCase):
 
     def test_heartbeat_writes_bridge_mtime_file_and_message(self):
         with tempfile.TemporaryDirectory() as root:
-            client = bridge.BridgeClient(root, "sess", "gen", "claude_code", poll_interval=0.001)
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
             client.heartbeat()
 
             heartbeat = Path(root) / bridge.HEARTBEAT / bridge.BRIDGE_HEARTBEAT
@@ -202,7 +202,7 @@ class BridgeClientTest(unittest.TestCase):
 
     def test_checkpoint_ready_marker_is_written_and_cleared(self):
         with tempfile.TemporaryDirectory() as root:
-            client = bridge.BridgeClient(root, "sess", "gen", "claude_code", poll_interval=0.001)
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
             client.mark_checkpoint_ready()
             ready = Path(root) / bridge.HEARTBEAT / bridge.CHECKPOINT_READY
             self.assertTrue(ready.exists())
@@ -228,7 +228,7 @@ class BridgeClientTest(unittest.TestCase):
                 bridge_dir=root,
                 session_id="sess",
                 generation_id="gen",
-                driver_id="claude_code",
+                driver_id="pi",
                 poll_interval=0.001,
                 interval=0.25,
             )
@@ -1263,6 +1263,45 @@ class BridgeClientTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, r"probe GET /healthz returned 204"):
                 bridge.run_network_probe("http://10.240.0.1:8082", {200}, 0.1)
 
+    def test_pi_probe_runs_proxy_http_probe(self):
+        with tempfile.TemporaryDirectory() as root:
+            args = argparse_namespace(
+                bridge_dir=root,
+                session_id="sess",
+                generation_id="gen",
+                driver_id="pi",
+                poll_interval=0.001,
+                timeout=0.1,
+                base_url="http://10.240.0.1:8082",
+                healthz_statuses="200",
+                http_timeout=0.1,
+            )
+            inbox = bridge.Queue(root, bridge.INBOX)
+
+            with mock.patch.object(bridge, "run_network_probe") as run_network_probe:
+                original_write = bridge.Queue.write
+
+                def write_and_respond(queue, envelope):
+                    message_type = envelope.get("type")
+                    request_id = envelope.get("request_id")
+                    if queue.name == bridge.OUTBOX and message_type in {"hello", "probe_network"}:
+                        inbox.write(
+                            {
+                                "message_id": f"host_{message_type}",
+                                "request_id": request_id,
+                                "type": "hello_ack" if message_type == "hello" else "no_work",
+                                "session_id": "sess",
+                                "generation_id": "gen",
+                                "payload": {"last_output_sequence_by_turn": {}} if message_type == "hello" else {},
+                            }
+                        )
+                    return original_write(queue, envelope)
+
+                with mock.patch.object(bridge.Queue, "write", write_and_respond):
+                    bridge.run_probe(args)
+
+            run_network_probe.assert_called_once_with("http://10.240.0.1:8082", {200}, 0.1)
+
     def test_shell_probe_skips_proxy_http_probe(self):
         with tempfile.TemporaryDirectory() as root:
             args = argparse_namespace(
@@ -1307,398 +1346,12 @@ class BridgeClientTest(unittest.TestCase):
             self.assertTrue((Path(root) / bridge.HEARTBEAT / bridge.BRIDGE_HEARTBEAT).exists())
             self.assertTrue((Path(root) / bridge.HEARTBEAT / bridge.CHECKPOINT_READY).exists())
 
-    def test_claude_runner_ignores_legacy_secret_environment(self):
-        class FakeStdin:
-            def __init__(self):
-                self.writes = []
-                self.closed = False
-
-            def write(self, value):
-                self.writes.append(value)
-
-            def close(self):
-                self.closed = True
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = FakeStdin()
-                self.stdout = iter(['{"type":"result","result":"ok"}\n'])
-
-            def wait(self):
-                return 0
-
-        captured = {}
-
-        def popen(command, **kwargs):
-            captured["command"] = command
-            captured["env"] = kwargs.get("env") or {}
-            captured["process"] = FakeProcess()
-            return captured["process"]
-
-        with mock.patch.dict(
-            os.environ,
-            {
-                "SESSION_ID": "sess",
-                "HARNESS_AGENT_HOME": "/agent-home",
-                "HARNESS_AGENT_UID": "65534",
-                "HARNESS_AGENT_GID": "65534",
-                "HARNESS_SECRET_READERS_GID": "12345",
-                "ANTHROPIC_BASE_URL": "http://harness-model-proxy.internal:8082",
-                "ANTHROPIC_AUTH_TOKEN": "legacy-token",
-                "SECRET_MOUNT_PATH": "/harness-secrets",
-                "ANTHROPIC_API_KEY_SECRET_ID": "anthropic_api_key",
-                "ANTHROPIC_AUTH_TOKEN_SECRET_ID": "anthropic_auth_token",
-                "SECRET_VERSION": "local",
-            },
-            clear=True,
-        ):
-            with mock.patch.object(bridge.subprocess, "Popen", side_effect=popen):
-                runner = claude_runner()
-                status, error_class, error = runner.run_turn("hello", lambda stream, line: None)
-
-        self.assertEqual((status, error_class, error), ("completed", "", ""))
-        command = captured["command"]
-        self.assertIn("--clear-groups", command)
-        self.assertNotIn("--groups", command)
-        self.assertNotIn("SECRET_MOUNT_PATH", " ".join(command))
-        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", " ".join(command))
-        self.assertIn("/usr/local/bin/claude", command)
-        self.assertEqual(captured["env"]["ANTHROPIC_API_KEY"], bridge.HOST_ONLY_DUMMY_API_KEY)
-        self.assertEqual(captured["env"]["ANTHROPIC_BASE_URL"], "http://harness-model-proxy.internal:8082")
-        for name in (
-            "SECRET_MOUNT_PATH",
-            "ANTHROPIC_API_KEY_SECRET_ID",
-            "ANTHROPIC_AUTH_TOKEN_SECRET_ID",
-            "SECRET_VERSION",
-            "HARNESS_SECRET_READERS_GID",
-            "ANTHROPIC_AUTH_TOKEN",
-        ):
-            self.assertNotIn(name, captured["env"])
-        self.assertIn('"text":"hello"', captured["process"].stdin.writes[0])
-
-    def test_claude_runner_uses_dummy_key_without_secret_mount(self):
-        class FakeStdin:
-            def __init__(self):
-                self.writes = []
-
-            def write(self, value):
-                self.writes.append(value)
-
-            def close(self):
-                pass
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = FakeStdin()
-                self.stdout = iter(['{"type":"result","result":"ok"}\n'])
-
-            def wait(self):
-                return 0
-
-        captured = {}
-
-        def popen(command, **kwargs):
-            captured["command"] = command
-            captured["env"] = kwargs.get("env") or {}
-            captured["process"] = FakeProcess()
-            return captured["process"]
-
-        with mock.patch.dict(
-            os.environ,
-            {
-                "SESSION_ID": "sess",
-                "HARNESS_AGENT_HOME": "/agent-home",
-                "HARNESS_AGENT_UID": "65534",
-                "HARNESS_AGENT_GID": "65534",
-                "ANTHROPIC_BASE_URL": "http://harness-model-proxy.internal:8082",
-            },
-            clear=True,
-        ):
-            with mock.patch.object(bridge.subprocess, "Popen", side_effect=popen):
-                status, error_class, error = claude_runner().run_turn(
-                    "hello",
-                    lambda stream, line: None,
-                )
-
-        self.assertEqual((status, error_class, error), ("completed", "", ""))
-        command = captured["command"]
-        self.assertIn("--clear-groups", command)
-        self.assertNotIn("--groups", command)
-        self.assertNotIn("SECRET_MOUNT_PATH", " ".join(command))
-        self.assertNotIn("ANTHROPIC_API_KEY=", " ".join(command))
-        self.assertEqual(captured["env"]["ANTHROPIC_API_KEY"], bridge.HOST_ONLY_DUMMY_API_KEY)
-        self.assertEqual(captured["env"]["ANTHROPIC_BASE_URL"], "http://harness-model-proxy.internal:8082")
-        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", captured["env"])
-        self.assertIn('"text":"hello"', captured["process"].stdin.writes[0])
-
-    def test_claude_runner_skips_setpriv_when_already_sandbox_identity(self):
-        class FakeStdin:
-            def __init__(self):
-                self.writes = []
-
-            def write(self, value):
-                self.writes.append(value)
-
-            def close(self):
-                pass
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = FakeStdin()
-                self.stdout = iter(['{"type":"result","result":"ok"}\n'])
-
-            def wait(self):
-                return 0
-
-        captured = {}
-
-        def popen(command, **kwargs):
-            captured["command"] = command
-            captured["env"] = kwargs.get("env") or {}
-            captured["process"] = FakeProcess()
-            return captured["process"]
-
-        with mock.patch.dict(
-            os.environ,
-            {
-                "SESSION_ID": "sess",
-                "HARNESS_AGENT_HOME": "/agent-home",
-                "HARNESS_AGENT_UID": "65534",
-                "HARNESS_AGENT_GID": "65534",
-                "ANTHROPIC_BASE_URL": "http://harness-model-proxy.internal:8082",
-            },
-            clear=True,
-        ):
-            with mock.patch.object(bridge.os, "geteuid", return_value=65534):
-                with mock.patch.object(bridge.os, "getegid", return_value=65534):
-                    with mock.patch.object(bridge.subprocess, "Popen", side_effect=popen):
-                        status, error_class, error = claude_runner().run_turn(
-                            "hello",
-                            lambda stream, line: None,
-                        )
-
-        self.assertEqual((status, error_class, error), ("completed", "", ""))
-        self.assertEqual(captured["command"][0], "/usr/local/bin/claude")
-        self.assertNotIn("setpriv", captured["command"])
-        self.assertEqual(captured["env"]["ANTHROPIC_API_KEY"], bridge.HOST_ONLY_DUMMY_API_KEY)
-
-    def test_claude_runner_resume_selector_uses_driver_state(self):
-        class FakeStdin:
-            def write(self, value):
-                pass
-
-            def close(self):
-                pass
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = FakeStdin()
-                self.stdout = iter(['{"type":"result","result":"ok"}\n'])
-
-            def wait(self):
-                return 0
-
-        commands = []
-
-        def popen(command, **kwargs):
-            commands.append(command)
-            return FakeProcess()
-
-        with mock.patch.dict(os.environ, claude_runner_env(), clear=True):
-            with mock.patch.object(bridge.subprocess, "Popen", side_effect=popen):
-                runner = bridge.ClaudeTurnRunner()
-                runner.set_turn_context(
-                    {
-                        "driver_state": {
-                            "driver_id": "claude_code",
-                            "state_payload": {
-                                "driver_id": "claude_code",
-                                "state_kind": "claude_session",
-                                "claude_session_uuid": "11111111-2222-3333-4444-555555555555",
-                                "initialized": False,
-                            },
-                        }
-                    }
-                )
-                runner.run_turn("first", lambda stream, line: None)
-                runner.set_turn_context(
-                    {
-                        "driver_state": {
-                            "driver_id": "claude_code",
-                            "state_payload": {
-                                "driver_id": "claude_code",
-                                "state_kind": "claude_session",
-                                "claude_session_uuid": "11111111-2222-3333-4444-555555555555",
-                                "initialized": True,
-                            },
-                        }
-                    }
-                )
-                runner.run_turn("second", lambda stream, line: None)
-
-        self.assertIn("--session-id", commands[0])
-        self.assertNotIn("--resume", commands[0])
-        self.assertIn("--resume", commands[1])
-        self.assertNotIn("--session-id", commands[1])
-
-    def test_claude_runner_marker_does_not_override_driver_state(self):
-        class FakeStdin:
-            def write(self, value):
-                pass
-
-            def close(self):
-                pass
-
-        class FakeProcess:
-            def __init__(self, lines):
-                self.stdin = FakeStdin()
-                self.stdout = iter(lines)
-
-            def wait(self):
-                return 0
-
-        session_uuid = "11111111-2222-3333-4444-555555555555"
-        command_outputs = iter(
-            [
-                [
-                    f'{{"type":"system","subtype":"init","session_id":"{session_uuid}"}}\n',
-                    f'{{"type":"result","result":"ok","session_id":"{session_uuid}"}}\n',
-                ],
-                ['{"type":"result","result":"ok"}\n'],
-            ]
-        )
-        commands = []
-
-        def popen(command, **kwargs):
-            commands.append(command)
-            return FakeProcess(next(command_outputs))
-
-        with tempfile.TemporaryDirectory() as agent_home:
-            env = claude_runner_env()
-            env["HARNESS_AGENT_HOME"] = agent_home
-            with mock.patch.dict(os.environ, env, clear=True):
-                with mock.patch.object(bridge.subprocess, "Popen", side_effect=popen):
-                    claude_runner(initialized=False, session_uuid=session_uuid).run_turn(
-                        "first",
-                        lambda stream, line: None,
-                    )
-                    claude_runner(initialized=False, session_uuid=session_uuid).run_turn(
-                        "second",
-                        lambda stream, line: None,
-                    )
-
-            marker = Path(agent_home) / bridge.CLAUDE_MARKER_DIR / bridge.CLAUDE_SESSION_MARKER
-            self.assertEqual(json.loads(marker.read_text(encoding="utf-8"))["claude_session_uuid"], session_uuid)
-
-        self.assertIn("--session-id", commands[0])
-        self.assertNotIn("--resume", commands[0])
-        self.assertIn("--session-id", commands[1])
-        self.assertNotIn("--resume", commands[1])
-
-    def test_claude_runner_filesystem_state_does_not_override_driver_state(self):
-        class FakeStdin:
-            def write(self, value):
-                pass
-
-            def close(self):
-                pass
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = FakeStdin()
-                self.stdout = iter(['{"type":"result","result":"ok"}\n'])
-
-            def wait(self):
-                return 0
-
-        session_uuid = "11111111-2222-3333-4444-555555555555"
-        commands = []
-
-        def popen(command, **kwargs):
-            commands.append(command)
-            return FakeProcess()
-
-        with tempfile.TemporaryDirectory() as agent_home:
-            state_dir = Path(agent_home) / ".claude" / "projects" / "-workspace"
-            state_dir.mkdir(parents=True)
-            (state_dir / f"{session_uuid}.jsonl").write_text(
-                f'{{"type":"last-prompt","sessionId":"{session_uuid}"}}\n',
-                encoding="utf-8",
-            )
-            env = claude_runner_env()
-            env["HARNESS_AGENT_HOME"] = agent_home
-            with mock.patch.dict(os.environ, env, clear=True):
-                with mock.patch.object(bridge.subprocess, "Popen", side_effect=popen):
-                    claude_runner(initialized=False, session_uuid=session_uuid).run_turn(
-                        "second",
-                        lambda stream, line: None,
-                    )
-
-        self.assertIn("--session-id", commands[0])
-        self.assertNotIn("--resume", commands[0])
-
-    def test_claude_runner_maps_stream_error_to_failed_turn(self):
-        class FakeStdin:
-            def write(self, value):
-                pass
-
-            def close(self):
-                pass
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = FakeStdin()
-                self.stdout = iter(['{"type":"error","message":"model overloaded"}\n'])
-
-            def wait(self):
-                return 0
-
-        emitted = []
-
-        with mock.patch.dict(os.environ, claude_runner_env(), clear=True):
-            with mock.patch.object(bridge.subprocess, "Popen", return_value=FakeProcess()):
-                status, error_class, error = claude_runner().run_turn(
-                    "hello",
-                    lambda stream, line: emitted.append((stream, line)),
-                )
-
-        self.assertEqual((status, error_class, error), ("failed", "agent_execution_failed", "model overloaded"))
-        self.assertEqual(emitted, [("stdout", '{"type":"error","message":"model overloaded"}')])
-
-    def test_claude_runner_maps_nonzero_exit_to_failed_turn(self):
-        class FakeStdin:
-            def write(self, value):
-                pass
-
-            def close(self):
-                pass
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = FakeStdin()
-                self.stdout = iter(["plain stderr line\n"])
-
-            def wait(self):
-                return 7
-
-        emitted = []
-
-        with mock.patch.dict(os.environ, claude_runner_env(), clear=True):
-            with mock.patch.object(bridge.subprocess, "Popen", return_value=FakeProcess()):
-                status, error_class, error = claude_runner().run_turn(
-                    "hello",
-                    lambda stream, line: emitted.append((stream, line)),
-                )
-
-        self.assertEqual((status, error_class, error), ("failed", "agent_exit_nonzero", "claude exited with status 7"))
-        self.assertEqual(emitted, [("stdout", "plain stderr line")])
-
 
 class EntrypointStaticTest(unittest.TestCase):
     def test_manifest_digest_matches_host_fixture(self):
         fixture = Path(__file__).resolve().parent / "testdata" / "control-manifest-payload.json"
         payload = json.loads(fixture.read_text(encoding="utf-8"))
-        digest = "2dcc2b3e69e7792c65fb521284d627253787e77f60202482e2839fe1fd97a341"
+        digest = "d6bec86f6b3b600c5f44d2d668d82594e5a96160fa22650cbff02544edc12497"
 
         self.assertEqual(manifest.manifest_digest(payload), digest)
         with tempfile.TemporaryDirectory() as root:
@@ -1740,17 +1393,14 @@ class EntrypointStaticTest(unittest.TestCase):
         self.assertNotIn('AGENT_UID="65534"', text)
         self.assertNotIn('AGENT_GID="65534"', text)
 
-    def test_entrypoint_supports_host_only_claude_credentials(self):
+    def test_entrypoint_supports_host_only_credentials(self):
         entrypoint = SCRIPT.with_name("harness-agent-entrypoint")
         text = entrypoint.read_text(encoding="utf-8")
-        self.assertIn("--clear-groups", text)
-        self.assertIn('[ "$(id -u)" = "$AGENT_UID" ]', text)
-        self.assertIn('[ "$(id -g)" = "$AGENT_GID" ]', text)
         self.assertIn("exec_bridge_client()", text)
         self.assertIn('/usr/local/bin/harness-bridge-client "$@"', text)
         self.assertIn("sandbox secret mounts are not supported", text)
-        self.assertNotIn("SECRET_BACKED_CLAUDE", text)
-        self.assertNotIn("secret-backed claude agent", text)
+        self.assertNotIn("AGENT_USER", text)
+        self.assertNotIn("ensure_agent_user", text)
         self.assertNotIn("--groups \"$HARNESS_SECRET_READERS_GID\"", text)
 
     def test_entrypoint_exports_pi_startup_gates(self):
@@ -1780,7 +1430,6 @@ class EntrypointStaticTest(unittest.TestCase):
         self.assertLess(text.index('[ "$SESSION_WORKSPACE" != "/workspace" ]'), claim_loop)
         self.assertLess(text.index('[ "$AGENT_HOME" != "/agent-home" ]'), claim_loop)
         self.assertLess(cd_workspace, claim_loop)
-        self.assertLess(text.index("  ensure_agent_user", cd_workspace), claim_loop)
         self.assertLess(text.index("exec_bridge_client()"), claim_loop)
         self.assertNotIn("/sessions/$SESSION_ID", text)
         self.assertNotIn("/agent-homes/$SESSION_ID", text)
@@ -1789,34 +1438,6 @@ class EntrypointStaticTest(unittest.TestCase):
 
 def argparse_namespace(**kwargs):
     return type("Args", (), kwargs)()
-
-
-def claude_runner_env():
-    return {
-        "SESSION_ID": "sess",
-        "HARNESS_AGENT_HOME": "/agent-home",
-        "HARNESS_AGENT_UID": "65534",
-        "HARNESS_AGENT_GID": "65534",
-        "ANTHROPIC_BASE_URL": "http://harness-model-proxy.internal:8082",
-    }
-
-
-def claude_runner(initialized=False, session_uuid="11111111-2222-3333-4444-555555555555"):
-    runner = bridge.ClaudeTurnRunner()
-    runner.set_turn_context(
-        {
-            "driver_state": {
-                "driver_id": "claude_code",
-                "state_payload": {
-                    "driver_id": "claude_code",
-                    "state_kind": "claude_session",
-                    "claude_session_uuid": session_uuid,
-                    "initialized": initialized,
-                },
-            }
-        }
-    )
-    return runner
 
 
 if __name__ == "__main__":
