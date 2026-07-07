@@ -1,4 +1,12 @@
-import type { ApiArtifact, ApiMessage, ApiSession, DeploymentCapabilities, SessionMode, SessionStatus } from "./types";
+import type {
+  ApiArtifact,
+  ApiMessage,
+  ApiNotification,
+  ApiSession,
+  DeploymentCapabilities,
+  SessionMode,
+  SessionStatus
+} from "./types";
 
 export type RequestResult<T> =
   | { ok: true; data: T; response: Response }
@@ -99,6 +107,16 @@ export async function fetchArtifacts(sessionId: string) {
   return request<{ artifacts: ApiArtifact[] | null }>(
     `/api/sessions/${encodeURIComponent(sessionId)}/artifacts`
   );
+}
+
+export async function fetchNotifications() {
+  return request<{ notifications: ApiNotification[] }>("/api/notifications");
+}
+
+export async function markNotificationRead(id: string) {
+  return request<{ status: string }>(`/api/notifications/${encodeURIComponent(id)}/read`, {
+    method: "POST"
+  });
 }
 
 export function buildArtifactHref(sessionId: string, path: string) {

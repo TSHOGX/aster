@@ -637,6 +637,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS runtime_resource_instances_log_dir_path_active
   ON runtime_resource_instances (log_dir_path)
   WHERE log_dir_path IS NOT NULL
     AND state NOT IN ('absent_verified','destroyed');
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS notifications_created_at_idx
+  ON notifications (created_at);
+
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  read_at TEXT NOT NULL,
+  PRIMARY KEY (notification_id, user_id),
+  FOREIGN KEY(notification_id) REFERENCES notifications(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS notification_reads_user_idx
+  ON notification_reads (user_id);
 `)
 	return err
 }

@@ -88,3 +88,11 @@ export type HarnessEvent = {
 };
 
 export type ConnectionStatus = "idle" | "connecting" | "live" | "reconnecting" | "down";
+
+export type ApiNotification = {
+  id: string;
+  title: string;
+  body: string;
+  created_at: string;
+  read: boolean;
+};
