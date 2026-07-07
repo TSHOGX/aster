@@ -67,8 +67,14 @@ export function Sidebar() {
   const [closingId, setClosingId] = useState<string | null>(null);
   const [endedOpen, setEndedOpen] = useState(false);
 
-  const activeSessions = state.sessions.filter((session) => !isTerminal(session.status));
-  const endedSessions = state.sessions.filter((session) => isTerminal(session.status));
+  const byRecentActivity = (a: ApiSession, b: ApiSession) =>
+    new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  const activeSessions = state.sessions
+    .filter((session) => !isTerminal(session.status))
+    .sort(byRecentActivity);
+  const endedSessions = state.sessions
+    .filter((session) => isTerminal(session.status))
+    .sort(byRecentActivity);
   const agentCapability = state.capabilities?.session_modes.find((mode) => mode.mode === "agent");
   const agentCreateDisabled = agentCapability ? !agentCapability.create_enabled : false;
 
