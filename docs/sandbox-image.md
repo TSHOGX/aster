@@ -16,6 +16,7 @@ sandbox-image/
     usr/local/lib/harness_manifest.py      # control-manifest load/verify
     usr/local/share/harness/pi-system-prompt.md
     usr/local/share/harness-skills/doris-query/…
+    usr/local/share/harness-skills/matplotlib-fonts/…
   tests/test_harness_bridge_client.py      # pins bridge/driver/entrypoint behavior
 ```
 
@@ -31,11 +32,16 @@ Produces an Ubuntu (`noble`) OCI rootfs directory. Key env knobs:
   regenerates the manifest (no root, no debootstrap); `1` does a full rebuild
   (requires root + `debootstrap`).
 
-Full-build steps: `debootstrap` → apt (`ca-certificates curl git nodejs npm python3
-python3-pip python3-venv xz-utils`) → pip (`matplotlib pandas pymysql`) → install a
-modern Node for Pi if selected → install the selected driver CLIs (`claude` via npm,
-`pi` via npm pinned to 0.77.0, `sh` uses the bundled shim) → `rsync` the overlay →
-generate `/etc/harness-image/agents.json` → sanitize.
+Full-build steps: `debootstrap` → apt (`ca-certificates curl fonts-wqy-microhei
+fonts-wqy-zenhei git nodejs npm python3 python3-pip python3-venv xz-utils`) → pip
+(`matplotlib pandas pymysql`) → install a modern Node for Pi if selected → install
+the selected driver CLIs (`claude` via npm, `pi` via npm pinned to 0.77.0, `sh` uses
+the bundled shim) → `rsync` the overlay → generate `/etc/harness-image/agents.json`
+→ sanitize.
+
+The two `fonts-wqy-*` packages (WenQuanYi Zen Hei / Micro Hei) give matplotlib and
+Pillow CJK glyph coverage — without them, Chinese text in generated charts/images
+renders as tofu boxes. See the **matplotlib-fonts** skill below.
 
 **Sanitize** scrubs any host/session state (`/workspace`, `/agent-home`,
 `/sessions`, `/agent-homes`, `/harness-secrets`, `/root/.claude*`, stray gVisor
@@ -123,6 +129,11 @@ The **doris-query** skill (`SKILL.md` + `references/vhr-data-schema.md`) documen
 read-only Doris connection and the `vhr_data` table guide. Note: `SKILL.md` embeds
 live DB connection details — treat it as sensitive local material and keep egress
 locked to the Doris host (see [security.md](./security.md)).
+
+The **matplotlib-fonts** skill (`SKILL.md`) documents the two installed WenQuanYi CJK
+fonts (`wqy-zenhei.ttc`, `wqy-microhei.ttc`) and how to select them in matplotlib
+(`rcParams["font.sans-serif"]`) and Pillow (`ImageFont.truetype`), so Chinese text in
+generated charts/images doesn't render as tofu boxes.
 
 ## Tests (`tests/test_harness_bridge_client.py`)
 
