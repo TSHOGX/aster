@@ -17,9 +17,9 @@ const button = cva(
         outline:
           "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-foreground)] hover:bg-[var(--color-surface-muted)]",
         soft:
-          "bg-[var(--color-surface-muted)] text-[var(--color-foreground)] hover:bg-[oklch(0.92_0.01_70)]",
+          "bg-[var(--color-surface-muted)] text-[var(--color-foreground)] hover:bg-[var(--color-border)]",
         danger:
-          "bg-transparent text-[var(--color-danger)] hover:bg-[oklch(0.95_0.04_25)]"
+          "bg-transparent text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)]"
       },
       size: {
         sm: "h-7 px-2 text-xs",

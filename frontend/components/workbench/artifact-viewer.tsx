@@ -168,7 +168,7 @@ function ViewerBody({
     return <CodeView code={load.text} language={meta.language} />;
   }
   return (
-    <pre className="h-full overflow-auto whitespace-pre-wrap break-words px-6 py-4 font-mono text-xs leading-relaxed">
+    <pre className="h-full overflow-auto whitespace-pre-wrap break-words bg-[var(--color-code-bg)] px-6 py-4 font-mono text-xs leading-relaxed text-[var(--color-code-ink)]">
       {load.text}
     </pre>
   );
@@ -189,7 +189,7 @@ function JsonPreview({ text }: { text: string }) {
       <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-2 text-xs text-[var(--color-danger)]">
         Invalid JSON. Showing raw text.
       </div>
-      <pre className="h-[calc(100%-37px)] overflow-auto whitespace-pre-wrap break-words px-6 py-4 font-mono text-xs leading-relaxed">
+      <pre className="h-[calc(100%-37px)] overflow-auto whitespace-pre-wrap break-words bg-[var(--color-code-bg)] px-6 py-4 font-mono text-xs leading-relaxed text-[var(--color-code-ink)]">
         {text}
       </pre>
     </div>

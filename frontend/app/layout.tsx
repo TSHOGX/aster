@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
-import { Toaster } from "sonner";
 import "./globals.css";
+import { ThemedToaster } from "@/components/theme/themed-toaster";
+import { themeInitScript } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "Agent Runtime Workbench",
@@ -14,9 +15,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Mobile browser chrome. The init script sets the correct value before
+            first paint (stored choice → OS fallback) and setTheme() updates it
+            on every toggle, so it always tracks the in-app theme. */}
+        <meta name="theme-color" content="#f7f6f2" />
+        {/* Set data-theme before first paint to avoid a light-mode flash. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body>
         {children}
-        <Toaster position="top-right" />
+        <ThemedToaster />
       </body>
     </html>
   );

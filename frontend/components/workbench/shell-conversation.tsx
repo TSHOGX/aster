@@ -7,6 +7,7 @@ import { useConversation, useHarness, useSelectedSession } from "@/components/ha
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { NotificationBell } from "@/components/notifications/notification-bell";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
 import { isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
@@ -171,6 +172,7 @@ export function ShellConversation() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
+          <ThemeToggle />
           <NotificationBell />
         </div>
       </header>

@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 type LoginScreenProps = {
   onSuccess: (userId: string) => void;
@@ -34,7 +35,10 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
     "h-9 w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-foreground)] outline-none focus-visible:border-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-accent)]";
 
   return (
-    <div className="flex h-dvh items-center justify-center bg-[var(--color-background)] p-8">
+    <div className="relative flex h-dvh items-center justify-center bg-[var(--color-background)] p-8">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <form
         onSubmit={handleSubmit}
         className="w-full max-w-sm rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6"
