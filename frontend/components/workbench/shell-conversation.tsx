@@ -6,6 +6,7 @@ import { Loader2, Send, Square, TerminalSquare } from "lucide-react";
 import { useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
 import { isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
@@ -168,7 +169,10 @@ export function ShellConversation() {
           <span className="truncate text-sm font-medium">{session.id}</span>
           <span className="text-[11px] text-[var(--color-foreground-muted)]">· {sessionModeLabel(session.mode, session.mode_label)}</span>
         </div>
-        <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
+          <NotificationBell />
+        </div>
       </header>
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">

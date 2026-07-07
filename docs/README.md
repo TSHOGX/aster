@@ -18,6 +18,7 @@ source of truth for how the system works today. Start with
 | [drivers.md](./drivers.md) | Pi / Claude Code / shell drivers, product-mode resolution, manifest validation |
 | [api.md](./api.md) | HTTP routes, DTOs, event types, proxy-correlation routes |
 | [frontend.md](./frontend.md) | Workbench architecture, same-origin proxy, event handling, auth flow |
+| [notifications.md](./notifications.md) | System notifications (inbox): schema, routes, SSE broadcast, `cmd/notify`, frontend bell |
 | [configuration.md](./configuration.md) | `harness.yaml` reference, `HARNESS_*` env vars, ports, data roots |
 | [security.md](./security.md) | Threat model, isolation, host-only credentials, proxy correlation, auth |
 | [verification.md](./verification.md) | How to verify a change: test commands, live smoke, platform notes |

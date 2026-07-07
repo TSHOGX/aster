@@ -407,6 +407,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.events(w, r)
 	case r.URL.Path == "/api/events/stream" && r.Method == http.MethodGet:
 		s.eventsStream(w, r)
+	case r.URL.Path == "/api/notifications" && r.Method == http.MethodGet:
+		s.listNotifications(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/notifications/") && strings.HasSuffix(r.URL.Path, "/read") && r.Method == http.MethodPost:
+		s.markNotificationRead(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/sessions/"):
 		s.sessionRoute(w, r)
 	default:
@@ -454,6 +458,52 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": publicSessions(sessions)})
+}
+
+func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
+	notifications, err := s.store.ListNotificationsForUser(r.Context(), userIDFromContext(r.Context()))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"notifications": publicNotifications(notifications)})
+}
+
+func (s *Server) markNotificationRead(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/notifications/"), "/read")
+	if id == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	userID := userIDFromContext(r.Context())
+	if err := s.store.MarkNotificationRead(r.Context(), id, userID, time.Now().UTC()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// CreateNotification persists a new system notification and broadcasts a
+// lightweight "notification.created" signal over SSE to all connected
+// clients. It is invoked internally (deploy tooling, startup logic) and is
+// not exposed as a public HTTP endpoint.
+func (s *Server) CreateNotification(ctx context.Context, title, body string) (string, error) {
+	id := newID("notif")
+	now := time.Now().UTC()
+	if err := s.store.CreateNotification(ctx, store.Notification{
+		ID:        id,
+		Title:     title,
+		Body:      body,
+		CreatedAt: now,
+	}); err != nil {
+		return "", err
+	}
+	s.hub.Publish(events.Event{
+		Type:    "notification.created",
+		Time:    now,
+		Payload: map[string]any{"notification_id": id},
+	})
+	return id, nil
 }
 
 func (s *Server) getQuota(w http.ResponseWriter, r *http.Request) {

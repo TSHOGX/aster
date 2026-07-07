@@ -19,16 +19,19 @@ import {
   fetchHealth,
   fetchMe,
   fetchMessages,
+  fetchNotifications,
   fetchSession,
   fetchSessions,
   interruptSession as apiInterruptSession,
   logout as apiLogout,
+  markNotificationRead as apiMarkNotificationRead,
   postMessage as apiPostMessage
 } from "@/lib/api";
 import { reduceSessionEvent } from "@/lib/session-events";
 import { buildEventsStreamUrl } from "@/lib/ws";
 import type {
   ApiArtifact,
+  ApiNotification,
   DeploymentCapabilities,
   ApiMessage,
   ApiSession,
@@ -61,6 +64,7 @@ type HarnessState = {
   selectedId: string | null;
   conversations: Record<string, ConversationState>;
   artifacts: Record<string, ApiArtifact[]>;
+  notifications: ApiNotification[];
   auth: AuthState;
 };
 
@@ -74,6 +78,7 @@ type HarnessApi = {
   refresh: () => Promise<void>;
   onLogin: (userId: string) => void;
   logout: () => Promise<void>;
+  markNotificationRead: (id: string) => Promise<void>;
 };
 
 const HarnessContext = createContext<HarnessApi | null>(null);
@@ -87,6 +92,7 @@ const initialState: HarnessState = {
   selectedId: null,
   conversations: {},
   artifacts: {},
+  notifications: [],
   auth: { checked: false, required: false, userId: null }
 };
 
@@ -119,7 +125,8 @@ const SSE_TYPED_EVENT_TYPES = [
   "proxy.request.completed",
   "proxy.request.failed",
   "replay_gap",
-  "error"
+  "error",
+  "notification.created"
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -302,6 +309,12 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     [ensureConvo, upsertConvo]
   );
 
+  const refreshNotifications = useCallback(async () => {
+    const res = await fetchNotifications();
+    if (!res.ok) return;
+    setState((p) => ({ ...p, notifications: res.data.notifications ?? [] }));
+  }, []);
+
   const handleEvent = useCallback(
     (event: HarnessEvent) => {
       const sessionId = event.session_id;
@@ -452,11 +465,16 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           });
           return;
         }
+        case "notification.created": {
+          void refreshNotifications();
+          toast.info("New notification", { duration: 3000 });
+          return;
+        }
         default:
           return;
       }
     },
-    [ensureConvo, upsertConvo]
+    [ensureConvo, upsertConvo, refreshNotifications]
   );
 
   const handleEventRef = useRef(handleEvent);
@@ -518,7 +536,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         void pollConversation(selectedId);
       }
     }
-  }, [loadSessionDetails, pollConversation, handleUnauthorized]);
+    void refreshNotifications();
+  }, [loadSessionDetails, pollConversation, handleUnauthorized, refreshNotifications]);
 
   // Determine auth state on boot before connecting any streams.
   const authReady = state.auth.checked && (!state.auth.required || state.auth.userId !== null);
@@ -723,9 +742,39 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     [pollConversation, upsertConvo]
   );
 
+  const markNotificationRead = useCallback(async (id: string) => {
+    setState((p) => ({
+      ...p,
+      notifications: p.notifications.map((n) => (n.id === id ? { ...n, read: true } : n))
+    }));
+    await apiMarkNotificationRead(id);
+  }, []);
+
   const value = useMemo<HarnessApi>(
-    () => ({ state, selectSession, createSession, destroySession, interruptSession, sendMessage, refresh, onLogin, logout }),
-    [state, selectSession, createSession, destroySession, interruptSession, sendMessage, refresh, onLogin, logout]
+    () => ({
+      state,
+      selectSession,
+      createSession,
+      destroySession,
+      interruptSession,
+      sendMessage,
+      refresh,
+      onLogin,
+      logout,
+      markNotificationRead
+    }),
+    [
+      state,
+      selectSession,
+      createSession,
+      destroySession,
+      interruptSession,
+      sendMessage,
+      refresh,
+      onLogin,
+      logout,
+      markNotificationRead
+    ]
   );
 
   return <HarnessContext.Provider value={value}>{children}</HarnessContext.Provider>;
@@ -753,4 +802,9 @@ export function useArtifacts(sessionId: string | null) {
   const { state } = useHarness();
   if (!sessionId) return [];
   return state.artifacts[sessionId] ?? [];
+}
+
+export function useNotifications() {
+  const { state, markNotificationRead } = useHarness();
+  return { notifications: state.notifications, markNotificationRead };
 }
