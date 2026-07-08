@@ -2,10 +2,29 @@
 
 > 面向 `watt` 用户。说明 publish 这套服务当前怎么部署的、日常怎么重启/排障、
 > 以及为什么后端必须用 root 跑而 watt 仍能免密运维。
-> 最后更新：2026-07-06。
+> 最后更新：2026-07-08。
 >
 > 系统架构见 [architecture.md](./architecture.md)；配置项与端口见
 > [configuration.md](./configuration.md)；安全边界见 [security.md](./security.md)。
+
+> ⚠️ **2026-07-08 分支合并的影响（务必先读）**：这里的 **`publish` 指的是「部署环境」**
+> （systemd `harness-publish-*`、`/var/lib/harness-publish/`、端口 9090/9001/8083、nginx），
+> 这套环境仍然在线、名字不变。但 **`publish` 作为分支和源码 checkout 已经没有了**——
+> 2026-07-08 `publish` 分支成为 `main`,旧 `/home/agent-runtime-platform/publish/` 源码目录被清空。
+> 部署源码现在统一在 **`/home/agent-runtime-platform/main/`**,下文所有 build/部署命令都已改到 `main/`。
+>
+> ✅ **已于 2026-07-08 完成 repoint + 重新部署**:两个 systemd unit 的
+> `Documentation` / `WorkingDirectory` / `ExecStart` / `HARNESS_AUTH_USERS_PATH` 已从旧的
+> `/home/agent-runtime-platform/publish/...` 改到 `main/`,`daemon-reload` 后从 `main/`
+> 重新 build 并重启,现网(publish 环境)已在跑 `main/` 的版本。unit 备份留在
+> `/etc/systemd/system/harness-publish-*.service.bak-2026-07-08`。`/var/lib/harness-publish/*`
+> 运行时路径未改动;model proxy(`claude-proxy.service`,`/root/claude-code-proxy/`)不在仓库里,不受影响。
+>
+> ⚠️ **登录凭据文件在合并中丢失并已重建**:`config/auth-users.yaml`(gitignore,只存在于已删除的
+> `publish/config/`)随目录清空一起没了。它**未提交**,所以 git 里恢复不了。已用 `cmd/authhash`
+> 在 `main/config/auth-users.yaml` 重建 `lab` 用户(600 权限,root 所有)。**这一步不能省**:
+> 该文件缺失时 `loadAuthUsers` 返回空、`AuthEnabled()=false`,`requireAuth` 会放行所有请求
+>(见 `config.go:1342`、`server.go:3608`)——公网 IP 上的 workbench 会变成无登录裸奔。改密码/加用户走第 3 节。
 
 ---
 
@@ -56,7 +75,7 @@ start/stop/restart/status，其它 `sudo` 仍需密码（规则见 `/etc/sudoers
 ### 重新部署后端（改了 Go 代码后）
 
 ```bash
-cd /home/agent-runtime-platform/publish/orchestrator
+cd /home/agent-runtime-platform/main/orchestrator
 go build -o bin/orchestrator ./cmd/orchestrator     # 用 watt 编译即可，产物归 watt
 sudo systemctl restart harness-publish-orchestrator # 加载新二进制
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9090/healthz  # 期望 200
@@ -85,7 +104,7 @@ sudo systemctl stop    harness-publish-frontend
 ### 重新部署前端（改了前端代码后）
 
 ```bash
-cd /home/agent-runtime-platform/publish/frontend
+cd /home/agent-runtime-platform/main/frontend
 npm run build                                   # 用 watt 编译
 sudo systemctl restart harness-publish-frontend # 加载新构建
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9001/  # 期望 200（前端内部端口）
@@ -176,7 +195,7 @@ curl -s http://127.0.0.1:8083/healthz                 # 期望 {"status":"ok"}
 - 改密码 / 加用户：
 
 ```bash
-cd /home/agent-runtime-platform/publish/orchestrator
+cd /home/agent-runtime-platform/main/orchestrator
 echo -n '你的新密码' | go run ./cmd/authhash     # 输出一行 pbkdf2-sha256$... 哈希
 # 把哈希粘进 config/auth-users.yaml 对应用户的 password_hash，然后：
 sudo systemctl restart harness-publish-orchestrator
@@ -193,7 +212,9 @@ users:
 > 验证登录（经 nginx 走 HTTPS，`-k` 跳过自签证书校验）：
 > `curl -k -X POST https://127.0.0.1/api/login -H 'Content-Type: application/json' -d '{"username":"lab","password":"..."}'`
 > 正确→200，错误→401。
-> 旧的 auth 配置备份在 `config/auth-users.yaml.bak`。
+> ⚠️ `config/auth-users.yaml` 是 **gitignore、不在仓库里** 的运行时文件(见 `.gitignore`)。
+> 它在 2026-07-08 合并中随旧 `publish/config/` 一起丢失、已重建(文首 ⚠️ 块)。
+> 因为不进 git,搬机器/重建 checkout 时**不会自动带上**——务必单独备份,否则重启即掉登录闸。
 > Cookie 是 Secure 的（按 HTTPS 访问设计）。现在对外全程走 nginx 的 HTTPS，nginx 会转发
 > `X-Forwarded-Proto https`，所以 Secure cookie 能正常下发，**无需** `HARNESS_COOKIE_INSECURE`。
 > 只有在绕过 nginx 直连前端纯 HTTP 调试时才会遇到 cookie 不下发，那种情况才需要该开关。
@@ -221,7 +242,7 @@ sudoers 规则免密控制这个服务**。这样数据不丢、新 session 正�
 
 | 用途 | 路径 |
 | --- | --- |
-| 代码仓库根 | `/home/agent-runtime-platform/publish/` |
+| 代码仓库根 | `/home/agent-runtime-platform/main/`（2026-07-08 合并前是 `.../publish/`） |
 | 后端源码（go.mod 在此） | `orchestrator/` |
 | 后端二进制（ExecStart 指向） | `orchestrator/bin/orchestrator` |
 | 主配置 | `config/harness.yaml` |

@@ -3,8 +3,10 @@
 Documentation for the **Agent Runtime Platform** — a Go control plane that runs each
 AI agent session in its own gVisor (`runsc`) sandbox, driven by a Next.js workbench.
 
-These docs were rewritten 2026-07-06 from the current `publish/` codebase and are the
-source of truth for how the system works today. Start with
+These docs were rewritten 2026-07-06 and are the source of truth for how the system
+works today. (They were written from the `publish` branch, which on 2026-07-08 became
+`main` — the single development branch; see
+[parallel-development.md](./parallel-development.md) for that history.) Start with
 [architecture.md](./architecture.md).
 
 ## Core documentation
@@ -22,8 +24,8 @@ source of truth for how the system works today. Start with
 | [configuration.md](./configuration.md) | `harness.yaml` reference, `HARNESS_*` env vars, ports, data roots |
 | [security.md](./security.md) | Threat model, isolation, host-only credentials, proxy correlation, auth |
 | [verification.md](./verification.md) | How to verify a change: test commands, live smoke, platform notes |
-| [operations.md](./operations.md) | Publish deployment & operations runbook (中文；systemd/nginx/proxy) |
-| [parallel-development.md](./parallel-development.md) | Parallel dev on `publish` via `git worktree` (中文) |
+| [operations.md](./operations.md) | `publish` deployment & operations runbook (中文；systemd/nginx/proxy) |
+| [parallel-development.md](./parallel-development.md) | Parallel dev on `main` via `git worktree` (中文) |
 
 ## Decisions & roadmap (`decisions/`)
 

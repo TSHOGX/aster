@@ -1,7 +1,8 @@
 # Agent Runtime Platform — Architecture
 
-> Rewritten 2026-07-06 from the `publish/` codebase. This is the single source of
-> truth for how the system works today. Deep-dive documents are linked per section.
+> Rewritten 2026-07-06. This is the single source of truth for how the system works
+> today. Deep-dive documents are linked per section. (Written from the `publish`
+> branch, which became `main` on 2026-07-08.)
 
 ## What this is
 

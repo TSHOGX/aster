@@ -110,6 +110,6 @@ Jul 07 16:49:41/43, 17:13:11/13, 18:35:41, 18:41:11, 19:00:31/33, 19:15:01/03, 1
 - 源码：
   - `/root/claude-code-proxy/src/core/harness_observability.py:126-158`（503/403 映射逻辑）
   - `/root/claude-code-proxy/src/core/config.py:44-46`（默认超时 0.25s）
-  - `/home/agent-runtime-platform/publish/orchestrator/internal/store/proxy.go:65-172`（`StartProxyRequest` 单飞行约束与 `ErrProxyContextUnavailable`）
-  - `/home/agent-runtime-platform/publish/orchestrator/internal/store/store.go:104,124-126`（SQLite 单写连接 + busy_timeout）
+  - `/home/agent-runtime-platform/main/orchestrator/internal/store/proxy.go:65-172`（`StartProxyRequest` 单飞行约束与 `ErrProxyContextUnavailable`）
+  - `/home/agent-runtime-platform/main/orchestrator/internal/store/store.go:104,124-126`（SQLite 单写连接 + busy_timeout）
   - `@earendil-works/pi-ai/dist/utils/retry.js`（`isRetryableAssistantError` 可重试错误正则白名单）
