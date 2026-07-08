@@ -42,10 +42,28 @@ import type {
   StreamLine
 } from "@/lib/types";
 
+export type ActivityPhase =
+  | "idle"
+  | "thinking"
+  | "tool"
+  | "streaming"
+  | "compacting"
+  | "retrying";
+
+export type ConversationActivity = {
+  phase: ActivityPhase;
+  startedAt: number | null;
+  requestCount: number;
+  inflight: number;
+  toolName: string | null;
+  toolDetail: string | null;
+};
+
 type ConversationState = {
   messages: ApiMessage[];
   streaming: Array<{ id: string; text: string; deltaType?: string }>;
   stream: StreamLine[];
+  activity: ConversationActivity;
   loading: boolean;
 };
 
@@ -152,8 +170,18 @@ function newId() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function idleActivity(): ConversationActivity {
+  return { phase: "idle", startedAt: null, requestCount: 0, inflight: 0, toolName: null, toolDetail: null };
+}
+
 function emptyConvo(): ConversationState {
-  return { messages: [], streaming: [], stream: [], loading: false };
+  return { messages: [], streaming: [], stream: [], activity: idleActivity(), loading: false };
+}
+
+// Monotonic clock for turn timers. Date.now would be fine, but performance.now
+// is immune to wall-clock adjustments during a long-running turn.
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 function delay(ms: number) {
@@ -198,6 +226,38 @@ function pruneCommittedStreaming(
     }
   }
   return next;
+}
+
+// Derive a short human label from a pi tool-call input object, e.g. the file
+// path being read or the command being run. Falls back to null when nothing
+// obviously label-worthy is present.
+function toolDetailFromInput(input: unknown): string | null {
+  if (!isRecord(input)) return null;
+  for (const key of ["path", "file_path", "command", "cmd", "pattern", "query", "url", "name"]) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) {
+      const trimmed = value.trim();
+      return trimmed.length > 80 ? `${trimmed.slice(0, 79)}…` : trimmed;
+    }
+  }
+  return null;
+}
+
+function withActivity(
+  c: ConversationState,
+  patch: Partial<ConversationActivity>
+): ConversationState {
+  const next: ConversationActivity = { ...c.activity, ...patch };
+  // Any non-idle phase implies the turn is underway: start the timer once.
+  if (next.phase !== "idle" && next.startedAt === null) {
+    next.startedAt = nowMs();
+  }
+  if (next.phase === "idle") {
+    next.startedAt = null;
+    next.toolName = null;
+    next.toolDetail = null;
+  }
+  return { ...c, activity: next };
 }
 
 export function HarnessProvider({ children }: { children: React.ReactNode }) {
@@ -276,7 +336,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
               conversations: ensureConvo(p.conversations, session.id)
             }));
             if (!active) {
-              upsertConvo(id, (c) => ({ ...c, streaming: [] }));
+              upsertConvo(id, (c) => withActivity({ ...c, streaming: [] }, { phase: "idle" }));
             }
           }
 
@@ -337,7 +397,20 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
             event,
             { emptyConversation: emptyConvo, time }
           );
-          return { ...p, sessions: next.sessions, conversations: next.conversations };
+          // The reducer clears streaming on turn/terminal events but is generic
+          // over activity; mirror that by parking activity back to idle for the
+          // affected session unless the turn is still active.
+          let conversations = next.conversations;
+          if (sessionId && conversations[sessionId]) {
+            const stillActive = event.type === "session.running_active";
+            if (!stillActive) {
+              conversations = {
+                ...conversations,
+                [sessionId]: withActivity(conversations[sessionId], { phase: "idle" })
+              };
+            }
+          }
+          return { ...p, sessions: next.sessions, conversations };
         });
         return true;
       };
@@ -389,13 +462,57 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           const deltaType = typeof event.payload.delta_type === "string" ? event.payload.delta_type : "text_delta";
           if (deltaType !== "text_delta") return;
           if (!text) return;
-          upsertConvo(sessionId, (c) => ({ ...c, streaming: appendStreaming(c.streaming, id, text, deltaType) }));
+          upsertConvo(sessionId, (c) =>
+            withActivity({ ...c, streaming: appendStreaming(c.streaming, id, text, deltaType) }, {
+              phase: "streaming"
+            })
+          );
           return;
         }
         case "agent.output": {
           if (!sessionId || !isRecord(event.payload)) return;
-          const stream = typeof event.payload.stream === "string" ? event.payload.stream : "stdout";
-          const line = typeof event.payload.line === "string" ? event.payload.line : "";
+          const payload = event.payload;
+          const piType = typeof payload.type === "string" ? payload.type : "";
+
+          // pi lifecycle events arrive here as their raw event map (no `line`
+          // field). Drive the activity state machine from tool calls so the UI
+          // can show "Running bash" / "Reading README.md" during the gap
+          // between text tokens where it previously looked frozen.
+          if (piType === "tool_execution_start" || piType === "tool_execution_update") {
+            const toolName = typeof payload.name === "string" ? payload.name : null;
+            const detail = toolDetailFromInput(payload.input);
+            upsertConvo(sessionId, (c) =>
+              withActivity(c, { phase: "tool", toolName, toolDetail: detail })
+            );
+            return;
+          }
+          if (piType === "tool_execution_end") {
+            // Tool finished; fall back to thinking until the next signal (more
+            // tools, or text deltas) refines the phase.
+            upsertConvo(sessionId, (c) =>
+              c.activity.phase === "tool"
+                ? withActivity(c, { phase: "thinking", toolName: null, toolDetail: null })
+                : c
+            );
+            return;
+          }
+          if (
+            piType === "toolcall_start" ||
+            piType === "toolcall_delta" ||
+            piType === "toolcall_end" ||
+            piType === "text_start" ||
+            piType === "text_end"
+          ) {
+            // Assistant is assembling a tool call or bracketing a text block:
+            // keep the turn marked active without a specific tool label.
+            upsertConvo(sessionId, (c) =>
+              c.activity.phase === "idle" ? withActivity(c, { phase: "thinking" }) : c
+            );
+            return;
+          }
+
+          const stream = typeof payload.stream === "string" ? payload.stream : "stdout";
+          const line = typeof payload.line === "string" ? payload.line : "";
           if (!line) return;
           const entry: StreamLine = {
             id: newId(),
@@ -407,18 +524,69 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           upsertConvo(sessionId, (c) => ({ ...c, stream: [...c.stream, entry].slice(-400) }));
           return;
         }
+        case "proxy.request.started": {
+          if (!sessionId) return;
+          // A model request is on the wire. Count it and mark the request as
+          // in-flight so the activity strip can show "waiting on model".
+          upsertConvo(sessionId, (c) =>
+            withActivity(c, {
+              phase: c.activity.phase === "idle" ? "thinking" : c.activity.phase,
+              requestCount: c.activity.requestCount + 1,
+              inflight: c.activity.inflight + 1
+            })
+          );
+          return;
+        }
+        case "proxy.request.completed":
+        case "proxy.request.failed": {
+          if (!sessionId) return;
+          upsertConvo(sessionId, (c) =>
+            withActivity(c, { inflight: Math.max(0, c.activity.inflight - 1) })
+          );
+          return;
+        }
         case "system.status": {
-          // System status messages: display as Toast notification
           if (!sessionId || !isRecord(event.payload)) return;
-          const line = typeof event.payload.line === "string" ? event.payload.line : "";
-          if (!line) return;
+          const payload = event.payload;
+          const piType = typeof payload.type === "string" ? payload.type : "";
 
-          // Display Toast notification
-          toast.info(line, { duration: 3000 });
+          // Drive the activity state machine from turn lifecycle events instead
+          // of firing a toast for each one (they were noisy and left no trace).
+          switch (piType) {
+            case "turn_start":
+            case "agent_start":
+            case "message_start":
+            case "queue_update":
+              upsertConvo(sessionId, (c) =>
+                c.activity.phase === "idle" || c.activity.phase === "retrying"
+                  ? withActivity(c, { phase: "thinking" })
+                  : c
+              );
+              return;
+            case "compaction_start":
+              upsertConvo(sessionId, (c) => withActivity(c, { phase: "compacting" }));
+              return;
+            case "compaction_end":
+              upsertConvo(sessionId, (c) =>
+                c.activity.phase === "compacting" ? withActivity(c, { phase: "thinking" }) : c
+              );
+              return;
+            case "auto_retry_start":
+            case "auto_retry":
+              upsertConvo(sessionId, (c) => withActivity(c, { phase: "retrying" }));
+              return;
+            case "auto_retry_end":
+              upsertConvo(sessionId, (c) =>
+                c.activity.phase === "retrying" ? withActivity(c, { phase: "thinking" }) : c
+              );
+              return;
+            default:
+              break;
+          }
 
-          // Also log in development mode
           if (process.env.NODE_ENV === "development") {
-            console.log(`[System] ${line}`);
+            const line = typeof payload.line === "string" ? payload.line : piType;
+            if (line) console.log(`[System] ${line}`);
           }
           return;
         }
@@ -796,6 +964,12 @@ export function useConversation(sessionId: string | null) {
   const { state } = useHarness();
   if (!sessionId) return emptyConvo();
   return state.conversations[sessionId] ?? emptyConvo();
+}
+
+export function useActivity(sessionId: string | null): ConversationActivity {
+  const { state } = useHarness();
+  if (!sessionId) return idleActivity();
+  return state.conversations[sessionId]?.activity ?? idleActivity();
 }
 
 export function useArtifacts(sessionId: string | null) {
