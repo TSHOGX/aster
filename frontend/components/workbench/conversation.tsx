@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import { Bot } from "lucide-react";
 
 import { useActivity, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { ShellConversation } from "./shell-conversation";
-import { MessageBubble, StreamingBubble } from "./message-bubble";
+import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
 import { Composer } from "./composer";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
-import { isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
+import { dayKey, formatDayDivider, isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 
 export function Conversation() {
   const session = useSelectedSession();
@@ -86,12 +86,26 @@ function ChatConversation() {
             </div>
           </div>
         ) : (
-          <div className="divide-y divide-[var(--color-border)]">
-            {convo.messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
-            ))}
-            {convo.streaming.map((stream) => (
-              <StreamingBubble key={stream.id} text={stream.text} />
+          <div>
+            {convo.messages.map((m, i) => {
+              const prev = convo.messages[i - 1];
+              const showDivider = i === 0 || dayKey(prev?.created_at) !== dayKey(m.created_at);
+              return (
+                <Fragment key={m.id}>
+                  {showDivider && <DayDivider label={formatDayDivider(m.created_at)} />}
+                  <div className={showDivider ? "" : "border-t border-[var(--color-border)]"}>
+                    <MessageBubble message={m} />
+                  </div>
+                </Fragment>
+              );
+            })}
+            {convo.streaming.map((stream, i) => (
+              <div
+                key={stream.id}
+                className={i === 0 && convo.messages.length === 0 ? "" : "border-t border-[var(--color-border)]"}
+              >
+                <StreamingBubble text={stream.text} />
+              </div>
             ))}
           </div>
         )}
