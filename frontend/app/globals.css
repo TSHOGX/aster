@@ -32,6 +32,9 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent-soft: var(--accent-soft);
+  --color-button-primary: var(--button-primary);
+  --color-button-primary-hover: var(--button-primary-hover);
+  --color-button-primary-foreground: var(--button-primary-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
@@ -73,6 +76,12 @@
   --accent-hover: #415a4f;
   --accent-foreground: #ffffff;
   --accent-soft: #cdd8d2;
+
+  /* Primary button: a lighter, less saturated sage than --accent so it sits
+     comfortably next to body text instead of reading as a dark, heavy slab. */
+  --button-primary: #6b8b7d;
+  --button-primary-hover: #5c7a6d;
+  --button-primary-foreground: #ffffff;
 
   --success: #4f6f61;
   --warning: #c7a36f;
@@ -129,6 +138,12 @@
   --accent-hover: #b491e8;
   --accent-foreground: #1e1e2e;
   --accent-soft: #383a52;
+
+  /* Primary button: a deeper, muted violet than mauve --accent so it reads as
+     a calm surface instead of a bright pastel slab against the dark canvas. */
+  --button-primary: #7c6f9e;
+  --button-primary-hover: #6c5f8d;
+  --button-primary-foreground: #eae6f7;
 
   --success: #a6e3a1;     /* green */
   --warning: #f9e2af;     /* yellow */

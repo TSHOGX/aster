@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Loader2, LogOut, Plus, RotateCw, Trash2 } from "lucide-react";
+import { ChevronDown, Loader2, LogOut, Plus, Trash2 } from "lucide-react";
 
 import { useHarness } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
 import { formatRelative, isTerminal, statusLabel } from "@/lib/format";
@@ -60,7 +62,7 @@ function SessionRow({ session, selected, closing, onSelect, onClose }: SessionRo
 }
 
 export function Sidebar() {
-  const { state, selectSession, createSession, destroySession, refresh, logout } = useHarness();
+  const { state, selectSession, createSession, destroySession, logout } = useHarness();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -98,24 +100,16 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full min-h-0 w-[280px] min-w-0 flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="flex shrink-0 items-center justify-between px-4 py-3">
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold tracking-tight">BatteryGPT</span>
-          <span className="text-[11px] text-[var(--color-foreground-muted)]">Workbench</span>
+      <div className="flex shrink-0 items-center justify-between px-4 pt-5 pb-1">
+        <span className="text-base font-semibold tracking-tight">BatteryGPT</span>
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+          <NotificationBell />
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => void refresh()}
-          aria-label="Refresh sessions"
-          title="Refresh"
-        >
-          <RotateCw className="h-4 w-4" />
-        </Button>
       </div>
 
       {state.auth.required && state.auth.userId ? (
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
+        <div className="flex shrink-0 items-center justify-between px-4 pb-3">
           <span className="truncate text-xs text-[var(--color-foreground-muted)]">
             Signed in as <span className="text-[var(--color-foreground)]">{state.auth.userId}</span>
           </span>

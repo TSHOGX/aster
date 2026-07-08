@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Bell } from "lucide-react";
 
 import { useNotifications } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
 import { NotificationDetailModal } from "@/components/notifications/notification-detail-modal";
 import type { ApiNotification } from "@/lib/types";
+
+const PANEL_WIDTH = 320;
+const VIEWPORT_MARGIN = 8;
 
 function formatRelativeTime(value: string) {
   const date = new Date(value);
@@ -27,16 +31,35 @@ export function NotificationBell() {
   const { notifications, markNotificationRead } = useNotifications();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<ApiNotification | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
     if (!open) return;
+    const updatePosition = () => {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const left = Math.min(rect.left, window.innerWidth - PANEL_WIDTH - VIEWPORT_MARGIN);
+      setPanelPos({ top: rect.bottom + 8, left: Math.max(left, VIEWPORT_MARGIN) });
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const handleClick = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const target = event.target as Node;
+      if (buttonRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -49,8 +72,9 @@ export function NotificationBell() {
   };
 
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       <Button
+        ref={buttonRef}
         variant="ghost"
         size="icon"
         onClick={() => setOpen((o) => !o)}
@@ -64,33 +88,40 @@ export function NotificationBell() {
           </span>
         ) : null}
       </Button>
-      {open ? (
-        <div className="absolute right-0 top-full z-20 mt-2 w-80 max-h-96 overflow-y-auto rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
-          {notifications.length === 0 ? (
-            <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">No notifications yet.</p>
-          ) : (
-            <ul className="divide-y divide-[var(--color-border)]">
-              {notifications.map((n) => (
-                <li key={n.id}>
-                  <button
-                    className="flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-[var(--color-surface-muted)]"
-                    onClick={() => handleSelect(n)}
-                  >
-                    <span className="flex items-center gap-2">
-                      {!n.read ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.title}</span>
-                      <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
-                        {formatRelativeTime(n.created_at)}
-                      </span>
-                    </span>
-                    <span className="truncate text-xs text-[var(--color-foreground-muted)]">{n.body}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : null}
+      {open && panelPos && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={panelRef}
+              style={{ top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH }}
+              className="fixed z-20 max-h-96 overflow-y-auto rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg"
+            >
+              {notifications.length === 0 ? (
+                <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">No notifications yet.</p>
+              ) : (
+                <ul className="divide-y divide-[var(--color-border)]">
+                  {notifications.map((n) => (
+                    <li key={n.id}>
+                      <button
+                        className="flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-[var(--color-surface-muted)]"
+                        onClick={() => handleSelect(n)}
+                      >
+                        <span className="flex items-center gap-2">
+                          {!n.read ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.title}</span>
+                          <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
+                            {formatRelativeTime(n.created_at)}
+                          </span>
+                        </span>
+                        <span className="truncate text-xs text-[var(--color-foreground-muted)]">{n.body}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>,
+            document.body
+          )
+        : null}
       {selected ? (
         <NotificationDetailModal notification={selected} onClose={() => setSelected(null)} />
       ) : null}

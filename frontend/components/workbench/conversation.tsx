@@ -8,8 +8,6 @@ import { ShellConversation } from "./shell-conversation";
 import { MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
 import { Composer } from "./composer";
-import { NotificationBell } from "@/components/notifications/notification-bell";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
 import { isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
@@ -71,8 +69,6 @@ function ChatConversation() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
-          <ThemeToggle />
-          <NotificationBell />
         </div>
       </header>
 
