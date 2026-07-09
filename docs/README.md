@@ -27,6 +27,13 @@ works today. (They were written from the `publish` branch, which on 2026-07-08 b
 | [operations.md](./operations.md) | `publish` deployment & operations runbook (中文；systemd/nginx/proxy) |
 | [parallel-development.md](./parallel-development.md) | Parallel dev on `main` via `git worktree` (中文) |
 
+## Proposals (`proposals/`)
+
+Lightweight RFCs and investigation writeups, tracked by a `Status` field per
+file (`Draft` → `Reviewing` → `Accepted` → `Implemented`, or `Rejected` /
+`Superseded`). See [proposals/README.md](./proposals/README.md) for the full
+index and status legend.
+
 ## Decisions & roadmap (`decisions/`)
 
 Preserved architecture decision records and forward-looking plans:

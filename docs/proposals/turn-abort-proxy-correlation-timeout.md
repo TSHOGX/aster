@@ -1,6 +1,6 @@
 # 排查记录：pi agent 在 turn 进行到一半自行终止（sess_2HG68uhmSrEIJh1k）
 
-**Status:** Root cause confirmed, 止血修复已上线；orchestrator 端根治仍待跟进
+**Status:** Accepted — 止血修复已上线；orchestrator 端根治仍待跟进
 **Date:** 2026-07-08
 **Scope:** 定位 `sess_2HG68uhmSrEIJh1k` 在 2026-07-07 11:16 UTC（19:16 CST）左右自行终止的根因，并给出优化建议。
 

@@ -1,6 +1,6 @@
 # 提案：在 thinking/responding 状态指示器里展示 token 用量
 
-**Status:** 调研完成，待决策实现方案
+**Status:** Reviewing — 调研完成，待决策实现方案
 **Date:** 2026-07-08
 **Scope:** 评估能否在前端 `ActivityIndicator`（thinking/responding 状态条）里加上每次请求的上行/下行 token 数。
 
