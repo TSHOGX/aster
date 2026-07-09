@@ -68,6 +68,7 @@ type Server struct {
 	log       *slog.Logger
 	upgrader  websocket.Upgrader
 	ownerUUID string
+	version   string
 
 	authUsers    map[string]config.AuthUser
 	authEnabled  bool
@@ -157,6 +158,10 @@ func New(
 
 func (s *Server) SetOwnerUUID(ownerUUID string) {
 	s.ownerUUID = strings.TrimSpace(ownerUUID)
+}
+
+func (s *Server) SetVersion(version string) {
+	s.version = strings.TrimSpace(version)
 }
 
 func (s *Server) Routes() http.Handler {
@@ -280,7 +285,7 @@ func chownProxyCorrelationPath(path string, proxyServiceGID int) error {
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": s.version})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

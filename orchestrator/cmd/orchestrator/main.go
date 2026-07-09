@@ -18,6 +18,11 @@ import (
 	"harness-platform/orchestrator/internal/store"
 )
 
+// version is injected at build time via -ldflags, e.g.:
+//
+//	go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" ./cmd/orchestrator
+var version = "dev"
+
 func main() {
 	logLevel := new(slog.LevelVar)
 	if os.Getenv("HARNESS_LOG_LEVEL") == "debug" {
@@ -26,6 +31,7 @@ func main() {
 		logLevel.Set(slog.LevelInfo)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+	log.Info("starting orchestrator", "version", version)
 	signal.Ignore(syscall.SIGPIPE)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -93,6 +99,7 @@ func main() {
 			watcher = artifacts.New(volumeConfig, db, hub, log)
 			app = server.New(cfg, db, rt, watcher, hub, log)
 			app.SetOwnerUUID(owner.UUID)
+			app.SetVersion(version)
 			return nil
 		},
 		RecoverExpiredRuntimeResources: func(ctx context.Context, now time.Time) (store.StartupRecoveryResult, error) {
