@@ -23,7 +23,8 @@ works today. (They were written from the `publish` branch, which on 2026-07-08 b
 | [notifications.md](./notifications.md) | System notifications (inbox): schema, routes, SSE broadcast, `cmd/notify`, frontend bell |
 | [configuration.md](./configuration.md) | `harness.yaml` reference, `HARNESS_*` env vars, ports, data roots |
 | [security.md](./security.md) | Threat model, isolation, host-only credentials, proxy correlation, auth |
-| [verification.md](./verification.md) | How to verify a change: test commands, live smoke, platform notes |
+| [verification.md](./verification.md) | How to verify a change: test commands, CI, live smoke, platform notes |
+| [release-process.md](./release-process.md) | Versioning (git tags only), requirements as lightweight RFCs, CI, cutting a release |
 | [operations.md](./operations.md) | `publish` deployment & operations runbook (中文；systemd/nginx/proxy) |
 | [parallel-development.md](./parallel-development.md) | Parallel dev on `main` via `git worktree` (中文) |
 

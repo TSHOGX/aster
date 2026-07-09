@@ -1,8 +1,10 @@
 # Proposals Index
 
 Lightweight RFCs: one Markdown file per proposal/investigation, no separate
-tracker. Each file starts with `Status` / `Date` / `Scope` fields (see existing
-files for the format). `Status` uses one of:
+tracker (see [../release-process.md](../release-process.md) for how this fits
+into the broader requirements/release process). Each file starts with
+`Status` / `Date` / `Scope` fields (see existing files for the format).
+`Status` uses one of:
 
 | Status | Meaning |
 |---|---|

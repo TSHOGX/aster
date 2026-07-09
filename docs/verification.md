@@ -2,7 +2,15 @@
 
 > How to verify a change before shipping. The tests live in the codebase itself;
 > run them on a host with the Go toolchain, Node, Python, and (for live smokes)
-> `runsc`. There is no CI — these are run manually.
+> `runsc`.
+>
+> GitHub Actions runs `go build`/`go vet`/`go test` and the frontend
+> lint/typecheck/test/build on every push and PR to `main`
+> (`.github/workflows/ci.yml`) — see [release-process.md](./release-process.md).
+> The backend job runs in a container as root because several store/artifacts
+> tests assert root-owned paths, matching how the orchestrator runs in
+> production. CI covers the same commands below; live smokes and sandbox-image
+> bridge tests still require a real gVisor host and are run manually.
 
 ## Standard checks
 
