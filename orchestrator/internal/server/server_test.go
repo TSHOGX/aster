@@ -2620,7 +2620,12 @@ func TestStartEnsuredGenerationRenewsLeaseDuringSlowPrepare(t *testing.T) {
 	st, owner := openServerOwnedStore(t, ctx, dir)
 	session := createServerTestSession(t, ctx, st, dir, "sess_slow_start", string(sessionstate.Created), time.Now().UTC(), nil)
 	cfg := testServerConfig(dir)
-	cfg.Harness.Bridge.LeaseTTL = config.Duration{Duration: 40 * time.Millisecond}
+	// Short enough that the background renewal loop (ticks at ttl/2) fires well
+	// within this test's 1s wait budgets, but long enough that the synchronous
+	// chain of DB writes between claiming the runtime resource materialization
+	// lease and its first renewal doesn't race the lease's own expiry under a
+	// loaded CI runner.
+	cfg.Harness.Bridge.LeaseTTL = config.Duration{Duration: 500 * time.Millisecond}
 	now := time.Now().UTC()
 	allocation, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
 		SessionID: session.ID,
