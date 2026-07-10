@@ -131,6 +131,13 @@ list — the schema changes over time. Note: `SKILL.md` embeds live DB connectio
 details — treat it as sensitive local material and keep egress locked to the Doris
 host (see [security.md](./security.md)).
 
+`sandbox-image/files/usr/local/share/harness-skills/` is **git-ignored**, not
+checked in, because doris-query's `SKILL.md` embeds a live credential. Before
+running `build-rootfs.sh`, restore that directory locally (from your own secrets
+store or a prior local copy) so the overlay rsync has something to pick up —
+without it, the doris-query and matplotlib-fonts skills are simply absent from
+the built image.
+
 The **matplotlib-fonts** skill (`SKILL.md`) documents the two installed WenQuanYi CJK
 fonts (`wqy-zenhei.ttc`, `wqy-microhei.ttc`) and how to select them in matplotlib
 (`rcParams["font.sans-serif"]`) and Pillow (`ImageFont.truetype`), so Chinese text in
