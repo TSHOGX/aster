@@ -84,6 +84,7 @@ agent-home. See [sandbox-runtime.md](./sandbox-runtime.md).
 | `HARNESS_COOKIE_NAME` | `harness_auth` | auth cookie name (`__Host-` prefixed over HTTPS) |
 | `HARNESS_COOKIE_INSECURE` | false | set `1` to allow non-Secure cookie (local http only) |
 | `HARNESS_TRUST_FORWARDED_PROTO` | true | trust `X-Forwarded-Proto` to detect HTTPS |
+| `HARNESS_TRUST_PROXY_HEADERS` | true | trust reverse-proxy client-IP headers for rate limiting: prefer nginx-overwritten `X-Real-IP`, fall back to the rightmost `X-Forwarded-For`; set `0` when exposing orchestrator directly |
 | `HARNESS_AUTH_USERS_PATH` | `<repo>/config/auth-users.yaml` | login users file |
 | `HARNESS_AUTH_SESSION_TTL` | 24h | login session TTL |
 | `HARNESS_SESSION_RETENTION` | config `0s` | session expiry (0 = never); invalid values fail startup |

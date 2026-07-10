@@ -29,6 +29,7 @@ type Config struct {
 	AuthSessionTTL       time.Duration
 	CookieSecure         bool
 	TrustForwardedProto  bool
+	TrustProxyHeaders    bool
 	SessionRetention     time.Duration
 	RepoRoot             string
 	RunscRoot            string
@@ -310,6 +311,7 @@ func Load() (Config, error) {
 		AuthSessionTTL:       authSessionTTL,
 		CookieSecure:         !boolEnvDefault("HARNESS_COOKIE_INSECURE", false),
 		TrustForwardedProto:  boolEnvDefault("HARNESS_TRUST_FORWARDED_PROTO", true),
+		TrustProxyHeaders:    boolEnvDefault("HARNESS_TRUST_PROXY_HEADERS", true),
 		SessionRetention:     sessionRetention,
 		RepoRoot:             getenv("HARNESS_REPO_ROOT", repoRoot),
 		RunscRoot:            getenv("RUNSC_ROOT", "/var/lib/harness/runsc"),

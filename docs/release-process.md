@@ -103,17 +103,33 @@ live-smoke steps CI cannot exercise (real gVisor host required).
    [Conventional Commits](https://www.conventionalcommits.org/) (`feat(x):
    ...`, `fix(x): ...`, `docs: ...`, etc.) for this to produce a useful
    changelog — this was already the repo's practice before CI existed.
-4. Deploy manually (no CD yet — see below):
+4. Deploy manually (no CD yet — see below). Build first, then cut over systemd services:
    ```bash
    cd /home/agent-runtime-platform/main
    git fetch --tags && git checkout vX.Y.Z
-   cd orchestrator && go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o bin/orchestrator ./cmd/orchestrator
-   cd ../frontend && npm run build
-   sudo systemctl restart harness-publish-orchestrator harness-publish-frontend
-   curl -s http://127.0.0.1:9090/healthz   # confirm the version field matches
+   VERSION=$(git describe --tags --always --dirty)
+
+   # Build backend to a staging binary so a failed build never corrupts the live binary.
+   cd orchestrator
+   go build -ldflags "-X main.version=${VERSION}" -o bin/orchestrator.new ./cmd/orchestrator
+
+   # Build frontend production assets. If this is not run as watt, chown .next before restart.
+   cd ../frontend
+   npm run build
+   # sudo chown -R watt:watt .next   # only if built as root
+
+   # Atomic-ish backend binary swap + service restarts.
+   cd ../orchestrator/bin
+   sudo cp -a orchestrator orchestrator.bak.$(date +%s)
+   sudo mv orchestrator.new orchestrator
+   sudo systemctl restart harness-publish-orchestrator
+   sudo systemctl restart harness-publish-frontend
+
+   curl -s http://127.0.0.1:9090/healthz   # confirm the version field matches ${VERSION}
+   curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1:9000/api/healthz
    ```
    See [operations.md](./operations.md) for the full runbook (ports, systemd
-   units, nginx, troubleshooting).
+   units, nginx/HSTS, security-header smoke checks, troubleshooting).
 
 Rolling back is the same flow with an older tag: `git checkout v<previous>`,
 rebuild, restart.

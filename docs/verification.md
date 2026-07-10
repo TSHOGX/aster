@@ -59,6 +59,24 @@ lifecycle, run an end-to-end smoke on a real gVisor host:
    completes: `ack_turn_started` → streamed output → `ack_turn_completed`, and the
    model proxy logs `started` / `200 OK` / `finished` for the turn.
 
+For web/security changes, also smoke the publish HTTPS path through nginx:
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1:9000/api/healthz
+curl -sk -D - -o /dev/null https://127.0.0.1:9000/ \
+  | grep -iE 'content-security-policy|strict-transport|x-frame-options|x-content-type|referrer-policy|permissions-policy|cross-origin-opener'
+
+# X-Forwarded-For spoofing must not bypass login lockout: rotating fake XFF
+# should still hit 429 after the 5th bad attempt from the same real client IP.
+for i in $(seq 1 7); do
+  curl -sk -o /dev/null -w "attempt $i -> %{http_code}\n" \
+    https://127.0.0.1:9000/api/login \
+    -H 'Content-Type: application/json' \
+    -H "X-Forwarded-For: 10.0.0.$i" \
+    -d '{"username":"nonexistent_probe_user","password":"wrong"}'
+done
+```
+
 ## Platform note
 
 The Go control plane uses Linux-only syscalls (e.g. `SO_PEERCRED` for the

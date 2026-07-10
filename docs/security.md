@@ -74,10 +74,23 @@ image manifest during resolution ([drivers.md](./drivers.md)).
 - **Login**: username/password verified against PBKDF2-SHA256 hashes (600k
   iterations) in `config/auth-users.yaml`; or `HARNESS_LAB_PASSWORD`; or open mode
   (single `lab` user, dev only). Failures are rate-limited per `username|IP`
-  (5 / 15 min).
+  (5 / 15 min). The client IP is derived from the trusted reverse proxy's
+  `X-Real-IP` (nginx overwrites it with the real TCP peer), **not** the leftmost
+  `X-Forwarded-For` entry, which a client can forge to rotate around the lockout.
+  Set `HARNESS_TRUST_PROXY_HEADERS=0` when the orchestrator is exposed directly
+  (no trusted proxy) so only `RemoteAddr` is used.
+- **Global rate limit**: every request (except `/healthz`) passes a per-IP
+  token-bucket limiter (~10 req/s sustained, burst 40); excess gets `429`. This
+  is a coarse flood/scan guard on top of the login lockout.
+- **Request body caps**: JSON endpoints wrap the body in `http.MaxBytesReader`
+  (64 KiB for control endpoints, 1 MiB for agent messages) so an oversized or
+  slow body cannot exhaust memory. The public `http.Server` sets
+  `ReadHeaderTimeout`/`ReadTimeout`/`IdleTimeout` and `MaxHeaderBytes` to blunt
+  Slowloris-style slow-send attacks (`WriteTimeout` stays unset so SSE streams
+  survive).
 - **Sessions**: server-side, stored as a SHA-256 token hash in `auth_sessions`,
   revocable, 24h TTL. Cookie is HttpOnly, SameSite=Strict, `Secure` + `__Host-` over
-  HTTPS (with HSTS).
+  HTTPS; HSTS is emitted by the TLS-terminating nginx layer.
 - **Owner scoping**: users see and act on only their own sessions; a missing session
   or an owner mismatch returns `404` (not `403`), so sessions cannot be enumerated.
   Event streams and artifact downloads re-check ownership.
@@ -101,12 +114,29 @@ One orchestrator per data root, enforced by both a flock pidfile and a DB owner 
 with a 5s heartbeat; all lease/reaper mutations are owner-fenced. This prevents two
 orchestrators from racing on the same SQLite DB and runtime resources.
 
+## Browser response headers
+
+The Next.js workbench sets a baseline security header set on every response
+(`frontend/next.config.mjs`): a pragmatic **CSP** (`default-src 'self'`,
+`frame-ancestors 'none'`, `object-src 'none'`; `script`/`style` allow
+`'unsafe-inline'` because Next.js injects inline bootstrap and the app ships an
+inline theme script), plus `X-Frame-Options: DENY`, `X-Content-Type-Options:
+nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, a restrictive
+`Permissions-Policy`, and `Cross-Origin-Opener-Policy: same-origin`. Agent
+output is rendered via react-markdown (no `rehype-raw`) and highlight.js
+(HTML-escaped), so stored-HTML XSS is already contained; the CSP is defense in
+depth. Orchestrator JSON responses carry `nosniff`, and artifact downloads add
+`Content-Security-Policy: default-src 'none'; sandbox` + `X-Frame-Options: DENY`
+so a malicious artifact cannot be framed or sniffed into active content.
+
 ## Deployment TLS
 
 The orchestrator serves plain HTTP; production **must** terminate TLS at a reverse
-proxy (nginx) and forward `X-Forwarded-Proto https` so Secure cookies and HSTS
-engage. The publish deployment binds the frontend to `127.0.0.1:9001` behind nginx.
-See [operations.md](./operations.md).
+proxy (nginx) and forward `X-Forwarded-Proto https` so Secure cookies engage. The
+trusted proxy must also overwrite `X-Real-IP` with `$remote_addr` for rate-limit
+keying and emit `Strict-Transport-Security` on HTTPS responses. The publish
+deployment binds the frontend to `127.0.0.1:9001` behind nginx. See
+[operations.md](./operations.md).
 
 ## Sensitive local material
 

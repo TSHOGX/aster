@@ -2,7 +2,7 @@
 
 > 面向 `watt` 用户。说明 publish 这套服务当前怎么部署的、日常怎么重启/排障、
 > 以及为什么后端必须用 root 跑而 watt 仍能免密运维。
-> 最后更新：2026-07-08。
+> 最后更新：2026-07-10。
 >
 > 系统架构见 [architecture.md](./architecture.md)；配置项与端口见
 > [configuration.md](./configuration.md)；安全边界见 [security.md](./security.md)。
@@ -76,18 +76,24 @@ start/stop/restart/status，其它 `sudo` 仍需密码（规则见 `/etc/sudoers
 
 ```bash
 cd /home/agent-runtime-platform/main/orchestrator
-go build -o bin/orchestrator ./cmd/orchestrator     # 用 watt 编译即可，产物归 watt
+VERSION=$(git -C /home/agent-runtime-platform/main describe --tags --always --dirty)
+go build -ldflags "-X main.version=${VERSION}" -o bin/orchestrator.new ./cmd/orchestrator
+sudo cp -a bin/orchestrator bin/orchestrator.bak.$(date +%s)
+sudo mv bin/orchestrator.new bin/orchestrator
 sudo systemctl restart harness-publish-orchestrator # 加载新二进制
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9090/healthz  # 期望 200
+curl -s http://127.0.0.1:9090/healthz              # 期望 200，version 字段应为 ${VERSION}
 ```
 
 > systemd unit 里 `ExecStart` 指向 `orchestrator/bin/orchestrator`，所以
 > **必须 build 到 `bin/` 目录**（不是 `go run`，也不是仓库根的旧 `orchestrator` 二进制）。
+> 用 `bin/orchestrator.new` 先构建、再 `mv` 原子替换，可避免构建失败或半写入二进制影响正在运行的服务；
+> 旧二进制留作 `orchestrator.bak.<timestamp>`，需要回滚时把备份移回 `bin/orchestrator` 后 restart。
+> `-ldflags "-X main.version=..."` 不能省：`/healthz` 和启动日志靠它确认现网版本。
 
 ### 前端（systemd 管理）
 
 前端已纳入 systemd，服务名 `harness-publish-frontend`，以 `watt` 用户运行，
-端口 9000，已指向后端 9090。
+监听 `127.0.0.1:9001`，已指向后端 9090。
 
 ```bash
 # 状态 / 日志
@@ -105,7 +111,9 @@ sudo systemctl stop    harness-publish-frontend
 
 ```bash
 cd /home/agent-runtime-platform/main/frontend
-npm run build                                   # 用 watt 编译
+npm run build                                    # 建议用 watt 编译，产物归 watt
+# 如果临时用 root 编译过，必须修正 .next 属主，避免 next start 写 cache 失败：
+#   sudo chown -R watt:watt .next
 sudo systemctl restart harness-publish-frontend # 加载新构建
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9001/  # 期望 200（前端内部端口）
 ```
@@ -115,6 +123,43 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9001/  # 期望 200（
 > ⚠️ 前端**只绑 127.0.0.1:9001**（对外由 nginx 终止 TLS 后反代过来，见第 8 节），不要改回 `0.0.0.0`。
 > 如果 node 版本路径变了（当前 `v24.15.0`）或后端端口变了，需改 unit 后
 > `sudo systemctl daemon-reload && sudo systemctl restart harness-publish-frontend`。
+
+### 完整重新部署（后端 + 前端 + 冒烟）
+
+改动同时涉及 Go 后端和 Next 前端时，按这个顺序做：先构建（无停机），再替换后端二进制，最后重启两个
+systemd unit。不要直接 `go build -o bin/orchestrator` 覆盖正在运行的文件。
+
+```bash
+set -euo pipefail
+cd /home/agent-runtime-platform/main
+VERSION=$(git describe --tags --always --dirty)
+
+# 1) 后端：构建到 staging 文件
+(cd orchestrator && go build -ldflags "-X main.version=${VERSION}" -o bin/orchestrator.new ./cmd/orchestrator)
+
+# 2) 前端：生产构建
+(cd frontend && npm run build)
+# 若上一步不是用 watt 用户执行，修正 .next 属主：
+# sudo chown -R watt:watt frontend/.next
+
+# 3) 切后端二进制 + 重启服务
+cd orchestrator/bin
+sudo cp -a orchestrator orchestrator.bak.$(date +%s)
+sudo mv orchestrator.new orchestrator
+sudo systemctl restart harness-publish-orchestrator
+sudo systemctl restart harness-publish-frontend
+
+# 4) 冒烟：服务、版本、公网 HTTPS、关键安全头
+systemctl is-active harness-publish-orchestrator harness-publish-frontend nginx
+curl -s http://127.0.0.1:9090/healthz
+curl -sk -o /dev/null -w 'public https: %{http_code}\n' https://127.0.0.1:9000/api/healthz
+curl -sk -D - -o /dev/null https://127.0.0.1:9000/ \
+  | grep -iE 'content-security-policy|strict-transport|x-frame-options|x-content-type|referrer-policy|permissions-policy|cross-origin-opener'
+```
+
+> 重启 orchestrator 时，如果有打开的 SSE 流，日志里可能出现
+> `http shutdown failed: context deadline exceeded`；只要新进程已启动、`/healthz` 正常、unit 没有 restart loop，
+> 这是一次性重启遗留连接导致的可接受现象。
 
 ### nginx（TLS 终止反代，systemd 管理）
 
@@ -133,6 +178,9 @@ sudo systemctl restart nginx     # 换证书 / 改监听端口时用 restart
 
 > 站点配置 `/etc/nginx/sites-available/harness-publish`（软链到 `sites-enabled/`），
 > 证书在 `/etc/ssl/harness-publish/`。改证书或反代逻辑后务必先 `nginx -t` 再 reload。
+> nginx 必须覆盖 `X-Real-IP $remote_addr`、设置 `X-Forwarded-Proto https`，并发送
+> `Strict-Transport-Security`；后端登录限速依赖可信反代注入的 `X-Real-IP`，不是客户端可伪造的
+> `X-Forwarded-For` 最左跳。
 
 ### model proxy（`claude-code-proxy`，systemd 管理）
 
@@ -278,6 +326,8 @@ systemd unit 里通过环境变量把上述根目录指到 `harness-publish`（�
 | 浏览器提示证书不安全 | 自签证书的正常表现（客户端不认自签 CA），点“继续前往”即可。要消除需换可信 CA 证书（见第 8 节末） |
 | 改了 nginx 配置不生效 | 忘了 reload；`sudo nginx -t && sudo systemctl reload nginx` |
 | 登录总是 401 | 哈希没更新 / 没重启后端 / 密码错；用第 3 节的 curl（经 HTTPS）直接测 |
+| 登录或接口返回 429 | 命中限速。登录失败按 `username|真实客户端IP` 5 次/15 分钟锁定；全局每 IP 约 10 req/s、突发 40。若大量伪造 XFF 仍触发同一 IP 的 429，说明 nginx `X-Real-IP $remote_addr` + 后端可信反代逻辑正常 |
+| 安全响应头缺失 | 首页头由 Next `frontend/next.config.mjs` 提供，HSTS 由 nginx 提供；先确认前端已 `npm run build` 并重启，再 `sudo nginx -t && sudo systemctl reload nginx` |
 | 登录成功但没保持登录态 | cookie 没下发：确认是经 nginx 的 HTTPS 访问（nginx 转发 `X-Forwarded-Proto https`），不是绕过 nginx 的裸 HTTP |
 | 新 session 卡住、网络/沙箱报错 | 确认后端是 **root**（`ps -o user= -p $(systemctl show -p MainPID --value harness-publish-orchestrator)`），`runsc`/`ip` 在 PATH |
 | 消息能发出、无 toast、但 agent 不回复 | model proxy 没贯通。`sudo journalctl -u claude-proxy.service -n 50` 看：`Errno 13`=proxy 没以 root 跑；`Errno 2 No such file`=`.env` 缺 publish 的 `HARNESS_RUN_DIR`/`HARNESS_PROXY_CORRELATION_SOCKET`（指到了 main 的 `/var/lib/harness/run`）；`401`=client key 不匹配 `.env` 的 `ANTHROPIC_API_KEY`。修好后 `sudo systemctl restart claude-proxy.service` |
@@ -293,6 +343,9 @@ echo "http  :80(跳转)-> $(curl -s -o /dev/null -w '%{http_code}' http://127.0.
 echo "backend :9090  -> $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9090/healthz)"
 echo "frontend :9001 -> $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9001/)"
 echo "proxy :8083    -> $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8083/healthz)"
+# 安全头（应看到 CSP / HSTS / DENY / nosniff 等）
+curl -sk -D - -o /dev/null https://127.0.0.1:9000/ \
+  | grep -iE 'content-security-policy|strict-transport|x-frame-options|x-content-type|referrer-policy|permissions-policy|cross-origin-opener'
 systemctl is-active nginx harness-publish-orchestrator harness-publish-frontend claude-proxy.service
 ps -o user= -p "$(systemctl show -p MainPID --value harness-publish-orchestrator)"  # 应为 root
 ps -o user= -p "$(systemctl show -p MainPID --value harness-publish-frontend)"      # 应为 watt
@@ -402,6 +455,10 @@ server {
     ssl_certificate_key /etc/ssl/harness-publish/privkey.pem;
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:harness_tls:10m;
+    ssl_session_timeout 1h;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     client_max_body_size 50m;   # 大 prompt / 上传不被 413 卡住
 

@@ -105,8 +105,9 @@ users:
 | `HARNESS_COOKIE_NAME` | `harness_auth` | cookie 名（HTTPS 下自动加 `__Host-` 前缀） |
 | `HARNESS_COOKIE_INSECURE` | `false` | 设 `1` 关闭 Secure cookie（仅本地 http 调试用） |
 | `HARNESS_TRUST_FORWARDED_PROTO` | `true` | 信任反代传来的 `X-Forwarded-Proto` 判定 HTTPS |
+| `HARNESS_TRUST_PROXY_HEADERS` | `true` | 信任反代传来的 `X-Real-IP`/`X-Forwarded-For` 判定客户端 IP(用于限速)。直连暴露(无可信反代)时设 `0`,只用真实 `RemoteAddr` |
 
-登录会话是服务端状态：存于 SQLite，可吊销、带过期，登出即吊销。后台维护循环会定期清理过期会话。登录失败按 用户名+IP 限速（15 分钟内 5 次失败后锁定）。
+登录会话是服务端状态：存于 SQLite，可吊销、带过期，登出即吊销。后台维护循环会定期清理过期会话。登录失败按 用户名+IP 限速（15 分钟内 5 次失败后锁定）。生产反代下客户端 IP 取 nginx 覆盖的 `X-Real-IP $remote_addr`（不可由外部伪造），不要取 `X-Forwarded-For` 最左跳；否则攻击者可轮换伪造头绕过登录锁定。另有一层全局每 IP 请求限速用于挡扫描/洪峰。
 
 ### HTTPS 部署（前置反代 TLS 终结）
 
@@ -119,11 +120,16 @@ server {
   ssl_certificate     /etc/ssl/workbench.crt;
   ssl_certificate_key /etc/ssl/workbench.key;
 
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
   location / {
-    proxy_pass http://127.0.0.1:8000;          # Next.js workbench
+    proxy_pass http://127.0.0.1:8000;            # Next.js workbench; workbench 再同源代理 /api 到 orchestrator
+    proxy_http_version 1.1;
     proxy_set_header Host              $host;
-    proxy_set_header X-Forwarded-Proto https;   # 让 orchestrator 知道是 HTTPS
-    proxy_set_header X-Forwarded-For   $remote_addr;
+    proxy_set_header X-Real-IP         $remote_addr;        # 后端限速信任这个真实客户端 IP
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;               # 让 orchestrator 知道是 HTTPS
+    proxy_set_header X-Forwarded-Host  $host;
 
     # SSE 事件流需要关闭缓冲
     proxy_buffering off;
@@ -132,7 +138,7 @@ server {
 }
 ```
 
-把 orchestrator（`:8090`）和前端（`:8000`）都绑到 `127.0.0.1`，只通过反代对外暴露。Secure cookie 与 HSTS 会在判定为 HTTPS 时自动启用。
+把 orchestrator（`:8090`）和前端（`:8000`）都绑到 `127.0.0.1`，只通过反代对外暴露。Secure cookie 会在判定为 HTTPS 时自动启用；HSTS 建议由 nginx 统一加（见上例）。
 
 
 ## 目录结构

@@ -73,6 +73,7 @@ type Server struct {
 	authUsers    map[string]config.AuthUser
 	authEnabled  bool
 	loginLimiter *auth.RateLimiter
+	ipLimiter    *auth.IPRateLimiter
 
 	sessionOwnerMu    sync.Mutex
 	sessionOwnerCache map[string]sessionOwnerEntry
@@ -140,15 +141,19 @@ func New(
 		authUsers[user.Username] = user
 	}
 	return &Server{
-		cfg:               cfg,
-		store:             store,
-		runtime:           runtime,
-		watcher:           watcher,
-		hub:               hub,
-		log:               log,
-		authUsers:         authUsers,
-		authEnabled:       cfg.AuthEnabled(),
-		loginLimiter:      auth.NewRateLimiter(5, 15*time.Minute),
+		cfg:          cfg,
+		store:        store,
+		runtime:      runtime,
+		watcher:      watcher,
+		hub:          hub,
+		log:          log,
+		authUsers:    authUsers,
+		authEnabled:  cfg.AuthEnabled(),
+		loginLimiter: auth.NewRateLimiter(5, 15*time.Minute),
+		// ~10 req/s sustained per IP with a burst of 40 absorbs normal
+		// interactive bursts and SSE reconnects while throttling scanners and
+		// request floods. Tune via constants if legitimate traffic trips it.
+		ipLimiter:         auth.NewIPRateLimiter(10, 40),
 		sessionOwnerCache: make(map[string]sessionOwnerEntry),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -172,7 +177,26 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/logout", s.requireAuth(http.HandlerFunc(s.logout)))
 	mux.Handle("/api/", s.requireAuth(http.HandlerFunc(s.api)))
 	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.downloadArtifact)))
-	return mux
+	return s.rateLimit(mux)
+}
+
+// rateLimit throttles requests per client IP with a token bucket, returning 429
+// once a client outpaces the sustained rate. /healthz is exempt so liveness
+// probes are never throttled. This is a coarse flood/scan guard layered on top
+// of the per-(username,IP) login lockout.
+func (s *Server) rateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !s.ipLimiter.Allowed(s.clientIP(r)) {
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) OperatorRoutes() http.Handler {
@@ -300,12 +324,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
+	limitBody(w, r, maxControlBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	username := strings.TrimSpace(req.Username)
-	rateKey := username + "|" + clientIP(r)
+	rateKey := username + "|" + s.clientIP(r)
 	if !s.loginLimiter.Allowed(rateKey) {
 		writeError(w, http.StatusTooManyRequests, "too many attempts, try again later")
 		return
@@ -571,6 +596,7 @@ func (s *Server) deploymentCapabilities(w http.ResponseWriter, r *http.Request) 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var raw map[string]json.RawMessage
 	if r.Body != nil {
+		limitBody(w, r, maxControlBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
@@ -675,6 +701,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 	var req struct {
 		Content string `json:"content"`
 	}
+	limitBody(w, r, maxMessageBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
@@ -2695,6 +2722,7 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 			s.log.Warn("expired auth-session sweep failed", "error", err)
 		}
 		s.loginLimiter.GC()
+		s.ipLimiter.GC()
 		if _, err := s.store.CancelTerminalSessionPendingTurns(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
 			s.log.Warn("terminal-session turn cleanup failed", "error", err)
 		}
@@ -2995,6 +3023,7 @@ func (s *Server) internalProxyRequestStart(w http.ResponseWriter, r *http.Reques
 		UpstreamModel   string `json:"upstream_model"`
 		UpstreamBaseURL string `json:"upstream_base_url"`
 	}
+	limitBody(w, r, maxControlBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
@@ -3039,6 +3068,7 @@ func (s *Server) internalProxyRequestFinish(w http.ResponseWriter, r *http.Reque
 		ErrorClass                 string `json:"error_class"`
 		Error                      string `json:"error"`
 	}
+	limitBody(w, r, maxControlBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
@@ -3204,7 +3234,11 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Harden artifact responses: never sniff into active content, never allow
+	// framing, and forbid script execution if a browser opens one directly.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("X-Frame-Options", "DENY")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
@@ -3705,18 +3739,57 @@ func hashAuthToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func clientIP(r *http.Request) string {
-	if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); fwd != "" {
-		if comma := strings.IndexByte(fwd, ','); comma >= 0 {
-			return strings.TrimSpace(fwd[:comma])
+// clientIP returns the client address used for rate-limit keying and logging.
+//
+// The orchestrator serves plain HTTP behind a TLS-terminating reverse proxy
+// (see docs/operations.md). When TrustProxyHeaders is set (the default deployed
+// posture), the trusted proxy is nginx, which OVERWRITES X-Real-IP with the true
+// TCP peer ($remote_addr) — a value the external client cannot forge — so we use
+// it directly. X-Forwarded-For is deliberately NOT trusted from the left: nginx
+// APPENDS the real peer to the end of any client-supplied chain, so the leftmost
+// entry is fully attacker-controlled and using it would let anyone bypass the
+// per-IP login lockout by rotating a spoofed header. As a fallback we take the
+// rightmost (last-hop) XFF entry, which nginx appended.
+//
+// When TrustProxyHeaders is false (orchestrator exposed directly, no trusted
+// proxy), all client-supplied forwarding headers are ignored and only the real
+// transport peer (RemoteAddr) is used.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.cfg.TrustProxyHeaders {
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			return realIP
 		}
-		return fwd
+		if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); fwd != "" {
+			// Use the rightmost entry: the hop appended by the trusted proxy.
+			if comma := strings.LastIndexByte(fwd, ','); comma >= 0 {
+				return strings.TrimSpace(fwd[comma+1:])
+			}
+			return fwd
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// Request-body size caps. Bounded reads keep a single oversized or slow body
+// from exhausting memory; the small cap covers control endpoints with tiny
+// JSON, the message cap covers user-authored agent prompts (nginx allows up to
+// 50m, but the orchestrator has no reason to buffer that much JSON in memory).
+const (
+	maxControlBodyBytes = 64 << 10 // 64 KiB
+	maxMessageBodyBytes = 1 << 20  // 1 MiB
+)
+
+// limitBody wraps r.Body with a MaxBytesReader so decoding fails cleanly with a
+// 400 (via http.MaxBytesError) once the cap is exceeded, instead of reading an
+// unbounded amount into memory.
+func limitBody(w http.ResponseWriter, r *http.Request, max int64) {
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, max)
+	}
 }
 
 func newID(prefix string) string {
@@ -3729,6 +3802,7 @@ func newID(prefix string) string {
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }

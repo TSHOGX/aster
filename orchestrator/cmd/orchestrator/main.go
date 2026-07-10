@@ -159,9 +159,18 @@ func main() {
 	}()
 
 	httpServer := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           app.Routes(),
+		Addr:    cfg.Addr,
+		Handler: app.Routes(),
+		// ReadHeaderTimeout and ReadTimeout bound how long a client may take to
+		// send headers/body, defending against Slowloris-style slow-send DoS.
+		// IdleTimeout caps keep-alive idle connections. WriteTimeout is left
+		// unset on purpose: the /api/events/stream SSE endpoint holds a single
+		// response open for the life of the session and any write deadline would
+		// sever it. nginx's proxy_read_timeout (3600s) bounds those streams.
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB, well above any legitimate header set
 	}
 	proxyCorrelationServer := app.ProxyCorrelationServer()
 	proxyCorrelationListener, proxyCorrelationSocket, err := app.ListenProxyCorrelation()
