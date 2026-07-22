@@ -1,47 +1,172 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, ExternalLink, Loader2 } from "lucide-react";
+import { Download, ExternalLink, Loader2, Pencil, RotateCw, Save, X } from "lucide-react";
+import { toast } from "sonner";
 
-import { buildArtifactHref, fetchArtifactText } from "@/lib/api";
+import { buildArtifactHref, fetchArtifactText, writeArtifact } from "@/lib/api";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { classifyArtifact, type ArtifactClassification } from "@/lib/mime";
 import { MarkdownView } from "./markdown-view";
 import { CodeView } from "./viewers/code-view";
+import { CodeEditor } from "./viewers/code-editor";
 import type { ApiArtifact } from "@/lib/types";
 
 type Props = { sessionId: string; path: string; artifact?: ApiArtifact | null };
 
+// Files at or below this size may be edited inline. Larger files stay read-only
+// to keep the editor responsive (the read path already caps text fetch at 2MB).
+const MAX_EDIT_BYTES = 1024 * 1024;
+const EDITABLE_KINDS = new Set(["text", "code", "json", "markdown"]);
+
 type LoadState =
   | { phase: "skip" }
   | { phase: "loading" }
-  | { phase: "ok"; text: string }
+  | { phase: "ok"; text: string; lastModified: string | null }
   | { phase: "error"; error: string };
+
+type EditState =
+  | { phase: "off" }
+  | { phase: "editing"; text: string; dirty: boolean }
+  | { phase: "saving"; text: string }
+  | { phase: "stale"; text: string };
 
 export function ArtifactViewer({ sessionId, path, artifact }: Props) {
   const meta = classifyArtifact(path);
   const href = buildArtifactHref(sessionId, path);
   const skip = meta.kind === "binary" || meta.kind === "image" || meta.kind === "pdf";
   const [load, setLoad] = useState<LoadState>(skip ? { phase: "skip" } : { phase: "loading" });
+  const [edit, setEdit] = useState<EditState>({ phase: "off" });
 
+  // Fetch text on mount / when the file identity changes. The parent remounts
+  // this viewer on path + updated_at change (its key), so this effect fetches
+  // once per mount; state is only written from the async callback.
   useEffect(() => {
     if (skip) return;
     let cancelled = false;
     void fetchArtifactText(sessionId, path).then((res) => {
       if (cancelled) return;
-      setLoad(res.ok ? { phase: "ok", text: res.text } : { phase: "error", error: res.error });
+      setLoad(
+        res.ok
+          ? { phase: "ok", text: res.text, lastModified: res.lastModified ?? null }
+          : { phase: "error", error: res.error }
+      );
     });
     return () => {
       cancelled = true;
     };
   }, [sessionId, path, artifact?.updated_at, skip]);
 
+  // User-triggered re-fetch (stale-edit reload); safe to set loading here since
+  // it runs from an event handler, not during an effect body.
+  const loadText = () => {
+    setLoad({ phase: "loading" });
+    void fetchArtifactText(sessionId, path).then((res) => {
+      setLoad(
+        res.ok
+          ? { phase: "ok", text: res.text, lastModified: res.lastModified ?? null }
+          : { phase: "error", error: res.error }
+      );
+    });
+  };
+
+  const editable =
+    EDITABLE_KINDS.has(meta.kind) &&
+    load.phase === "ok" &&
+    (!artifact || artifact.size <= MAX_EDIT_BYTES);
+
+  const startEditing = () => {
+    if (load.phase !== "ok") return;
+    setEdit({ phase: "editing", text: load.text, dirty: false });
+  };
+
+  const cancelEditing = () => setEdit({ phase: "off" });
+
+  const reloadStale = () => {
+    setEdit({ phase: "off" });
+    loadText();
+  };
+
+  const save = async () => {
+    if (edit.phase !== "editing") return;
+    const text = edit.text;
+    setEdit({ phase: "saving", text });
+    // The optimistic-concurrency token is the Last-Modified header the download
+    // emitted, echoed back as If-Unmodified-Since.
+    const lastModified = load.phase === "ok" ? load.lastModified ?? undefined : undefined;
+    const result = await writeArtifact(sessionId, path, text, lastModified);
+    if (result.ok) {
+      toast.success(`Saved ${path.split("/").pop()}`);
+      // The file re-renders via the artifact.updated SSE (key includes
+      // updated_at); leave edit mode so the fresh read shows.
+      setEdit({ phase: "off" });
+      return;
+    }
+    if (result.stale) {
+      setEdit({ phase: "stale", text });
+      return;
+    }
+    if (result.busy) {
+      toast.error("Can't save while the agent is working. Try again once the turn finishes.");
+      setEdit({ phase: "editing", text, dirty: true });
+      return;
+    }
+    if (result.status === 413) {
+      toast.error("File is too large to save (limit 1 MiB).");
+      setEdit({ phase: "editing", text, dirty: true });
+      return;
+    }
+    toast.error(`Save failed: ${result.error}`);
+    setEdit({ phase: "editing", text, dirty: true });
+  };
+
+  const editorText = edit.phase !== "off" ? edit.text : null;
+  const saving = edit.phase === "saving";
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-background)]">
-      <ViewerHeader path={path} href={href} artifact={artifact} />
+      <ViewerHeader
+        path={path}
+        href={href}
+        artifact={artifact}
+        editable={editable}
+        editState={edit}
+        onEdit={startEditing}
+        onCancel={cancelEditing}
+        onSave={save}
+      />
+      {edit.phase === "stale" ? (
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-danger)]">
+          <span>File changed by the agent — reload to get the latest.</span>
+          <button
+            type="button"
+            onClick={reloadStale}
+            className="flex shrink-0 items-center gap-1 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-[var(--color-foreground)] hover:bg-[var(--color-surface)]"
+          >
+            <RotateCw className="h-3 w-3" /> Reload
+          </button>
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-hidden">
-        <ViewerBody path={path} href={href} meta={meta} load={load} />
+        {editorText !== null ? (
+          <CodeEditor
+            path={path}
+            initialText={editorText}
+            onChange={(text) =>
+              setEdit((prev) =>
+                prev.phase === "editing" ? { phase: "editing", text, dirty: true } : prev
+              )
+            }
+          />
+        ) : (
+          <ViewerBody path={path} href={href} meta={meta} load={load} />
+        )}
       </div>
+      {saving ? (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[10px] text-[var(--color-foreground-muted)]">
+          Saving…
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -49,12 +174,24 @@ export function ArtifactViewer({ sessionId, path, artifact }: Props) {
 function ViewerHeader({
   path,
   href,
-  artifact
+  artifact,
+  editable,
+  editState,
+  onEdit,
+  onCancel,
+  onSave
 }: {
   path: string;
   href: string;
   artifact?: ApiArtifact | null;
+  editable: boolean;
+  editState: EditState;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: () => void;
 }) {
+  const editing = editState.phase === "editing" || editState.phase === "saving" || editState.phase === "stale";
+  const saving = editState.phase === "saving";
   return (
     <div className="flex min-h-[42px] items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
       <div className="min-w-0 flex-1">
@@ -71,23 +208,58 @@ function ViewerHeader({
           )}
         </div>
       </div>
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
-        title="Open raw"
-      >
-        <ExternalLink className="h-4 w-4" />
-      </a>
-      <a
-        href={href}
-        download
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
-        title="Download"
-      >
-        <Download className="h-4 w-4" />
-      </a>
+      {editing ? (
+        <>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving || editState.phase === "stale"}
+            className="flex h-8 items-center gap-1.5 rounded-[var(--radius)] bg-[var(--color-accent,var(--color-foreground))] px-2.5 text-xs text-[var(--color-background)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Save"
+          >
+            <Save className="h-3.5 w-3.5" /> Save
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+            title="Cancel edit"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </>
+      ) : (
+        <>
+          {editable ? (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+              title="Edit"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          ) : null}
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+            title="Open raw"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </a>
+          <a
+            href={href}
+            download
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+            title="Download"
+          >
+            <Download className="h-4 w-4" />
+          </a>
+        </>
+      )}
     </div>
   );
 }

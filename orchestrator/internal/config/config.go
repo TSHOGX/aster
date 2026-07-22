@@ -43,6 +43,13 @@ type Config struct {
 	DBPath               string
 	DefaultAgent         string
 	MaxSessions          int
+	// MaxUploadBytes caps the total decoded size of a single workspace upload
+	// request; MaxEditBytes caps a single online-edit body; MaxUploadFiles caps
+	// how many files one upload request may create. These bound memory and disk
+	// blast radius for the workspace file upload/edit endpoints.
+	MaxUploadBytes       int64
+	MaxEditBytes         int64
+	MaxUploadFiles       int
 	RunscNetwork         string
 	RunscOverlay2        string
 	Agents               map[string]AgentConfig
@@ -91,6 +98,15 @@ type RuntimeProviderConfig struct {
 	ProviderID string `yaml:"provider_id" json:"provider_id,omitempty"`
 	ProfileID  string `yaml:"profile_id" json:"profile_id,omitempty"`
 }
+
+// Defaults for the workspace upload/edit endpoints. Uploads may carry many
+// files (e.g. an uploaded folder) up to 100 MiB total; a single online edit is
+// capped at 1 MiB since it is one text file authored in the browser.
+const (
+	defaultMaxUploadBytes int64 = 100 << 20 // 100 MiB
+	defaultMaxEditBytes   int64 = 1 << 20   // 1 MiB
+	defaultMaxUploadFiles int   = 2000
+)
 
 const defaultModelProxyBindPort = 8082
 const defaultModelProxyBindURL = "http://0.0.0.0:8082"
@@ -313,6 +329,9 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("HARNESS_DEFAULT_AGENT: %w", err)
 	}
 	maxSessions := intEnv("HARNESS_MAX_SESSIONS", projectConfig.Harness.MaxSessions)
+	maxUploadBytes := int64Env("HARNESS_MAX_UPLOAD_BYTES", defaultMaxUploadBytes)
+	maxEditBytes := int64Env("HARNESS_MAX_EDIT_BYTES", defaultMaxEditBytes)
+	maxUploadFiles := intEnv("HARNESS_MAX_UPLOAD_FILES", defaultMaxUploadFiles)
 	authUsers, err := loadAuthUsers(getenv("HARNESS_AUTH_USERS_PATH", filepath.Join(repoRoot, "config", "auth-users.yaml")))
 	if err != nil {
 		return Config{}, err
@@ -347,6 +366,9 @@ func Load() (Config, error) {
 		DBPath:               getenv("HARNESS_DB_PATH", "/var/lib/harness/state/orchestrator.db"),
 		DefaultAgent:         string(defaultDriver),
 		MaxSessions:          maxSessions,
+		MaxUploadBytes:       maxUploadBytes,
+		MaxEditBytes:         maxEditBytes,
+		MaxUploadFiles:       maxUploadFiles,
 		RunscNetwork:         "sandbox",
 		RunscOverlay2:        "none",
 		ModelProxy:           projectConfig.Harness.ModelProxy,
@@ -1334,6 +1356,14 @@ func getenv(key, fallback string) string {
 
 func intEnv(key string, fallback int) int {
 	value, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func int64Env(key string, fallback int64) int64 {
+	value, err := strconv.ParseInt(os.Getenv(key), 10, 64)
 	if err != nil || value <= 0 {
 		return fallback
 	}

@@ -184,7 +184,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/me", s.me)
 	mux.Handle("POST /api/logout", s.requireAuth(http.HandlerFunc(s.logout)))
 	mux.Handle("/api/", s.requireAuth(http.HandlerFunc(s.api)))
-	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.downloadArtifact)))
+	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.artifactFile)))
 	return s.rateLimit(mux)
 }
 
@@ -483,6 +483,8 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 		s.sendMessage(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodGet:
 		s.listArtifacts(w, r, sessionID)
+	case len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodPost:
+		s.uploadArtifacts(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "interrupt" && r.Method == http.MethodPost:
 		s.interruptSession(w, r, sessionID)
 	default:
@@ -3364,7 +3366,21 @@ func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request, sessionID
 	writeJSON(w, http.StatusOK, map[string]any{"artifacts": items})
 }
 
-func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
+// artifactFile serves the /artifacts/{sessionID}/{path} endpoint. GET downloads
+// the file; PUT overwrites it for the online editor. The mux registration
+// matches all methods, so we dispatch here.
+func (s *Server) artifactFile(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.getArtifact(w, r)
+	case http.MethodPut:
+		s.writeArtifact(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/artifacts/"), "/", 2)
 	if len(parts) != 2 {
 		writeError(w, http.StatusBadRequest, "invalid artifact path")
@@ -3382,6 +3398,9 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("X-Frame-Options", "DENY")
+	// http.ServeContent sets Last-Modified from info.ModTime(); the online
+	// editor reads it and echoes it back in If-Unmodified-Since on PUT so we can
+	// detect a stale edit (the agent changed the file since the editor loaded).
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 

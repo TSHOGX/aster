@@ -21,4 +21,9 @@ async function handle(request: NextRequest, context: RouteContext) {
   return proxyToResponse(request, upstreamPath);
 }
 
+// App Router route handlers do NOT apply the legacy `api/` 4MB body-size cap
+// (that only affected the Pages Router `api/` routes via bodyParser config).
+// Bodies are streamed through proxyRequest (see lib/orchestrator-proxy.ts), so
+// there is no size limit to raise here; the orchestrator enforces the real cap.
 export const GET = handle;
+export const PUT = handle;

@@ -210,6 +210,22 @@ VALUES (?, ?, 'user', ?, 'queued', 0, ?)`, sessionID, next, content, formatTime(
 	return id, tx.Commit()
 }
 
+// SessionHasActiveTurn reports whether the session has any turn that is queued,
+// leased, or running. Callers use it to reject workspace mutations (uploads,
+// online edits) while the agent may be actively reading or writing the
+// workspace, mirroring the pending-turn check in generation idle CAS.
+func (s *Store) SessionHasActiveTurn(ctx context.Context, sessionID string) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM turns
+WHERE session_id = ?
+  AND status IN ('queued', 'leased', 'running')`, sessionID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count != 0, nil
+}
+
 func (s *Store) BridgeHelloAck(ctx context.Context, sessionID, generationID, owner string, now time.Time, ackStartedGrace time.Duration) (BridgeHelloAck, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()

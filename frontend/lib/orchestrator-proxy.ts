@@ -64,6 +64,15 @@ export async function proxyRequest(request: Request, upstreamPath: string) {
   const requestUrl = new URL(request.url);
   const upstreamUrl = buildUpstreamUrl(upstreamPath, requestUrl.search);
   const headers = copyRequestHeaders(request.headers, requestUrl);
+
+  // Buffer non-GET/HEAD bodies into memory before forwarding. Streaming the
+  // request body through (body: request.body / Readable.fromWeb(...) with
+  // duplex: 'half') was attempted to avoid materializing large uploads, but in
+  // this runtime (node v24.15.0 + Next 16.2.6 undici) it throws
+  // `fetch failed` / `expected non-null body source`, so forwarding a stream is
+  // not viable here. Buffering means a ~100MB upload is fully held in the Node
+  // process for the duration of the request — an accepted tradeoff for now; the
+  // orchestrator enforces the real per-file size cap.
   const body =
     request.method === "GET" || request.method === "HEAD"
       ? undefined

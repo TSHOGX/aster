@@ -4636,7 +4636,7 @@ func TestDownloadArtifactAllowsNestedRegularFile(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/reports/summary.txt", nil)
 	rec := httptest.NewRecorder()
 
-	srv.downloadArtifact(rec, req)
+	srv.getArtifact(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d body %s", rec.Code, rec.Body.String())
@@ -4670,7 +4670,7 @@ func TestDownloadArtifactRejectsMissingWorkspaceEvidence(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/orphan.txt", nil)
 	rec := httptest.NewRecorder()
 
-	srv.downloadArtifact(rec, req)
+	srv.getArtifact(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d body %s", rec.Code, rec.Body.String())
@@ -4692,7 +4692,7 @@ WHERE session_id = ?`, filepath.Join(filepath.Dir(workspace), "other_session"), 
 	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/report.txt", nil)
 	rec := httptest.NewRecorder()
 
-	srv.downloadArtifact(rec, req)
+	srv.getArtifact(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403, got %d body %s", rec.Code, rec.Body.String())
@@ -6254,7 +6254,7 @@ func TestDownloadArtifactRejectsSymlinkEscape(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/outside.txt", nil)
 	rec := httptest.NewRecorder()
 
-	srv.downloadArtifact(rec, req)
+	srv.getArtifact(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403, got %d body %s", rec.Code, rec.Body.String())
@@ -6278,7 +6278,7 @@ func TestDownloadArtifactRejectsSymlinkDirectory(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/linked/secret.txt", nil)
 	rec := httptest.NewRecorder()
 
-	srv.downloadArtifact(rec, req)
+	srv.getArtifact(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403, got %d body %s", rec.Code, rec.Body.String())
@@ -6291,7 +6291,7 @@ func TestDownloadArtifactRejectsTraversal(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/../outside.txt", nil)
 	rec := httptest.NewRecorder()
 
-	srv.downloadArtifact(rec, req)
+	srv.getArtifact(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d body %s", rec.Code, rec.Body.String())
