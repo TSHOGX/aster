@@ -26,6 +26,9 @@ orchestrator/authhash
 # 备份文件
 *.bak
 
+# 本地 agent 运维笔记,不入库
+AGENTS.md
+
 # 通用
 .DS_Store
 node_modules/
