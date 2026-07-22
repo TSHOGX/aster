@@ -40,7 +40,7 @@ All tables are created idempotently in `ensureSchema`. Summary:
 |---|---|
 | `users` | user rows (the `lab` user is always ensured) |
 | `auth_sessions` | server-side login sessions: `token_hash` PK, user, created/expires/revoked/last_seen |
-| `sessions` | session row: status, `driver_id` (pi/sh), `mode` (agent/shell), workspace, `restore_id`, timestamps, `auto_checkpoint_enabled`, `active_generation_id`, `agent_home_path`, failure_reason/error_class |
+| `sessions` | session row: status, `driver_id` (pi/sh), `mode` (agent/shell), workspace, `restore_id`, timestamps, `auto_checkpoint_enabled`, `active_generation_id`, `agent_home_path`, failure_reason/error_class, `title`/`title_custom` (display name + whether the user set it) |
 | `messages` | append-only user + assistant chat log (cascade on session delete) |
 | `artifacts` | `(session_id, path)` workspace file metadata: size, mod_time |
 | `orchestrator_owner` | singleton owner: uuid, boot_id, run dir, heartbeat |

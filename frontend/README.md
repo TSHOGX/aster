@@ -61,7 +61,7 @@ Environment overrides:
 - The UI checks `/api/healthz` first.
 - If the real backend is unavailable or a proxied HTTP request fails, the app shows the backend-unreachable state instead of a mock workspace.
 - Live events come from the global `GET /api/events/stream` SSE endpoint through the frontend proxy, with `last_event_id` replay fallback when the stream reconnects.
-- The stream renders `agent.delta`, `agent.message`, `agent.output`, `system.status`, and session lifecycle events.
+- The stream renders `agent.delta`, `agent.message`, `agent.output`, `system.status`, session lifecycle events, and `session.updated` (title changes).
 - After a successful message post, the provider also polls session/messages/artifacts for a short period so the view can recover from missed events.
 - The same-origin SSE path replaced the earlier direct browser WebSocket connection.
 - The artifact pane renders a live metadata-backed file tree with search, folder expand/collapse, tabs, download actions, and previews for Markdown, code, text, images, JSON, CSV/TSV, and PDF.

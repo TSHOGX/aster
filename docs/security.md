@@ -42,6 +42,13 @@ This is the central credential boundary:
 - There is one secret-grant spec (`model_provider` / `anthropic_messages`, exposure
   `proxy_only`, max TTL 24h) — it describes proxy-mediated access, not a mount.
 
+The optional session-title LLM ([configuration.md](./configuration.md)) is a
+**second, independent** host-side credential: the orchestrator calls its
+OpenAI-compatible endpoint directly with the key from `config/title-llm.yaml`. It
+does not touch the model proxy, the per-turn correlation, or the sandbox — the
+sandbox never sees this key either, so it sits on the same side of the boundary as
+the proxy's upstream key.
+
 ## Proxy correlation (authorization per turn)
 
 The model proxy does not blindly forward. For each request it calls the
