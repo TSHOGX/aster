@@ -50,7 +50,19 @@ type Config struct {
 	RuntimeProviders     map[string]RuntimeProviderConfig
 	ModelProxy           ModelProxyConfig
 	Harness              HarnessConfig
+	TitleLLM             TitleLLMConfig
 	Warnings             []string
+}
+
+// TitleLLMConfig configures the optional LLM-based session-title generator.
+// It is loaded from a separate gitignored secret file so the API key never
+// enters version control. When APIKey is empty the feature is disabled and the
+// system falls back to placeholder titles.
+type TitleLLMConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	BaseURL string `yaml:"base_url"`
+	APIKey  string `yaml:"api_key"`
+	Model   string `yaml:"model"`
 }
 
 type ModelProxyConfig struct {
@@ -303,6 +315,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	titleLLM, err := loadTitleLLM(getenv("HARNESS_TITLE_LLM_PATH", filepath.Join(repoRoot, "config", "title-llm.yaml")))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:                 getenv("HARNESS_ORCHESTRATOR_ADDR", ":8090"),
 		SharedSecret:         os.Getenv("HARNESS_LAB_PASSWORD"),
@@ -329,6 +345,7 @@ func Load() (Config, error) {
 		RunscOverlay2:        "none",
 		ModelProxy:           projectConfig.Harness.ModelProxy,
 		Harness:              projectConfig.Harness,
+		TitleLLM:             titleLLM,
 	}
 	cfg.Harness.SessionRetention = Duration{Duration: sessionRetention}
 	cfg.Harness.MaxSessions = maxSessions
@@ -1383,6 +1400,32 @@ func loadAuthUsers(path string) ([]AuthUser, error) {
 		users = append(users, AuthUser{Username: username, PasswordHash: hash})
 	}
 	return users, nil
+}
+
+// loadTitleLLM reads the optional LLM title-generator secret file. A missing or
+// empty file is not an error: it simply yields a zero-value config, which
+// leaves the feature disabled (placeholder-title fallback).
+func loadTitleLLM(path string) (TitleLLMConfig, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return TitleLLMConfig{}, nil
+	}
+	if err != nil {
+		return TitleLLMConfig{}, fmt.Errorf("read title llm %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return TitleLLMConfig{}, nil
+	}
+	var cfg TitleLLMConfig
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
+		return TitleLLMConfig{}, fmt.Errorf("parse title llm %s: %w", path, err)
+	}
+	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	cfg.Model = strings.TrimSpace(cfg.Model)
+	return cfg, nil
 }
 
 func authSessionTTLEnv(fallback time.Duration) (time.Duration, error) {

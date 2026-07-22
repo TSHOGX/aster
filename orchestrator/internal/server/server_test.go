@@ -31,6 +31,7 @@ import (
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/titler"
 )
 
 func TestCreateSessionRejectsLegacyAgentInput(t *testing.T) {
@@ -3452,6 +3453,73 @@ func TestRenameSession(t *testing.T) {
 	got, _ = st.GetSession(ctx, session.ID)
 	if got.Title != "My Session" {
 		t.Fatalf("other-user rename mutated title to %q", got.Title)
+	}
+}
+
+func TestGenerateLLMTitle(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, _ := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_llm", string(sessionstate.Created), time.Now().UTC(), nil)
+
+	// Mock OpenAI-compatible endpoint returning a title.
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Refactor Auth Module"}}]}`)
+	}))
+	defer mock.Close()
+
+	hub := events.NewHub()
+	srv := &Server{
+		cfg:   testServerConfig(dir),
+		store: st,
+		hub:   hub,
+		log:   slog.Default(),
+		titler: titler.New(titler.Config{
+			BaseURL: mock.URL,
+			APIKey:  "test-key",
+			Model:   "glm-5.2",
+		}),
+	}
+
+	srv.generateLLMTitle(ctx, session.ID, "please help me refactor the auth module")
+	got, err := st.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.Title != "Refactor Auth Module" || got.TitleCustom {
+		t.Fatalf("llm title = %q custom = %v, want \"Refactor Auth Module\"/false", got.Title, got.TitleCustom)
+	}
+
+	// A user-authored title must not be overwritten by a later LLM result.
+	if err := st.UpdateSessionTitle(ctx, session.ID, "My Title", true); err != nil {
+		t.Fatalf("manual rename: %v", err)
+	}
+	srv.generateLLMTitle(ctx, session.ID, "please help me refactor the auth module")
+	got, _ = st.GetSession(ctx, session.ID)
+	if got.Title != "My Title" || !got.TitleCustom {
+		t.Fatalf("llm clobbered custom title: %q custom = %v", got.Title, got.TitleCustom)
+	}
+}
+
+func TestStartLLMTitleGenerationDisabled(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, _ := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_llm_off", string(sessionstate.Created), time.Now().UTC(), nil)
+
+	// No titler configured -> feature is a no-op, must not panic or change title.
+	srv := &Server{
+		cfg:    testServerConfig(dir),
+		store:  st,
+		hub:    events.NewHub(),
+		log:    slog.Default(),
+		titler: titler.New(titler.Config{}),
+	}
+	srv.startLLMTitleGeneration(session.ID, "hello world")
+	got, _ := st.GetSession(ctx, session.ID)
+	if got.Title != "" {
+		t.Fatalf("disabled titler mutated title to %q", got.Title)
 	}
 }
 

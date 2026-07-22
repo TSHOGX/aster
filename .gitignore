@@ -4,6 +4,7 @@ docs/doris-connection.md
 **/secrets/
 **/.secrets/
 config/auth-users.yaml
+config/title-llm.yaml
 # harness-skills embeds live credentials (e.g. doris-query); keep local-only, see docs/sandbox-image.md
 sandbox-image/files/usr/local/share/harness-skills/
 

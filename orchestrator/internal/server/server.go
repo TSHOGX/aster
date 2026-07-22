@@ -37,6 +37,7 @@ import (
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/titler"
 )
 
 const labUserID = "lab"
@@ -67,6 +68,7 @@ type Server struct {
 	watcher   *artifacts.Watcher
 	hub       *events.Hub
 	log       *slog.Logger
+	titler    *titler.Client
 	upgrader  websocket.Upgrader
 	ownerUUID string
 	version   string
@@ -148,6 +150,11 @@ func New(
 		watcher:      watcher,
 		hub:          hub,
 		log:          log,
+		titler: titler.New(titler.Config{
+			BaseURL: cfg.TitleLLM.BaseURL,
+			APIKey:  cfg.TitleLLM.APIKey,
+			Model:   cfg.TitleLLM.Model,
+		}),
 		authUsers:    authUsers,
 		authEnabled:  cfg.AuthEnabled(),
 		loginLimiter: auth.NewRateLimiter(5, 15*time.Minute),
@@ -825,8 +832,59 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 
 	s.hub.Publish(events.Event{Type: "message.created", SessionID: sessionID, Payload: enqueue.Message})
 	s.hub.Publish(events.Event{Type: "session." + runningStatus, SessionID: sessionID})
+	// session.Title reflects the DB value loaded at the top of this handler, so
+	// an empty title means this is the first message: set an immediate
+	// placeholder, then (if configured) upgrade it to an LLM-generated title
+	// asynchronously so the request returns without waiting on the model.
+	firstMessage := session.Title == ""
 	s.maybeSetPlaceholderTitle(r.Context(), session, req.Content)
+	if firstMessage {
+		s.startLLMTitleGeneration(sessionID, req.Content)
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": runningStatus, "session_id": sessionID, "message": enqueue.Message})
+}
+
+// startLLMTitleGeneration kicks off asynchronous LLM title generation for a
+// session's first message. It runs in its own goroutine with a detached,
+// time-bounded context so it neither blocks nor is cancelled by the returning
+// HTTP request. It is a no-op when the title LLM is not configured.
+func (s *Server) startLLMTitleGeneration(sessionID, firstMessage string) {
+	if s.titler == nil || !s.titler.Enabled() || !s.cfg.TitleLLM.Enabled {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s.generateLLMTitle(ctx, sessionID, firstMessage)
+	}()
+}
+
+// generateLLMTitle asks the title LLM to condense the first message into a
+// short title and persists it. It is best-effort: any failure leaves the
+// existing placeholder title in place and is only logged. The store update is
+// guarded (custom=false) so it never overwrites a title the user set manually
+// in the meantime.
+func (s *Server) generateLLMTitle(ctx context.Context, sessionID, firstMessage string) {
+	title, err := s.titler.GenerateTitle(ctx, firstMessage)
+	if err != nil {
+		s.log.Warn("llm title generation failed", "session_id", sessionID, "error", err)
+		return
+	}
+	if err := s.store.UpdateSessionTitle(ctx, sessionID, title, false); err != nil {
+		s.log.Warn("failed to persist llm session title", "session_id", sessionID, "error", err)
+		return
+	}
+	session, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		s.log.Warn("failed to reload session after llm title", "session_id", sessionID, "error", err)
+		return
+	}
+	// If the user manually renamed while the model was working, the guarded
+	// update above was a no-op; don't broadcast a stale title.
+	if session.TitleCustom || session.Title != title {
+		return
+	}
+	s.hub.Publish(events.Event{Type: "session.updated", SessionID: sessionID, Payload: publicSession(session)})
 }
 
 // placeholderTitleRunes bounds the auto-generated placeholder title derived
