@@ -512,3 +512,66 @@ echo | openssl s_client -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout
 > 🔒 **安全说明**：自签证书只加密传输，**不能防中间人**（客户端不校验证书真伪）。
 > 内网自用足够；若 `123.249.65.231` 长期公网对外，建议换成可信 CA 证书
 > （有域名的话用 Let's Encrypt / `certbot` 最省事，还能自动续期）。
+
+---
+
+## 9. 维护模式（对外挂维护页下线服务）
+
+需要临时对外下线服务（发布、排障、迁移）时，在 **nginx 层**统一返回 `503` + 维护页，
+**不动后端**：orchestrator / frontend / DB / 会话状态全部照常运行，恢复只需还原 nginx
+配置 reload，秒级、零数据风险。这是首选做法——不要 stop 后端服务来下线（那样恢复要重启
+进程、会话要重连，也没必要）。
+
+- 维护页文件：`/var/www/harness-maintenance/maintenance.html`（`root:root 0644`，nginx 直读）。
+- 站点配置：`/etc/nginx/sites-available/harness-publish`（软链到 `sites-enabled/`）。
+
+### 上维护页（下线）
+
+```bash
+# 1) 先备份当前（正常反代）配置——恢复时要还原它
+ts=$(date +%Y%m%d-%H%M%S)
+sudo cp -a /etc/nginx/sites-available/harness-publish \
+           /etc/nginx/sites-available/harness-publish.bak.pre-maintenance.$ts
+
+# 2) 编辑 sites-available/harness-publish，把 HTTPS server 里的反代 location / 换成下面这段：
+#    （TLS/HSTS/端口等其余部分保持不变）
+#
+#      location = /maintenance.html {
+#          root /var/www/harness-maintenance;
+#          internal;
+#          charset utf-8;
+#      }
+#      error_page 503 /maintenance.html;
+#      location / {
+#          return 503;
+#      }
+#
+#    原来的 proxy_pass location / 整段注释掉留作恢复参照即可。
+
+# 3) 校验并平滑加载（reload 不断连，比 restart 温和）
+sudo nginx -t
+sudo systemctl reload nginx
+
+# 4) 冒烟：对外 503 + 维护页，后端仍活着
+curl -sk -o /dev/null -w '外部 :443 -> %{http_code} (期望 503)\n' https://127.0.0.1/
+curl -sk https://127.0.0.1/ | grep -o '平台维护中'
+curl -s  -o /dev/null -w '后端 :9090 -> %{http_code} (期望 200，说明后端没被动)\n' http://127.0.0.1:9090/healthz
+```
+
+### 下维护页（恢复服务）
+
+```bash
+# 还原维护前备份的正常反代配置（用上面步骤 1 记下的 <ts>），或手动把 location / 改回 proxy_pass
+sudo cp -a /etc/nginx/sites-available/harness-publish.bak.pre-maintenance.<ts> \
+           /etc/nginx/sites-available/harness-publish
+sudo nginx -t
+sudo systemctl reload nginx
+
+# 冒烟：对外恢复 200，接口正常
+curl -sk -o /dev/null -w '外部 :443 -> %{http_code} (期望 200)\n' https://127.0.0.1/
+curl -sk -o /dev/null -w '外部 /api -> %{http_code} (期望 200)\n' https://127.0.0.1/api/healthz
+```
+
+> 只改 nginx 时用 `reload`（不断开已有连接）；维护期间后端始终在跑，因此恢复没有"冷启动"，
+> 已登录用户 reload 后立即恢复访问。若曾误删维护页文件，按 `maintenance.html` 现有内容重建即可
+> （纯静态 HTML，无依赖）。
