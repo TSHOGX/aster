@@ -21,6 +21,7 @@ type apiSession struct {
 	AutoCheckpointEnabled bool       `json:"auto_checkpoint_enabled"`
 	FailureReason         string     `json:"failure_reason,omitempty"`
 	ErrorClass            string     `json:"error_class,omitempty"`
+	Title                 string     `json:"title"`
 }
 
 func publicSession(session store.Session) apiSession {
@@ -43,6 +44,7 @@ func publicSession(session store.Session) apiSession {
 		AutoCheckpointEnabled: session.AutoCheckpointEnabled,
 		FailureReason:         session.FailureReason,
 		ErrorClass:            session.ErrorClass,
+		Title:                 session.Title,
 	}
 }
 

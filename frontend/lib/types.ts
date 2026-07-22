@@ -10,6 +10,7 @@ export type SessionStatus =
 export type ApiSession = {
   id: string;
   user_id: string;
+  title?: string;
   status: SessionStatus;
   mode: SessionMode;
   mode_label: string;

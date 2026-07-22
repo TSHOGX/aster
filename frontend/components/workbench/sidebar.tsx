@@ -1,14 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, Loader2, LogOut, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, Loader2, LogOut, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { useHarness } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { StatusDot, statusTone } from "@/components/ui/badge";
-import { sessionModeLabel } from "@/lib/agents";
 import { formatRelative, isTerminal, statusLabel } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import type { ApiSession } from "@/lib/types";
@@ -19,9 +18,70 @@ type SessionRowProps = {
   closing: boolean;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onRename: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
 };
 
-function SessionRow({ session, selected, closing, onSelect, onClose }: SessionRowProps) {
+function SessionRow({ session, selected, closing, onSelect, onClose, onRename }: SessionRowProps) {
+  const displayTitle = session.title?.trim() || session.id;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(displayTitle);
+  const [saving, setSaving] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Close the "..." menu on any outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const startEditing = () => {
+    setMenuOpen(false);
+    setDraft(session.title?.trim() || "");
+    setEditing(true);
+    // Focus + select after the input mounts.
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  };
+
+  const commit = async () => {
+    if (saving) return;
+    const next = draft.trim();
+    // No-op or empty: just leave edit mode without a request.
+    if (!next || next === (session.title?.trim() || "")) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    const res = await onRename(session.id, next);
+    setSaving(false);
+    if (res.ok) setEditing(false);
+  };
+
+  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setEditing(false);
+    }
+  };
+
   return (
     <li>
       <div
@@ -32,37 +92,86 @@ function SessionRow({ session, selected, closing, onSelect, onClose }: SessionRo
             : "hover:bg-[var(--color-surface-muted)]"
         )}
       >
-        <button className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={() => onSelect(session.id)}>
-          <StatusDot tone={statusTone(session.status)} />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm leading-tight">{session.id}</div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-foreground-muted)]">
-              <span>{sessionModeLabel(session.mode, session.mode_label)}</span>
-              <span aria-hidden>·</span>
-              <span>{statusLabel(session.status)}</span>
-              <span aria-hidden>·</span>
-              <span>{formatRelative(session.updated_at)}</span>
-            </div>
+        <StatusDot tone={statusTone(session.status)} className="mt-1.5" />
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onInputKeyDown}
+              onBlur={() => void commit()}
+              disabled={saving}
+              maxLength={200}
+              aria-label="Session title"
+              className="w-full rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 py-0.5 text-sm leading-tight outline-none focus:border-[var(--color-accent)]"
+            />
+          ) : (
+            <button
+              className="block w-full text-left"
+              onClick={() => onSelect(session.id)}
+              onDoubleClick={startEditing}
+              title={displayTitle}
+            >
+              <div className="truncate text-sm leading-tight">{displayTitle}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-foreground-muted)]">
+                <span>{statusLabel(session.status)}</span>
+                <span aria-hidden>·</span>
+                <span>{formatRelative(session.updated_at)}</span>
+              </div>
+            </button>
+          )}
+        </div>
+        {!editing ? (
+          <div className="relative shrink-0" ref={menuRef}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 opacity-0 group-hover:opacity-70 hover:opacity-100 focus:opacity-100 aria-expanded:opacity-100"
+              onClick={() => setMenuOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`Session actions for ${displayTitle}`}
+              title="Session actions"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+            {menuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-8 z-20 min-w-[9rem] overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+              >
+                <button
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                  onClick={startEditing}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Rename
+                </button>
+                <button
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:opacity-50"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onClose(session.id);
+                  }}
+                  disabled={closing || session.status === "destroyed"}
+                >
+                  {closing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  Delete
+                </button>
+              </div>
+            ) : null}
           </div>
-        </button>
-        <Button
-          variant="danger"
-          size="icon"
-          className="h-7 w-7 shrink-0 opacity-70 hover:opacity-100 focus:opacity-100"
-          onClick={() => onClose(session.id)}
-          disabled={closing || session.status === "destroyed"}
-          aria-label={`Close session ${session.id}`}
-          title="Close session"
-        >
-          {closing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-        </Button>
+        ) : null}
       </div>
     </li>
   );
 }
 
 export function Sidebar() {
-  const { state, selectSession, createSession, destroySession, logout } = useHarness();
+  const { state, selectSession, createSession, destroySession, renameSession, logout } = useHarness();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -172,6 +281,7 @@ export function Sidebar() {
                       closing={closingId === s.id}
                       onSelect={selectSession}
                       onClose={(id) => void handleClose(id)}
+                      onRename={renameSession}
                     />
                   ))}
                 </ul>
@@ -204,6 +314,7 @@ export function Sidebar() {
                           closing={closingId === s.id}
                           onSelect={selectSession}
                           onClose={(id) => void handleClose(id)}
+                          onRename={renameSession}
                         />
                       ))}
                     </ul>

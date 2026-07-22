@@ -36,6 +36,8 @@ type Session struct {
 	AutoCheckpointEnabled bool       `json:"auto_checkpoint_enabled"`
 	FailureReason         string     `json:"failure_reason,omitempty"`
 	ErrorClass            string     `json:"error_class,omitempty"`
+	Title                 string     `json:"title"`
+	TitleCustom           bool       `json:"title_custom"`
 }
 
 type DestroySessionResult struct {
@@ -171,14 +173,14 @@ INSERT INTO sessions (
 
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class
+SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom
 FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class
+SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom
 FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -251,6 +253,24 @@ WHERE id = ?`
 		query += ` AND status NOT IN ('failed', 'destroyed')`
 	}
 	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+// UpdateSessionTitle sets a session's display title. When custom is true the
+// title is marked user-authored (title_custom=1) and future automatic naming
+// must not overwrite it. When custom is false (automatic naming) the update is
+// applied only if the title has not been user-authored, so a manual rename is
+// never clobbered by a later auto-title.
+func (s *Store) UpdateSessionTitle(ctx context.Context, id, title string, custom bool) error {
+	now := time.Now().UTC()
+	query := `
+UPDATE sessions
+SET title = ?, title_custom = ?, updated_at = ?
+WHERE id = ?`
+	if !custom {
+		query += ` AND title_custom = 0`
+	}
+	_, err := s.db.ExecContext(ctx, query, title, boolInt(custom), formatTime(now), id)
 	return err
 }
 
@@ -638,10 +658,12 @@ func scanSession(row scanner) (Session, error) {
 	var expiresAt, endedAt, lastActivityAt sql.NullString
 	var checkpointPath, failureReason, errorClass sql.NullString
 	var autoCheckpointEnabled int
+	var titleCustom int
 	err := row.Scan(
 		&session.ID, &session.UserID, &session.Status, &session.Agent, &session.Mode, &session.Workspace, &agentHomePath,
 		&activeGenerationID, &session.RestoreID, &restoreMS, &createdAt, &updatedAt,
 		&expiresAt, &endedAt, &lastActivityAt, &checkpointPath, &autoCheckpointEnabled, &failureReason, &errorClass,
+		&session.Title, &titleCustom,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, err
@@ -682,6 +704,7 @@ func scanSession(row scanner) (Session, error) {
 	if errorClass.Valid {
 		session.ErrorClass = errorClass.String
 	}
+	session.TitleCustom = titleCustom != 0
 	if strings.TrimSpace(session.Mode) == "" {
 		session.Mode = ModeForDriver(session.Agent)
 	}
@@ -795,7 +818,7 @@ func (s *Store) ListSessionsByStatus(ctx context.Context, status string) ([]Sess
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class
+SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom
 FROM sessions WHERE status = ? ORDER BY last_activity_at ASC`, status)
 	if err != nil {
 		return nil, err

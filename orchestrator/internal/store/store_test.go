@@ -84,6 +84,106 @@ func TestListMessagesAndUUID(t *testing.T) {
 	}
 }
 
+func TestUpdateSessionTitle(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	ctx := context.Background()
+	st, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Now().UTC()
+	session := Session{
+		ID:        "sess_title",
+		UserID:    "lab",
+		Status:    string(sessionstate.Created),
+		Agent:     "pi",
+		Workspace: dir,
+		RestoreID: "phase3-sess_title",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := st.CreateSession(ctx, session); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// A fresh session has an empty, non-custom title.
+	got, err := st.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.Title != "" || got.TitleCustom {
+		t.Fatalf("fresh session title = %q custom = %v, want empty/false", got.Title, got.TitleCustom)
+	}
+
+	// Automatic naming (custom=false) sets the title and leaves it non-custom.
+	if err := st.UpdateSessionTitle(ctx, session.ID, "auto placeholder", false); err != nil {
+		t.Fatalf("auto title: %v", err)
+	}
+	got, _ = st.GetSession(ctx, session.ID)
+	if got.Title != "auto placeholder" || got.TitleCustom {
+		t.Fatalf("after auto title = %q custom = %v", got.Title, got.TitleCustom)
+	}
+
+	// A manual rename (custom=true) marks the title user-authored.
+	if err := st.UpdateSessionTitle(ctx, session.ID, "my name", true); err != nil {
+		t.Fatalf("manual title: %v", err)
+	}
+	got, _ = st.GetSession(ctx, session.ID)
+	if got.Title != "my name" || !got.TitleCustom {
+		t.Fatalf("after manual title = %q custom = %v", got.Title, got.TitleCustom)
+	}
+
+	// A subsequent automatic naming must NOT clobber the user's title.
+	if err := st.UpdateSessionTitle(ctx, session.ID, "auto again", false); err != nil {
+		t.Fatalf("auto title over custom: %v", err)
+	}
+	got, _ = st.GetSession(ctx, session.ID)
+	if got.Title != "my name" || !got.TitleCustom {
+		t.Fatalf("auto naming clobbered custom title: %q custom = %v", got.Title, got.TitleCustom)
+	}
+}
+
+// TestEnsureSessionColumnsIdempotent simulates an older database whose sessions
+// table predates the title columns, and verifies ensureSchema adds them without
+// error and that a second run is a no-op.
+func TestEnsureSessionColumnsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+
+	ctx := context.Background()
+	st, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	// Drop the columns to emulate a legacy schema, then re-run the migration.
+	for _, col := range []string{"title", "title_custom"} {
+		if _, err := st.db.ExecContext(ctx, `ALTER TABLE sessions DROP COLUMN `+col); err != nil {
+			t.Fatalf("drop column %s: %v", col, err)
+		}
+	}
+	if exists, err := st.columnExists(ctx, "sessions", "title"); err != nil || exists {
+		t.Fatalf("expected title column absent after drop (err=%v exists=%v)", err, exists)
+	}
+
+	// First migration adds the columns.
+	if err := st.ensureSessionColumns(ctx); err != nil {
+		t.Fatalf("ensureSessionColumns (add): %v", err)
+	}
+	if exists, err := st.columnExists(ctx, "sessions", "title"); err != nil || !exists {
+		t.Fatalf("expected title column present after migration (err=%v exists=%v)", err, exists)
+	}
+	// Second run is idempotent.
+	if err := st.ensureSessionColumns(ctx); err != nil {
+		t.Fatalf("ensureSessionColumns (idempotent): %v", err)
+	}
+}
+
 func TestUpdateSessionStatusAndActivity(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")

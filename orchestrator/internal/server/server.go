@@ -24,6 +24,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
@@ -458,6 +459,8 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.getSession(w, r, sessionID)
+		case http.MethodPatch:
+			s.renameSession(w, r, sessionID)
 		case http.MethodDelete:
 			s.destroySession(w, r, sessionID)
 		default:
@@ -697,6 +700,43 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request, sessionID st
 	writeJSON(w, http.StatusOK, publicSession(session))
 }
 
+// maxSessionTitleRunes bounds the persisted title length. Enforced by rune
+// count so multi-byte titles are not truncated mid-character.
+const maxSessionTitleRunes = 200
+
+func (s *Server) renameSession(w http.ResponseWriter, r *http.Request, sessionID string) {
+	session, ok := s.authorizeSession(w, r, sessionID)
+	if !ok {
+		return
+	}
+	var req struct {
+		Title string `json:"title"`
+	}
+	limitBody(w, r, maxControlBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		writeError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+	if utf8.RuneCountInString(title) > maxSessionTitleRunes {
+		writeError(w, http.StatusBadRequest, "title too long")
+		return
+	}
+	if err := s.store.UpdateSessionTitle(r.Context(), sessionID, title, true); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	session.Title = title
+	session.TitleCustom = true
+	updated := publicSession(session)
+	s.hub.Publish(events.Event{Type: "session.updated", SessionID: sessionID, Payload: updated})
+	writeJSON(w, http.StatusOK, updated)
+}
+
 func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID string) {
 	var req struct {
 		Content string `json:"content"`
@@ -785,7 +825,48 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 
 	s.hub.Publish(events.Event{Type: "message.created", SessionID: sessionID, Payload: enqueue.Message})
 	s.hub.Publish(events.Event{Type: "session." + runningStatus, SessionID: sessionID})
+	s.maybeSetPlaceholderTitle(r.Context(), session, req.Content)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": runningStatus, "session_id": sessionID, "message": enqueue.Message})
+}
+
+// placeholderTitleRunes bounds the auto-generated placeholder title derived
+// from the first user message.
+const placeholderTitleRunes = 50
+
+// maybeSetPlaceholderTitle gives a still-untitled session an immediate,
+// human-meaningful label derived from its first user message, so the sidebar
+// shows something better than the raw session id right away. It is best-effort:
+// failures are logged and never block message delivery. The store update is
+// guarded (custom=false) so it cannot clobber a title the user set manually.
+func (s *Server) maybeSetPlaceholderTitle(ctx context.Context, session store.Session, content string) {
+	if strings.TrimSpace(session.Title) != "" {
+		return
+	}
+	title := placeholderTitleFromContent(content)
+	if title == "" {
+		return
+	}
+	if err := s.store.UpdateSessionTitle(ctx, session.ID, title, false); err != nil {
+		s.log.Warn("failed to set placeholder session title", "session_id", session.ID, "error", err)
+		return
+	}
+	session.Title = title
+	s.hub.Publish(events.Event{Type: "session.updated", SessionID: session.ID, Payload: publicSession(session)})
+}
+
+// placeholderTitleFromContent collapses the first user message to a single-line
+// snippet of at most placeholderTitleRunes runes, appending an ellipsis when
+// truncated.
+func placeholderTitleFromContent(content string) string {
+	collapsed := strings.Join(strings.Fields(content), " ")
+	if collapsed == "" {
+		return ""
+	}
+	if utf8.RuneCountInString(collapsed) <= placeholderTitleRunes {
+		return collapsed
+	}
+	runes := []rune(collapsed)
+	return strings.TrimRight(string(runes[:placeholderTitleRunes]), " ") + "…"
 }
 
 func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Session, ensured ensuredGeneration, failureMode generationStartFailureMode) error {

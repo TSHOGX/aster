@@ -3402,6 +3402,118 @@ WHERE session_id = ?
 	}
 }
 
+func TestRenameSession(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, _ := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_rename", string(sessionstate.Created), time.Now().UTC(), nil)
+	srv := &Server{
+		cfg:   testServerConfig(dir),
+		store: st,
+		hub:   events.NewHub(),
+		log:   slog.Default(),
+	}
+
+	rename := func(user, sessionID, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPatch, "/api/sessions/"+sessionID, strings.NewReader(body))
+		req = req.WithContext(context.WithValue(req.Context(), userContextKey{}, user))
+		rec := httptest.NewRecorder()
+		srv.renameSession(rec, req, sessionID)
+		return rec
+	}
+
+	// Owner can rename; title persists and is marked custom.
+	if rec := rename(labUserID, session.ID, `{"title":"  My Session  "}`); rec.Code != http.StatusOK {
+		t.Fatalf("owner rename: expected 200, got %d body %s", rec.Code, rec.Body.String())
+	}
+	got, err := st.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.Title != "My Session" || !got.TitleCustom {
+		t.Fatalf("after rename title = %q custom = %v", got.Title, got.TitleCustom)
+	}
+
+	// Empty / whitespace-only titles are rejected.
+	if rec := rename(labUserID, session.ID, `{"title":"   "}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty title: expected 400, got %d", rec.Code)
+	}
+
+	// Over-length titles are rejected.
+	long := `{"title":"` + strings.Repeat("x", maxSessionTitleRunes+1) + `"}`
+	if rec := rename(labUserID, session.ID, long); rec.Code != http.StatusBadRequest {
+		t.Fatalf("long title: expected 400, got %d", rec.Code)
+	}
+
+	// A different user cannot rename (indistinguishable 404) and must not mutate.
+	if rec := rename("someone-else", session.ID, `{"title":"hijack"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("other-user rename: expected 404, got %d body %s", rec.Code, rec.Body.String())
+	}
+	got, _ = st.GetSession(ctx, session.ID)
+	if got.Title != "My Session" {
+		t.Fatalf("other-user rename mutated title to %q", got.Title)
+	}
+}
+
+func TestSendMessageSetsPlaceholderTitle(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, _ := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_placeholder", string(sessionstate.Created), time.Now().UTC(), nil)
+	srv := &Server{
+		cfg:   testServerConfig(dir),
+		store: st,
+		hub:   events.NewHub(),
+		log:   slog.Default(),
+	}
+
+	// First message on an untitled session sets a non-custom placeholder title.
+	srv.maybeSetPlaceholderTitle(ctx, session, "Help me refactor the auth module please")
+	got, err := st.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.Title != "Help me refactor the auth module please" || got.TitleCustom {
+		t.Fatalf("placeholder title = %q custom = %v", got.Title, got.TitleCustom)
+	}
+
+	// A manual rename locks the title.
+	if err := st.UpdateSessionTitle(ctx, session.ID, "Auth work", true); err != nil {
+		t.Fatalf("manual rename: %v", err)
+	}
+	// A later first-message-style placeholder attempt must not overwrite it. Pass
+	// the refreshed session (empty Title guard is on the passed-in value, so use a
+	// copy that still looks untitled to prove the store-level guard holds).
+	stale := session
+	stale.Title = ""
+	srv.maybeSetPlaceholderTitle(ctx, stale, "totally different first message")
+	got, _ = st.GetSession(ctx, session.ID)
+	if got.Title != "Auth work" || !got.TitleCustom {
+		t.Fatalf("placeholder clobbered custom title: %q custom = %v", got.Title, got.TitleCustom)
+	}
+}
+
+func TestPlaceholderTitleFromContent(t *testing.T) {
+	long := strings.Repeat("a", 60)
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "   ", ""},
+		{"collapse whitespace", "  hello   world \n foo ", "hello world foo"},
+		{"short kept", "short one", "short one"},
+		{"truncated", long, strings.Repeat("a", placeholderTitleRunes) + "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := placeholderTitleFromContent(tt.in); got != tt.want {
+				t.Fatalf("placeholderTitleFromContent(%q) = %q want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunMaintenancePollsBridgeOutbox(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   active_generation_id TEXT REFERENCES runtime_generations(generation_id),
   agent_home_path TEXT,
   failure_reason TEXT,
-  error_class TEXT
+  error_class TEXT,
+  title TEXT NOT NULL DEFAULT '',
+  title_custom INTEGER NOT NULL DEFAULT 0 CHECK(title_custom IN (0,1))
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -658,7 +660,59 @@ CREATE TABLE IF NOT EXISTS notification_reads (
 CREATE INDEX IF NOT EXISTS notification_reads_user_idx
   ON notification_reads (user_id);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.ensureSessionColumns(ctx)
+}
+
+// ensureSessionColumns adds session columns introduced after the original
+// CREATE TABLE. ADD COLUMN with a constant DEFAULT is an O(1) metadata-only
+// change in SQLite (no table rewrite, no lock), so existing rows read back the
+// default without blocking online traffic. It is idempotent: pre-existing
+// columns are skipped so redeploys and rollbacks are safe.
+func (s *Store) ensureSessionColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"title", `ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''`},
+		{"title_custom", `ALTER TABLE sessions ADD COLUMN title_custom INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "sessions", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// columnExists reports whether the given table has a column of the given name,
+// via the pragma_table_info table-valued function, which accepts a bound
+// parameter for the table name.
+func (s *Store) columnExists(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func quoteSQLiteIdent(value string) string {

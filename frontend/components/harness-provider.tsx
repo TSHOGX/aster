@@ -25,7 +25,8 @@ import {
   interruptSession as apiInterruptSession,
   logout as apiLogout,
   markNotificationRead as apiMarkNotificationRead,
-  postMessage as apiPostMessage
+  postMessage as apiPostMessage,
+  renameSession as apiRenameSession
 } from "@/lib/api";
 import { reduceSessionEvent } from "@/lib/session-events";
 import { buildEventsStreamUrl } from "@/lib/ws";
@@ -91,6 +92,7 @@ type HarnessApi = {
   selectSession: (id: string | null) => void;
   createSession: (mode: SessionMode) => Promise<{ ok: boolean; error?: string; session?: ApiSession }>;
   destroySession: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  renameSession: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   interruptSession: (id: string) => Promise<{ ok: boolean; error?: string }>;
   sendMessage: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
   refresh: () => Promise<void>;
@@ -125,6 +127,7 @@ const SSE_TYPED_EVENT_TYPES = [
   "session.checkpointed",
   "session.failed",
   "session.destroyed",
+  "session.updated",
   "message.created",
   "agent.message",
   "agent.delta",
@@ -432,6 +435,15 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         case "session.failed":
         case "session.destroyed": {
           applySessionEvent();
+          return;
+        }
+        case "session.updated": {
+          const sess = readSession(event.payload);
+          if (!sess) return;
+          setState((p) => ({
+            ...p,
+            sessions: p.sessions.map((s) => (s.id === sess.id ? { ...s, ...sess } : s))
+          }));
           return;
         }
         case "message.created": {
@@ -880,6 +892,31 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     return { ok: true as const };
   }, []);
 
+  const renameSession = useCallback(async (id: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return { ok: false as const, error: "Title is required" };
+    const previous = stateRef.current.sessions.find((s) => s.id === id)?.title;
+    // Optimistic: reflect the new title immediately, roll back on failure.
+    setState((p) => ({
+      ...p,
+      sessions: p.sessions.map((s) => (s.id === id ? { ...s, title: trimmed } : s))
+    }));
+    const res = await apiRenameSession(id, trimmed);
+    if (!res.ok) {
+      setState((p) => ({
+        ...p,
+        sessions: p.sessions.map((s) => (s.id === id ? { ...s, title: previous } : s))
+      }));
+      return { ok: false as const, error: res.error };
+    }
+    const session = res.data;
+    setState((p) => ({
+      ...p,
+      sessions: p.sessions.map((s) => (s.id === session.id ? { ...s, ...session } : s))
+    }));
+    return { ok: true as const };
+  }, []);
+
   const interruptSession = useCallback(async (id: string) => {
     const res = await apiInterruptSession(id);
     if (!res.ok) return { ok: false as const, error: res.error };
@@ -924,6 +961,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       selectSession,
       createSession,
       destroySession,
+      renameSession,
       interruptSession,
       sendMessage,
       refresh,
@@ -936,6 +974,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       selectSession,
       createSession,
       destroySession,
+      renameSession,
       interruptSession,
       sendMessage,
       refresh,

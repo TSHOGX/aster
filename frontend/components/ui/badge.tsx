@@ -14,9 +14,9 @@ export function Badge({ className, ...rest }: HTMLAttributes<HTMLSpanElement>) {
   );
 }
 
-type DotProps = { tone?: "running" | "idle" | "ready" | "failed" | "muted" };
+type DotProps = { tone?: "running" | "idle" | "ready" | "failed" | "muted"; className?: string };
 
-export function StatusDot({ tone = "muted" }: DotProps) {
+export function StatusDot({ tone = "muted", className }: DotProps) {
   const color =
     tone === "running"
       ? "bg-[var(--color-accent)] animate-pulse-dot"
@@ -27,7 +27,7 @@ export function StatusDot({ tone = "muted" }: DotProps) {
       : tone === "failed"
       ? "bg-[var(--color-danger)]"
       : "bg-[var(--color-border-strong)]";
-  return <span className={cn("inline-block h-2 w-2 rounded-full", color)} />;
+  return <span className={cn("inline-block h-2 w-2 rounded-full", color, className)} />;
 }
 
 export function statusTone(status: string): DotProps["tone"] {

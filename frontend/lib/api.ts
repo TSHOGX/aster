@@ -82,6 +82,14 @@ export async function destroySession(sessionId: string) {
   return request<{ status: SessionStatus }>(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
 }
 
+export async function renameSession(sessionId: string, title: string) {
+  return request<ApiSession>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title })
+  });
+}
+
 export async function interruptSession(sessionId: string) {
   return request<{ status: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/interrupt`, {
     method: "POST"
