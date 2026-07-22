@@ -48,6 +48,43 @@ func publicSession(session store.Session) apiSession {
 	}
 }
 
+// apiSearchHit is the wire form of a store.SearchHit. Field names are part of
+// the /api/search contract consumed by the frontend and must not change without
+// coordinating that change.
+type apiSearchHit struct {
+	Kind      string `json:"kind"`
+	SessionID string `json:"session_id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	Mode      string `json:"mode"`
+	MessageID *int64 `json:"message_id,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Snippet   string `json:"snippet"`
+	CreatedAt string `json:"created_at"`
+}
+
+func publicSearchHit(hit store.SearchHit) apiSearchHit {
+	return apiSearchHit{
+		Kind:      hit.Kind,
+		SessionID: hit.SessionID,
+		Title:     hit.Title,
+		Status:    hit.Status,
+		Mode:      hit.Mode,
+		MessageID: hit.MessageID,
+		Role:      hit.Role,
+		Snippet:   hit.Snippet,
+		CreatedAt: hit.CreatedAt,
+	}
+}
+
+func publicSearchHits(hits []store.SearchHit) []apiSearchHit {
+	items := make([]apiSearchHit, 0, len(hits))
+	for _, hit := range hits {
+		items = append(items, publicSearchHit(hit))
+	}
+	return items
+}
+
 func modeLabel(mode string) string {
 	switch mode {
 	case "shell":

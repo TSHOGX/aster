@@ -144,12 +144,12 @@ func New(
 		authUsers[user.Username] = user
 	}
 	return &Server{
-		cfg:          cfg,
-		store:        store,
-		runtime:      runtime,
-		watcher:      watcher,
-		hub:          hub,
-		log:          log,
+		cfg:     cfg,
+		store:   store,
+		runtime: runtime,
+		watcher: watcher,
+		hub:     hub,
+		log:     log,
 		titler: titler.New(titler.Config{
 			BaseURL: cfg.TitleLLM.BaseURL,
 			APIKey:  cfg.TitleLLM.APIKey,
@@ -444,6 +444,8 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.events(w, r)
 	case r.URL.Path == "/api/events/stream" && r.Method == http.MethodGet:
 		s.eventsStream(w, r)
+	case r.URL.Path == "/api/search" && r.Method == http.MethodGet:
+		s.search(w, r)
 	case r.URL.Path == "/api/notifications" && r.Method == http.MethodGet:
 		s.listNotifications(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/notifications/") && strings.HasSuffix(r.URL.Path, "/read") && r.Method == http.MethodPost:
@@ -1716,6 +1718,42 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, sessionID 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+}
+
+const searchDefaultLimit = 50
+
+// search runs a full-text search over the caller's session titles and message
+// bodies. Results are always scoped to the authenticated user by the store.
+// The `q` query param is the search text; `limit` is optional and clamped to
+// [1, searchDefaultLimit]. truncated is true when the result set was capped at
+// the limit (more matches may exist).
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	limit := searchDefaultLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "limit must be an integer")
+			return
+		}
+		limit = parsed
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > searchDefaultLimit {
+		limit = searchDefaultLimit
+	}
+
+	hits, err := s.store.SearchMessages(r.Context(), userIDFromContext(r.Context()), query, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"results":   publicSearchHits(hits),
+		"truncated": len(hits) == limit,
+	})
 }
 
 type sessionRuntimeDataVolumes struct {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 
 	"harness-platform/orchestrator/internal/agents"
@@ -69,6 +70,35 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL,
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
+
+-- Full-text search over message content. We use an external-content FTS5 index
+-- (content='messages') so the text is not stored twice: the vtable holds only
+-- the inverted index and reads column values back from messages by rowid. The
+-- trigram tokenizer gives reliable substring matching for any script (including
+-- Chinese, which has no whitespace word boundaries); the trade-off is that a
+-- MATCH token must be at least 3 characters, which the query layer handles.
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  content,
+  content='messages',
+  content_rowid='id',
+  tokenize='trigram'
+);
+
+-- External-content sync triggers: keep messages_fts consistent with messages.
+-- The 'delete' command feeds the old content back so the index entry can be
+-- removed; updates are a delete of the old row followed by an insert of the new.
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+  INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+END;
 
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
@@ -663,7 +693,46 @@ CREATE INDEX IF NOT EXISTS notification_reads_user_idx
 	if err != nil {
 		return err
 	}
-	return s.ensureSessionColumns(ctx)
+	if err := s.ensureSessionColumns(ctx); err != nil {
+		return err
+	}
+	return s.backfillMessagesFTS(ctx)
+}
+
+// backfillMessagesFTS indexes messages rows that predate the messages_fts
+// vtable and its sync triggers. The triggers only cover writes made after the
+// vtable exists, so on the first deploy (or after the index is ever cleared)
+// history would otherwise be invisible to search.
+//
+// A full 'rebuild' is O(all rows) and must not run on every boot once the index
+// is populated. We therefore only rebuild when the index is empty while
+// messages is not. Emptiness is probed via the messages_fts_docsize shadow
+// table (one row per indexed document): querying messages_fts itself with
+// count()/rowid reads *through* to the external content table and so cannot
+// tell an unindexed table from an indexed one. This is idempotent and safe
+// across redeploys and rollbacks (a populated index is left untouched).
+func (s *Store) backfillMessagesFTS(ctx context.Context) error {
+	var indexedDocs int64
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages_fts_docsize`).Scan(&indexedDocs); err != nil {
+		return err
+	}
+	if indexedDocs > 0 {
+		// Index already populated; nothing to backfill.
+		return nil
+	}
+
+	var messageRowID int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM messages LIMIT 1`).Scan(&messageRowID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No history to index yet; triggers will cover future writes.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.ExecContext(ctx, `INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`)
+	return err
 }
 
 // ensureSessionColumns adds session columns introduced after the original

@@ -1,9 +1,10 @@
 "use client";
 
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, useSyncExternalStore } from "react";
 import { Bot } from "lucide-react";
 
 import { useActivity, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
+import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
 import { ShellConversation } from "./shell-conversation";
 import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
@@ -27,11 +28,33 @@ function ChatConversation() {
   const { sendMessage } = useHarness();
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // A pending jump target (set by the search palette) for THIS session means we
+  // scroll to a specific message instead of auto-scrolling to the bottom.
+  const jump = useSyncExternalStore(subscribeMessageJump, getMessageJump, () => null);
+  const pendingJumpHere = jump !== null && session != null && jump.sessionId === session.id;
+
   useEffect(() => {
+    // Don't fight a pending jump-to-message with the bottom auto-scroll.
+    if (pendingJumpHere) return;
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [convo.messages.length, convo.streaming, convo.stream.length, activity.phase]);
+  }, [convo.messages.length, convo.streaming, convo.stream.length, activity.phase, pendingJumpHere]);
+
+  // Once the target message has rendered, scroll it into view and flash a
+  // highlight ring, then consume the signal.
+  useEffect(() => {
+    if (!pendingJumpHere || !jump) return;
+    const el = document.getElementById(`msg-${jump.messageId}`);
+    if (!el) return; // messages may still be loading; a later render will retry.
+    el.scrollIntoView({ block: "center" });
+    el.classList.add("msg-jump-flash");
+    const timer = window.setTimeout(() => {
+      el.classList.remove("msg-jump-flash");
+    }, 1500);
+    clearMessageJump();
+    return () => window.clearTimeout(timer);
+  }, [pendingJumpHere, jump, convo.messages.length, convo.loading]);
 
   if (!session) {
     return (
@@ -95,7 +118,7 @@ function ChatConversation() {
               return (
                 <Fragment key={m.id}>
                   {showDivider && <DayDivider label={formatDayDivider(m.created_at)} />}
-                  <div className={showDivider ? "" : "border-t border-[var(--color-border)]"}>
+                  <div id={`msg-${m.id}`} className={showDivider ? "" : "border-t border-[var(--color-border)]"}>
                     <MessageBubble message={m} />
                   </div>
                 </Fragment>

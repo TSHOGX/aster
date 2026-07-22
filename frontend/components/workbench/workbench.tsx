@@ -1,13 +1,43 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
+
 import { HarnessProvider, useHarness } from "@/components/harness-provider";
 import { Sidebar } from "@/components/workbench/sidebar";
 import { Conversation } from "@/components/workbench/conversation";
 import { ArtifactPane } from "@/components/workbench/artifact-pane";
 import { LoginScreen } from "@/components/workbench/login-screen";
+import { SearchPalette } from "@/components/search/search-palette";
+import { requestMessageJump } from "@/lib/message-jump";
+import type { SearchHit } from "@/lib/types";
 
 function Shell() {
-  const { state, onLogin } = useHarness();
+  const { state, onLogin, selectSession } = useHarness();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Global Ctrl/⌘-P opens the palette (overriding the browser print dialog).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const handleOpenResult = useCallback(
+    (hit: SearchHit) => {
+      selectSession(hit.session_id);
+      // For message hits, also scroll to + flash the specific message once the
+      // target session's conversation has loaded (see lib/message-jump.ts).
+      if (hit.kind === "message" && typeof hit.message_id === "number") {
+        requestMessageJump(hit.session_id, hit.message_id);
+      }
+    },
+    [selectSession]
+  );
   // Hold the screen until /api/me resolves; otherwise the main workbench
   // renders for one frame before we know auth is required (login flash).
   if (!state.auth.checked) {
@@ -31,9 +61,12 @@ function Shell() {
   }
   return (
     <div className="grid h-dvh min-h-0 overflow-hidden grid-cols-[280px_minmax(0,1fr)_400px] bg-[var(--color-background)]">
-      <Sidebar />
+      <Sidebar onOpenSearch={() => setPaletteOpen(true)} />
       <Conversation />
       <ArtifactPane />
+      {paletteOpen ? (
+        <SearchPalette onClose={() => setPaletteOpen(false)} onOpenResult={handleOpenResult} />
+      ) : null}
     </div>
   );
 }

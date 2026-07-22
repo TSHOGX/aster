@@ -97,3 +97,24 @@ export type ApiNotification = {
   created_at: string;
   read: boolean;
 };
+
+// Command-palette search (GET /api/search). Contract is frozen; see the
+// SearchPalette component for how snippet ⟦…⟧ markers are rendered.
+export type SearchHit = {
+  kind: "title" | "message";
+  session_id: string;
+  title: string;
+  status: string;
+  mode: string;
+  message_id?: number;
+  role?: "user" | "assistant";
+  // For message hits: a clipped excerpt with match markers ⟦ and ⟧ around the
+  // matched substring. For title hits: the title itself.
+  snippet: string;
+  created_at: string;
+};
+
+export type SearchResponse = {
+  results: SearchHit[];
+  truncated: boolean;
+};

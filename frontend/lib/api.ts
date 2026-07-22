@@ -4,6 +4,7 @@ import type {
   ApiNotification,
   ApiSession,
   DeploymentCapabilities,
+  SearchResponse,
   SessionMode,
   SessionStatus
 } from "./types";
@@ -115,6 +116,10 @@ export async function fetchArtifacts(sessionId: string) {
   return request<{ artifacts: ApiArtifact[] | null }>(
     `/api/sessions/${encodeURIComponent(sessionId)}/artifacts`
   );
+}
+
+export async function searchSessions(q: string, limit = 50) {
+  return request<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
 
 export async function fetchNotifications() {

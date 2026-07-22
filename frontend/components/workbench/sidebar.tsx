@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Loader2, LogOut, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Loader2, LogOut, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import { useHarness } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
@@ -170,7 +170,7 @@ function SessionRow({ session, selected, closing, onSelect, onClose, onRename }:
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const { state, selectSession, createSession, destroySession, renameSession, logout } = useHarness();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -212,6 +212,17 @@ export function Sidebar() {
       <div className="flex shrink-0 items-center justify-between px-4 pt-5 pb-1">
         <span className="text-base font-semibold tracking-tight">BatteryGPT</span>
         <div className="flex items-center gap-1">
+          {onOpenSearch ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onOpenSearch}
+              aria-label="Search sessions and messages"
+              title="Search (⌘P / Ctrl+P)"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+          ) : null}
           <ThemeToggle />
           <NotificationBell />
         </div>
