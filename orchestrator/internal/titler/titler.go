@@ -154,6 +154,10 @@ func (c *Client) attempt(ctx context.Context, url string, body []byte) (title st
 		return "", resp.StatusCode >= 500, fmt.Errorf("titler: read response: %w", err)
 	}
 
+	// 429 (rate limited) is transient: retry like a 5xx.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", true, fmt.Errorf("titler: rate limited: status %d: %s", resp.StatusCode, snippet(respBody))
+	}
 	if resp.StatusCode >= 500 {
 		return "", true, fmt.Errorf("titler: server error: status %d: %s", resp.StatusCode, snippet(respBody))
 	}
