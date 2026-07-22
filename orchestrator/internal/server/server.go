@@ -853,7 +853,10 @@ func (s *Server) startLLMTitleGeneration(sessionID, firstMessage string) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		// Generous deadline: the title LLM may be a reasoning model that takes
+		// tens of seconds. This is fully async, so a long wait costs nothing on
+		// the request path; on timeout the placeholder title simply remains.
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		s.generateLLMTitle(ctx, sessionID, firstMessage)
 	}()

@@ -42,7 +42,8 @@ func New(cfg Config) *Client {
 	return &Client{
 		cfg: cfg,
 		// Timeout is a backstop only; callers own the real deadline via ctx.
-		http: &http.Client{Timeout: 15 * time.Second},
+		// Reasoning models can take tens of seconds, so keep this generous.
+		http: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -87,7 +88,11 @@ func (c *Client) GenerateTitle(ctx context.Context, firstMessage string) (string
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: firstMessage},
 		},
-		MaxTokens:   24,
+		// Large budget: some providers (e.g. reasoning models like glm-5.2)
+		// spend most of the completion budget on hidden reasoning tokens before
+		// emitting the short title. A small cap would starve reasoning and yield
+		// empty content, so give ample room; the visible title is still tiny.
+		MaxTokens:   2048,
 		Temperature: 0.3,
 		Stream:      false,
 	})
