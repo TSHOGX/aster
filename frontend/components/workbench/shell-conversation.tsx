@@ -165,7 +165,7 @@ export function ShellConversation() {
       <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={statusTone(session.status)} />
-          <span className="truncate text-sm font-medium">{session.id}</span>
+          <span className="truncate text-sm font-medium" title={session.id}>{session.title?.trim() || session.id}</span>
           <span className="text-[11px] text-[var(--color-foreground-muted)]">· {sessionModeLabel(session.mode, session.mode_label)}</span>
         </div>
         <div className="flex items-center gap-3">
