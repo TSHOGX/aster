@@ -2373,8 +2373,17 @@ func (r *Runtime) applySandboxEgressPolicy(ctx context.Context, details store.Ru
 	if err := r.runNetworkCommand(ctx, "ip", append(base, "add", "table", "inet", tableName)...); err != nil {
 		return err
 	}
-	if err := r.runNetworkCommand(ctx, "ip", append(base, "add", "chain", "inet", tableName, "output", "{", "type", "filter", "hook", "output", "priority", "0", ";", "policy", "drop", ";", "}")...); err != nil {
+	// The "all" sentinel opens outbound to everything: the output chain uses a
+	// default-accept policy and we skip the per-rule allowlist entirely.
+	outputPolicy := "drop"
+	if egressRulesAllowAll(rules) {
+		outputPolicy = "accept"
+	}
+	if err := r.runNetworkCommand(ctx, "ip", append(base, "add", "chain", "inet", tableName, "output", "{", "type", "filter", "hook", "output", "priority", "0", ";", "policy", outputPolicy, ";", "}")...); err != nil {
 		return err
+	}
+	if outputPolicy == "accept" {
+		return nil
 	}
 	if err := r.runNetworkCommand(ctx, "ip", append(base, "add", "rule", "inet", tableName, "output", "oifname", "lo", "accept")...); err != nil {
 		return err
@@ -2391,6 +2400,17 @@ func (r *Runtime) applySandboxEgressPolicy(ctx context.Context, details store.Ru
 		}
 	}
 	return nil
+}
+
+// egressRulesAllowAll reports whether the rule set contains the "all" sentinel,
+// meaning unrestricted outbound egress.
+func egressRulesAllowAll(rules []egressRule) bool {
+	for _, rule := range rules {
+		if rule.All {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runtime) applyHostEgressPolicy(ctx context.Context, details store.RuntimeGenerationDetails) error {
@@ -2416,24 +2436,32 @@ func (r *Runtime) applyHostEgressPolicy(ctx context.Context, details store.Runti
 	if err := r.runNetworkCommand(ctx, "nft", "add", "chain", "inet", tableName, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "100", ";", "policy", "accept", ";", "}"); err != nil {
 		return err
 	}
-	for _, rule := range rules {
-		if rule.Host == details.HostGatewayIP {
-			continue
-		}
-		args := []string{"add", "rule", "inet", tableName, "forward", "iifname", details.HostVeth}
-		if rule.Host != "" {
-			args = append(args, "ip", "daddr", rule.Host)
-		}
-		args = append(args, rule.Proto, "dport", strconv.Itoa(rule.Port), "accept")
-		if err := r.runNetworkCommand(ctx, "nft", args...); err != nil {
-			return err
+	allowAll := egressRulesAllowAll(rules)
+	if !allowAll {
+		for _, rule := range rules {
+			if rule.Host == details.HostGatewayIP {
+				continue
+			}
+			args := []string{"add", "rule", "inet", tableName, "forward", "iifname", details.HostVeth}
+			if rule.Host != "" {
+				args = append(args, "ip", "daddr", rule.Host)
+			}
+			args = append(args, rule.Proto, "dport", strconv.Itoa(rule.Port), "accept")
+			if err := r.runNetworkCommand(ctx, "nft", args...); err != nil {
+				return err
+			}
 		}
 	}
 	if err := r.runNetworkCommand(ctx, "nft", "add", "rule", "inet", tableName, "forward", "oifname", details.HostVeth, "ct", "state", "established,related", "accept"); err != nil {
 		return err
 	}
-	if err := r.runNetworkCommand(ctx, "nft", "add", "rule", "inet", tableName, "forward", "iifname", details.HostVeth, "drop"); err != nil {
-		return err
+	// In allow-all mode the sandbox-inbound forward traffic is left to the
+	// chain's default-accept policy; otherwise anything not matched above is
+	// dropped. NAT masquerade is always required so replies route back.
+	if !allowAll {
+		if err := r.runNetworkCommand(ctx, "nft", "add", "rule", "inet", tableName, "forward", "iifname", details.HostVeth, "drop"); err != nil {
+			return err
+		}
 	}
 	if err := r.runNetworkCommand(ctx, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", details.HostSideCIDR, "masquerade"); err != nil {
 		return err
@@ -2547,6 +2575,9 @@ type egressRule struct {
 	Proto string
 	Host  string
 	Port  int
+	// All, when true, is the "all" sentinel meaning unrestricted outbound
+	// (every host, every port, both protocols). Other fields are ignored.
+	All bool
 }
 
 func parseAllowedEgressRules(raw string) ([]egressRule, error) {
@@ -2571,6 +2602,9 @@ func parseAllowedEgressRules(raw string) ([]egressRule, error) {
 
 func parseAllowedEgressRule(value string) (egressRule, error) {
 	value = strings.TrimSpace(value)
+	if value == "all" {
+		return egressRule{All: true}, nil
+	}
 	parts := strings.Split(value, ":")
 	if len(parts) == 2 {
 		port, err := strconv.Atoi(parts[1])

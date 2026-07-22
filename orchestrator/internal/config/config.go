@@ -138,6 +138,12 @@ type EgressConfig struct {
 	DorisBEHosts []string  `yaml:"doris_be_hosts"`
 	DorisPorts   []int     `yaml:"doris_ports"`
 	DNSPolicy    DNSPolicy `yaml:"dns_policy"`
+	// AllowAll, when true, opens sandbox egress to the entire public internet
+	// (all hosts, all TCP/UDP ports). This intentionally removes the
+	// default-deny data-exfiltration boundary; the sandbox runs untrusted
+	// agent code that holds Doris read credentials. Leave false unless the
+	// deployment explicitly wants unrestricted outbound access.
+	AllowAll bool `yaml:"allow_all"`
 }
 
 type DNSPolicy string

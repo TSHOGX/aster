@@ -35,6 +35,7 @@ type ResourceAllocatorConfig struct {
 	EgressDorisBEHosts          []string
 	EgressDorisPorts            []int
 	EgressDNSPolicy             string
+	EgressAllowAll              bool
 	HostProxyBindURL            string
 	ProxyPort                   int
 	Agent                       string
@@ -2897,6 +2898,14 @@ func generationRunscContainerID(generationID string) string {
 
 func allowedEgressRules(hostGatewayIP string, cfg ResourceAllocatorConfig) []string {
 	rules := []string{fmt.Sprintf("tcp:%s:%d", hostGatewayIP, cfg.proxyPort())}
+	if cfg.EgressAllowAll {
+		// Unrestricted outbound: the "all" sentinel opens every host/port for
+		// both TCP and UDP (see parseAllowedEgressRule + applySandboxEgressPolicy).
+		// The proxy rule above is kept so the ordering/digest stays stable, but
+		// the sentinel makes the sandbox output chain accept everything.
+		rules = append(rules, "all")
+		return rules
+	}
 	for _, host := range cfg.EgressDorisFEHosts {
 		for _, port := range cfg.EgressDorisPorts {
 			rules = append(rules, fmt.Sprintf("tcp:%s:%d", host, port))

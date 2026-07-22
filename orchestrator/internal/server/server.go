@@ -1682,6 +1682,7 @@ func (s *Server) resourceAllocatorConfig(agent string) store.ResourceAllocatorCo
 		EgressDorisBEHosts:          s.cfg.Harness.Network.Egress.DorisBEHosts,
 		EgressDorisPorts:            s.cfg.Harness.Network.Egress.DorisPorts,
 		EgressDNSPolicy:             string(s.cfg.Harness.Network.Egress.DNSPolicy),
+		EgressAllowAll:              s.cfg.Harness.Network.Egress.AllowAll,
 		HostProxyBindURL:            s.cfg.ModelProxy.BindURL,
 		ProxyPort:                   s.cfg.ModelProxy.BindPort,
 		Agent:                       agent,

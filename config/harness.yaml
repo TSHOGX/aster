@@ -44,6 +44,10 @@ harness:
       doris_ports:
         - 9030
       dns_policy: hostnames_only
+      # Open sandbox egress to the entire public internet (all hosts/ports).
+      # Removes the default-deny exfiltration boundary so agents can pip
+      # install, hit GitHub/pypi, search, etc. See orchestrator EgressConfig.
+      allow_all: true
 
   events:
     retention_window: 24h

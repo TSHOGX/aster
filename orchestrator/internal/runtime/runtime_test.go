@@ -819,6 +819,68 @@ func TestEnsureSandboxNetworkUsesGenerationAllocationAndProbes(t *testing.T) {
 	}
 }
 
+func TestEnsureSandboxNetworkAllowAllOpensEgress(t *testing.T) {
+	runner := &recordingCommandRunner{
+		outputs: map[string][]byte{
+			"runsc --version": []byte("runsc test"),
+			"ip netns exec harness-gen-a nft list table inet harness_egress":                                                []byte("table exists"),
+			"nft list table inet harness_gen_gen_a":                                                                         []byte("table exists"),
+			"ip netns exec harness-gen-a curl -sS --max-time 2 -o /dev/null -w %{http_code} http://10.250.0.1:8082/healthz": []byte("200"),
+		},
+	}
+	rt := New(Config{
+		RunscNetwork:  "sandbox",
+		RunscOverlay2: "none",
+		CommandRunner: runner,
+	})
+	details := testGenerationDetails(t.TempDir(), "gen_a")
+	details.RunscNetwork = "sandbox"
+	details.RunscOverlay2 = "none"
+	details.NetnsName = "harness-gen-a"
+	details.NetnsPath = "/var/run/netns/harness-gen-a"
+	details.HostVeth = "hgenah"
+	details.SandboxVeth = "hgenas"
+	details.HostSideCIDR = "10.250.0.0/30"
+	details.SandboxIPCIDR = "10.250.0.2/30"
+	details.HostGatewayIP = "10.250.0.1"
+	details.ProbeURL = "http://10.250.0.1:8082"
+	// The "all" sentinel (emitted by allowedEgressRules when EgressAllowAll is
+	// set) must open the sandbox output chain to default-accept and drop the
+	// host-side inbound drop rule.
+	details.AllowedEgressRules = `["tcp:10.250.0.1:8082","all"]`
+
+	if err := rt.ensureSandboxNetwork(context.Background(), details); err != nil {
+		t.Fatalf("ensure sandbox network: %v", err)
+	}
+
+	got := runner.Commands()
+	joined := strings.Join(got, "\n")
+
+	// Sandbox output chain must be default-accept, with no per-port allow rules
+	// and no lo rule (policy accept already covers everything).
+	if !strings.Contains(joined, "nft add chain inet harness_egress output { type filter hook output priority 0 ; policy accept ; }") {
+		t.Fatalf("expected sandbox output chain policy accept, got:\n%s", joined)
+	}
+	for _, command := range got {
+		if strings.Contains(command, "harness_egress output oifname lo accept") {
+			t.Fatalf("allow-all should not emit per-rule sandbox output rules: %s", command)
+		}
+		if strings.Contains(command, "harness_egress output ip daddr") {
+			t.Fatalf("allow-all should not emit per-host sandbox output rules: %s", command)
+		}
+	}
+	// Host forward chain must NOT install the inbound drop rule in allow-all
+	// mode, but must still masquerade.
+	for _, command := range got {
+		if strings.Contains(command, "forward iifname hgenah drop") {
+			t.Fatalf("allow-all should not install host inbound drop rule: %s", command)
+		}
+	}
+	if !strings.Contains(joined, "nft add rule inet harness_gen_gen_a postrouting ip saddr 10.250.0.0/30 masquerade") {
+		t.Fatalf("allow-all must still install masquerade rule, got:\n%s", joined)
+	}
+}
+
 func TestProbeSandboxNetworkRetriesAndUsesConfiguredHealthzStatuses(t *testing.T) {
 	healthz := "ip netns exec harness-gen-a curl -sS --max-time 2 -o /dev/null -w %{http_code} http://10.250.0.1:8082/healthz"
 	runner := &recordingCommandRunner{

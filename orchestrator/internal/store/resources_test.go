@@ -397,6 +397,26 @@ func TestAllowedEgressRulesHonorsDNSPolicy(t *testing.T) {
 	}
 }
 
+func TestAllowedEgressRulesAllowAllEmitsSentinel(t *testing.T) {
+	cfg := testAllocatorConfig(t)
+	cfg.EgressDorisPorts = []int{9030}
+	cfg.EgressDorisFEHosts = []string{"172.16.0.138"}
+	cfg.EgressDorisBEHosts = []string{"172.16.0.139"}
+	cfg.EgressDNSPolicy = "hostnames_only"
+	cfg.EgressAllowAll = true
+
+	// Allow-all keeps the proxy rule (for stable ordering) then the "all"
+	// sentinel, and drops the Doris/DNS per-host rules since everything is open.
+	want := []string{
+		"tcp:10.240.0.1:8082",
+		"all",
+	}
+	got := allowedEgressRules("10.240.0.1", cfg)
+	if !slices.Equal(got, want) {
+		t.Fatalf("allow-all egress rules = %#v, want %#v", got, want)
+	}
+}
+
 func TestAllocateGenerationPersistsHostnameOnlyDNSPolicy(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
