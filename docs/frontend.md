@@ -36,9 +36,9 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
 
 - `api.ts` — typed client for every orchestrator call (`fetchMe`, `login`, `logout`,
   `fetchSessions`, `fetchSession`, `createSession`, `destroySession`,
-  `interruptSession`, `fetchMessages`, `postMessage`, `fetchArtifacts`,
-  `fetchDeploymentCapabilities`, `fetchHealth`, plus artifact helpers). All use
-  `cache: "no-store"` and a discriminated `RequestResult<T>`.
+  `renameSession`, `interruptSession`, `fetchMessages`, `postMessage`,
+  `fetchArtifacts`, `fetchDeploymentCapabilities`, `fetchHealth`, plus artifact
+  helpers). All use `cache: "no-store"` and a discriminated `RequestResult<T>`.
 - `types.ts` — domain model: `SessionStatus`, `SessionMode`, `ApiSession`,
   `DeploymentCapabilities`, `ApiArtifact`, `ApiMessage`, `HarnessEvent`,
   `ConnectionStatus`. (Deliberately no `agent_home_path`/`restore_id` — a release
@@ -59,12 +59,16 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   `bootError`, `connection`, `capabilities`, `sessions`, `selectedId`, per-session
   `conversations` (messages + streaming + runtime lines), per-session `artifacts`,
   and `auth`. Exposes `selectSession`, `createSession`, `destroySession`,
-  `interruptSession`, `sendMessage`, `refresh`, `onLogin`, `logout`.
+  `renameSession` (optimistic, rolls back on failure), `interruptSession`,
+  `sendMessage`, `refresh`, `onLogin`, `logout`.
 - `workbench/workbench.tsx` — the shell: a blank hold until auth is checked, then
   `LoginScreen`, backend-unreachable card, or the 3-column grid
   `Sidebar | Conversation | ArtifactPane`.
 - `workbench/sidebar.tsx` — session list, "New session" (creates an `agent`
-  session), active/ended split, per-session close, connection status.
+  session), active/ended split, connection status. Each row shows the session
+  `title` (falling back to the `id`) with a status dot; a per-row `...` menu offers
+  Rename and Delete, and Rename (or double-click) switches the title to an inline
+  editor (Enter saves via `renameSession`, Esc cancels).
 - `workbench/conversation.tsx` — routes to `ChatConversation` (agent) or
   `ShellConversation` (shell), renders committed messages + streaming bubbles + a
   runtime footer.
@@ -89,7 +93,8 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
    `agent.delta` streams tokens into a streaming bubble; `agent.message` /
    `message.created` commit messages; `agent.output` appends a runtime line;
    `artifact.updated`/`.deleted` update the tree; `system.status` toasts;
-   `session.*` updates status. A `replay_gap` forces a full `refresh()`.
+   `session.*` updates status; `session.updated` merges changed session metadata
+   (e.g. a generated or renamed `title`). A `replay_gap` forces a full `refresh()`.
 4. As a safety net, after a message post the provider **polls** session/messages/
    artifacts for up to 120s, reconciling streamed text against committed messages so
    a missed SSE frame never permanently desyncs the UI.

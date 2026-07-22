@@ -25,6 +25,7 @@ The orchestrator serves three trees:
 | GET | `/api/sessions` | required | list the caller's sessions |
 | POST | `/api/sessions` | required | create a session (`{"mode":"agent"\|"shell"}`) |
 | GET | `/api/sessions/{id}` | required | session detail |
+| PATCH | `/api/sessions/{id}` | required | rename session (`{"title":"..."}`) |
 | DELETE | `/api/sessions/{id}` | required | close session, reclaim runtime resources |
 | GET | `/api/sessions/{id}/messages` | required | message history |
 | POST | `/api/sessions/{id}/messages` | required | enqueue a turn (start/wake generation) |
@@ -54,8 +55,17 @@ the login screen.
 field rejected with `400`). → `200` an `apiSession`. `503 {"error_class":"pool_exhausted"}`
 when the live sandbox ceiling is reached.
 
+**`PATCH /api/sessions/{id}`** — `{"title":"..."}`. Renames the session and marks
+the title user-authored (so automatic naming never overwrites it). Title is
+trimmed, must be non-empty, and is capped at 200 runes (`400` otherwise). →
+`200` the updated `apiSession`; broadcasts a `session.updated` event.
+
 **`POST /api/sessions/{id}/messages`** — `{"content":"..."}`.
-→ `200 {"status": <session status>, "session_id", "message": <apiMessage>}`.
+→ `200 {"status": <session status>, "session_id", "message": <apiMessage>}`. On the
+first message of an untitled session the server sets a placeholder title (the
+truncated first message) and, when the title LLM is configured
+([configuration.md](./configuration.md)), asynchronously replaces it with a
+generated title — each emits a `session.updated` event.
 
 **`GET /api/quota`** →
 `{"soft_session_ceiling", "active_sessions", "live_pool_ceiling",
@@ -74,9 +84,12 @@ clamped to the other.
 
 ## Session DTO (`session_dto.go`)
 
-`apiSession` fields: `id`, `user_id`, `status`, `mode`, `mode_label` ("Agent" /
-"Shell"), `restore_ms`, `created_at`, `updated_at`, `expires_at`, `ended_at`,
-`last_activity_at`, `auto_checkpoint_enabled`, `failure_reason`, `error_class`.
+`apiSession` fields: `id`, `user_id`, `title`, `status`, `mode`, `mode_label`
+("Agent" / "Shell"), `restore_ms`, `created_at`, `updated_at`, `expires_at`,
+`ended_at`, `last_activity_at`, `auto_checkpoint_enabled`, `failure_reason`,
+`error_class`. `title` is the session's display name (empty until named); the
+frontend falls back to the `id` when it is empty. The `title_custom` flag
+(whether the user renamed it) is internal and not exposed.
 
 The internal `driver_id`/`agent` are **deliberately not exposed** — the browser only
 sees the product mode. Legacy `workspace`, `agent_home_path`, `restore_id` are
@@ -99,6 +112,7 @@ Event types:
 |---|---|
 | `session.created` | new session |
 | `session.running_active` / `.running_idle` / `.checkpointing` / `.checkpointed` / `.destroyed` | status transitions |
+| `session.updated` | session metadata changed (currently `title`); carries the full `apiSession` |
 | `session.error` | terminal only when `payload.terminal === true` |
 | `generation.error`, `session.checkpoint_retired`, `session.restore_fallback_retired` | non-terminal runtime events |
 | `ack_turn_completed` | turn outcome (may carry a committed idle transition) |

@@ -3,7 +3,9 @@
 > Primary config is `config/harness.yaml` under a strict `harness:` schema; env vars
 > override selected values. Loader: `orchestrator/internal/config/config.go`
 > (`KnownFields(true)` — unknown keys fail startup; only the `harness:` document is
-> decoded). Login users are in `config/auth-users.yaml` — see [security.md](./security.md).
+> decoded). Login users are in `config/auth-users.yaml`, and the optional session-title
+> LLM in `config/title-llm.yaml` — both are gitignored secret files loaded the same
+> way (missing file = feature simply off). See [security.md](./security.md).
 
 ## `config/harness.yaml` (checked-in lab profile)
 
@@ -74,6 +76,25 @@ free the compute slot, the session becomes `checkpointed` (logical "released"), 
 the next message cold-starts a fresh generation from the retained workspace +
 agent-home. See [sandbox-runtime.md](./sandbox-runtime.md).
 
+## `config/title-llm.yaml` (optional, gitignored)
+
+Configures the LLM that generates session titles from the first message. It is a
+**separate secret file** (like `auth-users.yaml`) so the API key never enters git;
+`config/title-llm.example.yaml` is the checked-in template. When the file is absent
+or `api_key` is empty the feature is off and sessions keep their placeholder title
+(the truncated first message). This is a plain OpenAI-compatible endpoint, wholly
+independent of the model proxy and the sandbox credential boundary — the
+orchestrator calls it directly from the host.
+
+```yaml
+enabled: true
+base_url: https://api.modelarts-maas.com/openai/v1
+api_key: "..."          # host-only secret; never committed
+model: glm-5.2
+```
+
+Loaded via `HARNESS_TITLE_LLM_PATH` (default `<repo>/config/title-llm.yaml`).
+
 ## Environment variables (`config.go`)
 
 | Env var | Default | Purpose |
@@ -86,6 +107,7 @@ agent-home. See [sandbox-runtime.md](./sandbox-runtime.md).
 | `HARNESS_TRUST_FORWARDED_PROTO` | true | trust `X-Forwarded-Proto` to detect HTTPS |
 | `HARNESS_TRUST_PROXY_HEADERS` | true | trust reverse-proxy client-IP headers for rate limiting: prefer nginx-overwritten `X-Real-IP`, fall back to the rightmost `X-Forwarded-For`; set `0` when exposing orchestrator directly |
 | `HARNESS_AUTH_USERS_PATH` | `<repo>/config/auth-users.yaml` | login users file |
+| `HARNESS_TITLE_LLM_PATH` | `<repo>/config/title-llm.yaml` | session-title LLM secret file (optional) |
 | `HARNESS_AUTH_SESSION_TTL` | 24h | login session TTL |
 | `HARNESS_SESSION_RETENTION` | config `0s` | session expiry (0 = never); invalid values fail startup |
 | `HARNESS_SESSION_TTL` | — | **obsolete; fatal if set** |

@@ -19,7 +19,7 @@ into the broader requirements/release process). Each file starts with
 
 | Proposal | Status | Summary |
 |---|---|---|
-| [session-display-names.md](./session-display-names.md) | Draft | Auto-generate a short session title after the first turn via pi's `set_session_name`, surface it in the sidebar |
+| [session-display-names.md](./session-display-names.md) | Implemented | Session titles: placeholder from the first message + async host-side LLM refinement, manual rename via `PATCH /api/sessions/{id}`, shown in the sidebar |
 | [workbench-slash-commands.md](./workbench-slash-commands.md) | Draft | `/`-prefixed commands in the chat composer (`/new`, `/end`, `/help` first; agent-side commands like `/compact` deferred) |
 | [token-usage-in-activity-indicator.md](./token-usage-in-activity-indicator.md) | Reviewing | Surface per-turn token usage in the activity indicator; usage data currently dead-ends before reaching orchestrator or frontend |
 | [turn-abort-proxy-correlation-timeout.md](./turn-abort-proxy-correlation-timeout.md) | Accepted | Root-caused a session self-terminating mid-turn (proxy-correlation timeout race); stopgap config fix shipped 2026-07-08, orchestrator-side fix still open |

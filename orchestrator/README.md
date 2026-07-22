@@ -172,6 +172,7 @@ bundle/restore smoke tooling has been removed from the runtime surface.
 
 ## Session Control
 
+- `PATCH /api/sessions/<id>` - rename a session (`{"title":"..."}`)
 - `POST /api/sessions/<id>/interrupt` - interrupt a running shell session
 - `DELETE /api/sessions/<id>` - close a session, preserve history/workspace state, and reclaim runtime resources
 

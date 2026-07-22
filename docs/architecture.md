@@ -98,6 +98,11 @@ completion; the session returns to `running_idle`.
 `DELETE /api/sessions/{id}` moves the session to `destroyed` and reclaims runtime
 resources while preserving messages, artifacts, workspace, and agent-home.
 
+Each session carries a human-readable `title` for the sidebar (falling back to the
+raw id when unset). The first message seeds a placeholder title and, when a title
+LLM is configured, an async call refines it; `PATCH /api/sessions/{id}` lets the
+user rename it, after which automatic naming leaves it alone.
+
 ## Turn execution via the bridge
 
 Turns are stored in SQLite before execution. The in-sandbox `harness-bridge-client`
