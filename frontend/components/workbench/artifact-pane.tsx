@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Braces,
   ChevronRight,
@@ -19,7 +19,6 @@ import {
 import { toast } from "sonner";
 
 import { useArtifacts, useSelectedSession } from "@/components/harness-provider";
-import { Tabs } from "@/components/ui/tabs";
 import { ArtifactViewer } from "./artifact-viewer";
 import { buildArtifactHref, uploadArtifacts, type UploadEntry } from "@/lib/api";
 import { buildArtifactTree, type ArtifactTreeDirectory, type ArtifactTreeNode } from "@/lib/artifact-tree";
@@ -29,18 +28,21 @@ import { classifyArtifact } from "@/lib/mime";
 import { cn } from "@/lib/cn";
 import type { ApiArtifact, SessionStatus } from "@/lib/types";
 
-const MAX_TABS = 6;
 // Backend-enforced upload limits, mirrored client-side for fast friendly errors.
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MiB per file
 const MAX_UPLOAD_FILES = 2000;
 
-export function ArtifactPane() {
+type ArtifactPaneProps = {
+  onExpandedChange?: (expanded: boolean) => void;
+};
+
+export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
   const session = useSelectedSession();
   const artifacts = useArtifacts(session?.id ?? null);
 
   if (!session) {
     return (
-      <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-foreground-muted)]">
+      <aside className="flex h-full min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-surface)] px-6 text-center text-xs text-[var(--color-foreground-muted)]">
         <span>Files will appear here once a session is running.</span>
       </aside>
     );
@@ -51,6 +53,7 @@ export function ArtifactPane() {
       sessionId={session.id}
       status={session.status}
       artifacts={artifacts}
+      onExpandedChange={onExpandedChange}
     />
   );
 }
@@ -62,14 +65,16 @@ type UploadState =
 function ArtifactPaneInner({
   sessionId,
   status,
-  artifacts
+  artifacts,
+  onExpandedChange
 }: {
   sessionId: string;
   status: SessionStatus;
   artifacts: ApiArtifact[];
+  onExpandedChange?: (expanded: boolean) => void;
 }) {
-  const [openTabs, setOpenTabs] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<string | null>(null);
+  // Artifacts-style: a single open file drives the Preview panel. Null → list view.
+  const [openPath, setOpenPath] = useState<string | null>(null);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
   const [upload, setUpload] = useState<UploadState>({ phase: "idle" });
@@ -152,37 +157,22 @@ function ArtifactPaneInner({
   }, []);
 
   const artifactPaths = useMemo(() => new Set(artifacts.map((a) => a.path)), [artifacts]);
-  const liveOpenTabs = useMemo(
-    () => openTabs.filter((path) => artifactPaths.has(path)),
-    [artifactPaths, openTabs]
-  );
-  const liveActiveTab = activeTab && artifactPaths.has(activeTab) ? activeTab : null;
+  const livePath = openPath && artifactPaths.has(openPath) ? openPath : null;
   const visibleArtifacts = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return artifacts;
     return artifacts.filter((a) => a.path.toLowerCase().includes(needle));
   }, [artifacts, query]);
   const tree = useMemo(() => buildArtifactTree(visibleArtifacts), [visibleArtifacts]);
-  const activeArtifact = liveActiveTab ? artifacts.find((a) => a.path === liveActiveTab) ?? null : null;
+  const activeArtifact = livePath ? artifacts.find((a) => a.path === livePath) ?? null : null;
 
-  const openArtifact = (path: string) => {
-    setOpenTabs((prev) => {
-      if (prev.includes(path)) return prev;
-      const next = [...prev, path];
-      return next.length > MAX_TABS ? next.slice(next.length - MAX_TABS) : next;
-    });
-    setActiveTab(path);
-  };
+  // Keep the parent grid in sync: the panel widens whenever a live file is open.
+  useEffect(() => {
+    onExpandedChange?.(livePath !== null);
+  }, [livePath, onExpandedChange]);
 
-  const closeTab = (path: string) => {
-    const idx = liveOpenTabs.indexOf(path);
-    const remaining = liveOpenTabs.filter((p) => p !== path);
-    setOpenTabs(remaining);
-    setActiveTab((prev) => {
-      if (prev !== path) return prev;
-      return remaining[Math.min(idx, remaining.length - 1)] ?? null;
-    });
-  };
+  const openArtifact = (path: string) => setOpenPath(path);
+  const closePreview = () => setOpenPath(null);
 
   const toggleDirectory = (path: string) => {
     setCollapsedDirs((prev) => {
@@ -229,114 +219,100 @@ function ArtifactPaneInner({
           e.target.value = "";
         }}
       />
-      <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs uppercase tracking-wider text-[var(--color-foreground-muted)]">
-            Files {artifacts.length > 0 ? `(${artifacts.length})` : ""}
-          </span>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {artifacts.length > 0 ? (
-              <span className="text-[11px] text-[var(--color-foreground-muted)]">
-                {formatBytes(tree.size)}
-              </span>
+      {livePath && activeArtifact ? (
+        // ── Preview mode: the panel becomes a full-height Artifact Preview. ──
+        <ArtifactViewer
+          key={`${livePath}:${activeArtifact.updated_at}`}
+          sessionId={sessionId}
+          path={livePath}
+          artifact={activeArtifact}
+          onClose={closePreview}
+        />
+      ) : (
+        // ── List mode: workspace file browser. ──
+        <>
+          <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <span className="text-sm font-semibold">Workspace</span>
+                {artifacts.length > 0 ? (
+                  <span className="text-[11px] text-[var(--color-foreground-muted)]">
+                    {artifacts.length} · {formatBytes(tree.size)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!canUpload}
+                  title={writable ? "Upload files" : "Uploads are paused while the agent is working"}
+                  className="flex h-7 w-7 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => folderInputRef.current?.click()}
+                  disabled={!canUpload}
+                  title={writable ? "Upload folder" : "Uploads are paused while the agent is working"}
+                  className="flex h-7 w-7 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <FolderUp className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            {busy ? (
+              <div className="mt-2">
+                <div className="mb-1 flex items-center justify-between text-[10px] text-[var(--color-foreground-muted)]">
+                  <span>Uploading {upload.count === 1 ? "1 file" : `${upload.count} files`}…</span>
+                  <span>{Math.round(upload.fraction * 100)}%</span>
+                </div>
+                <div className="h-1 overflow-hidden rounded-full bg-[var(--color-surface-muted)]">
+                  <div
+                    className="h-full bg-[var(--color-accent,var(--color-foreground))] transition-[width]"
+                    style={{ width: `${Math.round(upload.fraction * 100)}%` }}
+                  />
+                </div>
+              </div>
+            ) : !writable ? (
+              <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
+                Uploads paused while the agent is working.
+              </p>
             ) : null}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!canUpload}
-              title={writable ? "Upload files" : "Uploads are paused while the agent is working"}
-              className="flex h-7 w-7 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Upload className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => folderInputRef.current?.click()}
-              disabled={!canUpload}
-              title={writable ? "Upload folder" : "Uploads are paused while the agent is working"}
-              className="flex h-7 w-7 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <FolderUp className="h-3.5 w-3.5" />
-            </button>
+            {artifacts.length > 0 ? (
+              <label className="mt-2.5 flex h-8 items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] px-2.5 text-xs">
+                <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-foreground-muted)]" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search files"
+                  className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-[var(--color-foreground-muted)]"
+                />
+              </label>
+            ) : null}
           </div>
-        </div>
-        {busy ? (
-          <div className="mt-2">
-            <div className="mb-1 flex items-center justify-between text-[10px] text-[var(--color-foreground-muted)]">
-              <span>Uploading {upload.count === 1 ? "1 file" : `${upload.count} files`}…</span>
-              <span>{Math.round(upload.fraction * 100)}%</span>
-            </div>
-            <div className="h-1 overflow-hidden rounded-full bg-[var(--color-surface-muted)]">
-              <div
-                className="h-full bg-[var(--color-accent,var(--color-foreground))] transition-[width]"
-                style={{ width: `${Math.round(upload.fraction * 100)}%` }}
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {artifacts.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">
+                No artifacts yet. The agent writes files to <code className="font-mono">/workspace</code>.
+              </p>
+            ) : visibleArtifacts.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">No matching files.</p>
+            ) : (
+              <ArtifactTreeView
+                root={tree}
+                collapsedDirs={collapsedDirs}
+                forceExpanded={query.trim().length > 0}
+                activePath={null}
+                onToggleDirectory={toggleDirectory}
+                onOpenArtifact={openArtifact}
               />
-            </div>
+            )}
           </div>
-        ) : !writable ? (
-          <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
-            Uploads paused while the agent is working.
-          </p>
-        ) : null}
-        {artifacts.length > 0 ? (
-          <label className="mt-2 flex h-8 items-center gap-2 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-2 text-xs">
-            <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-foreground-muted)]" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search files"
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-[var(--color-foreground-muted)]"
-            />
-          </label>
-        ) : null}
-      </div>
-
-      <div className="min-h-[144px] max-h-[42%] shrink-0 overflow-y-auto border-b border-[var(--color-border)]">
-        {artifacts.length === 0 ? (
-          <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">
-            No artifacts yet. The agent writes files to <code className="font-mono">/workspace</code>.
-          </p>
-        ) : visibleArtifacts.length === 0 ? (
-          <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">No matching files.</p>
-        ) : (
-          <ArtifactTreeView
-            root={tree}
-            collapsedDirs={collapsedDirs}
-            forceExpanded={query.trim().length > 0}
-            activePath={liveActiveTab}
-            onToggleDirectory={toggleDirectory}
-            onOpenArtifact={openArtifact}
-          />
-        )}
-      </div>
-
-      <div className="flex flex-1 min-h-0 flex-col">
-        {liveOpenTabs.length > 0 ? (
-          <Tabs
-            value={liveActiveTab}
-            onValueChange={setActiveTab}
-            items={liveOpenTabs.map((path) => ({
-              value: path,
-              label: path.split("/").pop() ?? path,
-              onClose: () => closeTab(path)
-            }))}
-          />
-        ) : null}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {liveActiveTab && activeArtifact ? (
-            <ArtifactViewer
-              key={`${liveActiveTab}:${activeArtifact.updated_at}`}
-              sessionId={sessionId}
-              path={liveActiveTab}
-              artifact={activeArtifact}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-center text-xs text-[var(--color-foreground-muted)]">
-              <span>Select a file from the tree above to preview it here.</span>
-            </div>
-          )}
-        </div>
-      </div>
+        </>
+      )}
 
       {dragging ? (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center border-2 border-dashed border-[var(--color-accent,var(--color-foreground))] bg-[var(--color-background)]/85">

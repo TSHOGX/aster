@@ -1,18 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, ExternalLink, Loader2, Pencil, RotateCw, Save, X } from "lucide-react";
+import { Code2, Download, Eye, ExternalLink, Loader2, Pencil, RotateCw, Save, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { buildArtifactHref, fetchArtifactText, writeArtifact } from "@/lib/api";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { classifyArtifact, type ArtifactClassification } from "@/lib/mime";
+import { cn } from "@/lib/cn";
 import { MarkdownView } from "./markdown-view";
 import { CodeView } from "./viewers/code-view";
 import { CodeEditor } from "./viewers/code-editor";
 import type { ApiArtifact } from "@/lib/types";
 
-type Props = { sessionId: string; path: string; artifact?: ApiArtifact | null };
+type Props = { sessionId: string; path: string; artifact?: ApiArtifact | null; onClose?: () => void };
+
+type ViewMode = "preview" | "code";
+
+function isHtmlPath(path: string) {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return ext === "html" || ext === "htm";
+}
 
 // Files at or below this size may be edited inline. Larger files stay read-only
 // to keep the editor responsive (the read path already caps text fetch at 2MB).
@@ -31,10 +39,14 @@ type EditState =
   | { phase: "saving"; text: string }
   | { phase: "stale"; text: string };
 
-export function ArtifactViewer({ sessionId, path, artifact }: Props) {
+export function ArtifactViewer({ sessionId, path, artifact, onClose }: Props) {
   const meta = classifyArtifact(path);
   const href = buildArtifactHref(sessionId, path);
+  const html = isHtmlPath(path);
   const skip = meta.kind === "binary" || meta.kind === "image" || meta.kind === "pdf";
+  // Files with a meaningful rendered form get a Code / Preview switch.
+  const hasPreviewToggle = meta.kind === "markdown" || html;
+  const [view, setView] = useState<ViewMode>("preview");
   const [load, setLoad] = useState<LoadState>(skip ? { phase: "skip" } : { phase: "loading" });
   const [edit, setEdit] = useState<EditState>({ phase: "off" });
 
@@ -122,6 +134,8 @@ export function ArtifactViewer({ sessionId, path, artifact }: Props) {
 
   const editorText = edit.phase !== "off" ? edit.text : null;
   const saving = edit.phase === "saving";
+  // While editing, force the raw source so edits stay visible.
+  const effectiveView: ViewMode = editorText !== null ? "code" : view;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-background)]">
@@ -131,9 +145,12 @@ export function ArtifactViewer({ sessionId, path, artifact }: Props) {
         artifact={artifact}
         editable={editable}
         editState={edit}
+        view={effectiveView}
+        onViewChange={hasPreviewToggle && editorText === null ? setView : undefined}
         onEdit={startEditing}
         onCancel={cancelEditing}
         onSave={save}
+        onClose={onClose}
       />
       {edit.phase === "stale" ? (
         <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-danger)]">
@@ -158,8 +175,15 @@ export function ArtifactViewer({ sessionId, path, artifact }: Props) {
               )
             }
           />
+        ) : html && effectiveView === "preview" ? (
+          <iframe
+            src={href}
+            title={path}
+            sandbox="allow-scripts allow-same-origin"
+            className="h-full w-full border-0 bg-white"
+          />
         ) : (
-          <ViewerBody path={path} href={href} meta={meta} load={load} />
+          <ViewerBody path={path} href={href} meta={meta} load={load} forceCode={effectiveView === "code"} />
         )}
       </div>
       {saving ? (
@@ -177,25 +201,43 @@ function ViewerHeader({
   artifact,
   editable,
   editState,
+  view,
+  onViewChange,
   onEdit,
   onCancel,
-  onSave
+  onSave,
+  onClose
 }: {
   path: string;
   href: string;
   artifact?: ApiArtifact | null;
   editable: boolean;
   editState: EditState;
+  view: ViewMode;
+  onViewChange?: (view: ViewMode) => void;
   onEdit: () => void;
   onCancel: () => void;
   onSave: () => void;
+  onClose?: () => void;
 }) {
   const editing = editState.phase === "editing" || editState.phase === "saving" || editState.phase === "stale";
   const saving = editState.phase === "saving";
+  const name = path.split("/").pop() ?? path;
   return (
-    <div className="flex min-h-[42px] items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+    <div className="flex min-h-[48px] items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2">
+      {onClose ? (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Back to files"
+          title="Back to files"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      ) : null}
       <div className="min-w-0 flex-1">
-        <div className="truncate font-mono text-xs">{path}</div>
+        <div className="truncate text-sm font-medium" title={path}>{name}</div>
         <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-[var(--color-foreground-muted)]">
           {artifact ? (
             <>
@@ -208,6 +250,34 @@ function ViewerHeader({
           )}
         </div>
       </div>
+      {onViewChange ? (
+        <div className="flex shrink-0 items-center rounded-[var(--radius-lg)] bg-[var(--color-surface-muted)] p-0.5">
+          <button
+            type="button"
+            onClick={() => onViewChange("preview")}
+            className={cn(
+              "flex h-7 items-center gap-1 rounded-[calc(var(--radius-lg)-2px)] px-2 text-xs transition-colors",
+              view === "preview"
+                ? "bg-[var(--color-surface)] text-[var(--color-foreground)] shadow-sm"
+                : "text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]"
+            )}
+          >
+            <Eye className="h-3.5 w-3.5" /> Preview
+          </button>
+          <button
+            type="button"
+            onClick={() => onViewChange("code")}
+            className={cn(
+              "flex h-7 items-center gap-1 rounded-[calc(var(--radius-lg)-2px)] px-2 text-xs transition-colors",
+              view === "code"
+                ? "bg-[var(--color-surface)] text-[var(--color-foreground)] shadow-sm"
+                : "text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]"
+            )}
+          >
+            <Code2 className="h-3.5 w-3.5" /> Code
+          </button>
+        </div>
+      ) : null}
       {editing ? (
         <>
           <button
@@ -268,12 +338,14 @@ function ViewerBody({
   path,
   href,
   meta,
-  load
+  load,
+  forceCode
 }: {
   path: string;
   href: string;
   meta: ArtifactClassification;
   load: LoadState;
+  forceCode?: boolean;
 }) {
   if (meta.kind === "image") {
     return (
@@ -324,6 +396,9 @@ function ViewerBody({
   if (load.phase !== "ok") return null;
 
   if (meta.kind === "markdown") {
+    if (forceCode) {
+      return <CodeView code={load.text} language="markdown" />;
+    }
     return (
       <div className="h-full overflow-auto px-6 py-4">
         <MarkdownView content={load.text} />
