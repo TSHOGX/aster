@@ -10,6 +10,7 @@ import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
 import { Composer } from "./composer";
 import { StatusDot, statusTone } from "@/components/ui/badge";
+import { isFinalReply } from "@/lib/message-grouping";
 import { sessionModeLabel } from "@/lib/agents";
 import { dayKey, formatDayDivider, isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 
@@ -119,7 +120,11 @@ function ChatConversation() {
                 <Fragment key={m.id}>
                   {showDivider && <DayDivider label={formatDayDivider(m.created_at)} />}
                   <div id={`msg-${m.id}`} className={showDivider ? "" : "border-t border-[var(--color-border)]"}>
-                    <MessageBubble message={m} />
+                    <MessageBubble
+                      message={m}
+                      sessionId={session.id}
+                      showActions={isFinalReply(m, convo.messages[i + 1])}
+                    />
                   </div>
                 </Fragment>
               );
@@ -129,9 +134,17 @@ function ChatConversation() {
                 key={stream.id}
                 className={i === 0 && convo.messages.length === 0 ? "" : "border-t border-[var(--color-border)]"}
               >
-                <StreamingBubble text={stream.text} />
+                <StreamingBubble text={stream.text} liveTrace={i === 0 ? convo.liveTrace : undefined} />
               </div>
             ))}
+            {/* Tool activity can begin before any text streams. When the turn is
+                live with trace nodes but no streaming bubble exists yet, show a
+                standalone bubble so the work is visible immediately. */}
+            {convo.streaming.length === 0 && activityLive && convo.liveTrace.length > 0 ? (
+              <div className={convo.messages.length === 0 ? "" : "border-t border-[var(--color-border)]"}>
+                <StreamingBubble text="" liveTrace={convo.liveTrace} />
+              </div>
+            ) : null}
           </div>
         )}
       </div>

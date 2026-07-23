@@ -3,11 +3,24 @@
 import { User, Bot } from "lucide-react";
 
 import { MarkdownView } from "./markdown-view";
-import type { ApiMessage } from "@/lib/types";
+import { TraceList } from "./trace-list";
+import { MessageActions } from "./message-actions";
+import type { ApiMessage, TraceNode } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { formatFullTimestamp, formatTime } from "@/lib/format";
 
-export function MessageBubble({ message }: { message: ApiMessage }) {
+export function MessageBubble({
+  message,
+  sessionId,
+  showActions = true
+}: {
+  message: ApiMessage;
+  sessionId: string;
+  // Whether to show the Message Action Bar (thumbs / copy / overflow). We only
+  // surface it on a turn's final assistant reply — the answer to the user's
+  // message — not on the intermediate tool-use steps that precede it.
+  showActions?: boolean;
+}) {
   const isUser = message.role === "user";
   return (
     <div
@@ -41,7 +54,11 @@ export function MessageBubble({ message }: { message: ApiMessage }) {
           {isUser ? (
             <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</div>
           ) : (
-            <MarkdownView content={message.content} />
+            <>
+              <TraceList nodes={message.trace ?? []} />
+              <MarkdownView content={message.content} />
+              {showActions ? <MessageActions message={message} sessionId={sessionId} /> : null}
+            </>
           )}
         </div>
       </div>
@@ -49,7 +66,7 @@ export function MessageBubble({ message }: { message: ApiMessage }) {
   );
 }
 
-export function StreamingBubble({ text }: { text: string }) {
+export function StreamingBubble({ text, liveTrace }: { text: string; liveTrace?: TraceNode[] }) {
   return (
     <div className="flex gap-3 px-6 py-4 bg-[var(--color-surface)]">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-foreground)] text-[var(--color-accent-foreground)]">
@@ -61,6 +78,7 @@ export function StreamingBubble({ text }: { text: string }) {
           <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse-dot" />
         </div>
         <div className="mt-1">
+          <TraceList nodes={liveTrace ?? []} />
           <MarkdownView content={text || "…"} />
         </div>
       </div>

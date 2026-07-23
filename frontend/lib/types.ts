@@ -50,12 +50,36 @@ export type ApiArtifact = {
   updated_at: string;
 };
 
+export type TraceDiff = {
+  path?: string;
+  content?: string;
+  edits?: { oldText: string; newText: string }[];
+};
+
+export type TraceNode = {
+  kind: "thinking" | "tool";
+  toolName?: string;
+  label?: string;
+  args?: Record<string, unknown>;
+  resultSummary?: string;
+  isError?: boolean;
+  startedAt?: string;
+  durationMs?: number;
+  diff?: TraceDiff;
+};
+
 export type ApiMessage = {
   id: number;
   session_id: string;
   role: "user" | "assistant" | string;
   content: string;
   created_at: string;
+  // pi's terminator for an assistant message: "stop" = a turn's final reply,
+  // "toolUse" = an intermediate tool-calling step, "" / absent = unknown
+  // (user messages, salvaged text, pre-migration history).
+  stop_reason?: "stop" | "toolUse" | "";
+  trace?: TraceNode[];
+  feedback?: "up" | "down" | "";
 };
 
 export type StreamLineKind = "stdout" | "stderr" | "runtime";

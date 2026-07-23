@@ -112,6 +112,21 @@ export async function postMessage(sessionId: string, content: string) {
   );
 }
 
+export async function postMessageFeedback(
+  sessionId: string,
+  messageId: number,
+  rating: "up" | "down" | null
+) {
+  return request<{ feedback: string }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(String(messageId))}/feedback`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rating })
+    }
+  );
+}
+
 export async function fetchArtifacts(sessionId: string) {
   return request<{ artifacts: ApiArtifact[] | null }>(
     `/api/sessions/${encodeURIComponent(sessionId)}/artifacts`

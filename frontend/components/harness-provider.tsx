@@ -26,6 +26,7 @@ import {
   logout as apiLogout,
   markNotificationRead as apiMarkNotificationRead,
   postMessage as apiPostMessage,
+  postMessageFeedback,
   renameSession as apiRenameSession
 } from "@/lib/api";
 import { reduceSessionEvent } from "@/lib/session-events";
@@ -40,7 +41,9 @@ import type {
   HarnessEvent,
   SessionMode,
   SessionStatus,
-  StreamLine
+  StreamLine,
+  TraceDiff,
+  TraceNode
 } from "@/lib/types";
 
 export type ActivityPhase =
@@ -64,9 +67,15 @@ type ConversationState = {
   messages: ApiMessage[];
   streaming: Array<{ id: string; text: string; deltaType?: string }>;
   stream: StreamLine[];
+  liveTrace: LiveTraceNode[];
   activity: ConversationActivity;
   loading: boolean;
 };
+
+// A live trace node carries the tool call id (when pi provides one) so the
+// matching tool_execution_end can finalize the right node even when tools run
+// concurrently. The id is internal and dropped when rendered as a TraceNode.
+type LiveTraceNode = TraceNode & { toolCallId?: string };
 
 type AuthState = {
   checked: boolean;
@@ -95,6 +104,11 @@ type HarnessApi = {
   renameSession: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   interruptSession: (id: string) => Promise<{ ok: boolean; error?: string }>;
   sendMessage: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
+  submitFeedback: (
+    sessionId: string,
+    messageId: number,
+    rating: "up" | "down" | null
+  ) => Promise<{ ok: boolean; error?: string }>;
   refresh: () => Promise<void>;
   onLogin: (userId: string) => void;
   logout: () => Promise<void>;
@@ -178,7 +192,14 @@ function idleActivity(): ConversationActivity {
 }
 
 function emptyConvo(): ConversationState {
-  return { messages: [], streaming: [], stream: [], activity: idleActivity(), loading: false };
+  return {
+    messages: [],
+    streaming: [],
+    stream: [],
+    liveTrace: [] as LiveTraceNode[],
+    activity: idleActivity(),
+    loading: false
+  };
 }
 
 // Monotonic clock for turn timers. Date.now would be fine, but performance.now
@@ -244,6 +265,80 @@ function toolDetailFromInput(input: unknown): string | null {
     }
   }
   return null;
+}
+
+// pi emits `toolName`/`args` on tool lifecycle events; older frames used
+// `name`/`input`. Read the modern shape first and fall back so labels populate
+// regardless of which the backend sends.
+function readToolName(payload: Record<string, unknown>): string | null {
+  const modern = payload.toolName;
+  if (typeof modern === "string" && modern.trim()) return modern;
+  const legacy = payload.name;
+  return typeof legacy === "string" && legacy.trim() ? legacy : null;
+}
+
+function readToolArgs(payload: Record<string, unknown>): Record<string, unknown> | undefined {
+  const modern = payload.args;
+  if (isRecord(modern)) return modern;
+  const legacy = payload.input;
+  return isRecord(legacy) ? legacy : undefined;
+}
+
+const TRACE_RESULT_MAX = 2000;
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function stringifyResult(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+// Build a diff preview from a write/edit tool's arguments so the trace node can
+// render the change inline. Returns undefined for non-mutating tools.
+function diffFromToolArgs(
+  toolName: string | null,
+  args: Record<string, unknown> | undefined
+): TraceDiff | undefined {
+  if (!toolName || !args) return undefined;
+  const name = toolName.toLowerCase();
+  const path =
+    typeof args.path === "string"
+      ? args.path
+      : typeof args.file_path === "string"
+      ? args.file_path
+      : undefined;
+  if (name === "write") {
+    const content = typeof args.content === "string" ? args.content : undefined;
+    if (content === undefined) return undefined;
+    return { path, content };
+  }
+  if (name === "edit") {
+    const rawEdits = Array.isArray(args.edits) ? args.edits : null;
+    if (rawEdits) {
+      const edits = rawEdits
+        .filter(isRecord)
+        .map((e) => ({
+          oldText: typeof e.oldText === "string" ? e.oldText : typeof e.old_text === "string" ? e.old_text : "",
+          newText: typeof e.newText === "string" ? e.newText : typeof e.new_text === "string" ? e.new_text : ""
+        }));
+      if (edits.length > 0) return { path, edits };
+    }
+    const oldText =
+      typeof args.oldText === "string" ? args.oldText : typeof args.old_text === "string" ? args.old_text : null;
+    const newText =
+      typeof args.newText === "string" ? args.newText : typeof args.new_text === "string" ? args.new_text : null;
+    if (oldText !== null || newText !== null) {
+      return { path, edits: [{ oldText: oldText ?? "", newText: newText ?? "" }] };
+    }
+  }
+  return undefined;
 }
 
 function withActivity(
@@ -452,6 +547,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           if (!msg || typeof msg.id !== "number") return;
           upsertConvo(sessionId, (c) => ({
             ...c,
+            // A new user turn begins here: drop any live trace left from before.
+            liveTrace: msg.role === "user" ? [] : c.liveTrace,
             messages: c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg]
           }));
           return;
@@ -463,6 +560,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           upsertConvo(sessionId, (c) => ({
             ...c,
             streaming: pruneCommittedStreaming(c.streaming, [msg]),
+            // The committed assistant message renders its own server trace; clear
+            // the live nodes so they don't duplicate below it.
+            liveTrace: [],
             messages: c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg]
           }));
           return;
@@ -491,21 +591,76 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           // can show "Running bash" / "Reading README.md" during the gap
           // between text tokens where it previously looked frozen.
           if (piType === "tool_execution_start" || piType === "tool_execution_update") {
-            const toolName = typeof payload.name === "string" ? payload.name : null;
-            const detail = toolDetailFromInput(payload.input);
-            upsertConvo(sessionId, (c) =>
-              withActivity(c, { phase: "tool", toolName, toolDetail: detail })
-            );
+            const toolName = readToolName(payload);
+            const args = readToolArgs(payload);
+            const detail = toolDetailFromInput(args ?? payload.input);
+            const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : undefined;
+            upsertConvo(sessionId, (c) => {
+              const next = withActivity(c, {
+                phase: "tool",
+                toolName,
+                toolDetail: detail
+              });
+              // Only push a node on start; an update refines the activity strip
+              // but the node is already present.
+              if (piType !== "tool_execution_start") return next;
+              const node: LiveTraceNode = {
+                kind: "tool",
+                toolName: toolName ?? undefined,
+                label: detail ?? undefined,
+                args,
+                startedAt: new Date().toISOString(),
+                toolCallId
+              };
+              return { ...next, liveTrace: [...next.liveTrace, node] };
+            });
             return;
           }
           if (piType === "tool_execution_end") {
-            // Tool finished; fall back to thinking until the next signal (more
-            // tools, or text deltas) refines the phase.
-            upsertConvo(sessionId, (c) =>
-              c.activity.phase === "tool"
-                ? withActivity(c, { phase: "thinking", toolName: null, toolDetail: null })
-                : c
-            );
+            const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : undefined;
+            const result = "result" in payload ? payload.result : undefined;
+            const resultSummary = truncate(stringifyResult(result), TRACE_RESULT_MAX) || undefined;
+            const isError = payload.isError === true;
+            upsertConvo(sessionId, (c) => {
+              // Finalize the matching still-open tool node: prefer the toolCallId
+              // match, else the last tool node without a durationMs.
+              let targetIdx = -1;
+              for (let i = c.liveTrace.length - 1; i >= 0; i -= 1) {
+                const n = c.liveTrace[i];
+                if (n.kind !== "tool") continue;
+                if (toolCallId) {
+                  if (n.toolCallId === toolCallId) {
+                    targetIdx = i;
+                    break;
+                  }
+                } else if (n.durationMs === undefined) {
+                  targetIdx = i;
+                  break;
+                }
+              }
+              let liveTrace = c.liveTrace;
+              if (targetIdx !== -1) {
+                const node = c.liveTrace[targetIdx];
+                const durationMs = node.startedAt
+                  ? Math.max(0, Date.now() - new Date(node.startedAt).getTime())
+                  : undefined;
+                const finalized: LiveTraceNode = {
+                  ...node,
+                  resultSummary,
+                  isError,
+                  durationMs,
+                  diff: node.diff ?? diffFromToolArgs(node.toolName ?? null, node.args)
+                };
+                liveTrace = c.liveTrace.map((n, i) => (i === targetIdx ? finalized : n));
+              }
+              // Tool finished; fall back to thinking until the next signal (more
+              // tools, or text deltas) refines the phase.
+              const next =
+                c.activity.phase === "tool"
+                  ? withActivity(c, { phase: "thinking", toolName: null, toolDetail: null })
+                  : c;
+              return { ...next, liveTrace };
+            });
             return;
           }
           if (
@@ -947,6 +1102,38 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     [pollConversation, upsertConvo]
   );
 
+  const submitFeedback = useCallback(
+    async (sessionId: string, messageId: number, rating: "up" | "down" | null) => {
+      const previous =
+        stateRef.current.conversations[sessionId]?.messages.find((m) => m.id === messageId)?.feedback ?? "";
+      const optimistic: ApiMessage["feedback"] = rating ?? "";
+      // Optimistic: reflect the new rating immediately, roll back on failure.
+      upsertConvo(sessionId, (c) => ({
+        ...c,
+        messages: c.messages.map((m) => (m.id === messageId ? { ...m, feedback: optimistic } : m))
+      }));
+      const res = await postMessageFeedback(sessionId, messageId, rating);
+      if (!res.ok) {
+        upsertConvo(sessionId, (c) => ({
+          ...c,
+          messages: c.messages.map((m) => (m.id === messageId ? { ...m, feedback: previous } : m))
+        }));
+        toast.error(res.error || "Failed to submit feedback");
+        return { ok: false as const, error: res.error };
+      }
+      // Reconcile with the server's canonical value.
+      const settled = (res.data.feedback === "up" || res.data.feedback === "down"
+        ? res.data.feedback
+        : "") as ApiMessage["feedback"];
+      upsertConvo(sessionId, (c) => ({
+        ...c,
+        messages: c.messages.map((m) => (m.id === messageId ? { ...m, feedback: settled } : m))
+      }));
+      return { ok: true as const };
+    },
+    [upsertConvo]
+  );
+
   const markNotificationRead = useCallback(async (id: string) => {
     setState((p) => ({
       ...p,
@@ -964,6 +1151,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       renameSession,
       interruptSession,
       sendMessage,
+      submitFeedback,
       refresh,
       onLogin,
       logout,
@@ -977,6 +1165,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       renameSession,
       interruptSession,
       sendMessage,
+      submitFeedback,
       refresh,
       onLogin,
       logout,

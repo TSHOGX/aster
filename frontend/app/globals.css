@@ -306,6 +306,16 @@ input:focus-visible {
   animation: msg-jump-flash 1.5s ease-out;
 }
 
+/* Execution-trace node: gentle reveal of the expanded args/result/diff. */
+@keyframes trace-expand {
+  0% { opacity: 0; transform: translateY(-2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.trace-expand {
+  animation: trace-expand 0.15s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-dot,
   .activity-dot {
@@ -314,6 +324,9 @@ input:focus-visible {
   .msg-jump-flash {
     animation: none;
     background-color: var(--color-accent-soft);
+  }
+  .trace-expand {
+    animation: none;
   }
 }
 
