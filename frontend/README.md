@@ -61,11 +61,12 @@ Environment overrides:
 - The UI checks `/api/healthz` first.
 - If the real backend is unavailable or a proxied HTTP request fails, the app shows the backend-unreachable state instead of a mock workspace.
 - Live events come from the global `GET /api/events/stream` SSE endpoint through the frontend proxy, with `last_event_id` replay fallback when the stream reconnects.
-- The stream renders `agent.delta`, `agent.message`, `agent.output`, `system.status`, session lifecycle events, and `session.updated` (title changes).
+- The stream renders `agent.delta`, `agent.message`, `agent.output`, `system.status`, session lifecycle events, `session.updated` (title changes), and `notification.created` (bell refetch).
 - After a successful message post, the provider also polls session/messages/artifacts for a short period so the view can recover from missed events.
-- The same-origin SSE path replaced the earlier direct browser WebSocket connection.
-- The artifact pane renders a live metadata-backed file tree with search, folder expand/collapse, tabs, download actions, and previews for Markdown, code, text, images, JSON, CSV/TSV, and PDF.
+- The artifact pane renders a live metadata-backed file tree with search, folder expand/collapse, tabs, upload (multi-file/folder/drag-drop), inline text editing, download actions, and previews for Markdown, code, text, images, JSON, CSV/TSV, PDF, HTML, and Office files.
 - `artifact.updated` adds or refreshes files in the tree; `artifact.deleted` removes files or deleted directory prefixes and closes stale tabs.
+- ⌘P / Ctrl+P opens a command palette for full-text search across the user's sessions and messages; a notification bell surfaces broadcast announcements.
+- Assistant messages carry a progressive-disclosure execution trace and a per-message action bar (copy, 👍/👎 feedback).
 
 ## Current Agent Flow
 

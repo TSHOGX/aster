@@ -8,10 +8,11 @@
 ## Threat model
 
 Internal users run AI agents that execute arbitrary code (Python, shell) against a
-read-only Doris database. The worst case is prompt injection driving the agent to
-exfiltrate data or escalate. The design assumes agent code inside the sandbox is
-untrusted; the controls below ensure that even a fully compromised sandbox cannot
-reach credentials or the network beyond Doris and the model proxy.
+read-only Doris database. Agent code inside the sandbox is treated as untrusted: the
+worst case is prompt injection driving the agent to escalate or exfiltrate. The
+load-bearing control is that **model credentials never enter the sandbox** — that
+holds regardless of the egress policy. Network egress is a separate, tunable dial
+(open by default today; see below), not the credential boundary.
 
 ## Sandbox isolation (`sandbox-isolation-v1`)
 
@@ -24,13 +25,32 @@ Every generation runs under gVisor `runsc` (systrap platform) with:
 - **Strict mount allow-list** (`mount_plan.go`): exact binds only (no `rbind`), no
   duplicate destinations, and forbidden parent mounts — `/sessions`, `/agent-homes`,
   and `/harness-secrets` are rejected.
-- **Per-generation network namespace** with default-drop egress nftables. The only
-  allowed egress is Doris (`172.16.0.138:9030`) and the model-proxy alias; DNS is
-  `hostnames_only`. Even a broken-out sandbox has nowhere to send data.
+- **Per-generation network namespace** with a policy-driven egress nftables table.
+
+## Egress policy (open by default, lockable)
+
+Sandbox egress is governed by `network.egress` ([configuration.md](./configuration.md))
+and baked per generation at sandbox creation. Two modes:
+
+- **Open (`allow_all: true`, the checked-in default).** The sandbox output chain is
+  policy-accept: agents can pip install, reach GitHub/PyPI, and search the web. This
+  is a deliberate usability choice and it **removes the default-deny exfiltration
+  boundary** — a compromised or prompt-injected sandbox can send data anywhere it can
+  route to. The controls that still hold are the credential boundary below, gVisor
+  isolation, and per-user session ownership; the network is no longer a containment
+  layer.
+- **Locked (`allow_all: false`).** Default-drop egress: the only allowed destinations
+  are Doris (`172.16.0.138:9030`) and the model-proxy alias, with `dns_policy`
+  controlling name resolution. Even a broken-out sandbox then has nowhere to send
+  data. Choose this when the deployment handles sensitive data and does not need
+  general internet access.
+
+Neither mode changes the credential boundary — the sandbox never holds a real model
+key in either case.
 
 ## Model credentials never enter the sandbox
 
-This is the central credential boundary:
+This is the central credential boundary, independent of the egress policy above:
 
 - The sandbox reaches the model provider only through a **hostname alias**
   (`harness-model-proxy.internal`, mapped to the host gateway in the sandbox's
@@ -90,8 +110,10 @@ image manifest during resolution ([drivers.md](./drivers.md)).
   token-bucket limiter (~10 req/s sustained, burst 40); excess gets `429`. This
   is a coarse flood/scan guard on top of the login lockout.
 - **Request body caps**: JSON endpoints wrap the body in `http.MaxBytesReader`
-  (64 KiB for control endpoints, 1 MiB for agent messages) so an oversized or
-  slow body cannot exhaust memory. The public `http.Server` sets
+  (64 KiB for control endpoints, 1 MiB for agent messages); artifact uploads are
+  capped separately (`MaxUploadBytes`, default 100 MiB; `MaxUploadFiles`, default
+  2000) and online edits at `MaxEditBytes`. An oversized or slow body cannot exhaust
+  memory. The public `http.Server` sets
   `ReadHeaderTimeout`/`ReadTimeout`/`IdleTimeout` and `MaxHeaderBytes` to blunt
   Slowloris-style slow-send attacks (`WriteTimeout` stays unset so SSE streams
   survive).
@@ -109,11 +131,22 @@ Public API and event payloads are scrubbed of internal identifiers and host path
 `data_volumes`, `netns_path`, any `*_path`/`host_path`, `workspace`, etc. The browser
 only ever sees product-level fields (`mode`, `mode_label`, status, timestamps).
 
-## Artifact download safety
+## Artifact access safety
 
 `GET /artifacts/{session}/{path}` streams only regular files under the verified
 workspace, re-checking ownership first, and rejecting traversal, symlink components,
-symlink escape, directories, and non-regular files.
+symlink escape, directories, and non-regular files. `PUT` on the same path is the
+online editor (owner-checked, `If-Unmodified-Since` guards against clobbering a newer
+agent write); `POST /api/sessions/{id}/artifacts` is the multipart upload. Every
+write path applies the same traversal/symlink validation as download.
+
+Downloaded content is served inert by default (`Content-Security-Policy:
+default-src 'none'; sandbox`, `X-Frame-Options: DENY`, `nosniff`). HTML and PDF
+artifacts are the exception: the workbench previews them in a same-origin iframe, so
+they get a tailored CSP that permits same-origin framing and rendering
+(`frame-ancestors 'self'`) while still forbidding all outbound
+connect/img/font/form/nested-frame behavior — a malicious artifact can render but
+cannot phone home.
 
 ## Single-owner control plane
 
@@ -148,14 +181,18 @@ deployment binds the frontend to `127.0.0.1:9001` behind nginx. See
 ## Sensitive local material
 
 The `doris-query` skill's `SKILL.md` embeds live Doris connection details (host,
-read-only user, password). It ships baked into the rootfs. Keep egress locked to the
-Doris host and treat the rootfs/image as sensitive.
+read-only user, password). It ships baked into the rootfs, so treat the rootfs/image
+as sensitive. Note the Doris user is read-only, but with open egress the sandbox can
+still route those credentials (and query results) off-box; lock egress
+(`allow_all: false`) for deployments where that matters.
 
 ## Residual limitations
 
 gVisor is one tier weaker than a KVM microVM (Firecracker) but far stronger than
-shared-kernel containers; for the internal-users + read-only-DB + egress-allow-list
-threat model it is sufficient (see
-[decisions/gvisor-vs-firecracker.md](./decisions/gvisor-vs-firecracker.md)). Tenant
-authz beyond per-user session ownership, credential rotation/GC, per-tenant egress
-policy, and resource limits are future work.
+shared-kernel containers; for the internal-users + read-only-DB threat model it is
+sufficient (see
+[decisions/gvisor-vs-firecracker.md](./decisions/gvisor-vs-firecracker.md)). With the
+default open egress, the sandbox network is not an exfiltration barrier — the
+credential boundary and gVisor isolation are. Tenant authz beyond per-user session
+ownership, credential rotation/GC, per-tenant egress policy, and resource limits are
+future work.

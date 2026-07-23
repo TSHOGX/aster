@@ -1,8 +1,7 @@
 # Agent Runtime Platform — Architecture
 
-> Rewritten 2026-07-06. This is the single source of truth for how the system works
-> today. Deep-dive documents are linked per section. (Written from the `publish`
-> branch, which became `main` on 2026-07-08.)
+> Single source of truth for how the system works today. Deep-dive documents are
+> linked per section; start here.
 
 ## What this is
 
@@ -143,11 +142,12 @@ backpressure — output is part of the turn protocol). The bridge's `emit_output
 parsed per driver (`stream_parser.go`) into normalized events, persisted to the
 durable `events` table, then published through the event hub (non-blocking fan-out).
 
-Notable event types: `session.created` / `session.<status>`, `generation.error`,
-`agent.delta`, `agent.message`, `agent.output`, `system.status`, `artifact.updated`,
-`artifact.deleted`, plus proxy-correlation events. Two delivery endpoints:
-`GET /api/events/stream` (SSE, with `Last-Event-ID` replay) and `GET /api/events`
-(WebSocket compatibility). Full list: [api.md](./api.md).
+Notable event types: `session.created` / `session.<status>`, `session.updated`,
+`generation.error`, `agent.delta`, `agent.message`, `agent.output`, `system.status`,
+`artifact.updated`, `artifact.deleted`, `notification.created`, plus
+proxy-correlation events. Two delivery endpoints: `GET /api/events/stream` (SSE, with
+`Last-Event-ID` replay) and `GET /api/events` (WebSocket compatibility). Full list:
+[api.md](./api.md).
 
 ## Sandbox boundary and security
 
@@ -159,9 +159,14 @@ generation. Key properties:
 - Exact `/workspace` and `/agent-home` binds; parent `/sessions` / `/agent-homes`
   mounts are forbidden; `/harness-secrets` is absent.
 - Non-root agent (uid/gid `65534`), empty capabilities, `noNewPrivileges`.
-- Per-generation network namespace with default-drop egress; the only allowed
-  egress is Doris (`172.16.0.138:9030`) and the model-proxy alias.
-- **Model credentials never enter the sandbox.** The sandbox reaches the model
+- Per-generation network namespace with a configurable egress policy. The
+  checked-in default is **open egress** (`network.egress.allow_all: true`): the
+  sandbox can reach the whole public internet (pip, GitHub/PyPI, web search).
+  Flipping `allow_all` off restores a default-drop policy where the only allowed
+  egress is Doris (`172.16.0.138:9030`) and the model-proxy alias. Egress is baked
+  per generation at sandbox creation.
+- **Model credentials never enter the sandbox**, independent of the egress policy.
+  The sandbox reaches the model
   proxy via a hostname alias; the proxy authorizes each request over an
   SO_PEERCRED-authenticated Unix socket against live turn context. Secret mounts
   are rejected at generation validation.
@@ -180,10 +185,10 @@ reference in [control-plane.md](./control-plane.md).
 
 Primary config is `config/harness.yaml` under a strict `harness:` schema (unknown
 keys fail startup), plus `HARNESS_*` env overrides. Full reference:
-[configuration.md](./configuration.md). Checked-in lab defaults: orchestrator
-`:8090`, model proxy `:8083`, CIDR pool `10.201.0.0/16`, `default_agent: pi`,
-`session_retention: 0s`, `max_sessions: 30`, automatic idle release enabled after
-2h.
+[configuration.md](./configuration.md). Checked-in defaults: orchestrator `:8090`,
+model proxy `:8083`, CIDR pool `10.201.0.0/16`, `default_agent: pi`,
+`session_retention: 0s`, `max_sessions: 30`, open egress (`allow_all: true`),
+automatic idle release enabled after 2h.
 
 ## Checkpoint / idle release
 
@@ -192,9 +197,11 @@ keys fail startup), plus `HARNESS_*` env overrides. Full reference:
 slot — it does **not** take a `runsc` checkpoint image. The session moves to
 `checkpointed` (logical "released, cold-restore later"), and the next message
 cold-starts a fresh generation from the retained workspace + agent-home. True
-`runsc` checkpoint/restore also exists and is gated by strict metadata-digest
-matching, but is separate from idle release. Background:
-[decisions/runsc-checkpoint-research.md](./decisions/runsc-checkpoint-research.md).
+`runsc` checkpoint/restore also exists (gated by strict metadata-digest matching)
+but is separate from idle release. See [sandbox-runtime.md](./sandbox-runtime.md)
+for mechanics and
+[decisions/runsc-checkpoint-research.md](./decisions/runsc-checkpoint-research.md)
+for why there is no warm-sentry fast path.
 
 ## Source map
 
@@ -215,7 +222,8 @@ matching, but is separate from idle release. Background:
 
 - Supported drivers are Pi and the PTY shell. New adapters must enter
   through the driver/provider contract in [drivers.md](./drivers.md).
-- The artifact UI is read-only; files are created only by the agent/shell.
+- The artifact UI is mostly read-only: users can upload files and edit small text
+  files in place, but all rich generation is done by the agent/shell.
 - The event hub is for UI streaming, not an audit log; the durable `events` table is.
 - Single orchestrator per data root (flock + DB owner heartbeat). Multi-orchestrator
   HA, tenant authz, credential rotation, and resource limits are future work.

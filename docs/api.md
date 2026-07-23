@@ -29,13 +29,19 @@ The orchestrator serves three trees:
 | DELETE | `/api/sessions/{id}` | required | close session, reclaim runtime resources |
 | GET | `/api/sessions/{id}/messages` | required | message history |
 | POST | `/api/sessions/{id}/messages` | required | enqueue a turn (start/wake generation) |
+| POST | `/api/sessions/{id}/messages/{mid}/feedback` | required | set/clear the caller's 👍/👎 on a message |
 | GET | `/api/sessions/{id}/artifacts` | required | list workspace artifacts |
+| POST | `/api/sessions/{id}/artifacts` | required | multipart upload into the workspace |
 | POST | `/api/sessions/{id}/interrupt` | required | interrupt a running shell turn |
 | GET | `/api/quota` | required | session & `/30` pool ceilings |
 | GET | `/api/deployment-capabilities` | required | creatable product modes |
+| GET | `/api/search` | required | full-text search over the caller's sessions & messages |
+| GET | `/api/notifications` | required | list broadcast notifications with per-caller read state |
+| POST | `/api/notifications/{id}/read` | required | mark one notification read (idempotent) |
 | GET | `/api/events` | required | WebSocket event stream (compatibility) |
 | GET | `/api/events/stream` | required | SSE event stream (used by the workbench) |
 | GET | `/artifacts/{sessionID}/{path...}` | required | stream a workspace file |
+| PUT | `/artifacts/{sessionID}/{path...}` | required | online-edit a workspace text file |
 
 Ownership is enforced everywhere: a missing session **or** an owner mismatch returns
 `404`, so sessions cannot be probed across users.
@@ -82,6 +88,31 @@ clamped to the other.
 ```
 `disabled_reason` carries the capability error code when a mode is not creatable.
 
+**`GET /api/search`** — `?q=<text>&limit=<1..50>` (default 50). Full-text search
+scoped by the store to the caller's own sessions. →
+`{"results":[apiSearchHit...], "truncated":bool}`. `truncated` is true when the
+result set was capped at `limit`. Matching uses a trigram FTS5 index over message
+content, so substring matches work in any script (Chinese included); a match token
+must be ≥3 characters. `apiSearchHit`: `kind` (`session`|`message`), `session_id`,
+`title`, `status`, `mode`, `message_id`/`role`/`snippet` (message hits), `created_at`.
+
+**`POST /api/sessions/{id}/artifacts`** — `multipart/form-data`; each part's field
+name is the relative destination path (folder uploads preserve structure). Rejected
+while a turn is in progress (`409 turn_in_progress`). Capped by `MaxUploadBytes` /
+`MaxUploadFiles` (`413 too_many_files` / `edit_too_large`). →
+`200 {"uploaded":["path", ...]}`; a synchronous workspace scan runs so the artifact
+list and SSE are current on return.
+
+**`PUT /artifacts/{sessionID}/{path...}`** — raw text body (`text/plain`), the online
+editor. Rejected while a turn is in progress (`409 turn_in_progress`). Optional
+`If-Unmodified-Since` (echo the download's `Last-Modified`) guards against clobbering
+a newer agent write → `409 stale_edit` if stale. Capped by `MaxEditBytes`
+(`413 edit_too_large`). → `200 {"path":"<clean path>"}`.
+
+**`POST /api/sessions/{id}/messages/{mid}/feedback`** — `{"rating":"up"|"down"|"none"|""}`
+(empty/`none` clears). → `200 {"feedback":"<effective rating>"}`. `404` if the message
+is not in the session.
+
 ## Session DTO (`session_dto.go`)
 
 `apiSession` fields: `id`, `user_id`, `title`, `status`, `mode`, `mode_label`
@@ -92,8 +123,20 @@ frontend falls back to the `id` when it is empty. The `title_custom` flag
 (whether the user renamed it) is internal and not exposed.
 
 The internal `driver_id`/`agent` are **deliberately not exposed** — the browser only
-sees the product mode. Legacy `workspace`, `agent_home_path`, `restore_id` are
-internal-only and omitted from the DTO.
+sees the product mode. Internal `workspace`, `agent_home_path`, `restore_id` are
+omitted from the DTO.
+
+## Message DTO
+
+`GET /api/sessions/{id}/messages` → `{"messages":[Message...]}` (`store.Message`):
+
+- `id`, `session_id`, `role`, `content`, `created_at` — the chat log.
+- `stop_reason` — pi's terminator for an assistant message: `stop` (final reply),
+  `toolUse` (intermediate tool step), or empty (user/shell/pre-migration). Lets the
+  client distinguish a completed answer from an interstitial.
+- `trace` — execution-trace nodes (thinking phases + tool calls) that produced the
+  message; opaque JSON passed through verbatim, absent when there is no stored trace.
+- `feedback` — the requesting user's own `up`/`down` rating, empty when unset.
 
 ## Events
 
@@ -121,18 +164,21 @@ Event types:
 | `agent.output` | raw runtime stdout/stderr line |
 | `system.status` | informational status (toast) |
 | `artifact.updated` / `artifact.deleted` | workspace file metadata changes |
+| `notification.created` | new broadcast notification; payload is `{notification_id}` only, a "go refetch" signal (not durable, not replayed) |
 | `proxy.request.started` / `.completed` / `.failed` | model-proxy correlation |
 
 Payloads are scrubbed of internal identifiers and host paths (`event_dto.go`):
 `generation_id`, `driver_id`, `driver_state`, `data_volumes`, `netns_path`, any
 `*_path`/`host_path`, `workspace`, etc. are stripped before reaching the browser.
 
-## Artifact download
+## Artifact download & edit
 
 `GET /artifacts/{sessionID}/{path...}` streams a single regular file under the
-verified session workspace. Ownership is re-checked before any file metadata is
-touched. The server rejects path traversal, symlink components, symlink escape,
-directories, and non-regular files.
+verified session workspace; `PUT` on the same path is the online editor (see the
+shape above). Ownership is re-checked before any file metadata is touched, and both
+methods reject path traversal, symlink components, symlink escape, directories, and
+non-regular files. HTML/PDF downloads carry a preview-friendly same-origin CSP; all
+other types are served inert. See [security.md](./security.md).
 
 ## Errors
 

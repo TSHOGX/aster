@@ -91,14 +91,19 @@ Each generation owns a persisted `/30` from `harness.network.cidr_pool`
 (`10.201.0.0/16`), a netns, a veth pair, a host gateway, and a sandbox IP. The
 runtime recreates these host resources before start/restore, then:
 
-- **Sandbox egress nftables** (`harness_egress`): default-drop, allow loopback plus
-  the parsed allowed-egress rules (Doris + the model-proxy alias).
+- **Sandbox egress nftables** (`harness_egress`): applies the parsed egress rules.
+  With `network.egress.allow_all: true` (the checked-in default) the output chain is
+  policy-accept — the sandbox reaches the whole internet. With `allow_all: false` it
+  is default-drop, allowing only loopback plus the parsed rules (Doris + the
+  model-proxy alias). The "all" sentinel also drops the host-side inbound-drop rule
+  while keeping masquerade.
 - **Host egress/NAT** (`harness_gen_<id>`): forward + postrouting masquerade.
 - **Pre-start probe** (`probeSandboxNetwork`): curls `<probe_url>/healthz` inside the
   netns until an accepted status (per `harness.probe`).
 
-DNS policy is `hostnames_only` in the checked-in config. Egress is locked to Doris
-(`172.16.0.138:9030`) and the model proxy; nothing else leaves the sandbox.
+The egress policy is baked per generation at sandbox creation. The exfiltration
+tradeoff of open vs. locked egress is covered in [security.md](./security.md);
+`dns_policy` (`hostnames_only` in the checked-in config) gates name resolution.
 
 ## Startup handshake
 

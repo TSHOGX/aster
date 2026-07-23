@@ -34,7 +34,7 @@ A few ideas borrowed from agent memory and skill-evolution work:
 Practical takeaway: a two-track output:
 
 - **Memory:** many small facts, heuristics, preferences, pitfalls, bug signals.
-- **Skills:** fewer, curated operating procedures mounted into every new container through the Phase 10c skills payload.
+- **Skills:** fewer, curated operating procedures mounted into every new container through the (future) system-skills payload.
 
 ## Data Levels
 
@@ -71,7 +71,7 @@ trajectory_snapshots
 - event_max_id
 - artifact_manifest_json
 - skills_digest
-- skills_release_id (nullable; populated only if Phase 12 introduces a release layer above the 10c mount)
+- skills_release_id (nullable; populated only if a release layer is introduced above the system-skills mount)
 - fidelity: full | partial
 - created_at
 - processed_at
@@ -176,7 +176,7 @@ Skill candidates should be human-reviewable Markdown, not opaque model output.
 
 ### 5. Skill Payload / Optional Release
 
-The reviewed skills payload consumed by the future system-skills mount. Phase 12 can either commit accepted changes back to `sandbox-image/system-skills/` or add a formal release layer above that mount if independent review, rollback, and promotion require it.
+The reviewed skills payload consumed by the future system-skills mount. The publish step can either commit accepted changes back to `sandbox-image/system-skills/` or add a formal release layer above that mount if independent review, rollback, and promotion require it.
 
 Table:
 
@@ -192,7 +192,7 @@ skill_releases
 - activated_at
 ```
 
-This table is required only if Phase 12 chooses the formal release-layer path. If accepted skills are committed directly to `sandbox-image/system-skills/`, the repo commit plus `skills_digest` remains the versioning contract.
+This table is required only if the formal release-layer path is chosen. If accepted skills are committed directly to `sandbox-image/system-skills/`, the repo commit plus `skills_digest` remains the versioning contract.
 
 ## Nightly Pipeline
 
@@ -329,7 +329,7 @@ Review flow:
 1. Human reviews `skill_candidates`.
 2. Accepted candidates update a draft skills bundle.
 3. Run a small replay/eval set.
-4. Publish by committing accepted changes to `sandbox-image/system-skills/`, or to `releases/<release_id>` if Phase 12 introduces the optional release layer.
+4. Publish by committing accepted changes to `sandbox-image/system-skills/`, or to `releases/<release_id>` if the optional release layer is introduced.
 5. If using the optional release layer, atomically update `current`.
 
 The eval can start simple:
@@ -345,7 +345,7 @@ The easiest landing path is static skills refresh:
 
 1. Nightly pipeline generates draft skills.
 2. Human publishes a reviewed skills payload.
-3. Phase 12 either commits the accepted payload back to `sandbox-image/system-skills/` or introduces a formal `releases/<release_id>` tree above the Phase 10c mount.
+3. The publish step either commits the accepted payload back to `sandbox-image/system-skills/` or introduces a formal `releases/<release_id>` tree above the system-skills mount.
 4. New sessions mount the selected skills payload.
 5. Existing sessions stay pinned to their original skills digest.
 
@@ -385,34 +385,34 @@ Report sections:
 - Bug candidates created.
 - Skills published or pending review.
 
-## Implementation Sub-Phases
+## Implementation Sub-Steps
 
-### 12A: Snapshot and Episode Memory
+### A: Snapshot and Episode Memory
 
 - Add `trajectory_snapshots`.
 - Export raw JSON for completed/idle sessions.
 - Add `episode_memories`.
 - Produce a daily Markdown report.
 
-### 12B: Semantic Memory
+### B: Semantic Memory
 
 - Add `semantic_memories`.
 - Cluster and merge candidate memories.
 - Track support, contradiction, confidence, and evidence.
 
-### 12C: Skill Candidates
+### C: Skill Candidates
 
 - Add `skill_candidates`.
 - Generate Markdown draft skill changes.
 - Keep all candidates in review state by default.
 
-### 12D: Publish to Mounted Skills
+### D: Publish to Mounted Skills
 
-- Integrate with the Phase 10c skills mount.
+- Integrate with the system-skills mount.
 - Publish accepted drafts into `sandbox-image/system-skills/`, or introduce a formal `releases/<release_id>` tree if independent rollback/review requires it.
 - Ensure new sessions resolve the selected payload while existing sessions remain digest-pinned.
 
-### 12E: Runtime Retrieval (optional)
+### E: Runtime Retrieval (optional)
 
 - Retrieve relevant semantic memories at turn time.
 - Keep this separate from static system skills to avoid coupling nightly memory updates to every active session.

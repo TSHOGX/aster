@@ -84,11 +84,6 @@ proxy-correlation socket) and shells out to `runsc`, `ip`, and `nft`. It builds 
 tests fully only on Linux; a real gVisor host is required for live smokes and the
 sandbox-launch paths.
 
-## History
-
-An earlier `tools/release/` framework formalized `sandbox-isolation-v1` release
-qualification (suites, gates, supplied-evidence labels, and static doc-pinning
-checks). It was removed along with the phase-era docs it pinned, since it had no CI
-wiring, no production dependency, and would have constrained forthcoming
-architecture changes. If a formal release-gate process is needed again, rebuild it
-against the then-current contract rather than reviving the old phase-pinned one.
+There is no formal release-qualification gate today; CI (build/vet/test) plus the
+live smoke above are the bar. If a release-gate process is needed later, build it
+against the then-current contract.

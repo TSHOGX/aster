@@ -6,7 +6,7 @@
 
 ## 1. 上下文
 
-项目目标是给每个会话起一个独立的隔离环境跑 AI agent（Claude Code / OpenCode）+ Python 工具链，连远端只读 Doris 做数据分析。最初的方案是 Firecracker microVM + vsock + per-VM TAP。Phase 0 在本机（华为云 ECS）做环境检查时，发现 Firecracker 在这台机器上根本装不上，触发了一次彻底的运行时再选型。
+项目目标是给每个会话起一个独立的隔离环境跑 AI agent + Python 工具链，连远端只读 Doris 做数据分析。最初的方案是 Firecracker microVM + vsock + per-VM TAP。在本机（华为云 ECS）做环境检查时，发现 Firecracker 在这台机器上根本装不上，触发了一次彻底的运行时再选型。
 
 ## 2. 为什么本机装不了 Firecracker
 
@@ -70,8 +70,8 @@
 - **威胁模型**：内部同事使用，最坏情况是 prompt injection 让 agent 跑恶意代码尝试外发 Doris 数据 / 越权调系统。
 - **gVisor 的隔离**：用户态二次实现 Linux syscall（~200 个），sandbox 内 syscall 不直接进 host kernel。
 - **相对位置**：比 runc/Docker 强一档（Docker CVE 大头在共享 kernel），比 Firecracker 弱一档（Firecracker 攻击面是 ~50 syscall 白名单 + KVM ioctl）。
-- **关键补强**：叠上 host 端 nftables 出站白名单（只放 Doris FE `172.16.0.138:9030` 和本地 LLM proxy `127.0.0.1:8082`），即便 sandbox 被打穿，数据也出不去。
-- **结论**：对"内部同事 + 只读 DB + 出站白名单"的具体场景，gVisor 余裕。
+- **关键补强**：host 端每 netns 挂 nftables 出站策略，可选默认阻断（只放 Doris 和 model proxy），即便 sandbox 被打穿数据也出不去。当前默认改为放开全网出站以便安装依赖，出站不再作为兜底边界——详见 [`../security.md`](../security.md)。
+- **结论**：对"内部同事 + 只读 DB"的具体场景，gVisor 余裕。
 
 ## 5. 不选 Docker 的原因
 
@@ -96,7 +96,7 @@ my-sandbox/
 
 ## 6. 真正的代价与已知风险
 
-1. **`io_uring` 等新 syscall gVisor 实现不全**：Claude Code / Node 18+ 默认 epoll，不踩这个坑（Claude Code 驱动本身已于后续变更中移除，仅保留 pi / sh，但 epoll 优先的技术前提同样适用于 pi 的 Node 运行时）；要留意 Python 库不要用 `aio_uring`。Phase 1 用 `runsc --strace` 留一次完整 trace 提前发现 ENOSYS。
+1. **`io_uring` 等新 syscall gVisor 实现不全**：pi 的 Node 运行时默认走 epoll，不踩这个坑；要留意 Python 库不要用 `aio_uring`。用 `runsc --strace` 留一次完整 trace 可提前发现 ENOSYS。
 2. **vsock 协议方案废弃**：原 PLAN.md 的"双 vsock 通道"重写为 stdio + bind-mount，整体复杂度反而降低。
 3. **没有 overlayfs**：要装 `fuse-overlayfs` 或换 rootfs 目录复制方案（btrfs subvol / rsync）。
 4. **`runsc` 是 Google 一家维护**：偶有 corner case，但 GKE Sandbox / Cloud Run gen1 是大规模生产用户，长期可信。
@@ -104,12 +104,12 @@ my-sandbox/
 
 ## 7. 决策
 
-✅ **本项目第一阶段（Phase 1–7）使用 gVisor `runsc` + `systrap` 平台 + 手工 rootfs 目录 + 无 Docker。**
+✅ **使用 gVisor `runsc` + `systrap` 平台 + 手工 rootfs 目录 + 无 Docker。**
 
 迁移路径预留：
 
-- orchestrator 设计 `runtime.Driver` 抽象（启动/exec/kill/checkpoint），第一版实现 `runscDriver`，未来可加 `firecrackerDriver`。
+- orchestrator 设计 runtime 抽象（启动/exec/kill/checkpoint），当前实现基于 `runsc`，未来可加 `firecrackerDriver`。
 - artifact 事件协议、agent stdio 协议与 runtime 无关。
 - sandbox network namespace + nftables 出站规则与 runtime 无关。
 
-下一步：进入 Phase 1，装 `runsc` 二进制，手工构造一个最小 rootfs，用单个 sandbox 跑通"Claude Code → Doris → CSV / PNG / report.md"端到端 DEMO。
+这些边界让日后若要面向外部用户，可以把整套 orchestrator 平移到 BMS 上换回 Firecracker 而不动上层协议。

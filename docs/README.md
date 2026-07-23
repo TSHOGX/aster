@@ -3,10 +3,7 @@
 Documentation for the **Agent Runtime Platform** — a Go control plane that runs each
 AI agent session in its own gVisor (`runsc`) sandbox, driven by a Next.js workbench.
 
-These docs were rewritten 2026-07-06 and are the source of truth for how the system
-works today. (They were written from the `publish` branch, which on 2026-07-08 became
-`main` — the single development branch; see
-[parallel-development.md](./parallel-development.md) for that history.) Start with
+These docs are the source of truth for how the system works today. Start with
 [architecture.md](./architecture.md).
 
 ## Core documentation
@@ -48,7 +45,5 @@ Preserved architecture decision records and forward-looking plans:
 
 ---
 
-The `docs/` tree now contains only current-truth documentation and the decision
-records above. The phase-era docs (`PLAN.md`, `phaseN/`, status logs) and the
-`tools/release/` qualification framework were removed; verification guidance is in
-[verification.md](./verification.md).
+The `docs/` tree holds current-truth documentation plus the decision records and
+proposals above. Verification guidance lives in [verification.md](./verification.md).

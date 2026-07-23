@@ -2,29 +2,19 @@
 
 > 面向 `watt` 用户。说明 publish 这套服务当前怎么部署的、日常怎么重启/排障、
 > 以及为什么后端必须用 root 跑而 watt 仍能免密运维。
-> 最后更新：2026-07-10。
 >
 > 系统架构见 [architecture.md](./architecture.md)；配置项与端口见
 > [configuration.md](./configuration.md)；安全边界见 [security.md](./security.md)。
 
-> ⚠️ **2026-07-08 分支合并的影响（务必先读）**：这里的 **`publish` 指的是「部署环境」**
-> （systemd `harness-publish-*`、`/var/lib/harness-publish/`、端口 9090/9001/8083、nginx），
-> 这套环境仍然在线、名字不变。但 **`publish` 作为分支和源码 checkout 已经没有了**——
-> 2026-07-08 `publish` 分支成为 `main`,旧 `/home/agent-runtime-platform/publish/` 源码目录被清空。
-> 部署源码现在统一在 **`/home/agent-runtime-platform/main/`**,下文所有 build/部署命令都已改到 `main/`。
+> **术语**：这里的 **`publish` 指「部署环境」**（systemd `harness-publish-*`、
+> `/var/lib/harness-publish/`、端口 9090/9001/8083、nginx），不是分支。部署源码统一在
+> **`/home/agent-runtime-platform/main/`**，下文所有 build/部署命令都基于该目录；
+> model proxy(`claude-proxy.service`,`/root/claude-code-proxy/`)不在仓库里。
 >
-> ✅ **已于 2026-07-08 完成 repoint + 重新部署**:两个 systemd unit 的
-> `Documentation` / `WorkingDirectory` / `ExecStart` / `HARNESS_AUTH_USERS_PATH` 已从旧的
-> `/home/agent-runtime-platform/publish/...` 改到 `main/`,`daemon-reload` 后从 `main/`
-> 重新 build 并重启,现网(publish 环境)已在跑 `main/` 的版本。unit 备份留在
-> `/etc/systemd/system/harness-publish-*.service.bak-2026-07-08`。`/var/lib/harness-publish/*`
-> 运行时路径未改动;model proxy(`claude-proxy.service`,`/root/claude-code-proxy/`)不在仓库里,不受影响。
->
-> ⚠️ **登录凭据文件在合并中丢失并已重建**:`config/auth-users.yaml`(gitignore,只存在于已删除的
-> `publish/config/`)随目录清空一起没了。它**未提交**,所以 git 里恢复不了。已用 `cmd/authhash`
-> 在 `main/config/auth-users.yaml` 重建 `lab` 用户(600 权限,root 所有)。**这一步不能省**:
-> 该文件缺失时 `loadAuthUsers` 返回空、`AuthEnabled()=false`,`requireAuth` 会放行所有请求
->(见 `config.go:1342`、`server.go:3608`)——公网 IP 上的 workbench 会变成无登录裸奔。改密码/加用户走第 3 节。
+> ⚠️ **登录凭据文件不在 git 里**：`config/auth-users.yaml` 被 gitignore，只存在于运行机器上。
+> **搬机器/重建 checkout 时不会自动带上**——务必单独备份。该文件缺失时 `loadAuthUsers` 返回空、
+> `AuthEnabled()=false`,`requireAuth` 会放行所有请求,公网 IP 上的 workbench 会变成无登录裸奔。
+> 用 `cmd/authhash` 在 `config/auth-users.yaml` 重建 `lab` 用户(600 权限,root 所有);改密码/加用户走第 3 节。
 
 ---
 
@@ -190,7 +180,7 @@ model proxy 把 sandbox 里的 agent（Pi）发出的 `anthropic-messages`
 `anthropic-messages` + 指向 `harness-model-proxy.internal:8083` + 一个 dummy key
 （见 `orchestrator/internal/runtime/runtime.go` 的 `buildPiDriverConfigProjection`）。
 真正的上游 key 只存在 proxy 侧（`.env` 的 `OPENAI_API_KEY`），sandbox 永远拿不到——
-这是 Phase 8 的安全边界，不要试图让 Pi 直连上游（egress 防火墙也只放行 proxy alias）。
+这是凭据安全边界，不要试图让 Pi 直连上游。
 
 ```bash
 # 状态 / 日志（watt 免密）
@@ -261,8 +251,7 @@ users:
 > `curl -k -X POST https://127.0.0.1/api/login -H 'Content-Type: application/json' -d '{"username":"lab","password":"..."}'`
 > 正确→200，错误→401。
 > ⚠️ `config/auth-users.yaml` 是 **gitignore、不在仓库里** 的运行时文件(见 `.gitignore`)。
-> 它在 2026-07-08 合并中随旧 `publish/config/` 一起丢失、已重建(文首 ⚠️ 块)。
-> 因为不进 git,搬机器/重建 checkout 时**不会自动带上**——务必单独备份,否则重启即掉登录闸。
+> 因为不进 git,搬机器/重建 checkout 时**不会自动带上**——务必单独备份,否则重启即掉登录闸(见文首 ⚠️ 块)。
 > Cookie 是 Secure 的（按 HTTPS 访问设计）。现在对外全程走 nginx 的 HTTPS，nginx 会转发
 > `X-Forwarded-Proto https`，所以 Secure cookie 能正常下发，**无需** `HARNESS_COOKIE_INSECURE`。
 > 只有在绕过 nginx 直连前端纯 HTTP 调试时才会遇到 cookie 不下发，那种情况才需要该开关。
@@ -290,7 +279,7 @@ sudoers 规则免密控制这个服务**。这样数据不丢、新 session 正�
 
 | 用途 | 路径 |
 | --- | --- |
-| 代码仓库根 | `/home/agent-runtime-platform/main/`（2026-07-08 合并前是 `.../publish/`） |
+| 代码仓库根 | `/home/agent-runtime-platform/main/` |
 | 后端源码（go.mod 在此） | `orchestrator/` |
 | 后端二进制（ExecStart 指向） | `orchestrator/bin/orchestrator` |
 | 主配置 | `config/harness.yaml` |

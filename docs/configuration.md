@@ -35,6 +35,7 @@ harness:
       doris_be_hosts: [172.16.0.138]
       doris_ports: [9030]
       dns_policy: hostnames_only
+      allow_all: true          # open sandbox egress to the whole internet
 
   events:      { retention_window: 24h, retention_rows: 1000000, emit_output_batch_max_rows: 64, emit_output_batch_max_age: 100ms }
   probe:       { accept_status: { get_healthz: [200], post_v1_messages: { unauthorized: [401], malformed_authenticated: [400] } },
@@ -59,7 +60,8 @@ harness:
 | `model_proxy.sandbox_base_url` | sandbox-visible alias; its port must match `bind_url` |
 | `sandbox_identity` | non-root uid/gid the sandbox runs as (must be `>0`; default `65534`) |
 | `network.cidr_pool` | IPv4 `/≤30` pool carved into per-generation `/30`s |
-| `network.egress` | Doris FE/BE hosts + ports; `dns_policy` = `off`\|`hostnames_only`\|`always` |
+| `network.egress` | Doris FE/BE hosts + ports; `dns_policy` = `off`\|`hostnames_only`\|`always`; `allow_all` (see below) |
+| `agents.<id>.disable_nonessential_traffic` | when set, disables the driver's non-essential outbound (e.g. Pi telemetry/version checks) regardless of egress mode |
 | `events` | durable-event retention + `emit_output` batching |
 | `probe` | accepted proxy statuses + pre/post-start attempt counts and intervals |
 | `bridge` | lease TTL, heartbeat/poll intervals, ack-started grace, reconnect grace |
@@ -67,6 +69,17 @@ harness:
 | `checkpoint.idle_threshold` | idle time before release (checked-in `2h`) |
 | `reaper.failed_retention` | how long failed generations linger before physical cleanup |
 | `reaper.checkpoint_image_retention` | how long a `checkpointed` session keeps its slot |
+
+### Egress semantics
+
+`network.egress.allow_all: true` (the checked-in default) opens sandbox egress to the
+entire public internet — agents can pip install, reach GitHub/PyPI, and search the
+web. It emits an "all" sentinel rule that flips the sandbox output chain to
+policy-accept. This **removes the default-deny exfiltration boundary**; see the
+tradeoff in [security.md](./security.md). Set `allow_all: false` to restore
+default-drop egress where only Doris (`doris_*` hosts/ports) and the model-proxy alias
+are reachable, with `dns_policy` gating name resolution. The policy is baked per
+generation at sandbox creation, so only newly created sandboxes pick up a change.
 
 ### Idle release semantics
 
@@ -113,6 +126,9 @@ Loaded via `HARNESS_TITLE_LLM_PATH` (default `<repo>/config/title-llm.yaml`).
 | `HARNESS_SESSION_TTL` | — | **obsolete; fatal if set** |
 | `HARNESS_DEFAULT_AGENT` | config `pi` | product Agent driver |
 | `HARNESS_MAX_SESSIONS` | 30 | soft session ceiling |
+| `HARNESS_MAX_UPLOAD_BYTES` | `100 MiB` | cap on a single workspace upload request |
+| `HARNESS_MAX_UPLOAD_FILES` | 2000 | cap on files per upload request |
+| `HARNESS_MAX_EDIT_BYTES` | `1 MiB` | cap on a single online-edit body |
 | `HARNESS_AUTO_CHECKPOINT_ENABLED` | config | override idle-release policy for new sessions |
 | `HARNESS_SESSIONS_ROOT` | `/var/lib/harness/sessions` | session workspaces root |
 | `HARNESS_AGENT_HOMES_ROOT` | `/var/lib/harness/agent-homes` | agent-home root |
@@ -128,13 +144,13 @@ Hardcoded in the loaded config: `RunscNetwork=sandbox`, `RunscOverlay2=none`,
 `RequireAgentManifest=true`. `IsolationRoots`/`ValidateIsolationRoots` require every
 data root to be absolute, non-`/`, symlink-resolved, and mutually disjoint.
 
-## Rejected / legacy keys
+## Rejected keys (fail startup)
 
-- `HARNESS_SESSION_TTL` and `harness.session_ttl` — replaced by
-  `session_retention` (see [decisions/session-lifetime.md](./decisions/session-lifetime.md)).
-- Top-level `runtime:` / `claude:` docs and `harness.secrets.*` — rejected; model
-  proxy settings live only under `harness.model_proxy`, and credentials stay
-  host-side.
+Strict decoding rejects these; set them and the orchestrator refuses to start.
+
+- `HARNESS_SESSION_TTL` / `harness.session_ttl` — use `session_retention`.
+- Top-level `runtime:` / `claude:` documents and `harness.secrets.*` — model-proxy
+  settings live only under `harness.model_proxy`, and credentials stay host-side.
 
 ## Ports
 

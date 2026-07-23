@@ -54,90 +54,22 @@ Useful environment variables:
 
 `HARNESS_SESSION_TTL` is obsolete and fails startup if present; use `HARNESS_SESSION_RETENTION`.
 
-Runtime network and model proxy settings are explicit in `config/harness.yaml`:
+Runtime network and model proxy settings are explicit in `config/harness.yaml`.
+The full schema, every knob, and the checked-in values are in
+[`../docs/configuration.md`](../docs/configuration.md) — that is the single source
+of truth; don't duplicate the block here. Essentials:
 
-```yaml
-harness:
-  default_agent: pi
-  agents:
-    pi:
-      enabled: true
-      driver_id: pi
-      model_profile: anthropic_default
-      runtime_provider: local_runsc
-    sh:
-      enabled: true
-      driver_id: sh
-      runtime_provider: local_runsc
-  model_profiles:
-    anthropic_default:
-      enabled: true
-      provider: anthropic_messages
-      model: sonnet
-      proxy_ref: model_proxy
-  runtime_providers:
-    local_runsc:
-      enabled: true
-      provider_id: local_runsc
-      profile_id: local_runsc_default
-  run_dir: /var/lib/harness/run
-  session_retention: 0s
-  max_sessions: 30
-  model_proxy:
-    bind_url: http://0.0.0.0:8082
-    sandbox_base_url: http://harness-model-proxy.internal:8082
-  network:
-    cidr_pool: 10.200.0.0/16
-    egress:
-      doris_fe_hosts: [172.16.0.138]
-      doris_be_hosts: [172.16.0.138]
-      doris_ports: [9030]
-      dns_policy: hostnames_only
-  events:
-    retention_window: 24h
-    retention_rows: 1000000
-    emit_output_batch_max_rows: 64
-    emit_output_batch_max_age: 100ms
-  probe:
-    accept_status:
-      get_healthz: [200]
-      post_v1_messages:
-        unauthorized: [401]
-        malformed_authenticated: [400]
-    pre_start_attempts: 3
-    pre_start_interval: 500ms
-    post_start_attempts: 5
-    post_start_interval: 1s
-  bridge:
-    lease_ttl: 60s
-    heartbeat_interval: 30s
-    poll_interval: 5ms
-    ack_started_grace: 90s
-    reconnect_grace: 30s
-  checkpoint:
-    auto_enabled: false
-    idle_threshold: 30m
-    monitor_interval: 5m
-  reaper:
-    failed_retention: 10m
-    checkpoint_image_retention: 720h
-```
-
-The loader uses strict YAML decoding for the current `harness:` schema.
-Only the top-level `harness:` document is decoded; unknown top-level or
-nested keys fail startup.
-`harness.default_agent` selects the product `Agent` driver for new sessions;
-`sh` is selected only through product `mode: "shell"`.
-`harness.model_proxy.bind_url` controls the host listener port used for probes
-and egress allow-listing; `harness.model_proxy.sandbox_base_url` is the
-sandbox-visible alias written into generated control manifests.
-
-Legacy top-level `runtime:` / `claude:` sections no longer load. Migrate model
-proxy settings to `harness.model_proxy`; legacy `claude.proxy_bind_url` and
-`claude.sandbox_base_url` are rejected along with other unknown top-level keys.
-Obsolete `harness.session_ttl` and legacy `harness.secrets.*` keys are also
-rejected; use `harness.session_retention`, and keep provider credentials
-host-side.
+- `default_agent` selects the product `Agent` driver (checked-in: `pi`); `sh` is
+  reached only through product `mode: "shell"`.
+- `model_proxy.bind_url` is the host listener used for probes and egress
+  allow-listing; `model_proxy.sandbox_base_url` is the sandbox-visible alias written
+  into control manifests.
+- `network.egress.allow_all` (checked-in `true`) opens sandbox egress to the whole
+  internet; set `false` to lock egress to Doris + the proxy. See
+  [`../docs/security.md`](../docs/security.md).
+- The loader uses strict YAML decoding: only the top-level `harness:` document is
+  decoded, and any unknown top-level or nested key fails startup. Legacy
+  `runtime:` / `claude:` / `harness.secrets.*` / `harness.session_ttl` are rejected.
 
 The selected rootfs must contain an image manifest for the drivers selected by
 product modes. The checked-in lab default needs Pi Agent and Shell:
@@ -158,11 +90,11 @@ The runtime launches `runsc` directly in sandbox mode and keeps containers alive
 across turns. Each generation gets its own network profile, netns/veth pair,
 `/30`, generated runtime spec, control manifest, and file-queue bridge.
 
-Automatic idle checkpointing is a per-session policy. The checked-in default is
-off; `HARNESS_AUTO_CHECKPOINT_ENABLED=true` enables it for newly created
-sessions. Only the next idle generation with an empty turn queue plus fresh
-bridge heartbeat/checkpoint-ready markers can checkpoint. Legacy Phase 2
-bundle/restore smoke tooling has been removed from the runtime surface.
+`checkpoint.auto_enabled` (checked-in `true`) gates automatic idle *release*: an idle
+sandbox is torn down after `idle_threshold` to free its slot, and the next message
+cold-starts a fresh generation from the retained workspace + agent-home.
+`HARNESS_AUTO_CHECKPOINT_ENABLED` overrides it per new session. See
+[`../docs/sandbox-runtime.md`](../docs/sandbox-runtime.md).
 
 ## Event Streams
 
@@ -174,7 +106,13 @@ bundle/restore smoke tooling has been removed from the runtime surface.
 
 - `PATCH /api/sessions/<id>` - rename a session (`{"title":"..."}`)
 - `POST /api/sessions/<id>/interrupt` - interrupt a running shell session
+- `POST /api/sessions/<id>/artifacts` - multipart upload into the workspace
+- `PUT /artifacts/<id>/<path>` - online-edit a workspace text file
+- `POST /api/sessions/<id>/messages/<mid>/feedback` - 👍/👎 a message
+- `GET /api/search`, `GET /api/notifications` - search and broadcast notifications
 - `DELETE /api/sessions/<id>` - close a session, preserve history/workspace state, and reclaim runtime resources
+
+The full route reference and DTO shapes are in [`../docs/api.md`](../docs/api.md).
 
 ## Curl Smoke Test
 
@@ -197,7 +135,7 @@ curl -b /tmp/harness.cookies \
 ```
 
 Use `{"mode":"shell"}` for the PTY shell path when Shell is enabled. Raw
-`agent` input is rejected after the Phase 9 product-mode cutover.
+`agent`/`driver_id` input is rejected — the browser only ever picks a product mode.
 
 Send the first message:
 
@@ -233,6 +171,6 @@ Artifact downloads are read-only and limited to regular files under the session 
 
 ## Notes
 
-- Product `Agent` resolves to Pi in the checked-in lab config.
-- `sh` is the interactive shell session path; it is still useful for smoke tests and shell-style debugging.
-- Checkpoint/restore is generation-aware. Automatic checkpointing remains default-off in the checked-in lab config, and should be enabled only for lab profiles or explicit test environments.
+- Product `Agent` resolves to Pi in the checked-in config.
+- `sh` is the interactive shell session path; useful for smoke tests and shell-style debugging.
+- Checkpoint/restore is generation-aware. Automatic idle *release* is on in the checked-in config (`checkpoint.auto_enabled: true`); true `runsc` checkpoint images are a separate, digest-gated path.

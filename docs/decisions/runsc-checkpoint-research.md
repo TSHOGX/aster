@@ -9,9 +9,7 @@
 
 ## 背景
 
-项目 Phase 2 / Phase 3 文档里曾假设：升级到新版 `runsc` 后，可以开启 `--warm-sentry`，从而把 checkpoint restore 延迟压到 100 ms 以下，并解决旧版 `runsc restore` 从 Go orchestrator 启动时的不稳定问题。
-
-这次安装新版 `runsc` 后，需要重新确认该假设是否仍成立。
+早期设计曾假设：升级到新版 `runsc` 后可以开启 `--warm-sentry`，把 checkpoint restore 延迟压到 100 ms 以下，并解决旧版 `runsc restore` 从 Go orchestrator 启动时的不稳定问题。本文记录对该假设的核实结果。
 
 ## 本机版本
 
@@ -77,15 +75,14 @@ spec: 1.2.1
 
 ## 对本项目的结论
 
-1. 不再把 `--warm-sentry` 作为 Phase 2 / Phase 3 的升级目标。
-2. 文档中“升级 runsc 后打开 warm sentry”的描述需要修正。
-3. 近期优先目标应改为：
+1. 不再把 `--warm-sentry` 作为升级目标。
+2. 稳定性 / 性能优先目标：
    - 用 `release-20260511.0` 重新 bake checkpoint。
    - 复测 `bundle/restore-sandbox.sh` 标准 restore。
    - 复测 Go orchestrator 从长进程启动 restore 时，旧版 `hostfd ... socket operation on non-socket` 问题是否消失。
    - 新版 `runsc release-20260511.0` 上已复测通过，cold `runsc run` fallback 可以移除。
    - 再评估 `restore -background`、`checkpoint -exclude-committed-zero-pages`、`restore -direct` 等官方参数。
-4. 如果仍需要“首字延迟 <100 ms”或更低，应在 orchestrator 层做 pool：
+3. 如果仍需要“首字延迟 <100 ms”或更低，应在 orchestrator 层做 pool：
    - 预先 restore 若干一次性 sandbox。
    - 请求到来时从 pool 中取已就绪 sandbox。
    - 每个 sandbox 用完即销毁，不复用执行过用户代码的 Sentry。
