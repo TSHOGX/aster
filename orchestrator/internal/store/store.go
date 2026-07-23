@@ -139,6 +139,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `
 PRAGMA busy_timeout=5000;
 PRAGMA journal_mode=WAL;
+-- Under WAL, synchronous=NORMAL avoids an fsync on every commit (the default
+-- FULL does one per commit). It is crash-safe: the database cannot corrupt, and
+-- only the very last committed transaction can be lost on a power failure. That
+-- is acceptable here because bridge reconnect/replay recovers the latest state.
+PRAGMA synchronous=NORMAL;
 PRAGMA foreign_keys=ON;
 `); err != nil {
 		return err

@@ -83,6 +83,11 @@ type Server struct {
 
 	bridgeParserMu sync.Mutex
 	bridgeParsers  map[bridgeStreamParserKey]*streamParser
+
+	// publicPayloads memoizes the sanitized client-facing payload per durable
+	// event id so a single event fanned out to N subscribers is sanitized once
+	// rather than N times on the SSE/WebSocket delivery path.
+	publicPayloads publicPayloadCache
 }
 
 type sessionOwnerEntry struct {
@@ -3187,13 +3192,7 @@ func (s *Server) handleBridgeOutput(ctx context.Context, envelope bridge.Envelop
 	if len(payload.Payload) == 0 {
 		return
 	}
-	agent := ""
-	if session, err := s.store.GetSession(ctx, envelope.SessionID); err == nil {
-		agent = session.Agent
-	} else {
-		s.log.Warn("failed to load session for bridge output", "session_id", envelope.SessionID, "error", err)
-	}
-	parser := s.bridgeStreamParser(envelope, agent)
+	parser := s.bridgeStreamParser(ctx, envelope)
 	parser.handleBridgeOutput(normalizerBridgeOutput{Stream: stream, Payload: payload.Payload})
 }
 
@@ -3204,10 +3203,14 @@ func (s *Server) handleBridgeCompletion(ctx context.Context, envelope bridge.Env
 	}
 }
 
-func (s *Server) bridgeStreamParser(envelope bridge.Envelope, agent string) *streamParser {
+// bridgeStreamParser returns the per-turn parser, creating it on first output.
+// The session's agent is constant for the turn, so it is read once when the
+// parser is created and cached on the parser (via its driverID); the steady
+// token hot path reuses the cached parser and issues zero GetSession calls.
+func (s *Server) bridgeStreamParser(ctx context.Context, envelope bridge.Envelope) *streamParser {
 	key, ok := bridgeParserKey(envelope)
 	if !ok {
-		return newStreamParser(s, envelope.SessionID, agent)
+		return newStreamParser(s, envelope.SessionID, s.sessionAgent(ctx, envelope.SessionID))
 	}
 	s.bridgeParserMu.Lock()
 	defer s.bridgeParserMu.Unlock()
@@ -3216,11 +3219,23 @@ func (s *Server) bridgeStreamParser(envelope bridge.Envelope, agent string) *str
 	}
 	parser := s.bridgeParsers[key]
 	if parser == nil {
-		parser = newStreamParser(s, envelope.SessionID, agent)
+		parser = newStreamParser(s, envelope.SessionID, s.sessionAgent(ctx, envelope.SessionID))
 		parser.turnID = key.TurnID
 		s.bridgeParsers[key] = parser
 	}
 	return parser
+}
+
+// sessionAgent loads the session's configured agent, returning "" (and logging)
+// on failure so an unsupported/empty driver surfaces through the normalizer
+// rather than aborting output handling.
+func (s *Server) sessionAgent(ctx context.Context, sessionID string) string {
+	session, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		s.log.Warn("failed to load session for bridge output", "session_id", sessionID, "error", err)
+		return ""
+	}
+	return session.Agent
 }
 
 func (s *Server) completeBridgeStreamParser(envelope bridge.Envelope) {
@@ -3686,7 +3701,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		if !s.eventVisibleTo(r.Context(), event, userID) {
 			continue
 		}
-		if err := conn.WriteJSON(publicEvent(event)); err != nil {
+		if err := conn.WriteJSON(s.publicEventForDelivery(event)); err != nil {
 			return
 		}
 	}
@@ -3715,7 +3730,7 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 
 	lastEventID, cursorProvided, err := parseLastEventID(r)
 	if err != nil {
-		writeSSEError(w, flusher, "invalid_last_event_id", err.Error())
+		s.writeSSEError(w, flusher, "invalid_last_event_id", err.Error())
 		return
 	}
 	ch, cancel := s.hub.Subscribe(sessionID)
@@ -3761,7 +3776,7 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if err := writeSSEEvent(w, event); err != nil {
+			if err := s.writeSSEEvent(w, event); err != nil {
 				return
 			}
 			if event.EventID > replayedThrough {
@@ -3831,7 +3846,7 @@ func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flus
 		if sessionID != "" {
 			payloadSessionID = sessionID
 		}
-		if err := writeSSEEvent(w, events.Event{
+		if err := s.writeSSEEventUncached(w, events.Event{
 			EventID: gapID,
 			Type:    "replay_gap",
 			Payload: map[string]any{
@@ -3860,7 +3875,7 @@ func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flus
 			replayedThrough = record.EventID
 			continue
 		}
-		if err := writeSSEEvent(w, event); err != nil {
+		if err := s.writeSSEEventUncached(w, event); err != nil {
 			return replayedThrough, err
 		}
 		replayedThrough = record.EventID
@@ -3902,11 +3917,29 @@ func parseLastEventID(r *http.Request) (int64, bool, error) {
 	return id, true, nil
 }
 
-func writeSSEEvent(w http.ResponseWriter, event events.Event) error {
+// writeSSEEvent sanitizes and frames a live durable event, reusing the shared
+// per-event sanitized payload across subscribers (see publicEventForDelivery).
+// Only genuine durable records (unique, immutable event id -> payload) reach
+// this path.
+func (s *Server) writeSSEEvent(w http.ResponseWriter, event events.Event) error {
 	if event.Time.IsZero() {
 		event.Time = time.Now().UTC()
 	}
-	event = publicEvent(event)
+	return writeSSEEventFramed(w, s.publicEventForDelivery(event))
+}
+
+// writeSSEEventUncached sanitizes and frames an event without consulting the
+// shared payload cache. It is used for replayed and synthetic events (e.g.
+// replay_gap, whose EventID is borrowed from the durable stream and would
+// otherwise collide with a real record's cached payload).
+func (s *Server) writeSSEEventUncached(w http.ResponseWriter, event events.Event) error {
+	if event.Time.IsZero() {
+		event.Time = time.Now().UTC()
+	}
+	return writeSSEEventFramed(w, publicEvent(event))
+}
+
+func writeSSEEventFramed(w http.ResponseWriter, event events.Event) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -3925,8 +3958,8 @@ func writeSSEEvent(w http.ResponseWriter, event events.Event) error {
 	return err
 }
 
-func writeSSEError(w http.ResponseWriter, flusher http.Flusher, errorClass, message string) {
-	_ = writeSSEEvent(w, events.Event{
+func (s *Server) writeSSEError(w http.ResponseWriter, flusher http.Flusher, errorClass, message string) {
+	_ = s.writeSSEEvent(w, events.Event{
 		Type: "error",
 		Payload: map[string]string{
 			"error_class": errorClass,

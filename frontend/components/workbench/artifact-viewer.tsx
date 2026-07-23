@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Code2,
   Download,
@@ -494,12 +494,15 @@ function ViewerBody({
 }
 
 function JsonPreview({ text }: { text: string }) {
-  let formatted: string | null = null;
-  try {
-    formatted = JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    formatted = null;
-  }
+  // Parsing + re-stringifying can walk up to the 2MB fetch cap; memoize so a
+  // parent re-render (unrelated state change) doesn't redo it on every pass.
+  const formatted = useMemo<string | null>(() => {
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+      return null;
+    }
+  }, [text]);
   if (formatted !== null) {
     return <CodeView code={formatted} language="json" />;
   }
@@ -515,8 +518,17 @@ function JsonPreview({ text }: { text: string }) {
   );
 }
 
+const PREVIEW_ROW_LIMIT = 200;
+
 function DelimitedTable({ text, delimiter }: { text: string; delimiter: "," | "\t" }) {
-  const rows = parseDelimited(text, delimiter);
+  // Cap the scan at header + the rows we render + one sentinel row. The sentinel
+  // lets us tell "there are more rows" without walking the whole file; we no
+  // longer know the exact total, so the footer reports "200+" in that case.
+  // Memoized on [text, delimiter] so a parent re-render doesn't re-parse.
+  const rows = useMemo(
+    () => parseDelimited(text, delimiter, PREVIEW_ROW_LIMIT + 2),
+    [text, delimiter]
+  );
   if (rows.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-[var(--color-foreground-muted)]">
@@ -526,7 +538,10 @@ function DelimitedTable({ text, delimiter }: { text: string; delimiter: "," | "\
   }
 
   const [head, ...body] = rows;
-  const previewRows = body.slice(0, 200);
+  const previewRows = body.slice(0, PREVIEW_ROW_LIMIT);
+  // body may hold at most PREVIEW_ROW_LIMIT + 1 rows because of the parse cap, so
+  // once it exceeds the preview size the true total is unknown — show "200+".
+  const hasMore = body.length > previewRows.length;
 
   return (
     <div className="h-full overflow-auto">
@@ -565,16 +580,21 @@ function DelimitedTable({ text, delimiter }: { text: string; delimiter: "," | "\
           ))}
         </tbody>
       </table>
-      {body.length > previewRows.length ? (
+      {hasMore ? (
         <div className="border-t border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-foreground-muted)]">
-          Showing first {previewRows.length} rows of {body.length}.
+          Showing first {previewRows.length} rows of {PREVIEW_ROW_LIMIT}+.
         </div>
       ) : null}
     </div>
   );
 }
 
-function parseDelimited(text: string, delimiter: "," | "\t") {
+// Parses delimited text into rows, honouring quoted fields (embedded delimiters,
+// newlines, and "" escapes). When `maxRows` is set the scan stops as soon as that
+// many complete rows have been collected — always on a row boundary, so quoting
+// stays correct — which keeps the preview from walking the entire file (up to the
+// 2MB fetch cap) just to render a few hundred rows.
+function parseDelimited(text: string, delimiter: "," | "\t", maxRows?: number) {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -610,6 +630,11 @@ function parseDelimited(text: string, delimiter: "," | "\t") {
       pushField();
     } else if (char === "\n") {
       pushRow();
+      // Enough complete rows for the preview — stop before scanning the rest of
+      // the file. `row`/`field` are freshly reset here, so nothing is dropped.
+      if (maxRows !== undefined && rows.length >= maxRows) {
+        return rows;
+      }
     } else if (char !== "\r") {
       field += char;
     }

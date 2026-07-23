@@ -34,6 +34,9 @@ import type { ApiArtifact, SessionStatus } from "@/lib/types";
 // Backend-enforced upload limits, mirrored client-side for fast friendly errors.
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MiB per file
 const MAX_UPLOAD_FILES = 2000;
+// Debounce the file-search filtering (mirrors the command palette) so the tree
+// isn't refiltered + rebuilt on every keystroke.
+const SEARCH_DEBOUNCE_MS = 150;
 
 type ArtifactPaneProps = {
   onExpandedChange?: (expanded: boolean) => void;
@@ -83,6 +86,11 @@ function ArtifactPaneInner({
   const [fullScreen, setFullScreen] = useState(false);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
+  // `query` drives the input (updates immediately for a responsive field);
+  // `debouncedQuery` drives the derived filtering + tree rebuild + force-expand
+  // so typing a character doesn't re-filter all artifacts and rebuild the tree
+  // on every keystroke. Mirrors the 150ms debounce in the command palette.
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [upload, setUpload] = useState<UploadState>({ phase: "idle" });
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -162,13 +170,18 @@ function ArtifactPaneInner({
     if (dragDepth.current === 0) setDragging(false);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   const artifactPaths = useMemo(() => new Set(artifacts.map((a) => a.path)), [artifacts]);
   const livePath = openPath && artifactPaths.has(openPath) ? openPath : null;
   const visibleArtifacts = useMemo(() => {
-    const needle = query.trim().toLowerCase();
+    const needle = debouncedQuery.trim().toLowerCase();
     if (!needle) return artifacts;
     return artifacts.filter((a) => a.path.toLowerCase().includes(needle));
-  }, [artifacts, query]);
+  }, [artifacts, debouncedQuery]);
   const tree = useMemo(() => buildArtifactTree(visibleArtifacts), [visibleArtifacts]);
   const activeArtifact = livePath ? artifacts.find((a) => a.path === livePath) ?? null : null;
 
@@ -238,7 +251,13 @@ function ArtifactPaneInner({
       {livePath && activeArtifact ? (
         // ── Preview mode: the panel becomes a full-height Artifact Preview. ──
         <ArtifactViewer
-          key={`${livePath}:${activeArtifact.updated_at}`}
+          // Key on file identity only, NOT updated_at. Including updated_at made
+          // every `artifact.updated` SSE for the open file change the key → a
+          // full unmount/remount + redundant (up to 2MB) refetch on each write
+          // while an agent streams the file, causing flicker. ArtifactViewer's
+          // own effect (deps include artifact.updated_at) already refetches the
+          // content on change, so the component can stay mounted across updates.
+          key={livePath}
           sessionId={sessionId}
           path={livePath}
           artifact={activeArtifact}
@@ -322,7 +341,7 @@ function ArtifactPaneInner({
               <ArtifactTreeView
                 root={tree}
                 collapsedDirs={collapsedDirs}
-                forceExpanded={query.trim().length > 0}
+                forceExpanded={debouncedQuery.trim().length > 0}
                 activePath={null}
                 onToggleDirectory={toggleDirectory}
                 onOpenArtifact={openArtifact}
