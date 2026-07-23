@@ -8,11 +8,14 @@ import {
   Download,
   File,
   FileText,
+  FileType,
   Folder,
   FolderOpen,
   FolderUp,
   Image as ImageIcon,
+  Presentation,
   Search,
+  Sheet,
   Table2,
   Upload
 } from "lucide-react";
@@ -485,6 +488,12 @@ function ArtifactIcon({ path }: { path: string }) {
       return <Braces className={className} />;
     case "table":
       return <Table2 className={className} />;
+    case "spreadsheet":
+      return <Sheet className={className} />;
+    case "document":
+      return <FileType className={className} />;
+    case "presentation":
+      return <Presentation className={className} />;
     case "markdown":
     case "text":
       return <FileText className={className} />;

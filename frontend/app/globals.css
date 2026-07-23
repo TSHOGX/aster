@@ -469,3 +469,34 @@ input:focus-visible {
 .hljs-strong { color: var(--hl-base); font-weight: bold; }
 .hljs-addition { color: var(--hl-addition-fg); background-color: var(--hl-addition-bg); }
 .hljs-deletion { color: var(--hl-deletion-fg); background-color: var(--hl-deletion-bg); }
+
+/*
+  Office document previews (read-only). The xlsx/docx/pptx renderers ship their
+  own DOM + inline styles; these rules only reconcile their chrome with the app
+  shell — the document bodies themselves keep the source formatting.
+*/
+
+/* Excel (x-spreadsheet): let the grid fill the pane and drop its own border. */
+.office-view [data-office-kind="spreadsheet"] { height: 100%; }
+.office-view .x-spreadsheet { border: 0 !important; }
+.office-view .x-spreadsheet-bottombar {
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Word (docx-preview): center pages on the muted pane and give each rendered
+   page a paper card look with a soft shadow. The page interior stays white so
+   the document's own colors/contrast are preserved (also in dark mode). */
+.office-view .docx-wrapper {
+  background: transparent;
+  padding: 0;
+}
+.office-view .docx-wrapper > section.docx {
+  margin: 0 auto 1.5rem;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.08);
+  border-radius: var(--radius-xs);
+}
+
+/* PowerPoint (pptx-preview): center the slide stage and its pager. */
+.office-view [data-office-kind="presentation"] { width: 100%; }
+

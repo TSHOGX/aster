@@ -1,4 +1,4 @@
-export type ViewerKind = "markdown" | "code" | "image" | "json" | "table" | "pdf" | "text" | "binary";
+export type ViewerKind = "markdown" | "code" | "image" | "json" | "table" | "pdf" | "spreadsheet" | "document" | "presentation" | "text" | "binary";
 export type ArtifactClassification = { kind: ViewerKind; language?: string; delimiter?: "," | "\t" };
 
 const CODE_EXT: Record<string, string> = {
@@ -51,6 +51,9 @@ export function classifyArtifact(path: string): ArtifactClassification {
   if (ext === "csv") return { kind: "table", delimiter: "," };
   if (ext === "tsv") return { kind: "table", delimiter: "\t" };
   if (ext === "pdf") return { kind: "pdf" };
+  if (ext === "xlsx" || ext === "xls") return { kind: "spreadsheet" };
+  if (ext === "docx") return { kind: "document" };
+  if (ext === "pptx") return { kind: "presentation" };
   if (CODE_EXT[ext]) return { kind: "code", language: CODE_EXT[ext] };
   if (TEXT_EXT.has(ext)) return { kind: "text" };
   return { kind: "binary" };

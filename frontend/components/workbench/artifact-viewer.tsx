@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import dynamic from "next/dynamic";
+
 import { buildArtifactHref, fetchArtifactText, writeArtifact } from "@/lib/api";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { classifyArtifact, type ArtifactClassification } from "@/lib/mime";
@@ -23,7 +25,21 @@ import { cn } from "@/lib/cn";
 import { MarkdownView } from "./markdown-view";
 import { CodeView } from "./viewers/code-view";
 import { CodeEditor } from "./viewers/code-editor";
+import type { OfficeKind } from "./viewers/office-view";
 import type { ApiArtifact } from "@/lib/types";
+
+// The Office renderers pull in heavy parsers (~3-5 MB across xlsx/docx/pptx);
+// load the wrapper only when such a file is opened, and never on the server.
+const OfficeView = dynamic(() => import("./viewers/office-view").then((m) => m.OfficeView), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center text-[var(--color-foreground-muted)]">
+      <Loader2 className="h-4 w-4 animate-spin" />
+    </div>
+  )
+});
+
+const OFFICE_KINDS = new Set<string>(["spreadsheet", "document", "presentation"]);
 
 type Props = {
   sessionId: string;
@@ -62,7 +78,11 @@ export function ArtifactViewer({ sessionId, path, artifact, fullScreen, onToggle
   const meta = classifyArtifact(path);
   const href = buildArtifactHref(sessionId, path);
   const html = isHtmlPath(path);
-  const skip = meta.kind === "binary" || meta.kind === "image" || meta.kind === "pdf";
+  const skip =
+    meta.kind === "binary" ||
+    meta.kind === "image" ||
+    meta.kind === "pdf" ||
+    OFFICE_KINDS.has(meta.kind);
   // Files with a meaningful rendered form get a Code / Preview switch.
   const hasPreviewToggle = meta.kind === "markdown" || html;
   const [view, setView] = useState<ViewMode>("preview");
@@ -204,7 +224,14 @@ export function ArtifactViewer({ sessionId, path, artifact, fullScreen, onToggle
             className="h-full w-full border-0 bg-white"
           />
         ) : (
-          <ViewerBody path={path} href={href} meta={meta} load={load} forceCode={effectiveView === "code"} />
+          <ViewerBody
+            sessionId={sessionId}
+            path={path}
+            href={href}
+            meta={meta}
+            load={load}
+            forceCode={effectiveView === "code"}
+          />
         )}
       </div>
       {saving ? (
@@ -371,18 +398,24 @@ function ViewerHeader({
 }
 
 function ViewerBody({
+  sessionId,
   path,
   href,
   meta,
   load,
   forceCode
 }: {
+  sessionId: string;
   path: string;
   href: string;
   meta: ArtifactClassification;
   load: LoadState;
   forceCode?: boolean;
 }) {
+  if (meta.kind === "spreadsheet" || meta.kind === "document" || meta.kind === "presentation") {
+    return <OfficeView sessionId={sessionId} path={path} href={href} kind={meta.kind as OfficeKind} />;
+  }
+
   if (meta.kind === "image") {
     return (
       <div className="flex h-full items-center justify-center overflow-auto bg-[var(--color-surface)] p-4">

@@ -320,3 +320,19 @@ export async function fetchArtifactText(sessionId: string, path: string, maxByte
   }
   return { ok: true as const, text, lastModified };
 }
+
+export async function fetchArtifactBlob(sessionId: string, path: string, maxBytes = 25 * 1024 * 1024) {
+  const response = await fetch(buildArtifactHref(sessionId, path), { cache: "no-store" });
+  if (!response.ok) {
+    return { ok: false as const, status: response.status, error: response.statusText || "fetch failed" };
+  }
+  const sizeHeader = response.headers.get("content-length");
+  if (sizeHeader && Number.parseInt(sizeHeader, 10) > maxBytes) {
+    return { ok: false as const, status: 413, error: "artifact too large" };
+  }
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength > maxBytes) {
+    return { ok: false as const, status: 413, error: "artifact too large" };
+  }
+  return { ok: true as const, buffer };
+}
