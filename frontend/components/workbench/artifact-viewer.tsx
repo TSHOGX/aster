@@ -1,7 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Code2, Download, Eye, ExternalLink, Loader2, Pencil, RotateCw, Save, X } from "lucide-react";
+import {
+  Code2,
+  Download,
+  Eye,
+  ExternalLink,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Pencil,
+  RotateCw,
+  Save,
+  X
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { buildArtifactHref, fetchArtifactText, writeArtifact } from "@/lib/api";
@@ -13,7 +25,14 @@ import { CodeView } from "./viewers/code-view";
 import { CodeEditor } from "./viewers/code-editor";
 import type { ApiArtifact } from "@/lib/types";
 
-type Props = { sessionId: string; path: string; artifact?: ApiArtifact | null; onClose?: () => void };
+type Props = {
+  sessionId: string;
+  path: string;
+  artifact?: ApiArtifact | null;
+  fullScreen?: boolean;
+  onToggleFullScreen?: () => void;
+  onClose?: () => void;
+};
 
 type ViewMode = "preview" | "code";
 
@@ -39,7 +58,7 @@ type EditState =
   | { phase: "saving"; text: string }
   | { phase: "stale"; text: string };
 
-export function ArtifactViewer({ sessionId, path, artifact, onClose }: Props) {
+export function ArtifactViewer({ sessionId, path, artifact, fullScreen, onToggleFullScreen, onClose }: Props) {
   const meta = classifyArtifact(path);
   const href = buildArtifactHref(sessionId, path);
   const html = isHtmlPath(path);
@@ -146,6 +165,8 @@ export function ArtifactViewer({ sessionId, path, artifact, onClose }: Props) {
         editable={editable}
         editState={edit}
         view={effectiveView}
+        fullScreen={fullScreen}
+        onToggleFullScreen={onToggleFullScreen}
         onViewChange={hasPreviewToggle && editorText === null ? setView : undefined}
         onEdit={startEditing}
         onCancel={cancelEditing}
@@ -202,6 +223,8 @@ function ViewerHeader({
   editable,
   editState,
   view,
+  fullScreen,
+  onToggleFullScreen,
   onViewChange,
   onEdit,
   onCancel,
@@ -214,6 +237,8 @@ function ViewerHeader({
   editable: boolean;
   editState: EditState;
   view: ViewMode;
+  fullScreen?: boolean;
+  onToggleFullScreen?: () => void;
   onViewChange?: (view: ViewMode) => void;
   onEdit: () => void;
   onCancel: () => void;
@@ -309,6 +334,17 @@ function ViewerHeader({
               title="Edit"
             >
               <Pencil className="h-4 w-4" />
+            </button>
+          ) : null}
+          {onToggleFullScreen ? (
+            <button
+              type="button"
+              onClick={onToggleFullScreen}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+              title={fullScreen ? "Exit full screen (dock to sidebar)" : "Full screen preview"}
+              aria-pressed={fullScreen}
+            >
+              {fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>
           ) : null}
           <a

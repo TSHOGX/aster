@@ -75,6 +75,9 @@ function ArtifactPaneInner({
 }) {
   // Artifacts-style: a single open file drives the Preview panel. Null → list view.
   const [openPath, setOpenPath] = useState<string | null>(null);
+  // When true, the preview overlays the whole viewport instead of docking in the
+  // right rail. Persists across file switches; reset once the preview closes.
+  const [fullScreen, setFullScreen] = useState(false);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
   const [upload, setUpload] = useState<UploadState>({ phase: "idle" });
@@ -166,13 +169,18 @@ function ArtifactPaneInner({
   const tree = useMemo(() => buildArtifactTree(visibleArtifacts), [visibleArtifacts]);
   const activeArtifact = livePath ? artifacts.find((a) => a.path === livePath) ?? null : null;
 
-  // Keep the parent grid in sync: the panel widens whenever a live file is open.
+  // Keep the parent grid in sync: the docked panel widens whenever a live file
+  // is open, but not while full-screen (the overlay covers the grid anyway, so
+  // leaving the column at its normal width avoids a reflow behind the overlay).
   useEffect(() => {
-    onExpandedChange?.(livePath !== null);
-  }, [livePath, onExpandedChange]);
+    onExpandedChange?.(livePath !== null && !fullScreen);
+  }, [livePath, fullScreen, onExpandedChange]);
 
   const openArtifact = (path: string) => setOpenPath(path);
-  const closePreview = () => setOpenPath(null);
+  const closePreview = () => {
+    setOpenPath(null);
+    setFullScreen(false);
+  };
 
   const toggleDirectory = (path: string) => {
     setCollapsedDirs((prev) => {
@@ -186,9 +194,14 @@ function ArtifactPaneInner({
     });
   };
 
+  const overlay = fullScreen && livePath !== null && activeArtifact !== null;
+
   return (
     <aside
-      className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-surface)]"
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-surface)]",
+        overlay ? "fixed inset-0 z-40 h-dvh border-l-0" : "h-full"
+      )}
       onDragEnter={onDragEnter}
       onDragOver={(e) => {
         if (Array.from(e.dataTransfer.types).includes("Files")) e.preventDefault();
@@ -226,6 +239,8 @@ function ArtifactPaneInner({
           sessionId={sessionId}
           path={livePath}
           artifact={activeArtifact}
+          fullScreen={fullScreen}
+          onToggleFullScreen={() => setFullScreen((v) => !v)}
           onClose={closePreview}
         />
       ) : (
