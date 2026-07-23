@@ -483,6 +483,8 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 		s.listMessages(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodPost:
 		s.sendMessage(w, r, sessionID)
+	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "feedback" && r.Method == http.MethodPost:
+		s.handlePostMessageFeedback(w, r, sessionID, parts[2])
 	case len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodGet:
 		s.listArtifacts(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodPost:
@@ -1712,12 +1714,61 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, sessionID 
 	if _, ok := s.authorizeSession(w, r, sessionID); !ok {
 		return
 	}
-	messages, err := s.store.ListMessages(r.Context(), sessionID)
+	userID := userIDFromContext(r.Context())
+	messages, err := s.store.ListMessagesForUser(r.Context(), sessionID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+}
+
+// handlePostMessageFeedback records or clears the authenticated user's rating
+// ("up"/"down"; null/"" clears) for a single message. The message must belong
+// to the session in the URL, and that session must be owned by the caller.
+func (s *Server) handlePostMessageFeedback(w http.ResponseWriter, r *http.Request, sessionID, messageIDStr string) {
+	if _, ok := s.authorizeSession(w, r, sessionID); !ok {
+		return
+	}
+	messageID, err := strconv.ParseInt(messageIDStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid message id")
+		return
+	}
+	var req struct {
+		Rating *string `json:"rating"`
+	}
+	limitBody(w, r, maxControlBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	msgSessionID, ok, err := s.store.MessageSession(r.Context(), messageID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok || msgSessionID != sessionID {
+		writeError(w, http.StatusNotFound, "message not found")
+		return
+	}
+	rating := ""
+	if req.Rating != nil {
+		rating = strings.TrimSpace(*req.Rating)
+	}
+	switch rating {
+	case "", "none", "up", "down":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid feedback rating")
+		return
+	}
+	userID := userIDFromContext(r.Context())
+	effective, err := s.store.SetMessageFeedback(r.Context(), messageID, userID, rating)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"feedback": effective})
 }
 
 const searchDefaultLimit = 50
@@ -3184,7 +3235,9 @@ func (s *Server) completeBridgeStreamParser(envelope bridge.Envelope) {
 	if parser == nil {
 		return
 	}
-	parser.flush()
+	// Teardown flush on bridge disconnect: no turn-end event was seen, so the
+	// terminator is unknown.
+	parser.flush("")
 	parser.complete()
 }
 

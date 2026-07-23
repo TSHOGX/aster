@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS messages (
   role TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  stop_reason TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -689,11 +690,45 @@ CREATE TABLE IF NOT EXISTS notification_reads (
 
 CREATE INDEX IF NOT EXISTS notification_reads_user_idx
   ON notification_reads (user_id);
+
+-- Execution trace nodes (thinking phases + tool calls) captured live during a
+-- turn and attached to the assistant message they produced. Stored as a JSON
+-- array so the shape can evolve without a migration; result payloads are kept
+-- summarized/truncated by the writer, not archived whole.
+CREATE TABLE IF NOT EXISTS message_traces (
+  message_id INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  nodes TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS message_traces_session_idx
+  ON message_traces (session_id);
+
+-- Per-user thumbs up/down on an assistant message. One row per (message,user);
+-- toggling the same rating off deletes the row.
+CREATE TABLE IF NOT EXISTS message_feedback (
+  message_id INTEGER NOT NULL,
+  user_id TEXT NOT NULL,
+  rating TEXT NOT NULL CHECK(rating IN ('up','down')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(message_id, user_id),
+  FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS message_feedback_message_idx
+  ON message_feedback (message_id);
 `)
 	if err != nil {
 		return err
 	}
 	if err := s.ensureSessionColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureMessageColumns(ctx); err != nil {
 		return err
 	}
 	return s.backfillMessagesFTS(ctx)
@@ -750,6 +785,33 @@ func (s *Store) ensureSessionColumns(ctx context.Context) error {
 	}
 	for _, column := range columns {
 		exists, err := s.columnExists(ctx, "sessions", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureMessageColumns adds message columns introduced after the original
+// CREATE TABLE. Same O(1) metadata-only guarantee and idempotency as
+// ensureSessionColumns. stop_reason records pi's per-message terminator
+// ("stop" for a turn's final reply, "toolUse" for an intermediate step, "" when
+// unknown) so the UI can distinguish a completed answer from an interstitial.
+func (s *Store) ensureMessageColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"stop_reason", `ALTER TABLE messages ADD COLUMN stop_reason TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "messages", column.name)
 		if err != nil {
 			return err
 		}

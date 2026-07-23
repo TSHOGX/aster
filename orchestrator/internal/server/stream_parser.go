@@ -31,6 +31,9 @@ type streamParser struct {
 	once         sync.Once
 	err          error
 	last         string
+	// trace accumulates execution-trace nodes for the current turn; drained onto
+	// each assistant message as it is persisted.
+	trace *traceCollector
 }
 
 type outputNormalizer interface {
@@ -71,6 +74,7 @@ func newStreamParser(srv *Server, sessionID, driverID string) *streamParser {
 		normalizer: outputNormalizerForDriver(driverID),
 		pending:    map[string]*strings.Builder{},
 		done:       make(chan struct{}),
+		trace:      newTraceCollector(),
 	}
 }
 
@@ -234,7 +238,7 @@ func (shellOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutp
 			}
 		}
 	}
-	p.persistAssistant(rawLine)
+	p.persistAssistant(rawLine, "")
 }
 
 func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput) {
@@ -269,6 +273,7 @@ func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput)
 	case "message_end":
 		p.handlePiMessageEnd(event)
 	case "tool_execution_start", "tool_execution_update", "tool_execution_end":
+		p.captureToolEvent(eventType, event)
 		p.publish("agent.output", event)
 	case "turn_end", "agent_end":
 		if piEventStopReason(event) == "toolUse" {
@@ -276,7 +281,9 @@ func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput)
 			return
 		}
 		p.publish("system.status", event)
-		p.flush()
+		// Reaching flush here means the turn ended without inline text but not on
+		// a toolUse boundary, so the salvaged buffer is the turn-final reply.
+		p.flush(piEventStopReason(event))
 		p.complete()
 	case "error":
 		p.err = fmt.Errorf("pi event error")
@@ -332,13 +339,14 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 		return
 	}
 	id := stringFromMap(event, "messageId")
+	stopReason := piEventStopReason(event)
 	text := piMessageText(event["message"])
 	if text == "" {
 		// No authoritative inline text: salvage whatever streamed in under the
 		// real id and the empty-id fallback key, emitting it as this message's
 		// assistant.message rather than deferring to the turn_end bulk flush.
 		if salvaged := p.drainPending(id, "pi_assistant_pending"); salvaged != "" {
-			p.persistAssistant(salvaged)
+			p.persistAssistant(salvaged, stopReason)
 		}
 		return
 	}
@@ -347,7 +355,7 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 	// again at turn_end.
 	p.dropPending(id)
 	p.dropPending("pi_assistant_pending")
-	p.persistAssistant(text)
+	p.persistAssistant(text, stopReason)
 }
 
 func piEventStopReason(event map[string]any) string {
@@ -417,7 +425,7 @@ func (nativeEventsOutputNormalizer) Handle(p *streamParser, output normalizerBri
 			p.complete()
 			return
 		}
-		p.persistAssistant(payload.Content)
+		p.persistAssistant(payload.Content, "")
 	case "agent.delta", "agent.output", "system.status":
 		p.publish(native.Event.Type, nativeEventPublicPayload(native.Event.Payload))
 	default:
@@ -456,16 +464,51 @@ func (p *streamParser) handleShellTurnDone(exitCode int) {
 	p.complete()
 }
 
-func (p *streamParser) persistAssistant(text string) {
+// captureToolEvent feeds a pi tool_execution_* event into the trace collector.
+// The pi event carries camelCase fields (toolCallId/toolName/args/result); a
+// nil collector (older driver paths) is a no-op.
+func (p *streamParser) captureToolEvent(eventType string, event map[string]any) {
+	if p.trace == nil {
+		return
+	}
+	toolCallID := stringFromMap(event, "toolCallId")
+	toolName := stringFromMap(event, "toolName")
+	switch eventType {
+	case "tool_execution_start":
+		args, _ := event["args"].(map[string]any)
+		p.trace.startTool(toolCallID, toolName, args)
+	case "tool_execution_end":
+		isError, _ := event["isError"].(bool)
+		p.trace.endTool(toolCallID, event["result"], isError)
+	}
+}
+
+// persistAssistant stores an assistant message and publishes it. stopReason is
+// pi's terminator for the message ("stop" = turn-final reply, "toolUse" =
+// intermediate step, "" = unknown), recorded so the UI can tell a completed
+// answer from an interstitial.
+func (p *streamParser) persistAssistant(text, stopReason string) {
 	if strings.TrimSpace(text) == "" || text == p.last {
 		return
 	}
-	stored, err := p.srv.store.AddMessage(context.Background(), p.sessionID, "assistant", text)
+	stored, err := p.srv.store.AddAssistantMessage(context.Background(), p.sessionID, "assistant", text, stopReason)
 	if err != nil {
 		p.srv.log.Warn("failed to store assistant message", "session_id", p.sessionID, "error", err)
 		return
 	}
 	p.last = text
+	// Attach the trace accumulated since the previous message so this reply
+	// carries the thinking/tool work that produced it. Persist first, then echo
+	// on the event so live and reloaded views share one structure.
+	if p.trace != nil {
+		if nodes := p.trace.drain(); nodes != nil {
+			if err := p.srv.store.SaveMessageTrace(context.Background(), stored.ID, p.sessionID, nodes); err != nil {
+				p.srv.log.Warn("failed to store message trace", "session_id", p.sessionID, "message_id", stored.ID, "error", err)
+			} else {
+				stored.Trace = nodes
+			}
+		}
+	}
 	p.srv.hub.Publish(events.Event{Type: "agent.message", SessionID: p.sessionID, Payload: stored})
 }
 
@@ -478,7 +521,7 @@ func (p *streamParser) persistShellOutput(text string) {
 	p.srv.hub.Publish(events.Event{Type: "agent.message", SessionID: p.sessionID, Payload: stored})
 }
 
-func (p *streamParser) flush() {
+func (p *streamParser) flush(stopReason string) {
 	// If the runtime exited mid-stream without ever delivering an "assistant"
 	// or "result" event, salvage whatever we buffered into a final message.
 	// Iterate in insertion order so multi-builder text (multiple messageIds or
@@ -496,7 +539,7 @@ func (p *streamParser) flush() {
 	p.pending = map[string]*strings.Builder{}
 	p.pendingOrder = nil
 	if text := strings.TrimSpace(b.String()); text != "" {
-		p.persistAssistant(text)
+		p.persistAssistant(text, stopReason)
 	}
 }
 

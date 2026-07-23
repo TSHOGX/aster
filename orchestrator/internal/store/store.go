@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -51,6 +52,19 @@ type Message struct {
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
+	// StopReason is pi's terminator for an assistant message: "stop" for a
+	// turn's final reply, "toolUse" for an intermediate tool-calling step, or ""
+	// when unknown (user messages, shell output, salvaged text, pre-migration
+	// history). Lets the client mark a completed answer vs. an interstitial.
+	StopReason string `json:"stop_reason,omitempty"`
+	// Trace holds the execution-trace nodes (thinking phases + tool calls) that
+	// produced this assistant message. Nil when the message has no stored trace
+	// (user messages, shell output, pre-trace history). Serialized to the client
+	// verbatim; the orchestrator does not interpret node contents.
+	Trace json.RawMessage `json:"trace,omitempty"`
+	// Feedback is the requesting user's thumbs rating for this message
+	// ("up"/"down"), or empty when unset. Populated by ListMessages.
+	Feedback string `json:"feedback,omitempty"`
 }
 
 type EnqueueTurnMessageParams struct {
@@ -488,10 +502,17 @@ WHERE id = ?
 }
 
 func (s *Store) AddMessage(ctx context.Context, sessionID, role, content string) (Message, error) {
+	return s.AddAssistantMessage(ctx, sessionID, role, content, "")
+}
+
+// AddAssistantMessage is AddMessage with pi's stop_reason recorded. Callers
+// that have the terminator (the pi normalizer's message_end path) use this; all
+// others go through AddMessage, which passes an empty stop_reason.
+func (s *Store) AddAssistantMessage(ctx context.Context, sessionID, role, content, stopReason string) (Message, error) {
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx, `
-INSERT INTO messages (session_id, role, content, created_at)
-VALUES (?, ?, ?, ?)`, sessionID, role, content, formatTime(now))
+INSERT INTO messages (session_id, role, content, created_at, stop_reason)
+VALUES (?, ?, ?, ?, ?)`, sessionID, role, content, formatTime(now), stopReason)
 	if err != nil {
 		return Message{}, err
 	}
@@ -499,7 +520,7 @@ VALUES (?, ?, ?, ?)`, sessionID, role, content, formatTime(now))
 	if err != nil {
 		return Message{}, err
 	}
-	return Message{ID: id, SessionID: sessionID, Role: role, Content: content, CreatedAt: now}, nil
+	return Message{ID: id, SessionID: sessionID, Role: role, Content: content, CreatedAt: now, StopReason: stopReason}, nil
 }
 
 func (s *Store) EnqueueTurnMessage(ctx context.Context, p EnqueueTurnMessageParams) (EnqueueTurnMessageResult, error) {
@@ -570,9 +591,25 @@ WHERE id = ?
 }
 
 func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]Message, error) {
+	return s.listMessages(ctx, sessionID, "")
+}
+
+// ListMessagesForUser is ListMessages plus the given user's thumbs rating on
+// each message. An empty userID behaves like ListMessages (no feedback joined).
+func (s *Store) ListMessagesForUser(ctx context.Context, sessionID, userID string) ([]Message, error) {
+	return s.listMessages(ctx, sessionID, userID)
+}
+
+func (s *Store) listMessages(ctx context.Context, sessionID, userID string) ([]Message, error) {
+	// LEFT JOIN the trace (one row per message) and, when a user is known, that
+	// user's feedback. Both are optional so history predating either table still
+	// reads back cleanly as NULL.
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, session_id, role, content, created_at
-FROM messages WHERE session_id = ? ORDER BY id ASC`, sessionID)
+SELECT m.id, m.session_id, m.role, m.content, m.created_at, m.stop_reason, t.nodes, f.rating
+FROM messages m
+LEFT JOIN message_traces t ON t.message_id = m.id
+LEFT JOIN message_feedback f ON f.message_id = m.id AND f.user_id = ?
+WHERE m.session_id = ? ORDER BY m.id ASC`, userID, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -582,13 +619,81 @@ FROM messages WHERE session_id = ? ORDER BY id ASC`, sessionID)
 	for rows.Next() {
 		var m Message
 		var createdAt string
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &createdAt); err != nil {
+		var stopReason sql.NullString
+		var nodes sql.NullString
+		var rating sql.NullString
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &createdAt, &stopReason, &nodes, &rating); err != nil {
 			return nil, err
 		}
 		m.CreatedAt = parseTime(createdAt)
+		if stopReason.Valid {
+			m.StopReason = stopReason.String
+		}
+		if nodes.Valid && nodes.String != "" {
+			m.Trace = json.RawMessage(nodes.String)
+		}
+		if rating.Valid {
+			m.Feedback = rating.String
+		}
 		messages = append(messages, m)
 	}
 	return messages, rows.Err()
+}
+
+// SaveMessageTrace stores (or replaces) the execution-trace node array for an
+// assistant message. nodes must be a JSON array; an empty/blank value is a
+// no-op so callers can pass through turns that produced no trace.
+func (s *Store) SaveMessageTrace(ctx context.Context, messageID int64, sessionID string, nodes json.RawMessage) error {
+	if len(nodes) == 0 || strings.TrimSpace(string(nodes)) == "" || string(nodes) == "[]" {
+		return nil
+	}
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO message_traces (message_id, session_id, nodes, created_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(message_id) DO UPDATE SET nodes = excluded.nodes`,
+		messageID, sessionID, string(nodes), formatTime(now))
+	return err
+}
+
+// SetMessageFeedback upserts the user's thumbs rating for a message. rating must
+// be "up" or "down"; passing "" (or "none") clears any existing rating. Returns
+// the effective rating after the operation ("" when cleared).
+func (s *Store) SetMessageFeedback(ctx context.Context, messageID int64, userID, rating string) (string, error) {
+	rating = strings.TrimSpace(rating)
+	if rating == "" || rating == "none" {
+		if _, err := s.db.ExecContext(ctx,
+			`DELETE FROM message_feedback WHERE message_id = ? AND user_id = ?`, messageID, userID); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	if rating != "up" && rating != "down" {
+		return "", fmt.Errorf("invalid feedback rating %q", rating)
+	}
+	now := formatTime(time.Now().UTC())
+	if _, err := s.db.ExecContext(ctx, `
+INSERT INTO message_feedback (message_id, user_id, rating, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(message_id, user_id) DO UPDATE SET rating = excluded.rating, updated_at = excluded.updated_at`,
+		messageID, userID, rating, now, now); err != nil {
+		return "", err
+	}
+	return rating, nil
+}
+
+// MessageSession returns the session id that owns a message, or ("", false)
+// when no such message exists. Used to authorize feedback writes.
+func (s *Store) MessageSession(ctx context.Context, messageID int64) (string, bool, error) {
+	var sessionID string
+	err := s.db.QueryRowContext(ctx, `SELECT session_id FROM messages WHERE id = ?`, messageID).Scan(&sessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return sessionID, true, nil
 }
 
 func (s *Store) UpsertArtifact(ctx context.Context, artifact Artifact) error {

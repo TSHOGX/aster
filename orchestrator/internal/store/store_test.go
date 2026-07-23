@@ -84,6 +84,98 @@ func TestListMessagesAndUUID(t *testing.T) {
 	}
 }
 
+func TestMessageTraceAndFeedback(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Now().UTC()
+	sess := Session{
+		ID: "sess_t", UserID: "lab", Status: string(sessionstate.Created),
+		Agent: "pi", Workspace: dir, RestoreID: "r", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := st.CreateSession(ctx, sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	msg, err := st.AddAssistantMessage(ctx, sess.ID, "assistant", "done", "stop")
+	if err != nil {
+		t.Fatalf("add message: %v", err)
+	}
+	if msg.StopReason != "stop" {
+		t.Fatalf("stop_reason want stop, got %q", msg.StopReason)
+	}
+
+	// Trace: empty/[] is a no-op; a real array round-trips verbatim.
+	if err := st.SaveMessageTrace(ctx, msg.ID, sess.ID, nil); err != nil {
+		t.Fatalf("save nil trace: %v", err)
+	}
+	if err := st.SaveMessageTrace(ctx, msg.ID, sess.ID, []byte("[]")); err != nil {
+		t.Fatalf("save empty trace: %v", err)
+	}
+	nodes := []byte(`[{"kind":"tool","toolName":"read","label":"a.txt"}]`)
+	if err := st.SaveMessageTrace(ctx, msg.ID, sess.ID, nodes); err != nil {
+		t.Fatalf("save trace: %v", err)
+	}
+
+	// Feedback: set, toggle value, then clear.
+	if got, err := st.SetMessageFeedback(ctx, msg.ID, "lab", "up"); err != nil || got != "up" {
+		t.Fatalf("set up: got %q err %v", got, err)
+	}
+	if got, err := st.SetMessageFeedback(ctx, msg.ID, "lab", "down"); err != nil || got != "down" {
+		t.Fatalf("set down: got %q err %v", got, err)
+	}
+	if _, err := st.SetMessageFeedback(ctx, msg.ID, "lab", "sideways"); err == nil {
+		t.Fatalf("expected error for invalid rating")
+	}
+
+	msgs, err := st.ListMessagesForUser(ctx, sess.ID, "lab")
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("list for user: len %d err %v", len(msgs), err)
+	}
+	if string(msgs[0].Trace) != string(nodes) {
+		t.Fatalf("trace mismatch: %s", msgs[0].Trace)
+	}
+	if msgs[0].StopReason != "stop" {
+		t.Fatalf("stop_reason round-trip want stop, got %q", msgs[0].StopReason)
+	}
+	if msgs[0].Feedback != "down" {
+		t.Fatalf("feedback want down, got %q", msgs[0].Feedback)
+	}
+
+	// A different user sees the trace but not lab's feedback.
+	other, err := st.ListMessagesForUser(ctx, sess.ID, "someone-else")
+	if err != nil || len(other) != 1 {
+		t.Fatalf("list other: %v", err)
+	}
+	if other[0].Feedback != "" {
+		t.Fatalf("other user feedback should be empty, got %q", other[0].Feedback)
+	}
+	if len(other[0].Trace) == 0 {
+		t.Fatalf("other user should still see trace")
+	}
+
+	// Clear feedback removes it.
+	if got, err := st.SetMessageFeedback(ctx, msg.ID, "lab", ""); err != nil || got != "" {
+		t.Fatalf("clear: got %q err %v", got, err)
+	}
+	msgs, _ = st.ListMessagesForUser(ctx, sess.ID, "lab")
+	if msgs[0].Feedback != "" {
+		t.Fatalf("feedback should be cleared, got %q", msgs[0].Feedback)
+	}
+
+	// MessageSession resolves ownership; unknown id => not ok.
+	if sid, ok, err := st.MessageSession(ctx, msg.ID); err != nil || !ok || sid != sess.ID {
+		t.Fatalf("message session: sid %q ok %v err %v", sid, ok, err)
+	}
+	if _, ok, err := st.MessageSession(ctx, 999999); err != nil || ok {
+		t.Fatalf("unknown message should be not-ok: ok %v err %v", ok, err)
+	}
+}
+
 func TestUpdateSessionTitle(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
