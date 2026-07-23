@@ -14,6 +14,9 @@ import type { SearchHit } from "@/lib/types";
 function Shell() {
   const { state, onLogin, selectSession } = useHarness();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // The right panel widens into an Artifact Preview when a file is open.
+  const [artifactExpanded, setArtifactExpanded] = useState(false);
 
   // Global Ctrl/⌘-P opens the palette (overriding the browser print dialog).
   useEffect(() => {
@@ -59,11 +62,23 @@ function Shell() {
       </div>
     );
   }
+  // Column widths animate: the left rail collapses to an icon strip, and the
+  // right panel widens when an artifact preview is open.
+  const gridCols = `${sidebarCollapsed ? "64px" : "280px"} minmax(0,1fr) ${
+    artifactExpanded ? "min(46vw,640px)" : "360px"
+  }`;
   return (
-    <div className="grid h-dvh min-h-0 overflow-hidden grid-cols-[280px_minmax(0,1fr)_400px] bg-[var(--color-background)]">
-      <Sidebar onOpenSearch={() => setPaletteOpen(true)} />
+    <div
+      className="grid h-dvh min-h-0 overflow-hidden bg-[var(--color-background)] transition-[grid-template-columns] duration-300 ease-out"
+      style={{ gridTemplateColumns: gridCols }}
+    >
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+        onOpenSearch={() => setPaletteOpen(true)}
+      />
       <Conversation />
-      <ArtifactPane />
+      <ArtifactPane onExpandedChange={setArtifactExpanded} />
       {paletteOpen ? (
         <SearchPalette onClose={() => setPaletteOpen(false)} onOpenResult={handleOpenResult} />
       ) : null}
