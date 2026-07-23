@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Loader2, Send, Square, TerminalSquare } from "lucide-react";
 
 import { useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
-import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
@@ -91,45 +90,46 @@ function ShellComposer({
   };
 
   return (
-    <div className="border-t border-[var(--color-border)] bg-[var(--color-background)] px-6 py-3">
-      <div className="flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2">
-        <span className="shrink-0 font-mono text-sm text-[var(--color-foreground-muted)]">$</span>
-        <Textarea
-          ref={ref}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={placeholder}
-          rows={1}
-          disabled={disabled || sending || busy}
-          className="h-8 min-h-8 border-0 bg-transparent px-0 py-1 font-mono text-sm leading-6 focus:border-0 focus:outline-none focus-visible:outline-none"
-        />
-        {busy ? (
-          <Button
-            variant="danger"
-            size="icon"
-            onClick={() => void interrupt()}
-            disabled={stopping}
-            aria-label="Stop"
-            title="Stop"
-          >
-            {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            size="icon"
-            onClick={() => void submit()}
-            disabled={disabled || sending || !value.trim()}
-            aria-label="Run"
-          >
-            <Send className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
-      <div className="mt-1.5 flex items-center justify-between text-[11px] text-[var(--color-foreground-muted)]">
-        <span>{busy ? "Command running. Stop to interrupt." : "Enter to run · Shift+Enter for newline"}</span>
-        {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center px-4 pb-4">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-32 bg-gradient-to-t from-[var(--color-background)] via-[var(--color-background)] to-transparent" />
+      <div className="pointer-events-auto w-full max-w-3xl">
+        <div className="flex items-center gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2 shadow-lg shadow-black/5 backdrop-blur">
+          <span className="shrink-0 font-mono text-sm text-[var(--color-foreground-muted)]">$</span>
+          <Textarea
+            ref={ref}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={onKey}
+            placeholder={placeholder}
+            rows={1}
+            disabled={disabled || sending || busy}
+            className="h-8 min-h-8 resize-none border-0 bg-transparent px-0 py-1 font-mono text-sm leading-6 focus:border-0 focus:outline-none focus-visible:outline-none"
+          />
+          {busy ? (
+            <button
+              onClick={() => void interrupt()}
+              disabled={stopping}
+              aria-label="Stop"
+              title="Stop"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-danger-soft)] text-[var(--color-danger)] transition-colors hover:opacity-80 disabled:opacity-50"
+            >
+              {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
+            </button>
+          ) : (
+            <button
+              onClick={() => void submit()}
+              disabled={disabled || sending || !value.trim()}
+              aria-label="Run"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-button-primary)] text-[var(--color-button-primary-foreground)] transition-colors hover:bg-[var(--color-button-primary-hover)] disabled:bg-[var(--color-surface-muted)] disabled:text-[var(--color-foreground-muted)]"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <div className="mt-1.5 flex items-center justify-between px-3 text-[11px] text-[var(--color-foreground-muted)]">
+          <span>{busy ? "Command running. Stop to interrupt." : "Enter to run · Shift+Enter for newline"}</span>
+          {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
+        </div>
       </div>
     </div>
   );
@@ -161,8 +161,8 @@ export function ShellConversation() {
     : "Run a command…";
 
   return (
-    <main className="flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
+    <main className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
+      <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-6 py-3 backdrop-blur">
         <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={statusTone(session.status)} />
           <span className="truncate text-sm font-medium" title={session.id}>{session.title?.trim() || session.id}</span>
@@ -173,7 +173,7 @@ export function ShellConversation() {
         </div>
       </header>
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-32">
         {convo.loading && convo.messages.length === 0 ? (
           <p className="px-6 py-8 text-xs text-[var(--color-foreground-muted)]">Loading shell…</p>
         ) : convo.messages.length === 0 ? (

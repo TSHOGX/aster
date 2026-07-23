@@ -64,7 +64,7 @@ export function ActivityIndicator({ activity }: { activity: ConversationActivity
 
   return (
     <div
-      className="border-t border-[var(--color-border)] bg-[var(--color-surface-muted)] px-6 py-2"
+      className="mb-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-1.5 shadow-sm"
       role="status"
       aria-live="polite"
       aria-label={activityAccessibleLabel(activity.phase)}

@@ -81,8 +81,8 @@ function ChatConversation() {
   const activityLive = activity.phase !== "idle";
 
   return (
-    <main className="flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
+    <main className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
+      <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-6 py-3 backdrop-blur">
         <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={statusTone(session.status)} />
           <span className="truncate text-sm font-medium" title={session.id}>
@@ -97,7 +97,7 @@ function ChatConversation() {
         </div>
       </header>
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-36">
         {convo.loading && convo.messages.length === 0 ? (
           <p className="px-6 py-8 text-xs text-[var(--color-foreground-muted)]">Loading conversation…</p>
         ) : convo.messages.length === 0 && convo.streaming.length === 0 && !activityLive ? (
@@ -136,11 +136,10 @@ function ChatConversation() {
         )}
       </div>
 
-      <ActivityIndicator activity={activity} />
-
       <Composer
         disabled={!accepting}
         placeholder={placeholder}
+        topSlot={<ActivityIndicator activity={activity} />}
         onSend={(content) => sendMessage(session.id, content)}
       />
     </main>
