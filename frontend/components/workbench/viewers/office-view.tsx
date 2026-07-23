@@ -124,9 +124,25 @@ export function OfficeView({ sessionId, path, href, kind }: Props) {
         setState({ phase: "ready" });
       } catch (err) {
         if (cancelled) return;
+        // Tear down the partially-initialised viewer before showing the error
+        // overlay. x-spreadsheet's init() injects positioned layers (editor,
+        // selector, toolbar) with z-index up to 1001 and pointer-events:auto;
+        // left in place they paint over the overlay and swallow clicks, so the
+        // Download fallback becomes unselectable/unclickable. Clearing the
+        // container removes that leftover DOM entirely.
+        try {
+          disposer?.();
+        } catch {
+          // ignore teardown failures — we're already in the error path
+        }
+        disposer = null;
+        container.replaceChildren();
+        // The underlying viewers throw parser-internal messages (sometimes
+        // non-English, e.g. x-spreadsheet's "未获取到数据…"). Surface a single,
+        // clear, app-consistent line and let the user fall back to Download.
         setState({
           phase: "error",
-          message: err instanceof Error ? err.message : "This file couldn't be rendered."
+          message: "This file couldn't be previewed. It may use features the viewer doesn't support."
         });
       }
     })();
@@ -152,12 +168,12 @@ export function OfficeView({ sessionId, path, href, kind }: Props) {
         }
       />
       {state.phase === "loading" ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-sm text-[var(--color-foreground-muted)]">
+        <div className="pointer-events-none absolute inset-0 z-[1100] flex items-center justify-center gap-2 bg-[var(--color-surface-muted)] text-sm text-[var(--color-foreground-muted)]">
           <Loader2 className="h-4 w-4 animate-spin" /> Rendering preview…
         </div>
       ) : null}
       {state.phase === "error" ? (
-        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+        <div className="absolute inset-0 z-[1100] flex items-center justify-center bg-[var(--color-surface-muted)] px-6 text-center">
           <div>
             <p className="text-sm">{state.message}</p>
             <a
