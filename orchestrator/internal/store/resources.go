@@ -7,10 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"net/url"
-	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -543,12 +539,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	affected, err := res.RowsAffected()
-	if err != nil {
+	if err := requireOneRow(res, "generation live CAS failed"); err != nil {
 		return err
-	}
-	if affected != 1 {
-		return fmt.Errorf("generation live CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE network_profiles
@@ -559,12 +551,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	affected, err = res.RowsAffected()
-	if err != nil {
+	if err := requireOneRow(res, "network allocation live CAS failed"); err != nil {
 		return err
-	}
-	if affected != 1 {
-		return fmt.Errorf("network allocation live CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE runtime_generation_resources
@@ -574,12 +562,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	affected, err = res.RowsAffected()
-	if err != nil {
+	if err := requireOneRow(res, "generation resource live CAS failed"); err != nil {
 		return err
-	}
-	if affected != 1 {
-		return fmt.Errorf("generation resource live CAS failed")
 	}
 	return tx.Commit()
 }
@@ -1015,10 +999,8 @@ WHERE generation_id = ?
 		if err != nil {
 			return nil, err
 		}
-		if affected, err := res.RowsAffected(); err != nil {
+		if err := requireOneRow(res, "checkpoint retirement generation CAS failed"); err != nil {
 			return nil, err
-		} else if affected != 1 {
-			return nil, fmt.Errorf("checkpoint retirement generation CAS failed")
 		}
 		res, err = tx.ExecContext(ctx, `
 UPDATE network_profiles
@@ -1029,10 +1011,8 @@ WHERE generation_id = ?
 		if err != nil {
 			return nil, err
 		}
-		if affected, err := res.RowsAffected(); err != nil {
+		if err := requireOneRow(res, "checkpoint retirement network CAS failed"); err != nil {
 			return nil, err
-		} else if affected != 1 {
-			return nil, fmt.Errorf("checkpoint retirement network CAS failed")
 		}
 		res, err = tx.ExecContext(ctx, `
 UPDATE runtime_generation_resources
@@ -1042,10 +1022,8 @@ WHERE generation_id = ?
 		if err != nil {
 			return nil, err
 		}
-		if affected, err := res.RowsAffected(); err != nil {
+		if err := requireOneRow(res, "checkpoint retirement resource CAS failed"); err != nil {
 			return nil, err
-		} else if affected != 1 {
-			return nil, fmt.Errorf("checkpoint retirement resource CAS failed")
 		}
 		res, err = tx.ExecContext(ctx, `
 UPDATE sessions
@@ -1059,10 +1037,8 @@ WHERE id = ?
 		if err != nil {
 			return nil, err
 		}
-		if affected, err := res.RowsAffected(); err != nil {
+		if err := requireOneRow(res, "checkpoint retirement session CAS failed"); err != nil {
 			return nil, err
-		} else if affected != 1 {
-			return nil, fmt.Errorf("checkpoint retirement session CAS failed")
 		}
 		var lastActivity any
 		if candidate.lastActivityAt.Valid {
@@ -1159,10 +1135,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return RetiredRestoreFallback{}, err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "restore fallback generation CAS failed"); err != nil {
 		return RetiredRestoreFallback{}, err
-	} else if affected != 1 {
-		return RetiredRestoreFallback{}, fmt.Errorf("restore fallback generation CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE network_profiles
@@ -1173,10 +1147,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return RetiredRestoreFallback{}, err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "restore fallback network CAS failed"); err != nil {
 		return RetiredRestoreFallback{}, err
-	} else if affected != 1 {
-		return RetiredRestoreFallback{}, fmt.Errorf("restore fallback network CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE runtime_generation_resources
@@ -1186,10 +1158,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return RetiredRestoreFallback{}, err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "restore fallback resource CAS failed"); err != nil {
 		return RetiredRestoreFallback{}, err
-	} else if affected != 1 {
-		return RetiredRestoreFallback{}, fmt.Errorf("restore fallback resource CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE sessions
@@ -1205,10 +1175,8 @@ WHERE id = ?
 	if err != nil {
 		return RetiredRestoreFallback{}, err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "restore fallback session update CAS failed"); err != nil {
 		return RetiredRestoreFallback{}, err
-	} else if affected != 1 {
-		return RetiredRestoreFallback{}, fmt.Errorf("restore fallback session update CAS failed")
 	}
 	var lastActivity any
 	if lastActivityAt.Valid {
@@ -1315,12 +1283,8 @@ WHERE session_id = ?
 	if err != nil {
 		return err
 	}
-	affected, err := res.RowsAffected()
-	if err != nil {
+	if err := requireOneRow(res, "network allocation destroyed CAS failed"); err != nil {
 		return err
-	}
-	if affected != 1 {
-		return fmt.Errorf("network allocation destroyed CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE runtime_generation_resources
@@ -1331,428 +1295,10 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	affected, err = res.RowsAffected()
-	if err != nil {
+	if err := requireOneRow(res, "generation resource destroyed CAS failed"); err != nil {
 		return err
 	}
-	if affected != 1 {
-		return fmt.Errorf("generation resource destroyed CAS failed")
-	}
 	return tx.Commit()
-}
-
-func (s *Store) ListExpiredRuntimeRecoveryCandidates(ctx context.Context, p StartupRecoveryParams) ([]ExpiredRuntimeRecoveryCandidate, error) {
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	if p.AckStartedGrace <= 0 {
-		p.AckStartedGrace = p.ReconnectGrace
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := assertOwnerTx(ctx, tx, p.OwnerUUID); err != nil {
-		return nil, err
-	}
-
-	var candidates []ExpiredRuntimeRecoveryCandidate
-	rows, err := tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status
-FROM runtime_generations g
-JOIN sessions s ON s.id = g.session_id
-JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
-WHERE g.status IN ('allocating','starting','probing','restoring','checkpointing')
-  AND g.lease_expires_at IS NOT NULL
-  AND g.lease_expires_at <= ?
-  AND s.active_generation_id = g.generation_id
-  AND s.status NOT IN ('failed', 'destroyed')
-ORDER BY s.id, g.generation_id`, formatTime(p.Now))
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		c.ErrorClass = "orchestrator_restart_during_" + c.Status
-		candidates = append(candidates, c)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-
-	ackStartedCutoff := p.Now.Add(-p.AckStartedGrace)
-	rows, err = tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status
-FROM runtime_generations g
-JOIN sessions s ON s.id = g.session_id
-JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
-WHERE g.status IN ('active','idle')
-  AND g.lease_expires_at IS NOT NULL
-  AND g.lease_expires_at <= ?
-  AND s.active_generation_id = g.generation_id
-  AND s.status NOT IN ('failed', 'destroyed')
-  AND EXISTS (
-    SELECT 1 FROM turns
-    WHERE turns.generation_id = g.generation_id
-      AND turns.status = 'running'
-      AND turns.ack_started_at IS NOT NULL
-      AND turns.lease_expires_at IS NOT NULL
-      AND turns.lease_expires_at <= ?
-  )
-ORDER BY s.id, g.generation_id`, formatTime(ackStartedCutoff), formatTime(ackStartedCutoff))
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		c.ErrorClass = "unknown_after_ack_started"
-		candidates = append(candidates, c)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-
-	cutoff := p.Now.Add(-p.ReconnectGrace)
-	rows, err = tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status
-FROM runtime_generations g
-JOIN sessions s ON s.id = g.session_id
-JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
-WHERE g.status IN ('active','idle')
-  AND g.lease_expires_at IS NOT NULL
-  AND g.lease_expires_at <= ?
-  AND s.active_generation_id = g.generation_id
-  AND s.status NOT IN ('failed', 'destroyed')
-  AND NOT EXISTS (
-    SELECT 1 FROM turns
-    WHERE turns.generation_id = g.generation_id
-      AND turns.status = 'running'
-      AND turns.ack_started_at IS NOT NULL
-  )
-ORDER BY s.id, g.generation_id`, formatTime(cutoff))
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		c.ErrorClass = "orchestrator_restart_reconnect_grace_expired"
-		candidates = append(candidates, c)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return candidates, nil
-}
-
-func (s *Store) RepairExpiredRuntimeRecovery(ctx context.Context, p StartupRecoveryParams, candidates []ExpiredRuntimeRecoveryCandidate) (StartupRecoveryResult, error) {
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	if p.AckStartedGrace <= 0 {
-		p.AckStartedGrace = p.ReconnectGrace
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return StartupRecoveryResult{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := assertOwnerTx(ctx, tx, p.OwnerUUID); err != nil {
-		return StartupRecoveryResult{}, err
-	}
-	result := StartupRecoveryResult{}
-	now := formatTime(p.Now)
-	lifecycleIDs, unknownIDs, reconnectIDs := recoveryCandidateIDs(candidates)
-
-	lifecycleIDs, err = filterLifecycleRecoveryIDsTx(ctx, tx, lifecycleIDs, p.Now)
-	if err != nil {
-		return StartupRecoveryResult{}, err
-	}
-	if len(lifecycleIDs) > 0 {
-		requeued, err := requeueExpiredLeasedTurnsTx(ctx, tx, lifecycleIDs, p.Now)
-		if err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		result.ExpiredLeasedRequeued += requeued
-		args := []any{now}
-		args = appendStringIDs(args, lifecycleIDs)
-		if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'failed',
-    error_class = 'orchestrator_restart_during_' || status,
-    failure_reason = 'orchestrator_restart_during_' || status,
-    ended_at = ?,
-    lease_owner = NULL
-WHERE generation_id IN (`+sqlPlaceholders(len(lifecycleIDs))+`)`, args...); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if err := markAllocationsReclaimableTx(ctx, tx, lifecycleIDs); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if err := deleteActiveContextsForGenerationsTx(ctx, tx, lifecycleIDs); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		result.ExpiredLifecycleFailed = int64(len(lifecycleIDs))
-	}
-
-	unknownIDs, err = filterUnknownRecoveryIDsTx(ctx, tx, unknownIDs, p.Now.Add(-p.AckStartedGrace))
-	if err != nil {
-		return StartupRecoveryResult{}, err
-	}
-	if len(unknownIDs) > 0 {
-		args := []any{now}
-		args = appendStringIDs(args, unknownIDs)
-		res, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET status = 'failed',
-    completed_at = ?,
-    completed_by_generation = generation_id,
-    error_class = 'unknown_after_ack_started',
-    error = 'unknown_after_ack_started',
-    lease_owner = NULL,
-    lease_expires_at = NULL
-WHERE generation_id IN (`+sqlPlaceholders(len(unknownIDs))+`)
-  AND status = 'running'
-  AND ack_started_at IS NOT NULL`, args...)
-		if err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		unknownTurns, err := res.RowsAffected()
-		if err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		args = []any{now}
-		args = appendStringIDs(args, unknownIDs)
-		if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'failed',
-    error_class = 'unknown_after_ack_started',
-    failure_reason = 'unknown_after_ack_started',
-    ended_at = ?,
-    lease_owner = NULL
-WHERE generation_id IN (`+sqlPlaceholders(len(unknownIDs))+`)`, args...); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if err := markAllocationsReclaimableTx(ctx, tx, unknownIDs); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if err := deleteActiveContextsForGenerationsTx(ctx, tx, unknownIDs); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		result.UnknownAfterAckStarted += unknownTurns
-	}
-
-	reconnectIDs, err = filterReconnectRecoveryIDsTx(ctx, tx, reconnectIDs, p.Now.Add(-p.ReconnectGrace))
-	if err != nil {
-		return StartupRecoveryResult{}, err
-	}
-	if len(reconnectIDs) > 0 {
-		requeued, err := requeueExpiredLeasedTurnsTx(ctx, tx, reconnectIDs, p.Now)
-		if err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		result.ExpiredLeasedRequeued += requeued
-		args := []any{now}
-		args = appendStringIDs(args, reconnectIDs)
-		if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'failed',
-    error_class = 'orchestrator_restart_reconnect_grace_expired',
-    failure_reason = 'orchestrator_restart_reconnect_grace_expired',
-    ended_at = ?,
-    lease_owner = NULL
-WHERE generation_id IN (`+sqlPlaceholders(len(reconnectIDs))+`)`, args...); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if err := markAllocationsReclaimableTx(ctx, tx, reconnectIDs); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if err := deleteActiveContextsForGenerationsTx(ctx, tx, reconnectIDs); err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		result.ReconnectGraceFailed = int64(len(reconnectIDs))
-	}
-	repairedIDs := append(append([]string{}, lifecycleIDs...), unknownIDs...)
-	repairedIDs = append(repairedIDs, reconnectIDs...)
-	for _, generationID := range repairedIDs {
-		eventID, err := repairRecoveredSessionTx(ctx, tx, generationID, p.Now)
-		if err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if eventID != 0 {
-			result.EventIDs = append(result.EventIDs, eventID)
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `
-DELETE FROM active_model_request_contexts
-WHERE lease_owner NOT LIKE ?`, p.OwnerUUID+":%"); err != nil {
-		return StartupRecoveryResult{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return StartupRecoveryResult{}, err
-	}
-	return result, nil
-}
-
-func recoveryCandidateIDs(candidates []ExpiredRuntimeRecoveryCandidate) (lifecycleIDs, unknownIDs, reconnectIDs []string) {
-	for _, candidate := range candidates {
-		switch candidate.ErrorClass {
-		case "unknown_after_ack_started":
-			unknownIDs = append(unknownIDs, candidate.GenerationID)
-		case "orchestrator_restart_reconnect_grace_expired":
-			reconnectIDs = append(reconnectIDs, candidate.GenerationID)
-		default:
-			if strings.HasPrefix(candidate.ErrorClass, "orchestrator_restart_during_") {
-				lifecycleIDs = append(lifecycleIDs, candidate.GenerationID)
-			}
-		}
-	}
-	return lifecycleIDs, unknownIDs, reconnectIDs
-}
-
-func filterLifecycleRecoveryIDsTx(ctx context.Context, tx *sql.Tx, ids []string, now time.Time) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	args := appendStringIDs([]any{formatTime(now)}, ids)
-	return queryStringColumnTx(ctx, tx, `
-SELECT generation_id
-FROM runtime_generations
-WHERE status IN ('allocating','starting','probing','restoring','checkpointing')
-  AND lease_expires_at IS NOT NULL
-  AND lease_expires_at <= ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE sessions.id = runtime_generations.session_id
-      AND sessions.active_generation_id = runtime_generations.generation_id
-      AND sessions.status NOT IN ('failed', 'destroyed')
-  )
-  AND generation_id IN (`+sqlPlaceholders(len(ids))+`)`, args...)
-}
-
-func filterUnknownRecoveryIDsTx(ctx context.Context, tx *sql.Tx, ids []string, cutoff time.Time) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	args := appendStringIDs([]any{formatTime(cutoff), formatTime(cutoff)}, ids)
-	return queryStringColumnTx(ctx, tx, `
-SELECT generation_id
-FROM runtime_generations
-WHERE status IN ('active','idle')
-  AND lease_expires_at IS NOT NULL
-  AND lease_expires_at <= ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE sessions.id = runtime_generations.session_id
-      AND sessions.active_generation_id = runtime_generations.generation_id
-      AND sessions.status NOT IN ('failed', 'destroyed')
-  )
-  AND EXISTS (
-    SELECT 1 FROM turns
-    WHERE turns.generation_id = runtime_generations.generation_id
-      AND turns.status = 'running'
-      AND turns.ack_started_at IS NOT NULL
-      AND turns.lease_expires_at IS NOT NULL
-      AND turns.lease_expires_at <= ?
-  )
-  AND generation_id IN (`+sqlPlaceholders(len(ids))+`)`, args...)
-}
-
-func filterReconnectRecoveryIDsTx(ctx context.Context, tx *sql.Tx, ids []string, cutoff time.Time) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	args := appendStringIDs([]any{formatTime(cutoff)}, ids)
-	return queryStringColumnTx(ctx, tx, `
-SELECT generation_id
-FROM runtime_generations
-WHERE status IN ('active','idle')
-  AND lease_expires_at IS NOT NULL
-  AND lease_expires_at <= ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE sessions.id = runtime_generations.session_id
-      AND sessions.active_generation_id = runtime_generations.generation_id
-      AND sessions.status NOT IN ('failed', 'destroyed')
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM turns
-    WHERE turns.generation_id = runtime_generations.generation_id
-      AND turns.status = 'running'
-      AND turns.ack_started_at IS NOT NULL
-  )
-  AND generation_id IN (`+sqlPlaceholders(len(ids))+`)`, args...)
-}
-
-func repairRecoveredSessionTx(ctx context.Context, tx *sql.Tx, generationID string, now time.Time) (int64, error) {
-	nowString := formatTime(now)
-	res, err := tx.ExecContext(ctx, `
-UPDATE sessions
-SET status = CASE
-      WHEN EXISTS (
-        SELECT 1 FROM turns
-        WHERE turns.session_id = sessions.id
-          AND turns.status IN ('queued','leased','running')
-      ) THEN 'running_active'
-      ELSE 'running_idle'
-    END,
-    checkpoint_path = NULL,
-    restore_ms = NULL,
-    error_class = NULL,
-    failure_reason = NULL,
-    updated_at = ?
-WHERE active_generation_id = ?
-  AND status NOT IN ('failed', 'destroyed')`, nowString, generationID)
-	if err != nil {
-		return 0, err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	if affected == 0 {
-		return 0, nil
-	}
-	var sessionID, sessionStatus, errorClass, reason string
-	if err := tx.QueryRowContext(ctx, `
-SELECT s.id, s.status, COALESCE(g.error_class, ''), COALESCE(g.failure_reason, '')
-FROM sessions s
-JOIN runtime_generations g ON g.generation_id = s.active_generation_id
-WHERE s.active_generation_id = ?`, generationID).Scan(&sessionID, &sessionStatus, &errorClass, &reason); err != nil {
-		return 0, err
-	}
-	return appendEventTx(ctx, tx, AppendEventParams{
-		SessionID:    sessionID,
-		GenerationID: generationID,
-		DedupeKey:    "runtime_recovery:" + generationID + ":" + errorClass,
-		Type:         "generation.error",
-		Payload: map[string]any{
-			"terminal":             false,
-			"error_class":          errorClass,
-			"error":                reason,
-			"generation_id":        generationID,
-			"session_status":       sessionStatus,
-			"session_updated_at":   nowString,
-			"active_generation_id": generationID,
-			"restore_ms":           nil,
-		},
-		Now: now,
-	})
 }
 
 func (s *Store) RenewLiveGenerationLeases(ctx context.Context, p RenewLiveGenerationsParams) (int64, error) {
@@ -2190,10 +1736,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation checkpoint begin CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("generation checkpoint begin CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE sessions
@@ -2206,10 +1750,8 @@ WHERE id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "session checkpoint begin CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("session checkpoint begin CAS failed")
 	}
 	return tx.Commit()
 }
@@ -2236,10 +1778,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation checkpoint abort CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("generation checkpoint abort CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE sessions
@@ -2251,10 +1791,8 @@ WHERE id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "session checkpoint abort CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("session checkpoint abort CAS failed")
 	}
 	return tx.Commit()
 }
@@ -2336,10 +1874,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation checkpoint complete CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("generation checkpoint complete CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE network_profiles
@@ -2350,10 +1886,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "network checkpoint complete CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("network checkpoint complete CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE runtime_generation_resources
@@ -2364,10 +1898,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "resource checkpoint complete CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("resource checkpoint complete CAS failed")
 	}
 	res, err = tx.ExecContext(ctx, `
 UPDATE sessions
@@ -2380,10 +1912,8 @@ WHERE id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "session checkpoint complete CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("session checkpoint complete CAS failed")
 	}
 	return tx.Commit()
 }
@@ -2458,10 +1988,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation idle release CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("generation idle release CAS failed")
 	}
 
 	res, err = tx.ExecContext(ctx, `
@@ -2473,10 +2001,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "network idle release CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("network idle release CAS failed")
 	}
 
 	res, err = tx.ExecContext(ctx, `
@@ -2487,10 +2013,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "resource idle release CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("resource idle release CAS failed")
 	}
 
 	res, err = tx.ExecContext(ctx, `
@@ -2505,10 +2029,8 @@ WHERE id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "session idle release CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("session idle release CAS failed")
 	}
 	return tx.Commit()
 }
@@ -2874,377 +2396,10 @@ WHERE id = ?
 	if err != nil {
 		return err
 	}
-	affected, err := res.RowsAffected()
-	if err != nil {
+	if err := requireOneRow(res, "session active generation CAS failed"); err != nil {
 		return err
 	}
-	if affected != 1 {
-		return fmt.Errorf("session active generation CAS failed")
-	}
 	return nil
-}
-
-func nextFreeSlot(ctx context.Context, tx *sql.Tx, pool netip.Prefix) (uint64, error) {
-	rows, err := tx.QueryContext(ctx, `
-SELECT host_side_cidr
-FROM network_profiles
-WHERE allocation_state != 'destroyed'`)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	used := map[uint64]struct{}{}
-	for rows.Next() {
-		var cidr string
-		if err := rows.Scan(&cidr); err != nil {
-			return 0, err
-		}
-		prefix, err := netip.ParsePrefix(cidr)
-		if err != nil || prefix.Bits() != 30 {
-			continue
-		}
-		if slot, ok := slotForPrefix(pool, prefix); ok {
-			used[slot] = struct{}{}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	capacity := uint64(1) << uint(30-pool.Bits())
-	for slot := uint64(0); slot < capacity; slot++ {
-		if _, ok := used[slot]; !ok {
-			return slot, nil
-		}
-	}
-	return 0, ErrPoolExhausted
-}
-
-func slotForPrefix(pool, prefix netip.Prefix) (uint64, bool) {
-	if !pool.Contains(prefix.Addr()) {
-		return 0, false
-	}
-	base := ip4ToUint32(pool.Addr())
-	addr := ip4ToUint32(prefix.Addr())
-	if addr < base {
-		return 0, false
-	}
-	return uint64(addr-base) / 4, true
-}
-
-func buildNetworkAllocation(cfg ResourceAllocatorConfig, slot uint64, generationID string) (networkAllocation, error) {
-	base := ip4ToUint32(cfg.CIDRPool.Addr())
-	networkIP := base + uint32(slot*4)
-	gatewayIP := uint32ToIP4(networkIP + 1)
-	sandboxIP := uint32ToIP4(networkIP + 2)
-	generationToken := shortGenerationToken(generationID)
-	proxyPort := cfg.proxyPort()
-	sandboxBaseURL := fmt.Sprintf("http://%s:%d", gatewayIP, proxyPort)
-	return networkAllocation{
-		HostGatewayIP:  gatewayIP.String(),
-		SandboxBaseURL: sandboxBaseURL,
-		ProbeURL:       sandboxBaseURL,
-		NetnsName:      "harness-gen-" + generationToken,
-		NetnsPath:      filepath.Join("/var/run/netns", "harness-gen-"+generationToken),
-		HostVeth:       "hgen" + generationToken[:6] + "h",
-		SandboxVeth:    "hgen" + generationToken[:6] + "s",
-		SandboxIPCIDR:  sandboxIP.String() + "/30",
-		HostSideCIDR:   netip.PrefixFrom(uint32ToIP4(networkIP), 30).String(),
-	}, nil
-}
-
-func shortGenerationToken(generationID string) string {
-	token := strings.NewReplacer("gen_", "", "-", "").Replace(generationID)
-	if len(token) < 8 {
-		return fmt.Sprintf("%08s", token)
-	}
-	return token[:8]
-}
-
-func buildResourcePaths(runDir, generationID string) resourcePaths {
-	base := filepath.Join(runDir, "gen-"+generationID)
-	controlDir := filepath.Join(runDir, "control", "gen-"+generationID)
-	bundleDir := filepath.Join(runDir, "runtime", "gen-"+generationID)
-	bridgeDir := filepath.Join(runDir, "bridge", "gen-"+generationID)
-	return resourcePaths{
-		ControlDirPath:      controlDir,
-		ControlManifestPath: filepath.Join(controlDir, "session.json"),
-		BundleDirPath:       bundleDir,
-		SpecPath:            filepath.Join(bundleDir, "config.json"),
-		CheckpointPath:      filepath.Join(base, "checkpoint"),
-		SecretsDirPath:      filepath.Join(controlDir, "secrets"),
-		BridgeDirPath:       bridgeDir,
-		NetworkHostsPath:    filepath.Join(runDir, "network", "gen-"+generationID, "hosts"),
-		LogDirPath:          filepath.Join(runDir, "logs", "gen-"+generationID),
-	}
-}
-
-func generationRunscContainerID(generationID string) string {
-	return "harness-gen-" + strings.TrimSpace(generationID)
-}
-
-func allowedEgressRules(hostGatewayIP string, cfg ResourceAllocatorConfig) []string {
-	rules := []string{fmt.Sprintf("tcp:%s:%d", hostGatewayIP, cfg.proxyPort())}
-	if cfg.EgressAllowAll {
-		// Unrestricted outbound: the "all" sentinel opens every host/port for
-		// both TCP and UDP (see parseAllowedEgressRule + applySandboxEgressPolicy).
-		// The proxy rule above is kept so the ordering/digest stays stable, but
-		// the sentinel makes the sandbox output chain accept everything.
-		rules = append(rules, "all")
-		return rules
-	}
-	for _, host := range cfg.EgressDorisFEHosts {
-		for _, port := range cfg.EgressDorisPorts {
-			rules = append(rules, fmt.Sprintf("tcp:%s:%d", host, port))
-		}
-	}
-	for _, host := range cfg.EgressDorisBEHosts {
-		for _, port := range cfg.EgressDorisPorts {
-			rules = append(rules, fmt.Sprintf("tcp:%s:%d", host, port))
-		}
-	}
-	if egressAllowsDNS(cfg) {
-		rules = append(rules, "udp:53", "tcp:53")
-	}
-	return rules
-}
-
-func egressAllowsDNS(cfg ResourceAllocatorConfig) bool {
-	switch cfg.EgressDNSPolicy {
-	case "always":
-		return true
-	case "hostnames_only":
-		return egressUsesHostnames(cfg)
-	default:
-		return false
-	}
-}
-
-func egressUsesHostnames(cfg ResourceAllocatorConfig) bool {
-	return containsHostname(cfg.EgressDorisFEHosts) || containsHostname(cfg.EgressDorisBEHosts)
-}
-
-func containsHostname(hosts []string) bool {
-	for _, host := range hosts {
-		trimmed := strings.TrimSpace(host)
-		if trimmed == "" {
-			return true
-		}
-		if _, err := netip.ParseAddr(trimmed); err != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func egressPolicyID(cfg ResourceAllocatorConfig) string {
-	payload := fmt.Sprintf("proxy_port=%d", cfg.proxyPort()) + "|" +
-		strings.Join(cfg.EgressDorisFEHosts, ",") + "|" +
-		strings.Join(cfg.EgressDorisBEHosts, ",") + "|" +
-		fmt.Sprint(cfg.EgressDorisPorts) + "|" + cfg.EgressDNSPolicy + "|" +
-		fmt.Sprintf("dns_allowed=%t", egressAllowsDNS(cfg))
-	return "egress_" + strings.ReplaceAll(payload, " ", "_")
-}
-
-func agentRuntimeProfileID(generationID string) string {
-	return "arp_" + generationID
-}
-
-func (c ResourceAllocatorConfig) agent() string {
-	if strings.TrimSpace(c.Agent) != "" {
-		return strings.TrimSpace(c.Agent)
-	}
-	if strings.TrimSpace(c.AgentOutputFormat) == "shell_pty" {
-		return string(agents.Shell)
-	}
-	return string(agents.Pi)
-}
-
-func (c ResourceAllocatorConfig) outputFormat() string {
-	if strings.TrimSpace(c.AgentOutputFormat) == "" {
-		return "stream-json"
-	}
-	return strings.TrimSpace(c.AgentOutputFormat)
-}
-
-func (c ResourceAllocatorConfig) sandboxUID() int {
-	if c.SandboxUID <= 0 {
-		return 65534
-	}
-	return c.SandboxUID
-}
-
-func (c ResourceAllocatorConfig) sandboxGID() int {
-	if c.SandboxGID <= 0 {
-		return 65534
-	}
-	return c.SandboxGID
-}
-
-func (c ResourceAllocatorConfig) sandboxSupplementalGIDs() []int {
-	if len(c.SandboxSupplementalGIDs) == 0 {
-		return []int{}
-	}
-	out := append([]int(nil), c.SandboxSupplementalGIDs...)
-	sort.Ints(out)
-	deduped := out[:0]
-	for _, gid := range out {
-		if gid <= 0 {
-			continue
-		}
-		if len(deduped) == 0 || deduped[len(deduped)-1] != gid {
-			deduped = append(deduped, gid)
-		}
-	}
-	return deduped
-}
-
-func (c ResourceAllocatorConfig) modelAccessAllowed() bool {
-	if c.ModelAccessAllowed != nil {
-		return *c.ModelAccessAllowed
-	}
-	return c.driverSupportsModelAccess()
-}
-
-func (c ResourceAllocatorConfig) providerCredentialsHostOnly() bool {
-	return c.driverSupportsModelAccess()
-}
-
-func (c ResourceAllocatorConfig) driverSupportsModelAccess() bool {
-	spec, ok := agents.DriverSpecFor(c.agent())
-	return ok && spec.ModelAccess
-}
-
-func (c ResourceAllocatorConfig) requiresNetworkHostsProjection() bool {
-	if !c.providerCredentialsHostOnly() || !c.modelAccessAllowed() {
-		return false
-	}
-	host := modelProxyBaseURLHost(c.sandboxModelProxyBaseURL())
-	if host == "" {
-		return false
-	}
-	if _, err := netip.ParseAddr(host); err == nil {
-		return false
-	}
-	return true
-}
-
-func (c ResourceAllocatorConfig) manifestAnthropicBaseURL(baseURL string) string {
-	if !c.modelAccessAllowed() {
-		return ""
-	}
-	if c.providerCredentialsHostOnly() {
-		return c.sandboxModelProxyBaseURL()
-	}
-	return strings.TrimSpace(baseURL)
-}
-
-func (c ResourceAllocatorConfig) sandboxModelProxyBaseURL() string {
-	if value := strings.TrimSpace(c.SandboxModelProxyBaseURL); value != "" {
-		return value
-	}
-	if c.providerCredentialsHostOnly() && c.modelAccessAllowed() {
-		return defaultSandboxModelProxyAliasURLForPort(c.proxyPort())
-	}
-	return ""
-}
-
-func defaultSandboxModelProxyAliasURLForPort(port int) string {
-	if port <= 0 {
-		port = defaultSandboxModelProxyAliasPort
-	}
-	return fmt.Sprintf("http://%s:%d", defaultSandboxModelProxyAliasHost, port)
-}
-
-func (c ResourceAllocatorConfig) validateSandboxModelProxyBaseURL() error {
-	if !c.providerCredentialsHostOnly() || !c.modelAccessAllowed() {
-		return nil
-	}
-	raw := c.sandboxModelProxyBaseURL()
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("sandbox model proxy base url %q is invalid: %w", raw, err)
-	}
-	if parsed.Scheme != "http" {
-		return fmt.Errorf("sandbox model proxy base url %q must use the local http proxy scheme", raw)
-	}
-	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return fmt.Errorf("sandbox model proxy base url %q must not include userinfo, query, or fragment", raw)
-	}
-	if parsed.Path != "" && parsed.Path != "/" {
-		return fmt.Errorf("sandbox model proxy base url %q must not include a path", raw)
-	}
-	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-	if host == "" {
-		return fmt.Errorf("sandbox model proxy base url %q must include a hostname alias", raw)
-	}
-	if _, err := netip.ParseAddr(host); err == nil {
-		return fmt.Errorf("sandbox model proxy base url %q must use a stable hostname alias, not an IP literal", raw)
-	}
-	if modelProxyHostIsHostLocal(host) {
-		return fmt.Errorf("sandbox model proxy base url %q must not use a host-local name", raw)
-	}
-	if modelProxyHostIsProviderUpstream(host) {
-		return fmt.Errorf("sandbox model proxy base url %q must not point at a provider upstream", raw)
-	}
-	portRaw := parsed.Port()
-	if portRaw == "" {
-		return fmt.Errorf("sandbox model proxy base url %q must include an explicit port matching proxy port %d", raw, c.proxyPort())
-	}
-	port, err := strconv.Atoi(portRaw)
-	if err != nil || port <= 0 || port > 65535 {
-		return fmt.Errorf("sandbox model proxy base url %q contains invalid port %q", raw, portRaw)
-	}
-	if port != c.proxyPort() {
-		return fmt.Errorf("sandbox model proxy base url %q port must match proxy port %d", raw, c.proxyPort())
-	}
-	return nil
-}
-
-func modelProxyBaseURLHost(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-}
-
-func modelProxyHostIsHostLocal(host string) bool {
-	return host == "localhost" ||
-		host == "host.docker.internal" ||
-		strings.HasSuffix(host, ".localhost") ||
-		strings.HasSuffix(host, ".local")
-}
-
-func modelProxyHostIsProviderUpstream(host string) bool {
-	switch host {
-	case "api.anthropic.com", "anthropic.com", "api.openai.com", "openai.com":
-		return true
-	default:
-		return strings.HasSuffix(host, ".anthropic.com") || strings.HasSuffix(host, ".openai.com")
-	}
-}
-
-func (c ResourceAllocatorConfig) hostProxyBindURL() string {
-	if strings.TrimSpace(c.HostProxyBindURL) == "" {
-		return "http://0.0.0.0:8082"
-	}
-	return strings.TrimSpace(c.HostProxyBindURL)
-}
-
-func (c ResourceAllocatorConfig) proxyPort() int {
-	if c.ProxyPort <= 0 {
-		return 8082
-	}
-	return c.ProxyPort
-}
-
-func ip4ToUint32(addr netip.Addr) uint32 {
-	a := addr.As4()
-	return uint32(a[0])<<24 | uint32(a[1])<<16 | uint32(a[2])<<8 | uint32(a[3])
-}
-
-func uint32ToIP4(value uint32) netip.Addr {
-	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
 }
 
 func ownerUUIDFromLeaseOwner(owner string) string {

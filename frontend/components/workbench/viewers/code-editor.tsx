@@ -12,37 +12,38 @@ import { markdown } from "@codemirror/lang-markdown";
 import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
 
-// Map a file path to a CodeMirror language extension. Returns undefined for
-// plain text (the editor still works, just without syntax awareness).
-function languageForPath(path: string): Extension | undefined {
-  const ext = (path.split(".").pop() ?? "").toLowerCase();
-  switch (ext) {
-    case "js":
-    case "jsx":
-    case "mjs":
-    case "cjs":
+import { codeMirrorLang, type CodeMirrorLang } from "@/lib/languages";
+
+// Instantiate the CodeMirror language extension for a loader key. The key→ext
+// mapping lives in lib/languages.ts (shared with the hljs highlighter); this
+// switch is the only place the heavy @codemirror/lang-* loaders are pulled in.
+function extensionForLang(lang: CodeMirrorLang): Extension {
+  switch (lang) {
+    case "javascript":
       return javascript();
-    case "ts":
+    case "typescript":
       return javascript({ typescript: true });
     case "tsx":
       return javascript({ typescript: true, jsx: true });
     case "json":
       return json();
-    case "py":
+    case "python":
       return python();
-    case "md":
     case "markdown":
-    case "mdx":
       return markdown();
     case "html":
-    case "htm":
       return html();
     case "css":
-    case "scss":
       return css();
-    default:
-      return undefined;
   }
+}
+
+// Map a file path to a CodeMirror language extension. Returns undefined for
+// plain text (the editor still works, just without syntax awareness).
+function languageForPath(path: string): Extension | undefined {
+  const ext = (path.split(".").pop() ?? "").toLowerCase();
+  const lang = codeMirrorLang(ext);
+  return lang ? extensionForLang(lang) : undefined;
 }
 
 // Light theme aligned with the app's CSS variables. Kept minimal on purpose.

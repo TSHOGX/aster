@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -898,11 +899,7 @@ FROM runtime_resource_instances
 `
 }
 
-type runtimeResourceScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanRuntimeResourceInstance(row runtimeResourceScanner) (RuntimeResourceInstance, error) {
+func scanRuntimeResourceInstance(row rowScanner) (RuntimeResourceInstance, error) {
 	var instance RuntimeResourceInstance
 	var state, leaseExpiresAt, verifiedAt, updatedAt, payload, evidence string
 	if err := row.Scan(
@@ -970,7 +967,7 @@ func requireOneRow(result sql.Result, message string) error {
 		return err
 	}
 	if affected != 1 {
-		return fmt.Errorf(message)
+		return errors.New(message)
 	}
 	return nil
 }

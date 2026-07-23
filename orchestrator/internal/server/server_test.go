@@ -559,15 +559,15 @@ func TestCloseSessionReleasesSoftLimitWithoutDeletingHistory(t *testing.T) {
 	cfg.Harness.MaxSessions = 1
 	now := time.Now().UTC()
 	oldSession := store.Session{
-		ID:                "sess_retained",
-		UserID:            labUserID,
-		Status:            string(sessionstate.Created),
-		Agent:             "pi",
-		Workspace:         filepath.Join(cfg.SessionsRoot, "sess_retained"),
-		AgentHomePath:     filepath.Join(dir, "agent-homes", "sess_retained"),
-		RestoreID:         "phase3-sess_retained",
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:            "sess_retained",
+		UserID:        labUserID,
+		Status:        string(sessionstate.Created),
+		Agent:         "pi",
+		Workspace:     filepath.Join(cfg.SessionsRoot, "sess_retained"),
+		AgentHomePath: filepath.Join(dir, "agent-homes", "sess_retained"),
+		RestoreID:     "phase3-sess_retained",
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	if err := os.MkdirAll(oldSession.Workspace, 0o755); err != nil {
 		t.Fatalf("create workspace: %v", err)
@@ -988,30 +988,6 @@ func TestMonitorIdleSessionsReEnablesCheckpointedSessionsWhenCheckpointDisabled(
 	}
 }
 
-func TestBridgeCheckpointReadyRequiresFreshHeartbeatAndMarker(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now().UTC()
-
-	if bridgeCheckpointReady(dir, now, time.Second) {
-		t.Fatal("empty bridge dir should not be checkpoint-ready")
-	}
-	if err := bridge.TouchHeartbeat(dir, bridge.BridgeHeartbeatFile, now); err != nil {
-		t.Fatalf("touch heartbeat: %v", err)
-	}
-	if bridgeCheckpointReady(dir, now, time.Second) {
-		t.Fatal("missing ready marker should not be checkpoint-ready")
-	}
-	if err := bridge.TouchCheckpointReady(dir, now); err != nil {
-		t.Fatalf("touch ready: %v", err)
-	}
-	if !bridgeCheckpointReady(dir, now, time.Second) {
-		t.Fatal("fresh heartbeat and ready marker should be checkpoint-ready")
-	}
-	if bridgeCheckpointReady(dir, now.Add(10*time.Second), time.Second) {
-		t.Fatal("stale bridge control files should not be checkpoint-ready")
-	}
-}
-
 func TestMonitorIdleSessionsReleasesEligibleGeneration(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -1130,7 +1106,16 @@ func testDriveCheckpoint(t *testing.T, ctx context.Context, srv *Server, st *sto
 	}); err != nil {
 		t.Fatalf("complete checkpoint: %v", err)
 	}
-	if err := srv.reserveRuntimeResourceCheckpoint(ctx, generationID); err != nil {
+	instance, err := st.GetRuntimeResourceInstance(ctx, generationID)
+	if err != nil {
+		t.Fatalf("get runtime resource instance: %v", err)
+	}
+	if err := st.ReserveRuntimeResourceCheckpoint(ctx, store.RuntimeResourceWorkerTransitionParams{
+		GenerationID: generationID,
+		WorkerID:     instance.WorkerID,
+		HostID:       instance.HostID,
+		Now:          time.Now().UTC(),
+	}); err != nil {
 		t.Fatalf("reserve runtime resource checkpoint: %v", err)
 	}
 }
@@ -5110,17 +5095,17 @@ func testGenerationArtifactsForAgent(agent string) runtime.GenerationArtifacts {
 		})
 	}
 	return runtime.GenerationArtifacts{
-		BundleDir:               "/tmp/bundle",
-		SpecPath:                "/tmp/bundle/config.json",
-		ManifestPath:            "/tmp/control/session.json",
-		ManifestDigest:          "manifest_digest",
-		ProjectedManifestDigest: "projected_manifest_digest",
-		BundleDigest:            "bundle_digest",
-		RuntimeConfigDigest:     "runtime_config_digest",
-		SpecDigest:              "spec_digest",
-		RunscVersion:            "runsc test",
-		RunscBinaryPath:         "/usr/local/bin/runsc-test",
-		RunscBinaryDigest:       "sha256:runsc-test",
+		BundleDir:                "/tmp/bundle",
+		SpecPath:                 "/tmp/bundle/config.json",
+		ManifestPath:             "/tmp/control/session.json",
+		ManifestDigest:           "manifest_digest",
+		ProjectedManifestDigest:  "projected_manifest_digest",
+		BundleDigest:             "bundle_digest",
+		RuntimeConfigDigest:      "runtime_config_digest",
+		SpecDigest:               "spec_digest",
+		RunscVersion:             "runsc test",
+		RunscBinaryPath:          "/usr/local/bin/runsc-test",
+		RunscBinaryDigest:        "sha256:runsc-test",
 		MaterializedDriverConfig: materialized,
 	}
 }
@@ -5610,15 +5595,15 @@ func openServerOwnedStore(t *testing.T, ctx context.Context, dir string) (*store
 func createServerTestSession(t *testing.T, ctx context.Context, st *store.Store, dir, id, status string, now time.Time, expiresAt *time.Time) store.Session {
 	t.Helper()
 	session := store.Session{
-		ID:                id,
-		UserID:            labUserID,
-		Status:            status,
-		Agent:             "pi",
-		Workspace:         filepath.Join(dir, "sessions", id),
-		RestoreID:         "phase3-" + id,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-		ExpiresAt:         expiresAt,
+		ID:        id,
+		UserID:    labUserID,
+		Status:    status,
+		Agent:     "pi",
+		Workspace: filepath.Join(dir, "sessions", id),
+		RestoreID: "phase3-" + id,
+		CreatedAt: now,
+		UpdatedAt: now,
+		ExpiresAt: expiresAt,
 	}
 	if err := os.MkdirAll(session.Workspace, 0o755); err != nil {
 		t.Fatalf("create workspace: %v", err)

@@ -143,11 +143,6 @@ func (p *streamParser) drainPending(ids ...string) string {
 	return b.String()
 }
 
-func (p *streamParser) handle(output runtime.Output) {
-	payload, _ := json.Marshal(lineBridgePayload{Line: output.Line})
-	p.handleBridgeOutput(normalizerBridgeOutput{Stream: output.Stream, Payload: payload})
-}
-
 func (p *streamParser) handleBridgeOutput(output normalizerBridgeOutput) {
 	if output.Stream == "" {
 		output.Stream = "stdout"

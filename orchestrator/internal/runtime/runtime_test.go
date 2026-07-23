@@ -844,7 +844,7 @@ func TestDestroyGenerationResourcesFallsBackToRecordedRunscOnPinMismatch(t *test
 		},
 		fail: map[string]error{
 			currentRunscPath + " -root " + runscRoot + " delete -force harness-gen-gen_pin": errors.New("incompatible runsc root"),
-			oldRunscPath + " -root " + runscRoot + " state harness-gen-gen_pin":      errors.New("not found"),
+			oldRunscPath + " -root " + runscRoot + " state harness-gen-gen_pin":             errors.New("not found"),
 		},
 	}
 	rt := New(Config{

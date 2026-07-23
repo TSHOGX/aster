@@ -1,3 +1,4 @@
+import { isRecord } from "./guards";
 import type { ApiSession, HarnessEvent, SessionStatus } from "./types";
 
 export type SessionEventConversation = {
@@ -28,10 +29,6 @@ const SESSION_EVENT_STATUSES = new Set<SessionStatus>([
   "failed",
   "destroyed"
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function readSessionStatusEvent(type: string): SessionStatus | null {
   if (!type.startsWith("session.")) return null;

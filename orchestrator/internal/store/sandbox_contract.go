@@ -105,21 +105,6 @@ func RuntimeConfigInputDigest(canonicalPreimage []byte) string {
 	return "sha256:" + fmt.Sprintf("%x", sum[:])
 }
 
-func (s *Store) ensureSandboxContractInputEvidenceSchema(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-CREATE TABLE IF NOT EXISTS sandbox_contract_input_evidence (
-  contract_id TEXT PRIMARY KEY,
-  runtime_config_digest TEXT NOT NULL,
-  runtime_config_preimage TEXT NOT NULL,
-  agent_manifest_digest TEXT NOT NULL,
-  agent_manifest_payload TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY(contract_id) REFERENCES sandbox_contracts(contract_id) ON DELETE CASCADE
-);
-`)
-	return err
-}
-
 func VerifySandboxContractDigest(canonicalPayload []byte, digest string) error {
 	canonical, err := canonicalizeSandboxContractJSON(canonicalPayload)
 	if err != nil {
@@ -521,11 +506,7 @@ WHERE generation_id = ?
 	return nil
 }
 
-type sandboxContractScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanSandboxContract(row sandboxContractScanner) (SandboxContractRecord, error) {
+func scanSandboxContract(row rowScanner) (SandboxContractRecord, error) {
 	var record SandboxContractRecord
 	var payload, createdAt string
 	if err := row.Scan(
@@ -552,7 +533,7 @@ func scanSandboxContract(row sandboxContractScanner) (SandboxContractRecord, err
 	return record, nil
 }
 
-func scanSandboxContractWithMirrors(row sandboxContractScanner) (SandboxContractRecord, error) {
+func scanSandboxContractWithMirrors(row rowScanner) (SandboxContractRecord, error) {
 	var record SandboxContractRecord
 	var payload, createdAt, generationContractID, generationContractVersion, resourceContractID, resourceContractVersion string
 	if err := row.Scan(

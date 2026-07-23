@@ -74,17 +74,6 @@ export function buildArtifactTree(artifacts: ApiArtifact[]): ArtifactTreeDirecto
   return root;
 }
 
-export function collectDirectoryPaths(root: ArtifactTreeDirectory) {
-  const paths: string[] = [];
-  const visit = (node: ArtifactTreeNode) => {
-    if (node.kind !== "directory") return;
-    if (node.path) paths.push(node.path);
-    node.children.forEach(visit);
-  };
-  root.children.forEach(visit);
-  return paths;
-}
-
 function sortTree(dir: ArtifactTreeDirectory) {
   dir.children.sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;

@@ -17,6 +17,14 @@ import (
 	"harness-platform/orchestrator/internal/store"
 )
 
+// handle wraps a raw runtime.Output line into the bridge payload envelope and
+// feeds it through handleBridgeOutput, matching how production ingests stdout.
+// It exists only for tests that drive the parser with plain output lines.
+func (p *streamParser) handle(output runtime.Output) {
+	payload, _ := json.Marshal(lineBridgePayload{Line: output.Line})
+	p.handleBridgeOutput(normalizerBridgeOutput{Stream: output.Stream, Payload: payload})
+}
+
 func newParserTestServer(t *testing.T) (*Server, *store.Store) {
 	t.Helper()
 

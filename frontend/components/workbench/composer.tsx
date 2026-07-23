@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp } from "lucide-react";
 
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
+import { useComposerState } from "@/lib/use-composer-state";
 
 type ComposerProps = {
   disabled?: boolean;
@@ -14,9 +15,7 @@ type ComposerProps = {
 };
 
 export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerProps) {
-  const [value, setValue] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { value, setValue, sending, error, submit, onKey } = useComposerState(onSend, disabled);
   const [multiline, setMultiline] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -30,27 +29,6 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
     el.style.height = `${next}px`;
     setMultiline(next > 40 || value.includes("\n"));
   }, [value]);
-
-  const submit = async () => {
-    const text = value.trim();
-    if (!text || sending || disabled) return;
-    setSending(true);
-    setError(null);
-    const res = await onSend(text);
-    setSending(false);
-    if (res.ok) {
-      setValue("");
-    } else {
-      setError(res.error ?? "Failed to send");
-    }
-  };
-
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void submit();
-    }
-  };
 
   const canSend = !disabled && !sending && !!value.trim();
 

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Bell } from "lucide-react";
 
 import { useNotifications } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
 import { NotificationDetailModal } from "@/components/notifications/notification-detail-modal";
+import { useAnchoredPosition, useDismissOnOutside } from "@/lib/use-popover";
 import type { ApiNotification } from "@/lib/types";
 
 const PANEL_WIDTH = 320;
@@ -31,39 +32,18 @@ export function NotificationBell() {
   const { notifications, markNotificationRead } = useNotifications();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<ApiNotification | null>(null);
-  const [panelPos, setPanelPos] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  useEffect(() => {
-    if (!open) return;
-    const updatePosition = () => {
-      const rect = buttonRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const left = Math.min(rect.left, window.innerWidth - PANEL_WIDTH - VIEWPORT_MARGIN);
-      setPanelPos({ top: rect.bottom + 8, left: Math.max(left, VIEWPORT_MARGIN) });
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (buttonRef.current?.contains(target) || panelRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  const panelPos = useAnchoredPosition(open, buttonRef, {
+    width: PANEL_WIDTH,
+    gap: 8,
+    margin: VIEWPORT_MARGIN,
+    align: "left"
+  });
+  useDismissOnOutside(open, [buttonRef, panelRef], () => setOpen(false));
 
   const handleSelect = (n: ApiNotification) => {
     setSelected(n);

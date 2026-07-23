@@ -837,10 +837,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return 0, err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation ack_started CAS failed"); err != nil {
 		return 0, err
-	} else if affected != 1 {
-		return 0, fmt.Errorf("generation ack_started CAS failed")
 	}
 	sandboxSourceIP, err := sandboxSourceIPForGenerationTx(ctx, tx, p.SessionID, p.GenerationID)
 	if err != nil {
@@ -1054,10 +1052,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation heartbeat CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("generation heartbeat CAS failed")
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE turns
@@ -1113,10 +1109,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation start lease renewal CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("generation start lease renewal CAS failed")
 	}
 	return nil
 }
@@ -1148,10 +1142,8 @@ WHERE id = ?
 		if err != nil {
 			return err
 		}
-		if affected, err := res.RowsAffected(); err != nil {
+		if err := requireOneRow(res, "turn failure CAS failed"); err != nil {
 			return err
-		} else if affected != 1 {
-			return fmt.Errorf("turn failure CAS failed")
 		}
 	}
 	res, err := tx.ExecContext(ctx, `
@@ -1176,10 +1168,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation failure CAS failed"); err != nil {
 		return err
-	} else if affected != 1 {
-		return fmt.Errorf("generation failure CAS failed")
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE network_profiles
@@ -1239,10 +1229,8 @@ WHERE generation_id = ?
 	if err != nil {
 		return 0, err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "generation start failure CAS failed"); err != nil {
 		return 0, err
-	} else if affected != 1 {
-		return 0, fmt.Errorf("generation start failure CAS failed")
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE network_profiles
@@ -1279,10 +1267,8 @@ WHERE id = ?
 	if err != nil {
 		return 0, err
 	}
-	if affected, err := res.RowsAffected(); err != nil {
+	if err := requireOneRow(res, "session start failure CAS failed"); err != nil {
 		return 0, err
-	} else if affected != 1 {
-		return 0, fmt.Errorf("session start failure CAS failed")
 	}
 	var eventID int64
 	if p.EventType != "" {

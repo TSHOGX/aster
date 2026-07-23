@@ -438,10 +438,6 @@ func PublicAgentForDriver(value string) (string, bool) {
 	}
 }
 
-func SandboxAgentForDriver(value string) (string, bool) {
-	return PublicAgentForDriver(value)
-}
-
 func normalizeDriverSpec(spec DriverSpec) DriverSpec {
 	sort.Strings(spec.RequiredRuntimeCapabilities)
 	sort.Strings(spec.Phase10Support)

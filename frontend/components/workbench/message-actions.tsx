@@ -9,6 +9,7 @@ import { useHarness } from "@/components/harness-provider";
 import type { ApiMessage } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { stripMarkdown } from "@/lib/format";
+import { useAnchoredPosition, useDismissOnOutside } from "@/lib/use-popover";
 
 const MENU_WIDTH = 200;
 const VIEWPORT_MARGIN = 8;
@@ -36,7 +37,6 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
   const { submitFeedback } = useHarness();
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -48,33 +48,13 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const updatePosition = () => {
-      const rect = menuButtonRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const left = Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - VIEWPORT_MARGIN);
-      setMenuPos({ top: rect.bottom + 6, left: Math.max(left, VIEWPORT_MARGIN) });
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [menuOpen]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (menuButtonRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [menuOpen]);
+  const menuPos = useAnchoredPosition(menuOpen, menuButtonRef, {
+    width: MENU_WIDTH,
+    gap: 6,
+    margin: VIEWPORT_MARGIN,
+    align: "right"
+  });
+  useDismissOnOutside(menuOpen, [menuButtonRef, menuRef], () => setMenuOpen(false));
 
   const rate = (next: "up" | "down") => {
     void submitFeedback(sessionId, message.id, rating === next ? null : next);

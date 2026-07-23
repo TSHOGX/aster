@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Send, Square, TerminalSquare } from "lucide-react";
 
 import { useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
 import { isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
+import { useComposerState } from "@/lib/use-composer-state";
 import type { ApiMessage } from "@/lib/types";
 
 function ShellEntry({ message }: { message: ApiMessage }) {
@@ -41,10 +42,8 @@ function ShellComposer({
   onSend: (content: string) => Promise<{ ok: boolean; error?: string }>;
   onInterrupt: () => Promise<{ ok: boolean; error?: string }>;
 }) {
-  const [value, setValue] = useState("");
-  const [sending, setSending] = useState(false);
+  const { value, setValue, sending, error, setError, submit, onKey } = useComposerState(onSend, disabled);
   const [stopping, setStopping] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -57,20 +56,6 @@ function ShellComposer({
     ref.current.style.height = `${Math.max(32, Math.min(ref.current.scrollHeight, 240))}px`;
   }, [value]);
 
-  const submit = async () => {
-    const text = value.trim();
-    if (!text || sending || disabled) return;
-    setSending(true);
-    setError(null);
-    const res = await onSend(text);
-    setSending(false);
-    if (res.ok) {
-      setValue("");
-    } else {
-      setError(res.error ?? "Failed to send");
-    }
-  };
-
   const interrupt = async () => {
     if (!busy || stopping) return;
     setStopping(true);
@@ -79,13 +64,6 @@ function ShellComposer({
     setStopping(false);
     if (!res.ok) {
       setError(res.error ?? "Failed to interrupt");
-    }
-  };
-
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void submit();
     }
   };
 

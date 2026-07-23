@@ -190,16 +190,21 @@ INSERT INTO sessions (
 	return err
 }
 
+// sessionSelectColumns is the 21-column projection consumed by scanSession. It
+// is shared by every "SELECT ... FROM sessions" query so the column order stays
+// in lockstep with the scan helper; only the WHERE/ORDER clauses differ.
+const sessionSelectColumns = `id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom`
+
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom
+SELECT `+sessionSelectColumns+`
 FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom
+SELECT `+sessionSelectColumns+`
 FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -756,11 +761,13 @@ WHERE session_id = ?
 	return err
 }
 
-type scanner interface {
+// rowScanner is the shared abstraction over *sql.Row and *sql.Rows used by the
+// package's scan helpers.
+type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanSession(row scanner) (Session, error) {
+func scanSession(row rowScanner) (Session, error) {
 	var session Session
 	var restoreMS sql.NullInt64
 	var agentHomePath, activeGenerationID sql.NullString
@@ -928,7 +935,7 @@ func (s *Store) ListSessionsByStatus(ctx context.Context, status string) ([]Sess
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom
+SELECT `+sessionSelectColumns+`
 FROM sessions WHERE status = ? ORDER BY last_activity_at ASC`, status)
 	if err != nil {
 		return nil, err

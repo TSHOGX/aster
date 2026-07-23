@@ -283,4 +283,3 @@ func hasSymlinkComponent(root, slashPath string) bool {
 	}
 	return false
 }
-
