@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
+	"harness-platform/orchestrator/internal/pathutil"
+	"harness-platform/orchestrator/internal/strutil"
 
 	"gopkg.in/yaml.v3"
 )
@@ -522,7 +524,7 @@ func defaultHarnessConfig() HarnessConfig {
 }
 
 func normalizeHarnessConfig(cfg HarnessConfig) HarnessConfig {
-	cfg.DefaultAgent = defaultString(cfg.DefaultAgent, string(agents.Pi))
+	cfg.DefaultAgent = strutil.Default(cfg.DefaultAgent, string(agents.Pi))
 	if canonical, err := agents.CanonicalDriverID(cfg.DefaultAgent); err == nil {
 		cfg.DefaultAgent = string(canonical)
 	}
@@ -767,10 +769,10 @@ func ValidateIsolationRoots(roots IsolationRoots) (CanonicalIsolationRoots, erro
 	if canonical.ProviderCredentialRoot != "" {
 		topLevel = append(topLevel, isolationRoot{label: "provider credential root", path: canonical.ProviderCredentialRoot})
 	}
-	if !isolationPathWithin(canonical.DataVolumeEvidenceRoot, canonical.DBStateRoot) {
+	if !pathutil.Within(canonical.DBStateRoot, canonical.DataVolumeEvidenceRoot) {
 		topLevel = append(topLevel, isolationRoot{label: "data volume evidence root", path: canonical.DataVolumeEvidenceRoot})
 	}
-	if !isolationPathWithin(canonical.ProxyInternalRoot, canonical.RunDir) {
+	if !pathutil.Within(canonical.RunDir, canonical.ProxyInternalRoot) {
 		topLevel = append(topLevel, isolationRoot{label: "proxy internal root", path: canonical.ProxyInternalRoot})
 	}
 	if err := validateIsolationTopLevelDisjoint(topLevel); err != nil {
@@ -856,7 +858,7 @@ func validateIsolationTopLevelDisjoint(roots []isolationRoot) error {
 }
 
 func validateReservedHostRoot(label, path string, roots CanonicalIsolationRoots, allowedParent string) error {
-	if !isolationPathWithin(path, allowedParent) && isolationRootsOverlap(path, allowedParent) {
+	if !pathutil.Within(allowedParent, path) && isolationRootsOverlap(path, allowedParent) {
 		return fmt.Errorf("isolation %s %q must not contain reserved parent %q", label, path, allowedParent)
 	}
 	sandboxBindable := []isolationRoot{
@@ -878,17 +880,7 @@ func validateReservedHostRoot(label, path string, roots CanonicalIsolationRoots,
 }
 
 func isolationRootsOverlap(a, b string) bool {
-	return isolationPathWithin(a, b) || isolationPathWithin(b, a)
-}
-
-func isolationPathWithin(path, root string) bool {
-	path = filepath.Clean(path)
-	root = filepath.Clean(root)
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	return pathutil.Within(b, a) || pathutil.Within(a, b)
 }
 
 func harnessConfigWarnings(cfg HarnessConfig) []string {
@@ -1096,7 +1088,7 @@ func validateDeploymentConfig(cfg HarnessConfig) error {
 		return fmt.Errorf("harness.agents must be non-empty")
 	}
 	for id, agentCfg := range cfg.Agents {
-		driverID, err := agents.CanonicalDriverID(defaultString(agentCfg.DriverID, id))
+		driverID, err := agents.CanonicalDriverID(strutil.Default(agentCfg.DriverID, id))
 		if err != nil {
 			return fmt.Errorf("harness.agents.%s.driver_id: %w", id, err)
 		}
@@ -1114,7 +1106,7 @@ func validateDeploymentConfig(cfg HarnessConfig) error {
 		if enabled(agentCfg.Enabled) && !enabled(runtimeCfg.Enabled) {
 			return fmt.Errorf("harness.agents.%s.runtime_provider %q is disabled", id, agentCfg.RuntimeProvider)
 		}
-		providerID := defaultString(runtimeCfg.ProviderID, agentCfg.RuntimeProvider)
+		providerID := strutil.Default(runtimeCfg.ProviderID, agentCfg.RuntimeProvider)
 		if err := agents.EnsureDriverSupportedByProvider(string(driverID), providerID); err != nil {
 			return fmt.Errorf("harness.agents.%s.runtime_provider: %w", id, err)
 		}
@@ -1158,7 +1150,7 @@ func EnabledAgentConfigForDriver(agentConfigs map[string]AgentConfig, driverID s
 		if !enabled(cfg.Enabled) {
 			continue
 		}
-		candidate, err := agents.CanonicalDriverID(defaultString(cfg.DriverID, key))
+		candidate, err := agents.CanonicalDriverID(strutil.Default(cfg.DriverID, key))
 		if err == nil && candidate == canonical {
 			return key, cfg, true
 		}
@@ -1236,13 +1228,13 @@ func boolPtr(value bool) *bool {
 }
 
 func normalizeModelProxyConfig(cfg ModelProxyConfig) ModelProxyConfig {
-	cfg.BindURL = defaultString(cfg.BindURL, defaultModelProxyBindURL)
+	cfg.BindURL = strutil.Default(cfg.BindURL, defaultModelProxyBindURL)
 	if port, err := parseModelProxyBindPort(cfg.BindURL); err == nil {
 		cfg.BindPort = port
 	} else {
 		cfg.BindPort = 0
 	}
-	cfg.SandboxBaseURL = defaultString(cfg.SandboxBaseURL, defaultSandboxModelProxyBaseURLForPort(cfg.BindPort))
+	cfg.SandboxBaseURL = strutil.Default(cfg.SandboxBaseURL, defaultSandboxModelProxyBaseURLForPort(cfg.BindPort))
 	return cfg
 }
 
@@ -1338,13 +1330,6 @@ func isUnspecifiedModelProxyBindHost(host string) bool {
 		return false
 	}
 	return addr.IsUnspecified()
-}
-
-func defaultString(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return strings.TrimSpace(value)
 }
 
 func getenv(key, fallback string) string {

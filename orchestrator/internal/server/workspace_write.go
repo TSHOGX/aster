@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/store"
 )
 
@@ -77,7 +78,7 @@ func (s *Server) writeWorkspaceFile(ctx context.Context, sessionID, relPath stri
 	gid := workspace.SandboxGID
 
 	fullPath := filepath.Join(sessionRoot, filepath.FromSlash(cleanPath))
-	if !isPathInside(sessionRoot, fullPath) {
+	if !pathutil.Within(sessionRoot, fullPath) {
 		return "", newWorkspaceWriteError(http.StatusBadRequest, "invalid artifact path")
 	}
 
@@ -108,7 +109,7 @@ func (s *Server) writeWorkspaceFile(ctx context.Context, sessionID, relPath stri
 	if err != nil {
 		return "", err
 	}
-	if !isPathInside(realSessionRoot, realParent) {
+	if !pathutil.Within(realSessionRoot, realParent) {
 		return "", newWorkspaceWriteError(http.StatusForbidden, "artifact path escapes session workspace")
 	}
 

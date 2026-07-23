@@ -24,7 +24,9 @@ import (
 
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/bridge"
+	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/strutil"
 )
 
 type Config struct {
@@ -124,13 +126,6 @@ type Result struct {
 	RunscVersion          string
 	PostStartProof        *store.RuntimeResourcePostStartProof
 	Err                   error
-}
-
-type CheckpointRequest struct {
-	SessionID      string
-	GenerationID   string
-	CheckpointPath string
-	Generation     store.RuntimeGenerationDetails
 }
 
 type checkpointImageManifest struct {
@@ -604,7 +599,7 @@ func (r *Runtime) recordGenerationResourceAbsenceEvidence(ctx context.Context, d
 }
 
 func (r *Runtime) runscContainerAbsenceEvidence(ctx context.Context, runscBinary, containerID string) (string, error) {
-	runscBinary = defaultString(runscBinary, "runsc")
+	runscBinary = strutil.Default(runscBinary, "runsc")
 	output, err := r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "state", containerID)
 	if err != nil {
 		if commandFailureContains(output, err, "does not exist", "not found", "no such container", "no such file") {
@@ -706,7 +701,7 @@ func (r *Runtime) runtimePostStartProof(ctx context.Context, details store.Runti
 }
 
 func (r *Runtime) runscContainerRunningEvidence(ctx context.Context, runscBinary, containerID string) (string, error) {
-	runscBinary = defaultString(runscBinary, "runsc")
+	runscBinary = strutil.Default(runscBinary, "runsc")
 	deadline := time.Now().Add(runscRunningProofTimeout)
 	pollInterval := runscRunningProofPollInterval
 	var lastErr error
@@ -919,7 +914,7 @@ func pathContainsDotDot(path string) bool {
 }
 
 func ensurePathStaysWithinRoot(path, root string) error {
-	if !pathWithinRoot(path, root) {
+	if !pathutil.Within(root, path) {
 		return fmt.Errorf("path is outside root %q", root)
 	}
 	resolvedRoot := root
@@ -931,7 +926,7 @@ func ensurePathStaysWithinRoot(path, root string) error {
 
 	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err == nil {
-		if !pathWithinRoot(filepath.Clean(resolvedPath), resolvedRoot) {
+		if !pathutil.Within(resolvedRoot, filepath.Clean(resolvedPath)) {
 			return fmt.Errorf("resolved path escapes root %q", resolvedRoot)
 		}
 		return nil
@@ -946,14 +941,14 @@ func ensurePathStaysWithinRoot(path, root string) error {
 	if prefix == "" {
 		return nil
 	}
-	if !pathWithinRoot(prefix, root) {
+	if !pathutil.Within(root, prefix) {
 		return nil
 	}
 	resolvedPrefix, err := filepath.EvalSymlinks(prefix)
 	if err != nil {
 		return fmt.Errorf("resolve existing prefix: %w", err)
 	}
-	if !pathWithinRoot(filepath.Clean(resolvedPrefix), resolvedRoot) {
+	if !pathutil.Within(resolvedRoot, filepath.Clean(resolvedPrefix)) {
 		return fmt.Errorf("resolved existing prefix escapes root %q", resolvedRoot)
 	}
 	return nil
@@ -973,14 +968,6 @@ func deepestExistingPath(path string) (string, error) {
 	}
 }
 
-func pathWithinRoot(path, root string) bool {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
-}
-
 func (r *Runtime) deleteNetworkResource(ctx context.Context, name string, args []string, missingOK bool) error {
 	output, err := r.runner.CombinedOutput(ctx, name, args...)
 	if err == nil {
@@ -997,7 +984,7 @@ func (r *Runtime) deleteGenerationRunscContainer(ctx context.Context, details st
 		return "runsc", "", r.deleteRunscContainer(ctx, "runsc", containerID)
 	}
 	current := r.currentRunscPin(ctx)
-	currentBinary := defaultString(current.BinaryPath, "runsc")
+	currentBinary := strutil.Default(current.BinaryPath, "runsc")
 	pinned := runscPinFromDetails(details)
 	if cleanupRunscPinMatches(current, pinned) {
 		return currentBinary, "", r.deleteRunscContainer(ctx, currentBinary, containerID)
@@ -1104,7 +1091,7 @@ func (r *Runtime) deleteRunscContainer(ctx context.Context, runscBinary, contain
 }
 
 func (r *Runtime) deleteRunscContainerDetailed(ctx context.Context, runscBinary, containerID string) (runscContainerDeleteResult, error) {
-	runscBinary = defaultString(runscBinary, "runsc")
+	runscBinary = strutil.Default(runscBinary, "runsc")
 	_, _ = r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "kill", containerID, "KILL")
 	output, err := r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "delete", "-force", containerID)
 	if err != nil {
@@ -1458,7 +1445,7 @@ func (r *Runtime) buildGenerationManifest(req StartRequest, runscVersion, bundle
 	manifest := controlManifest{
 		SessionID:                req.SessionID,
 		GenerationID:             details.GenerationID,
-		SandboxContractVersion:   defaultString(details.SandboxContractVersion, store.SandboxContractVersion),
+		SandboxContractVersion:   strutil.Default(details.SandboxContractVersion, store.SandboxContractVersion),
 		CreatedAt:                time.Now().UTC().Format(time.RFC3339Nano),
 		AttemptID:                "attempt-0",
 		NetworkProfileID:         details.NetworkProfileID,
@@ -1667,7 +1654,7 @@ func (r *Runtime) renderSandboxIsolatedRuntimeSpec(req StartRequest) (runtimeSpe
 		fmt.Sprintf("HARNESS_AGENT_UID=%d", identity.UID),
 		fmt.Sprintf("HARNESS_AGENT_GID=%d", identity.GID),
 		"HARNESS_BRIDGE_DIR=" + bridge.BridgeMountDestination,
-		"HARNESS_BRIDGE_MODE=" + defaultString(r.cfg.BridgeMode, "claim-loop"),
+		"HARNESS_BRIDGE_MODE=" + strutil.Default(r.cfg.BridgeMode, "claim-loop"),
 		"HARNESS_BRIDGE_HEARTBEAT_INTERVAL=" + formatSeconds(defaultDuration(r.cfg.BridgeHeartbeat, 30*time.Second)),
 		"HARNESS_BRIDGE_POLL_INTERVAL=" + formatSeconds(defaultDuration(r.cfg.BridgePollInterval, 5*time.Millisecond)),
 		"HARNESS_BRIDGE_IDLE_INTERVAL=" + formatSeconds(defaultBridgeIdleInterval),
@@ -1865,7 +1852,7 @@ func (r *Runtime) currentRunscPin(ctx context.Context) runscPin {
 }
 
 func effectiveRunscPlatform(details store.RuntimeGenerationDetails) string {
-	return defaultString(details.RunscPlatform, defaultRunscPlatform)
+	return strutil.Default(details.RunscPlatform, defaultRunscPlatform)
 }
 
 func runscPinFromArtifacts(details store.RuntimeGenerationDetails, artifacts GenerationArtifacts) runscPin {
@@ -1892,14 +1879,6 @@ func (r *Runtime) verifyLaunchRunscPin(ctx context.Context, operation string, de
 		return current, err
 	}
 	if err := verifyOptionalRunscPin(operation, "resource instance", current, runscPinFromDetails(details)); err != nil {
-		return current, err
-	}
-	return current, nil
-}
-
-func (r *Runtime) verifyGenerationRunscPin(ctx context.Context, operation string, details store.RuntimeGenerationDetails) (runscPin, error) {
-	current := r.currentRunscPin(ctx)
-	if err := verifyRequiredRunscPin(operation, "resource instance", current, runscPinFromDetails(details)); err != nil {
 		return current, err
 	}
 	return current, nil
@@ -1966,19 +1945,12 @@ func runscBinaryMetadata() (string, string) {
 }
 
 
-func defaultString(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return strings.TrimSpace(value)
-}
-
 func (r *Runtime) runscNetwork(details store.RuntimeGenerationDetails) string {
-	return defaultString(details.RunscNetwork, r.cfg.RunscNetwork)
+	return strutil.Default(details.RunscNetwork, r.cfg.RunscNetwork)
 }
 
 func (r *Runtime) runscOverlay2(details store.RuntimeGenerationDetails) string {
-	return defaultString(details.RunscOverlay2, r.cfg.RunscOverlay2)
+	return strutil.Default(details.RunscOverlay2, r.cfg.RunscOverlay2)
 }
 
 type runtimeSandboxIdentity struct {
@@ -3201,93 +3173,6 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func (r *Runtime) Checkpoint(ctx context.Context, req CheckpointRequest) error {
-	if strings.TrimSpace(req.SessionID) == "" {
-		return errors.New("session id is required")
-	}
-	if strings.TrimSpace(req.GenerationID) == "" {
-		return errors.New("generation id is required")
-	}
-	r.mu.RLock()
-	container, exists := r.containers[req.SessionID]
-	r.mu.RUnlock()
-
-	if !exists {
-		return errors.New("container not found")
-	}
-	if container.GenerationID != req.GenerationID {
-		return fmt.Errorf("container generation mismatch: got %s want %s", container.GenerationID, req.GenerationID)
-	}
-	if strings.TrimSpace(req.Generation.SessionID) != "" && req.Generation.SessionID != req.SessionID {
-		return fmt.Errorf("checkpoint generation session mismatch")
-	}
-	if strings.TrimSpace(req.Generation.GenerationID) != "" && req.Generation.GenerationID != req.GenerationID {
-		return fmt.Errorf("checkpoint generation id mismatch")
-	}
-	if strings.TrimSpace(req.Generation.RunscContainerID) != "" && req.Generation.RunscContainerID != container.RunscContainerID {
-		return fmt.Errorf("checkpoint runsc container mismatch")
-	}
-	generationCheckpointPath := strings.TrimSpace(req.Generation.CheckpointPath)
-	checkpointPath := strings.TrimSpace(req.CheckpointPath)
-	if checkpointPath == "" {
-		checkpointPath = generationCheckpointPath
-	}
-	if checkpointPath == "" {
-		return errors.New("generation checkpoint path is required")
-	}
-	if !filepath.IsAbs(checkpointPath) || filepath.Clean(checkpointPath) != checkpointPath {
-		return fmt.Errorf("generation checkpoint path %q must be canonical absolute path", checkpointPath)
-	}
-	if generationCheckpointPath != "" && filepath.Clean(generationCheckpointPath) != checkpointPath {
-		return fmt.Errorf("checkpoint path mismatch: got %q want generation path %q", checkpointPath, generationCheckpointPath)
-	}
-	currentRunsc, err := r.verifyGenerationRunscPin(ctx, "checkpoint", req.Generation)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(checkpointPath), 0o755); err != nil {
-		return fmt.Errorf("create checkpoint dir: %w", err)
-	}
-	if err := os.RemoveAll(checkpointPath); err != nil {
-		return fmt.Errorf("clear checkpoint dir: %w", err)
-	}
-	if err := os.MkdirAll(checkpointPath, 0o755); err != nil {
-		return fmt.Errorf("create checkpoint image dir: %w", err)
-	}
-
-	// Create checkpoint
-	cmd := exec.CommandContext(ctx, currentRunsc.BinaryPath,
-		"-root", r.cfg.RunscRoot,
-		"-overlay2", r.runscOverlay2(req.Generation),
-		"checkpoint",
-		"-image-path", checkpointPath,
-		container.RunscContainerID,
-	)
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		_ = os.RemoveAll(checkpointPath)
-		return fmt.Errorf("runsc checkpoint: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	if err := writeCheckpointImageManifest(checkpointPath); err != nil {
-		_ = os.RemoveAll(checkpointPath)
-		return err
-	}
-
-	r.mu.Lock()
-	if current := r.containers[req.SessionID]; current == container {
-		delete(r.containers, req.SessionID)
-	}
-	r.mu.Unlock()
-
-	// The checkpoint image is durable once runsc checkpoint returns. Do not wait
-	// synchronously for the attached runsc run process here; that teardown can
-	// block status finalization and leave the session stuck in checkpointing.
-	container.Cancel()
-
-	return nil
 }
 
 func (r *Runtime) Interrupt(sessionID string) error {

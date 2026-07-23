@@ -34,6 +34,7 @@ import (
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
@@ -103,7 +104,6 @@ type runtimeDriver interface {
 	Destroy(context.Context, string) error
 	DestroyGenerationResources(context.Context, store.RuntimeGenerationDetails) (runtime.GenerationResourceCleanup, error)
 	Interrupt(string) error
-	Checkpoint(context.Context, runtime.CheckpointRequest) error
 }
 
 type bridgeStore interface {
@@ -3591,7 +3591,7 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath, 
 
 	sessionRoot := workspace.HostPath
 	fullPath := filepath.Join(sessionRoot, filepath.FromSlash(cleanPath))
-	if !isPathInside(sessionRoot, fullPath) {
+	if !pathutil.Within(sessionRoot, fullPath) {
 		return nil, nil, http.StatusBadRequest, "invalid artifact path"
 	}
 
@@ -3612,7 +3612,7 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath, 
 		}
 		return nil, nil, http.StatusInternalServerError, err.Error()
 	}
-	if !isPathInside(realSessionRoot, realPath) {
+	if !pathutil.Within(realSessionRoot, realPath) {
 		return nil, nil, http.StatusForbidden, "artifact path escapes session workspace"
 	}
 
@@ -3674,11 +3674,6 @@ func rejectSymlinkComponents(root, slashPath string) (int, string) {
 		}
 	}
 	return 0, ""
-}
-
-func isPathInside(root, candidate string) bool {
-	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {

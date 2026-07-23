@@ -1044,10 +1044,7 @@ func TestMonitorIdleSessionsReleasesEligibleGeneration(t *testing.T) {
 		t.Fatalf("monitor exit err=%v, want context canceled", err)
 	}
 
-	// Release must not take a runsc checkpoint; it tears the sandbox down.
-	if checkpoints := rt.checkpointRequests(); len(checkpoints) != 0 {
-		t.Fatalf("release should not checkpoint, got %+v", checkpoints)
-	}
+	// Release tears the sandbox down (it never took a runsc checkpoint).
 	if destroys := rt.destroyGenerationRequests(); len(destroys) != 1 || destroys[0].GenerationID != allocation.GenerationID {
 		t.Fatalf("release should tear down the generation sandbox, got %+v", destroys)
 	}
@@ -1116,14 +1113,6 @@ func testDriveCheckpoint(t *testing.T, ctx context.Context, srv *Server, st *sto
 	details, err := st.GetRuntimeGenerationDetails(ctx, sessionID, generationID)
 	if err != nil {
 		t.Fatalf("get generation details: %v", err)
-	}
-	if err := srv.runtime.Checkpoint(ctx, runtime.CheckpointRequest{
-		SessionID:      sessionID,
-		GenerationID:   generationID,
-		CheckpointPath: details.CheckpointPath,
-		Generation:     details,
-	}); err != nil {
-		t.Fatalf("runtime checkpoint: %v", err)
 	}
 	if err := st.CompleteGenerationCheckpoint(ctx, store.CompleteCheckpointParams{
 		SessionID:                       sessionID,
@@ -4816,10 +4805,6 @@ func (instantRuntime) Interrupt(string) error {
 	return nil
 }
 
-func (instantRuntime) Checkpoint(context.Context, runtime.CheckpointRequest) error {
-	return nil
-}
-
 type recordingRuntime struct {
 	mu                sync.Mutex
 	prepareRequests   []runtime.StartRequest
@@ -4828,8 +4813,6 @@ type recordingRuntime struct {
 	destroyRuntimeErr error
 	destroyRequests   []store.RuntimeGenerationDetails
 	destroyErr        error
-	checkpointReqs    []runtime.CheckpointRequest
-	checkpointErr     error
 }
 
 type blockingPrepareRuntime struct {
@@ -4983,26 +4966,12 @@ func (r *recordingRuntime) Interrupt(string) error {
 	return nil
 }
 
-func (r *recordingRuntime) Checkpoint(_ context.Context, req runtime.CheckpointRequest) error {
-	r.mu.Lock()
-	r.checkpointReqs = append(r.checkpointReqs, req)
-	err := r.checkpointErr
-	r.mu.Unlock()
-	return err
-}
-
 func (r *recordingRuntime) requests() ([]runtime.StartRequest, []runtime.StartRequest) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	prepares := append([]runtime.StartRequest(nil), r.prepareRequests...)
 	starts := append([]runtime.StartRequest(nil), r.startRequests...)
 	return prepares, starts
-}
-
-func (r *recordingRuntime) checkpointRequests() []runtime.CheckpointRequest {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]runtime.CheckpointRequest(nil), r.checkpointReqs...)
 }
 
 func (r *recordingRuntime) destroyGenerationRequests() []store.RuntimeGenerationDetails {
@@ -5080,10 +5049,6 @@ func (r *restoreValidationRuntime) Interrupt(string) error {
 	return nil
 }
 
-func (r *restoreValidationRuntime) Checkpoint(context.Context, runtime.CheckpointRequest) error {
-	return nil
-}
-
 type serverCommandRunner struct {
 	outputs map[string][]byte
 	fail    map[string]error
@@ -5101,9 +5066,8 @@ func (r serverCommandRunner) CombinedOutput(_ context.Context, name string, args
 }
 
 type failingRuntime struct {
-	prepareErr    error
-	err           error
-	checkpointErr error
+	prepareErr error
+	err        error
 }
 
 func (f failingRuntime) PrepareGeneration(context.Context, runtime.StartRequest) (runtime.GenerationArtifacts, error) {
@@ -5127,10 +5091,6 @@ func (f failingRuntime) DestroyGenerationResources(_ context.Context, details st
 
 func (f failingRuntime) Interrupt(string) error {
 	return nil
-}
-
-func (f failingRuntime) Checkpoint(context.Context, runtime.CheckpointRequest) error {
-	return f.checkpointErr
 }
 
 func testGenerationArtifacts() runtime.GenerationArtifacts {
@@ -6016,22 +5976,6 @@ WHERE n.generation_id = ?`, generationID).Scan(&networkState, &resourceState); e
 		t.Fatalf("query final generation resource states: %v", err)
 	}
 	t.Fatalf("generation %s resource states did not reach %s/%s: network=%s resource=%s", generationID, wantNetwork, wantResource, networkState, resourceState)
-}
-
-func waitForCheckpointRequests(t *testing.T, ctx context.Context, rt *recordingRuntime, want int) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if got := len(rt.checkpointRequests()); got >= want {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("context canceled before checkpoint requests reached %d", want)
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	t.Fatalf("checkpoint requests=%d want at least %d", len(rt.checkpointRequests()), want)
 }
 
 func waitForGenerationStatus(t *testing.T, ctx context.Context, st *store.Store, generationID, want string) {
