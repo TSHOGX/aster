@@ -4646,6 +4646,53 @@ func TestDownloadArtifactAllowsNestedRegularFile(t *testing.T) {
 	}
 }
 
+func TestDownloadArtifactPDFAllowsSameOriginFraming(t *testing.T) {
+	srv, _, workspace := newArtifactDownloadServer(t, "sess_1")
+	if err := os.WriteFile(filepath.Join(workspace, "report.pdf"), []byte("%PDF-1.4\n"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/report.pdf", nil)
+	rec := httptest.NewRecorder()
+
+	srv.getArtifact(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body %s", rec.Code, rec.Body.String())
+	}
+	// The workbench previews PDFs in a same-origin iframe; DENY/sandbox would make
+	// the browser refuse to frame the file ("<host> refused to connect").
+	if got := rec.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Fatalf("expected X-Frame-Options SAMEORIGIN, got %q", got)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "sandbox") {
+		t.Fatalf("PDF CSP must not use sandbox, got %q", csp)
+	}
+	if !strings.Contains(csp, "frame-ancestors 'self'") {
+		t.Fatalf("expected frame-ancestors 'self' in PDF CSP, got %q", csp)
+	}
+}
+
+func TestDownloadArtifactNonFramableTypeStaysInert(t *testing.T) {
+	srv, _, workspace := newArtifactDownloadServer(t, "sess_1")
+	if err := os.WriteFile(filepath.Join(workspace, "summary.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/artifacts/sess_1/summary.txt", nil)
+	rec := httptest.NewRecorder()
+
+	srv.getArtifact(rec, req)
+
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("expected X-Frame-Options DENY, got %q", got)
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); got != "default-src 'none'; sandbox" {
+		t.Fatalf("unexpected CSP for inert type: %q", got)
+	}
+}
+
 func TestDownloadArtifactRejectsMissingWorkspaceEvidence(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

@@ -3494,7 +3494,8 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 	// frames or plugins. Inline script/style are allowed so self-contained pages
 	// render, but they can only touch same-origin resources and cannot phone home.
 	ext := strings.ToLower(filepath.Ext(info.Name()))
-	if ext == ".html" || ext == ".htm" {
+	switch ext {
+	case ".html", ".htm":
 		w.Header().Set("Content-Security-Policy", strings.Join([]string{
 			"default-src 'self'",
 			"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
@@ -3510,7 +3511,21 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 			"frame-ancestors 'self'",
 		}, "; "))
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-	} else {
+	case ".pdf":
+		// PDFs are previewed in a same-origin iframe in the workbench. A blanket
+		// DENY (or the `sandbox` CSP below) makes the browser refuse to frame the
+		// file, which surfaces as a bogus "<host> refused to connect" error. PDF
+		// is passive content rendered by the browser's built-in viewer, so allow
+		// same-origin framing while still forbidding any active/outbound behaviour.
+		w.Header().Set("Content-Security-Policy", strings.Join([]string{
+			"default-src 'none'",
+			"img-src 'self' data: blob:",
+			"object-src 'self'",
+			"plugin-types application/pdf",
+			"frame-ancestors 'self'",
+		}, "; "))
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	default:
 		// Everything else: inert. Forbid script execution and framing entirely if
 		// a browser opens one directly.
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
