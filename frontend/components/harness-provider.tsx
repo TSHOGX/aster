@@ -30,7 +30,29 @@ import {
   postMessageFeedback,
   renameSession as apiRenameSession
 } from "@/lib/api";
+import { isRecord } from "@/lib/guards";
+import {
+  emptyConvo,
+  idleActivity,
+  pruneCommittedStreaming,
+  readAgentDelta,
+  reduceAgentDelta,
+  reduceCompactionEnd,
+  reduceCompactionStart,
+  reduceProxySettled,
+  reduceProxyStarted,
+  reduceRetryEnd,
+  reduceRetryStart,
+  reduceThinkingWhenIdle,
+  reduceThinkingWhenIdleOrRetrying,
+  reduceToolActivity,
+  reduceToolEnd,
+  withActivity,
+  type ConversationActivity,
+  type ConversationState
+} from "@/lib/harness-events";
 import { reduceSessionEvent } from "@/lib/session-events";
+import { useEventStream } from "@/lib/use-event-stream";
 import { buildEventsStreamUrl } from "@/lib/ws";
 import type {
   ApiArtifact,
@@ -41,42 +63,13 @@ import type {
   ConnectionStatus,
   HarnessEvent,
   SessionMode,
-  SessionStatus,
-  StreamLine,
-  TraceDiff,
-  TraceNode
+  SessionStatus
 } from "@/lib/types";
 
-export type ActivityPhase =
-  | "idle"
-  | "thinking"
-  | "tool"
-  | "streaming"
-  | "compacting"
-  | "retrying";
-
-export type ConversationActivity = {
-  phase: ActivityPhase;
-  startedAt: number | null;
-  requestCount: number;
-  inflight: number;
-  toolName: string | null;
-  toolDetail: string | null;
-};
-
-type ConversationState = {
-  messages: ApiMessage[];
-  streaming: Array<{ id: string; text: string; deltaType?: string }>;
-  stream: StreamLine[];
-  liveTrace: LiveTraceNode[];
-  activity: ConversationActivity;
-  loading: boolean;
-};
-
-// A live trace node carries the tool call id (when pi provides one) so the
-// matching tool_execution_end can finalize the right node even when tools run
-// concurrently. The id is internal and dropped when rendered as a TraceNode.
-type LiveTraceNode = TraceNode & { toolCallId?: string };
+// Activity/conversation types and their pure reducers now live in
+// lib/harness-events.ts. Re-export the two public types so existing consumers
+// (e.g. ActivityIndicator) keep importing them from this module unchanged.
+export type { ActivityPhase, ConversationActivity } from "@/lib/harness-events";
 
 type AuthState = {
   checked: boolean;
@@ -151,40 +144,6 @@ const initialState: HarnessState = {
 const RUNNING_STATUSES = new Set<SessionStatus>(["running_active"]);
 const MESSAGE_POLL_INTERVAL_MS = 1000;
 const MESSAGE_POLL_TIMEOUT_MS = 120_000;
-const SSE_TYPED_EVENT_TYPES = [
-  "session.created",
-  "session.running_active",
-  "session.running_idle",
-  "session.checkpointing",
-  "session.checkpointed",
-  "session.failed",
-  "session.destroyed",
-  "session.updated",
-  "message.created",
-  "agent.message",
-  "agent.delta",
-  "agent.output",
-  "system.status",
-  "session.error",
-  "generation.error",
-  "session.checkpoint_retired",
-  "session.restore_fallback_retired",
-  "artifact.updated",
-  "artifact.deleted",
-  "ack_turn_started",
-  "emit_output",
-  "ack_turn_completed",
-  "proxy.request.started",
-  "proxy.request.completed",
-  "proxy.request.failed",
-  "replay_gap",
-  "error",
-  "notification.created"
-] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function readSession(payload: unknown): ApiSession | null {
   if (!isRecord(payload)) return null;
@@ -199,25 +158,6 @@ function readArtifact(payload: unknown): ApiArtifact | null {
   const path = typeof payload.path === "string" ? payload.path : null;
   if (!sessionId || !path) return null;
   return payload as unknown as ApiArtifact;
-}
-
-function newId() {
-  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function idleActivity(): ConversationActivity {
-  return { phase: "idle", startedAt: null, requestCount: 0, inflight: 0, toolName: null, toolDetail: null };
-}
-
-function emptyConvo(): ConversationState {
-  return {
-    messages: [],
-    streaming: [],
-    stream: [],
-    liveTrace: [] as LiveTraceNode[],
-    activity: idleActivity(),
-    loading: false
-  };
 }
 
 // Module-level stable references so selector hooks return a constant identity
@@ -242,160 +182,12 @@ function shallowEqual<T extends Record<string, unknown>>(a: T, b: T): boolean {
   return true;
 }
 
-// Monotonic clock for turn timers. Date.now would be fine, but performance.now
-// is immune to wall-clock adjustments during a long-running turn.
-function nowMs(): number {
-  return typeof performance !== "undefined" ? performance.now() : Date.now();
-}
-
 function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 function isActiveStatus(status: SessionStatus) {
   return RUNNING_STATUSES.has(status);
-}
-
-function appendStreaming(
-  streaming: ConversationState["streaming"],
-  id: string,
-  text: string,
-  deltaType?: string
-): ConversationState["streaming"] {
-  const idx = streaming.findIndex((entry) => entry.id === id);
-  if (idx === -1) {
-    return [...streaming, { id, text, deltaType }];
-  }
-  return streaming.map((entry, entryIdx) =>
-    entryIdx === idx ? { ...entry, text: entry.text + text } : entry
-  );
-}
-
-function isCommittedStream(streamText: string, messageText: string) {
-  const stream = streamText.trim();
-  const message = messageText.trim();
-  return stream !== "" && message !== "" && (stream === message || message.startsWith(stream));
-}
-
-function pruneCommittedStreaming(
-  streaming: ConversationState["streaming"],
-  messages: ApiMessage[]
-): ConversationState["streaming"] {
-  let next = streaming;
-  for (const message of messages) {
-    if (message.role !== "assistant") continue;
-    const idx = next.findIndex((entry) => isCommittedStream(entry.text, message.content));
-    if (idx !== -1) {
-      next = [...next.slice(0, idx), ...next.slice(idx + 1)];
-    }
-  }
-  return next;
-}
-
-// Derive a short human label from a pi tool-call input object, e.g. the file
-// path being read or the command being run. Falls back to null when nothing
-// obviously label-worthy is present.
-function toolDetailFromInput(input: unknown): string | null {
-  if (!isRecord(input)) return null;
-  for (const key of ["path", "file_path", "command", "cmd", "pattern", "query", "url", "name"]) {
-    const value = input[key];
-    if (typeof value === "string" && value.trim()) {
-      const trimmed = value.trim();
-      return trimmed.length > 80 ? `${trimmed.slice(0, 79)}…` : trimmed;
-    }
-  }
-  return null;
-}
-
-// pi emits `toolName`/`args` on tool lifecycle events; older frames used
-// `name`/`input`. Read the modern shape first and fall back so labels populate
-// regardless of which the backend sends.
-function readToolName(payload: Record<string, unknown>): string | null {
-  const modern = payload.toolName;
-  if (typeof modern === "string" && modern.trim()) return modern;
-  const legacy = payload.name;
-  return typeof legacy === "string" && legacy.trim() ? legacy : null;
-}
-
-function readToolArgs(payload: Record<string, unknown>): Record<string, unknown> | undefined {
-  const modern = payload.args;
-  if (isRecord(modern)) return modern;
-  const legacy = payload.input;
-  return isRecord(legacy) ? legacy : undefined;
-}
-
-const TRACE_RESULT_MAX = 2000;
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
-
-function stringifyResult(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-// Build a diff preview from a write/edit tool's arguments so the trace node can
-// render the change inline. Returns undefined for non-mutating tools.
-function diffFromToolArgs(
-  toolName: string | null,
-  args: Record<string, unknown> | undefined
-): TraceDiff | undefined {
-  if (!toolName || !args) return undefined;
-  const name = toolName.toLowerCase();
-  const path =
-    typeof args.path === "string"
-      ? args.path
-      : typeof args.file_path === "string"
-      ? args.file_path
-      : undefined;
-  if (name === "write") {
-    const content = typeof args.content === "string" ? args.content : undefined;
-    if (content === undefined) return undefined;
-    return { path, content };
-  }
-  if (name === "edit") {
-    const rawEdits = Array.isArray(args.edits) ? args.edits : null;
-    if (rawEdits) {
-      const edits = rawEdits
-        .filter(isRecord)
-        .map((e) => ({
-          oldText: typeof e.oldText === "string" ? e.oldText : typeof e.old_text === "string" ? e.old_text : "",
-          newText: typeof e.newText === "string" ? e.newText : typeof e.new_text === "string" ? e.new_text : ""
-        }));
-      if (edits.length > 0) return { path, edits };
-    }
-    const oldText =
-      typeof args.oldText === "string" ? args.oldText : typeof args.old_text === "string" ? args.old_text : null;
-    const newText =
-      typeof args.newText === "string" ? args.newText : typeof args.new_text === "string" ? args.new_text : null;
-    if (oldText !== null || newText !== null) {
-      return { path, edits: [{ oldText: oldText ?? "", newText: newText ?? "" }] };
-    }
-  }
-  return undefined;
-}
-
-function withActivity(
-  c: ConversationState,
-  patch: Partial<ConversationActivity>
-): ConversationState {
-  const next: ConversationActivity = { ...c.activity, ...patch };
-  // Any non-idle phase implies the turn is underway: start the timer once.
-  if (next.phase !== "idle" && next.startedAt === null) {
-    next.startedAt = nowMs();
-  }
-  if (next.phase === "idle") {
-    next.startedAt = null;
-    next.toolName = null;
-    next.toolDetail = null;
-  }
-  return { ...c, activity: next };
 }
 
 export function HarnessProvider({ children }: { children: React.ReactNode }) {
@@ -439,7 +231,6 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
   const aliveRef = useRef(true);
   const pollingRef = useRef<Set<string>>(new Set());
-  const connectedOnceRef = useRef(false);
   const lastEventIDRef = useRef<number | null>(null);
 
   const ensureConvo = useCallback((convos: HarnessState["conversations"], id: string) => {
@@ -647,16 +438,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         }
         case "agent.delta": {
           if (!sessionId || !isRecord(event.payload)) return;
-          const text = typeof event.payload.text === "string" ? event.payload.text : "";
-          const id = typeof event.payload.message_id === "string" ? event.payload.message_id : "assistant_pending";
-          const deltaType = typeof event.payload.delta_type === "string" ? event.payload.delta_type : "text_delta";
-          if (deltaType !== "text_delta") return;
-          if (!text) return;
-          upsertConvo(sessionId, (c) =>
-            withActivity({ ...c, streaming: appendStreaming(c.streaming, id, text, deltaType) }, {
-              phase: "streaming"
-            })
-          );
+          const delta = readAgentDelta(event.payload);
+          if (!delta) return;
+          upsertConvo(sessionId, (c) => reduceAgentDelta(c, delta.id, delta.text, delta.deltaType));
           return;
         }
         case "agent.output": {
@@ -669,76 +453,13 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           // can show "Running bash" / "Reading README.md" during the gap
           // between text tokens where it previously looked frozen.
           if (piType === "tool_execution_start" || piType === "tool_execution_update") {
-            const toolName = readToolName(payload);
-            const args = readToolArgs(payload);
-            const detail = toolDetailFromInput(args ?? payload.input);
-            const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : undefined;
-            upsertConvo(sessionId, (c) => {
-              const next = withActivity(c, {
-                phase: "tool",
-                toolName,
-                toolDetail: detail
-              });
-              // Only push a node on start; an update refines the activity strip
-              // but the node is already present.
-              if (piType !== "tool_execution_start") return next;
-              const node: LiveTraceNode = {
-                kind: "tool",
-                toolName: toolName ?? undefined,
-                label: detail ?? undefined,
-                args,
-                startedAt: new Date().toISOString(),
-                toolCallId
-              };
-              return { ...next, liveTrace: [...next.liveTrace, node] };
-            });
+            upsertConvo(sessionId, (c) =>
+              reduceToolActivity(c, payload, piType === "tool_execution_start")
+            );
             return;
           }
           if (piType === "tool_execution_end") {
-            const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : undefined;
-            const result = "result" in payload ? payload.result : undefined;
-            const resultSummary = truncate(stringifyResult(result), TRACE_RESULT_MAX) || undefined;
-            const isError = payload.isError === true;
-            upsertConvo(sessionId, (c) => {
-              // Finalize the matching still-open tool node: prefer the toolCallId
-              // match, else the last tool node without a durationMs.
-              let targetIdx = -1;
-              for (let i = c.liveTrace.length - 1; i >= 0; i -= 1) {
-                const n = c.liveTrace[i];
-                if (n.kind !== "tool") continue;
-                if (toolCallId) {
-                  if (n.toolCallId === toolCallId) {
-                    targetIdx = i;
-                    break;
-                  }
-                } else if (n.durationMs === undefined) {
-                  targetIdx = i;
-                  break;
-                }
-              }
-              let liveTrace = c.liveTrace;
-              if (targetIdx !== -1) {
-                const node = c.liveTrace[targetIdx];
-                const durationMs = node.startedAt
-                  ? Math.max(0, Date.now() - new Date(node.startedAt).getTime())
-                  : undefined;
-                const finalized: LiveTraceNode = {
-                  ...node,
-                  resultSummary,
-                  isError,
-                  durationMs,
-                  diff: node.diff ?? diffFromToolArgs(node.toolName ?? null, node.args)
-                };
-                liveTrace = c.liveTrace.map((n, i) => (i === targetIdx ? finalized : n));
-              }
-              // Tool finished; fall back to thinking until the next signal (more
-              // tools, or text deltas) refines the phase.
-              const next =
-                c.activity.phase === "tool"
-                  ? withActivity(c, { phase: "thinking", toolName: null, toolDetail: null })
-                  : c;
-              return { ...next, liveTrace };
-            });
+            upsertConvo(sessionId, (c) => reduceToolEnd(c, payload));
             return;
           }
           if (
@@ -750,44 +471,25 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           ) {
             // Assistant is assembling a tool call or bracketing a text block:
             // keep the turn marked active without a specific tool label.
-            upsertConvo(sessionId, (c) =>
-              c.activity.phase === "idle" ? withActivity(c, { phase: "thinking" }) : c
-            );
+            upsertConvo(sessionId, reduceThinkingWhenIdle);
             return;
           }
 
-          const stream = typeof payload.stream === "string" ? payload.stream : "stdout";
-          const line = typeof payload.line === "string" ? payload.line : "";
-          if (!line) return;
-          const entry: StreamLine = {
-            id: newId(),
-            session_id: sessionId,
-            stream,
-            line,
-            time
-          };
-          upsertConvo(sessionId, (c) => ({ ...c, stream: [...c.stream, entry].slice(-400) }));
+          // stdout/stderr lines (pi events carrying a `line` field) are not
+          // rendered anywhere, so there is nothing to accumulate here.
           return;
         }
         case "proxy.request.started": {
           if (!sessionId) return;
           // A model request is on the wire. Count it and mark the request as
           // in-flight so the activity strip can show "waiting on model".
-          upsertConvo(sessionId, (c) =>
-            withActivity(c, {
-              phase: c.activity.phase === "idle" ? "thinking" : c.activity.phase,
-              requestCount: c.activity.requestCount + 1,
-              inflight: c.activity.inflight + 1
-            })
-          );
+          upsertConvo(sessionId, reduceProxyStarted);
           return;
         }
         case "proxy.request.completed":
         case "proxy.request.failed": {
           if (!sessionId) return;
-          upsertConvo(sessionId, (c) =>
-            withActivity(c, { inflight: Math.max(0, c.activity.inflight - 1) })
-          );
+          upsertConvo(sessionId, reduceProxySettled);
           return;
         }
         case "system.status": {
@@ -802,28 +504,20 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
             case "agent_start":
             case "message_start":
             case "queue_update":
-              upsertConvo(sessionId, (c) =>
-                c.activity.phase === "idle" || c.activity.phase === "retrying"
-                  ? withActivity(c, { phase: "thinking" })
-                  : c
-              );
+              upsertConvo(sessionId, reduceThinkingWhenIdleOrRetrying);
               return;
             case "compaction_start":
-              upsertConvo(sessionId, (c) => withActivity(c, { phase: "compacting" }));
+              upsertConvo(sessionId, reduceCompactionStart);
               return;
             case "compaction_end":
-              upsertConvo(sessionId, (c) =>
-                c.activity.phase === "compacting" ? withActivity(c, { phase: "thinking" }) : c
-              );
+              upsertConvo(sessionId, reduceCompactionEnd);
               return;
             case "auto_retry_start":
             case "auto_retry":
-              upsertConvo(sessionId, (c) => withActivity(c, { phase: "retrying" }));
+              upsertConvo(sessionId, reduceRetryStart);
               return;
             case "auto_retry_end":
-              upsertConvo(sessionId, (c) =>
-                c.activity.phase === "retrying" ? withActivity(c, { phase: "thinking" }) : c
-              );
+              upsertConvo(sessionId, reduceRetryEnd);
               return;
             default:
               break;
@@ -890,10 +584,6 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     [ensureConvo, upsertConvo, refreshNotifications, setState, stateRef]
   );
 
-  const handleEventRef = useRef(handleEvent);
-  useEffect(() => {
-    handleEventRef.current = handleEvent;
-  }, [handleEvent]);
 
   const handleUnauthorized = useCallback(() => {
     aliveRef.current = false;
@@ -1002,87 +692,22 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     handleUnauthorized();
   }, [handleUnauthorized]);
 
-  useEffect(() => {
-    if (!authReady) return;
-    aliveRef.current = true;
-    let cleanedUp = false;
-    connectedOnceRef.current = false;
+  const setConnection = useCallback(
+    (status: ConnectionStatus) => setState((p) => ({ ...p, connection: status })),
+    [setState]
+  );
+  const onStreamRefresh = useCallback(() => {
+    void refresh();
+  }, [refresh]);
 
-    let source: EventSource;
-    try {
-      source = new EventSource(buildEventsStreamUrl(undefined, lastEventIDRef.current));
-    } catch {
-      const failureTimer = setTimeout(() => {
-        if (!cleanedUp) {
-          setState((p) => ({ ...p, connection: "down" }));
-        }
-      }, 0);
-      return () => {
-        cleanedUp = true;
-        aliveRef.current = false;
-        clearTimeout(failureTimer);
-      };
-    }
-
-    source.onopen = () => {
-      if (cleanedUp) return;
-      const wasConnected = connectedOnceRef.current;
-      connectedOnceRef.current = true;
-      setState((p) => ({ ...p, connection: "live" }));
-      if (wasConnected) {
-        void refresh();
-      }
-    };
-
-    const handleSourceEvent = (ev: MessageEvent) => {
-      try {
-        const data = JSON.parse(typeof ev.data === "string" ? ev.data : "");
-        const eventID =
-          data && typeof data.event_id === "number"
-            ? data.event_id
-            : Number.parseInt(ev.lastEventId, 10);
-        if (Number.isFinite(eventID) && eventID > 0) {
-          lastEventIDRef.current = eventID;
-        }
-        if (data && data.type === "replay_gap") {
-          void refresh();
-          return;
-        }
-        if (data && typeof data.type === "string") {
-          handleEventRef.current(data as HarnessEvent);
-        }
-      } catch {
-        // ignore malformed frames
-      }
-    };
-    source.onmessage = handleSourceEvent;
-    for (const eventType of SSE_TYPED_EVENT_TYPES) {
-      source.addEventListener(eventType, handleSourceEvent);
-    }
-
-    source.onerror = () => {
-      if (cleanedUp) return;
-      if (source.readyState === EventSource.CLOSED) {
-        setState((p) => ({ ...p, connection: "down" }));
-        return;
-      }
-      setState((p) => ({ ...p, connection: connectedOnceRef.current ? "reconnecting" : "connecting" }));
-    };
-
-    const bootTimer = setTimeout(() => {
-      void refresh();
-    }, 0);
-
-    return () => {
-      cleanedUp = true;
-      aliveRef.current = false;
-      clearTimeout(bootTimer);
-      for (const eventType of SSE_TYPED_EVENT_TYPES) {
-        source.removeEventListener(eventType, handleSourceEvent);
-      }
-      source.close();
-    };
-  }, [refresh, authReady, setState]);
+  useEventStream({
+    enabled: authReady,
+    aliveRef,
+    lastEventIdRef: lastEventIDRef,
+    onEvent: handleEvent,
+    onRefresh: onStreamRefresh,
+    onConnectionChange: setConnection
+  });
 
   const selectSession = useCallback(
     (id: string | null) => {
@@ -1311,16 +936,14 @@ function useStoreSelector<T>(
 }
 
 /**
- * useHarness — returns the STABLE actions object plus the store. Kept for
- * least-churn compatibility: consumers destructure actions (e.g.
- * `const { sendMessage } = useHarness()`) exactly as before. It no longer
- * carries a live `state`; read state via the slice hooks below so components
- * only re-render on the slices they actually use.
+ * useHarness — returns the STABLE actions object. Kept for least-churn
+ * compatibility: consumers destructure actions (e.g.
+ * `const { sendMessage } = useHarness()`) exactly as before. It carries no
+ * live `state`; read state via the slice hooks below so components only
+ * re-render on the slices they actually use.
  */
-export function useHarness(): HarnessActions & { store: HarnessStore } {
-  const { store, actions } = useHarnessContext();
-  // Stable inputs ⇒ stable result; memo keeps identity across renders.
-  return useMemo(() => ({ ...actions, store }), [actions, store]);
+export function useHarness(): HarnessActions {
+  return useHarnessContext().actions;
 }
 
 export function useSessions() {

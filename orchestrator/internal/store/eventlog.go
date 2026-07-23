@@ -151,11 +151,7 @@ WHERE event_id NOT IN (
 	return deleted, tx.Commit()
 }
 
-type eventScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanEventRecord(scanner eventScanner) (EventRecord, error) {
+func scanEventRecord(scanner rowScanner) (EventRecord, error) {
 	var record EventRecord
 	var sessionID, generationID, proxyRequestID, stream, severity sql.NullString
 	var turnID, outputSequence sql.NullInt64

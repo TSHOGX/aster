@@ -13,6 +13,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/store"
 )
 
@@ -94,7 +95,7 @@ func (w *Watcher) ScanSession(ctx context.Context, sessionID string) error {
 		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
-		artifactPath, ok := workspaceRelativePath(workspace.HostPath, path)
+		artifactPath, ok := pathutil.Rel(workspace.HostPath, path)
 		if !ok {
 			return nil
 		}
@@ -166,7 +167,7 @@ func (w *Watcher) workspaceSnapshot() ([]store.SessionWorkspaceVolume, bool) {
 // this watcher registered under it.
 func (w *Watcher) removeRecursive(watcher *fsnotify.Watcher, root string) {
 	for _, watched := range watcher.WatchList() {
-		if watched == root || pathInside(root, watched) {
+		if watched == root || pathutil.Within(root, watched) {
 			if err := watcher.Remove(watched); err != nil {
 				w.log.Warn("failed to remove artifact directory watch", "path", watched, "error", err)
 			}
@@ -210,7 +211,7 @@ func (w *Watcher) recordWorkspacePath(ctx context.Context, sessionID, workspaceR
 		return
 	}
 	realPath, err := filepath.EvalSymlinks(path)
-	if err != nil || !pathInside(realWorkspaceRoot, realPath) {
+	if err != nil || !pathutil.Within(realWorkspaceRoot, realPath) {
 		return
 	}
 	artifact := store.Artifact{
@@ -260,20 +261,12 @@ func (w *Watcher) resolveArtifactPath(ctx context.Context, path string) (string,
 		}
 	}
 	for _, workspace := range workspaces {
-		artifactPath, ok := workspaceRelativePath(workspace.HostPath, path)
+		artifactPath, ok := pathutil.Rel(workspace.HostPath, path)
 		if ok {
 			return workspace.SessionID, artifactPath, workspace.HostPath, true
 		}
 	}
 	return "", "", "", false
-}
-
-func workspaceRelativePath(root, path string) (string, bool) {
-	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	return filepath.ToSlash(rel), true
 }
 
 func hasSymlinkComponent(root, slashPath string) bool {
@@ -289,9 +282,4 @@ func hasSymlinkComponent(root, slashPath string) bool {
 		}
 	}
 	return false
-}
-
-func pathInside(root, candidate string) bool {
-	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

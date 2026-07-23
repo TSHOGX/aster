@@ -31,6 +31,7 @@ import { NotificationBell } from "@/components/notifications/notification-bell";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { formatRelative, isTerminal, statusLabel } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { useDismissOnOutside } from "@/lib/use-popover";
 import type { ApiSession } from "@/lib/types";
 
 type SessionRowProps = {
@@ -60,21 +61,7 @@ const SessionRow = memo(function SessionRow({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Close the "..." menu on any outside click or Escape.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
+  useDismissOnOutside(menuOpen, [menuRef], () => setMenuOpen(false), { escape: true });
 
   const startEditing = () => {
     setMenuOpen(false);

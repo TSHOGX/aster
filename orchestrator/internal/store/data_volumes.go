@@ -934,9 +934,7 @@ WHERE session_id = ?`, sessionID)
 	return scanSessionWorkspaceVolume(row)
 }
 
-func scanSessionWorkspaceVolume(row interface {
-	Scan(dest ...any) error
-}) (SessionWorkspaceVolume, error) {
+func scanSessionWorkspaceVolume(row rowScanner) (SessionWorkspaceVolume, error) {
 	var volume SessionWorkspaceVolume
 	var gids, provisionedAt string
 	if err := row.Scan(

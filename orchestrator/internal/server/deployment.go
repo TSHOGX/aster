@@ -13,6 +13,7 @@ import (
 
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/config"
+	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/store"
 )
 
@@ -476,7 +477,7 @@ func resolveRootfsPath(rootfs, sandboxPath string) (string, error) {
 			return "", err
 		}
 		absolute = filepath.Clean(absolute)
-		if !pathWithinRoot(absolute, root) {
+		if !pathutil.Within(root, absolute) {
 			return "", fmt.Errorf("manifest binary path %q escapes rootfs", sandboxPath)
 		}
 		info, err := os.Lstat(absolute)
@@ -501,14 +502,6 @@ func resolveRootfsPath(rootfs, sandboxPath string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("manifest binary path %q symlink resolution exceeded limit", sandboxPath)
-}
-
-func pathWithinRoot(path, root string) bool {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func (r deploymentResolution) runtimeConfigPreimage(defaultAgent string) map[string]any {

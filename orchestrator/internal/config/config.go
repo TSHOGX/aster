@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
+	"harness-platform/orchestrator/internal/pathutil"
+	"harness-platform/orchestrator/internal/strutil"
 
 	"gopkg.in/yaml.v3"
 )
@@ -47,18 +49,18 @@ type Config struct {
 	// request; MaxEditBytes caps a single online-edit body; MaxUploadFiles caps
 	// how many files one upload request may create. These bound memory and disk
 	// blast radius for the workspace file upload/edit endpoints.
-	MaxUploadBytes       int64
-	MaxEditBytes         int64
-	MaxUploadFiles       int
-	RunscNetwork         string
-	RunscOverlay2        string
-	Agents               map[string]AgentConfig
-	ModelProfiles        map[string]ModelProfileConfig
-	RuntimeProviders     map[string]RuntimeProviderConfig
-	ModelProxy           ModelProxyConfig
-	Harness              HarnessConfig
-	TitleLLM             TitleLLMConfig
-	Warnings             []string
+	MaxUploadBytes   int64
+	MaxEditBytes     int64
+	MaxUploadFiles   int
+	RunscNetwork     string
+	RunscOverlay2    string
+	Agents           map[string]AgentConfig
+	ModelProfiles    map[string]ModelProfileConfig
+	RuntimeProviders map[string]RuntimeProviderConfig
+	ModelProxy       ModelProxyConfig
+	Harness          HarnessConfig
+	TitleLLM         TitleLLMConfig
+	Warnings         []string
 }
 
 // TitleLLMConfig configures the optional LLM-based session-title generator.
@@ -522,7 +524,7 @@ func defaultHarnessConfig() HarnessConfig {
 }
 
 func normalizeHarnessConfig(cfg HarnessConfig) HarnessConfig {
-	cfg.DefaultAgent = defaultString(cfg.DefaultAgent, string(agents.Pi))
+	cfg.DefaultAgent = strutil.Default(cfg.DefaultAgent, string(agents.Pi))
 	if canonical, err := agents.CanonicalDriverID(cfg.DefaultAgent); err == nil {
 		cfg.DefaultAgent = string(canonical)
 	}
@@ -767,10 +769,10 @@ func ValidateIsolationRoots(roots IsolationRoots) (CanonicalIsolationRoots, erro
 	if canonical.ProviderCredentialRoot != "" {
 		topLevel = append(topLevel, isolationRoot{label: "provider credential root", path: canonical.ProviderCredentialRoot})
 	}
-	if !isolationPathWithin(canonical.DataVolumeEvidenceRoot, canonical.DBStateRoot) {
+	if !pathutil.Within(canonical.DBStateRoot, canonical.DataVolumeEvidenceRoot) {
 		topLevel = append(topLevel, isolationRoot{label: "data volume evidence root", path: canonical.DataVolumeEvidenceRoot})
 	}
-	if !isolationPathWithin(canonical.ProxyInternalRoot, canonical.RunDir) {
+	if !pathutil.Within(canonical.RunDir, canonical.ProxyInternalRoot) {
 		topLevel = append(topLevel, isolationRoot{label: "proxy internal root", path: canonical.ProxyInternalRoot})
 	}
 	if err := validateIsolationTopLevelDisjoint(topLevel); err != nil {
@@ -856,7 +858,7 @@ func validateIsolationTopLevelDisjoint(roots []isolationRoot) error {
 }
 
 func validateReservedHostRoot(label, path string, roots CanonicalIsolationRoots, allowedParent string) error {
-	if !isolationPathWithin(path, allowedParent) && isolationRootsOverlap(path, allowedParent) {
+	if !pathutil.Within(allowedParent, path) && isolationRootsOverlap(path, allowedParent) {
 		return fmt.Errorf("isolation %s %q must not contain reserved parent %q", label, path, allowedParent)
 	}
 	sandboxBindable := []isolationRoot{
@@ -878,17 +880,7 @@ func validateReservedHostRoot(label, path string, roots CanonicalIsolationRoots,
 }
 
 func isolationRootsOverlap(a, b string) bool {
-	return isolationPathWithin(a, b) || isolationPathWithin(b, a)
-}
-
-func isolationPathWithin(path, root string) bool {
-	path = filepath.Clean(path)
-	root = filepath.Clean(root)
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	return pathutil.Within(b, a) || pathutil.Within(a, b)
 }
 
 func harnessConfigWarnings(cfg HarnessConfig) []string {
@@ -972,116 +964,107 @@ func defaultRuntimeProviderConfigs() map[string]RuntimeProviderConfig {
 	}
 }
 
-func normalizeAgentConfigs(raw map[string]AgentConfig) map[string]AgentConfig {
-	defaults := defaultAgentConfigs()
+// normalizeConfigMap is the shared merge skeleton for the config families. It
+// starts from a clone of the defaults, and for each raw entry (keyed by a
+// trimmed id, empty ids skipped) merges the raw value onto the existing base
+// (or a zero value for unknown keys) via mergeOne. The per-type field-merge
+// logic lives in mergeOne; only the map iteration is shared here. Behavior is
+// preserved: an empty raw map yields a fresh clone of the defaults.
+func normalizeConfigMap[T any](
+	raw map[string]T,
+	defaults map[string]T,
+	cloneMap func(map[string]T) map[string]T,
+	mergeOne func(key string, base, raw T) T,
+) map[string]T {
 	if len(raw) == 0 {
-		return cloneAgentConfigs(defaults)
+		return cloneMap(defaults)
 	}
-	normalized := cloneAgentConfigs(defaults)
+	normalized := cloneMap(defaults)
 	for id, cfg := range raw {
 		key := strings.TrimSpace(id)
 		if key == "" {
 			continue
 		}
-		base, ok := normalized[key]
-		if !ok {
-			base = AgentConfig{}
-		}
-		if cfg.Enabled != nil {
-			base.Enabled = boolPtr(*cfg.Enabled)
-		}
-		if strings.TrimSpace(cfg.DriverID) != "" {
-			base.DriverID = strings.TrimSpace(cfg.DriverID)
-		} else if strings.TrimSpace(base.DriverID) == "" {
-			base.DriverID = key
-		}
-		if canonical, err := agents.CanonicalDriverID(base.DriverID); err == nil {
-			base.DriverID = string(canonical)
-		}
-		if strings.TrimSpace(cfg.ModelProfile) != "" {
-			base.ModelProfile = strings.TrimSpace(cfg.ModelProfile)
-		}
-		if strings.TrimSpace(cfg.RuntimeProvider) != "" {
-			base.RuntimeProvider = strings.TrimSpace(cfg.RuntimeProvider)
-		}
-		if cfg.DisableNonessentialTraffic != nil {
-			base.DisableNonessentialTraffic = boolPtr(*cfg.DisableNonessentialTraffic)
-		}
-		if base.Enabled == nil {
-			base.Enabled = boolPtr(false)
-		}
-		normalized[key] = base
+		base := normalized[key]
+		normalized[key] = mergeOne(key, base, cfg)
 	}
 	return normalized
+}
+
+func normalizeAgentConfigs(raw map[string]AgentConfig) map[string]AgentConfig {
+	return normalizeConfigMap(raw, defaultAgentConfigs(), cloneAgentConfigs, mergeAgentConfig)
+}
+
+func mergeAgentConfig(key string, base, cfg AgentConfig) AgentConfig {
+	if cfg.Enabled != nil {
+		base.Enabled = boolPtr(*cfg.Enabled)
+	}
+	if strings.TrimSpace(cfg.DriverID) != "" {
+		base.DriverID = strings.TrimSpace(cfg.DriverID)
+	} else if strings.TrimSpace(base.DriverID) == "" {
+		base.DriverID = key
+	}
+	if canonical, err := agents.CanonicalDriverID(base.DriverID); err == nil {
+		base.DriverID = string(canonical)
+	}
+	if strings.TrimSpace(cfg.ModelProfile) != "" {
+		base.ModelProfile = strings.TrimSpace(cfg.ModelProfile)
+	}
+	if strings.TrimSpace(cfg.RuntimeProvider) != "" {
+		base.RuntimeProvider = strings.TrimSpace(cfg.RuntimeProvider)
+	}
+	if cfg.DisableNonessentialTraffic != nil {
+		base.DisableNonessentialTraffic = boolPtr(*cfg.DisableNonessentialTraffic)
+	}
+	if base.Enabled == nil {
+		base.Enabled = boolPtr(false)
+	}
+	return base
 }
 
 func normalizeModelProfileConfigs(raw map[string]ModelProfileConfig) map[string]ModelProfileConfig {
-	defaults := defaultModelProfileConfigs()
-	if len(raw) == 0 {
-		return cloneModelProfileConfigs(defaults)
+	return normalizeConfigMap(raw, defaultModelProfileConfigs(), cloneModelProfileConfigs, mergeModelProfileConfig)
+}
+
+func mergeModelProfileConfig(_ string, base, cfg ModelProfileConfig) ModelProfileConfig {
+	if cfg.Enabled != nil {
+		base.Enabled = boolPtr(*cfg.Enabled)
 	}
-	normalized := cloneModelProfileConfigs(defaults)
-	for id, cfg := range raw {
-		key := strings.TrimSpace(id)
-		if key == "" {
-			continue
-		}
-		base, ok := normalized[key]
-		if !ok {
-			base = ModelProfileConfig{}
-		}
-		if cfg.Enabled != nil {
-			base.Enabled = boolPtr(*cfg.Enabled)
-		}
-		if strings.TrimSpace(cfg.Provider) != "" {
-			base.Provider = strings.TrimSpace(cfg.Provider)
-		}
-		if strings.TrimSpace(cfg.Model) != "" {
-			base.Model = strings.TrimSpace(cfg.Model)
-		}
-		if strings.TrimSpace(cfg.ProxyRef) != "" {
-			base.ProxyRef = strings.TrimSpace(cfg.ProxyRef)
-		}
-		if base.Enabled == nil {
-			base.Enabled = boolPtr(false)
-		}
-		normalized[key] = base
+	if strings.TrimSpace(cfg.Provider) != "" {
+		base.Provider = strings.TrimSpace(cfg.Provider)
 	}
-	return normalized
+	if strings.TrimSpace(cfg.Model) != "" {
+		base.Model = strings.TrimSpace(cfg.Model)
+	}
+	if strings.TrimSpace(cfg.ProxyRef) != "" {
+		base.ProxyRef = strings.TrimSpace(cfg.ProxyRef)
+	}
+	if base.Enabled == nil {
+		base.Enabled = boolPtr(false)
+	}
+	return base
 }
 
 func normalizeRuntimeProviderConfigs(raw map[string]RuntimeProviderConfig) map[string]RuntimeProviderConfig {
-	defaults := defaultRuntimeProviderConfigs()
-	if len(raw) == 0 {
-		return cloneRuntimeProviderConfigs(defaults)
+	return normalizeConfigMap(raw, defaultRuntimeProviderConfigs(), cloneRuntimeProviderConfigs, mergeRuntimeProviderConfig)
+}
+
+func mergeRuntimeProviderConfig(key string, base, cfg RuntimeProviderConfig) RuntimeProviderConfig {
+	if cfg.Enabled != nil {
+		base.Enabled = boolPtr(*cfg.Enabled)
 	}
-	normalized := cloneRuntimeProviderConfigs(defaults)
-	for id, cfg := range raw {
-		key := strings.TrimSpace(id)
-		if key == "" {
-			continue
-		}
-		base, ok := normalized[key]
-		if !ok {
-			base = RuntimeProviderConfig{}
-		}
-		if cfg.Enabled != nil {
-			base.Enabled = boolPtr(*cfg.Enabled)
-		}
-		if strings.TrimSpace(cfg.ProviderID) != "" {
-			base.ProviderID = strings.TrimSpace(cfg.ProviderID)
-		} else if strings.TrimSpace(base.ProviderID) == "" {
-			base.ProviderID = key
-		}
-		if strings.TrimSpace(cfg.ProfileID) != "" {
-			base.ProfileID = strings.TrimSpace(cfg.ProfileID)
-		}
-		if base.Enabled == nil {
-			base.Enabled = boolPtr(false)
-		}
-		normalized[key] = base
+	if strings.TrimSpace(cfg.ProviderID) != "" {
+		base.ProviderID = strings.TrimSpace(cfg.ProviderID)
+	} else if strings.TrimSpace(base.ProviderID) == "" {
+		base.ProviderID = key
 	}
-	return normalized
+	if strings.TrimSpace(cfg.ProfileID) != "" {
+		base.ProfileID = strings.TrimSpace(cfg.ProfileID)
+	}
+	if base.Enabled == nil {
+		base.Enabled = boolPtr(false)
+	}
+	return base
 }
 
 func validateDeploymentConfig(cfg HarnessConfig) error {
@@ -1096,7 +1079,7 @@ func validateDeploymentConfig(cfg HarnessConfig) error {
 		return fmt.Errorf("harness.agents must be non-empty")
 	}
 	for id, agentCfg := range cfg.Agents {
-		driverID, err := agents.CanonicalDriverID(defaultString(agentCfg.DriverID, id))
+		driverID, err := agents.CanonicalDriverID(strutil.Default(agentCfg.DriverID, id))
 		if err != nil {
 			return fmt.Errorf("harness.agents.%s.driver_id: %w", id, err)
 		}
@@ -1114,7 +1097,7 @@ func validateDeploymentConfig(cfg HarnessConfig) error {
 		if enabled(agentCfg.Enabled) && !enabled(runtimeCfg.Enabled) {
 			return fmt.Errorf("harness.agents.%s.runtime_provider %q is disabled", id, agentCfg.RuntimeProvider)
 		}
-		providerID := defaultString(runtimeCfg.ProviderID, agentCfg.RuntimeProvider)
+		providerID := strutil.Default(runtimeCfg.ProviderID, agentCfg.RuntimeProvider)
 		if err := agents.EnsureDriverSupportedByProvider(string(driverID), providerID); err != nil {
 			return fmt.Errorf("harness.agents.%s.runtime_provider: %w", id, err)
 		}
@@ -1158,7 +1141,7 @@ func EnabledAgentConfigForDriver(agentConfigs map[string]AgentConfig, driverID s
 		if !enabled(cfg.Enabled) {
 			continue
 		}
-		candidate, err := agents.CanonicalDriverID(defaultString(cfg.DriverID, key))
+		candidate, err := agents.CanonicalDriverID(strutil.Default(cfg.DriverID, key))
 		if err == nil && candidate == canonical {
 			return key, cfg, true
 		}
@@ -1178,15 +1161,22 @@ func (c Config) DeploymentRuntimeProviders() map[string]RuntimeProviderConfig {
 	return normalizeRuntimeProviderConfigs(c.RuntimeProviders)
 }
 
-func cloneAgentConfigs(input map[string]AgentConfig) map[string]AgentConfig {
+// cloneConfigMap is the shared map-copy skeleton for the config families. It
+// preserves nil-vs-empty semantics (a nil input yields a nil output) and defers
+// the per-type deep copy to cloneOne.
+func cloneConfigMap[T any](input map[string]T, cloneOne func(T) T) map[string]T {
 	if input == nil {
 		return nil
 	}
-	output := make(map[string]AgentConfig, len(input))
+	output := make(map[string]T, len(input))
 	for key, value := range input {
-		output[key] = cloneAgentConfig(value)
+		output[key] = cloneOne(value)
 	}
 	return output
+}
+
+func cloneAgentConfigs(input map[string]AgentConfig) map[string]AgentConfig {
+	return cloneConfigMap(input, cloneAgentConfig)
 }
 
 func cloneAgentConfig(value AgentConfig) AgentConfig {
@@ -1200,31 +1190,25 @@ func cloneAgentConfig(value AgentConfig) AgentConfig {
 }
 
 func cloneModelProfileConfigs(input map[string]ModelProfileConfig) map[string]ModelProfileConfig {
-	if input == nil {
-		return nil
+	return cloneConfigMap(input, cloneModelProfileConfig)
+}
+
+func cloneModelProfileConfig(value ModelProfileConfig) ModelProfileConfig {
+	if value.Enabled != nil {
+		value.Enabled = boolPtr(*value.Enabled)
 	}
-	output := make(map[string]ModelProfileConfig, len(input))
-	for key, value := range input {
-		if value.Enabled != nil {
-			value.Enabled = boolPtr(*value.Enabled)
-		}
-		output[key] = value
-	}
-	return output
+	return value
 }
 
 func cloneRuntimeProviderConfigs(input map[string]RuntimeProviderConfig) map[string]RuntimeProviderConfig {
-	if input == nil {
-		return nil
+	return cloneConfigMap(input, cloneRuntimeProviderConfig)
+}
+
+func cloneRuntimeProviderConfig(value RuntimeProviderConfig) RuntimeProviderConfig {
+	if value.Enabled != nil {
+		value.Enabled = boolPtr(*value.Enabled)
 	}
-	output := make(map[string]RuntimeProviderConfig, len(input))
-	for key, value := range input {
-		if value.Enabled != nil {
-			value.Enabled = boolPtr(*value.Enabled)
-		}
-		output[key] = value
-	}
-	return output
+	return value
 }
 
 func enabled(value *bool) bool {
@@ -1236,13 +1220,13 @@ func boolPtr(value bool) *bool {
 }
 
 func normalizeModelProxyConfig(cfg ModelProxyConfig) ModelProxyConfig {
-	cfg.BindURL = defaultString(cfg.BindURL, defaultModelProxyBindURL)
+	cfg.BindURL = strutil.Default(cfg.BindURL, defaultModelProxyBindURL)
 	if port, err := parseModelProxyBindPort(cfg.BindURL); err == nil {
 		cfg.BindPort = port
 	} else {
 		cfg.BindPort = 0
 	}
-	cfg.SandboxBaseURL = defaultString(cfg.SandboxBaseURL, defaultSandboxModelProxyBaseURLForPort(cfg.BindPort))
+	cfg.SandboxBaseURL = strutil.Default(cfg.SandboxBaseURL, defaultSandboxModelProxyBaseURLForPort(cfg.BindPort))
 	return cfg
 }
 
@@ -1338,13 +1322,6 @@ func isUnspecifiedModelProxyBindHost(host string) bool {
 		return false
 	}
 	return addr.IsUnspecified()
-}
-
-func defaultString(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return strings.TrimSpace(value)
 }
 
 func getenv(key, fallback string) string {

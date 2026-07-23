@@ -50,7 +50,7 @@ function ChatConversation() {
       const node = scrollRef.current;
       if (node) node.scrollTop = node.scrollHeight;
     });
-  }, [convo.messages.length, convo.streaming, convo.stream.length, activity.phase, pendingJumpHere]);
+  }, [convo.messages.length, convo.streaming, activity.phase, pendingJumpHere]);
 
   // Cancel any pending scroll on unmount so the rAF callback never touches a
   // detached node.

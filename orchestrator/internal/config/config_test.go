@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"harness-platform/orchestrator/internal/pathutil"
 )
 
 func TestLoadProjectConfigUsesHarnessSchema(t *testing.T) {
@@ -972,7 +974,7 @@ func TestLoadDefaultDBPathIsOutsideSessionsRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if isolationPathWithin(cfg.DBPath, cfg.SessionsRoot) {
+	if pathutil.Within(cfg.SessionsRoot, cfg.DBPath) {
 		t.Fatalf("default DB path %q must not be under sessions root %q", cfg.DBPath, cfg.SessionsRoot)
 	}
 	if _, err := ValidateIsolationRoots(cfg.IsolationRoots()); err != nil {

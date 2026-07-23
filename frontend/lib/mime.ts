@@ -1,37 +1,7 @@
+import { hljsLanguage } from "./languages";
+
 export type ViewerKind = "markdown" | "code" | "image" | "json" | "table" | "pdf" | "spreadsheet" | "document" | "presentation" | "text" | "binary";
 export type ArtifactClassification = { kind: ViewerKind; language?: string; delimiter?: "," | "\t" };
-
-const CODE_EXT: Record<string, string> = {
-  js: "javascript",
-  jsx: "javascript",
-  ts: "typescript",
-  tsx: "typescript",
-  py: "python",
-  go: "go",
-  rs: "rust",
-  java: "java",
-  rb: "ruby",
-  php: "php",
-  sh: "bash",
-  bash: "bash",
-  zsh: "bash",
-  c: "c",
-  h: "c",
-  cpp: "cpp",
-  hpp: "cpp",
-  cs: "csharp",
-  swift: "swift",
-  kt: "kotlin",
-  css: "css",
-  scss: "scss",
-  html: "xml",
-  xml: "xml",
-  sql: "sql",
-  yaml: "yaml",
-  yml: "yaml",
-  toml: "ini",
-  ini: "ini",
-};
 
 const TEXT_EXT = new Set(["txt", "log", "env", "diff", "patch"]);
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"]);
@@ -54,7 +24,8 @@ export function classifyArtifact(path: string): ArtifactClassification {
   if (ext === "xlsx" || ext === "xls") return { kind: "spreadsheet" };
   if (ext === "docx") return { kind: "document" };
   if (ext === "pptx") return { kind: "presentation" };
-  if (CODE_EXT[ext]) return { kind: "code", language: CODE_EXT[ext] };
+  const hljs = hljsLanguage(ext);
+  if (hljs) return { kind: "code", language: hljs };
   if (TEXT_EXT.has(ext)) return { kind: "text" };
   return { kind: "binary" };
 }

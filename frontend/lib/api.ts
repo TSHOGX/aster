@@ -13,6 +13,32 @@ export type RequestResult<T> =
   | { ok: true; data: T; response: Response }
   | { ok: false; status: number; error: string; response?: Response };
 
+// Parse an HTTP error body and pull out the standard `{error, error_class}`
+// shape our backend returns. `rawText` is the response body as text: it is
+// try-JSON-parsed (a non-JSON body just yields the fallback). `statusText` is
+// the HTTP status text, `fallback` the message when neither a JSON `error` nor
+// a status text is present. Shared by request<T>, uploadArtifacts, and
+// writeArtifact so the parse→extract logic lives in one place; error_class is
+// preserved for the callers whose result type carries it.
+export function parseApiError(
+  rawText: string,
+  statusText: string,
+  fallback: string
+): { error: string; errorClass?: string } {
+  let payload: unknown = rawText;
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText);
+    } catch {
+      payload = rawText;
+    }
+  }
+  const record = typeof payload === "object" && payload ? (payload as Record<string, unknown>) : null;
+  const error = record && typeof record.error === "string" ? record.error : statusText || fallback;
+  const errorClass = record && typeof record.error_class === "string" ? record.error_class : undefined;
+  return { error, errorClass };
+}
+
 export async function request<T>(input: RequestInfo | URL, init?: RequestInit): Promise<RequestResult<T>> {
   try {
     const response = await fetch(input, { cache: "no-store", ...init });
@@ -27,10 +53,10 @@ export async function request<T>(input: RequestInfo | URL, init?: RequestInit): 
       }
     }
     if (!response.ok) {
-      const error =
-        typeof payload === "object" && payload && "error" in payload && typeof (payload as { error?: unknown }).error === "string"
-          ? ((payload as { error: string }).error)
-          : response.statusText || "request failed";
+      // Preserve the original content-type gate: only a JSON body is inspected
+      // for an `error` field, otherwise fall back to the status text.
+      const jsonBody = contentType.includes("application/json") ? text : "";
+      const { error } = parseApiError(jsonBody, response.statusText, "request failed");
       return { ok: false, status: response.status, error, response };
     }
     return { ok: true, data: payload as T, response };
@@ -225,9 +251,7 @@ export function uploadArtifacts(
         resolve({ ok: true, uploaded, response: payload });
         return;
       }
-      const error =
-        record && typeof record.error === "string" ? record.error : xhr.statusText || "upload failed";
-      const errorClass = record && typeof record.error_class === "string" ? record.error_class : undefined;
+      const { error, errorClass } = parseApiError(raw, xhr.statusText, "upload failed");
       resolve({ ok: false, status: xhr.status, error, errorClass });
     };
 
@@ -274,24 +298,23 @@ export async function writeArtifact(
   }
 
   const raw = await response.text();
-  let payload: unknown = raw;
-  if (raw) {
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      payload = raw;
-    }
-  }
-  const record = typeof payload === "object" && payload ? (payload as Record<string, unknown>) : null;
 
   if (response.ok) {
     // 200 body: {"path":"<clean rel path>"}.
+    let payload: unknown = raw;
+    if (raw) {
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = raw;
+      }
+    }
+    const record = typeof payload === "object" && payload ? (payload as Record<string, unknown>) : null;
     const savedPath = record && typeof record.path === "string" ? record.path : undefined;
     return { ok: true, path: savedPath };
   }
 
-  const error = record && typeof record.error === "string" ? record.error : response.statusText || "save failed";
-  const errorClass = record && typeof record.error_class === "string" ? record.error_class : undefined;
+  const { error, errorClass } = parseApiError(raw, response.statusText, "save failed");
   return {
     ok: false,
     status: response.status,

@@ -82,23 +82,6 @@ export type ApiMessage = {
   feedback?: "up" | "down" | "";
 };
 
-export type StreamLineKind = "stdout" | "stderr" | "runtime";
-
-export type StreamLine = {
-  id: string;
-  session_id: string;
-  stream: StreamLineKind | string;
-  line: string;
-  time: string;
-};
-
-export type DeltaPayload = {
-  message_id: string;
-  text: string;
-  delta_type?: string;
-  index?: number;
-};
-
 export type HarnessEvent = {
   event_id?: number;
   type: string;
