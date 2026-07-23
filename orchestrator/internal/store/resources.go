@@ -1815,13 +1815,35 @@ func (s *Store) ListBridgePollGenerations(ctx context.Context, owner string, now
   )`
 		args = append(args, formatTime(now), formatTime(cutoff), formatTime(now), formatTime(cutoff))
 	}
+	// The sandbox_contracts JOIN folds the per-generation contract validation
+	// (digest + schema/gate + mirror-match) into this single query so the 5ms
+	// bridge-poll tick issues one query instead of 1+N. The JOIN is safe as an
+	// INNER JOIN: every row that survives the ri.state='live' filter has a live
+	// runtime_resource_instances row, and CreateRuntimeResourceInstance requires
+	// (and FK-references) a sandbox_contracts row for the generation, so a
+	// poll-eligible generation always has a contract row. An INNER JOIN therefore
+	// cannot drop a row the pre-fold query would have kept.
 	rows, err := s.db.QueryContext(ctx, `
-SELECT g.session_id, g.generation_id, r.bridge_dir_path
+SELECT g.session_id, g.generation_id, r.bridge_dir_path,
+  sc.contract_id,
+  sc.session_id,
+  sc.generation_id,
+  sc.sandbox_contract_version,
+  sc.contract_schema_version,
+  sc.contract_gate_version,
+  sc.canonical_payload,
+  sc.sandbox_contract_digest,
+  sc.created_at,
+  COALESCE(g.sandbox_contract_id, ''),
+  COALESCE(g.sandbox_contract_version, ''),
+  COALESCE(r.contract_id, ''),
+  COALESCE(r.sandbox_contract_version, '')
 FROM runtime_generations g
 JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
 JOIN runtime_resource_instances ri ON ri.generation_id = g.generation_id
   AND ri.session_id = g.session_id
 JOIN sessions s ON s.id = g.session_id
+JOIN sandbox_contracts sc ON sc.generation_id = g.generation_id
 WHERE g.status IN ('active','idle','probing','restoring','starting')
   AND (
     (g.lease_owner = ? AND g.lease_expires_at > ?)
@@ -1838,19 +1860,42 @@ ORDER BY g.session_id, g.generation_id`, args...)
 	defer rows.Close()
 	var generations []BridgePollGeneration
 	for rows.Next() {
-		var generation BridgePollGeneration
-		if err := rows.Scan(&generation.SessionID, &generation.GenerationID, &generation.BridgeDirPath); err != nil {
+		var (
+			generation                                      BridgePollGeneration
+			record                                          SandboxContractRecord
+			payload, createdAt                              string
+			generationContractID, generationContractVersion string
+			resourceContractID, resourceContractVersion     string
+		)
+		if err := rows.Scan(
+			&generation.SessionID, &generation.GenerationID, &generation.BridgeDirPath,
+			&record.ContractID,
+			&record.SessionID,
+			&record.GenerationID,
+			&record.SandboxContractVersion,
+			&record.ContractSchemaVersion,
+			&record.ContractGateVersion,
+			&payload,
+			&record.SandboxContractDigest,
+			&createdAt,
+			&generationContractID,
+			&generationContractVersion,
+			&resourceContractID,
+			&resourceContractVersion,
+		); err != nil {
+			return nil, err
+		}
+		if _, err := validateScannedSandboxContractWithMirrors(
+			record, payload, createdAt,
+			generationContractID, generationContractVersion,
+			resourceContractID, resourceContractVersion,
+		); err != nil {
 			return nil, err
 		}
 		generations = append(generations, generation)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	for _, generation := range generations {
-		if _, err := s.GetSandboxContractForGeneration(ctx, generation.SessionID, generation.GenerationID); err != nil {
-			return nil, err
-		}
 	}
 	return generations, nil
 }
@@ -1935,14 +1980,32 @@ func (s *Store) ListAutoCheckpointCandidates(ctx context.Context, owner string, 
 		return nil, fmt.Errorf("idle threshold must be >= 0")
 	}
 	cutoff := now.Add(-idleThreshold)
+	// As in ListBridgePollGenerations, the sandbox_contracts JOIN folds contract
+	// validation into this query so the maintenance tick keeps the corrupt-contract
+	// gate without an extra query per candidate. INNER JOIN is correct for the same
+	// reason: the ri.state='live' filter guarantees a contract row exists.
 	rows, err := s.db.QueryContext(ctx, `
-SELECT s.id, g.generation_id, r.bridge_dir_path
+SELECT s.id, g.generation_id, r.bridge_dir_path,
+  sc.contract_id,
+  sc.session_id,
+  sc.generation_id,
+  sc.sandbox_contract_version,
+  sc.contract_schema_version,
+  sc.contract_gate_version,
+  sc.canonical_payload,
+  sc.sandbox_contract_digest,
+  sc.created_at,
+  COALESCE(g.sandbox_contract_id, ''),
+  COALESCE(g.sandbox_contract_version, ''),
+  COALESCE(r.contract_id, ''),
+  COALESCE(r.sandbox_contract_version, '')
 FROM sessions s
 JOIN runtime_generations g ON g.generation_id = s.active_generation_id
   AND g.session_id = s.id
 JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
 JOIN runtime_resource_instances ri ON ri.generation_id = g.generation_id
   AND ri.session_id = g.session_id
+JOIN sandbox_contracts sc ON sc.generation_id = g.generation_id
 WHERE s.status = 'running_idle'
   AND s.auto_checkpoint_enabled = 1
   AND s.last_activity_at IS NOT NULL
@@ -1973,19 +2036,42 @@ ORDER BY s.last_activity_at ASC`, formatTime(cutoff), owner, formatTime(now))
 	defer rows.Close()
 	var candidates []CheckpointCandidate
 	for rows.Next() {
-		var candidate CheckpointCandidate
-		if err := rows.Scan(&candidate.SessionID, &candidate.GenerationID, &candidate.BridgeDirPath); err != nil {
+		var (
+			candidate                                       CheckpointCandidate
+			record                                          SandboxContractRecord
+			payload, createdAt                              string
+			generationContractID, generationContractVersion string
+			resourceContractID, resourceContractVersion     string
+		)
+		if err := rows.Scan(
+			&candidate.SessionID, &candidate.GenerationID, &candidate.BridgeDirPath,
+			&record.ContractID,
+			&record.SessionID,
+			&record.GenerationID,
+			&record.SandboxContractVersion,
+			&record.ContractSchemaVersion,
+			&record.ContractGateVersion,
+			&payload,
+			&record.SandboxContractDigest,
+			&createdAt,
+			&generationContractID,
+			&generationContractVersion,
+			&resourceContractID,
+			&resourceContractVersion,
+		); err != nil {
+			return nil, err
+		}
+		if _, err := validateScannedSandboxContractWithMirrors(
+			record, payload, createdAt,
+			generationContractID, generationContractVersion,
+			resourceContractID, resourceContractVersion,
+		); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	for _, candidate := range candidates {
-		if _, err := s.GetSandboxContractForGeneration(ctx, candidate.SessionID, candidate.GenerationID); err != nil {
-			return nil, err
-		}
 	}
 	return candidates, nil
 }

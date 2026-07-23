@@ -302,23 +302,53 @@ export async function writeArtifact(
   };
 }
 
-export async function fetchArtifactText(sessionId: string, path: string, maxBytes = 2 * 1024 * 1024) {
-  const response = await fetch(buildArtifactHref(sessionId, path), { cache: "no-store" });
-  if (!response.ok) {
-    return { ok: false as const, status: response.status, error: response.statusText || "fetch failed" };
-  }
-  const sizeHeader = response.headers.get("content-length");
-  if (sizeHeader && Number.parseInt(sizeHeader, 10) > maxBytes) {
-    return { ok: false as const, status: 413, error: "artifact too large" };
-  }
-  // Capture the Last-Modified token so an inline edit can round-trip it as
-  // If-Unmodified-Since for optimistic-concurrency (409 stale_edit) checks.
-  const lastModified = response.headers.get("last-modified");
-  const text = await response.text();
-  if (text.length > maxBytes) {
-    return { ok: false as const, status: 413, error: "artifact too large" };
-  }
-  return { ok: true as const, text, lastModified };
+type FetchArtifactTextResult =
+  | { ok: true; text: string; lastModified: string | null }
+  | { ok: false; status: number; error: string };
+
+// We deliberately keep `cache: "no-store"` on artifact reads: the workspace
+// files change under an actively-writing agent, so any HTTP/response cache would
+// risk serving stale bytes. Rather than layer a caching library (SWR/react-query)
+// on top — which would reintroduce that staleness question — we only collapse
+// *concurrent* duplicate reads of the same file via an in-flight promise map.
+// Entries are cleared the moment the request settles, so there is no lingering
+// cache and each fresh call still hits the network with no-store semantics.
+const inFlightArtifactText = new Map<string, Promise<FetchArtifactTextResult>>();
+
+export async function fetchArtifactText(
+  sessionId: string,
+  path: string,
+  maxBytes = 2 * 1024 * 1024
+): Promise<FetchArtifactTextResult> {
+  // maxBytes participates in the key so callers with different caps don't share
+  // a result that was accepted/rejected under a different limit.
+  const key = `${sessionId}:${maxBytes}:${path}`;
+  const existing = inFlightArtifactText.get(key);
+  if (existing) return existing;
+
+  const promise = (async (): Promise<FetchArtifactTextResult> => {
+    const response = await fetch(buildArtifactHref(sessionId, path), { cache: "no-store" });
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: response.statusText || "fetch failed" };
+    }
+    const sizeHeader = response.headers.get("content-length");
+    if (sizeHeader && Number.parseInt(sizeHeader, 10) > maxBytes) {
+      return { ok: false, status: 413, error: "artifact too large" };
+    }
+    // Capture the Last-Modified token so an inline edit can round-trip it as
+    // If-Unmodified-Since for optimistic-concurrency (409 stale_edit) checks.
+    const lastModified = response.headers.get("last-modified");
+    const text = await response.text();
+    if (text.length > maxBytes) {
+      return { ok: false, status: 413, error: "artifact too large" };
+    }
+    return { ok: true, text, lastModified };
+  })().finally(() => {
+    inFlightArtifactText.delete(key);
+  });
+
+  inFlightArtifactText.set(key, promise);
+  return promise;
 }
 
 export async function fetchArtifactBlob(sessionId: string, path: string, maxBytes = 25 * 1024 * 1024) {

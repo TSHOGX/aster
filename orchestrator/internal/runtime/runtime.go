@@ -57,6 +57,16 @@ const checkpointImageManifestVersion = 1
 const defaultRunscPlatform = "systrap"
 const runscRunningProofTimeout = 2 * time.Second
 const runscRunningProofPollInterval = 25 * time.Millisecond
+const runscRunningProofMaxPollInterval = 200 * time.Millisecond
+
+// defaultBridgeIdleInterval is the sleep between "any new turn to claim?" checks
+// while the sandboxed bridge is idle (harness-bridge-client run_claim_loop). Unlike
+// HARNESS_BRIDGE_POLL_INTERVAL — which paces in-flight request/response streaming and
+// must stay small for low latency — the idle interval only affects how quickly a brand
+// new turn is picked up. Defaulting it to the active 5ms made an idle agent wake ~200x/sec
+// forever, burning CPU inside gVisor per container. 250ms cuts that to ~4 wakes/sec while
+// keeping new-turn pickup latency imperceptible for a fresh conversational turn.
+const defaultBridgeIdleInterval = 250 * time.Millisecond
 
 var requiredCheckpointImageFiles = []string{"checkpoint.img", "pages.img", "pages_meta.img"}
 
@@ -698,6 +708,7 @@ func (r *Runtime) runtimePostStartProof(ctx context.Context, details store.Runti
 func (r *Runtime) runscContainerRunningEvidence(ctx context.Context, runscBinary, containerID string) (string, error) {
 	runscBinary = defaultString(runscBinary, "runsc")
 	deadline := time.Now().Add(runscRunningProofTimeout)
+	pollInterval := runscRunningProofPollInterval
 	var lastErr error
 	for {
 		output, err := r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "state", containerID)
@@ -716,12 +727,26 @@ func (r *Runtime) runscContainerRunningEvidence(ctx context.Context, runscBinary
 		if time.Now().After(deadline) {
 			return "", lastErr
 		}
-		timer := time.NewTimer(runscRunningProofPollInterval)
+		// Capped exponential backoff: start at 25ms and grow toward 200ms so a
+		// container that takes a while to report "running" is not busy-polled ~80x.
+		// Clamp the wait to the time left before the deadline so the overall 2s
+		// bound (and its error/correctness behavior) is unchanged.
+		wait := pollInterval
+		if remaining := time.Until(deadline); wait > remaining {
+			wait = remaining
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return "", fmt.Errorf("verify runsc container %s running: %w", containerID, ctx.Err())
 		case <-timer.C:
+		}
+		if pollInterval < runscRunningProofMaxPollInterval {
+			pollInterval *= 2
+			if pollInterval > runscRunningProofMaxPollInterval {
+				pollInterval = runscRunningProofMaxPollInterval
+			}
 		}
 	}
 }
@@ -1645,7 +1670,7 @@ func (r *Runtime) renderSandboxIsolatedRuntimeSpec(req StartRequest) (runtimeSpe
 		"HARNESS_BRIDGE_MODE=" + defaultString(r.cfg.BridgeMode, "claim-loop"),
 		"HARNESS_BRIDGE_HEARTBEAT_INTERVAL=" + formatSeconds(defaultDuration(r.cfg.BridgeHeartbeat, 30*time.Second)),
 		"HARNESS_BRIDGE_POLL_INTERVAL=" + formatSeconds(defaultDuration(r.cfg.BridgePollInterval, 5*time.Millisecond)),
-		"HARNESS_BRIDGE_IDLE_INTERVAL=" + formatSeconds(defaultDuration(r.cfg.BridgePollInterval, 5*time.Millisecond)),
+		"HARNESS_BRIDGE_IDLE_INTERVAL=" + formatSeconds(defaultBridgeIdleInterval),
 		"HARNESS_PROBE_HEALTHZ_STATUSES=" + joinInts(defaultIntSlice(r.cfg.ProbeHealthzStatuses, []int{200})),
 	}
 	if layout, ok := agents.DriverRuntimeLayoutSpecFor(agents.ID(selectedDriver)); ok {

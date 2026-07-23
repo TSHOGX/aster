@@ -1724,7 +1724,7 @@ func TestPrepareGenerationWritesPerGenerationSpecManifestAndIsolatedRuntime(t *t
 		env["HARNESS_EXPECTED_MANIFEST_VERSION"] != "1" ||
 		env["HARNESS_BRIDGE_HEARTBEAT_INTERVAL"] != "20" ||
 		env["HARNESS_BRIDGE_POLL_INTERVAL"] != "0.005" ||
-		env["HARNESS_BRIDGE_IDLE_INTERVAL"] != "0.005" ||
+		env["HARNESS_BRIDGE_IDLE_INTERVAL"] != "0.25" ||
 		env["HARNESS_PROBE_HEALTHZ_STATUSES"] != "200" {
 		t.Fatalf("runtime spec missing bridge/probe env: %+v", env)
 	}

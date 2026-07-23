@@ -572,6 +572,26 @@ func scanSandboxContractWithMirrors(row sandboxContractScanner) (SandboxContract
 	); err != nil {
 		return SandboxContractRecord{}, err
 	}
+	return validateScannedSandboxContractWithMirrors(
+		record, payload, createdAt,
+		generationContractID, generationContractVersion,
+		resourceContractID, resourceContractVersion,
+	)
+}
+
+// validateScannedSandboxContractWithMirrors runs the digest, schema/gate, and
+// mirror-column checks on an already-scanned sandbox_contracts row. It is shared
+// by scanSandboxContractWithMirrors (single-row load) and the hot-path list
+// queries that fold contract validation into their own JOIN so they do not have
+// to issue a separate query per generation. The mirror columns are the
+// COALESCE'd g.sandbox_contract_id/version and r.contract_id/version projected
+// alongside the contract row.
+func validateScannedSandboxContractWithMirrors(
+	record SandboxContractRecord,
+	payload, createdAt string,
+	generationContractID, generationContractVersion string,
+	resourceContractID, resourceContractVersion string,
+) (SandboxContractRecord, error) {
 	record.CanonicalPayload = []byte(payload)
 	record.CreatedAt = parseTime(createdAt)
 	if err := VerifySandboxContractDigest(record.CanonicalPayload, record.SandboxContractDigest); err != nil {

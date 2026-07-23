@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   title_custom INTEGER NOT NULL DEFAULT 0 CHECK(title_custom IN (0,1))
 );
 
+CREATE INDEX IF NOT EXISTS sessions_status_idx ON sessions(status);
+CREATE INDEX IF NOT EXISTS sessions_active_generation_idx ON sessions(active_generation_id);
+
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
@@ -71,6 +74,8 @@ CREATE TABLE IF NOT EXISTS messages (
   stop_reason TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS messages_session_idx ON messages(session_id, id);
 
 -- Full-text search over message content. We use an external-content FTS5 index
 -- (content='messages') so the text is not stored twice: the vtable holds only
