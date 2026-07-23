@@ -35,7 +35,13 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: "/:path*",
+        // Everything EXCEPT /artifacts/*. Artifact responses carry their own
+        // framing + CSP headers straight from the orchestrator (see
+        // getArtifact): HTML is framable SAMEORIGIN so the workbench preview
+        // iframe can load it. If we also emitted X-Frame-Options here the two
+        // values would collide and the browser would fall back to blocking the
+        // frame, which is exactly the "refused to connect" preview bug.
+        source: "/((?!artifacts/).*)",
         headers: securityHeaders
       }
     ];

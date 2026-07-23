@@ -3431,11 +3431,38 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Harden artifact responses: never sniff into active content, never allow
-	// framing, and forbid script execution if a browser opens one directly.
+	// Harden artifact responses: never sniff into active content.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	w.Header().Set("X-Frame-Options", "DENY")
+	// HTML artifacts get a preview in the workbench, which frames them from the
+	// app's own origin. Blanket DENY / `sandbox` (which we still use for every
+	// other type) makes that iframe fail to load, so HTML gets a policy that is
+	// framable same-origin AND renders, while still cutting off every exfiltration
+	// path: no outbound connect/img/font to other hosts, no forms, no nested
+	// frames or plugins. Inline script/style are allowed so self-contained pages
+	// render, but they can only touch same-origin resources and cannot phone home.
+	ext := strings.ToLower(filepath.Ext(info.Name()))
+	if ext == ".html" || ext == ".htm" {
+		w.Header().Set("Content-Security-Policy", strings.Join([]string{
+			"default-src 'self'",
+			"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+			"style-src 'self' 'unsafe-inline'",
+			"img-src 'self' data: blob:",
+			"font-src 'self' data:",
+			"media-src 'self' data: blob:",
+			"connect-src 'none'",
+			"form-action 'none'",
+			"frame-src 'none'",
+			"object-src 'none'",
+			"base-uri 'none'",
+			"frame-ancestors 'self'",
+		}, "; "))
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	} else {
+		// Everything else: inert. Forbid script execution and framing entirely if
+		// a browser opens one directly.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("X-Frame-Options", "DENY")
+	}
 	// http.ServeContent sets Last-Modified from info.ModTime(); the online
 	// editor reads it and echoes it back in If-Unmodified-Since on PUT so we can
 	// detect a stale edit (the agent changed the file since the editor loaded).
