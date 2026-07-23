@@ -78,7 +78,7 @@ export function StreamingBubble({ text, liveTrace }: { text: string; liveTrace?:
           <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse-dot" />
         </div>
         <div className="mt-1">
-          <TraceList nodes={liveTrace ?? []} />
+          <TraceList nodes={liveTrace ?? []} defaultOpen />
           <MarkdownView content={text || "…"} />
         </div>
       </div>
