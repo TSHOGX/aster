@@ -253,7 +253,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Search sessions and messages"
-        className="flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
+        className="flex max-h-[70vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
         onKeyDown={onKeyDown}
       >
         <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
