@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   Brain,
   ChevronDown,
@@ -44,7 +44,7 @@ function headline(node: TraceNodeData): string {
   return node.label?.trim() ? `${name} · ${node.label.trim()}` : name;
 }
 
-export function TraceNode({ node }: { node: TraceNodeData }) {
+function TraceNodeImpl({ node }: { node: TraceNodeData }) {
   const [open, setOpen] = useState(false);
   const duration = formatDuration(node.durationMs);
   const hasArgs = node.args !== undefined && Object.keys(node.args).length > 0;
@@ -119,3 +119,7 @@ export function TraceNode({ node }: { node: TraceNodeData }) {
     </div>
   );
 }
+
+// Memoized so an unchanged trace node doesn't re-render as sibling nodes stream in.
+export const TraceNode = memo(TraceNodeImpl);
+TraceNode.displayName = "TraceNode";

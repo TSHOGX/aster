@@ -217,10 +217,13 @@ export function ArtifactViewer({ sessionId, path, artifact, fullScreen, onToggle
             }
           />
         ) : html && effectiveView === "preview" ? (
+          // Agent-authored HTML is untrusted. We keep allow-scripts so interactive
+          // demos still run, but drop allow-same-origin so the iframe gets an opaque
+          // origin and can't touch this app's cookies, localStorage, or session.
           <iframe
             src={href}
             title={path}
-            sandbox="allow-scripts allow-same-origin"
+            sandbox="allow-scripts"
             className="h-full w-full border-0 bg-white"
           />
         ) : (

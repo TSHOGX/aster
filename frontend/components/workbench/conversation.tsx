@@ -28,6 +28,7 @@ function ChatConversation() {
   const activity = useActivity(session?.id ?? null);
   const { sendMessage } = useHarness();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRafRef = useRef<number | null>(null);
 
   // A pending jump target (set by the search palette) for THIS session means we
   // scroll to a specific message instead of auto-scrolling to the bottom.
@@ -37,10 +38,28 @@ function ChatConversation() {
   useEffect(() => {
     // Don't fight a pending jump-to-message with the bottom auto-scroll.
     if (pendingJumpHere) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    if (!scrollRef.current) return;
+    // Reading scrollHeight forces a layout reflow. During a live turn deltas
+    // fire many times per second, so doing it per token thrashed layout and
+    // froze the UI. Coalesce all deltas within a frame into a single scroll:
+    // the rAF guard ensures at most one pending scroll, and it always reads the
+    // latest scrollHeight when it runs, so the view still follows the stream.
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const node = scrollRef.current;
+      if (node) node.scrollTop = node.scrollHeight;
+    });
   }, [convo.messages.length, convo.streaming, convo.stream.length, activity.phase, pendingJumpHere]);
+
+  // Cancel any pending scroll on unmount so the rAF callback never touches a
+  // detached node.
+  useEffect(
+    () => () => {
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    },
+    []
+  );
 
   // Once the target message has rendered, scroll it into view and flash a
   // highlight ring, then consume the signal.

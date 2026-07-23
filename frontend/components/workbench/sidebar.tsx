@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   ChevronDown,
@@ -16,7 +16,15 @@ import {
   Trash2
 } from "lucide-react";
 
-import { useHarness } from "@/components/harness-provider";
+import {
+  useAuth,
+  useCapabilities,
+  useConnection,
+  useHarness,
+  useReady,
+  useSelectedId,
+  useSessions
+} from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { NotificationBell } from "@/components/notifications/notification-bell";
@@ -34,7 +42,14 @@ type SessionRowProps = {
   onRename: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
 };
 
-function SessionRow({ session, selected, closing, onSelect, onClose, onRename }: SessionRowProps) {
+const SessionRow = memo(function SessionRow({
+  session,
+  selected,
+  closing,
+  onSelect,
+  onClose,
+  onRename
+}: SessionRowProps) {
   const displayTitle = session.title?.trim() || session.id;
   const ModeIcon = session.mode === "shell" ? TerminalSquare : Bot;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -195,7 +210,7 @@ function SessionRow({ session, selected, closing, onSelect, onClose, onRename }:
       </div>
     </li>
   );
-}
+});
 
 
 type SidebarProps = {
@@ -262,9 +277,13 @@ function CollapsedRail({
   onOpenSearch?: () => void;
   onPeek?: () => void;
 }) {
-  const { state, createSession } = useHarness();
+  const { createSession } = useHarness();
+  const sessions = useSessions();
   const [creating, setCreating] = useState(false);
-  const activeCount = state.sessions.filter((s) => !isTerminal(s.status)).length;
+  const activeCount = useMemo(
+    () => sessions.filter((s) => !isTerminal(s.status)).length,
+    [sessions]
+  );
 
   const handleCreate = async () => {
     setCreating(true);
@@ -329,22 +348,32 @@ function SidebarPanel({
   onToggleCollapse?: () => void;
   onNavigate?: () => void;
 }) {
-  const { state, selectSession, createSession, destroySession, renameSession, logout } = useHarness();
+  const { selectSession, createSession, destroySession, renameSession, logout } = useHarness();
+  // Slice subscriptions: the sidebar reads only sessions/selection/meta, so it
+  // is never re-rendered by a per-token agent.delta on the open conversation.
+  const sessions = useSessions();
+  const selectedId = useSelectedId();
+  const capabilities = useCapabilities();
+  const auth = useAuth();
+  const ready = useReady();
+  const connection = useConnection();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
   const [endedOpen, setEndedOpen] = useState(false);
 
-  const byRecentActivity = (a: ApiSession, b: ApiSession) =>
-    new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-  const activeSessions = state.sessions
-    .filter((session) => !isTerminal(session.status))
-    .sort(byRecentActivity);
-  const endedSessions = state.sessions
-    .filter((session) => isTerminal(session.status))
-    .sort(byRecentActivity);
-  const agentCapability = state.capabilities?.session_modes.find((mode) => mode.mode === "agent");
+  // Filter + sort only when the sessions array identity changes (the reducer
+  // replaces it only on a real session change), not on every render.
+  const { activeSessions, endedSessions } = useMemo(() => {
+    const byRecentActivity = (a: ApiSession, b: ApiSession) =>
+      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    return {
+      activeSessions: sessions.filter((session) => !isTerminal(session.status)).sort(byRecentActivity),
+      endedSessions: sessions.filter((session) => isTerminal(session.status)).sort(byRecentActivity)
+    };
+  }, [sessions]);
+  const agentCapability = capabilities?.session_modes.find((mode) => mode.mode === "agent");
   const agentCreateDisabled = agentCapability ? !agentCapability.create_enabled : false;
 
   const handleCreate = async () => {
@@ -356,20 +385,28 @@ function SidebarPanel({
     else onNavigate?.();
   };
 
-  const handleClose = async (id: string) => {
-    if (closingId) return;
-    if (!window.confirm(`Close session ${id}? History and workspace files are retained.`)) return;
-    setClosingId(id);
-    setCloseError(null);
-    const res = await destroySession(id);
-    setClosingId(null);
-    if (!res.ok) setCloseError(res.error ?? "Failed to close session");
-  };
+  // Stable callbacks so the memoized SessionRow only re-renders when its own
+  // props (session/selected/closing) change, not on every parent render.
+  const handleClose = useCallback(
+    async (id: string) => {
+      if (closingId) return;
+      if (!window.confirm(`Close session ${id}? History and workspace files are retained.`)) return;
+      setClosingId(id);
+      setCloseError(null);
+      const res = await destroySession(id);
+      setClosingId(null);
+      if (!res.ok) setCloseError(res.error ?? "Failed to close session");
+    },
+    [closingId, destroySession]
+  );
 
-  const handleSelect = (id: string) => {
-    selectSession(id);
-    onNavigate?.();
-  };
+  const handleSelect = useCallback(
+    (id: string) => {
+      selectSession(id);
+      onNavigate?.();
+    },
+    [selectSession, onNavigate]
+  );
 
   return (
     <aside
@@ -409,10 +446,10 @@ function SidebarPanel({
         </div>
       </div>
 
-      {state.auth.required && state.auth.userId ? (
+      {auth.required && auth.userId ? (
         <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-1">
           <span className="truncate text-xs text-[var(--color-foreground-muted)]">
-            <span className="text-[var(--color-foreground)]">{state.auth.userId}</span>
+            <span className="text-[var(--color-foreground)]">{auth.userId}</span>
           </span>
           <button
             onClick={() => void logout()}
@@ -445,13 +482,13 @@ function SidebarPanel({
         <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
           History
         </span>
-        <span className="text-[11px] text-[var(--color-foreground-muted)]">{state.sessions.length}</span>
+        <span className="text-[11px] text-[var(--color-foreground-muted)]">{sessions.length}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {state.sessions.length === 0 ? (
+        {sessions.length === 0 ? (
           <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">
-            {state.ready || state.connection === "live" ? "No sessions yet. Create one to get started." : "Loading…"}
+            {ready || connection === "live" ? "No sessions yet. Create one to get started." : "Loading…"}
           </p>
         ) : (
           <div className="flex h-full min-h-0 flex-col">
@@ -466,10 +503,10 @@ function SidebarPanel({
                     <SessionRow
                       key={s.id}
                       session={s}
-                      selected={s.id === state.selectedId}
+                      selected={s.id === selectedId}
                       closing={closingId === s.id}
                       onSelect={handleSelect}
-                      onClose={(id) => void handleClose(id)}
+                      onClose={handleClose}
                       onRename={renameSession}
                     />
                   ))}
@@ -499,10 +536,10 @@ function SidebarPanel({
                         <SessionRow
                           key={s.id}
                           session={s}
-                          selected={s.id === state.selectedId}
+                          selected={s.id === selectedId}
                           closing={closingId === s.id}
                           onSelect={handleSelect}
-                          onClose={(id) => void handleClose(id)}
+                          onClose={handleClose}
                           onRename={renameSession}
                         />
                       ))}
@@ -515,11 +552,11 @@ function SidebarPanel({
         )}
       </div>
 
-      {state.connection !== "live" && state.connection !== "idle" ? (
+      {connection !== "live" && connection !== "idle" ? (
         <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-[11px] text-[var(--color-foreground-muted)]">
-          {state.connection === "connecting"
+          {connection === "connecting"
             ? "Connecting to event stream…"
-            : state.connection === "reconnecting"
+            : connection === "reconnecting"
             ? "Reconnecting…"
             : "Disconnected. Retrying."}
         </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useEffect, useRef, useState } from "react";
 import { User, Bot } from "lucide-react";
 
 import { MarkdownView } from "./markdown-view";
@@ -9,7 +10,7 @@ import type { ApiMessage, TraceNode } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { formatFullTimestamp, formatTime } from "@/lib/format";
 
-export function MessageBubble({
+function MessageBubbleImpl({
   message,
   sessionId,
   showActions = true
@@ -66,7 +67,49 @@ export function MessageBubble({
   );
 }
 
-export function StreamingBubble({ text, liveTrace }: { text: string; liveTrace?: TraceNode[] }) {
+export const MessageBubble = memo(MessageBubbleImpl);
+MessageBubble.displayName = "MessageBubble";
+
+// Returns `value`, but rate-limits how often the returned reference changes to
+// at most once per `ms`. A trailing timeout always flushes the most recent
+// value after the last change, so the final value is never dropped — critical
+// for streaming, where the last token completes the message.
+function useThrottledValue<T>(value: T, ms: number): T {
+  const [throttled, setThrottled] = useState(value);
+  // 0 means "never emitted": the first change reads as fully elapsed and lands
+  // immediately (leading edge). Seeded in the effect, not during render, so no
+  // impure Date.now() call happens while rendering.
+  const lastRun = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const elapsed = Date.now() - lastRun.current;
+    if (elapsed >= ms) {
+      // Enough time has passed — update immediately (leading edge).
+      lastRun.current = Date.now();
+      setThrottled(value);
+    } else {
+      // Schedule a trailing update so the latest value still lands even if no
+      // further changes arrive. Each new value reschedules to the newest one.
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        lastRun.current = Date.now();
+        setThrottled(value);
+      }, ms - elapsed);
+    }
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [value, ms]);
+
+  return throttled;
+}
+
+function StreamingBubbleImpl({ text, liveTrace }: { text: string; liveTrace?: TraceNode[] }) {
+  // Throttle only the markdown text so the expensive parse/highlight runs at
+  // ~12fps instead of once per streamed token. The live trace still updates
+  // immediately below.
+  const throttled = useThrottledValue(text, 80);
   return (
     <div className="flex gap-3 px-6 py-4 bg-[var(--color-surface)]">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-foreground)] text-[var(--color-accent-foreground)]">
@@ -79,14 +122,17 @@ export function StreamingBubble({ text, liveTrace }: { text: string; liveTrace?:
         </div>
         <div className="mt-1">
           <TraceList nodes={liveTrace ?? []} defaultOpen />
-          <MarkdownView content={text || "…"} />
+          <MarkdownView content={throttled || "…"} />
         </div>
       </div>
     </div>
   );
 }
 
-export function DayDivider({ label }: { label: string }) {
+export const StreamingBubble = memo(StreamingBubbleImpl);
+StreamingBubble.displayName = "StreamingBubble";
+
+function DayDividerImpl({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3 px-6 py-2.5 bg-[var(--color-background)]">
       <div className="h-px flex-1 bg-[var(--color-border)]" />
@@ -95,3 +141,6 @@ export function DayDivider({ label }: { label: string }) {
     </div>
   );
 }
+
+export const DayDivider = memo(DayDividerImpl);
+DayDivider.displayName = "DayDivider";

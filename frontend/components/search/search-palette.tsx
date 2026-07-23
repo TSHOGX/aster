@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { createPortal } from "react-dom";
 import { Bot, Hash, Loader2, MessageSquare, Search, User } from "lucide-react";
 
-import { useHarness } from "@/components/harness-provider";
+import { useSessions } from "@/components/harness-provider";
 import { searchSessions } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatRelative, statusLabel } from "@/lib/format";
@@ -134,7 +134,7 @@ function ResultRow({
 // The palette only mounts while open (parent gates it), so open/close state and
 // the per-open reset are handled purely by mount/unmount.
 export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
-  const { state } = useHarness();
+  const sessions = useSessions();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
@@ -150,11 +150,11 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
 
   // Zero-state: most-recently-updated sessions as quick-open rows.
   const recent = useMemo(() => {
-    return [...state.sessions]
+    return [...sessions]
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
       .slice(0, RECENT_LIMIT)
       .map(sessionToHit);
-  }, [state.sessions]);
+  }, [sessions]);
 
   const hits = trimmed ? results : recent;
 

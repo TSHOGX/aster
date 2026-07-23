@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { ChevronDown, ChevronRight, ListTree } from "lucide-react";
 
 import type { TraceNode as TraceNodeData } from "@/lib/types";
@@ -23,7 +23,7 @@ function summarize(nodes: TraceNodeData[]): string {
 
 // defaultOpen: committed replies collapse (answer first); a live turn expands
 // so tool progress is visible as it happens.
-export function TraceList({
+function TraceListImpl({
   nodes,
   defaultOpen = false
 }: {
@@ -79,3 +79,7 @@ export function TraceList({
     </div>
   );
 }
+
+// Memoized so a committed trace list doesn't re-parse as new turns stream in.
+export const TraceList = memo(TraceListImpl);
+TraceList.displayName = "TraceList";

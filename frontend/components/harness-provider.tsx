@@ -7,7 +7,8 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  useSyncExternalStore
 } from "react";
 import { toast } from "sonner";
 
@@ -96,8 +97,9 @@ type HarnessState = {
   auth: AuthState;
 };
 
-type HarnessApi = {
-  state: HarnessState;
+// The stable action surface. Identity never changes across the provider's
+// lifetime, so destructuring these from useHarness() never causes a re-render.
+type HarnessActions = {
   selectSession: (id: string | null) => void;
   createSession: (mode: SessionMode) => Promise<{ ok: boolean; error?: string; session?: ApiSession }>;
   destroySession: (id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -115,7 +117,23 @@ type HarnessApi = {
   markNotificationRead: (id: string) => Promise<void>;
 };
 
-const HarnessContext = createContext<HarnessApi | null>(null);
+// A minimal external store. State lives in a mutable ref; setState keeps the
+// exact (prev) => next updater contract the reducer code already uses, and
+// synchronously notifies subscribers. Selector hooks (useSyncExternalStore)
+// then re-render only the components whose selected slice actually changed,
+// so a per-token agent.delta no longer re-renders every consumer.
+type HarnessStore = {
+  getState: () => HarnessState;
+  setState: (updater: (prev: HarnessState) => HarnessState) => void;
+  subscribe: (listener: () => void) => () => void;
+};
+
+type HarnessContextValue = {
+  store: HarnessStore;
+  actions: HarnessActions;
+};
+
+const HarnessContext = createContext<HarnessContextValue | null>(null);
 
 const initialState: HarnessState = {
   ready: false,
@@ -200,6 +218,28 @@ function emptyConvo(): ConversationState {
     activity: idleActivity(),
     loading: false
   };
+}
+
+// Module-level stable references so selector hooks return a constant identity
+// for the "no such conversation / no artifacts" case. Reference equality on
+// these prevents an unknown id from churning re-renders every notify.
+const EMPTY_CONVO: ConversationState = Object.freeze(emptyConvo()) as ConversationState;
+const EMPTY_ACTIVITY: ConversationActivity = Object.freeze(idleActivity()) as ConversationActivity;
+const EMPTY_ARTIFACTS: ApiArtifact[] = Object.freeze([]) as unknown as ApiArtifact[];
+
+// Shallow equality for flat objects. Used by the activity selector so that a
+// delta which rebuilds the activity object but leaves every field unchanged
+// does not re-render ActivityIndicator.
+function shallowEqual<T extends Record<string, unknown>>(a: T, b: T): boolean {
+  if (Object.is(a, b)) return true;
+  if (a == null || b == null) return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.is(a[key], b[key])) return false;
+  }
+  return true;
 }
 
 // Monotonic clock for turn timers. Date.now would be fine, but performance.now
@@ -359,17 +399,48 @@ function withActivity(
 }
 
 export function HarnessProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<HarnessState>(initialState);
-  const stateRef = useRef(state);
+  // The external store. Domain state no longer lives in React state, so the
+  // provider itself does not re-render when it changes; selector hooks (below)
+  // subscribe to just the slices they read. A lazy useState initializer builds
+  // it exactly once and hands back a stable value (never a ref read during
+  // render), so its identity is constant for the provider's lifetime.
+  const [store] = useState<HarnessStore>(() => {
+    let current = initialState;
+    const listeners = new Set<() => void>();
+    return {
+      getState: () => current,
+      setState: (updater) => {
+        const next = updater(current);
+        if (next === current) return;
+        current = next;
+        // Synchronous notify: keeps the reducer's "one event → one state"
+        // semantics identical to the previous useState behavior.
+        for (const listener of listeners) listener();
+      },
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      }
+    };
+  });
+
+  // Preserve the (prev) => next contract every existing call site relies on.
+  const setState = useCallback(
+    (updater: (prev: HarnessState) => HarnessState) => store.setState(updater),
+    [store]
+  );
+
+  // stateRef.current always resolves to the live store state — no syncing
+  // effect needed since store.getState() is authoritative. Memoized so its
+  // identity is stable (store is stable), which keeps dependent callbacks stable.
+  const stateRef = useMemo(() => ({ get current() { return store.getState(); } }), [store]);
 
   const aliveRef = useRef(true);
   const pollingRef = useRef<Set<string>>(new Set());
   const connectedOnceRef = useRef(false);
   const lastEventIDRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
 
   const ensureConvo = useCallback((convos: HarnessState["conversations"], id: string) => {
     if (convos[id]) return convos;
@@ -383,7 +454,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         return { ...prev, conversations: { ...prev.conversations, [id]: patch(current) } };
       });
     },
-    []
+    [setState]
   );
 
   const loadSessionDetails = useCallback(
@@ -404,17 +475,24 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         setState((p) => ({ ...p, artifacts: { ...p.artifacts, [id]: list } }));
       });
     },
-    [upsertConvo]
+    [upsertConvo, setState, stateRef]
   );
 
   const pollConversation = useCallback(
     async (id: string, afterMessageId?: number) => {
       if (pollingRef.current.has(id)) return;
+      // Polling is now a FALLBACK for when SSE is down. When the stream is
+      // "live" it already delivers messages, artifacts, and session status, so
+      // the 1s triple-fetch loop is redundant and just adds load + churn.
+      // Read through a function so TS doesn't narrow the live getter's value
+      // (stateRef.current.connection can change between iterations).
+      const streamLive = () => stateRef.current.connection === "live";
+      if (streamLive()) return;
       pollingRef.current.add(id);
       const deadline = Date.now() + MESSAGE_POLL_TIMEOUT_MS;
 
       try {
-        while (aliveRef.current && Date.now() < deadline) {
+        while (aliveRef.current && Date.now() < deadline && !streamLive()) {
           const [messagesRes, sessionRes, artifactsRes] = await Promise.all([
             fetchMessages(id),
             fetchSession(id),
@@ -464,14 +542,14 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         pollingRef.current.delete(id);
       }
     },
-    [ensureConvo, upsertConvo]
+    [ensureConvo, upsertConvo, setState, stateRef]
   );
 
   const refreshNotifications = useCallback(async () => {
     const res = await fetchNotifications();
     if (!res.ok) return;
     setState((p) => ({ ...p, notifications: res.data.notifications ?? [] }));
-  }, []);
+  }, [setState]);
 
   const handleEvent = useCallback(
     (event: HarnessEvent) => {
@@ -809,7 +887,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           return;
       }
     },
-    [ensureConvo, upsertConvo, refreshNotifications]
+    [ensureConvo, upsertConvo, refreshNotifications, setState, stateRef]
   );
 
   const handleEventRef = useRef(handleEvent);
@@ -828,7 +906,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       selectedId: null,
       connection: "down"
     }));
-  }, []);
+  }, [setState]);
 
   const refresh = useCallback(async () => {
     const health = await fetchHealth();
@@ -872,10 +950,19 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       }
     }
     void refreshNotifications();
-  }, [loadSessionDetails, pollConversation, handleUnauthorized, refreshNotifications]);
+  }, [loadSessionDetails, pollConversation, handleUnauthorized, refreshNotifications, setState, stateRef]);
 
-  // Determine auth state on boot before connecting any streams.
-  const authReady = state.auth.checked && (!state.auth.required || state.auth.userId !== null);
+  // Determine auth state on boot before connecting any streams. The provider
+  // subscribes to ONLY the auth-derived readiness flag; every other state
+  // change (sessions, conversations, deltas) leaves the provider un-rendered.
+  const authReady = useSyncExternalStore(
+    store.subscribe,
+    () => {
+      const auth = store.getState().auth;
+      return auth.checked && (!auth.required || auth.userId !== null);
+    },
+    () => false
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -898,7 +985,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setState]);
 
   const onLogin = useCallback((userId: string) => {
     aliveRef.current = true;
@@ -908,7 +995,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       auth: { checked: true, required: true, userId },
       connection: "connecting"
     }));
-  }, []);
+  }, [setState]);
 
   const logout = useCallback(async () => {
     await apiLogout();
@@ -995,7 +1082,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       }
       source.close();
     };
-  }, [refresh, authReady]);
+  }, [refresh, authReady, setState]);
 
   const selectSession = useCallback(
     (id: string | null) => {
@@ -1007,7 +1094,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         void pollConversation(id);
       }
     },
-    [loadSessionDetails, pollConversation]
+    [loadSessionDetails, pollConversation, setState, stateRef]
   );
 
   const createSession = useCallback(
@@ -1023,7 +1110,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       }));
       return { ok: true as const, session };
     },
-    []
+    [setState]
   );
 
   const destroySession = useCallback(async (id: string) => {
@@ -1045,7 +1132,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       )
     }));
     return { ok: true as const };
-  }, []);
+  }, [setState]);
 
   const renameSession = useCallback(async (id: string, title: string) => {
     const trimmed = title.trim();
@@ -1070,7 +1157,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       sessions: p.sessions.map((s) => (s.id === session.id ? { ...s, ...session } : s))
     }));
     return { ok: true as const };
-  }, []);
+  }, [setState, stateRef]);
 
   const interruptSession = useCallback(async (id: string) => {
     const res = await apiInterruptSession(id);
@@ -1099,7 +1186,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       void pollConversation(id, msg?.id);
       return { ok: true as const };
     },
-    [pollConversation, upsertConvo]
+    [pollConversation, upsertConvo, setState]
   );
 
   const submitFeedback = useCallback(
@@ -1131,7 +1218,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       }));
       return { ok: true as const };
     },
-    [upsertConvo]
+    [upsertConvo, stateRef]
   );
 
   const markNotificationRead = useCallback(async (id: string) => {
@@ -1140,11 +1227,13 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       notifications: p.notifications.map((n) => (n.id === id ? { ...n, read: true } : n))
     }));
     await apiMarkNotificationRead(id);
-  }, []);
+  }, [setState]);
 
-  const value = useMemo<HarnessApi>(
+  // Actions are all stable useCallbacks, so this object is built once and its
+  // identity never changes — destructuring an action from useHarness() can
+  // never trigger a re-render.
+  const actions = useMemo<HarnessActions>(
     () => ({
-      state,
       selectSession,
       createSession,
       destroySession,
@@ -1158,7 +1247,6 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       markNotificationRead
     }),
     [
-      state,
       selectSession,
       createSession,
       destroySession,
@@ -1173,40 +1261,122 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
+  // Both store and actions are referentially stable, so the context value is
+  // stable forever — useContext alone never causes a consumer to re-render.
+  const value = useMemo<HarnessContextValue>(() => ({ store, actions }), [store, actions]);
+
   return <HarnessContext.Provider value={value}>{children}</HarnessContext.Provider>;
 }
 
-export function useHarness() {
+function useHarnessContext(): HarnessContextValue {
   const ctx = useContext(HarnessContext);
   if (!ctx) throw new Error("useHarness must be used inside HarnessProvider");
   return ctx;
 }
 
+/**
+ * Subscribe to a derived slice of the store. Backed by useSyncExternalStore
+ * with a cached-selector so the snapshot getter returns a STABLE reference
+ * whenever the selected value is (by `isEqual`) unchanged — that stability is
+ * what both avoids the "getSnapshot should be cached" infinite loop and lets
+ * React skip re-renders. Default equality is Object.is (reference equality),
+ * which is correct for our reducer since it only replaces a slice object when
+ * that slice actually changed.
+ */
+function useStoreSelector<T>(
+  selector: (s: HarnessState) => T,
+  isEqual: (a: T, b: T) => boolean = Object.is
+): T {
+  const { store } = useHarnessContext();
+  // Cache of the last value handed out. .current is written/read only inside
+  // getSnapshot (call time, not render), so it's rule-compliant. Repeated
+  // getSnapshot calls return the same reference until the selection changes.
+  const cacheRef = useRef<{ value: T } | null>(null);
+
+  // getSnapshot closes directly over the current-render selector/isEqual (no
+  // refs), so a changed selector — e.g. a new sessionId — is reflected with no
+  // stale frame. Rebuilding it each render is fine for useSyncExternalStore:
+  // only `subscribe` identity governs resubscription, and store is stable.
+  const getSnapshot = () => {
+    const next = selector(store.getState());
+    const cached = cacheRef.current;
+    if (cached && isEqual(cached.value, next)) {
+      return cached.value;
+    }
+    cacheRef.current = { value: next };
+    return next;
+  };
+
+  return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * useHarness — returns the STABLE actions object plus the store. Kept for
+ * least-churn compatibility: consumers destructure actions (e.g.
+ * `const { sendMessage } = useHarness()`) exactly as before. It no longer
+ * carries a live `state`; read state via the slice hooks below so components
+ * only re-render on the slices they actually use.
+ */
+export function useHarness(): HarnessActions & { store: HarnessStore } {
+  const { store, actions } = useHarnessContext();
+  // Stable inputs ⇒ stable result; memo keeps identity across renders.
+  return useMemo(() => ({ ...actions, store }), [actions, store]);
+}
+
+export function useSessions() {
+  return useStoreSelector((s) => s.sessions);
+}
+
+export function useSelectedId() {
+  return useStoreSelector((s) => s.selectedId);
+}
+
 export function useSelectedSession() {
-  const { state } = useHarness();
-  if (!state.selectedId) return null;
-  return state.sessions.find((s) => s.id === state.selectedId) ?? null;
+  return useStoreSelector((s) => (s.selectedId ? s.sessions.find((x) => x.id === s.selectedId) ?? null : null));
 }
 
 export function useConversation(sessionId: string | null) {
-  const { state } = useHarness();
-  if (!sessionId) return emptyConvo();
-  return state.conversations[sessionId] ?? emptyConvo();
+  return useStoreSelector((s) => (sessionId ? s.conversations[sessionId] ?? EMPTY_CONVO : EMPTY_CONVO));
 }
 
 export function useActivity(sessionId: string | null): ConversationActivity {
-  const { state } = useHarness();
-  if (!sessionId) return idleActivity();
-  return state.conversations[sessionId]?.activity ?? idleActivity();
+  // Shallow equality: withActivity rebuilds the activity object on many events
+  // (including every delta, which sets phase "streaming"), but when the fields
+  // are unchanged this returns the cached reference and skips the re-render.
+  return useStoreSelector(
+    (s) => (sessionId ? s.conversations[sessionId]?.activity ?? EMPTY_ACTIVITY : EMPTY_ACTIVITY),
+    shallowEqual
+  );
 }
 
 export function useArtifacts(sessionId: string | null) {
-  const { state } = useHarness();
-  if (!sessionId) return [];
-  return state.artifacts[sessionId] ?? [];
+  return useStoreSelector((s) => (sessionId ? s.artifacts[sessionId] ?? EMPTY_ARTIFACTS : EMPTY_ARTIFACTS));
 }
 
 export function useNotifications() {
-  const { state, markNotificationRead } = useHarness();
-  return { notifications: state.notifications, markNotificationRead };
+  const { actions } = useHarnessContext();
+  const notifications = useStoreSelector((s) => s.notifications);
+  return { notifications, markNotificationRead: actions.markNotificationRead };
+}
+
+// Rarely-changing meta grouped behind a shallow-equal selector so a delta on a
+// conversation never re-renders auth/connection/capabilities consumers.
+export function useConnection() {
+  return useStoreSelector((s) => s.connection);
+}
+
+export function useCapabilities() {
+  return useStoreSelector((s) => s.capabilities);
+}
+
+export function useAuth() {
+  return useStoreSelector((s) => s.auth, shallowEqual);
+}
+
+export function useReady() {
+  return useStoreSelector((s) => s.ready);
+}
+
+export function useBootError() {
+  return useStoreSelector((s) => s.bootError);
 }
