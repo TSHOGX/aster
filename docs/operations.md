@@ -514,6 +514,21 @@ echo | openssl s_client -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout
 - 维护页文件：`/var/www/harness-maintenance/maintenance.html`（`root:root 0644`，nginx 直读）。
 - 站点配置：`/etc/nginx/sites-available/harness-publish`（软链到 `sites-enabled/`）。
 
+### 首选：用 `harness-ctl`
+
+日常直接用运维 CLI，它把下面的手工步骤（备份、生成配置、`nginx -t`、reload 后等 worker、探活）
+都封装好了，并内置了坏配置自动回滚：
+
+```bash
+harness-ctl maintenance on      # 上维护页（自动备份 + 校验 + reload + 探活）
+harness-ctl maintenance off     # 下维护页，恢复服务
+harness-ctl maintenance status  # 只看当前是否维护模式
+harness-ctl status              # 服务/入口/在途对话 一屏总览
+```
+
+CLI 用法与设计详见 [`scripts/README.md`](../scripts/README.md)。下面的手工步骤保留作原理说明与
+CLI 不可用时的兜底。
+
 ### 上维护页（下线）
 
 ```bash
