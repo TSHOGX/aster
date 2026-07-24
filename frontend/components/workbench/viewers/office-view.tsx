@@ -28,8 +28,39 @@ export function OfficeView({ sessionId, path, href, kind }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<Phase>({ phase: "loading" });
   // Bumped by the ResizeObserver (pptx only) to re-render slides at the new
-  // pane width. Excel/Word reflow on their own, so they ignore this.
+  // pane width. Word reflows on its own (plain DOM), so it ignores this.
   const [sizeTick, setSizeTick] = useState(0);
+
+  // Spreadsheet reflow. x-spreadsheet (inside @js-preview/excel) renders to a
+  // fixed-size canvas whose dimensions it only recomputes from the wrapper's
+  // clientWidth/Height when it receives a `window` `resize` event (its internal
+  // listener calls reload()). Toggling the workbench between docked and full
+  // screen resizes this container, NOT the window, so without a nudge the sheet
+  // stays locked at whatever size it had on first render (the "only a sliver,
+  // not scaled up" bug). We can't call reload() directly — the instance only
+  // exposes preview/save/destroy — so we re-emit a window resize when the
+  // container's own box changes, which drives the library's existing handler.
+  useEffect(() => {
+    if (kind !== "spreadsheet") return;
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let last = { w: el.clientWidth, h: el.clientHeight };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      // Ignore sub-pixel churn; only react to a meaningful box change.
+      if (Math.abs(w - last.w) < 8 && Math.abs(h - last.h) < 8) return;
+      last = { w, h };
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => window.dispatchEvent(new Event("resize")), 100);
+    });
+    ro.observe(el);
+    return () => {
+      if (timer) clearTimeout(timer);
+      ro.disconnect();
+    };
+  }, [kind]);
 
   // Debounced width observer for the slide renderer, which needs an explicit
   // pixel size. Declared before the render effect so the container is measured

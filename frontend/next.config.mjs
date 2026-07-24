@@ -13,7 +13,11 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  // blob: is required by the Office/xlsx preview viewer (@js-preview/excel),
+  // which reads the workbook by XHR'ing a blob: object URL it creates from the
+  // fetched ArrayBuffer. blob: URLs are same-origin, opaque, and can't exfiltrate
+  // to a remote host, so this does not weaken the exfiltration guarantee.
+  "connect-src 'self' blob:",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
