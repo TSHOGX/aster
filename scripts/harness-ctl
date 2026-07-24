@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+# harness-ctl — publish 环境运维 CLI
+#
+# 子命令：
+#   status                服务状态 + 是否处于维护模式 + 在途对话数（一屏总览）
+#   inflight              列出正在进行的 turn（queued/leased/running），标注时长与僵尸 lease
+#   traffic [N]           从 nginx access.log 汇总最近 N 行流量（QPS/状态码/top IP/top 路径），默认 5000
+#   maintenance on|off    上/下维护页（nginx 层 503，不动后端）
+#   maintenance status    只看当前是否维护模式
+#   safe-restart <svc>    重启前先查在途 turn，有真活跃对话则拦住（--force 跳过）
+#
+# 设计原则：只读监控零副作用；维护/重启操作前先备份、后验证；
+# 维护配置从当前 live 配置动态生成（继承 TLS/端口），不依赖硬编码模板。
+#
+# 依赖：bash sqlite3 curl systemctl nginx（均已在机器上）。
+# 权限：只读命令(status/inflight/traffic)普通用户即可；maintenance/safe-restart 需能
+#       reload nginx / 控制 systemd（root 或有对应 sudoers）。脚本内部按需 sudo。
+#
+# 详见 docs/operations.md 第 9 节（维护模式）与本文件 --help。
+set -euo pipefail
+
+# ---- 常量（与 operations.md 第 1、5、9 节保持一致）----
+DB="/var/lib/harness-publish/state/orchestrator.db"
+NGINX_SITE="/etc/nginx/sites-available/harness-publish"
+MAINT_HTML_DIR="/var/www/harness-maintenance"
+ACCESS_LOG="/var/log/nginx/access.log"
+BACKEND_HEALTH="http://127.0.0.1:9090/healthz"
+FRONTEND_URL="http://127.0.0.1:9001/"
+PUBLIC_URL="https://127.0.0.1/"
+SERVICES=(nginx harness-publish-orchestrator harness-publish-frontend claude-proxy.service)
+# 判定「正在进行的对话」的 turn 状态（见 turns 表 CHECK 约束）
+INFLIGHT_STATES="'queued','leased','running'"
+
+# ---- 小工具 ----
+c_red=$'\e[31m'; c_grn=$'\e[32m'; c_yel=$'\e[33m'; c_dim=$'\e[2m'; c_bold=$'\e[1m'; c_rst=$'\e[0m'
+err()  { echo "${c_red}error:${c_rst} $*" >&2; }
+die()  { err "$@"; exit 1; }
+# 需要 root 的操作：已是 root 直接跑，否则 sudo
+as_root() { if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
+# 只读 sqlite（DB 是 root:root 0644，普通用户能读；WAL 下用 -readonly 安全）
+dbq() {
+  if [[ -r "$DB" ]]; then sqlite3 -readonly "$DB" "$1"
+  else as_root sqlite3 -readonly "$DB" "$1"; fi
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+
+need_deps() {
+  local m=()
+  for d in sqlite3 curl systemctl; do have "$d" || m+=("$d"); done
+  [[ ${#m[@]} -eq 0 ]] || die "缺少依赖：${m[*]}"
+}
+
+# 当前是否维护模式：live 配置里出现生效的 `return 503` 即为 on
+is_maintenance() {
+  as_root grep -qE '^\s*return 503' "$NGINX_SITE" 2>/dev/null
+}
+
+http_code() { curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || echo "ERR"; }
+
+# ---- 命令：status ----
+cmd_status() {
+  echo "${c_bold}== 服务状态 ==${c_rst}"
+  for svc in "${SERVICES[@]}"; do
+    local st; st=$(systemctl is-active "$svc" 2>/dev/null || true)
+    local mark; [[ "$st" == "active" ]] && mark="${c_grn}●${c_rst}" || mark="${c_red}●${c_rst}"
+    printf "  %s %-34s %s\n" "$mark" "$svc" "$st"
+  done
+
+  echo
+  echo "${c_bold}== 对外入口 ==${c_rst}"
+  if is_maintenance; then
+    echo "  模式: ${c_yel}维护中 (MAINTENANCE)${c_rst}"
+  else
+    echo "  模式: ${c_grn}正常运行${c_rst}"
+  fi
+  printf "  公网 :443 -> %s   后端 :9090 -> %s   前端 :9001 -> %s\n" \
+    "$(http_code "$PUBLIC_URL")" "$(http_code "$BACKEND_HEALTH")" "$(http_code "$FRONTEND_URL")"
+
+  echo
+  echo "${c_bold}== 在途对话 ==${c_rst}"
+  local n; n=$(dbq "SELECT COUNT(*) FROM turns WHERE status IN ($INFLIGHT_STATES);" 2>/dev/null || echo "?")
+  local live; live=$(dbq "SELECT COUNT(*) FROM turns WHERE status='running';" 2>/dev/null || echo "?")
+  if [[ "$n" == "0" ]]; then
+    echo "  ${c_grn}无正在进行的 turn — 可安全重启${c_rst}"
+  else
+    echo "  ${c_yel}${n} 个 turn 在途（其中 running=${live}）— 重启会打断，详见: harness-ctl inflight${c_rst}"
+  fi
+}
+
+# ---- 命令：inflight ----
+cmd_inflight() {
+  local now_epoch; now_epoch=$(date -u +%s)
+  echo "${c_bold}正在进行的 turn（queued/leased/running）：${c_rst}"
+  local rows
+  rows=$(dbq "SELECT session_id, status,
+                     COALESCE(started_at,''), COALESCE(lease_expires_at,''), created_at
+              FROM turns WHERE status IN ($INFLIGHT_STATES)
+              ORDER BY created_at DESC;")
+  if [[ -z "$rows" ]]; then
+    echo "  ${c_grn}(无)${c_rst}"
+    return 0
+  fi
+  printf "  %-24s %-8s %-9s %-9s %s\n" "SESSION" "STATUS" "AGE" "LEASE" "NOTE"
+  local zombies=0 realactive=0
+  while IFS='|' read -r sid status started lease created; do
+    [[ -z "$sid" ]] && continue
+    # 年龄按 created_at 算（ISO8601 带纳秒，截到秒交给 date）
+    local age="-" note=""
+    local cts; cts=$(date -u -d "${created%.*}Z" +%s 2>/dev/null || echo "")
+    [[ -n "$cts" ]] && age="$(( (now_epoch - cts) / 60 ))m"
+    local leasestate="-"
+    if [[ -n "$lease" ]]; then
+      local lts; lts=$(date -u -d "${lease%.*}Z" +%s 2>/dev/null || echo "")
+      if [[ -n "$lts" ]]; then
+        if (( lts < now_epoch )); then leasestate="${c_red}expired${c_rst}"; note="${c_dim}僵尸lease/已过期,不算真活跃${c_rst}"; zombies=$((zombies+1))
+        else leasestate="${c_grn}ok${c_rst}"; realactive=$((realactive+1)); fi
+      fi
+    else
+      # queued 无 lease：真在途（等待处理）
+      realactive=$((realactive+1))
+    fi
+    printf "  %-24s %-8s %-9s %-18b %b\n" "$sid" "$status" "$age" "$leasestate" "$note"
+  done <<< "$rows"
+  echo
+  echo "  ${c_bold}真活跃 ~${realactive}${c_rst}，僵尸/过期 lease ${zombies}"
+  echo "  ${c_dim}判定：lease 未过期的 running/leased + 所有 queued 视为真活跃；过期 lease 是卡死残留。${c_rst}"
+}
+
+# ---- 命令：traffic ----
+cmd_traffic() {
+  local n="${1:-5000}"
+  [[ -r "$ACCESS_LOG" ]] || { as_root test -r "$ACCESS_LOG" || die "读不到 $ACCESS_LOG"; }
+  local tmp; tmp=$(mktemp)
+  if [[ -r "$ACCESS_LOG" ]]; then tail -n "$n" "$ACCESS_LOG" > "$tmp"
+  else as_root tail -n "$n" "$ACCESS_LOG" > "$tmp"; fi
+
+  local lines; lines=$(wc -l < "$tmp")
+  echo "${c_bold}== 流量汇总（最近 ${lines} 行 access.log）==${c_rst}"
+
+  # 时间跨度 & 粗略 QPS：首末行的 [time]
+  local t_first t_last
+  t_first=$(head -1 "$tmp" | grep -oE '\[[^]]+\]' | head -1 | tr -d '[]')
+  t_last=$(tail -1 "$tmp"  | grep -oE '\[[^]]+\]' | head -1 | tr -d '[]')
+  echo "  窗口: ${c_dim}${t_first} → ${t_last}${c_rst}"
+  # combined 格式：解析首末秒级时间算 QPS
+  local ef el
+  ef=$(date -d "$(echo "$t_first" | sed 's#/# #g; s#:# #; s#\([0-9]\) \([0-9][0-9]\)#\1 \2#')" +%s 2>/dev/null || echo "")
+  el=$(date -d "$(echo "$t_last"  | sed 's#/# #g; s#:# #; s#\([0-9]\) \([0-9][0-9]\)#\1 \2#')" +%s 2>/dev/null || echo "")
+  if [[ -n "$ef" && -n "$el" && "$el" -gt "$ef" ]]; then
+    printf "  跨度 %ds，平均 %.1f req/s\n" "$((el-ef))" "$(echo "scale=2;$lines/($el-$ef)" | bc 2>/dev/null || echo 0)"
+  fi
+
+  echo
+  echo "  ${c_bold}状态码分布：${c_rst}"
+  awk '{print $9}' "$tmp" | sort | uniq -c | sort -rn | head -10 | awk '{printf "    %-6s %s\n",$2,$1}'
+
+  echo
+  echo "  ${c_bold}Top 10 客户端 IP：${c_rst}"
+  awk '{print $1}' "$tmp" | sort | uniq -c | sort -rn | head -10 | awk '{printf "    %-18s %s\n",$2,$1}'
+
+  echo
+  echo "  ${c_bold}Top 10 路径：${c_rst}"
+  awk '{print $7}' "$tmp" | sort | uniq -c | sort -rn | head -10 | awk '{printf "    %6s  %s\n",$1,$2}'
+
+  rm -f "$tmp"
+}
+
+# ---- 维护模式 ----
+_reload_nginx_verify() {
+  # 校验 -> reload -> 等 worker 接管（reload 是平滑重载，旧 worker draining，
+  # 紧跟其后的探测可能命中旧 worker，见 operations.md 第 9 节踩坑记录）-> 验证
+  as_root nginx -t
+  as_root systemctl reload nginx
+  sleep 3
+}
+
+maintenance_on() {
+  is_maintenance && { echo "已经是维护模式，无需重复操作。"; return 0; }
+  [[ -f "$MAINT_HTML_DIR/maintenance.html" ]] || die "维护页缺失：$MAINT_HTML_DIR/maintenance.html"
+
+  local ts; ts=$(date +%Y%m%d-%H%M%S)
+  local bak="${NGINX_SITE}.bak.pre-maintenance.${ts}"
+  as_root cp -a "$NGINX_SITE" "$bak"
+  # 记一个稳定的“正常配置”快照，供 off 恢复（始终指向最近一次正常态）
+  as_root cp -a "$NGINX_SITE" "${NGINX_SITE}.normal"
+  echo "已备份正常配置 -> $bak（并更新 .normal 快照）"
+
+  # 从 live 配置动态生成维护版：把 HTTPS server 里的反代 location / 整块替换成 503。
+  # 用 awk 状态机：进入 `location / {` 到其配对 `}` 之间全部丢弃，替换为维护块。
+  local tmp; tmp=$(mktemp)
+  as_root awk -v mhtml="$MAINT_HTML_DIR" '
+    BEGIN{depth=0; inloc=0; done=0}
+    # 侦测反代 location / 的开始（顶层，含 proxy 段）
+    !done && $0 ~ /^[[:space:]]*location[[:space:]]+\/[[:space:]]*\{/ {
+      inloc=1; depth=1;
+      print "    # ===== 维护模式：所有请求返回 503 + 维护页（harness-ctl maintenance on 生成）=====";
+      print "    location = /maintenance.html {";
+      print "        root " mhtml ";";
+      print "        internal;";
+      print "        charset utf-8;";
+      print "    }";
+      print "    error_page 503 /maintenance.html;";
+      print "    location / {";
+      print "        return 503;";
+      print "    }";
+      next
+    }
+    inloc {
+      n=gsub(/\{/,"{"); depth+=n;
+      m=gsub(/\}/,"}"); depth-=m;
+      if(depth<=0){inloc=0; done=1}
+      next
+    }
+    {print}
+  ' "$NGINX_SITE" > "$tmp"
+
+  if ! grep -qE '^\s*return 503' "$tmp"; then
+    rm -f "$tmp"; die "生成维护配置失败（没找到反代 location / 块）。未改动任何东西。"
+  fi
+  as_root cp "$tmp" "$NGINX_SITE"; rm -f "$tmp"
+
+  # 守卫：reload 前先 nginx -t，失败则自动回滚到 .normal，绝不 reload 坏配置
+  if ! as_root nginx -t 2>/dev/null; then
+    as_root cp -a "${NGINX_SITE}.normal" "$NGINX_SITE"
+    die "生成的维护配置 nginx -t 未通过，已自动回滚到正常配置（未 reload，线上不受影响）。"
+  fi
+  _reload_nginx_verify
+  local code; code=$(http_code "$PUBLIC_URL")
+  local back; back=$(http_code "$BACKEND_HEALTH")
+  if [[ "$code" == "503" ]]; then
+    echo "${c_grn}✔ 维护页已上线${c_rst}：对外 :443 -> $code，后端 :9090 -> $back（后端未动）"
+    echo "  恢复：harness-ctl maintenance off"
+  else
+    err "预期对外 503，实际 $code —— 请检查 nginx。备份在 $bak"
+    return 1
+  fi
+}
+
+maintenance_off() {
+  is_maintenance || { echo "当前不是维护模式，无需操作。对外 :443 -> $(http_code "$PUBLIC_URL")"; return 0; }
+  local src
+  if [[ -f "${NGINX_SITE}.normal" ]]; then
+    src="${NGINX_SITE}.normal"
+  else
+    # 退路：找最近一次 pre-maintenance 备份
+    src=$(as_root bash -c "ls -1t ${NGINX_SITE}.bak.pre-maintenance.* 2>/dev/null | head -1" || true)
+    [[ -n "$src" ]] || die "找不到正常配置快照（.normal 或 .bak.pre-maintenance.*），无法自动恢复。请手动改回 proxy_pass。"
+    echo "${c_yel}未找到 .normal 快照，改用最近备份：$src${c_rst}"
+  fi
+  as_root cp -a "$src" "$NGINX_SITE"
+  _reload_nginx_verify
+  local code; code=$(http_code "$PUBLIC_URL")
+  local api; api=$(http_code "https://127.0.0.1/api/healthz")
+  if [[ "$code" == "200" ]]; then
+    echo "${c_grn}✔ 服务已恢复上线${c_rst}：对外 :443 -> $code，/api -> $api"
+  else
+    err "预期对外 200，实际 $code —— 请检查 nginx（源: $src）"
+    return 1
+  fi
+}
+
+cmd_maintenance() {
+  case "${1:-}" in
+    on)     maintenance_on ;;
+    off)    maintenance_off ;;
+    status|"") if is_maintenance; then echo "${c_yel}维护模式：ON${c_rst}"; else echo "${c_grn}维护模式：OFF（正常）${c_rst}"; fi ;;
+    *)      die "用法：harness-ctl maintenance on|off|status" ;;
+  esac
+}
+
+# ---- 命令：safe-restart ----
+cmd_safe_restart() {
+  local force=0 svc=""
+  for a in "$@"; do
+    case "$a" in
+      --force) force=1 ;;
+      *) svc="$a" ;;
+    esac
+  done
+  [[ -n "$svc" ]] || die "用法：harness-ctl safe-restart <service> [--force]
+  可选服务：harness-publish-orchestrator | harness-publish-frontend"
+  case "$svc" in
+    harness-publish-orchestrator|harness-publish-frontend) ;;
+    *) die "只允许重启 harness-publish-orchestrator / harness-publish-frontend（其它服务请手动确认）" ;;
+  esac
+
+  local n; n=$(dbq "SELECT COUNT(*) FROM turns WHERE status IN ($INFLIGHT_STATES);")
+  # 真活跃 = 未过期 lease 的 running/leased + 所有 queued
+  local nowe; nowe=$(date -u +%s)
+  local realactive=0
+  if [[ "$n" != "0" ]]; then
+    while IFS='|' read -r status lease; do
+      [[ -z "$status" ]] && continue
+      if [[ "$status" == "queued" || -z "$lease" ]]; then realactive=$((realactive+1)); continue; fi
+      local lts; lts=$(date -u -d "${lease%.*}Z" +%s 2>/dev/null || echo "")
+      [[ -n "$lts" && "$lts" -gt "$nowe" ]] && realactive=$((realactive+1))
+    done <<< "$(dbq "SELECT status, COALESCE(lease_expires_at,'') FROM turns WHERE status IN ($INFLIGHT_STATES);")"
+  fi
+
+  if [[ "$realactive" -gt 0 && "$force" -ne 1 ]]; then
+    err "有 ${realactive} 个正在进行的对话（真活跃 turn），重启 $svc 会打断它们。"
+    echo "  查看详情：harness-ctl inflight"
+    echo "  确要重启：harness-ctl safe-restart $svc --force"
+    return 2
+  fi
+  [[ "$realactive" -gt 0 ]] && echo "${c_yel}--force：无视 ${realactive} 个在途对话，继续重启${c_rst}"
+  echo "重启 $svc ..."
+  as_root systemctl restart "$svc"
+  sleep 2
+  echo "状态：$(systemctl is-active "$svc")  后端健康：$(http_code "$BACKEND_HEALTH")"
+}
+
+usage() {
+  cat <<'EOF'
+harness-ctl — publish 环境运维 CLI
+
+用法：
+  harness-ctl status                服务/入口/在途对话 一屏总览
+  harness-ctl inflight              列出正在进行的 turn（含时长、僵尸 lease 标注）
+  harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
+  harness-ctl maintenance on        上维护页（nginx 503，后端不动）
+  harness-ctl maintenance off       下维护页，恢复服务
+  harness-ctl maintenance status    只看维护模式开关
+  harness-ctl safe-restart <svc>    重启前检查在途对话，有则拦住（--force 强制）
+
+服务名：harness-publish-orchestrator | harness-publish-frontend
+详见 docs/operations.md 第 9 节。
+EOF
+}
+
+main() {
+  need_deps
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    status)       cmd_status ;;
+    inflight)     cmd_inflight ;;
+    traffic)      cmd_traffic "$@" ;;
+    maintenance|maint) cmd_maintenance "$@" ;;
+    safe-restart) cmd_safe_restart "$@" ;;
+    -h|--help|help|"") usage ;;
+    *) err "未知命令：$cmd"; usage; exit 1 ;;
+  esac
+}
+main "$@"
