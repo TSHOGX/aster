@@ -4,8 +4,13 @@ import { ThemedToaster } from "@/components/theme/themed-toaster";
 import { themeInitScript } from "@/lib/theme";
 
 export const metadata: Metadata = {
-  title: "Agent Runtime Workbench",
-  description: "Workbench for sandboxed AI agent sessions"
+  title: "BatteryGPT",
+  description: "AI agent workbench for battery research and engineering — sandboxed sessions for data analysis, modeling, and diagnostics",
+  applicationName: "BatteryGPT",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg"
+  }
 };
 
 export default function RootLayout({

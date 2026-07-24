@@ -1,0 +1,12 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    BatteryGPT mark — "charge ring".
+    An open ring (a charge gauge / energy loop with a gap at top-right)
+    wrapping a lightning bolt: charge + energy, fully abstract.
+    Single colour on a transparent ground so it inverts cleanly on
+    light and dark browser chrome.
+  -->
+  <path d="M256 96 a160 160 0 1 1 -113 47"
+        fill="none" stroke="#4f6f61" stroke-width="58" stroke-linecap="round" />
+  <path d="M276 168 L196 288 L250 288 L236 372 L326 244 L268 244 Z" fill="#4f6f61" />
+</svg>
