@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/trajectory"
 )
 
 // Stage names double as extraction_state watermark keys.
@@ -35,6 +36,12 @@ type Pipeline struct {
 	kb        *KB
 	log       *slog.Logger
 
+	// capturer (re)builds full-fidelity trajectory_events from native pi files
+	// across all users before extraction. Nil when trajectory archiving is
+	// disabled, in which case the loop falls back to the lossy DB projection via
+	// store.SnapshotSession inside processSession.
+	capturer *trajectory.Capturer
+
 	// runInterval is how often the loop wakes; runAt is the target hour (local)
 	// for the daily run. A tick that isn't near runAt is a no-op unless a run is
 	// due (never ran today).
@@ -47,6 +54,9 @@ type PipelineOptions struct {
 	Extractor *Extractor
 	KB        *KB
 	Log       *slog.Logger
+	// Capturer archives + re-parses native pi trajectories before each sweep.
+	// Nil disables native capture (fall back to the DB projection).
+	Capturer *trajectory.Capturer
 	// Interval between wake-ups. Defaults to 1h; the loop runs the full sweep
 	// each wake but only reprocesses sessions whose fingerprint moved, so a
 	// smaller interval just means fresher KB at negligible cost when idle.
@@ -68,6 +78,7 @@ func NewPipeline(opts PipelineOptions) *Pipeline {
 		extractor: opts.Extractor,
 		kb:        opts.KB,
 		log:       opts.Log,
+		capturer:  opts.Capturer,
 		interval:  interval,
 	}
 }
@@ -92,12 +103,39 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 }
 
-// runSweep processes every session that has changed since the last sweep:
-// normalize → extract (3 lenses) → consolidate, then curate + publish once.
+// runSweep runs a full sweep over the daily window (48h back, wide enough to
+// catch sessions that ended recently or were never extracted).
 func (p *Pipeline) runSweep(ctx context.Context) {
-	// Look back a window wide enough to catch sessions that ended recently or
-	// were never extracted. 48h covers a daily cadence with slack.
-	since := time.Now().UTC().Add(-48 * time.Hour)
+	p.sweep(ctx, time.Now().UTC().Add(-48*time.Hour))
+}
+
+// RunOnce runs a single bounded sweep scoped to `since` and returns any error
+// from the enumeration step. Used by the replay CLI to reprocess a specific
+// window without launching the ticker loop.
+func (p *Pipeline) RunOnce(ctx context.Context, since time.Time) error {
+	if p == nil {
+		return nil
+	}
+	p.sweep(ctx, since)
+	return nil
+}
+
+// sweep processes every session that has changed since `since`: (re)build
+// native trajectory_events for all users, then per-session normalize → extract
+// (3 lenses) → consolidate, then curate + publish once.
+func (p *Pipeline) sweep(ctx context.Context, since time.Time) {
+	// Native capture first: rebuild full-fidelity trajectory_events from the
+	// on-host pi JSONL across ALL users, so the per-session lens extraction below
+	// reads full-fidelity data rather than the lossy DB projection.
+	if p.capturer != nil {
+		results, err := p.capturer.CaptureAll(ctx, since)
+		if err != nil {
+			p.log.Warn("distillation: native capture failed", "error", err)
+		} else {
+			p.log.Info("distillation native capture complete", "captured_sessions", len(results))
+		}
+	}
+
 	snaps, err := p.store.ListSessionsForDistillation(ctx, since)
 	if err != nil {
 		p.log.Warn("distillation: list sessions failed", "error", err)
@@ -135,8 +173,13 @@ func (p *Pipeline) runSweep(ctx context.Context) {
 // processSession normalizes one session and runs the three lenses over it,
 // each gated by a cheap signal and its own per-stage watermark.
 func (p *Pipeline) processSession(ctx context.Context, sessionID string) error {
-	if err := p.store.SnapshotSession(ctx, sessionID); err != nil {
-		return fmt.Errorf("snapshot: %w", err)
+	// Only project the lossy DB snapshot when native capture is disabled. When a
+	// capturer ran, trajectory_events already hold full-fidelity native data and
+	// SnapshotSession would overwrite them with the lossy projection.
+	if p.capturer == nil {
+		if err := p.store.SnapshotSession(ctx, sessionID); err != nil {
+			return fmt.Errorf("snapshot: %w", err)
+		}
 	}
 	events, err := p.store.GetTrajectoryEvents(ctx, sessionID)
 	if err != nil {

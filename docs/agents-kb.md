@@ -55,15 +55,24 @@ snapshot exists yet. A baked seed KB
 
 ## Nightly distillation loop
 
-A background goroutine (`internal/memory`) runs once a day. It reads durable
-session data — `messages` + `message_traces` + `message_feedback`, NOT the
-`events` table (which is pruned to a 24h window every ~30s and is
-infrastructure-centric) — and:
+A background goroutine (`internal/memory`) runs once a day. Its trajectory source
+is pi's **native session JSONL** — the same complete record the local sess-cli
+ingests — captured full-fidelity, NOT the lossy `messages`/`message_traces`
+projection and NOT the `events` table (which is pruned to a 24h window every ~30s,
+is infrastructure-centric, and even drops pi's `toolUse` turn boundaries). It:
 
-1. **Normalize** each grown session into `trajectory_events` (the sess-cli
-   7-primitive schema: user / assistant / thinking / tool_call / tool_result /
-   system / usage), indexed by `trajectory_snapshots` with a fingerprint so only
-   sessions that changed are reprocessed.
+1. **Capture** each session's native pi trace (`internal/trajectory`): locate
+   `<session_driver_homes.host_path>/.pi/agent/sessions/<selected_session_relpath>`
+   (from `session_driver_states`; glob fallback), archive a durable copy under
+   `<TrajectoryRoot>/raw/<session>/`, record a `raw_sources` pointer, parse it via
+   the sess-cli `pi.ts` field mapping into `trajectory_events` (7-primitive schema:
+   user / assistant / thinking / tool_call / tool_result / system; pi emits no
+   token usage). Text is stored **full and untruncated** — the 2000-char
+   `message_traces` cap and synthesized "thinking" of the product path are gone.
+   Indexed by `trajectory_snapshots` with a fingerprint (`records:lastEpoch`) so
+   only changed sessions are reprocessed. Enumerated across **all users**. When no
+   native file is available the loop falls back to the lossy DB projection at
+   `fidelity=partial`.
 2. **Extract** via three LLM lenses (adapted from Mem0 / WDM / Hermes /
    ReasoningBank / AWM), each gated by a cheap hard signal before spending an LLM
    call:
@@ -83,11 +92,31 @@ infrastructure-centric) — and:
 
 Two table groups share the DB but have opposite lifecycles:
 
-- **Rebuildable view** — `trajectory_snapshots`, `trajectory_events`. Derived
-  mechanically; a re-snapshot replaces a session's rows wholesale.
+- **Rebuildable view** — `raw_sources` (pointer to the archived native trace),
+  `trajectory_snapshots`, `trajectory_events`. Derived mechanically from the
+  native pi files; a re-capture replaces a session's rows wholesale.
 - **Non-rebuildable output** — `episode_memories`, `semantic_memories`,
-  `skill_candidates`. Expensive LLM output; a re-snapshot must never cascade into
+  `skill_candidates`. Expensive LLM output; a re-capture must never cascade into
   these. They join the view only by soft keys (session id, evidence refs).
+
+This full research store is deliberately **separate from the `events` table**,
+which remains the untouched user-facing product log (two businesses: product vs
+research). Native traces persist on the host (agent homes are never reclaimed by
+cleanup), so capture can run long after a session ends.
+
+### Cold-start: backfill + replay
+
+The orchestrator binary has two one-shot subcommands for bootstrapping the store
+(e.g. on first ECS deploy):
+
+- `orchestrator backfill [--since YYYY-MM-DD]` — capture every historical pi
+  session's native trajectory (omit `--since` for all history). Idempotent.
+- `orchestrator replay --date YYYY-MM-DD` — re-capture that day and run the
+  distillation sweep scoped to it, as if it were that night — so historical days
+  can be processed one at a time to grow the KB from cold.
+
+Both need `HARNESS_TRAJECTORY_ROOT` (default `/var/lib/harness/trajectories`);
+`replay` also needs `config/memory-llm.yaml`.
 
 ## LLM configuration
 

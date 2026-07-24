@@ -18,6 +18,7 @@ import (
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/server"
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/trajectory"
 )
 
 // version is injected at build time via -ldflags, e.g.:
@@ -37,6 +38,26 @@ func main() {
 	signal.Ignore(syscall.SIGPIPE)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Trajectory subcommands run a bounded one-shot job (no server, no
+	// goroutines) then exit. The default (no subcommand) path is the full server
+	// boot below.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "backfill":
+			if err := runBackfill(ctx, log, os.Args[2:]); err != nil {
+				log.Error("backfill failed", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "replay":
+			if err := runReplay(ctx, log, os.Args[2:]); err != nil {
+				log.Error("replay failed", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -176,8 +197,9 @@ func main() {
 			APIKey:  cfg.MemoryLLM.APIKey,
 			Model:   cfg.MemoryLLM.Model,
 		}),
-		KB:  memory.NewKB(cfg.AgentsKBRoot),
-		Log: log,
+		KB:       memory.NewKB(cfg.AgentsKBRoot),
+		Log:      log,
+		Capturer: trajectory.NewCapturer(db, cfg.TrajectoryRoot, log),
 	}); pipeline != nil {
 		log.Info("nightly distillation pipeline enabled")
 		go func() {

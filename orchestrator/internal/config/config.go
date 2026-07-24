@@ -65,6 +65,11 @@ type Config struct {
 	// bind-mounted read-only into every sandbox; the nightly distillation loop
 	// writes new snapshots and re-points `current`.
 	AgentsKBRoot string
+	// TrajectoryRoot is the host directory holding full-fidelity native session
+	// trajectories: <root>/raw/<session_id>/<native-session-id>.jsonl archives,
+	// captured by the distillation loop and backfill/replay CLI so the research
+	// store survives agent-home reclamation. Empty disables archiving.
+	TrajectoryRoot string
 	// MemoryLLM configures the LLM used by the nightly trajectory-distillation
 	// loop, loaded from a gitignored secret file (same shape as TitleLLM).
 	MemoryLLM MemoryLLMConfig
@@ -400,6 +405,7 @@ func Load() (Config, error) {
 		Harness:              projectConfig.Harness,
 		TitleLLM:             titleLLM,
 		AgentsKBRoot:         getenv("HARNESS_AGENTS_KB_PATH", "/var/lib/harness/agents-kb"),
+		TrajectoryRoot:       getenv("HARNESS_TRAJECTORY_ROOT", "/var/lib/harness/trajectories"),
 		MemoryLLM:            memoryLLM,
 	}
 	cfg.Harness.SessionRetention = Duration{Duration: sessionRetention}

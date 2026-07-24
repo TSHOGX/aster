@@ -873,8 +873,28 @@ CREATE INDEX IF NOT EXISTS skill_candidates_status_idx
 
 CREATE UNIQUE INDEX IF NOT EXISTS skill_candidates_name_uq
   ON skill_candidates (target_skill_name);
+
+-- raw_sources points at the archived, verbatim native agent trace a session's
+-- trajectory_events were parsed from (the sess-cli pointer model). It is NOT a
+-- copy of the content — bytes/mtime exist for drift/staleness detection so the
+-- ground-truth file can be re-read on demand. One pi session = one JSONL file =
+-- one row; kind records the native format.
+CREATE TABLE IF NOT EXISTS raw_sources (
+  session_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  native_session_id TEXT NOT NULL DEFAULT '',
+  bytes INTEGER NOT NULL DEFAULT 0,
+  mtime TEXT,
+  captured_at TEXT NOT NULL,
+  PRIMARY KEY(session_id, path),
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
 `)
 	if err != nil {
+		return err
+	}
+	if err := s.ensureTrajectoryEventColumns(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureSessionColumns(ctx); err != nil {
@@ -964,6 +984,34 @@ func (s *Store) ensureMessageColumns(ctx context.Context) error {
 	}
 	for _, column := range columns {
 		exists, err := s.columnExists(ctx, "messages", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureTrajectoryEventColumns adds the native-lineage columns introduced when
+// trajectory capture switched from the messages/message_traces projection to
+// parsing pi's native session JSONL. native_id/parent_id carry pi's intra-session
+// parentId->id chain (Tree A). Same O(1) metadata-only ALTER + idempotency
+// guarantee as ensureSessionColumns.
+func (s *Store) ensureTrajectoryEventColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"native_id", `ALTER TABLE trajectory_events ADD COLUMN native_id TEXT NOT NULL DEFAULT ''`},
+		{"parent_id", `ALTER TABLE trajectory_events ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "trajectory_events", column.name)
 		if err != nil {
 			return err
 		}

@@ -49,13 +49,18 @@ type TrajectorySnapshot struct {
 // 7-primitive taxonomy (user/assistant/thinking/tool_call/tool_result/system/
 // usage). Derived from messages.role and message_traces.nodes[].
 type TrajectoryEvent struct {
-	SessionID string     `json:"session_id"`
-	Idx       int        `json:"idx"`
-	Kind      string     `json:"kind"`
-	Subtype   string     `json:"subtype,omitempty"`
-	Name      string     `json:"name,omitempty"`
-	CallID    string     `json:"call_id,omitempty"`
-	IsError   bool       `json:"is_error"`
+	SessionID string `json:"session_id"`
+	Idx       int    `json:"idx"`
+	Kind      string `json:"kind"`
+	Subtype   string `json:"subtype,omitempty"`
+	Name      string `json:"name,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+	IsError   bool   `json:"is_error"`
+	// NativeID/ParentID carry pi's native intra-session lineage (Tree A): the
+	// record's own id and its parentId. Empty for events derived from the legacy
+	// messages/message_traces projection.
+	NativeID  string     `json:"native_id,omitempty"`
+	ParentID  string     `json:"parent_id,omitempty"`
 	MessageID *int64     `json:"message_id,omitempty"`
 	Tokens    *int64     `json:"tokens,omitempty"`
 	Text      string     `json:"text"`
@@ -201,12 +206,47 @@ INSERT INTO trajectory_events (
 		}
 	}
 
-	// Index row: insert-or-update, preserving created_at/extracted_at on update.
+	// Index row (fidelity=partial: this is the lossy messages/traces projection).
+	if err := upsertTrajectorySnapshotTx(ctx, tx, TrajectorySnapshot{
+		SessionID:    session.ID,
+		Status:       session.Status,
+		Agent:        session.Agent,
+		UserID:       session.UserID,
+		StartedAt:    &session.CreatedAt,
+		EndedAt:      session.EndedAt,
+		TurnCount:    turnCount,
+		MessageCount: len(messages),
+		Fingerprint:  fingerprint,
+		Fidelity:     "partial",
+		NormalizedAt: &now,
+	}); err != nil {
+		return fmt.Errorf("snapshot session %q: %w", sessionID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("snapshot session %q: commit: %w", sessionID, err)
+	}
+	return nil
+}
+
+// upsertTrajectorySnapshotTx inserts-or-updates the index row for a session,
+// preserving created_at and extracted_at across updates (only the normalize-time
+// fields and fidelity change). fidelity defaults to 'full' when unset.
+func upsertTrajectorySnapshotTx(ctx context.Context, tx *sql.Tx, snap TrajectorySnapshot) error {
+	now := time.Now().UTC()
+	fidelity := strings.TrimSpace(snap.Fidelity)
+	if fidelity == "" {
+		fidelity = "full"
+	}
+	normalizedAt := snap.NormalizedAt
+	if normalizedAt == nil {
+		normalizedAt = &now
+	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO trajectory_snapshots (
   session_id, status, agent, user_id, started_at, ended_at,
-  turn_count, message_count, fingerprint, normalized_at, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  turn_count, message_count, fingerprint, fidelity, normalized_at, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
   status = excluded.status,
   agent = excluded.agent,
@@ -216,16 +256,13 @@ ON CONFLICT(session_id) DO UPDATE SET
   turn_count = excluded.turn_count,
   message_count = excluded.message_count,
   fingerprint = excluded.fingerprint,
+  fidelity = excluded.fidelity,
   normalized_at = excluded.normalized_at`,
-		session.ID, session.Status, session.Agent, session.UserID,
-		formatTime(session.CreatedAt), formatOptionalTime(session.EndedAt),
-		turnCount, len(messages), fingerprint, formatTime(now), formatTime(now),
+		snap.SessionID, snap.Status, snap.Agent, snap.UserID,
+		formatOptionalTime(snap.StartedAt), formatOptionalTime(snap.EndedAt),
+		snap.TurnCount, snap.MessageCount, snap.Fingerprint, fidelity, formatTime(*normalizedAt), formatTime(now),
 	); err != nil {
-		return fmt.Errorf("snapshot session %q: upsert snapshot: %w", sessionID, err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("snapshot session %q: commit: %w", sessionID, err)
+		return fmt.Errorf("upsert trajectory snapshot: %w", err)
 	}
 	return nil
 }
@@ -357,7 +394,7 @@ func trajectoryFingerprint(turnCount int, messages []Message) string {
 // GetTrajectoryEvents returns a session's normalized events ordered by idx.
 func (s *Store) GetTrajectoryEvents(ctx context.Context, sessionID string) ([]TrajectoryEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT session_id, idx, kind, subtype, name, call_id, is_error, message_id, tokens, text, ts
+SELECT session_id, idx, kind, subtype, name, call_id, is_error, native_id, parent_id, message_id, tokens, text, ts
 FROM trajectory_events WHERE session_id = ? ORDER BY idx ASC`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get trajectory events %q: %w", sessionID, err)
@@ -377,17 +414,19 @@ FROM trajectory_events WHERE session_id = ? ORDER BY idx ASC`, sessionID)
 
 func scanTrajectoryEvent(sc interface{ Scan(...any) error }) (TrajectoryEvent, error) {
 	var ev TrajectoryEvent
-	var subtype, name, callID sql.NullString
+	var subtype, name, callID, nativeID, parentID sql.NullString
 	var isError int
 	var messageID, tokens sql.NullInt64
 	var ts sql.NullString
 	if err := sc.Scan(&ev.SessionID, &ev.Idx, &ev.Kind, &subtype, &name, &callID,
-		&isError, &messageID, &tokens, &ev.Text, &ts); err != nil {
+		&isError, &nativeID, &parentID, &messageID, &tokens, &ev.Text, &ts); err != nil {
 		return TrajectoryEvent{}, fmt.Errorf("scan trajectory event: %w", err)
 	}
 	ev.Subtype = subtype.String
 	ev.Name = name.String
 	ev.CallID = callID.String
+	ev.NativeID = nativeID.String
+	ev.ParentID = parentID.String
 	ev.IsError = isError != 0
 	if messageID.Valid {
 		ev.MessageID = &messageID.Int64
