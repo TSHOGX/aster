@@ -25,6 +25,12 @@ orchestrator/authhash
 
 # 备份文件
 *.bak
+*.bak.*
+# 带时间戳的运维备份（DB / 配置 / 前端构建产物）
+*.backup.*
+config/auth-users.yaml.bak.*
+frontend/.next.backup.*/
+orchestrator.db.bak.*
 
 # 本地 agent 运维笔记,不入库
 AGENTS.md
