@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"harness-platform/orchestrator/internal/store"
@@ -122,5 +123,66 @@ func TestKBPublishAndRepoint(t *testing.T) {
 	}
 	if digest2 != digest {
 		t.Fatalf("identical content changed digest: %q != %q", digest2, digest)
+	}
+}
+
+// TestKBPublishCarriesForwardSeed proves a republish preserves human-owned seed
+// content (the constitution + seeded skills + data) that the distillation
+// publisher does not itself regenerate, while still regenerating facts/INDEX.md.
+func TestKBPublishCarriesForwardSeed(t *testing.T) {
+	root := t.TempDir()
+	kb := NewKB(root)
+
+	// Seed a "current" snapshot the way ensureAgentsKB would: constitution, a
+	// human-seeded in-use skill, and a data file — plus a stale INDEX.
+	seed := filepath.Join(root, "snapshots", "seed")
+	mustWrite(t, filepath.Join(seed, "CONSTITUTION.md"), "# Constitution\nyou are BatteryGPT\n")
+	mustWrite(t, filepath.Join(seed, "skills/doris-query/SKILL.md"), "---\nstatus: in-use\n---\n# Doris\n")
+	mustWrite(t, filepath.Join(seed, "data/schemas/vhr.md"), "col list\n")
+	mustWrite(t, filepath.Join(seed, "facts/INDEX.md"), "STALE INDEX\n")
+	if err := os.Symlink(filepath.Join("snapshots", "seed"), filepath.Join(root, "current")); err != nil {
+		t.Fatalf("seed symlink: %v", err)
+	}
+
+	// Publish a distilled skill; no memories.
+	_, err := kb.Publish(nil, []store.SkillCandidate{{
+		TargetSkillName: "charging-analysis", Title: "Charging analysis",
+		BodyMD: "# Charging analysis\n", KBStatus: "observing", SupportCount: 3, Confidence: 0.8,
+	}})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
+	if err != nil {
+		t.Fatalf("resolve current: %v", err)
+	}
+	// Seed content carried forward.
+	for _, rel := range []string{"CONSTITUTION.md", "skills/doris-query/SKILL.md", "data/schemas/vhr.md"} {
+		if _, err := os.Stat(filepath.Join(resolved, rel)); err != nil {
+			t.Fatalf("seed file %s not carried forward: %v", rel, err)
+		}
+	}
+	// Distilled skill added.
+	if _, err := os.Stat(filepath.Join(resolved, "skills/charging-analysis/SKILL.md")); err != nil {
+		t.Fatalf("distilled skill missing: %v", err)
+	}
+	// INDEX.md regenerated, not the stale seed copy.
+	idx, err := os.ReadFile(filepath.Join(resolved, "facts/INDEX.md"))
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	if strings.Contains(string(idx), "STALE INDEX") {
+		t.Fatalf("facts/INDEX.md was carried forward stale instead of regenerated")
+	}
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }

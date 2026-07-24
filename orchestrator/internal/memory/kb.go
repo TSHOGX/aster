@@ -44,7 +44,14 @@ func (k *KB) Publish(memories []store.SemanticMemory, skills []store.SkillCandid
 	if k == nil {
 		return "", nil
 	}
-	files := k.render(memories, skills)
+	// Start from everything the current snapshot carries that the publisher does
+	// NOT itself regenerate — the constitution, human-seeded skills, and data/.
+	// Otherwise a republish (which only knows about distilled memories/skills)
+	// would drop the seed. The generated set below overlays on top.
+	files := k.carryForward()
+	for rel, content := range k.render(memories, skills) {
+		files[rel] = content
+	}
 	digest := contentDigest(files)
 
 	snapshotsDir := filepath.Join(k.root, "snapshots")
@@ -100,7 +107,47 @@ func (k *KB) repointCurrent(digest string) error {
 	return nil
 }
 
-// render builds the full file set (relative path → content) for a snapshot.
+// carryForward reads the snapshot `current` points at and returns the files a
+// republish must preserve because the publisher does not regenerate them: the
+// constitution, human-seeded skills, and any data/ material. The regenerated set
+// (facts/INDEX.md, facts/*.md, and distilled skills) is overlaid by the caller,
+// so those paths are intentionally EXCLUDED here to avoid resurrecting stale
+// generated content. Returns an empty map when there is no current snapshot yet
+// (first publish after seeding reads the seed via `current`).
+func (k *KB) carryForward() map[string]string {
+	out := map[string]string{}
+	current := filepath.Join(k.root, "current")
+	base, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		return out // no current snapshot yet
+	}
+	_ = filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(base, path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		// facts/* is fully regenerated each publish; never carry it forward.
+		if rel == "facts/INDEX.md" || strings.HasPrefix(rel, "facts/") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		out[rel] = string(data)
+		return nil
+	})
+	return out
+}
+
+// render builds the file set the publisher REGENERATES each snapshot (relative
+// path → content): the index, per-scope facts, and one SKILL.md per distilled
+// skill. Carried-forward files (constitution, seeded skills, data/) are merged in
+// by Publish.
 func (k *KB) render(memories []store.SemanticMemory, skills []store.SkillCandidate) map[string]string {
 	files := map[string]string{}
 

@@ -1,0 +1,85 @@
+---
+status: in-use
+support_count: 999
+confidence: 1.0
+---
+# Doris Query
+
+## When To Use
+
+Any question that needs data from the internal Apache Doris warehouse (the
+`vhr_data` schema): vehicle charging analysis, raw signal inspection, or any
+read-only analytical query.
+
+## Context
+
+This skill embeds a read-only credential so a session can connect without
+rediscovering project docs. It is sensitive — the real `SKILL.md` is git-ignored
+and provisioned on the host out-of-band. Copy this file to `SKILL.md` and fill in
+the real connection values before building the rootfs seed.
+
+Doris FE speaks the MySQL wire protocol:
+
+- Host: `<DORIS_FE_HOST>`
+- Port: `<DORIS_FE_PORT>`
+- User: `<DORIS_RO_USER>`
+- Password: `<DORIS_RO_PASSWORD>`
+- Database: `vhr_data`
+- Intent: read-only
+
+```bash
+MYSQL_PWD='<DORIS_RO_PASSWORD>' mysql --batch --raw -h <DORIS_FE_HOST> -P <DORIS_FE_PORT> -u <DORIS_RO_USER> -D vhr_data -e "SHOW FULL TABLES;"
+```
+
+Use `pymysql` for Python analysis. Avoid `mysql-connector-python >= 8.0.16`
+(known Doris FE compatibility issues here).
+
+```python
+import pymysql
+conn = pymysql.connect(
+    host="<DORIS_FE_HOST>", port=<DORIS_FE_PORT>, user="<DORIS_RO_USER>", password="<DORIS_RO_PASSWORD>",
+    database="vhr_data", cursorclass=pymysql.cursors.DictCursor,
+    connect_timeout=10, read_timeout=120,
+)
+```
+
+## Procedure
+
+The schema changes over time — never rely on a remembered table/column list.
+Discover it live every session:
+
+1. List what exists:
+   ```sql
+   SHOW FULL TABLES;
+   SELECT table_name, COUNT(*) AS column_count
+   FROM information_schema.columns
+   WHERE table_schema = 'vhr_data'
+   GROUP BY table_name ORDER BY table_name;
+   ```
+2. Inspect a candidate table's columns before using it:
+   ```sql
+   SELECT column_name, column_type, is_nullable, ordinal_position
+   FROM information_schema.columns
+   WHERE table_schema = 'vhr_data' AND table_name = '<table_name>'
+   ORDER BY ordinal_position;
+   ```
+3. Judge from names/types/a small sample which table fits. Find a time/partition
+   column (`*_time`, `*_date`, `ts`) and a key column (`vehicle_id`, `vid`) before
+   querying — tables are large and unfiltered scans are expensive or will fail.
+4. Only `SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN`. No DDL/DML/admin SQL.
+5. For samples, select explicit columns + `LIMIT`; check `COUNT(*)` before any
+   `SELECT *`.
+
+## Known Pitfalls
+
+- Always filter on the table's own time/partition column — don't assume a fixed
+  name across tables. Add a key-column filter too when row counts are large.
+- Use `row_count` as an alias, not `rows` (reserved keyword in Doris).
+- Prefer smaller derived/summary tables over raw/wide ones; tell them apart via
+  `information_schema` counts, not naming.
+- Avoid large in-memory results: don't `fetchall()` or
+  `pandas.read_sql(...).to_csv(...)`. Stream with `fetchmany(batch_size)`, write
+  to a temp file, atomically rename on success. Split large exports by
+  date/partition/key and report progress.
+- On compute-group or permission errors, report the exact Doris error and do NOT
+  retry with broader SQL — it is an environment permission issue, not SQL syntax.

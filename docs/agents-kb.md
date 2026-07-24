@@ -12,7 +12,8 @@ Every sandbox gets a read-only `/agents` directory bind-mounted in, holding a
 
 ```
 /agents/
-  facts/INDEX.md        # navigation entry — the agent reads this first
+  CONSTITUTION.md       # who the agent is, what it can do, how it works — read first
+  facts/INDEX.md        # navigation entry / map of the KB
   facts/<fact>.md       # small, agentic-searchable knowledge notes
   skills/<name>/SKILL.md # curated procedures; frontmatter `status:` key
   data/<domain>/...      # bulky reference material
@@ -24,8 +25,31 @@ Skills carry a lifecycle status in their frontmatter:
 - `in-use` — stable, well-supported, the default an agent should prefer.
 - `deprecated` — kept for provenance, should not be followed.
 
-The Pi system prompt points the agent at `/agents/facts/INDEX.md` and tells it to
-search the KB before starting recurring tasks.
+### Prompt architecture: slim bootstrap + evolvable constitution
+
+The identity/capabilities/where-to-look content that used to be frozen in the
+baked system prompt is split by change-rate and owner into two layers:
+
+- **Bootstrap prompt** (`sandbox-image/.../pi-system-prompt.md`, baked, injected
+  via `--append-system-prompt`): a minimal, rarely-changing string — the identity
+  one-liner plus "read `/agents/CONSTITUTION.md` first, consult the KB before
+  recurring work", and safe defaults for when `/agents` is absent. No domain rules.
+- **Constitution** (`/agents/CONSTITUTION.md`): the governing document — who the
+  agent is, what it can do, who it helps, operating principles, and the KB search
+  protocol. It lives in the KB, so it evolves without an image rebuild and can
+  later become a curator candidate (behind human review). Modeled on the local
+  `~/.agents` spec style.
+
+Domain skills (Doris, matplotlib-CJK) are no longer inlined in the prompt or the
+legacy `harness-skills/` dir — they are seeded skills in the KB
+(`agents-kb-seed/skills/`, `status: in-use`) and follow the same
+snapshot/promotion lifecycle as distilled ones.
+
+The constitution and human-seeded skills are **carried forward** on every
+republish (`kb.go` `carryForward`): the distillation publisher only regenerates
+`facts/INDEX.md`, per-scope facts, and distilled skills, and overlays them on top
+of the preserved seed — so a nightly snapshot never drops the constitution or a
+seeded skill.
 
 ## Delivery (no image rebuild, no restart)
 

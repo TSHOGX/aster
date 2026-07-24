@@ -116,32 +116,32 @@ sentinel `__HARNESS_PROMPT_<uuid>__[<exit>]__` after each command. It reads
 
 ## System prompt & skills
 
-Skills are **baked into the image** (rsync'd overlay), not dynamically mounted, and
-appear at `/usr/local/share/harness-skills/`. The Pi system prompt
-(`pi-system-prompt.md`) sets the identity "BatteryGPT" and, for Doris/`vhr_data`
-questions, directs the agent to read the doris-query SKILL and follow read-only
-rules: only `SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN`; prefer metadata, `COUNT(*)`, small
-`LIMIT`; never `SELECT *` on wide/raw tables; stream CSV exports with `fetchmany` +
-atomic rename. It is injected into Pi via `--append-system-prompt`.
+The Pi system prompt (`pi-system-prompt.md`, injected via `--append-system-prompt`)
+is now a **minimal bootstrap**: it states the "BatteryGPT" identity and directs the
+agent to read `/agents/CONSTITUTION.md` and consult the `/agents` knowledge base
+before recurring work. It carries no domain rules and no `harness-skills/`
+references — those moved into the mounted, evolving KB. See
+[agents-kb.md](./agents-kb.md) for the full design.
 
-The **doris-query** skill (`SKILL.md`) documents the read-only Doris connection and
-instructs the agent to discover the current `vhr_data` schema live via
-`information_schema` every session, rather than relying on a fixed table/column
-list — the schema changes over time. Note: `SKILL.md` embeds live DB connection
-details — treat it as sensitive local material and keep egress locked to the Doris
-host (see [security.md](./security.md)).
+Skills now live in the **`/agents` knowledge base** (a read-only bind mount whose
+source is a content-addressed snapshot the nightly loop republishes), seeded from
+the baked overlay at `sandbox-image/files/usr/local/share/agents-kb-seed/`:
 
-`sandbox-image/files/usr/local/share/harness-skills/` is **git-ignored**, not
-checked in, because doris-query's `SKILL.md` embeds a live credential. Before
-running `build-rootfs.sh`, restore that directory locally (from your own secrets
-store or a prior local copy) so the overlay rsync has something to pick up —
-without it, the doris-query and matplotlib-fonts skills are simply absent from
-the built image.
+- **doris-query** (`skills/doris-query/SKILL.md`, `status: in-use`) — read-only
+  Doris/`vhr_data` access: live `information_schema` discovery, safe SQL
+  (`SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN` only), streaming large exports. Embeds a
+  live credential, so the real `SKILL.md` is **git-ignored**; a redacted
+  `SKILL.md.example` is committed. Copy it to `SKILL.md` with real values (or
+  provision on the host) before `build-rootfs.sh`, and keep egress locked to the
+  Doris host (see [security.md](./security.md)).
+- **matplotlib-cjk-fonts** (`skills/matplotlib-cjk-fonts/SKILL.md`, `status:
+  in-use`) — select the installed WenQuanYi CJK fonts in matplotlib/Pillow so
+  Chinese chart text doesn't render as tofu boxes.
 
-The **matplotlib-fonts** skill (`SKILL.md`) documents the two installed WenQuanYi CJK
-fonts (`wqy-zenhei.ttc`, `wqy-microhei.ttc`) and how to select them in matplotlib
-(`rcParams["font.sans-serif"]`) and Pillow (`ImageFont.truetype`), so Chinese text in
-generated charts/images doesn't render as tofu boxes.
+> **Deprecated:** `sandbox-image/files/usr/local/share/harness-skills/` (still
+> git-ignored) is superseded by the `/agents` KB seed above and is no longer
+> referenced by the prompt. Existing deployed copies are harmless; the directory
+> will be removed in a later image cleanup.
 
 ## Tests (`tests/test_harness_bridge_client.py`)
 
