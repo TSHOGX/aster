@@ -2,8 +2,6 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot,
-  ChevronDown,
   Loader2,
   LogOut,
   MoreHorizontal,
@@ -12,7 +10,6 @@ import {
   Pencil,
   Plus,
   Search,
-  TerminalSquare,
   Trash2
 } from "lucide-react";
 
@@ -52,7 +49,6 @@ const SessionRow = memo(function SessionRow({
   onRename
 }: SessionRowProps) {
   const displayTitle = session.title?.trim() || session.id;
-  const ModeIcon = session.mode === "shell" ? TerminalSquare : Bot;
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(displayTitle);
@@ -132,18 +128,9 @@ const SessionRow = memo(function SessionRow({
         {selected ? (
           <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full bg-[var(--color-accent)]" />
         ) : null}
-        <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
-          <ModeIcon
-            className={cn(
-              "h-4 w-4 transition-colors",
-              selected ? "text-[var(--color-accent)]" : "text-[var(--color-foreground-muted)]"
-            )}
-          />
-          {/* Status glyph tucked at the corner of the mode icon. */}
-          <StatusDot
-            tone={statusTone(session.status)}
-            className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[var(--color-surface)]"
-          />
+        {/* Status dot alone — the only glyph the row needs. */}
+        <span className="flex h-4 w-3 shrink-0 items-center justify-center">
+          <StatusDot tone={statusTone(session.status)} />
         </span>
         <button
           className="min-w-0 flex-1 truncate text-left text-sm leading-tight"
@@ -348,17 +335,14 @@ function SidebarPanel({
   const [createError, setCreateError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
-  const [endedOpen, setEndedOpen] = useState(false);
 
   // Filter + sort only when the sessions array identity changes (the reducer
-  // replaces it only on a real session change), not on every render.
-  const { activeSessions, endedSessions } = useMemo(() => {
+  // replaces it only on a real session change), not on every render. Terminal
+  // (deleted/failed) sessions are dropped outright — a deletion is a deletion.
+  const activeSessions = useMemo(() => {
     const byRecentActivity = (a: ApiSession, b: ApiSession) =>
       new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-    return {
-      activeSessions: sessions.filter((session) => !isTerminal(session.status)).sort(byRecentActivity),
-      endedSessions: sessions.filter((session) => isTerminal(session.status)).sort(byRecentActivity)
-    };
+    return sessions.filter((session) => !isTerminal(session.status)).sort(byRecentActivity);
   }, [sessions]);
   const agentCapability = capabilities?.session_modes.find((mode) => mode.mode === "agent");
   const agentCreateDisabled = agentCapability ? !agentCapability.create_enabled : false;
@@ -469,72 +453,29 @@ function SidebarPanel({
         <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
           History
         </span>
-        <span className="text-[11px] text-[var(--color-foreground-muted)]">{sessions.length}</span>
+        <span className="text-[11px] text-[var(--color-foreground-muted)]">{activeSessions.length}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {sessions.length === 0 ? (
+        {activeSessions.length === 0 ? (
           <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">
             {ready || connection === "live" ? "No sessions yet. Create one to get started." : "Loading…"}
           </p>
         ) : (
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {activeSessions.length === 0 ? (
-                <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">
-                  No active sessions.
-                </p>
-              ) : (
-                <ul className="space-y-0.5 px-2 pb-3">
-                  {activeSessions.map((s) => (
-                    <SessionRow
-                      key={s.id}
-                      session={s}
-                      selected={s.id === selectedId}
-                      closing={closingId === s.id}
-                      onSelect={handleSelect}
-                      onClose={handleClose}
-                      onRename={renameSession}
-                    />
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            {endedSessions.length > 0 ? (
-              <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
-                <button
-                  className="flex h-9 w-full items-center justify-between px-3 text-left text-[11px] uppercase tracking-wider text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)]"
-                  onClick={() => setEndedOpen((open) => !open)}
-                  aria-expanded={endedOpen}
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <ChevronDown
-                      className={cn("h-3.5 w-3.5 shrink-0 transition-transform", endedOpen ? "" : "-rotate-90")}
-                    />
-                    <span>Ended</span>
-                  </span>
-                  <span>{endedSessions.length}</span>
-                </button>
-                {endedOpen ? (
-                  <div className="max-h-64 overflow-y-auto border-t border-[var(--color-border)]">
-                    <ul className="space-y-0.5 px-2 py-1.5">
-                      {endedSessions.map((s) => (
-                        <SessionRow
-                          key={s.id}
-                          session={s}
-                          selected={s.id === selectedId}
-                          closing={closingId === s.id}
-                          onSelect={handleSelect}
-                          onClose={handleClose}
-                          onRename={renameSession}
-                        />
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <ul className="space-y-0.5 px-2 pb-3">
+              {activeSessions.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  selected={s.id === selectedId}
+                  closing={closingId === s.id}
+                  onSelect={handleSelect}
+                  onClose={handleClose}
+                  onRename={renameSession}
+                />
+              ))}
+            </ul>
           </div>
         )}
       </div>
