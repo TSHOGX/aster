@@ -1,0 +1,8 @@
+# Optional: LLM for the nightly trajectory-distillation pipeline (agents-kb).
+# Copy to config/memory-llm.yaml (gitignored) and fill in api_key.
+# When api_key is empty or this file is absent, the nightly pipeline is disabled
+# and the shared /agents knowledge base is only ever updated by hand.
+enabled: true
+base_url: https://api.modelarts-maas.com/openai/v1
+api_key: ""
+model: glm-5.2

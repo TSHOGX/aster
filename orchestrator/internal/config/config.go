@@ -60,7 +60,26 @@ type Config struct {
 	ModelProxy       ModelProxyConfig
 	Harness          HarnessConfig
 	TitleLLM         TitleLLMConfig
-	Warnings         []string
+	// AgentsKBRoot is the host directory holding the shared, self-evolving
+	// "/agents" knowledge base (skills/data/facts). Its `current` symlink is
+	// bind-mounted read-only into every sandbox; the nightly distillation loop
+	// writes new snapshots and re-points `current`.
+	AgentsKBRoot string
+	// MemoryLLM configures the LLM used by the nightly trajectory-distillation
+	// loop, loaded from a gitignored secret file (same shape as TitleLLM).
+	MemoryLLM MemoryLLMConfig
+	Warnings  []string
+}
+
+// MemoryLLMConfig configures the optional LLM used by the nightly
+// trajectory-distillation pipeline. Loaded from a separate gitignored secret
+// file so the API key never enters version control. When APIKey is empty or
+// the file is absent the nightly pipeline is disabled.
+type MemoryLLMConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	BaseURL string `yaml:"base_url"`
+	APIKey  string `yaml:"api_key"`
+	Model   string `yaml:"model"`
 }
 
 // TitleLLMConfig configures the optional LLM-based session-title generator.
@@ -346,6 +365,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	memoryLLM, err := loadMemoryLLM(getenv("HARNESS_MEMORY_LLM_PATH", filepath.Join(repoRoot, "config", "memory-llm.yaml")))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:                 getenv("HARNESS_ORCHESTRATOR_ADDR", ":8090"),
 		SharedSecret:         os.Getenv("HARNESS_LAB_PASSWORD"),
@@ -376,6 +399,8 @@ func Load() (Config, error) {
 		ModelProxy:           projectConfig.Harness.ModelProxy,
 		Harness:              projectConfig.Harness,
 		TitleLLM:             titleLLM,
+		AgentsKBRoot:         getenv("HARNESS_AGENTS_KB_PATH", "/var/lib/harness/agents-kb"),
+		MemoryLLM:            memoryLLM,
 	}
 	cfg.Harness.SessionRetention = Duration{Duration: sessionRetention}
 	cfg.Harness.MaxSessions = maxSessions
@@ -1434,6 +1459,29 @@ func loadTitleLLM(path string) (TitleLLMConfig, error) {
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
 		return TitleLLMConfig{}, fmt.Errorf("parse title llm %s: %w", path, err)
+	}
+	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	cfg.Model = strings.TrimSpace(cfg.Model)
+	return cfg, nil
+}
+
+func loadMemoryLLM(path string) (MemoryLLMConfig, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return MemoryLLMConfig{}, nil
+	}
+	if err != nil {
+		return MemoryLLMConfig{}, fmt.Errorf("read memory llm %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return MemoryLLMConfig{}, nil
+	}
+	var cfg MemoryLLMConfig
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
+		return MemoryLLMConfig{}, fmt.Errorf("parse memory llm %s: %w", path, err)
 	}
 	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)

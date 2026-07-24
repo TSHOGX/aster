@@ -726,6 +726,153 @@ CREATE TABLE IF NOT EXISTS message_feedback (
 
 CREATE INDEX IF NOT EXISTS message_feedback_message_idx
   ON message_feedback (message_id);
+
+-- ============================================================================
+-- Trajectory distillation (agents-kb pipeline)
+--
+-- Two lifecycles share this DB but must never be conflated (the sess-cli
+-- trace.db/overlay.db split, expressed as table groups here):
+--
+--   * REBUILDABLE view  — trajectory_snapshots + trajectory_events. Derived
+--     mechanically from the durable messages/message_traces/message_feedback
+--     tables (NOT from the pruned events table). Safe to delete and rebuild;
+--     a re-snapshot of a grown session replaces its rows wholesale.
+--   * NON-REBUILDABLE output — episode_memories, semantic_memories,
+--     skill_candidates. Expensive LLM output keyed by session/evidence. A
+--     re-snapshot of trajectory_events must NEVER cascade into these.
+--
+-- The two groups are joined only by soft keys (session_id, evidence refs), so
+-- rebuilding the mechanical half leaves distilled memory untouched.
+-- ============================================================================
+
+-- One index row per snapshotted session. fingerprint = turn_count + last
+-- message id/time; the nightly pipeline only re-normalizes and re-extracts a
+-- session whose fingerprint moved since last run (sess-cli incremental model).
+CREATE TABLE IF NOT EXISTS trajectory_snapshots (
+  session_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  started_at TEXT,
+  ended_at TEXT,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  fingerprint TEXT NOT NULL DEFAULT '',
+  fidelity TEXT NOT NULL DEFAULT 'full' CHECK(fidelity IN ('full','partial')),
+  normalized_at TEXT,
+  extracted_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS trajectory_snapshots_extracted_idx
+  ON trajectory_snapshots (extracted_at);
+
+-- Normalized event stream: the 7-primitive taxonomy borrowed from sess-cli
+-- (user/assistant/thinking/tool_call/tool_result/system/usage). Derived from
+-- messages.role (user/assistant) and message_traces.nodes[] (thinking/tool_*).
+-- text is stored in full; large tool payloads already arrive summarized in the
+-- trace nodes. Rebuildable: wiped+reinserted per session on re-snapshot.
+CREATE TABLE IF NOT EXISTS trajectory_events (
+  session_id TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('user','assistant','thinking','tool_call','tool_result','system','usage')),
+  subtype TEXT,
+  name TEXT,
+  call_id TEXT,
+  is_error INTEGER NOT NULL DEFAULT 0 CHECK(is_error IN (0,1)),
+  message_id INTEGER,
+  tokens INTEGER,
+  text TEXT NOT NULL,
+  ts TEXT,
+  PRIMARY KEY(session_id, idx),
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS trajectory_events_kind_idx
+  ON trajectory_events (session_id, kind);
+
+-- Per-(session, stage) watermark. processed_turn_count lets a lens detect when
+-- a session has grown since it last ran and re-process only then. Stages are
+-- the lens families: 'facts' | 'failure' | 'skill' | 'curator'.
+CREATE TABLE IF NOT EXISTS extraction_state (
+  session_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  processed_turn_count INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  status TEXT NOT NULL DEFAULT 'ok' CHECK(status IN ('ok','error','skipped')),
+  error TEXT,
+  PRIMARY KEY(session_id, stage),
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+-- A structured summary of one session (ReasoningBank episodic item). Candidate
+-- memories live in candidate_memories_json until consolidation lifts them into
+-- semantic_memories. Non-rebuildable LLM output.
+CREATE TABLE IF NOT EXISTS episode_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  task TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL DEFAULT 'unknown' CHECK(outcome IN ('success','partial','failed','abandoned','unknown')),
+  domains_json TEXT NOT NULL DEFAULT '[]',
+  worked_steps_json TEXT NOT NULL DEFAULT '[]',
+  failed_steps_json TEXT NOT NULL DEFAULT '[]',
+  user_frustration TEXT NOT NULL DEFAULT 'unknown' CHECK(user_frustration IN ('none','mild','high','unknown')),
+  candidate_memories_json TEXT NOT NULL DEFAULT '[]',
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  model TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS episode_memories_session_idx
+  ON episode_memories (session_id);
+
+-- Cross-session consolidated knowledge. support/contradiction counts drive
+-- confidence; status gates promotion into the shared KB. Non-rebuildable.
+CREATE TABLE IF NOT EXISTS semantic_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL CHECK(type IN ('fact','heuristic','procedure','bug','preference')),
+  scope TEXT NOT NULL DEFAULT 'global',
+  statement TEXT NOT NULL,
+  when_to_apply TEXT NOT NULL DEFAULT '',
+  support_count INTEGER NOT NULL DEFAULT 1,
+  contradiction_count INTEGER NOT NULL DEFAULT 0,
+  evidence_session_ids_json TEXT NOT NULL DEFAULT '[]',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate','accepted','deprecated')),
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS semantic_memories_status_idx
+  ON semantic_memories (status, scope);
+
+-- A proposed change to the shared skills pack. body_md is human-reviewable
+-- Markdown, not opaque model output. Non-rebuildable.
+CREATE TABLE IF NOT EXISTS skill_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_skill_name TEXT NOT NULL,
+  operation TEXT NOT NULL DEFAULT 'create' CHECK(operation IN ('create','update','deprecate')),
+  title TEXT NOT NULL DEFAULT '',
+  body_md TEXT NOT NULL DEFAULT '',
+  source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+  evidence_session_ids_json TEXT NOT NULL DEFAULT '[]',
+  support_count INTEGER NOT NULL DEFAULT 1,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','needs_review','accepted','published','rejected')),
+  kb_status TEXT NOT NULL DEFAULT 'observing' CHECK(kb_status IN ('observing','in-use','deprecated')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  published_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS skill_candidates_status_idx
+  ON skill_candidates (status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS skill_candidates_name_uq
+  ON skill_candidates (target_skill_name);
 `)
 	if err != nil {
 		return err

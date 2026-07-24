@@ -1,10 +1,14 @@
 # Roadmap: Trajectory → Memory → Skill Pipeline
 
-> Type: forward-looking design · Status: design only / future, not actively planned.
-> This is aspirational and not implemented in the current codebase. It depends on a
-> future system-skills mount (an unbuilt concept — a content-addressed skills
-> snapshot mounted read-only into each sandbox). Current system overview:
-> [`../architecture.md`](../architecture.md).
+> Type: forward-looking design · Status: being implemented — see
+> [`../agents-kb.md`](../agents-kb.md) for the shipped design.
+> This document is the original aspirational design and rationale. The
+> "system-skills mount" it references is now concrete: a content-addressed KB
+> snapshot bind-mounted read-only at `/agents` in every sandbox. Where this doc
+> and `agents-kb.md` differ, `agents-kb.md` wins — notably: the trajectory source
+> is the durable `messages`/`message_traces`/`message_feedback` tables, NOT the
+> `events` table (which is pruned to a 24h window every ~30s). Current system
+> overview: [`../architecture.md`](../architecture.md).
 
 ## Goal
 

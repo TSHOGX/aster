@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"harness-platform/orchestrator/internal/artifacts"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/server"
 	"harness-platform/orchestrator/internal/store"
@@ -80,6 +82,7 @@ func main() {
 				CheckpointsRoot:         cfg.CheckpointsRoot,
 				BundleRoot:              cfg.BundleRoot,
 				RootFSPath:              cfg.RootFSPath,
+				AgentsKBRoot:            cfg.AgentsKBRoot,
 				DefaultAgent:            cfg.DefaultAgent,
 				SandboxUID:              cfg.Harness.SandboxIdentity.UID,
 				SandboxGID:              cfg.Harness.SandboxIdentity.GID,
@@ -132,6 +135,10 @@ func main() {
 		log.Error("failed to create agent homes root", "error", err)
 		os.Exit(1)
 	}
+	if err := ensureAgentsKB(cfg.AgentsKBRoot, filepath.Join(cfg.RepoRoot, "sandbox-image", "files", "usr", "local", "share", "agents-kb-seed")); err != nil {
+		log.Error("failed to ensure agents knowledge base", "error", err)
+		os.Exit(1)
+	}
 
 	go func() {
 		if err := <-ownerHeartbeatErr; err != nil {
@@ -157,6 +164,28 @@ func main() {
 			log.Error("maintenance stopped", "error", err)
 		}
 	}()
+
+	// Nightly trajectory-distillation loop: normalize session trajectories,
+	// extract memory/skills via the configured LLM, and publish promoted
+	// knowledge into the shared /agents knowledge base. Disabled (nil) when no
+	// memory LLM is configured.
+	if pipeline := memory.NewPipeline(memory.PipelineOptions{
+		Store: db,
+		Extractor: memory.NewExtractor(memory.Config{
+			BaseURL: cfg.MemoryLLM.BaseURL,
+			APIKey:  cfg.MemoryLLM.APIKey,
+			Model:   cfg.MemoryLLM.Model,
+		}),
+		KB:  memory.NewKB(cfg.AgentsKBRoot),
+		Log: log,
+	}); pipeline != nil {
+		log.Info("nightly distillation pipeline enabled")
+		go func() {
+			if err := pipeline.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("distillation pipeline stopped", "error", err)
+			}
+		}()
+	}
 
 	httpServer := &http.Server{
 		Addr:    cfg.Addr,

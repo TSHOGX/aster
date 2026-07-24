@@ -314,6 +314,7 @@ func (r *Runtime) renderSandboxIsolatedRuntimeSpec(req StartRequest) (runtimeSpe
 		WorkspaceHostPath: workspaceHostPath,
 		AgentHomeHostPath: agentHomeHostPath,
 		NetworkHostsPath:  details.NetworkHostsPath,
+		AgentsKBHostPath:  r.agentsKBMountSource(),
 	})
 	if err != nil {
 		return runtimeSpec{}, "", err

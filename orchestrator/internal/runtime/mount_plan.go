@@ -31,6 +31,7 @@ type SandboxMountPlanInputs struct {
 	WorkspaceHostPath string
 	AgentHomeHostPath string
 	NetworkHostsPath  string
+	AgentsKBHostPath  string
 }
 
 type allowedMountPlanSurface struct {
@@ -55,6 +56,7 @@ func contentMountPlanSurfaces() map[string]allowedMountPlanSurface {
 		"bridge_inbox":    {Destination: filepath.Join(bridge.BridgeMountDestination, bridge.InboxDir), Type: "bind", Mode: "ro"},
 		"bridge_host_tmp": {Destination: filepath.Join(bridge.BridgeMountDestination, bridge.HostTmpDir), Type: "bind", Mode: "ro"},
 		"network_hosts":   {Destination: "/etc/hosts", Type: "bind", Mode: "ro"},
+		"agents_kb":       {Destination: "/agents", Type: "bind", Mode: "ro"},
 	}
 	for _, spec := range agents.AllDriverConfigMaterializationSpecs() {
 		allow[spec.MountName] = allowedMountPlanSurface{
@@ -87,6 +89,9 @@ func BuildSandboxMountPlan(input SandboxMountPlanInputs) (MountPlan, error) {
 	}
 	if strings.TrimSpace(input.NetworkHostsPath) != "" {
 		plan.Content = append(plan.Content, exactBindMount("network_hosts", input.NetworkHostsPath, "/etc/hosts", "ro", []string{"bind", "ro", "nosuid", "nodev", "noexec"}, nil))
+	}
+	if strings.TrimSpace(input.AgentsKBHostPath) != "" {
+		plan.Content = append(plan.Content, exactBindMount("agents_kb", input.AgentsKBHostPath, "/agents", "ro", []string{"bind", "ro", "nosuid", "nodev", "noexec"}, nil))
 	}
 	for _, spec := range agents.DriverConfigMaterializationSpecsFor(agents.ID(strings.TrimSpace(details.Agent))) {
 		plan.Content = append(plan.Content, exactBindMount(spec.MountName, spec.HostSourcePath(details.ControlDirPath), spec.SandboxDestination, spec.MountMode, driverConfigMaterializationMountOptions(spec), nil))

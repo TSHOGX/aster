@@ -23,14 +23,19 @@ import (
 )
 
 type Config struct {
-	RunscRoot               string
-	RunscNetwork            string
-	RunscOverlay2           string
-	SessionsRoot            string
-	AgentHomesRoot          string
-	CheckpointsRoot         string
-	BundleRoot              string
-	RootFSPath              string
+	RunscRoot       string
+	RunscNetwork    string
+	RunscOverlay2   string
+	SessionsRoot    string
+	AgentHomesRoot  string
+	CheckpointsRoot string
+	BundleRoot      string
+	RootFSPath      string
+	// AgentsKBRoot is the host directory holding the shared "/agents" knowledge
+	// base. Its `current` symlink is resolved at spec-build time and the
+	// concrete snapshot dir is bind-mounted read-only into every sandbox at
+	// /agents. Empty disables the mount.
+	AgentsKBRoot            string
 	DefaultAgent            string
 	SandboxUID              int
 	SandboxGID              int
@@ -501,6 +506,24 @@ func validateGenerationDetails(req StartRequest) error {
 		return fmt.Errorf("sandbox_secret_disallowed")
 	}
 	return nil
+}
+
+// agentsKBMountSource resolves the shared knowledge-base mount source. It
+// returns the concrete snapshot directory that <AgentsKBRoot>/current points
+// to, so the bind mount targets a stable per-generation path (content-addressed
+// snapshot) rather than the mutable symlink. Returns "" when unconfigured or
+// when no current snapshot exists yet, which disables the /agents mount.
+func (r *Runtime) agentsKBMountSource() string {
+	root := strings.TrimSpace(r.cfg.AgentsKBRoot)
+	if root == "" {
+		return ""
+	}
+	current := filepath.Join(root, "current")
+	resolved, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		return ""
+	}
+	return resolved
 }
 
 func (r *Runtime) rootFSPath() string {
