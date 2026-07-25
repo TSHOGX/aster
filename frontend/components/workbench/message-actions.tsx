@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { useHarness } from "@/components/harness-provider";
 import type { ApiMessage } from "@/lib/types";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { stripMarkdown } from "@/lib/format";
 import { useAnchoredPosition, useDismissOnOutside } from "@/lib/use-popover";
@@ -61,13 +62,9 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
   };
 
   const copyText = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      toast.error(`Failed to copy ${label}`);
-      return false;
-    }
+    if (await copyTextToClipboard(text)) return true;
+    toast.error(`Failed to copy ${label}`);
+    return false;
   };
 
   const handleCopy = async () => {
