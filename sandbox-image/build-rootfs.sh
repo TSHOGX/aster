@@ -6,7 +6,15 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 ROOTFS_DIR="${ROOTFS_DIR:-${SCRIPT_DIR}/rootfs}"
 UBUNTU_SUITE="${UBUNTU_SUITE:-noble}"
-UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}"
+# archive.ubuntu.com carries amd64/i386 only; every other arch (arm64 — the local
+# dev VM on Apple silicon) is on ports.ubuntu.com. Pick by host arch so the same
+# command works on both, and still allow an explicit override.
+if [ -z "${UBUNTU_MIRROR:-}" ]; then
+  case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
+    amd64 | i386 | x86_64) UBUNTU_MIRROR="http://archive.ubuntu.com/ubuntu" ;;
+    *) UBUNTU_MIRROR="http://ports.ubuntu.com/ubuntu-ports" ;;
+  esac
+fi
 UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-main,universe}"
 FORCE="${FORCE:-0}"
 SANDBOX_AGENT_DRIVERS="${SANDBOX_AGENT_DRIVERS:-pi}"
@@ -255,6 +263,72 @@ with open(out_dir / "agents.json", "w", encoding="utf-8") as f:
 PY
 }
 
+# Hosts the build fetches from, used to check whether DNS actually works.
+BUILD_DNS_PIN_HOSTS="${BUILD_DNS_PIN_HOSTS:-pypi.org files.pythonhosted.org ports.ubuntu.com registry.npmjs.org nodejs.org}"
+
+# True when the build host's resolver is unusable from inside the chroot. Some
+# dev machines (e.g. a local VM behind a fake-ip proxy) answer every query with
+# an unroutable 198.18.0.0/15 address, and do so even for queries aimed straight
+# at a public resolver, so switching nameservers does not help. A deployment host
+# with working DNS returns real addresses and this is false.
+build_dns_is_intercepted() {
+  local addr
+  addr="$(getent ahostsv4 pypi.org 2>/dev/null | awk 'NR==1 {print $1}')"
+  case "${addr}" in
+    198.1[89].*) return 0 ;;
+    "") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Resolve over DNS-over-HTTPS, which bypasses an intercepting resolver.
+resolve_over_doh() {
+  curl -sS --max-time 20 -H 'accept: application/dns-json' \
+    "https://1.1.1.1/dns-query?name=$1&type=A" 2>/dev/null |
+    sed -n 's/.*"type":1,"TTL":[0-9]*,"data":"\([0-9.]*\)".*/\1/p' | head -1
+}
+
+# The chroot resolves names itself (apt, pip, npm, nodejs.org), so it needs a
+# usable resolv.conf during the build. Both files written here are build-time
+# only — at runtime the orchestrator renders /etc/hosts and resolv.conf per
+# generation (renderNetworkHostsProjection).
+#
+# On a host with working DNS this only seeds resolv.conf and localhost. Pinning
+# is applied only when the resolver is detected as intercepted, so this is inert
+# on deployment hosts.
+prepare_build_time_dns() {
+  log "seeding build-time resolv.conf/hosts into ${ROOTFS_DIR}"
+  install -d -m 0755 "${ROOTFS_DIR}/etc"
+  printf 'nameserver %s\n' ${BUILD_DNS_SERVERS:-1.1.1.1 8.8.8.8} \
+    > "${ROOTFS_DIR}/etc/resolv.conf"
+  {
+    printf '127.0.0.1\tlocalhost\n'
+    printf '::1\t\tlocalhost ip6-localhost ip6-loopback\n'
+  } > "${ROOTFS_DIR}/etc/hosts"
+
+  if ! build_dns_is_intercepted; then
+    log "build host DNS resolves normally; no host pinning needed"
+    return
+  fi
+
+  log "build host DNS is intercepted; pinning build hosts by IP"
+  {
+    # Carry over pins the build host itself already relies on.
+    if [ -f /etc/hosts ]; then
+      awk '/^[0-9]/ && $2 !~ /^(localhost|.*\.localdomain)$/ && $1 !~ /^127\./ { print }' /etc/hosts
+    fi
+    local host addr
+    for host in ${BUILD_DNS_PIN_HOSTS}; do
+      addr="$(resolve_over_doh "${host}")"
+      if [ -n "${addr}" ]; then
+        printf '%s %s\n' "${addr}" "${host}"
+      else
+        log "warning: could not pin ${host}; the build may fail to fetch from it"
+      fi
+    done
+  } >> "${ROOTFS_DIR}/etc/hosts"
+}
+
 sanitize_isolated_rootfs() {
   log "sanitizing rootfs for sandbox-isolation-v1"
   rm -rf --one-file-system \
@@ -294,6 +368,8 @@ fi
 log "bootstrapping Ubuntu ${UBUNTU_SUITE} rootfs"
 mkdir -p "${ROOTFS_DIR}"
 debootstrap --variant=minbase --components="${UBUNTU_COMPONENTS}" "${UBUNTU_SUITE}" "${ROOTFS_DIR}" "${UBUNTU_MIRROR}"
+
+prepare_build_time_dns
 
 log "installing apt packages"
 chroot "${ROOTFS_DIR}" /bin/sh -lc "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${APT_PACKAGES[*]} && apt-get clean && rm -rf /var/lib/apt/lists/*"
