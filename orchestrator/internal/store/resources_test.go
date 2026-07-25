@@ -1690,6 +1690,221 @@ func TestRenewLiveGenerationLeasesKeepsIdle7AGenerationAlive(t *testing.T) {
 	if got := parseTime(leaseExpires); !got.After(now.Add(time.Minute)) {
 		t.Fatalf("lease expiry was not extended enough: %s", got)
 	}
+	// MarkGenerationResourcesLive must have anchored started_at (the cold-start
+	// grace anchor the liveness gate relies on).
+	var startedAt sql.NullString
+	if err := st.db.QueryRowContext(ctx, `SELECT started_at FROM runtime_generations WHERE generation_id = ?`, allocation.GenerationID).Scan(&startedAt); err != nil {
+		t.Fatalf("query started_at: %v", err)
+	}
+	if !startedAt.Valid || startedAt.String == "" {
+		t.Fatalf("expected started_at to be populated after MarkGenerationResourcesLive, got %v", startedAt)
+	}
+}
+
+// TestRenewLiveGenerationLeasesStopsRenewingSandboxStalledGeneration is the
+// direct regression test for the zombie-session bug: a generation whose sandbox
+// heartbeated once and then went silent must stop being self-renewed once
+// StallGrace lapses, so its lease can expire and recovery can reclaim it.
+func TestRenewLiveGenerationLeasesStopsRenewingSandboxStalledGeneration(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	createStoreSession(t, ctx, st, "sess_stalled")
+	now := time.Now().UTC()
+	allocation, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
+		SessionID: "sess_stalled",
+		Owner:     GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    cfg,
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, "sess_stalled", allocation.GenerationID, allocation.Owner, now.Add(time.Second)); err != nil {
+		t.Fatalf("mark resources live: %v", err)
+	}
+	// Sandbox heartbeated once, then went silent 5 minutes ago.
+	if err := st.RenewGenerationHeartbeat(ctx, RenewHeartbeatParams{
+		SessionID:    "sess_stalled",
+		GenerationID: allocation.GenerationID,
+		Owner:        allocation.Owner,
+		LeaseTTL:     time.Minute,
+		Now:          now.Add(-5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed sandbox heartbeat: %v", err)
+	}
+	// Re-arm the generation lease as if the orchestrator had kept renewing it
+	// up to `now` (this is exactly what masked the stall in prod).
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generations SET lease_expires_at = ? WHERE generation_id = ?`, formatTime(now.Add(time.Minute)), allocation.GenerationID); err != nil {
+		t.Fatalf("re-arm lease: %v", err)
+	}
+	var before string
+	if err := st.db.QueryRowContext(ctx, `SELECT lease_expires_at FROM runtime_generations WHERE generation_id = ?`, allocation.GenerationID).Scan(&before); err != nil {
+		t.Fatalf("query lease before: %v", err)
+	}
+	renewed, err := st.RenewLiveGenerationLeases(ctx, RenewLiveGenerationsParams{
+		Owner:      allocation.Owner,
+		LeaseTTL:   time.Minute,
+		Now:        now,
+		StallGrace: 90 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("renew live generation leases: %v", err)
+	}
+	if renewed != 0 {
+		t.Fatalf("expected sandbox-stalled generation to NOT be renewed, got renewed=%d", renewed)
+	}
+	var after string
+	if err := st.db.QueryRowContext(ctx, `SELECT lease_expires_at FROM runtime_generations WHERE generation_id = ?`, allocation.GenerationID).Scan(&after); err != nil {
+		t.Fatalf("query lease after: %v", err)
+	}
+	if after != before {
+		t.Fatalf("lease expiry must be untouched for stalled generation: before=%s after=%s", before, after)
+	}
+}
+
+// TestRenewLiveGenerationLeasesKeepsFreshlyHeartbeatingGeneration verifies the
+// gate does NOT harm a healthy sandbox that is actively heartbeating.
+func TestRenewLiveGenerationLeasesKeepsFreshlyHeartbeatingGeneration(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	createStoreSession(t, ctx, st, "sess_fresh")
+	now := time.Now().UTC()
+	allocation, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
+		SessionID: "sess_fresh",
+		Owner:     GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    cfg,
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, "sess_fresh", allocation.GenerationID, allocation.Owner, now.Add(time.Second)); err != nil {
+		t.Fatalf("mark resources live: %v", err)
+	}
+	if err := st.RenewGenerationHeartbeat(ctx, RenewHeartbeatParams{
+		SessionID:    "sess_fresh",
+		GenerationID: allocation.GenerationID,
+		Owner:        allocation.Owner,
+		LeaseTTL:     time.Minute,
+		Now:          now.Add(20 * time.Second),
+	}); err != nil {
+		t.Fatalf("sandbox heartbeat: %v", err)
+	}
+	renewed, err := st.RenewLiveGenerationLeases(ctx, RenewLiveGenerationsParams{
+		Owner:      allocation.Owner,
+		LeaseTTL:   time.Minute,
+		Now:        now.Add(30 * time.Second),
+		StallGrace: 90 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("renew live generation leases: %v", err)
+	}
+	if renewed != 1 {
+		t.Fatalf("expected freshly-heartbeating generation to be renewed, got %d", renewed)
+	}
+}
+
+// TestRenewLiveGenerationLeasesColdStartGraceBoundary covers a generation that
+// has NOT yet sent any sandbox heartbeat (sandbox_last_seen_at NULL): it is
+// protected within the cold-start grace (anchored on started_at) and gated once
+// the grace lapses.
+func TestRenewLiveGenerationLeasesColdStartGraceBoundary(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	createStoreSession(t, ctx, st, "sess_cold")
+	now := time.Now().UTC()
+	allocation, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
+		SessionID: "sess_cold",
+		Owner:     GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    cfg,
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	// started_at anchored here; no sandbox heartbeat ever sent.
+	if err := st.MarkGenerationResourcesLive(ctx, "sess_cold", allocation.GenerationID, allocation.Owner, now); err != nil {
+		t.Fatalf("mark resources live: %v", err)
+	}
+	// Within grace (30s after started_at, grace 90s): still renewed.
+	renewed, err := st.RenewLiveGenerationLeases(ctx, RenewLiveGenerationsParams{
+		Owner:      allocation.Owner,
+		LeaseTTL:   time.Minute,
+		Now:        now.Add(30 * time.Second),
+		StallGrace: 90 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("renew within grace: %v", err)
+	}
+	if renewed != 1 {
+		t.Fatalf("expected cold-start generation within grace to be renewed, got %d", renewed)
+	}
+	// Re-arm the lease so the beyond-grace assertion isolates the gate (not lease
+	// expiry) as the reason renewal stops.
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generations SET lease_expires_at = ? WHERE generation_id = ?`, formatTime(now.Add(6*time.Minute)), allocation.GenerationID); err != nil {
+		t.Fatalf("re-arm lease: %v", err)
+	}
+	// Beyond grace (5m after started_at, still no heartbeat): gated.
+	renewed, err = st.RenewLiveGenerationLeases(ctx, RenewLiveGenerationsParams{
+		Owner:      allocation.Owner,
+		LeaseTTL:   time.Minute,
+		Now:        now.Add(5 * time.Minute),
+		StallGrace: 90 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("renew beyond grace: %v", err)
+	}
+	if renewed != 0 {
+		t.Fatalf("expected cold-start generation beyond grace to be gated, got renewed=%d", renewed)
+	}
+}
+
+// TestRenewLiveGenerationLeasesDisabledGateRenewsUnconditionally verifies the
+// fail-safe: StallGrace <= 0 preserves legacy unconditional renewal.
+func TestRenewLiveGenerationLeasesDisabledGateRenewsUnconditionally(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	createStoreSession(t, ctx, st, "sess_nogate")
+	now := time.Now().UTC()
+	allocation, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
+		SessionID: "sess_nogate",
+		Owner:     GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    cfg,
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, "sess_nogate", allocation.GenerationID, allocation.Owner, now.Add(time.Second)); err != nil {
+		t.Fatalf("mark resources live: %v", err)
+	}
+	// Simulate the orchestrator having self-renewed the lease up to `now` (as it
+	// would in prod), so the lease is still valid; only the sandbox is silent.
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generations SET lease_expires_at = ? WHERE generation_id = ?`, formatTime(now.Add(10*time.Minute+time.Minute)), allocation.GenerationID); err != nil {
+		t.Fatalf("re-arm lease: %v", err)
+	}
+	// Sandbox never heartbeated (sandbox_last_seen_at NULL) and started_at is
+	// long past, but gate disabled -> still renewed (legacy behavior).
+	renewed, err := st.RenewLiveGenerationLeases(ctx, RenewLiveGenerationsParams{
+		Owner:      allocation.Owner,
+		LeaseTTL:   time.Minute,
+		Now:        now.Add(10 * time.Minute),
+		StallGrace: 0,
+	})
+	if err != nil {
+		t.Fatalf("renew with disabled gate: %v", err)
+	}
+	if renewed != 1 {
+		t.Fatalf("expected unconditional renewal with gate disabled, got %d", renewed)
+	}
 }
 
 func TestListBridgePollGenerationsFiltersCurrentOwnerLiveResources(t *testing.T) {

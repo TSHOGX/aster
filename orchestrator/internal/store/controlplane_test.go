@@ -1008,6 +1008,16 @@ func TestGenerationHeartbeatAndFailureCAS(t *testing.T) {
 	if got := parseTime(leaseExpires); !got.Equal(wantExpires) {
 		t.Fatalf("generation lease_expires_at=%s want %s", got, wantExpires)
 	}
+	// The sandbox-driven heartbeat is the ONLY writer of sandbox_last_seen_at;
+	// it must record the heartbeat instant so the liveness gate can detect a
+	// silent sandbox.
+	var sandboxLastSeen string
+	if err := st.db.QueryRowContext(ctx, `SELECT COALESCE(sandbox_last_seen_at,'') FROM runtime_generations WHERE generation_id = 'gen_hb'`).Scan(&sandboxLastSeen); err != nil {
+		t.Fatalf("query sandbox_last_seen_at: %v", err)
+	}
+	if got := parseTime(sandboxLastSeen); !got.Equal(now) {
+		t.Fatalf("sandbox_last_seen_at=%s want %s", got, now)
+	}
 	var turnExpires, contextSourceIP, contextExpires, contextOwner, resourceSourceIP string
 	if err := st.db.QueryRowContext(ctx, `SELECT lease_expires_at FROM turns WHERE id = ?`, turnID).Scan(&turnExpires); err != nil {
 		t.Fatalf("query turn lease expiry: %v", err)

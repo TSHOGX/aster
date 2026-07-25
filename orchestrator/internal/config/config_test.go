@@ -610,6 +610,21 @@ func TestValidateHarnessConfig(t *testing.T) {
 			want: "ack_started_grace must be >=",
 		},
 		{
+			name: "sandbox stall grace positive",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Bridge.SandboxHeartbeatStallGrace.Duration = 0
+			},
+			want: "sandbox_heartbeat_stall_grace must be > 0",
+		},
+		{
+			name: "sandbox stall grace below lease ttl",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Bridge.LeaseTTL.Duration = 60 * time.Second
+				cfg.Bridge.SandboxHeartbeatStallGrace.Duration = 30 * time.Second
+			},
+			want: "sandbox_heartbeat_stall_grace must be >= harness.bridge.lease_ttl",
+		},
+		{
 			name: "events bounds",
 			mutate: func(cfg *HarnessConfig) {
 				cfg.Events.RetentionWindow.Duration = 0

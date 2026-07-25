@@ -1038,7 +1038,8 @@ func (s *Store) RenewGenerationHeartbeat(ctx context.Context, p RenewHeartbeatPa
 	res, err := tx.ExecContext(ctx, `
 UPDATE runtime_generations
 SET lease_expires_at = ?,
-    last_seen_at = ?
+    last_seen_at = ?,
+    sandbox_last_seen_at = ?
 WHERE generation_id = ?
   AND session_id = ?
   AND status IN ('starting','probing','active','idle','checkpointing','restoring')
@@ -1048,7 +1049,7 @@ WHERE generation_id = ?
     SELECT 1 FROM sessions
     WHERE id = ?
       AND active_generation_id = ?
-  )`, formatTime(expiresAt), formatTime(p.Now), p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID)
+  )`, formatTime(expiresAt), formatTime(p.Now), formatTime(p.Now), p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID)
 	if err != nil {
 		return err
 	}

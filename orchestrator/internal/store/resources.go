@@ -251,6 +251,14 @@ type RenewLiveGenerationsParams struct {
 	Owner    string
 	LeaseTTL time.Duration
 	Now      time.Time
+	// StallGrace gates renewal of active/idle generations on sandbox liveness:
+	// a generation whose sandbox has not heartbeated within StallGrace is no
+	// longer self-renewed, so its lease lapses and the existing startup-recovery
+	// path fails/requeues its turn (unblocking a frontend stuck on "thinking").
+	// <= 0 disables the gate (renew unconditionally, preserving legacy behavior)
+	// so a misconfiguration degrades to the old behavior rather than to killing
+	// healthy generations.
+	StallGrace time.Duration
 }
 
 type ExpiredRuntimeRecoveryCandidate struct {
@@ -524,7 +532,8 @@ func (s *Store) MarkGenerationResourcesLive(ctx context.Context, sessionID, gene
 	res, err := tx.ExecContext(ctx, `
 UPDATE runtime_generations
 SET status = 'idle',
-    last_seen_at = ?
+    last_seen_at = ?,
+    started_at = COALESCE(started_at, ?)
 WHERE generation_id = ?
   AND session_id = ?
   AND status IN ('allocating','starting','probing','restoring')
@@ -535,7 +544,7 @@ WHERE generation_id = ?
     WHERE id = ?
       AND active_generation_id = ?
       AND status NOT IN ('failed', 'destroyed')
-  )`, formatTime(now), generationID, sessionID, owner, formatTime(now), sessionID, generationID)
+  )`, formatTime(now), formatTime(now), generationID, sessionID, owner, formatTime(now), sessionID, generationID)
 	if err != nil {
 		return err
 	}
@@ -1312,6 +1321,34 @@ func (s *Store) RenewLiveGenerationLeases(ctx context.Context, p RenewLiveGenera
 		return 0, fmt.Errorf("lease ttl must be > 0")
 	}
 	expiresAt := p.Now.Add(p.LeaseTTL)
+	args := []any{formatTime(expiresAt), formatTime(p.Now), p.Owner, formatTime(p.Now)}
+	// Sandbox-liveness gate. Transient states (starting/probing/restoring/
+	// checkpointing) are always renewed: the sandbox is legitimately not
+	// heartbeating yet (still coming up) or is frozen (checkpointing), so gating
+	// them on heartbeat freshness would kill healthy work. active/idle
+	// generations must prove liveness: either a recent sandbox heartbeat, or —
+	// for a generation that has not heartbeated since this column was introduced
+	// (sandbox_last_seen_at NULL) — a cold-start grace anchored on
+	// started_at/last_seen_at. Once the grace lapses with no heartbeat, renewal
+	// stops, the 60s lease TTL expires, and the maintenance loop's already-
+	// scheduled recovery pass fails/requeues the turn and returns the session to
+	// running_idle. StallGrace <= 0 disables the gate (legacy behavior).
+	gate := ""
+	if p.StallGrace > 0 {
+		stallCutoff := formatTime(p.Now.Add(-p.StallGrace))
+		gate = `
+  AND (
+    status IN ('starting','probing','restoring','checkpointing')
+    OR (
+      status IN ('active','idle')
+      AND (
+        (sandbox_last_seen_at IS NOT NULL AND sandbox_last_seen_at > ?)
+        OR (sandbox_last_seen_at IS NULL AND COALESCE(started_at, last_seen_at) > ?)
+      )
+    )
+  )`
+		args = append(args, stallCutoff, stallCutoff)
+	}
 	res, err := s.db.ExecContext(ctx, `
 UPDATE runtime_generations
 SET lease_expires_at = ?,
@@ -1324,7 +1361,7 @@ WHERE status IN ('starting','probing','active','idle','checkpointing','restoring
     WHERE id = runtime_generations.session_id
       AND active_generation_id = runtime_generations.generation_id
       AND status NOT IN ('failed', 'destroyed')
-  )`, formatTime(expiresAt), formatTime(p.Now), p.Owner, formatTime(p.Now))
+  )`+gate, args...)
 	if err != nil {
 		return 0, err
 	}

@@ -75,6 +75,11 @@ harness:
     poll_interval: 5ms
     ack_started_grace: 90s
     reconnect_grace: 30s
+    # How long an active/idle generation may go without a sandbox heartbeat
+    # before the orchestrator stops self-renewing its lease, letting the lease
+    # lapse so recovery fails/requeues the stuck turn (prevents zombie sessions
+    # stuck on "thinking" after a sandbox dies). Must be >= lease_ttl.
+    sandbox_heartbeat_stall_grace: 90s
 
   checkpoint:
     # auto_enabled now gates automatic idle *release*: when a session is idle

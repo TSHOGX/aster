@@ -59,9 +59,10 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 			s.log.Warn("allocation recovery failed", "error", err)
 		}
 		if _, err := s.store.RenewLiveGenerationLeases(ctx, store.RenewLiveGenerationsParams{
-			Owner:    owner,
-			LeaseTTL: s.cfg.Harness.Bridge.LeaseTTL.Duration,
-			Now:      now,
+			Owner:      owner,
+			LeaseTTL:   s.cfg.Harness.Bridge.LeaseTTL.Duration,
+			Now:        now,
+			StallGrace: s.cfg.Harness.Bridge.SandboxHeartbeatStallGrace.Duration,
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			s.log.Warn("generation lease renewal failed", "error", err)
 		}

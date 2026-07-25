@@ -198,6 +198,11 @@ CREATE TABLE IF NOT EXISTS runtime_generations (
   lease_expires_at TEXT,
   started_at TEXT,
   last_seen_at TEXT,
+  -- sandbox_last_seen_at is written ONLY by the sandbox-driven heartbeat path
+  -- (RenewGenerationHeartbeat). Unlike last_seen_at, no orchestrator-side lease
+  -- renewal touches it, so a stale value is a reliable signal that the sandbox
+  -- process itself has stopped reporting (see RenewLiveGenerationLeases gate).
+  sandbox_last_seen_at TEXT,
   ended_at TEXT,
   failure_reason TEXT,
   error_class TEXT,
@@ -937,7 +942,56 @@ CREATE INDEX IF NOT EXISTS idx_agent_calls_run ON agent_calls(run_id);
 	if err := s.ensureMessageColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureRuntimeGenerationColumns(ctx); err != nil {
+		return err
+	}
 	return s.backfillMessagesFTS(ctx)
+}
+
+// ensureRuntimeGenerationColumns adds sandbox_last_seen_at (introduced to
+// distinguish sandbox-driven heartbeats from orchestrator-side lease renewal)
+// to existing DBs, and backfills started_at as a stable cold-start anchor.
+//
+// Same O(1) metadata-only ALTER + idempotency guarantee as ensureSessionColumns.
+//
+// The started_at backfill exists because started_at was declared in the
+// original schema but never written until the sandbox-liveness fix began
+// populating it in MarkGenerationResourcesLive. Live/idle generations that
+// predate that change have NULL started_at; the liveness gate uses
+// COALESCE(started_at, last_seen_at) as the cold-start grace anchor for rows
+// whose sandbox_last_seen_at is still NULL. Seeding started_at from the
+// already-recent last_seen_at for non-terminal rows guarantees those rows stay
+// within the cold-start grace window right after deploy, so a healthy live
+// generation is never gated before its sandbox has a chance to send its first
+// post-deploy heartbeat. Idempotent: only touches NULL started_at.
+func (s *Store) ensureRuntimeGenerationColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"sandbox_last_seen_at", `ALTER TABLE runtime_generations ADD COLUMN sandbox_last_seen_at TEXT`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "runtime_generations", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE runtime_generations
+SET started_at = last_seen_at
+WHERE started_at IS NULL
+  AND last_seen_at IS NOT NULL
+  AND status NOT IN ('failed','destroyed')`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // backfillMessagesFTS indexes messages rows that predate the messages_fts

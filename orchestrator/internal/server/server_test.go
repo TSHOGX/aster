@@ -3718,6 +3718,95 @@ WHERE generation_id = ?`, allocation.GenerationID).Scan(&errorClass, &leaseOwner
 	}
 }
 
+// TestRunMaintenanceRecoversSandboxStalledGeneration is the end-to-end
+// regression test for the zombie-session bug. The generation is owned by the
+// CURRENT maintenance owner with a still-valid lease — exactly the state a
+// zombie is in, because before this fix RunMaintenance self-renewed the lease
+// every tick and recovery could never fire. With the sandbox-liveness gate, a
+// stale sandbox_last_seen_at stops the self-renewal, the lease lapses, and the
+// reconnect-grace recovery branch fails the generation and frees the session.
+func TestRunMaintenanceRecoversSandboxStalledGeneration(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_sandbox_stalled", string(sessionstate.RunningIdle), time.Now().UTC(), nil)
+	cfg := testServerConfig(dir)
+	cfg.Harness.Bridge.HeartbeatInterval = config.Duration{Duration: 10 * time.Millisecond}
+	cfg.Harness.Bridge.ReconnectGrace = config.Duration{Duration: 20 * time.Millisecond}
+	cfg.Harness.Bridge.LeaseTTL = config.Duration{Duration: time.Minute}
+	cfg.Harness.Bridge.SandboxHeartbeatStallGrace = config.Duration{Duration: 30 * time.Millisecond}
+	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
+	allocation, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
+		SessionID: session.ID,
+		Owner:     leaseOwner,
+		LeaseTTL:  time.Minute,
+		Now:       time.Now().UTC(),
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, session.ID, allocation.GenerationID, allocation.Owner, time.Now().UTC()); err != nil {
+		t.Fatalf("mark generation live: %v", err)
+	}
+	// Current owner, lease still valid, but the sandbox has been silent for a
+	// minute (stale sandbox_last_seen_at). This is the zombie state.
+	now := time.Now().UTC()
+	if _, err := st.DBForTest().ExecContext(ctx, `
+UPDATE runtime_generations
+SET lease_owner = ?,
+    lease_expires_at = ?,
+    sandbox_last_seen_at = ?
+WHERE generation_id = ?`,
+		leaseOwner,
+		now.Add(15*time.Millisecond).Format(time.RFC3339Nano),
+		now.Add(-time.Minute).Format(time.RFC3339Nano),
+		allocation.GenerationID,
+	); err != nil {
+		t.Fatalf("set zombie lease state: %v", err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	rt := &recordingRuntime{}
+	srv := &Server{
+		cfg:     cfg,
+		store:   st,
+		runtime: rt,
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, events.NewHub()),
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+	done := make(chan error, 1)
+	go func() {
+		done <- srv.RunMaintenance(runCtx)
+	}()
+
+	waitForGenerationStatus(t, runCtx, st, allocation.GenerationID, "failed")
+	cancel()
+	err = <-done
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("maintenance exit err=%v, want context canceled", err)
+	}
+
+	var errorClass, leaseOwnerAfter, sessionStatus string
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT COALESCE(g.error_class, ''), COALESCE(g.lease_owner, ''), s.status
+FROM runtime_generations g
+JOIN sessions s ON s.id = g.session_id
+WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&errorClass, &leaseOwnerAfter, &sessionStatus); err != nil {
+		t.Fatalf("query recovered generation: %v", err)
+	}
+	if errorClass != "orchestrator_restart_reconnect_grace_expired" || leaseOwnerAfter != "" {
+		t.Fatalf("unexpected recovered generation: error_class=%s lease_owner=%s", errorClass, leaseOwnerAfter)
+	}
+	// Session must return to running_idle so the frontend unblocks.
+	if sessionStatus != string(sessionstate.RunningIdle) {
+		t.Fatalf("expected session to return to running_idle, got %s", sessionStatus)
+	}
+}
+
 func TestExpiredRuntimeRecoverySkipsRepairWhenRuntimeCleanupFails(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

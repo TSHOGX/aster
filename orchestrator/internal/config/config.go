@@ -252,6 +252,13 @@ type BridgeConfig struct {
 	PollInterval      Duration `yaml:"poll_interval"`
 	AckStartedGrace   Duration `yaml:"ack_started_grace"`
 	ReconnectGrace    Duration `yaml:"reconnect_grace"`
+	// SandboxHeartbeatStallGrace is how long an active/idle generation may go
+	// without a sandbox heartbeat before the orchestrator stops self-renewing
+	// its lease, letting the lease lapse so startup-recovery fails/requeues the
+	// turn. Guards against zombie sessions where a dead sandbox is kept
+	// "alive" forever by orchestrator-side lease renewal. Must be >= lease_ttl
+	// so a healthy sandbox is never gated between two heartbeats.
+	SandboxHeartbeatStallGrace Duration `yaml:"sandbox_heartbeat_stall_grace"`
 }
 
 type CheckpointConfig struct {
@@ -534,11 +541,12 @@ func defaultHarnessConfig() HarnessConfig {
 			PostStartInterval: Duration{Duration: time.Second},
 		},
 		Bridge: BridgeConfig{
-			LeaseTTL:          Duration{Duration: time.Minute},
-			HeartbeatInterval: Duration{Duration: 30 * time.Second},
-			PollInterval:      Duration{Duration: 5 * time.Millisecond},
-			AckStartedGrace:   Duration{Duration: 90 * time.Second},
-			ReconnectGrace:    Duration{Duration: 30 * time.Second},
+			LeaseTTL:                   Duration{Duration: time.Minute},
+			HeartbeatInterval:          Duration{Duration: 30 * time.Second},
+			PollInterval:               Duration{Duration: 5 * time.Millisecond},
+			AckStartedGrace:            Duration{Duration: 90 * time.Second},
+			ReconnectGrace:             Duration{Duration: 30 * time.Second},
+			SandboxHeartbeatStallGrace: Duration{Duration: 90 * time.Second},
 		},
 		Checkpoint: CheckpointConfig{
 			AutoEnabled:     false,
@@ -666,6 +674,12 @@ func validateHarnessConfig(cfg HarnessConfig) error {
 	}
 	if cfg.Bridge.AckStartedGrace.Duration < cfg.Bridge.ReconnectGrace.Duration {
 		return fmt.Errorf("harness.bridge.ack_started_grace must be >= harness.bridge.reconnect_grace")
+	}
+	if cfg.Bridge.SandboxHeartbeatStallGrace.Duration <= 0 {
+		return fmt.Errorf("harness.bridge.sandbox_heartbeat_stall_grace must be > 0")
+	}
+	if cfg.Bridge.SandboxHeartbeatStallGrace.Duration < cfg.Bridge.LeaseTTL.Duration {
+		return fmt.Errorf("harness.bridge.sandbox_heartbeat_stall_grace must be >= harness.bridge.lease_ttl (else a healthy sandbox can be gated between heartbeats)")
 	}
 	if cfg.Checkpoint.IdleThreshold.Duration < 0 {
 		return fmt.Errorf("harness.checkpoint.idle_threshold must be >= 0")
