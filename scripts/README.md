@@ -29,7 +29,7 @@ harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000�
 harness-ctl maintenance on        上维护页（nginx 503，后端不动）
 harness-ctl maintenance off       下维护页，恢复服务
 harness-ctl maintenance status    只看维护模式开关
-harness-ctl safe-restart <svc>    重启前检查在途对话，有则拦住（--force 强制）
+harness-ctl safe-restart <svc>                  零打断重启：上维护页→等活跃对话跑完→重启→下维护页
 ```
 
 服务名限 `harness-publish-orchestrator` / `harness-publish-frontend`。
@@ -67,10 +67,34 @@ HTTP 状态码分布、Top 10 客户端 IP、Top 10 请求路径。纯只读。
 
 维护页文件：`/var/www/harness-maintenance/maintenance.html`（纯静态，不在 git 里）。
 
-#### `safe-restart <svc> [--force]`
-重启前先数「真活跃」对话数（口径同 `inflight`）：
-有真活跃对话时**拒绝重启**并提示，退出码 `2`；加 `--force` 才无视并重启。
-重启后自动探活。只允许重启上面两个 publish 服务。
+#### `safe-restart <svc> [--timeout=秒] [--interval=秒] [--force]`
+只允许重启 `harness-publish-orchestrator` / `harness-publish-frontend`。
+**固定走一套零打断流程，维护页强制、不可关闭**：
+
+```bash
+harness-ctl safe-restart harness-publish-orchestrator
+```
+
+一条命令自动完成四步：
+
+1. **上维护页**（nginx 层 503）挡住新对话进来——不挡新流量的话活跃数会被新请求持续补进、迟迟不归零；
+2. **循环 drain**：每隔 `--interval` 秒（默认 5s）轮询一次，等正在跑的对话全部收尾，最长等 `--timeout` 秒（默认 900s）。期间实时刷一行进度：`活跃(等待中) / 排队 / 僵尸(不等) / 待排查 / 剩余秒数`；
+3. **重启服务**并自动探活；
+4. **下维护页**恢复对外服务。
+
+超时仍没归零则默认**不重启**并自动回退维护页（不会把站晾在维护态）；确要超时也硬重启，加 `--force`。
+若进入前站点本就处于维护模式，则沿用现状、重启后也不动维护页（避免误关别人开的维护窗口）。
+
+> ⚠️ **drain 等的是「沙箱心跳新鲜」的活跃 session，不是「lease 未过期」的。**
+> 因为 orchestrator 的 maintenance 循环会无条件自续租 generation lease，僵尸
+> session 的 lease 永不过期——若按 lease 判，一个僵尸就能让循环干等到超时。故 drain
+> 改用沙箱 bridge 心跳新鲜度（判据同 `zombies` 命令）识别谁真在跑，僵尸单独计数、
+> **不纳入等待**（重启本就是清理它们的手段）。
+
+需要时调等待参数（也可用环境变量 `DRAIN_TIMEOUT` / `DRAIN_INTERVAL` 覆盖）：
+```bash
+harness-ctl safe-restart harness-publish-orchestrator --timeout=1800 --interval=3
+```
 
 ### 依赖与权限
 

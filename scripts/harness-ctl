@@ -8,7 +8,7 @@
 #   traffic [N]           从 nginx access.log 汇总最近 N 行流量（QPS/状态码/top IP/top 路径），默认 5000
 #   maintenance on|off    上/下维护页（nginx 层 503，不动后端）
 #   maintenance status    只看当前是否维护模式
-#   safe-restart <svc>    重启前先查在途 turn，有真活跃对话则拦住（--force 跳过）
+#   safe-restart <svc>    零打断重启：上维护页→等活跃对话跑完→重启→下维护页（维护页强制）
 #
 # 设计原则：只读监控零副作用；维护/重启操作前先备份、后验证；
 # 维护配置从当前 live 配置动态生成（继承 TLS/端口），不依赖硬编码模板。
@@ -337,46 +337,109 @@ cmd_maintenance() {
   esac
 }
 
+# drain 用：统计「真正在跑」的活跃 session。判据用沙箱心跳新鲜度（同 zombies 命令），
+# 规避 orchestrator maintenance 循环无条件自续租 lease 造成的「假活跃」——否则一个僵尸
+# session 会让 drain 循环永远等不到归零。回显四个数：live zombie unknown queued。
+#   live    = running_active + 有 inflight turn + 心跳新鲜（这些才是要等它跑完的）
+#   zombie  = running_active + 有 inflight turn + 心跳失联（永不自己结束，drain 不等它）
+#   unknown = 有 inflight turn 但拿不到心跳（无资源/无心跳文件，需人工排查，drain 不等）
+#   queued  = 排队中、尚未开跑的 turn（重启不会丢，会被重新领取；仅作提示）
+count_live_active() {
+  local now_epoch; now_epoch=$(date -u +%s)
+  local rows
+  rows=$(dbq "SELECT s.id, COALESCE(r.bridge_dir_path,''),
+                     (SELECT COUNT(*) FROM turns t
+                        WHERE t.session_id=s.id AND t.status IN ($INFLIGHT_STATES))
+              FROM sessions s
+              LEFT JOIN runtime_resource_instances r
+                     ON r.generation_id = s.active_generation_id
+              WHERE s.status='running_active';")
+  local live=0 zombie=0 unknown=0
+  while IFS='|' read -r sid bridge inflight; do
+    [[ -z "$sid" ]] && continue
+    [[ -z "$inflight" || "$inflight" == "0" ]] && continue   # 无在途 turn，不用等
+    if [[ -z "$bridge" ]]; then unknown=$((unknown+1)); continue; fi
+    local m; m=$(file_mtime "$bridge/heartbeat/bridge")
+    if [[ -z "$m" ]]; then unknown=$((unknown+1)); continue; fi
+    if (( now_epoch - m > ZOMBIE_STALL_SECS )); then zombie=$((zombie+1)); else live=$((live+1)); fi
+  done <<< "$rows"
+  local queued; queued=$(dbq "SELECT COUNT(*) FROM turns WHERE status='queued';")
+  echo "$live $zombie $unknown ${queued:-0}"
+}
+
 # ---- 命令：safe-restart ----
+# 固定流程（无开关）：上维护页挡新流量 → 循环等活跃对话跑完 → 重启 → 自动下维护页。
+# 维护页的上/下是强制的，不再可选：restart 一律零打断进行。
+DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-900}"   # drain 最长等待秒数（默认 15 分钟）
+DRAIN_INTERVAL="${DRAIN_INTERVAL:-5}"   # drain 轮询间隔秒数
 cmd_safe_restart() {
   local force=0 svc=""
   for a in "$@"; do
     case "$a" in
       --force) force=1 ;;
+      --timeout=*) DRAIN_TIMEOUT="${a#*=}" ;;
+      --interval=*) DRAIN_INTERVAL="${a#*=}" ;;
       *) svc="$a" ;;
     esac
   done
-  [[ -n "$svc" ]] || die "用法：harness-ctl safe-restart <service> [--force]
-  可选服务：harness-publish-orchestrator | harness-publish-frontend"
+  [[ -n "$svc" ]] || die "用法：harness-ctl safe-restart <service> [--timeout=秒] [--interval=秒] [--force]
+  可选服务：harness-publish-orchestrator | harness-publish-frontend
+  固定流程：上维护页 → 等活跃对话跑完 → 重启 → 下维护页（维护页强制，不可关闭）
+  --timeout=秒   drain 最长等待（默认 ${DRAIN_TIMEOUT}s），超时不重启（除非 --force）
+  --force        超时后无视残留活跃对话强制重启"
   case "$svc" in
     harness-publish-orchestrator|harness-publish-frontend) ;;
     *) die "只允许重启 harness-publish-orchestrator / harness-publish-frontend（其它服务请手动确认）" ;;
   esac
 
-  local n; n=$(dbq "SELECT COUNT(*) FROM turns WHERE status IN ($INFLIGHT_STATES);")
-  # 真活跃 = 未过期 lease 的 running/leased + 所有 queued
-  local nowe; nowe=$(date -u +%s)
-  local realactive=0
-  if [[ "$n" != "0" ]]; then
-    while IFS='|' read -r status lease; do
-      [[ -z "$status" ]] && continue
-      if [[ "$status" == "queued" || -z "$lease" ]]; then realactive=$((realactive+1)); continue; fi
-      local lts; lts=$(date -u -d "${lease%.*}Z" +%s 2>/dev/null || echo "")
-      [[ -n "$lts" && "$lts" -gt "$nowe" ]] && realactive=$((realactive+1))
-    done <<< "$(dbq "SELECT status, COALESCE(lease_expires_at,'') FROM turns WHERE status IN ($INFLIGHT_STATES);")"
+  # ---- 强制先上维护页挡新流量（结束后自动恢复；若本来就在维护态则不动它）----
+  local maint_was_on=0
+  is_maintenance && maint_was_on=1
+  if [[ "$maint_was_on" -eq 0 ]]; then
+    echo "上维护页，挡住新对话进来（重启后自动恢复）..."
+    maintenance_on || die "上维护页失败，已中止（未重启）。"
+  else
+    echo "${c_dim}已处于维护模式，沿用现状（重启后不改动维护页）。${c_rst}"
   fi
 
-  if [[ "$realactive" -gt 0 && "$force" -ne 1 ]]; then
-    err "有 ${realactive} 个正在进行的对话（真活跃 turn），重启 $svc 会打断它们。"
-    echo "  查看详情：harness-ctl inflight"
-    echo "  确要重启：harness-ctl safe-restart $svc --force"
-    return 2
+  local deadline=$(( $(date -u +%s) + DRAIN_TIMEOUT ))
+  local live zombie unknown queued done=0
+  echo "开始 drain：等心跳新鲜的活跃对话跑完（每 ${DRAIN_INTERVAL}s 查一次，最长 ${DRAIN_TIMEOUT}s）..."
+  while :; do
+    read -r live zombie unknown queued <<< "$(count_live_active)"
+    local remain=$(( deadline - $(date -u +%s) ))
+    printf "\r  活跃(等待中)=%s  排队=%s  僵尸(不等)=%s  待排查=%s  剩余=%ss   " \
+      "$live" "$queued" "$zombie" "$unknown" "$((remain>0?remain:0))"
+    if [[ "$live" -eq 0 && "$queued" -eq 0 ]]; then done=1; break; fi
+    if (( remain <= 0 )); then break; fi
+    sleep "$DRAIN_INTERVAL"
+  done
+  echo   # 收掉 \r 行
+
+  if [[ "$done" -ne 1 ]]; then
+    err "drain 超时（${DRAIN_TIMEOUT}s）仍有 活跃=${live} 排队=${queued}。"
+    [[ "$zombie" -gt 0 ]] && echo "  ${c_yel}有 ${zombie} 个僵尸 session（沙箱失联，永不自结束）——它们不会随 drain 消失，见: harness-ctl zombies${c_rst}"
+    if [[ "$force" -ne 1 ]]; then
+      echo "  强制重启（会打断上述活跃对话）：加 --force"
+      [[ "$maint_was_on" -eq 0 ]] && { echo "  回退维护页..."; maintenance_off || true; }
+      return 2
+    fi
+    echo "${c_yel}--force：无视残留活跃对话，继续重启${c_rst}"
+  else
+    echo "${c_grn}活跃对话已全部跑完，可安全重启。${c_rst}"
+    [[ "$zombie" -gt 0 ]] && echo "  ${c_dim}（另有 ${zombie} 个僵尸 session 被跳过，重启正好清理它们）${c_rst}"
   fi
-  [[ "$realactive" -gt 0 ]] && echo "${c_yel}--force：无视 ${realactive} 个在途对话，继续重启${c_rst}"
+
   echo "重启 $svc ..."
   as_root systemctl restart "$svc"
   sleep 2
   echo "状态：$(systemctl is-active "$svc")  后端健康：$(http_code "$BACKEND_HEALTH")"
+  if [[ "$maint_was_on" -eq 0 ]]; then
+    echo "下维护页，恢复对外服务..."
+    maintenance_off || err "下维护页失败！请手动执行 harness-ctl maintenance off"
+  else
+    echo "${c_dim}进入前已是维护模式，保持维护页不动（如需恢复：harness-ctl maintenance off）。${c_rst}"
+  fi
 }
 
 usage() {
@@ -391,7 +454,8 @@ harness-ctl — publish 环境运维 CLI
   harness-ctl maintenance on        上维护页（nginx 503，后端不动）
   harness-ctl maintenance off       下维护页，恢复服务
   harness-ctl maintenance status    只看维护模式开关
-  harness-ctl safe-restart <svc>    重启前检查在途对话，有则拦住（--force 强制）
+  harness-ctl safe-restart <svc>    零打断重启：上维护页→等活跃对话跑完→重启→下维护页
+                                    （--timeout=秒 调等待上限，--force 超时也强制重启）
 
 服务名：harness-publish-orchestrator | harness-publish-frontend
 详见 docs/operations.md 第 9 节。
