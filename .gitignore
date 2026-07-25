@@ -25,6 +25,10 @@ bundle/checkpoints/
 orchestrator/orchestrator
 orchestrator/bin/
 orchestrator/authhash
+# dev/ 的脚本入库,但本地运行产物不入库(dev/model-proxy/.env 已被 **/*.env 覆盖)
+dev/logs/
+dev/orchestrator
+dev/local.env
 .scratch/
 
 # 备份文件

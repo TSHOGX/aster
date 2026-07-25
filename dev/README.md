@@ -1,0 +1,135 @@
+# Local dev (microVM) alongside the ECS deployment
+
+Runs the whole platform — orchestrator, model proxy, frontend, and real gVisor
+sandboxes — on a local machine that has `runsc`, reachable from a browser on the
+host. Verified in the `sbx` OrbStack VM on Apple silicon (arm64).
+
+The repo's root `AGENTS.md` says there is no local runtime. That is about the
+macOS host, not this VM.
+
+## How local and ECS stay in sync
+
+The two environments genuinely differ (arch, DNS, TLS, addresses, who runs the
+proxy). The rule that keeps the repo shared anyway:
+
+> **Committed files must behave correctly in both environments without editing.**
+> Anything true of only one machine goes in a gitignored file or is auto-detected.
+
+So there is no local-vs-ECS branch to reconcile, and no diff to carry. Three
+mechanisms, in order of preference:
+
+1. **Auto-detect** when the environment can be observed. `build-rootfs.sh` picks
+   `ports.ubuntu.com` vs `archive.ubuntu.com` from the host architecture, and
+   applies DNS pinning only when it detects an intercepting resolver — a no-op on
+   a normal host. `dev/start-all.sh` detects the VM IP and the checkout's owner.
+2. **Derive from a signal that already exists.** The CSP adds `'unsafe-eval'` only
+   when `NODE_ENV=development`, because `next dev` needs it and production does
+   not. The deployed policy is byte-identical to before (verified against
+   `next build` + `next start`).
+3. **Read from a gitignored file** when neither applies: `dev/local.env`
+   (see `dev/local.env.example`) for paths/IPs/ports, `dev/model-proxy/.env` for
+   the upstream key. Both are covered by `.gitignore`.
+
+What this means in practice: commit normally. If a change would only be right on
+one machine, that is the signal to convert it into one of the three forms above
+rather than to keep it uncommitted. Secrets and build outputs stay out of git —
+`dev/logs/`, `dev/orchestrator`, `dev/local.env`, and `**/*.env` are ignored.
+
+## Start / stop
+
+```bash
+sudo ./dev/start-all.sh     # orchestrator :8090, proxy :8083, frontend :8000
+sudo ./dev/stop-all.sh
+tail -f dev/logs/*.log
+```
+
+`start-all.sh` prints the URL to open. The orchestrator runs as root (it manages
+netns, nft, runsc, and `/var/lib/harness*`). Both scripts use `setsid`: a plain
+backgrounded `nohup` dies with the launching shell when invoked through
+`orb bash -lc` or a non-interactive ssh.
+
+Reach it from the host browser at the VM's IP — currently
+**http://192.168.139.93:8000**. `sbx.orb.local` does not work for this. Login is
+open mode: with no `config/auth-users.yaml` the workbench skips the login screen
+entirely and everything belongs to the `lab` user. `HARNESS_COOKIE_INSECURE=1` is
+set because this is plain http. Add `config/auth-users.yaml` to get the real login
+gate (see the root README).
+
+## One-time setup already done here
+
+- `config/title-llm.yaml` — GLM-5.2 for session titles (gitignored secret).
+- `dev/model-proxy/.env` — upstream key for the proxy stand-in.
+- rootfs built with `SANDBOX_AGENT_DRIVERS=pi,sh` so Agent and Shell both work.
+
+Rebuild the rootfs after changing the sandbox image (no env overrides needed —
+mirror and DNS are detected):
+
+```bash
+sudo SANDBOX_AGENT_DRIVERS=pi,sh FORCE=1 ./sandbox-image/build-rootfs.sh
+```
+
+## The model proxy
+
+`claude-code-proxy` is not in this repo (ECS deploys it separately), so local dev
+uses a stand-in at `dev/model-proxy/proxy.py`. It does the two things the platform
+requires: authorize every request against the orchestrator's correlation Unix
+socket (`start` → forward → `finish`), then forward upstream with the real API key
+injected. The sandbox only ever holds a dummy key — do not "simplify" this by
+letting Pi reach upstream directly, that is the credential boundary.
+
+It targets ModelArts' **native Anthropic endpoint**
+(`https://api.modelarts-maas.com/anthropic`), so it is a straight pass-through with
+no protocol translation. The ECS proxy instead targets `/openai/v1` and translates.
+This is a real behavioral difference between the two environments, contained
+entirely inside the untracked `.env`.
+
+`HARNESS_PROXY_CORRELATION_SOCKET` must match `harness.yaml`'s `run_dir` —
+currently `/var/lib/harness-publish/run/proxy-internal/proxy-correlation.sock`.
+Pointing it at the wrong run dir gives `Errno 2` and every turn 503s.
+
+## DNS: the thing that breaks everything locally
+
+If the host runs a fake-ip proxy (clash and similar), **every** hostname resolves
+inside the VM to an unroutable `198.18.0.0/15` address — including when querying
+1.1.1.1 directly, because the interception is upstream of the VM. Changing
+nameservers does nothing. The VM works around it with pinned IPs in its own
+`/etc/hosts` (`# sbx-doh-pin`), and `build-rootfs.sh` now does the same for the
+chroot.
+
+Symptoms, each of which looks like an unrelated network flake:
+
+| Symptom | Cause / fix |
+|---|---|
+| `build-rootfs.sh`: hundreds of `Failed to fetch ... [IP: 198.18.0.39]` | the chroot had no `/etc/hosts`; handled by `prepare_build_time_dns` |
+| model proxy: `SSLEOFError` on every upstream call | `api.modelarts-maas.com` needs a pin in the VM's `/etc/hosts` |
+| `npm install`: `ECONNRESET` from `repo.huaweicloud.com` | 27 lockfile `resolved` URLs pointed at that mirror; rewritten to registry.npmjs.org (integrity hashes unchanged) |
+| `npm install`: `ENOTEMPTY` / "Exit handler never called" | a previous failed install left `node_modules` corrupt — `rm -rf node_modules` and retry |
+| blank page, `Uncaught EvalError` in console | CSP was missing `'unsafe-eval'` for `next dev`; fixed in `next.config.mjs` |
+
+To pin a newly blocked host, resolve it over DoH (which bypasses the intercepted
+resolver) and add the answer to `/etc/hosts`:
+
+```bash
+curl -H 'accept: application/dns-json' \
+  'https://1.1.1.1/dns-query?name=api.example.com&type=A'
+```
+
+## Smoke test
+
+```bash
+C=/tmp/c.txt
+curl -sS -c $C -X POST http://127.0.0.1:8090/api/login -H 'Content-Type: application/json' -d '{}'
+SID=$(curl -sS -b $C -X POST http://127.0.0.1:8090/api/sessions \
+  -H 'Content-Type: application/json' -d '{"mode":"agent"}' |
+  python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+curl -sS -b $C -X POST "http://127.0.0.1:8090/api/sessions/$SID/messages" \
+  -H 'Content-Type: application/json' -d '{"content":"Reply with exactly: SMOKE OK"}'
+# poll until status is running_idle, then read the messages:
+curl -sS -b $C "http://127.0.0.1:8090/api/sessions/$SID/messages"
+```
+
+The turn is fully wired only if `dev/logs/model-proxy.log` shows both
+`request started ... turn=N` and `request finished ... status=200`, and the
+assistant message lands. A `503 active_context_unavailable` between turns is
+correct behavior — the sandbox tried to call the model outside its own active turn
+and correlation refused.
