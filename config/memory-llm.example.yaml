@@ -6,3 +6,13 @@ enabled: true
 base_url: https://api.modelarts-maas.com/openai/v1
 api_key: ""
 model: glm-5.2
+
+# Optional: agentic context-evolution graph. When agentic:true the
+# consolidate/verify/curate/critic nodes run as local `pi` agents (see
+# docs/decisions/agentic-context-evolution.md) instead of scalar heuristics.
+# agent_provider/agent_model must exist in pi's own models.json (the api key
+# lives there, never here). Can also be toggled with HARNESS_MEMORY_AGENTIC=true.
+agentic: false
+agent_bin: pi
+agent_provider: modelarts
+agent_model: glm-5.2

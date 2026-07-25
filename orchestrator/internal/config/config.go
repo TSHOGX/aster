@@ -85,6 +85,17 @@ type MemoryLLMConfig struct {
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
 	Model   string `yaml:"model"`
+	// Agentic turns on the agent-driven context-evolution graph (consolidate/
+	// verify/curate/critic run as local pi agents instead of scalar heuristics).
+	// When false the loop uses the original scalar consolidation/promotion path.
+	Agentic bool `yaml:"agentic"`
+	// AgentBin/AgentProvider/AgentModel configure the local pi coding agent used
+	// by the graph's judgment nodes. Provider/Model index pi's own models.json
+	// (credentials live there, never here). Empty provider/model disables the
+	// agentic path even if Agentic is true.
+	AgentBin      string `yaml:"agent_bin"`
+	AgentProvider string `yaml:"agent_provider"`
+	AgentModel    string `yaml:"agent_model"`
 }
 
 // TitleLLMConfig configures the optional LLM-based session-title generator.
@@ -1492,6 +1503,13 @@ func loadMemoryLLM(path string) (MemoryLLMConfig, error) {
 	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.Model = strings.TrimSpace(cfg.Model)
+	cfg.AgentBin = strings.TrimSpace(cfg.AgentBin)
+	cfg.AgentProvider = strings.TrimSpace(cfg.AgentProvider)
+	cfg.AgentModel = strings.TrimSpace(cfg.AgentModel)
+	// Env override so the agentic path can be toggled without editing the secret.
+	if v, ok := boolEnv("HARNESS_MEMORY_AGENTIC"); ok {
+		cfg.Agentic = v
+	}
 	return cfg, nil
 }
 
