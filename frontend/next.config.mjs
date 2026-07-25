@@ -7,9 +7,20 @@
 // output is rendered via react-markdown (no rehype-raw) and highlight.js
 // (HTML-escaped), so stored-HTML XSS is already contained. connect-src stays
 // 'self' because the browser only talks to the same-origin /api proxy.
+// `next dev` compiles React Refresh's runtime by evaluating a string, so the dev
+// server cannot run under a CSP without 'unsafe-eval' (the page dies with
+// "Uncaught EvalError" and renders blank). Production builds do not need it, so
+// it is added only in development and never weakens the deployed policy.
+const isDev = process.env.NODE_ENV === "development";
+const scriptSrc = ["'self'", "'unsafe-inline'", ...(isDev ? ["'unsafe-eval'"] : [])].join(" ");
+
+// Dev over plain http also needs the HMR websocket, which connects to the host
+// the browser used rather than to 'self'.
+const connectSrc = ["'self'", "blob:", ...(isDev ? ["ws:", "wss:"] : [])].join(" ");
+
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src ${scriptSrc}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
@@ -17,7 +28,7 @@ const csp = [
   // which reads the workbook by XHR'ing a blob: object URL it creates from the
   // fetched ArrayBuffer. blob: URLs are same-origin, opaque, and can't exfiltrate
   // to a remote host, so this does not weaken the exfiltration guarantee.
-  "connect-src 'self' blob:",
+  `connect-src ${connectSrc}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -35,7 +46,16 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
-  allowedDevOrigins: ["123.249.65.231"],
+  // Dev-only: hosts the browser may load the dev server from. Deployments differ
+  // (ECS public IP vs. a local VM's address), so extra hosts come from
+  // HARNESS_DEV_ORIGINS (comma-separated) rather than being hardcoded per env.
+  allowedDevOrigins: [
+    "123.249.65.231",
+    ...(process.env.HARNESS_DEV_ORIGINS ?? "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+  ],
   async headers() {
     return [
       {
