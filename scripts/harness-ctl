@@ -4,6 +4,7 @@
 # 子命令：
 #   status                服务状态 + 是否处于维护模式 + 在途对话数（一屏总览）
 #   inflight              列出正在进行的 turn（queued/leased/running），标注时长与僵尸 lease
+#   zombies               扫描僵尸 session（running_active 但沙箱 bridge 心跳失联，前端永卡 thinking）
 #   traffic [N]           从 nginx access.log 汇总最近 N 行流量（QPS/状态码/top IP/top 路径），默认 5000
 #   maintenance on|off    上/下维护页（nginx 层 503，不动后端）
 #   maintenance status    只看当前是否维护模式
@@ -43,6 +44,12 @@ dbq() {
   else as_root sqlite3 -readonly "$DB" "$1"; fi
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+# 读文件 mtime（epoch 秒）；bridge 目录 root 属主，普通用户读不到时回退 sudo。读不到回显空。
+file_mtime() {
+  local f="$1"
+  if [[ -r "$f" ]]; then stat -c %Y "$f" 2>/dev/null
+  else as_root stat -c %Y "$f" 2>/dev/null || true; fi
+}
 
 need_deps() {
   local m=()
@@ -124,6 +131,68 @@ cmd_inflight() {
   echo
   echo "  ${c_bold}真活跃 ~${realactive}${c_rst}，僵尸/过期 lease ${zombies}"
   echo "  ${c_dim}判定：lease 未过期的 running/leased + 所有 queued 视为真活跃；过期 lease 是卡死残留。${c_rst}"
+}
+
+# ---- 命令：zombies ----
+# 僵尸 session：session 卡在 running_active，但其活跃 generation 的沙箱侧 bridge 心跳
+# 文件已长时间不更新（沙箱进程死/卡），且有 inflight turn。这类 session 前端永远显示
+# "thinking"、无法输入/打断。⚠️ inflight 子命令按 lease 过期判断，发现不了这类——因为
+# orchestrator 的 maintenance 循环会无条件自续租 generation lease，把沙箱的沉默掩盖掉，
+# 所以 lease 永不过期。本命令改用「沙箱 bridge 心跳文件新鲜度」这一独立判据。
+#
+# 判据阈值：沙箱心跳间隔为 heartbeat_interval(默认30s)。留足抖动/GC 余量，
+# 静默 > 阈值(默认180s，约 6 个心跳周期) 视为沙箱失联。纯只读，不改任何状态。
+ZOMBIE_STALL_SECS="${ZOMBIE_STALL_SECS:-180}"
+cmd_zombies() {
+  local now_epoch; now_epoch=$(date -u +%s)
+  echo "${c_bold}僵尸 session 扫描（running_active + 沙箱心跳失联 > ${ZOMBIE_STALL_SECS}s）：${c_rst}"
+  # 每个 running_active session：活跃 generation 的 bridge_dir + 该 session 的 inflight turn 数
+  local rows
+  rows=$(dbq "SELECT s.id, COALESCE(s.active_generation_id,''),
+                     COALESCE(r.bridge_dir_path,''),
+                     (SELECT COUNT(*) FROM turns t
+                        WHERE t.session_id=s.id AND t.status IN ($INFLIGHT_STATES))
+              FROM sessions s
+              LEFT JOIN runtime_resource_instances r
+                     ON r.generation_id = s.active_generation_id
+              WHERE s.status='running_active'
+              ORDER BY s.id;")
+  if [[ -z "$rows" ]]; then
+    echo "  ${c_grn}(无 running_active session)${c_rst}"
+    return 0
+  fi
+  printf "  %-24s %-11s %-14s %s\n" "SESSION" "INFLIGHT" "SANDBOX-HB" "判定"
+  local zombies=0 active=0 unknown=0
+  local zlist=()
+  while IFS='|' read -r sid gen bridge inflight; do
+    [[ -z "$sid" ]] && continue
+    local age_disp verdict
+    if [[ -z "$bridge" ]]; then
+      age_disp="无资源"; verdict="${c_yel}无 live 沙箱资源(排查)${c_rst}"; unknown=$((unknown+1))
+    else
+      local hbf="$bridge/heartbeat/bridge"
+      local m; m=$(file_mtime "$hbf")
+      if [[ -z "$m" ]]; then
+        age_disp="无心跳文件"; verdict="${c_yel}无心跳文件(排查)${c_rst}"; unknown=$((unknown+1))
+      else
+        local age=$(( now_epoch - m ))
+        age_disp="${age}s前"
+        if (( age > ZOMBIE_STALL_SECS )); then
+          verdict="${c_red}僵尸(沙箱失联)${c_rst}"; zombies=$((zombies+1)); zlist+=("$sid")
+        else
+          verdict="${c_grn}活跃${c_rst}"; active=$((active+1))
+        fi
+      fi
+    fi
+    printf "  %-24s %-11s %-14s %b\n" "$sid" "$inflight" "$age_disp" "$verdict"
+  done <<< "$rows"
+  echo
+  echo "  ${c_bold}僵尸 ${zombies}${c_rst}，活跃 ${active}，待排查 ${unknown}"
+  if (( zombies > 0 )); then
+    echo "  ${c_yel}僵尸 session：${zlist[*]}${c_rst}"
+    echo "  ${c_dim}恢复需人工介入（备份DB→标 generation failed / turn canceled → session 回落 running_idle）。${c_rst}"
+  fi
+  echo "  ${c_dim}判据=沙箱 bridge 心跳文件(runtime_resource_instances.bridge_dir_path/heartbeat/bridge)新鲜度；纯只读。${c_rst}"
 }
 
 # ---- 命令：traffic ----
@@ -317,6 +386,7 @@ harness-ctl — publish 环境运维 CLI
 用法：
   harness-ctl status                服务/入口/在途对话 一屏总览
   harness-ctl inflight              列出正在进行的 turn（含时长、僵尸 lease 标注）
+  harness-ctl zombies               扫描僵尸 session（running_active 但沙箱心跳失联）
   harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
   harness-ctl maintenance on        上维护页（nginx 503，后端不动）
   harness-ctl maintenance off       下维护页，恢复服务
@@ -334,6 +404,7 @@ main() {
   case "$cmd" in
     status)       cmd_status ;;
     inflight)     cmd_inflight ;;
+    zombies)      cmd_zombies ;;
     traffic)      cmd_traffic "$@" ;;
     maintenance|maint) cmd_maintenance "$@" ;;
     safe-restart) cmd_safe_restart "$@" ;;
