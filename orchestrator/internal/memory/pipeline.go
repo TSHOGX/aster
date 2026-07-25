@@ -42,6 +42,13 @@ type Pipeline struct {
 	// store.SnapshotSession inside processSession.
 	capturer *trajectory.Capturer
 
+	// agent drives the agentic context-evolution graph (consolidate/verify/
+	// curate/critic). Nil ⇒ the scalar curateAndPublish path is used instead.
+	agent *AgentRunner
+	// agentic selects the agentic graph over the scalar path when true AND agent
+	// is enabled.
+	agentic bool
+
 	// runInterval is how often the loop wakes; runAt is the target hour (local)
 	// for the daily run. A tick that isn't near runAt is a no-op unless a run is
 	// due (never ran today).
@@ -57,6 +64,11 @@ type PipelineOptions struct {
 	// Capturer archives + re-parses native pi trajectories before each sweep.
 	// Nil disables native capture (fall back to the DB projection).
 	Capturer *trajectory.Capturer
+	// Agent, when enabled, runs the agentic context-evolution graph. Nil/disabled
+	// falls back to the scalar consolidation/promotion path.
+	Agent *AgentRunner
+	// Agentic selects the agentic graph when true and Agent is enabled.
+	Agentic bool
 	// Interval between wake-ups. Defaults to 1h; the loop runs the full sweep
 	// each wake but only reprocesses sessions whose fingerprint moved, so a
 	// smaller interval just means fresher KB at negligible cost when idle.
@@ -79,6 +91,8 @@ func NewPipeline(opts PipelineOptions) *Pipeline {
 		kb:        opts.KB,
 		log:       opts.Log,
 		capturer:  opts.Capturer,
+		agent:     opts.Agent,
+		agentic:   opts.Agentic && opts.Agent.Enabled(),
 		interval:  interval,
 	}
 }
@@ -146,16 +160,32 @@ func (p *Pipeline) sweep(ctx context.Context, since time.Time) {
 	}
 	p.log.Info("distillation sweep starting", "candidate_sessions", len(snaps))
 
-	processed := 0
-	for _, snap := range snaps {
-		if ctx.Err() != nil {
-			return
-		}
+	// Harvest sessions in parallel. Each processSession makes HTTP lens calls
+	// (the Extractor, not a pi subprocess) and writes candidates through the
+	// store, whose single-connection pool serializes the writes. parMap bounds
+	// concurrency (HARNESS_MEMORY_AGENT_CONCURRENCY) so we don't open unbounded
+	// upstream glm connections. Serial before this was the cold-start bottleneck.
+	oks := parMap(ctx, snaps, func(ctx context.Context, snap store.TrajectorySnapshot) bool {
 		if err := p.processSession(ctx, snap.SessionID); err != nil {
 			p.log.Warn("distillation: session failed", "session_id", snap.SessionID, "error", err)
-			continue
+			return false
 		}
-		processed++
+		return true
+	})
+	processed := 0
+	for _, ok := range oks {
+		if ok {
+			processed++
+		}
+	}
+
+	if p.agentic {
+		// Agentic graph: reflect → consolidate → verify → curate → critic →
+		// publish. Replaces the scalar curateAndPublish (harvest above is shared).
+		if err := p.runAgenticGraph(ctx, processed); err != nil {
+			p.log.Warn("distillation: agentic graph failed", "error", err)
+		}
+		return
 	}
 
 	report, err := p.curateAndPublish(ctx)

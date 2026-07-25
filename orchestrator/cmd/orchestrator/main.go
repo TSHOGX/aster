@@ -190,7 +190,14 @@ func main() {
 	// extract memory/skills via the configured LLM, and publish promoted
 	// knowledge into the shared /agents knowledge base. Disabled (nil) when no
 	// memory LLM is configured.
-	if pipeline := memory.NewPipeline(memory.PipelineOptions{
+	// The background nightly loop honors the `enabled` flag in memory-llm.yaml.
+	// Setting enabled:false keeps the KB/agents mount live (seed carried forward)
+	// while suppressing the automatic sweep — used to run cold-start/backfill
+	// out-of-band (e.g. a scheduled overnight job) without the server's own timer
+	// competing for the DB or firing an expensive re-harvest during the day.
+	if !cfg.MemoryLLM.Enabled {
+		log.Info("nightly distillation loop disabled (memory-llm enabled:false); KB mount still served")
+	} else if pipeline := memory.NewPipeline(memory.PipelineOptions{
 		Store: db,
 		Extractor: memory.NewExtractor(memory.Config{
 			BaseURL: cfg.MemoryLLM.BaseURL,
@@ -200,8 +207,15 @@ func main() {
 		KB:       memory.NewKB(cfg.AgentsKBRoot),
 		Log:      log,
 		Capturer: trajectory.NewCapturer(db, cfg.TrajectoryRoot, log),
+		Agent: memory.NewAgentRunner(memory.AgentConfig{
+			Bin:      cfg.MemoryLLM.AgentBin,
+			Provider: cfg.MemoryLLM.AgentProvider,
+			Model:    cfg.MemoryLLM.AgentModel,
+			WorkDir:  cfg.RepoRoot, // Node C reads the live tree from here
+		}),
+		Agentic: cfg.MemoryLLM.Agentic,
 	}); pipeline != nil {
-		log.Info("nightly distillation pipeline enabled")
+		log.Info("nightly distillation pipeline enabled", "agentic", cfg.MemoryLLM.Agentic)
 		go func() {
 			if err := pipeline.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("distillation pipeline stopped", "error", err)

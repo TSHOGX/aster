@@ -99,6 +99,13 @@ func runReplay(ctx context.Context, log *slog.Logger, args []string) error {
 		KB:       memory.NewKB(cfg.AgentsKBRoot),
 		Log:      log,
 		Capturer: trajectory.NewCapturer(db, cfg.TrajectoryRoot, log),
+		Agent: memory.NewAgentRunner(memory.AgentConfig{
+			Bin:      cfg.MemoryLLM.AgentBin,
+			Provider: cfg.MemoryLLM.AgentProvider,
+			Model:    cfg.MemoryLLM.AgentModel,
+			WorkDir:  cfg.RepoRoot,
+		}),
+		Agentic: cfg.MemoryLLM.Agentic,
 	})
 	if pipeline == nil {
 		return fmt.Errorf("distillation disabled (no memory LLM configured)")
