@@ -890,11 +890,45 @@ CREATE TABLE IF NOT EXISTS raw_sources (
   PRIMARY KEY(session_id, path),
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
+
+-- evolution_runs: one row per agentic context-evolution cycle. Powers Phase-0
+-- "what changed since last cycle" and the daily report. Non-rebuildable output.
+CREATE TABLE IF NOT EXISTS evolution_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  phase0_plan_json TEXT NOT NULL DEFAULT '{}',
+  counts_json TEXT NOT NULL DEFAULT '{}',
+  digest TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT ''
+);
+
+-- agent_calls: audit + cost/latency observability for every pi-agent invocation
+-- across all nodes (reflect/consolidate/verify/curate/critic). Non-rebuildable.
+CREATE TABLE IF NOT EXISTS agent_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER,
+  node TEXT NOT NULL,
+  ref TEXT NOT NULL DEFAULT '',
+  prompt_sha TEXT NOT NULL DEFAULT '',
+  verdict TEXT NOT NULL DEFAULT '',
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_calls_run ON agent_calls(run_id);
 `)
 	if err != nil {
 		return err
 	}
 	if err := s.ensureTrajectoryEventColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureSemanticMemoryColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureSkillCandidateColumns(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureSessionColumns(ctx); err != nil {
@@ -1012,6 +1046,62 @@ func (s *Store) ensureTrajectoryEventColumns(ctx context.Context) error {
 	}
 	for _, column := range columns {
 		exists, err := s.columnExists(ctx, "trajectory_events", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureSemanticMemoryColumns adds the agentic-evolution columns to
+// semantic_memories: the merged member ids from Node B, the curator/consolidate
+// rationale, and Node C's verification verdict + correction. Same O(1)
+// metadata-only ALTER + idempotency guarantee as ensureSessionColumns.
+func (s *Store) ensureSemanticMemoryColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"canonical_of_json", `ALTER TABLE semantic_memories ADD COLUMN canonical_of_json TEXT NOT NULL DEFAULT '[]'`},
+		{"agent_rationale", `ALTER TABLE semantic_memories ADD COLUMN agent_rationale TEXT NOT NULL DEFAULT ''`},
+		{"verify_verdict", `ALTER TABLE semantic_memories ADD COLUMN verify_verdict TEXT NOT NULL DEFAULT ''`},
+		{"verify_checked_at", `ALTER TABLE semantic_memories ADD COLUMN verify_checked_at TEXT`},
+		{"corrected_statement", `ALTER TABLE semantic_memories ADD COLUMN corrected_statement TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "semantic_memories", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureSkillCandidateColumns adds the agentic-evolution columns to
+// skill_candidates: the curator's promotion reason and Node C's verdict. Same
+// O(1) metadata-only ALTER + idempotency guarantee as ensureSessionColumns.
+func (s *Store) ensureSkillCandidateColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"curator_reason", `ALTER TABLE skill_candidates ADD COLUMN curator_reason TEXT NOT NULL DEFAULT ''`},
+		{"verify_verdict", `ALTER TABLE skill_candidates ADD COLUMN verify_verdict TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "skill_candidates", column.name)
 		if err != nil {
 			return err
 		}
