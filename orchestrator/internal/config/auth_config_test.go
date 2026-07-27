@@ -18,7 +18,7 @@ func TestLoadAuthUsersValid(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	users, err := loadAuthUsers(path)
+	users, err := LoadAuthUsersFile(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestLoadAuthUsersValid(t *testing.T) {
 }
 
 func TestLoadAuthUsersMissingFileIsOpen(t *testing.T) {
-	users, err := loadAuthUsers(filepath.Join(t.TempDir(), "nope.yaml"))
+	users, err := LoadAuthUsersFile(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {
 		t.Fatalf("missing file should not error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestLoadAuthUsersRejectsBadUsername(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := loadAuthUsers(path); err == nil {
+	if _, err := LoadAuthUsersFile(path); err == nil {
 		t.Fatalf("expected error for username with a dot")
 	}
 }
@@ -62,7 +62,7 @@ func TestLoadAuthUsersRejectsPlaintext(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := loadAuthUsers(path); err == nil {
+	if _, err := LoadAuthUsersFile(path); err == nil {
 		t.Fatalf("expected error for non-pbkdf2 password_hash")
 	}
 }
@@ -79,7 +79,7 @@ func TestLoadAuthUsersRejectsDuplicate(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := loadAuthUsers(path); err == nil {
+	if _, err := LoadAuthUsersFile(path); err == nil {
 		t.Fatalf("expected error for duplicate username")
 	}
 }

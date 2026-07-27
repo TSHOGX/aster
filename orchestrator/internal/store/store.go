@@ -106,6 +106,32 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	return OpenWithOptions(ctx, path, Options{})
 }
 
+// OpenForMaintenance opens an existing database for a short-lived out-of-band
+// task (e.g. the `orchestrator user` subcommands) while the server may be
+// running against the same file. It applies the connection PRAGMAs but
+// deliberately SKIPS migrate(): schema setup includes ALTER TABLE statements
+// and an FTS rebuild, which a side process must not run under a live server.
+// A missing database file is an error here rather than something to create.
+func OpenForMaintenance(ctx context.Context, path string) (*Store, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("open database %s: %w", path, err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.ExecContext(ctx, `
+PRAGMA busy_timeout=5000;
+PRAGMA foreign_keys=ON;
+`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure database %s: %w", path, err)
+	}
+	return &Store{db: db, options: Options{AgentHomesRoot: "/var/lib/harness/agent-homes"}}, nil
+}
+
 func OpenWithOptions(ctx context.Context, path string, options Options) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err

@@ -28,6 +28,7 @@ harness-ctl inflight              列出正在进行的 turn（含时长、僵�
 harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
 harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
 harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
+harness-ctl user list|add|passwd|rm  登录账号管理（改完免重启生效）
 harness-ctl storage [N]           存储总览：按目录 + Top N 会话占用
 harness-ctl maintenance on        上维护页（nginx 503，后端不动）
 harness-ctl maintenance off       下维护页，恢复服务
@@ -84,6 +85,34 @@ HTTP 状态码分布、Top 10 客户端 IP、Top 10 请求路径。纯只读。
 
 > `du` 必须以 root 跑：session workspace 是 `0750 nobody:nogroup`，父目录可读但子目录不可读，
 > 非 root 直接 `du` 会**静默少算**。脚本内部统一走 `as_root`。
+
+#### `user list|add <名>|passwd <名>|rm <名>`
+登录账号管理。注意和只读统计命令 `users`（复数）区分：**`user` 改凭据，`users` 看用量**。
+
+```bash
+harness-ctl user list                        # 只打印算法/迭代数，从不打印哈希
+harness-ctl user add alice                   # 交互式输入密码两次
+harness-ctl user passwd alice                # 默认吊销该账号已有 cookie
+harness-ctl user passwd alice --keep-sessions  # 改密码但不踢下线
+harness-ctl user rm alice                    # 删最后一个账号需 --force
+```
+
+**改完立即生效，不要重启 orchestrator**（重启会杀掉所有活跃沙箱）。后端发现
+`config/auth-users.yaml` 的 mtime 变了就重载凭据，下一次登录请求就用新的。
+
+实现分工：真正的读写在 orchestrator 二进制的 `user` 子命令里（复用后端的 YAML 校验、
+PBKDF2 参数、会话吊销）；脚本只负责定位二进制、从 systemd unit 取
+`HARNESS_AUTH_USERS_PATH`/`HARNESS_DB_PATH` 保证和服务读同一份文件，以及用 `read -s`
+静默读密码后管道喂进去（密码不进 argv、不进 shell history）。非 TTY 下直接透传 stdin，
+便于脚本化。
+
+几个刻意的安全取舍：
+
+- 写文件是「同目录 temp → 0600 → rename」原子替换，中断不会留半个文件。
+- 删最后一个账号会让登录闸**对所有人开放**，所以必须显式 `--force`。
+- 文件写坏/被删时后端保留内存里上一份凭据并打 ERROR，**不会**因此放开登录闸；
+  但重启后就真的裸奔了，所以坏文件要尽快修。
+- `rm` 只删登录凭据，该用户的历史会话和数据仍在库里（`sessions.user_id` 无外键）。
 
 #### `maintenance on|off|status`
 在 **nginx 层**挂/撤维护页，**完全不动后端**（orchestrator/frontend/DB/会话照常跑）。

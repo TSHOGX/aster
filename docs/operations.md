@@ -12,9 +12,11 @@
 > model proxy(`claude-proxy.service`,`/root/claude-code-proxy/`)不在仓库里。
 >
 > ⚠️ **登录凭据文件不在 git 里**：`config/auth-users.yaml` 被 gitignore，只存在于运行机器上。
-> **搬机器/重建 checkout 时不会自动带上**——务必单独备份。该文件缺失时 `loadAuthUsers` 返回空、
-> `AuthEnabled()=false`,`requireAuth` 会放行所有请求,公网 IP 上的 workbench 会变成无登录裸奔。
-> 用 `cmd/authhash` 在 `config/auth-users.yaml` 重建 `lab` 用户(600 权限,root 所有);改密码/加用户走第 3 节。
+> **搬机器/重建 checkout 时不会自动带上**——务必单独备份。该文件缺失时 `LoadAuthUsersFile` 返回空、
+> 登录闸判定为关闭,`requireAuth` 会放行所有请求,公网 IP 上的 workbench 会变成无登录裸奔。
+> 用 `harness-ctl user add lab` 重建(自动 600 权限、root 所有);改密码/加用户走第 3 节,**免重启**。
+> 注意这只针对「文件从一开始就不存在」：服务已经加载过凭据后再删文件,后端会保留内存里的
+> 那一份并打 ERROR,不会退回裸奔——但重启后就真的裸奔了。
 
 ---
 
@@ -230,14 +232,29 @@ curl -s http://127.0.0.1:8083/healthz                 # 期望 {"status":"ok"}
 
 - 用户配置在 `config/auth-users.yaml`，密码**只存 PBKDF2-SHA256 哈希，无明文、不可逆**。
 - 当前用户：`lab`（保留了登录功能上线前创建的历史 session）。
-- 改密码 / 加用户：
+- **改密码 / 加用户不需要重启**：后端发现该文件 mtime 变了就自动重载凭据，
+  下一次登录请求即生效。**不要**再为了加人而 restart orchestrator（会杀掉所有活跃沙箱）。
 
 ```bash
-cd /home/agent-runtime-platform/main/orchestrator
-echo -n '你的新密码' | go run ./cmd/authhash     # 输出一行 pbkdf2-sha256$... 哈希
-# 把哈希粘进 config/auth-users.yaml 对应用户的 password_hash，然后：
-sudo systemctl restart harness-publish-orchestrator
+harness-ctl user list              # 列出账号（只打印算法/迭代数，不打印哈希）
+harness-ctl user add alice         # 新增（交互式输入密码两次，不进 shell history）
+harness-ctl user passwd alice      # 改密码，默认吊销该账号已有 cookie
+harness-ctl user rm alice          # 删除账号；删最后一个需 --force
 ```
+
+改完不用做别的：无需 restart、无需维护页。想保留已登录会话时加 `--keep-sessions`。
+
+底层是 orchestrator 二进制的同名子命令（`harness-ctl` 只是负责隐式读密码、
+对齐 systemd 的 `HARNESS_AUTH_USERS_PATH` / `HARNESS_DB_PATH`）：
+
+```bash
+cd /home/agent-runtime-platform/main
+echo -n '你的新密码' | ./orchestrator/bin/orchestrator user passwd lab --password-stdin
+```
+
+手工编辑 YAML 同样会被热加载（`cmd/authhash` 生成哈希后粘进去即可），只是没有
+校验和会话吊销那一层保护。**重载是单向安全的**：文件写坏、写成空、或被删掉时，
+后端保留上一份正确凭据并打 ERROR 日志，绝不会因此把登录闸放开。
 
 `auth-users.yaml` 格式（用户名只允许字母/数字/`_`/`-`，1-64 字符）：
 

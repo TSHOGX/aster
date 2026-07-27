@@ -15,7 +15,7 @@ import (
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.applyHSTS(w, r)
-		if !s.authEnabled {
+		if !s.creds.enabled() {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, labUserID)))
 			return
 		}

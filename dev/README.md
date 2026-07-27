@@ -53,7 +53,8 @@ Reach it from the host browser at the VM's IP — currently
 open mode: with no `config/auth-users.yaml` the workbench skips the login screen
 entirely and everything belongs to the `lab` user. `HARNESS_COOKIE_INSECURE=1` is
 set because this is plain http. Add `config/auth-users.yaml` to get the real login
-gate (see the root README).
+gate (see the root README) — `orchestrator user add <name> --password-stdin` writes
+it for you, and the running backend picks it up without a restart.
 
 ## One-time setup already done here
 
