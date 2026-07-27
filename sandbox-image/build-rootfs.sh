@@ -318,8 +318,15 @@ with open(out_dir / "agents.json", "w", encoding="utf-8") as f:
 PY
 }
 
-# Hosts the build fetches from, used to check whether DNS actually works.
-BUILD_DNS_PIN_HOSTS="${BUILD_DNS_PIN_HOSTS:-pypi.org files.pythonhosted.org ports.ubuntu.com registry.npmjs.org nodejs.org}"
+# Every host this script fetches from. Only consulted when DNS is detected as
+# intercepted (see prepare_build_time_dns). Keep in sync when adding a build
+# stage that downloads from somewhere new — a missing entry shows up as that one
+# stage failing to connect while everything before it succeeded.
+BUILD_DNS_PIN_HOSTS="${BUILD_DNS_PIN_HOSTS:-\
+pypi.org files.pythonhosted.org \
+ports.ubuntu.com archive.ubuntu.com \
+registry.npmjs.org nodejs.org \
+extensions.duckdb.org}"
 
 # True when the build host's resolver is unusable from inside the chroot. Some
 # dev machines (e.g. a local VM behind a fake-ip proxy) answer every query with
