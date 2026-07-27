@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +90,16 @@ type Artifact struct {
 }
 
 type Store struct {
-	db      *sql.DB
+	// db is the writer pool: exactly one connection, opened with
+	// _txlock=immediate. Every method on Store currently runs through it, so
+	// concurrency behavior is identical to the single-pool setup this replaced.
+	db *sql.DB
+	// readDB is the reader pool. It is intentionally NOT used by any query
+	// method yet: this change only establishes the infrastructure so that
+	// migrating read paths off the writer is a separate, reviewable diff. To
+	// move a read query over, swap its s.db for s.readDB (and keep anything
+	// that writes, or that reads inside a write transaction, on s.db).
+	readDB  *sql.DB
 	options Options
 
 	// trajRebuildLocks holds one mutex per session_id being rebuilt into
@@ -101,12 +111,84 @@ type Store struct {
 
 type Options struct {
 	AgentHomesRoot string
+	// ReaderPoolSize caps the reader pool. Zero means defaultReaderPoolSize.
+	// Each modernc.org/sqlite connection carries its own libc.TLS, so
+	// connections are not free; keep this small.
+	ReaderPoolSize int
 }
 
 type SessionActiveGenerationCASParams struct {
 	SessionID            string
 	ExpectedGenerationID sql.NullString
 	NextGenerationID     string
+}
+
+const (
+	// defaultReaderPoolSize is the reader pool ceiling. Reads under WAL never
+	// block the writer, so this only needs to cover the orchestrator's
+	// concurrent request fan-out, not the whole HTTP concurrency limit. Each
+	// modernc.org/sqlite connection allocates its own libc.TLS and page cache,
+	// so a large pool costs real memory for no throughput gain on a
+	// single-file local database.
+	defaultReaderPoolSize = 4
+
+	// busyTimeoutMS must match the _pragma value in buildDSN; verifyPragmas
+	// reads it back to catch a typo'd pragma name (the driver silently accepts
+	// unknown pragmas).
+	busyTimeoutMS = 5000
+)
+
+// buildDSN renders the connection string for one pool. The path is carried in
+// the URL's opaque/path position via net/url rather than concatenated, so a
+// path containing '?' or '#' cannot terminate the DSN early and smuggle in (or
+// silently drop) query parameters.
+//
+// Pragmas are set as DSN _pragma params, not as one-shot statements after
+// Open: the driver applies them inside newConn for EVERY connection it creates.
+// A one-shot PRAGMA only configures whichever connection happened to serve it,
+// which silently leaves later connections at busy_timeout=0 and
+// foreign_keys=OFF once the pool can hold more than one connection.
+func buildDSN(path string, writer bool) string {
+	q := url.Values{}
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeoutMS))
+	q.Add("_pragma", "journal_mode(WAL)")
+	// Under WAL, synchronous=NORMAL avoids an fsync on every commit (the
+	// default FULL does one per commit). It is crash-safe: the database cannot
+	// corrupt, and only the very last committed transaction can be lost on a
+	// power failure. That is acceptable here because bridge reconnect/replay
+	// recovers the latest state.
+	q.Add("_pragma", "synchronous(NORMAL)")
+	q.Add("_pragma", "foreign_keys(ON)")
+	if writer {
+		// The writer pool is serialized to one connection, but immediate
+		// locking still matters: it takes the write lock at BEGIN instead of
+		// on first write, so a busy database fails (or waits out busy_timeout)
+		// up front rather than mid-transaction with SQLITE_BUSY that cannot be
+		// retried safely. Readers must not take it.
+		q.Set("_txlock", "immediate")
+	}
+	// Opaque, not Path: url.URL would re-encode a leading "//" or reinterpret
+	// the path as a host. Escaping the path ourselves keeps '?' and '#' inert.
+	// SQLITE_OPEN_URI is set by the driver, so the file: form is parsed by
+	// SQLite as a URI and percent-escapes are decoded back to the real path.
+	u := url.URL{Scheme: "file", Opaque: escapeDSNPath(path), RawQuery: q.Encode()}
+	return u.String()
+}
+
+// escapeDSNPath percent-escapes the characters that are significant in a
+// SQLite file: URI while leaving path separators intact.
+func escapeDSNPath(path string) string {
+	var b strings.Builder
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		switch {
+		case c == '?' || c == '#' || c == '%':
+			fmt.Fprintf(&b, "%%%02X", c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -120,41 +202,120 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 	if strings.TrimSpace(options.AgentHomesRoot) == "" {
 		options.AgentHomesRoot = "/var/lib/harness/agent-homes"
 	}
-	db, err := sql.Open("sqlite", path)
+	if options.ReaderPoolSize <= 0 {
+		options.ReaderPoolSize = defaultReaderPoolSize
+	}
+
+	writer, err := sql.Open("sqlite", buildDSN(path, true))
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	store := &Store{db: db, options: options}
+	// One writer connection: SQLite allows only one write transaction at a
+	// time anyway, and serializing in the pool turns lock contention into
+	// queueing instead of SQLITE_BUSY.
+	writer.SetMaxOpenConns(1)
+	writer.SetMaxIdleConns(1)
+	// No lifetime cap on the writer: recycling the sole write connection buys
+	// nothing (there is no upstream proxy to age out) and would drop the WAL
+	// read mark plus the warm page cache at arbitrary points.
+	writer.SetConnMaxLifetime(0)
+
+	store := &Store{db: writer, options: options}
+	// The writer creates the file and owns schema changes. Migrating before
+	// the reader pool exists means no reader can observe a half-built schema.
 	if err := store.migrate(ctx); err != nil {
-		_ = db.Close()
+		_ = writer.Close()
 		return nil, err
 	}
+	if err := verifyPragmas(ctx, writer, 1); err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("writer pool: %w", err)
+	}
+
+	reader, err := sql.Open("sqlite", buildDSN(path, false))
+	if err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	reader.SetMaxOpenConns(options.ReaderPoolSize)
+	reader.SetMaxIdleConns(options.ReaderPoolSize)
+	// Idle readers are recycled so a pool that spiked to its ceiling during a
+	// burst gives the memory back (each connection holds a libc.TLS and page
+	// cache). No MaxLifetime: a read connection has no server-side state that
+	// goes stale, and forcibly closing a busy one only costs a reopen.
+	reader.SetConnMaxIdleTime(5 * time.Minute)
+	reader.SetConnMaxLifetime(0)
+	if err := verifyPragmas(ctx, reader, options.ReaderPoolSize); err != nil {
+		_ = reader.Close()
+		_ = writer.Close()
+		return nil, fmt.Errorf("reader pool: %w", err)
+	}
+	store.readDB = reader
 	return store, nil
 }
 
-func (s *Store) Close() error {
-	return s.db.Close()
+// verifyPragmas reads back the per-connection pragmas that must hold on every
+// connection a pool hands out. modernc.org/sqlite silently accepts a
+// misspelled pragma name, so without this a typo in buildDSN would disable FK
+// enforcement and busy-waiting with no error anywhere. conns connections are
+// held open simultaneously to force the pool to create distinct connections
+// rather than checking the same one repeatedly.
+func verifyPragmas(ctx context.Context, db *sql.DB, conns int) error {
+	if conns < 1 {
+		conns = 1
+	}
+	held := make([]*sql.Conn, 0, conns)
+	defer func() {
+		for _, c := range held {
+			_ = c.Close()
+		}
+	}()
+	for i := 0; i < conns; i++ {
+		c, err := db.Conn(ctx)
+		if err != nil {
+			return fmt.Errorf("open connection %d/%d: %w", i+1, conns, err)
+		}
+		held = append(held, c)
+
+		var foreignKeys int
+		if err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+			return fmt.Errorf("read foreign_keys on connection %d: %w", i+1, err)
+		}
+		if foreignKeys != 1 {
+			return fmt.Errorf("connection %d has foreign_keys=%d, want 1", i+1, foreignKeys)
+		}
+
+		var busyTimeout int
+		if err := c.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+			return fmt.Errorf("read busy_timeout on connection %d: %w", i+1, err)
+		}
+		if busyTimeout != busyTimeoutMS {
+			return fmt.Errorf("connection %d has busy_timeout=%d, want %d", i+1, busyTimeout, busyTimeoutMS)
+		}
+	}
+	return nil
 }
 
+func (s *Store) Close() error {
+	var readerErr error
+	if s.readDB != nil {
+		readerErr = s.readDB.Close()
+	}
+	return errors.Join(s.db.Close(), readerErr)
+}
+
+// DBForTest returns the writer handle. Tests reach through it for direct SQL,
+// and every Store method runs on the writer, so this stays the writer pool.
 func (s *Store) DBForTest() *sql.DB {
 	return s.db
 }
 
+// ReadDBForTest returns the reader pool handle.
+func (s *Store) ReadDBForTest() *sql.DB {
+	return s.readDB
+}
+
 func (s *Store) migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `
-PRAGMA busy_timeout=5000;
-PRAGMA journal_mode=WAL;
--- Under WAL, synchronous=NORMAL avoids an fsync on every commit (the default
--- FULL does one per commit). It is crash-safe: the database cannot corrupt, and
--- only the very last committed transaction can be lost on a power failure. That
--- is acceptable here because bridge reconnect/replay recovers the latest state.
-PRAGMA synchronous=NORMAL;
-PRAGMA foreign_keys=ON;
-`); err != nil {
-		return err
-	}
 	return s.ensureSchema(ctx)
 }
 
