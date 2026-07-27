@@ -31,6 +31,38 @@ Produces an Ubuntu (`noble`) OCI rootfs directory. Key env knobs:
   regenerates the manifest (no root, no debootstrap); `1` does a full rebuild
   (requires root + `debootstrap`).
 
+### Per-host build config (`sandbox-image/build.env`)
+
+Anything specific to *where* the build runs or *where the image will run* is read
+from `sandbox-image/build.env` (gitignored; override the path with
+`SANDBOX_BUILD_ENV`). The committed defaults are upstream-canonical, so a build
+with no env file is correct — it just fetches from upstream and bakes public
+resolvers. Copy `build.env.example` and fill in per host:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `UBUNTU_MIRROR` | `archive.ubuntu.com` on amd64/i386, `ports.ubuntu.com` elsewhere | apt/debootstrap mirror. Only x86 is served by `archive`. |
+| `UBUNTU_COMPONENTS` | `main,universe` | debootstrap components |
+| `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` | unset → pypi.org | pip index |
+| `NPM_REGISTRY` | unset → registry.npmjs.org | registry for the in-chroot Pi install |
+| `NODE_DIST_BASE_URL` | `https://nodejs.org/dist` | Node tarball source |
+| `SANDBOX_DNS_SERVERS` | `1.1.1.1 8.8.8.8` | resolvers written to the image's `/etc/resolv.conf` |
+| `SANDBOX_DNS_SEARCH` | unset | `search` line in the same file |
+| `SANDBOX_BUILD_DNS_HOOK` | unset | executable run after debootstrap with the rootfs dir as `$1` |
+
+`/etc/resolv.conf` is **rendered at build time**, not committed — the sandbox falls
+back to it whenever the orchestrator is not projecting a per-generation
+`/etc/hosts` (that projection is conditional; see `requiresNetworkHostsProjection`),
+so the resolvers must be reachable wherever the image runs. A cloud deployment
+points them at its VPC resolvers via `build.env`.
+
+`SANDBOX_BUILD_DNS_HOOK` exists for build hosts whose own DNS the chroot cannot
+use — e.g. a fake-ip proxy that answers every query with an unroutable
+`198.18.0.0/15` address. `dev/build-dns-pin.sh` is the reference implementation
+(resolves the build's download hosts over DoH and pins them in the chroot's
+`/etc/hosts`); it no-ops on a host with working DNS. Nothing it writes reaches the
+image — sanitize resets `/etc/hosts`.
+
 Full-build steps: `debootstrap` → apt (`ca-certificates curl fonts-wqy-microhei
 fonts-wqy-zenhei git nodejs npm python3 python3-pip python3-venv xz-utils`) → pip
 (`matplotlib pandas pymysql`) → install a modern Node for Pi if selected → install
@@ -45,7 +77,10 @@ renders as tofu boxes. See the **matplotlib-fonts** skill below.
 **Sanitize** scrubs any host/session state (`/workspace`, `/agent-home`,
 `/sessions`, `/agent-homes`, `/harness-secrets`, stray gVisor filestore files)
 and recreates empty `/workspace` and `/agent-home` mount points, so the image
-is a clean template.
+is a clean template. It also resets `/etc/hosts` to localhost-only, dropping
+whatever the build host resolved during the build. Reset rather than delete: a
+generation without the hosts projection still needs `localhost` to resolve, and
+gVisor's file bind mount needs the destination to exist.
 
 ## Agent image manifest (`/etc/harness-image/agents.json`)
 
