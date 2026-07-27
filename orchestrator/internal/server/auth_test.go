@@ -30,10 +30,6 @@ func newAuthTestServer(t *testing.T, dir string, st *store.Store, users []config
 		AuthUsers:        users,
 		AuthSessionTTL:   time.Hour,
 	}
-	authUsers := map[string]config.AuthUser{}
-	for _, u := range users {
-		authUsers[u.Username] = u
-	}
 	return &Server{
 		cfg:               cfg,
 		store:             st,
@@ -41,8 +37,7 @@ func newAuthTestServer(t *testing.T, dir string, st *store.Store, users []config
 		watcher:           newServerTestWatcher(t, dir, st, events.NewHub()),
 		hub:               events.NewHub(),
 		log:               slog.Default(),
-		authUsers:         authUsers,
-		authEnabled:       cfg.AuthEnabled(),
+		creds:             newAuthRegistry(cfg, slog.Default()),
 		loginLimiter:      auth.NewRateLimiter(5, 15*time.Minute),
 		sessionOwnerCache: map[string]sessionOwnerEntry{},
 	}

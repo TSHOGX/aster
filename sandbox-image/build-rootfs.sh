@@ -5,6 +5,18 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 ROOTFS_DIR="${ROOTFS_DIR:-${SCRIPT_DIR}/rootfs}"
+
+# Everything deployment-specific about this build — package mirrors, the DNS
+# servers baked into the image, an optional build-host DNS hook — comes from an
+# env file the host provides, never from a committed value. Defaults below are
+# upstream-canonical and carry no environment's fingerprint, so a build with no
+# env file at all is correct (just not mirrored). See build.env.example.
+SANDBOX_BUILD_ENV="${SANDBOX_BUILD_ENV:-${SCRIPT_DIR}/build.env}"
+if [ -f "${SANDBOX_BUILD_ENV}" ]; then
+  # shellcheck disable=SC1090
+  . "${SANDBOX_BUILD_ENV}"
+fi
+
 UBUNTU_SUITE="${UBUNTU_SUITE:-noble}"
 # archive.ubuntu.com carries amd64/i386 only; every other arch (arm64 — the local
 # dev VM on Apple silicon) is on ports.ubuntu.com. Pick by host arch so the same
@@ -16,6 +28,22 @@ if [ -z "${UBUNTU_MIRROR:-}" ]; then
   esac
 fi
 UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-main,universe}"
+# Package index overrides. Empty means the tool's own default (pypi.org,
+# registry.npmjs.org, nodejs.org) — a mirrored deployment sets these.
+PIP_INDEX_URL="${PIP_INDEX_URL:-}"
+PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-}"
+NPM_REGISTRY="${NPM_REGISTRY:-}"
+NODE_DIST_BASE_URL="${NODE_DIST_BASE_URL:-https://nodejs.org/dist}"
+# Resolvers baked into the image's /etc/resolv.conf. These are what the sandbox
+# uses when the orchestrator is not projecting a per-generation resolv.conf, so
+# they have to be reachable from wherever the image runs — a cloud deployment
+# points them at its VPC resolvers, and nothing here assumes any one of them.
+SANDBOX_DNS_SERVERS="${SANDBOX_DNS_SERVERS:-1.1.1.1 8.8.8.8}"
+SANDBOX_DNS_SEARCH="${SANDBOX_DNS_SEARCH:-}"
+# Optional executable run after debootstrap with the rootfs dir as $1, to fix up
+# build-host network quirks (e.g. pinning hosts by IP behind an intercepting
+# resolver). Unset on any host with working DNS. See dev/build-dns-pin.sh.
+SANDBOX_BUILD_DNS_HOOK="${SANDBOX_BUILD_DNS_HOOK:-}"
 FORCE="${FORCE:-0}"
 SANDBOX_AGENT_DRIVERS="${SANDBOX_AGENT_DRIVERS:-pi}"
 PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-0.77.0}"
@@ -176,10 +204,11 @@ case "${arch}" in
   *) echo "unsupported Node architecture for Pi: ${arch}" >&2; exit 1 ;;
 esac
 version="'"${PI_NODE_VERSION}"'"
+dist_base="'"${NODE_DIST_BASE_URL}"'"
 prefix="/opt/node-v${version}"
 if [ ! -x "${prefix}/bin/node" ]; then
   tmp="/tmp/node-v${version}.tar.xz"
-  curl -fsSL "https://nodejs.org/dist/v${version}/node-v${version}-linux-${node_arch}.tar.xz" -o "${tmp}"
+  curl -fsSL "${dist_base}/v${version}/node-v${version}-linux-${node_arch}.tar.xz" -o "${tmp}"
   mkdir -p "${prefix}"
   tar -xJf "${tmp}" -C "${prefix}" --strip-components=1
   rm -f "${tmp}"
@@ -198,7 +227,12 @@ install_agent_drivers() {
     case "${driver}" in
       pi)
         log "installing Pi coding agent ${PI_CODING_AGENT_VERSION}"
-        chroot "${ROOTFS_DIR}" /bin/sh -lc "npm install -g --prefix /usr/local '${PI_PACKAGE}@${PI_CODING_AGENT_VERSION}'"
+        local npm_registry_arg=""
+        if [ -n "${NPM_REGISTRY}" ]; then
+          npm_registry_arg="--registry ${NPM_REGISTRY}"
+          log "using npm registry ${NPM_REGISTRY}"
+        fi
+        chroot "${ROOTFS_DIR}" /bin/sh -lc "npm install -g --prefix /usr/local ${npm_registry_arg} '${PI_PACKAGE}@${PI_CODING_AGENT_VERSION}'"
         ;;
       sh)
         log "using bundled shell agent"
@@ -318,77 +352,56 @@ with open(out_dir / "agents.json", "w", encoding="utf-8") as f:
 PY
 }
 
-# Every host this script fetches from. Only consulted when DNS is detected as
-# intercepted (see prepare_build_time_dns). Keep in sync when adding a build
-# stage that downloads from somewhere new — a missing entry shows up as that one
-# stage failing to connect while everything before it succeeded.
-BUILD_DNS_PIN_HOSTS="${BUILD_DNS_PIN_HOSTS:-\
-pypi.org files.pythonhosted.org \
-ports.ubuntu.com archive.ubuntu.com \
-registry.npmjs.org nodejs.org \
-extensions.duckdb.org}"
-
-# True when the build host's resolver is unusable from inside the chroot. Some
-# dev machines (e.g. a local VM behind a fake-ip proxy) answer every query with
-# an unroutable 198.18.0.0/15 address, and do so even for queries aimed straight
-# at a public resolver, so switching nameservers does not help. A deployment host
-# with working DNS returns real addresses and this is false.
-build_dns_is_intercepted() {
-  local addr
-  addr="$(getent ahostsv4 pypi.org 2>/dev/null | awk 'NR==1 {print $1}')"
-  case "${addr}" in
-    198.1[89].*) return 0 ;;
-    "") return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Resolve over DNS-over-HTTPS, which bypasses an intercepting resolver.
-resolve_over_doh() {
-  curl -sS --max-time 20 -H 'accept: application/dns-json' \
-    "https://1.1.1.1/dns-query?name=$1&type=A" 2>/dev/null |
-    sed -n 's/.*"type":1,"TTL":[0-9]*,"data":"\([0-9.]*\)".*/\1/p' | head -1
-}
-
 # The chroot resolves names itself (apt, pip, npm, nodejs.org), so it needs a
-# usable resolv.conf during the build. Both files written here are build-time
-# only — at runtime the orchestrator renders /etc/hosts and resolv.conf per
-# generation (renderNetworkHostsProjection).
+# usable resolv.conf and a /etc/hosts during the build — debootstrap leaves it
+# with neither. Both files are build-time state: resolv.conf is replaced by
+# render_sandbox_resolv_conf at the end, and hosts is reset to localhost-only by
+# sanitize_isolated_rootfs, so nothing the build host resolved survives into the
+# image.
 #
-# On a host with working DNS this only seeds resolv.conf and localhost. Pinning
-# is applied only when the resolver is detected as intercepted, so this is inert
-# on deployment hosts.
+# A host whose resolver cannot be used from the chroot supplies
+# SANDBOX_BUILD_DNS_HOOK to fix that up; with the hook unset this is just the
+# two default files.
 prepare_build_time_dns() {
   log "seeding build-time resolv.conf/hosts into ${ROOTFS_DIR}"
   install -d -m 0755 "${ROOTFS_DIR}/etc"
   printf 'nameserver %s\n' ${BUILD_DNS_SERVERS:-1.1.1.1 8.8.8.8} \
     > "${ROOTFS_DIR}/etc/resolv.conf"
+  write_localhost_only_hosts
+
+  if [ -z "${SANDBOX_BUILD_DNS_HOOK}" ]; then
+    return
+  fi
+  if [ ! -x "${SANDBOX_BUILD_DNS_HOOK}" ]; then
+    echo "SANDBOX_BUILD_DNS_HOOK is set but not executable: ${SANDBOX_BUILD_DNS_HOOK}" >&2
+    exit 1
+  fi
+  log "running build DNS hook ${SANDBOX_BUILD_DNS_HOOK}"
+  "${SANDBOX_BUILD_DNS_HOOK}" "${ROOTFS_DIR}"
+}
+
+write_localhost_only_hosts() {
   {
     printf '127.0.0.1\tlocalhost\n'
     printf '::1\t\tlocalhost ip6-localhost ip6-loopback\n'
   } > "${ROOTFS_DIR}/etc/hosts"
+}
 
-  if ! build_dns_is_intercepted; then
-    log "build host DNS resolves normally; no host pinning needed"
-    return
-  fi
-
-  log "build host DNS is intercepted; pinning build hosts by IP"
+# The image's own resolv.conf, rendered from the deployment's resolvers. Runs
+# after copy_overlay_files so it replaces the build-time one written above. The
+# orchestrator may also project a per-generation /etc/hosts over the sandbox
+# (renderNetworkHostsProjection), but that projection is conditional — see
+# requiresNetworkHostsProjection — so what is baked here has to stand on its own.
+render_sandbox_resolv_conf() {
+  log "rendering /etc/resolv.conf for: ${SANDBOX_DNS_SERVERS}"
   {
-    # Carry over pins the build host itself already relies on.
-    if [ -f /etc/hosts ]; then
-      awk '/^[0-9]/ && $2 !~ /^(localhost|.*\.localdomain)$/ && $1 !~ /^127\./ { print }' /etc/hosts
+    printf 'nameserver %s\n' ${SANDBOX_DNS_SERVERS}
+    printf 'options edns0\n'
+    if [ -n "${SANDBOX_DNS_SEARCH}" ]; then
+      printf 'search %s\n' "${SANDBOX_DNS_SEARCH}"
     fi
-    local host addr
-    for host in ${BUILD_DNS_PIN_HOSTS}; do
-      addr="$(resolve_over_doh "${host}")"
-      if [ -n "${addr}" ]; then
-        printf '%s %s\n' "${addr}" "${host}"
-      else
-        log "warning: could not pin ${host}; the build may fail to fetch from it"
-      fi
-    done
-  } >> "${ROOTFS_DIR}/etc/hosts"
+  } > "${ROOTFS_DIR}/etc/resolv.conf"
+  chmod 0644 "${ROOTFS_DIR}/etc/resolv.conf"
 }
 
 sanitize_isolated_rootfs() {
@@ -402,15 +415,28 @@ sanitize_isolated_rootfs() {
     "${ROOTFS_DIR}/root/.cache"
   install -d -m 0755 "${ROOTFS_DIR}/workspace" "${ROOTFS_DIR}/agent-home"
   find "${ROOTFS_DIR}" -maxdepth 1 -type f -name '.gvisor.filestore.*' -delete
+  # Drop whatever the build host resolved into /etc/hosts, so the image carries
+  # no trace of the machine it was built on. Reset rather than delete: the
+  # per-generation hosts projection is conditional, and a sandbox running
+  # without it still needs localhost to resolve.
+  write_localhost_only_hosts
+  chmod 0644 "${ROOTFS_DIR}/etc/hosts"
+}
+
+# Both entry paths (fresh build and FORCE=0 reuse) end here, so the image is
+# assembled the same way either way.
+finalize_rootfs() {
+  copy_overlay_files
+  render_sandbox_resolv_conf
+  generate_agent_manifest
+  sanitize_isolated_rootfs
 }
 
 parse_agent_drivers
 
 if [ -d "${ROOTFS_DIR}" ] && [ "${FORCE}" != "1" ]; then
   log "reusing existing rootfs at ${ROOTFS_DIR}; set FORCE=1 to rebuild"
-  copy_overlay_files
-  generate_agent_manifest
-  sanitize_isolated_rootfs
+  finalize_rootfs
   log "done"
   exit 0
 fi
@@ -437,15 +463,21 @@ log "installing apt packages"
 chroot "${ROOTFS_DIR}" /bin/sh -lc "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${APT_PACKAGES[*]} && apt-get clean && rm -rf /var/lib/apt/lists/*"
 
 log "installing Python packages"
-chroot "${ROOTFS_DIR}" /bin/sh -lc "python3 -m pip install --break-system-packages --no-cache-dir ${PIP_PACKAGES[*]}"
+pip_args=""
+if [ -n "${PIP_INDEX_URL}" ]; then
+  pip_args="--index-url ${PIP_INDEX_URL}"
+  log "using pip index ${PIP_INDEX_URL}"
+fi
+if [ -n "${PIP_TRUSTED_HOST}" ]; then
+  pip_args="${pip_args} --trusted-host ${PIP_TRUSTED_HOST}"
+fi
+chroot "${ROOTFS_DIR}" /bin/sh -lc "python3 -m pip install --break-system-packages --no-cache-dir ${pip_args} ${PIP_PACKAGES[*]}"
 
 install_duckdb_extensions
 
 install_modern_node_for_pi
 install_agent_drivers
 
-copy_overlay_files
-generate_agent_manifest
-sanitize_isolated_rootfs
+finalize_rootfs
 
 log "rootfs ready at ${ROOTFS_DIR}"

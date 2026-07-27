@@ -138,7 +138,7 @@ func (s *Server) sessionVisibleTo(ctx context.Context, sessionID, userID string)
 		session, err := s.store.GetSession(ctx, sessionID)
 		if err != nil {
 			// Unknown/deleted session: don't leak; allow only if not auth-gated.
-			return !s.authEnabled
+			return !s.creds.enabled()
 		}
 		owner = session.UserID
 		s.storeSessionOwner(sessionID, owner)

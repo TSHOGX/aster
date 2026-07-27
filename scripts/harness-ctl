@@ -31,6 +31,9 @@ ACCESS_LOG="/var/log/nginx/access.log"
 DATA_ROOT="/var/lib/harness-publish"
 SESS_DIR="$DATA_ROOT/sessions"      # 每 session 的 workspace
 HOME_DIR="$DATA_ROOT/agent-homes"   # 每 session 的 agent HOME（含 pi/claude 轨迹）
+REPO_ROOT="/home/agent-runtime-platform/main"          # 部署源码根（见 operations.md 第 5 节）
+ORCH_BIN="$REPO_ROOT/orchestrator/bin/orchestrator"    # systemd ExecStart 指向的同一个二进制
+AUTH_USERS="$REPO_ROOT/config/auth-users.yaml"         # 登录凭据（gitignore，只在机器上）
 BACKEND_HEALTH="http://127.0.0.1:9090/healthz"
 FRONTEND_URL="http://127.0.0.1:9001/"
 PUBLIC_URL="https://127.0.0.1/"
@@ -256,6 +259,62 @@ _session_sizes() {
 human_kb() { awk -v k="$1" 'BEGIN{
   if(k>=1048576) printf "%.1fG",k/1048576; else if(k>=1024) printf "%.0fM",k/1024;
   else printf "%dK",k }'; }
+
+# ---- 命令：user（登录凭据管理，免重启生效）----
+# 注意与只读统计命令 `users`（复数）区分：`user`（单数）改凭据，`users` 看用量。
+#
+# 实际改动由 orchestrator 二进制的 `user` 子命令完成（它复用后端的 YAML 校验、
+# PBKDF2 参数和会话吊销逻辑）；这里只负责：定位二进制、对齐 systemd 的环境变量、
+# 用 `read -s` 隐式读密码后管道喂进去（密码不进 argv、不进 shell history）。
+#
+# orchestrator 写完文件即生效：后端发现文件 mtime 变了就重载凭据，不需要重启，
+# 也不需要维护页。
+
+# 从 systemd unit 里取环境变量，保证 CLI 和跑着的服务读同一份文件/同一个库。
+unit_env() {
+  local key="$1"
+  systemctl show harness-publish-orchestrator -p Environment --value 2>/dev/null \
+    | tr ' ' '\n' | sed -n "s/^${key}=//p" | tail -1
+}
+
+cmd_user() {
+  local action="${1:-}"; shift || true
+  [[ -x "$ORCH_BIN" ]] || die "找不到可执行的 orchestrator 二进制：$ORCH_BIN"
+
+  # 与服务对齐：unit 里显式设过就用 unit 的，否则用 config.Load 的默认推导。
+  local users_path db_path
+  users_path="$(unit_env HARNESS_AUTH_USERS_PATH)"; users_path="${users_path:-$AUTH_USERS}"
+  db_path="$(unit_env HARNESS_DB_PATH)"; db_path="${db_path:-$DB}"
+
+  run_orch() { as_root env HARNESS_AUTH_USERS_PATH="$users_path" HARNESS_DB_PATH="$db_path" \
+                 "$ORCH_BIN" user "$@"; }
+  # add/passwd 需要密码：TTY 下静默读两次比对，非 TTY 下直接透传 stdin（便于脚本化）。
+  run_orch_with_password() {
+    if [[ -t 0 ]]; then
+      local pw1 pw2
+      read -rsp "新密码：" pw1; echo
+      read -rsp "再输一次：" pw2; echo
+      [[ -n "$pw1" ]] || die "密码不能为空"
+      [[ "$pw1" == "$pw2" ]] || die "两次输入不一致"
+      printf '%s' "$pw1" | run_orch "$@" --password-stdin
+    else
+      run_orch "$@" --password-stdin
+    fi
+  }
+
+  case "$action" in
+    list|ls|"")   run_orch list ;;
+    add)          [[ -n "${1:-}" ]] || die "用法：harness-ctl user add <用户名>"
+                  run_orch_with_password add "$1" ;;
+    passwd|pw)    [[ -n "${1:-}" ]] || die "用法：harness-ctl user passwd <用户名> [--keep-sessions]"
+                  local name="$1"; shift
+                  run_orch_with_password passwd "$name" "$@" ;;
+    rm|remove|del) [[ -n "${1:-}" ]] || die "用法：harness-ctl user rm <用户名> [--force] [--keep-sessions]"
+                  run_orch rm "$@" ;;
+    -h|--help|help) run_orch --help ;;
+    *)            err "未知子命令：user $action"; run_orch --help; exit 1 ;;
+  esac
+}
 
 # ---- 命令：users ----
 cmd_users() {
@@ -721,6 +780,11 @@ harness-ctl — publish 环境运维 CLI
   harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
   harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
   harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
+  harness-ctl user list             列出登录账号（不打印哈希）
+  harness-ctl user add <名>         新增登录账号（交互式输入密码）
+  harness-ctl user passwd <名>      改密码（默认吊销该账号已有 cookie）
+  harness-ctl user rm <名>          删除登录账号（删最后一个需 --force）
+                                    以上四条改完立即生效，无需重启、无需维护页
   harness-ctl storage [N]           存储总览：按目录 + Top N 会话占用
   harness-ctl maintenance on        上维护页（nginx 503，后端不动）
   harness-ctl maintenance off       下维护页，恢复服务
@@ -743,6 +807,7 @@ main() {
     traffic)      cmd_traffic "$@" ;;
     stats|usage)  cmd_stats "$@" ;;
     users)        cmd_users "$@" ;;
+    user)         cmd_user "$@" ;;
     storage|disk) cmd_storage "$@" ;;
     maintenance|maint) cmd_maintenance "$@" ;;
     safe-restart) cmd_safe_restart "$@" ;;

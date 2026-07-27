@@ -106,6 +106,13 @@ image manifest during resolution ([drivers.md](./drivers.md)).
   `X-Forwarded-For` entry, which a client can forge to rotate around the lockout.
   Set `HARNESS_TRUST_PROXY_HEADERS=0` when the orchestrator is exposed directly
   (no trusted proxy) so only `RemoteAddr` is used.
+- **Credential changes need no restart**: `config/auth-users.yaml` is reloaded on
+  change. Manage it with `harness-ctl user add|passwd|rm` (or `orchestrator user …`),
+  which writes the file atomically at `0600` and revokes the affected user's login
+  cookies by default (`--keep-sessions` opts out). A malformed, unreadable, or
+  deleted file leaves the previously loaded credentials in force rather than
+  falling back to open mode; removing the last user does reopen the gate, so it
+  requires `--force`.
 - **Global rate limit**: every request (except `/healthz`) passes a per-IP
   token-bucket limiter (~10 req/s sustained, burst 40); excess gets `429`. This
   is a coarse flood/scan guard on top of the login lockout.

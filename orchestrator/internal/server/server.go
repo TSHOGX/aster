@@ -72,8 +72,7 @@ type Server struct {
 	ownerUUID string
 	version   string
 
-	authUsers    map[string]config.AuthUser
-	authEnabled  bool
+	creds        *authRegistry
 	loginLimiter *auth.RateLimiter
 	ipLimiter    *auth.IPRateLimiter
 
@@ -142,10 +141,6 @@ func New(
 	hub *events.Hub,
 	log *slog.Logger,
 ) *Server {
-	authUsers := make(map[string]config.AuthUser, len(cfg.AuthUsers))
-	for _, user := range cfg.AuthUsers {
-		authUsers[user.Username] = user
-	}
 	return &Server{
 		cfg:     cfg,
 		store:   store,
@@ -158,8 +153,7 @@ func New(
 			APIKey:  cfg.TitleLLM.APIKey,
 			Model:   cfg.TitleLLM.Model,
 		}),
-		authUsers:    authUsers,
-		authEnabled:  cfg.AuthEnabled(),
+		creds:        newAuthRegistry(cfg, log),
 		loginLimiter: auth.NewRateLimiter(5, 15*time.Minute),
 		// ~10 req/s sustained per IP with a burst of 40 absorbs normal
 		// interactive bursts and SSE reconnects while throttling scanners and
@@ -313,7 +307,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.authEnabled {
+	if !s.creds.enabled() {
 		// Open mode: issue a session for the default lab user so the cookie
 		// flow is uniform, but no credentials are required.
 		s.issueAuthSession(w, r, labUserID)
@@ -352,8 +346,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 // the single shared-password fallback. It always performs hashing work even
 // when the user is unknown, to avoid leaking account existence via timing.
 func (s *Server) verifyCredentials(username, password string) (string, bool) {
-	if len(s.authUsers) > 0 {
-		user, ok := s.authUsers[username]
+	// Force a reload check so a hash written seconds ago is honored, even when a
+	// shared secret short-circuits enabled().
+	s.creds.refresh(true)
+	if s.creds.hasUsers() {
+		user, ok := s.creds.lookup(username)
 		if !ok {
 			// Run a dummy verify to equalize timing for unknown users.
 			auth.VerifyPassword("pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", password)
@@ -407,7 +404,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	if !s.authEnabled {
+	if !s.creds.enabled() {
 		writeJSON(w, http.StatusOK, map[string]any{"auth_required": false, "user_id": labUserID})
 		return
 	}

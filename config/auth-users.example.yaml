@@ -1,9 +1,20 @@
 # Auth users for the workbench login gate.
 #
-# Copy this file to config/auth-users.yaml (which is gitignored) and replace the
-# hashes. Generate a hash with:
+# Prefer managing this file with the CLI, which validates the entry, hashes the
+# password, and revokes the user's stale cookies:
+#
+#   harness-ctl user add alice          # or, without the ops wrapper:
+#   orchestrator user add alice --password-stdin
+#
+# To manage it by hand, copy this file to config/auth-users.yaml (which is
+# gitignored) and replace the hashes. Generate a hash with:
 #
 #   echo -n 'your-password' | go run ./orchestrator/cmd/authhash
+#
+# Either way the running orchestrator reloads this file when it changes, so
+# adding a user or rotating a password does NOT need a restart. A file that is
+# unreadable or fails to parse is ignored (the previous credentials keep
+# serving) rather than emptying the credential set.
 #
 # Notes:
 #  - usernames may contain only letters, digits, "_" and "-" (1-64 chars).

@@ -6,6 +6,9 @@
 > decoded). Login users are in `config/auth-users.yaml`, and the optional session-title
 > LLM in `config/title-llm.yaml` — both are gitignored secret files loaded the same
 > way (missing file = feature simply off). See [security.md](./security.md).
+> Everything else is read once at startup, but `auth-users.yaml` is the exception:
+> it is reloaded whenever it changes, so `harness-ctl user add|passwd|rm` needs no
+> restart. See [operations.md](./operations.md) §3.
 
 ## `config/harness.yaml` (checked-in lab profile)
 
@@ -119,7 +122,7 @@ Loaded via `HARNESS_TITLE_LLM_PATH` (default `<repo>/config/title-llm.yaml`).
 | `HARNESS_COOKIE_INSECURE` | false | set `1` to allow non-Secure cookie (local http only) |
 | `HARNESS_TRUST_FORWARDED_PROTO` | true | trust `X-Forwarded-Proto` to detect HTTPS |
 | `HARNESS_TRUST_PROXY_HEADERS` | true | trust reverse-proxy client-IP headers for rate limiting: prefer nginx-overwritten `X-Real-IP`, fall back to the rightmost `X-Forwarded-For`; set `0` when exposing orchestrator directly |
-| `HARNESS_AUTH_USERS_PATH` | `<repo>/config/auth-users.yaml` | login users file |
+| `HARNESS_AUTH_USERS_PATH` | `<repo>/config/auth-users.yaml` | login users file; re-read on change (no restart) |
 | `HARNESS_TITLE_LLM_PATH` | `<repo>/config/title-llm.yaml` | session-title LLM secret file (optional) |
 | `HARNESS_AUTH_SESSION_TTL` | 24h | login session TTL |
 | `HARNESS_SESSION_RETENTION` | config `0s` | session expiry (0 = never); invalid values fail startup |

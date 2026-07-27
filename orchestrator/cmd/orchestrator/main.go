@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -36,14 +37,13 @@ func main() {
 		logLevel.Set(slog.LevelInfo)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
-	log.Info("starting orchestrator", "version", version)
 	signal.Ignore(syscall.SIGPIPE)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Trajectory subcommands run a bounded one-shot job (no server, no
-	// goroutines) then exit. The default (no subcommand) path is the full server
-	// boot below.
+	// Subcommands run a bounded one-shot job (no server, no goroutines) then
+	// exit; `user` also keeps stdout clean for CLI consumption, so the startup
+	// banner below is only logged on the full server boot path.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "db-split":
@@ -64,8 +64,16 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "user":
+			if err := runUser(ctx, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
+
+	log.Info("starting orchestrator", "version", version)
 
 	cfg, err := config.Load()
 	if err != nil {

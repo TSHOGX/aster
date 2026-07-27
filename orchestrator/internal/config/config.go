@@ -28,6 +28,7 @@ type Config struct {
 	SharedSecret         string
 	CookieName           string
 	AuthUsers            []AuthUser
+	AuthUsersPath        string
 	AuthSessionTTL       time.Duration
 	CookieSecure         bool
 	TrustForwardedProto  bool
@@ -387,7 +388,8 @@ func Load() (Config, error) {
 	maxUploadBytes := int64Env("HARNESS_MAX_UPLOAD_BYTES", defaultMaxUploadBytes)
 	maxEditBytes := int64Env("HARNESS_MAX_EDIT_BYTES", defaultMaxEditBytes)
 	maxUploadFiles := intEnv("HARNESS_MAX_UPLOAD_FILES", defaultMaxUploadFiles)
-	authUsers, err := loadAuthUsers(getenv("HARNESS_AUTH_USERS_PATH", filepath.Join(repoRoot, "config", "auth-users.yaml")))
+	authUsersPath := ResolveAuthUsersPath(repoRoot)
+	authUsers, err := LoadAuthUsersFile(authUsersPath)
 	if err != nil {
 		return Config{}, err
 	}
@@ -408,6 +410,7 @@ func Load() (Config, error) {
 		SharedSecret:         os.Getenv("HARNESS_LAB_PASSWORD"),
 		CookieName:           getenv("HARNESS_COOKIE_NAME", "harness_auth"),
 		AuthUsers:            authUsers,
+		AuthUsersPath:        authUsersPath,
 		AuthSessionTTL:       authSessionTTL,
 		CookieSecure:         !boolEnvDefault("HARNESS_COOKIE_INSECURE", false),
 		TrustForwardedProto:  boolEnvDefault("HARNESS_TRUST_FORWARDED_PROTO", true),
@@ -1462,15 +1465,36 @@ type AuthUser struct {
 
 var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+// ValidateAuthUsername applies the same username rule LoadAuthUsersFile
+// enforces. Writers use it to reject a bad name up front, since an invalid
+// entry would make the whole file fail to parse on reload.
+func ValidateAuthUsername(username string) error {
+	if !authUsernamePattern.MatchString(username) {
+		return fmt.Errorf("invalid username %q (allowed: letters, digits, _ and -, 1-64 chars)", username)
+	}
+	return nil
+}
+
 // AuthEnabled reports whether credential-based login is active. Login is
 // required when any users are configured or a shared password is set.
 func (c Config) AuthEnabled() bool {
 	return len(c.AuthUsers) > 0 || strings.TrimSpace(c.SharedSecret) != ""
 }
 
-// loadAuthUsers reads and validates the auth users file. A missing file is not
-// an error: it simply yields no users (open / single-password fallback).
-func loadAuthUsers(path string) ([]AuthUser, error) {
+// ResolveAuthUsersPath returns the auth users file location: the
+// HARNESS_AUTH_USERS_PATH override, else config/auth-users.yaml under repoRoot.
+// Exported so the `orchestrator user` subcommands and the server's hot reloader
+// resolve exactly the same file the running server loaded at boot.
+func ResolveAuthUsersPath(repoRoot string) string {
+	return getenv("HARNESS_AUTH_USERS_PATH", filepath.Join(repoRoot, "config", "auth-users.yaml"))
+}
+
+// LoadAuthUsersFile reads and validates the auth users file. A missing file is
+// not an error: it simply yields no users (open / single-password fallback).
+//
+// This is re-read at runtime (see the server's auth registry), so it must stay
+// free of side effects: parse, validate, return.
+func LoadAuthUsersFile(path string) ([]AuthUser, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

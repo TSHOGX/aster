@@ -65,7 +65,21 @@ Workbench 支持用户名/密码登录，每个用户只能看到并操作自己
 
 ### 配置用户凭据
 
-凭据放在 `config/auth-users.yaml`（已被 `.gitignore` 忽略，不会进 git）。复制模板并填入哈希：
+凭据放在 `config/auth-users.yaml`（已被 `.gitignore` 忽略，不会进 git）。
+
+最省事的方式是用 CLI，它会校验用户名、生成哈希、原子写入 `0600` 文件：
+
+```bash
+# 仓库根目录下
+echo -n '你的密码' | ./orchestrator/bin/orchestrator user add alice --password-stdin
+./orchestrator/bin/orchestrator user list          # 查看已有账号（不打印哈希）
+```
+
+**加用户 / 改密码都不需要重启**：orchestrator 发现该文件变化后会自动重载凭据，
+下一次登录请求即生效。部署环境上有更顺手的包装 `harness-ctl user add|passwd|rm`
+（见 [docs/operations.md](docs/operations.md) 第 3 节）。
+
+也可以手工编辑。复制模板：
 
 ```bash
 cp config/auth-users.example.yaml config/auth-users.yaml
@@ -95,6 +109,8 @@ users:
 - 用户名只允许字母、数字、`_`、`-`（1-64 字符）。
 - **保留 `lab` 用户**：登录前已存在的历史会话都归属于 `lab`，用 `lab` 登录才能继续看到它们。
 - 若 `config/auth-users.yaml` 不存在，orchestrator 以开放模式运行（单一 `lab` 用户、无需登录），仅适合本地开发。
+- 文件改动会被自动重载，无需重启。但**写坏的文件会被忽略**（保留上一份已加载的凭据并打
+  ERROR 日志），这样一个语法错误不会把登录闸放开——留意日志里的 `failed to reload auth users`。
 
 ### 相关环境变量
 
