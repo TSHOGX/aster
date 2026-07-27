@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // A compact but representative native pi session: head, model_change, a user
@@ -119,7 +119,7 @@ func TestParsePiSessionFauxIsTest(t *testing.T) {
 	}
 }
 
-func kindsOf(events []store.TrajectoryEvent) []string {
+func kindsOf(events []memorystore.TrajectoryEvent) []string {
 	out := make([]string, len(events))
 	for i, e := range events {
 		out[i] = e.Kind

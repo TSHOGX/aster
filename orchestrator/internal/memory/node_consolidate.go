@@ -4,7 +4,7 @@ package memory
 //
 // See docs/decisions/agentic-context-evolution.md §"No vectors" and node
 // B0/B1/B2/B3. This node replaces the exact-string dedup of
-// store.UpsertSemanticMemory (which pins every LLM statement at support=1) with
+// memorystore.UpsertSemanticMemory (which pins every LLM statement at support=1) with
 // blocking + in-context clustering, the classic scalable record-linkage shape:
 //
 //	B0 block-key  single agent: read the SET of distinct raw scope labels →
@@ -34,7 +34,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // clusterCharBudget bounds one B1 bucket's rendered candidates in a single
@@ -45,7 +45,7 @@ const clusterCharBudget = 12000
 // ConsolidateNode drives Node B.
 type ConsolidateNode struct {
 	agent *AgentRunner
-	store *store.Store
+	store *memorystore.Store
 	log   *slog.Logger
 	runID int64
 }
@@ -53,7 +53,7 @@ type ConsolidateNode struct {
 // NewConsolidateNode builds the node. A nil/disabled agent is tolerated: Run
 // then uses the deterministic fallbacks throughout (identity block-key, singleton
 // clusters) so the node still executes without a live pi.
-func NewConsolidateNode(agent *AgentRunner, st *store.Store, log *slog.Logger, runID int64) *ConsolidateNode {
+func NewConsolidateNode(agent *AgentRunner, st *memorystore.Store, log *slog.Logger, runID int64) *ConsolidateNode {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -241,7 +241,7 @@ func (n *ConsolidateNode) blockKey(ctx context.Context, rawScopes []string, rep 
 // clusterBucket clusters one (canonical_scope, type) bucket. Small buckets take
 // one B1 agent call; oversized buckets shard and take the B2 reduce path. On
 // agent failure it falls back to singleton clusters (one per candidate).
-func (n *ConsolidateNode) clusterBucket(ctx context.Context, k bucketKey, members []store.SemanticMemory, rep *ConsolidateReport) []clusterCluster {
+func (n *ConsolidateNode) clusterBucket(ctx context.Context, k bucketKey, members []memorystore.SemanticMemory, rep *ConsolidateReport) []clusterCluster {
 	if len(members) == 0 {
 		return nil
 	}
@@ -265,7 +265,7 @@ func (n *ConsolidateNode) clusterBucket(ctx context.Context, k bucketKey, member
 }
 
 // clusterOne runs one B1 agent call over a single shard/bucket.
-func (n *ConsolidateNode) clusterOne(ctx context.Context, k bucketKey, members []store.SemanticMemory, rep *ConsolidateReport) []clusterCluster {
+func (n *ConsolidateNode) clusterOne(ctx context.Context, k bucketKey, members []memorystore.SemanticMemory, rep *ConsolidateReport) []clusterCluster {
 	data := renderCandidates(members)
 	payload, err := n.callAgent(ctx, "B1:"+k.scope+"/"+k.typ, clusterSystemPrompt, data, "cluster")
 	if err != nil {
@@ -330,7 +330,7 @@ func (n *ConsolidateNode) reduceClusters(ctx context.Context, k bucketKey, perSh
 
 // writeCluster persists one cluster via ReplaceWithConsolidated. Returns the new
 // canonical memory id. Skips (ok=false) clusters with no resolvable members.
-func (n *ConsolidateNode) writeCluster(ctx context.Context, k bucketKey, cl clusterCluster, byID map[int64]store.SemanticMemory, rep *ConsolidateReport) (int64, bool) {
+func (n *ConsolidateNode) writeCluster(ctx context.Context, k bucketKey, cl clusterCluster, byID map[int64]memorystore.SemanticMemory, rep *ConsolidateReport) (int64, bool) {
 	mems := resolveMembers(cl.MemberIDs, byID)
 	if len(mems) == 0 {
 		return 0, false
@@ -348,7 +348,7 @@ func (n *ConsolidateNode) writeCluster(ctx context.Context, k bucketKey, cl clus
 	if support < 1 {
 		support = 1
 	}
-	cm := store.ConsolidatedMemory{
+	cm := memorystore.ConsolidatedMemory{
 		Type:               defaultString(cl.Type, k.typ),
 		Scope:              defaultString(cl.Scope, k.scope),
 		Statement:          stmt,
@@ -415,13 +415,13 @@ func (n *ConsolidateNode) dedupAgainstKB(ctx context.Context, newID int64, scope
 		return
 	}
 
-	evidence := unionEvidence([]store.SemanticMemory{newMem, match})
+	evidence := unionEvidence([]memorystore.SemanticMemory{newMem, match})
 	stmt := defaultString(res.Canonical, match.Statement)
 	support := len(evidence)
 	if support < 1 {
 		support = 1
 	}
-	_, err = n.store.ReplaceWithConsolidated(ctx, store.ConsolidatedMemory{
+	_, err = n.store.ReplaceWithConsolidated(ctx, memorystore.ConsolidatedMemory{
 		Type:               defaultString(match.Type, newMem.Type),
 		Scope:              defaultString(scope, match.Scope),
 		Statement:          stmt,
@@ -449,7 +449,7 @@ func (n *ConsolidateNode) callAgent(ctx context.Context, ref, sys, data, verdict
 	if err != nil {
 		v = "error"
 	}
-	_ = n.store.RecordAgentCall(ctx, store.AgentCall{
+	_ = n.store.RecordAgentCall(ctx, memorystore.AgentCall{
 		RunID: n.runID, Node: "consolidate", Ref: ref, Verdict: v,
 		LatencyMS: ms, OK: err == nil, Error: errString(err),
 	})
@@ -476,7 +476,7 @@ type bucketKey struct {
 }
 
 // distinctScopes returns the sorted set of raw scope strings among candidates.
-func distinctScopes(cands []store.SemanticMemory) []string {
+func distinctScopes(cands []memorystore.SemanticMemory) []string {
 	seen := map[string]struct{}{}
 	for _, c := range cands {
 		s := strings.TrimSpace(c.Scope)
@@ -516,8 +516,8 @@ func canonicalScope(raw string, mapping map[string]string) string {
 }
 
 // groupCandidates buckets candidates by (canonical_scope, type).
-func groupCandidates(cands []store.SemanticMemory, mapping map[string]string) map[bucketKey][]store.SemanticMemory {
-	out := map[bucketKey][]store.SemanticMemory{}
+func groupCandidates(cands []memorystore.SemanticMemory, mapping map[string]string) map[bucketKey][]memorystore.SemanticMemory {
+	out := map[bucketKey][]memorystore.SemanticMemory{}
 	for _, c := range cands {
 		k := bucketKey{
 			scope: canonicalScope(c.Scope, mapping),
@@ -531,16 +531,16 @@ func groupCandidates(cands []store.SemanticMemory, mapping map[string]string) ma
 // shardByBudget splits a bucket into shards each under the char budget. It never
 // returns an empty result; a bucket already under budget is a single shard. A
 // single candidate over budget still gets its own shard (it must be processed).
-func shardByBudget(members []store.SemanticMemory, budget int) [][]store.SemanticMemory {
+func shardByBudget(members []memorystore.SemanticMemory, budget int) [][]memorystore.SemanticMemory {
 	if len(members) == 0 {
 		return nil
 	}
 	// Fast path: the whole bucket fits.
 	if renderedSize(members) <= budget {
-		return [][]store.SemanticMemory{members}
+		return [][]memorystore.SemanticMemory{members}
 	}
-	var shards [][]store.SemanticMemory
-	var cur []store.SemanticMemory
+	var shards [][]memorystore.SemanticMemory
+	var cur []memorystore.SemanticMemory
 	curSize := 0
 	for _, m := range members {
 		sz := candidateSize(m)
@@ -559,11 +559,11 @@ func shardByBudget(members []store.SemanticMemory, budget int) [][]store.Semanti
 }
 
 // candidateSize approximates the rendered char cost of one candidate.
-func candidateSize(m store.SemanticMemory) int {
+func candidateSize(m memorystore.SemanticMemory) int {
 	return len(m.Statement) + len(m.WhenToApply) + len(strings.Join(m.EvidenceSessionIDs, ",")) + 48
 }
 
-func renderedSize(members []store.SemanticMemory) int {
+func renderedSize(members []memorystore.SemanticMemory) int {
 	total := 0
 	for _, m := range members {
 		total += candidateSize(m)
@@ -573,7 +573,7 @@ func renderedSize(members []store.SemanticMemory) int {
 
 // unionEvidence returns the DISTINCT union of member evidence session ids,
 // sorted for determinism.
-func unionEvidence(members []store.SemanticMemory) []string {
+func unionEvidence(members []memorystore.SemanticMemory) []string {
 	seen := map[string]struct{}{}
 	for _, m := range members {
 		for _, s := range m.EvidenceSessionIDs {
@@ -604,7 +604,7 @@ func confidenceFromSupport(support int) float64 {
 
 // singletons turns each candidate into its own one-member cluster (the B1
 // deterministic fallback).
-func singletons(members []store.SemanticMemory) []clusterCluster {
+func singletons(members []memorystore.SemanticMemory) []clusterCluster {
 	out := make([]clusterCluster, 0, len(members))
 	for _, m := range members {
 		out = append(out, clusterCluster{
@@ -620,7 +620,7 @@ func singletons(members []store.SemanticMemory) []clusterCluster {
 
 // appendMissingSingletons ensures every member id appears in some cluster; any
 // candidate the agent omitted becomes its own singleton so knowledge is not lost.
-func appendMissingSingletons(clusters []clusterCluster, members []store.SemanticMemory) []clusterCluster {
+func appendMissingSingletons(clusters []clusterCluster, members []memorystore.SemanticMemory) []clusterCluster {
 	claimed := map[int64]struct{}{}
 	for _, c := range clusters {
 		for _, id := range c.MemberIDs {
@@ -682,15 +682,15 @@ func mergeClusterGroups(perShard []clusterCluster, groups [][]int) []clusterClus
 	return out
 }
 
-func indexByID(cands []store.SemanticMemory) map[int64]store.SemanticMemory {
-	m := make(map[int64]store.SemanticMemory, len(cands))
+func indexByID(cands []memorystore.SemanticMemory) map[int64]memorystore.SemanticMemory {
+	m := make(map[int64]memorystore.SemanticMemory, len(cands))
 	for _, c := range cands {
 		m[c.ID] = c
 	}
 	return m
 }
 
-func idSet(members []store.SemanticMemory) map[int64]struct{} {
+func idSet(members []memorystore.SemanticMemory) map[int64]struct{} {
 	m := make(map[int64]struct{}, len(members))
 	for _, x := range members {
 		m[x.ID] = struct{}{}
@@ -714,8 +714,8 @@ func filterKnownIDs(ids []int64, known map[int64]struct{}) []int64 {
 	return out
 }
 
-func resolveMembers(ids []int64, byID map[int64]store.SemanticMemory) []store.SemanticMemory {
-	var out []store.SemanticMemory
+func resolveMembers(ids []int64, byID map[int64]memorystore.SemanticMemory) []memorystore.SemanticMemory {
+	var out []memorystore.SemanticMemory
 	for _, id := range ids {
 		if m, ok := byID[id]; ok {
 			out = append(out, m)
@@ -724,18 +724,18 @@ func resolveMembers(ids []int64, byID map[int64]store.SemanticMemory) []store.Se
 	return out
 }
 
-func findByID(mems []store.SemanticMemory, id int64) (store.SemanticMemory, bool) {
+func findByID(mems []memorystore.SemanticMemory, id int64) (memorystore.SemanticMemory, bool) {
 	for _, m := range mems {
 		if m.ID == id {
 			return m, true
 		}
 	}
-	return store.SemanticMemory{}, false
+	return memorystore.SemanticMemory{}, false
 }
 
-func filterScope(mems []store.SemanticMemory, scope string) []store.SemanticMemory {
+func filterScope(mems []memorystore.SemanticMemory, scope string) []memorystore.SemanticMemory {
 	scope = strings.TrimSpace(scope)
-	var out []store.SemanticMemory
+	var out []memorystore.SemanticMemory
 	for _, m := range mems {
 		if strings.TrimSpace(m.Scope) == scope {
 			out = append(out, m)
@@ -755,7 +755,7 @@ func countDistinctValues(m map[string]string) int {
 // ---- data rendering (untrusted; fenced by AgentRunner.Run) -----------------
 
 // renderCandidates renders a bucket/shard's candidates as JSON lines for B1.
-func renderCandidates(members []store.SemanticMemory) string {
+func renderCandidates(members []memorystore.SemanticMemory) string {
 	var b strings.Builder
 	b.WriteString("candidates:\n")
 	for _, m := range members {
@@ -788,7 +788,7 @@ func renderClustersForReduce(clusters []clusterCluster) string {
 }
 
 // renderKBDedup renders the new memory + accepted set in the same scope for B3.
-func renderKBDedup(newMem store.SemanticMemory, accepted []store.SemanticMemory) string {
+func renderKBDedup(newMem memorystore.SemanticMemory, accepted []memorystore.SemanticMemory) string {
 	var b strings.Builder
 	b.WriteString("new:\n")
 	b.Write(mustJSONBytes(map[string]any{"statement": newMem.Statement, "when_to_apply": newMem.WhenToApply}))

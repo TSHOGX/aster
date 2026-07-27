@@ -3,7 +3,7 @@ package memory
 import (
 	"testing"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // memoryEligibleForCuration: Node C exclusion filter (ContradictionCount>0).
@@ -19,7 +19,7 @@ func TestMemoryEligibleForCuration(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := store.SemanticMemory{ContradictionCount: tc.contradict}
+			m := memorystore.SemanticMemory{ContradictionCount: tc.contradict}
 			if got := memoryEligibleForCuration(m); got != tc.want {
 				t.Fatalf("memoryEligibleForCuration(contradict=%d) = %v, want %v", tc.contradict, got, tc.want)
 			}
@@ -42,7 +42,7 @@ func TestSkillEligibleForCuration(t *testing.T) {
 		{"  rejected  ", false},
 	}
 	for _, tc := range cases {
-		sk := store.SkillCandidate{Status: tc.status}
+		sk := memorystore.SkillCandidate{Status: tc.status}
 		if got := skillEligibleForCuration(sk); got != tc.want {
 			t.Fatalf("skillEligibleForCuration(status=%q) = %v, want %v", tc.status, got, tc.want)
 		}

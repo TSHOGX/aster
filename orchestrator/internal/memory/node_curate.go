@@ -41,7 +41,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // maxReflectRevisions bounds the skill reflect-loop: at most this many revise
@@ -78,13 +78,13 @@ type CurateReport struct {
 // the audit run id, matching the constructor shape every node uses.
 type CurateNode struct {
 	agent *AgentRunner
-	store *store.Store
+	store *memorystore.Store
 	log   *slog.Logger
 	runID int64
 }
 
 // NewCurateNode builds Node D.
-func NewCurateNode(agent *AgentRunner, st *store.Store, log *slog.Logger, runID int64) *CurateNode {
+func NewCurateNode(agent *AgentRunner, st *memorystore.Store, log *slog.Logger, runID int64) *CurateNode {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -137,7 +137,7 @@ func (n *CurateNode) curateMemories(ctx context.Context, manifest string, report
 	// Partition: items Node C excluded (stale/fixed) are held without an agent
 	// call; the rest are judged in parallel, then applied to the store serially
 	// (SQLite is single-writer) in input order for deterministic reporting.
-	var eligible []store.SemanticMemory
+	var eligible []memorystore.SemanticMemory
 	var excludedByC int
 	for _, m := range candidates {
 		if !memoryEligibleForCuration(m) {
@@ -152,7 +152,7 @@ func (n *CurateNode) curateMemories(ctx context.Context, manifest string, report
 		res curateMemoryResult
 		ok  bool
 	}
-	verdicts := parMap(ctx, eligible, func(ctx context.Context, m store.SemanticMemory) memVerdict {
+	verdicts := parMap(ctx, eligible, func(ctx context.Context, m memorystore.SemanticMemory) memVerdict {
 		res, ok := n.judgeMemory(ctx, m, manifest)
 		return memVerdict{res: res, ok: ok}
 	})
@@ -193,7 +193,7 @@ func (n *CurateNode) curateMemories(ctx context.Context, manifest string, report
 
 // judgeMemory runs one curator agent turn for a memory. Returns ok=false on any
 // error / unparseable output (caller holds).
-func (n *CurateNode) judgeMemory(ctx context.Context, m store.SemanticMemory, manifest string) (curateMemoryResult, bool) {
+func (n *CurateNode) judgeMemory(ctx context.Context, m memorystore.SemanticMemory, manifest string) (curateMemoryResult, bool) {
 	data := renderMemoryForCuration(m, manifest)
 	start := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, defaultAgentTimeout)
@@ -264,7 +264,7 @@ func (n *CurateNode) curateSkills(ctx context.Context, manifest string, report *
 // reflectSkill runs the bounded draft→critic→revise loop. It returns the final
 // body, whether the critic approved it, whether the body was materially revised,
 // and ok=false on any agent error / unparseable output (caller holds).
-func (n *CurateNode) reflectSkill(ctx context.Context, sk store.SkillCandidate, manifest string) (body string, approved, revised, ok bool) {
+func (n *CurateNode) reflectSkill(ctx context.Context, sk memorystore.SkillCandidate, manifest string) (body string, approved, revised, ok bool) {
 	body = sk.BodyMD
 	for round := 0; ; round++ {
 		res, callOK := n.critiqueSkill(ctx, sk, body, manifest)
@@ -284,7 +284,7 @@ func (n *CurateNode) reflectSkill(ctx context.Context, sk store.SkillCandidate, 
 }
 
 // critiqueSkill runs one critic agent turn over the current body.
-func (n *CurateNode) critiqueSkill(ctx context.Context, sk store.SkillCandidate, body, manifest string) (skillCriticResult, bool) {
+func (n *CurateNode) critiqueSkill(ctx context.Context, sk memorystore.SkillCandidate, body, manifest string) (skillCriticResult, bool) {
 	data := renderSkillForCritique(sk, body, manifest)
 	start := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, defaultAgentTimeout)
@@ -313,13 +313,13 @@ func (n *CurateNode) critiqueSkill(ctx context.Context, sk store.SkillCandidate,
 
 // memoryEligibleForCuration excludes items Node C flagged (ContradictionCount>0):
 // those are stale/fixed and must never promote.
-func memoryEligibleForCuration(m store.SemanticMemory) bool {
+func memoryEligibleForCuration(m memorystore.SemanticMemory) bool {
 	return m.ContradictionCount == 0
 }
 
 // skillEligibleForCuration selects skill candidates Node D should judge: anything
 // not already rejected and not already published.
-func skillEligibleForCuration(sk store.SkillCandidate) bool {
+func skillEligibleForCuration(sk memorystore.SkillCandidate) bool {
 	switch strings.ToLower(strings.TrimSpace(sk.Status)) {
 	case "rejected", "published":
 		return false
@@ -412,7 +412,7 @@ func (n *CurateNode) buildManifest(ctx context.Context) (string, error) {
 	return b.String(), nil
 }
 
-func renderMemoryForCuration(m store.SemanticMemory, manifest string) string {
+func renderMemoryForCuration(m memorystore.SemanticMemory, manifest string) string {
 	var b strings.Builder
 	b.WriteString("CANDIDATE MEMORY UNDER REVIEW\n")
 	fmt.Fprintf(&b, "type: %s\n", defaultString(m.Type, "fact"))
@@ -428,7 +428,7 @@ func renderMemoryForCuration(m store.SemanticMemory, manifest string) string {
 	return b.String()
 }
 
-func renderSkillForCritique(sk store.SkillCandidate, body, manifest string) string {
+func renderSkillForCritique(sk memorystore.SkillCandidate, body, manifest string) string {
 	var b strings.Builder
 	b.WriteString("SKILL CANDIDATE UNDER REVIEW\n")
 	fmt.Fprintf(&b, "target_skill_name: %s\n", sk.TargetSkillName)
@@ -482,7 +482,7 @@ const skillCriticPrompt = grounding + `
 // ---- audit + small utils ----------------------------------------------------
 
 func (n *CurateNode) record(ctx context.Context, id int64, verdict string, start time.Time, callErr error) {
-	if err := n.store.RecordAgentCall(ctx, store.AgentCall{
+	if err := n.store.RecordAgentCall(ctx, memorystore.AgentCall{
 		RunID:     n.runID,
 		Node:      "curate",
 		Ref:       fmt.Sprint(id),

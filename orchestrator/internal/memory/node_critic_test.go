@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 func TestParseCriticResult(t *testing.T) {
@@ -96,8 +96,8 @@ func TestNormalizeCriticKind(t *testing.T) {
 }
 
 func TestFilterReviewSets(t *testing.T) {
-	mems := []store.SemanticMemory{{ID: 1}, {ID: 2}, {ID: 3}}
-	skills := []store.SkillCandidate{{ID: 10}, {ID: 11}}
+	mems := []memorystore.SemanticMemory{{ID: 1}, {ID: 2}, {ID: 3}}
+	skills := []memorystore.SkillCandidate{{ID: 10}, {ID: 11}}
 
 	// nil/empty filter → review all (v1 default).
 	if got := filterMemoryReviewSet(mems, nil); len(got) != 3 {
@@ -119,8 +119,8 @@ func TestFilterReviewSets(t *testing.T) {
 }
 
 func TestIDSets(t *testing.T) {
-	mems := []store.SemanticMemory{{ID: 5}, {ID: 6}}
-	skills := []store.SkillCandidate{{ID: 7}}
+	mems := []memorystore.SemanticMemory{{ID: 5}, {ID: 6}}
+	skills := []memorystore.SkillCandidate{{ID: 7}}
 	ms := memoryIDSet(mems)
 	if !ms[5] || !ms[6] || ms[99] {
 		t.Errorf("memoryIDSet wrong: %v", ms)
@@ -132,10 +132,10 @@ func TestIDSets(t *testing.T) {
 }
 
 func TestFormatCriticData(t *testing.T) {
-	mems := []store.SemanticMemory{
+	mems := []memorystore.SemanticMemory{
 		{ID: 1, Type: "fact", Scope: "doris", Statement: "current_curve is double-encoded JSON", WhenToApply: "解析充电曲线时"},
 	}
-	skills := []store.SkillCandidate{
+	skills := []memorystore.SkillCandidate{
 		{ID: 2, TargetSkillName: "doris-query", KBStatus: "observing", Title: "Query Doris for charging data"},
 	}
 	out := formatCriticData(mems, skills)

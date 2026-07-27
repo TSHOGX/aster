@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // A slice renders a normalized trajectory into a transcript string for a lens,
@@ -25,7 +25,7 @@ const (
 
 // sliceDialogue renders user + assistant text only (no tool noise). Best for the
 // facts lens: stable preferences/decisions live in what was said, not the tools.
-func sliceDialogue(events []store.TrajectoryEvent) string {
+func sliceDialogue(events []memorystore.TrajectoryEvent) string {
 	var b strings.Builder
 	for _, e := range events {
 		switch e.Kind {
@@ -41,7 +41,7 @@ func sliceDialogue(events []store.TrajectoryEvent) string {
 // sliceAnnotated renders user + assistant narrative plus ONLY erroring
 // tool_result events. Best for the failure lens: narrative + hard failure signal,
 // with successful tool output (noise the assistant already narrates) dropped.
-func sliceAnnotated(events []store.TrajectoryEvent) string {
+func sliceAnnotated(events []memorystore.TrajectoryEvent) string {
 	var b strings.Builder
 	for _, e := range events {
 		switch e.Kind {
@@ -61,7 +61,7 @@ func sliceAnnotated(events []store.TrajectoryEvent) string {
 // sliceReasoning renders user + thinking + tool_call (no results). Best for the
 // skill lens: how the agent reasoned and which tools it invoked, in order, is
 // what a reusable workflow is induced from.
-func sliceReasoning(events []store.TrajectoryEvent) string {
+func sliceReasoning(events []memorystore.TrajectoryEvent) string {
 	var b strings.Builder
 	for _, e := range events {
 		switch e.Kind {
@@ -102,7 +102,7 @@ func clamp(s string) string {
 // true only on a *material* failure: the last tool_result is an error, or there
 // are at least failureErrorThreshold tool_result errors. (Feedback-based signal
 // is applied separately by the pipeline, which has access to message_feedback.)
-func hasFailureSignal(events []store.TrajectoryEvent) bool {
+func hasFailureSignal(events []memorystore.TrajectoryEvent) bool {
 	errCount := 0
 	lastToolResultErr := false
 	for _, e := range events {
@@ -119,7 +119,7 @@ func hasFailureSignal(events []store.TrajectoryEvent) bool {
 
 // countTurns returns the number of user events, a cheap proxy for turn count
 // used by the skill lens gate.
-func countUserTurns(events []store.TrajectoryEvent) int {
+func countUserTurns(events []memorystore.TrajectoryEvent) int {
 	n := 0
 	for _, e := range events {
 		if e.Kind == "user" {

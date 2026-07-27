@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"harness-platform/orchestrator/internal/controlsource"
+	"harness-platform/orchestrator/internal/memorystore"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 )
@@ -25,26 +27,39 @@ func writeNativePiFile(t *testing.T, home, rel, content string) string {
 	return full
 }
 
-func newCaptureTestStore(t *testing.T) (*store.Store, context.Context) {
+// newCaptureTestStore opens the control+memory database pair capture needs since
+// the split: the session and its driver home are seeded on the control side, the
+// captured trajectory is asserted on the memory side, and the two are joined only
+// by the ingest boundary.
+func newCaptureTestStore(t *testing.T) (*store.Store, *memorystore.Store, *memorystore.Ingestor, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	dir := t.TempDir()
+
+	control, err := store.Open(ctx, filepath.Join(dir, "control.db"))
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatalf("open control store: %v", err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	if err := st.EnsureUser(ctx, "u1", "User One"); err != nil {
+	t.Cleanup(func() { _ = control.Close() })
+
+	mem, err := memorystore.Open(ctx, filepath.Join(dir, "memory.db"))
+	if err != nil {
+		t.Fatalf("open memory store: %v", err)
+	}
+	t.Cleanup(func() { _ = mem.Close() })
+
+	if err := control.EnsureUser(ctx, "u1", "User One"); err != nil {
 		t.Fatalf("ensure user: %v", err)
 	}
-	return st, ctx
+	return control, mem, memorystore.NewIngestor(mem, controlsource.New(control)), ctx
 }
 
 func TestCaptureSessionFullFidelity(t *testing.T) {
-	st, ctx := newCaptureTestStore(t)
+	control, mem, ingest, ctx := newCaptureTestStore(t)
 
 	const sessionID = "sess_cap"
 	now := time.Now().UTC()
-	if err := st.CreateSession(ctx, store.Session{
+	if err := control.CreateSession(ctx, store.Session{
 		ID: sessionID, UserID: "u1", Status: string(sessionstate.Created),
 		Agent: "pi", Workspace: t.TempDir(), RestoreID: "r-" + sessionID,
 		CreatedAt: now, UpdatedAt: now,
@@ -66,12 +81,12 @@ func TestCaptureSessionFullFidelity(t *testing.T) {
 	writeNativePiFile(t, home, "2026-07-14T03-33-33_pi-xyz.jsonl", native)
 
 	archiveRoot := t.TempDir()
-	cap := NewCapturer(st, archiveRoot, nil)
+	cap := NewCapturer(mem, ingest, archiveRoot, nil)
 	if cap == nil {
 		t.Fatal("NewCapturer returned nil for non-empty root")
 	}
 
-	res, err := cap.CaptureSession(ctx, store.PiSessionForCapture{
+	res, err := cap.CaptureSession(ctx, memorystore.PiSessionForCapture{
 		SessionID:              sessionID,
 		UserID:                 "u1",
 		Status:                 string(sessionstate.Created),
@@ -87,7 +102,7 @@ func TestCaptureSessionFullFidelity(t *testing.T) {
 	}
 
 	// Events persisted with full fidelity.
-	events, err := st.GetTrajectoryEvents(ctx, sessionID)
+	events, err := mem.GetTrajectoryEvents(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("GetTrajectoryEvents: %v", err)
 	}
@@ -118,7 +133,7 @@ func TestCaptureSessionFullFidelity(t *testing.T) {
 	}
 
 	// Idempotent re-capture: same events, no error.
-	res2, err := cap.CaptureSession(ctx, store.PiSessionForCapture{
+	res2, err := cap.CaptureSession(ctx, memorystore.PiSessionForCapture{
 		SessionID: sessionID, UserID: "u1", Status: string(sessionstate.Created),
 		AgentHomeHostPath: home, SelectedSessionRelpath: "2026-07-14T03-33-33_pi-xyz.jsonl", NativeSessionID: "pi-xyz",
 	})

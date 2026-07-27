@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"harness-platform/orchestrator/internal/sqlitex"
 )
 
 func openPoolTestStore(t *testing.T) *Store {
@@ -34,17 +36,17 @@ func TestReaderPoolAppliesPragmasToEveryConnection(t *testing.T) {
 	if reader == nil {
 		t.Fatal("reader pool is nil")
 	}
-	if got := reader.Stats().MaxOpenConnections; got != defaultReaderPoolSize {
-		t.Fatalf("reader MaxOpenConnections=%d want %d", got, defaultReaderPoolSize)
+	if got := reader.Stats().MaxOpenConnections; got != sqlitex.DefaultReaderPoolSize {
+		t.Fatalf("reader MaxOpenConnections=%d want %d", got, sqlitex.DefaultReaderPoolSize)
 	}
 
-	conns := make([]*sql.Conn, 0, defaultReaderPoolSize)
+	conns := make([]*sql.Conn, 0, sqlitex.DefaultReaderPoolSize)
 	t.Cleanup(func() {
 		for _, c := range conns {
 			_ = c.Close()
 		}
 	})
-	for i := 0; i < defaultReaderPoolSize; i++ {
+	for i := 0; i < sqlitex.DefaultReaderPoolSize; i++ {
 		c, err := reader.Conn(ctx)
 		if err != nil {
 			t.Fatalf("reader conn %d: %v", i, err)
@@ -53,8 +55,8 @@ func TestReaderPoolAppliesPragmasToEveryConnection(t *testing.T) {
 	}
 	// All connections are held simultaneously, so the pool had to create
 	// distinct ones rather than handing back the same connection each time.
-	if got := reader.Stats().OpenConnections; got != defaultReaderPoolSize {
-		t.Fatalf("held OpenConnections=%d want %d", got, defaultReaderPoolSize)
+	if got := reader.Stats().OpenConnections; got != sqlitex.DefaultReaderPoolSize {
+		t.Fatalf("held OpenConnections=%d want %d", got, sqlitex.DefaultReaderPoolSize)
 	}
 
 	for i, c := range conns {
@@ -68,8 +70,8 @@ func TestReaderPoolAppliesPragmasToEveryConnection(t *testing.T) {
 		if err := c.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
 			t.Fatalf("conn %d busy_timeout: %v", i, err)
 		}
-		if busyTimeout != busyTimeoutMS {
-			t.Errorf("reader conn %d busy_timeout=%d want %d", i, busyTimeout, busyTimeoutMS)
+		if busyTimeout != sqlitex.BusyTimeoutMS {
+			t.Errorf("reader conn %d busy_timeout=%d want %d", i, busyTimeout, sqlitex.BusyTimeoutMS)
 		}
 	}
 
@@ -84,8 +86,8 @@ func TestReaderPoolAppliesPragmasToEveryConnection(t *testing.T) {
 	if err := st.DBForTest().QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
 		t.Fatalf("writer busy_timeout: %v", err)
 	}
-	if busyTimeout != busyTimeoutMS {
-		t.Errorf("writer busy_timeout=%d want %d", busyTimeout, busyTimeoutMS)
+	if busyTimeout != sqlitex.BusyTimeoutMS {
+		t.Errorf("writer busy_timeout=%d want %d", busyTimeout, sqlitex.BusyTimeoutMS)
 	}
 
 	// Asked on a connection we already hold: the pool is at its ceiling here,
@@ -131,8 +133,8 @@ INSERT INTO users (id, display_name, created_at) VALUES (?, ?, ?)`,
 	defer cancel()
 
 	var wg sync.WaitGroup
-	errs := make(chan error, defaultReaderPoolSize*2)
-	for i := 0; i < defaultReaderPoolSize*2; i++ {
+	errs := make(chan error, sqlitex.DefaultReaderPoolSize*2)
+	for i := 0; i < sqlitex.DefaultReaderPoolSize*2; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -196,7 +198,7 @@ VALUES (?, ?, ?, ?)`, "no-such-session", "user", "orphan", time.Now().UTC().Form
 }
 
 func TestBuildDSNEscapesPathAndSetsPragmas(t *testing.T) {
-	writer := buildDSN("/var/lib/harness/db?x=1#frag", true)
+	writer := sqlitex.BuildDSN("/var/lib/harness/db?x=1#frag", true)
 	if !strings.HasPrefix(writer, "file:/var/lib/harness/db%3Fx=1%23frag?") {
 		t.Fatalf("path not escaped into the DSN path component: %s", writer)
 	}
@@ -214,7 +216,7 @@ func TestBuildDSNEscapesPathAndSetsPragmas(t *testing.T) {
 		}
 	}
 
-	reader := buildDSN("/tmp/x.db", false)
+	reader := sqlitex.BuildDSN("/tmp/x.db", false)
 	if strings.Contains(reader, "_txlock") {
 		t.Errorf("reader DSN must not set _txlock: %s", reader)
 	}

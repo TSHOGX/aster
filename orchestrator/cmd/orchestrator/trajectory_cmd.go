@@ -9,13 +9,32 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/config"
+	"harness-platform/orchestrator/internal/controlsource"
 	"harness-platform/orchestrator/internal/memory"
+	"harness-platform/orchestrator/internal/memorystore"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/trajectory"
 )
 
 // dateLayout is the CLI date format for --since / --date flags.
 const dateLayout = "2006-01-02"
+
+// openStores opens both databases and builds the ingest boundary between them.
+// Both trajectory subcommands need the same triple: the control store (read-only
+// as far as they are concerned), the memory store they write to, and the adapter
+// that connects the two.
+func openStores(ctx context.Context, cfg config.Config) (*store.Store, *memorystore.Store, *memorystore.Ingestor, error) {
+	db, err := store.OpenWithOptions(ctx, cfg.DBPath, store.Options{AgentHomesRoot: cfg.AgentHomesRoot})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("open store: %w", err)
+	}
+	memoryDB, err := memorystore.Open(ctx, cfg.MemoryDBPath)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, nil, fmt.Errorf("open memory store: %w", err)
+	}
+	return db, memoryDB, memorystore.NewIngestor(memoryDB, controlsource.New(db)), nil
+}
 
 // runBackfill archives + parses every native pi trajectory since an optional
 // date (zero = all history) into the research store, then prints a fidelity
@@ -41,13 +60,14 @@ func runBackfill(ctx context.Context, log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	db, err := store.OpenWithOptions(ctx, cfg.DBPath, store.Options{AgentHomesRoot: cfg.AgentHomesRoot})
+	db, memoryDB, ingest, err := openStores(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("open store: %w", err)
+		return err
 	}
 	defer db.Close()
+	defer memoryDB.Close()
 
-	capturer := trajectory.NewCapturer(db, cfg.TrajectoryRoot, log)
+	capturer := trajectory.NewCapturer(memoryDB, ingest, cfg.TrajectoryRoot, log)
 	if capturer == nil {
 		return fmt.Errorf("trajectory capture disabled (HARNESS_TRAJECTORY_ROOT is empty)")
 	}
@@ -83,14 +103,16 @@ func runReplay(ctx context.Context, log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	db, err := store.OpenWithOptions(ctx, cfg.DBPath, store.Options{AgentHomesRoot: cfg.AgentHomesRoot})
+	db, memoryDB, ingest, err := openStores(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("open store: %w", err)
+		return err
 	}
 	defer db.Close()
+	defer memoryDB.Close()
 
 	pipeline := memory.NewPipeline(memory.PipelineOptions{
-		Store: db,
+		Store:  memoryDB,
+		Ingest: ingest,
 		Extractor: memory.NewExtractor(memory.Config{
 			BaseURL: cfg.MemoryLLM.BaseURL,
 			APIKey:  cfg.MemoryLLM.APIKey,
@@ -98,7 +120,7 @@ func runReplay(ctx context.Context, log *slog.Logger, args []string) error {
 		}),
 		KB:       memory.NewKB(cfg.AgentsKBRoot),
 		Log:      log,
-		Capturer: trajectory.NewCapturer(db, cfg.TrajectoryRoot, log),
+		Capturer: trajectory.NewCapturer(memoryDB, ingest, cfg.TrajectoryRoot, log),
 		Agent: memory.NewAgentRunner(memory.AgentConfig{
 			Bin:      cfg.MemoryLLM.AgentBin,
 			Provider: cfg.MemoryLLM.AgentProvider,

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // Promotion thresholds (from decisions/trajectory-pipeline.md §Step-4): a memory
@@ -69,7 +69,7 @@ func (p *Pipeline) curateAndPublish(ctx context.Context) (Report, error) {
 		return report, fmt.Errorf("list accepted memories: %w", err)
 	}
 
-	var publish []store.SkillCandidate
+	var publish []memorystore.SkillCandidate
 	for _, sk := range skills {
 		if sk.Status == "rejected" {
 			continue

@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // ReflectPlan is the cycle plan Node 0 emits.
@@ -37,13 +37,13 @@ type ReflectPlan struct {
 // ReflectNode runs the reflect/plan step.
 type ReflectNode struct {
 	agent *AgentRunner
-	store *store.Store
+	store *memorystore.Store
 	log   *slog.Logger
 	runID int64
 }
 
 // NewReflectNode builds the node.
-func NewReflectNode(agent *AgentRunner, st *store.Store, log *slog.Logger, runID int64) *ReflectNode {
+func NewReflectNode(agent *AgentRunner, st *memorystore.Store, log *slog.Logger, runID int64) *ReflectNode {
 	return &ReflectNode{agent: agent, store: st, log: log, runID: runID}
 }
 
@@ -74,7 +74,7 @@ func (n *ReflectNode) Run(ctx context.Context) (ReflectPlan, error) {
 	if err != nil {
 		verdict = "error"
 	}
-	_ = n.store.RecordAgentCall(ctx, store.AgentCall{
+	_ = n.store.RecordAgentCall(ctx, memorystore.AgentCall{
 		RunID: n.runID, Node: "reflect", Ref: "cycle", PromptSHA: promptSHA(reflectSystemPrompt, data),
 		Verdict: verdict, LatencyMS: latency, OK: err == nil, Error: errString(err),
 	})

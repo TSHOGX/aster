@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // Capturer performs full-fidelity trajectory capture: it locates a session's
@@ -20,7 +20,13 @@ import (
 // stream + a raw_sources pointer. It is the platform-side, multi-user analogue
 // of the local sess-cli ingest.
 type Capturer struct {
-	store *store.Store
+	// store is the MEMORY database: every write this type performs
+	// (raw_sources, trajectory_events, trajectory_snapshots) lands there.
+	store *memorystore.Store
+	// ingest is the control -> memory boundary, used for exactly one thing: the
+	// session enumeration CaptureAll walks. The Capturer holds no control-store
+	// handle, so it cannot write control-plane data even by accident.
+	ingest *memorystore.Ingestor
 	// archiveRoot is <TrajectoryRoot>/raw; each session's native file is copied
 	// to <archiveRoot>/<session_id>/<native-session-id>.jsonl so it survives any
 	// future agent-home reclamation (the platform can't assume immortal homes
@@ -29,9 +35,10 @@ type Capturer struct {
 	log         *slog.Logger
 }
 
-// NewCapturer builds a Capturer. trajectoryRoot defaults are the caller's
+// NewCapturer builds a Capturer over the memory store, with ingest supplying the
+// control-plane session enumeration. trajectoryRoot defaults are the caller's
 // responsibility; an empty root disables archiving (capture becomes a no-op).
-func NewCapturer(st *store.Store, trajectoryRoot string, log *slog.Logger) *Capturer {
+func NewCapturer(st *memorystore.Store, ingest *memorystore.Ingestor, trajectoryRoot string, log *slog.Logger) *Capturer {
 	root := strings.TrimSpace(trajectoryRoot)
 	if root == "" {
 		return nil
@@ -39,7 +46,7 @@ func NewCapturer(st *store.Store, trajectoryRoot string, log *slog.Logger) *Capt
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Capturer{store: st, archiveRoot: filepath.Join(root, "raw"), log: log}
+	return &Capturer{store: st, ingest: ingest, archiveRoot: filepath.Join(root, "raw"), log: log}
 }
 
 // CaptureResult reports what one CaptureSession did.
@@ -57,8 +64,8 @@ type CaptureResult struct {
 // re-archived, and the event stream is wholesale-replaced each run. Faux/test
 // sessions are skipped. Sessions with no locatable native file are recorded at
 // fidelity=partial (the distillation loop can still fall back to the DB
-// projection via store.SnapshotSession).
-func (c *Capturer) CaptureSession(ctx context.Context, rec store.PiSessionForCapture) (CaptureResult, error) {
+// projection via memorystore.SnapshotSession).
+func (c *Capturer) CaptureSession(ctx context.Context, rec memorystore.PiSessionForCapture) (CaptureResult, error) {
 	if c == nil {
 		return CaptureResult{SessionID: rec.SessionID, Skipped: true, Reason: "capturer disabled"}, nil
 	}
@@ -91,7 +98,7 @@ func (c *Capturer) CaptureSession(ctx context.Context, rec store.PiSessionForCap
 	}
 
 	// Stamp the platform session id onto each event and persist.
-	snap := store.TrajectorySnapshot{
+	snap := memorystore.TrajectorySnapshot{
 		SessionID:    rec.SessionID,
 		Status:       rec.Status,
 		Agent:        "pi",
@@ -117,7 +124,7 @@ func (c *Capturer) CaptureSession(ctx context.Context, rec store.PiSessionForCap
 // prefers the DB-recorded selected_session_relpath; when absent it globs the
 // session dir and picks the most-recently-modified *.jsonl (pi may have written
 // a file it never reported at a completed turn).
-func (c *Capturer) locateNativeFile(rec store.PiSessionForCapture) (string, error) {
+func (c *Capturer) locateNativeFile(rec memorystore.PiSessionForCapture) (string, error) {
 	home := strings.TrimSpace(rec.AgentHomeHostPath)
 	if home == "" {
 		return "", fmt.Errorf("no agent-home host path")
@@ -235,7 +242,7 @@ func (c *Capturer) CaptureAll(ctx context.Context, since time.Time) ([]CaptureRe
 	if c == nil {
 		return nil, nil
 	}
-	sessions, err := c.store.ListPiSessionsForCapture(ctx, since)
+	sessions, err := c.ingest.ListPiSessionsForCapture(ctx, since)
 	if err != nil {
 		return nil, err
 	}

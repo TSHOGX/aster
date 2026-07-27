@@ -17,7 +17,7 @@ package memory
 // argument), and emits a pure-JSON veto set.
 //
 // Applying a veto:
-//   - Memory veto  → store.SetMemoryStatus(id, "candidate"): rolls the memory
+//   - Memory veto  → memorystore.SetMemoryStatus(id, "candidate"): rolls the memory
 //     back out of the accepted set so it will not be published, symmetric with
 //     the way a Node C stale/fixed verdict keeps an item out of promotion.
 //   - Skill veto   → RETURNED in the report (CriticReport.VetoedSkillIDs) for the
@@ -41,13 +41,13 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // CriticNode is the whole-snapshot consistency gate (Node F).
 type CriticNode struct {
 	agent *AgentRunner
-	store *store.Store
+	store *memorystore.Store
 	log   *slog.Logger
 	runID int64
 
@@ -61,7 +61,7 @@ type CriticNode struct {
 }
 
 // NewCriticNode builds the Consistency Critic node.
-func NewCriticNode(agent *AgentRunner, st *store.Store, log *slog.Logger, runID int64) *CriticNode {
+func NewCriticNode(agent *AgentRunner, st *memorystore.Store, log *slog.Logger, runID int64) *CriticNode {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -160,7 +160,7 @@ func (n *CriticNode) Run(ctx context.Context) (CriticReport, error) {
 // callAgent runs the single no-tools critic turn and parses the veto set.
 // Returns ok=false on any error / unparseable output (the caller then holds:
 // no veto). The call is recorded for audit best-effort.
-func (n *CriticNode) callAgent(ctx context.Context, memories []store.SemanticMemory, skills []store.SkillCandidate) (criticResult, bool) {
+func (n *CriticNode) callAgent(ctx context.Context, memories []memorystore.SemanticMemory, skills []memorystore.SkillCandidate) (criticResult, bool) {
 	callCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -186,7 +186,7 @@ func (n *CriticNode) callAgent(ctx context.Context, memories []store.SemanticMem
 	if err == nil && len(res.Vetoes) > 0 {
 		verdict = fmt.Sprintf("veto:%d", len(res.Vetoes))
 	}
-	if aerr := n.store.RecordAgentCall(ctx, store.AgentCall{
+	if aerr := n.store.RecordAgentCall(ctx, memorystore.AgentCall{
 		RunID: n.runID, Node: "critic", Ref: fmt.Sprintf("run-%d", n.runID),
 		PromptSHA: promptSHA(sys, data), Verdict: verdict,
 		LatencyMS: ms, OK: err == nil, Error: errString(err),
@@ -255,11 +255,11 @@ func normalizeCriticKind(kind string) string {
 
 // filterMemoryReviewSet returns only memories whose id is in `only`; a nil/empty
 // `only` means review all (the v1 default). Pure.
-func filterMemoryReviewSet(memories []store.SemanticMemory, only map[int64]bool) []store.SemanticMemory {
+func filterMemoryReviewSet(memories []memorystore.SemanticMemory, only map[int64]bool) []memorystore.SemanticMemory {
 	if len(only) == 0 {
 		return memories
 	}
-	out := make([]store.SemanticMemory, 0, len(memories))
+	out := make([]memorystore.SemanticMemory, 0, len(memories))
 	for _, m := range memories {
 		if only[m.ID] {
 			out = append(out, m)
@@ -270,11 +270,11 @@ func filterMemoryReviewSet(memories []store.SemanticMemory, only map[int64]bool)
 
 // filterSkillReviewSet returns only skills whose id is in `only`; a nil/empty
 // `only` means review all (the v1 default). Pure.
-func filterSkillReviewSet(skills []store.SkillCandidate, only map[int64]bool) []store.SkillCandidate {
+func filterSkillReviewSet(skills []memorystore.SkillCandidate, only map[int64]bool) []memorystore.SkillCandidate {
 	if len(only) == 0 {
 		return skills
 	}
-	out := make([]store.SkillCandidate, 0, len(skills))
+	out := make([]memorystore.SkillCandidate, 0, len(skills))
 	for _, s := range skills {
 		if only[s.ID] {
 			out = append(out, s)
@@ -283,7 +283,7 @@ func filterSkillReviewSet(skills []store.SkillCandidate, only map[int64]bool) []
 	return out
 }
 
-func memoryIDSet(memories []store.SemanticMemory) map[int64]bool {
+func memoryIDSet(memories []memorystore.SemanticMemory) map[int64]bool {
 	set := make(map[int64]bool, len(memories))
 	for _, m := range memories {
 		set[m.ID] = true
@@ -291,7 +291,7 @@ func memoryIDSet(memories []store.SemanticMemory) map[int64]bool {
 	return set
 }
 
-func skillIDSet(skills []store.SkillCandidate) map[int64]bool {
+func skillIDSet(skills []memorystore.SkillCandidate) map[int64]bool {
 	set := make(map[int64]bool, len(skills))
 	for _, s := range skills {
 		set[s.ID] = true
@@ -303,7 +303,7 @@ func skillIDSet(skills []store.SkillCandidate) map[int64]bool {
 // agent must treat statements/titles as data, not instructions — Run fences it).
 // Only the fields the critic needs to reason about cross-item consistency are
 // included: memory id/type/scope/statement, skill id/name/title. Pure.
-func formatCriticData(memories []store.SemanticMemory, skills []store.SkillCandidate) string {
+func formatCriticData(memories []memorystore.SemanticMemory, skills []memorystore.SkillCandidate) string {
 	var b strings.Builder
 	b.WriteString("ACCEPTED_MEMORIES:\n")
 	if len(memories) == 0 {

@@ -13,8 +13,10 @@ import (
 
 	"harness-platform/orchestrator/internal/artifacts"
 	"harness-platform/orchestrator/internal/config"
+	"harness-platform/orchestrator/internal/controlsource"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/memory"
+	"harness-platform/orchestrator/internal/memorystore"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/server"
 	"harness-platform/orchestrator/internal/store"
@@ -95,6 +97,19 @@ func main() {
 		log.Error("failed to write orchestrator owner", "error", err)
 		os.Exit(1)
 	}
+	// The memory/distillation database is physically separate from the control
+	// plane, with its own writer connection, so a distillation sweep can no
+	// longer take the lock that serves HTTP traffic and session state. It is
+	// opened unconditionally (not only when the pipeline is enabled) so its
+	// schema is present and the CLI paths find a migrated database.
+	memoryDB, err := memorystore.Open(ctx, cfg.MemoryDBPath)
+	if err != nil {
+		log.Error("failed to open memory store", "error", err, "path", cfg.MemoryDBPath)
+		os.Exit(1)
+	}
+	defer memoryDB.Close()
+	// The ingest boundary: reads control, writes memory, never the reverse.
+	memoryIngest := memorystore.NewIngestor(memoryDB, controlsource.New(db))
 	var app *server.Server
 	var watcher *artifacts.Watcher
 	startup, err := runStartupRuntimeRecovery(ctx, cfg, owner.UUID, startupRuntimeRecoveryHooks{
@@ -204,7 +219,8 @@ func main() {
 	if !cfg.MemoryLLM.Enabled {
 		log.Info("nightly distillation loop disabled (memory-llm enabled:false); KB mount still served")
 	} else if pipeline := memory.NewPipeline(memory.PipelineOptions{
-		Store: db,
+		Store:  memoryDB,
+		Ingest: memoryIngest,
 		Extractor: memory.NewExtractor(memory.Config{
 			BaseURL: cfg.MemoryLLM.BaseURL,
 			APIKey:  cfg.MemoryLLM.APIKey,
@@ -212,7 +228,7 @@ func main() {
 		}),
 		KB:       memory.NewKB(cfg.AgentsKBRoot),
 		Log:      log,
-		Capturer: trajectory.NewCapturer(db, cfg.TrajectoryRoot, log),
+		Capturer: trajectory.NewCapturer(memoryDB, memoryIngest, cfg.TrajectoryRoot, log),
 		Agent: memory.NewAgentRunner(memory.AgentConfig{
 			Bin:      cfg.MemoryLLM.AgentBin,
 			Provider: cfg.MemoryLLM.AgentProvider,

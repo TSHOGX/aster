@@ -12,6 +12,7 @@ import (
 
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/sessionstate"
+	"harness-platform/orchestrator/internal/sqlitex"
 
 	"github.com/google/uuid"
 )
@@ -2447,9 +2448,6 @@ func ownerUUIDFromLeaseOwner(owner string) string {
 	return before
 }
 
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
-}
+// boolInt is the package-local spelling of sqlitex.BoolInt; see the alias block
+// in store.go.
+var boolInt = sqlitex.BoolInt

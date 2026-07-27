@@ -6,17 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/sessionstate"
-
-	_ "modernc.org/sqlite"
+	"harness-platform/orchestrator/internal/sqlitex"
 )
 
 type Session struct {
@@ -89,6 +85,14 @@ type Artifact struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Store is the CONTROL-PLANE store: sessions, messages, turns, runtime
+// generations, resources, notifications, auth. It owns control.db.
+//
+// The memory/distillation half (trajectory events, episode/semantic memories,
+// skill candidates, evolution runs) lives in a physically separate database
+// behind internal/memorystore. This package has NO knowledge of that package;
+// the dependency runs one way only, control -> memory, via the ingest-boundary
+// interfaces memorystore declares for itself (see memorystore/ingest.go).
 type Store struct {
 	// db is the writer pool: exactly one connection, opened with
 	// _txlock=immediate. Every method on Store currently runs through it, so
@@ -101,12 +105,6 @@ type Store struct {
 	// that writes, or that reads inside a write transaction, on s.db).
 	readDB  *sql.DB
 	options Options
-
-	// trajRebuildLocks holds one mutex per session_id being rebuilt into
-	// trajectory_events. A rebuild spans several short transactions rather than one
-	// long one (see rebuildTrajectoryEvents), so same-session rebuilds must be
-	// serialized in-process. map[string]*sync.Mutex.
-	trajRebuildLocks sync.Map
 }
 
 type Options struct {
@@ -123,102 +121,22 @@ type SessionActiveGenerationCASParams struct {
 	NextGenerationID     string
 }
 
-const (
-	// defaultReaderPoolSize is the reader pool ceiling. Reads under WAL never
-	// block the writer, so this only needs to cover the orchestrator's
-	// concurrent request fan-out, not the whole HTTP concurrency limit. Each
-	// modernc.org/sqlite connection allocates its own libc.TLS and page cache,
-	// so a large pool costs real memory for no throughput gain on a
-	// single-file local database.
-	defaultReaderPoolSize = 4
-
-	// busyTimeoutMS must match the _pragma value in buildDSN; verifyPragmas
-	// reads it back to catch a typo'd pragma name (the driver silently accepts
-	// unknown pragmas).
-	busyTimeoutMS = 5000
-)
-
-// buildDSN renders the connection string for one pool. The path is carried in
-// the URL's opaque/path position via net/url rather than concatenated, so a
-// path containing '?' or '#' cannot terminate the DSN early and smuggle in (or
-// silently drop) query parameters.
-//
-// Pragmas are set as DSN _pragma params, not as one-shot statements after
-// Open: the driver applies them inside newConn for EVERY connection it creates.
-// A one-shot PRAGMA only configures whichever connection happened to serve it,
-// which silently leaves later connections at busy_timeout=0 and
-// foreign_keys=OFF once the pool can hold more than one connection.
-func buildDSN(path string, writer bool) string {
-	q := url.Values{}
-	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeoutMS))
-	q.Add("_pragma", "journal_mode(WAL)")
-	// Under WAL, synchronous=NORMAL avoids an fsync on every commit (the
-	// default FULL does one per commit). It is crash-safe: the database cannot
-	// corrupt, and only the very last committed transaction can be lost on a
-	// power failure. That is acceptable here because bridge reconnect/replay
-	// recovers the latest state.
-	q.Add("_pragma", "synchronous(NORMAL)")
-	q.Add("_pragma", "foreign_keys(ON)")
-	if writer {
-		// The writer pool is serialized to one connection, but immediate
-		// locking still matters: it takes the write lock at BEGIN instead of
-		// on first write, so a busy database fails (or waits out busy_timeout)
-		// up front rather than mid-transaction with SQLITE_BUSY that cannot be
-		// retried safely. Readers must not take it.
-		q.Set("_txlock", "immediate")
-	}
-	// Opaque, not Path: url.URL would re-encode a leading "//" or reinterpret
-	// the path as a host. Escaping the path ourselves keeps '?' and '#' inert.
-	// SQLITE_OPEN_URI is set by the driver, so the file: form is parsed by
-	// SQLite as a URI and percent-escapes are decoded back to the real path.
-	u := url.URL{Scheme: "file", Opaque: escapeDSNPath(path), RawQuery: q.Encode()}
-	return u.String()
-}
-
-// escapeDSNPath percent-escapes the characters that are significant in a
-// SQLite file: URI while leaving path separators intact.
-func escapeDSNPath(path string) string {
-	var b strings.Builder
-	for i := 0; i < len(path); i++ {
-		c := path[i]
-		switch {
-		case c == '?' || c == '#' || c == '%':
-			fmt.Fprintf(&b, "%%%02X", c)
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
-
 func Open(ctx context.Context, path string) (*Store, error) {
 	return OpenWithOptions(ctx, path, Options{})
 }
 
 func OpenWithOptions(ctx context.Context, path string, options Options) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
 	if strings.TrimSpace(options.AgentHomesRoot) == "" {
 		options.AgentHomesRoot = "/var/lib/harness/agent-homes"
 	}
 	if options.ReaderPoolSize <= 0 {
-		options.ReaderPoolSize = defaultReaderPoolSize
+		options.ReaderPoolSize = sqlitex.DefaultReaderPoolSize
 	}
 
-	writer, err := sql.Open("sqlite", buildDSN(path, true))
+	writer, err := sqlitex.OpenWriter(path)
 	if err != nil {
 		return nil, err
 	}
-	// One writer connection: SQLite allows only one write transaction at a
-	// time anyway, and serializing in the pool turns lock contention into
-	// queueing instead of SQLITE_BUSY.
-	writer.SetMaxOpenConns(1)
-	writer.SetMaxIdleConns(1)
-	// No lifetime cap on the writer: recycling the sole write connection buys
-	// nothing (there is no upstream proxy to age out) and would drop the WAL
-	// read mark plus the warm page cache at arbitrary points.
-	writer.SetConnMaxLifetime(0)
 
 	store := &Store{db: writer, options: options}
 	// The writer creates the file and owns schema changes. Migrating before
@@ -227,73 +145,18 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 		_ = writer.Close()
 		return nil, err
 	}
-	if err := verifyPragmas(ctx, writer, 1); err != nil {
+	if err := sqlitex.VerifyPragmas(ctx, writer, 1); err != nil {
 		_ = writer.Close()
 		return nil, fmt.Errorf("writer pool: %w", err)
 	}
 
-	reader, err := sql.Open("sqlite", buildDSN(path, false))
+	reader, err := sqlitex.OpenReader(ctx, path, options.ReaderPoolSize)
 	if err != nil {
 		_ = writer.Close()
 		return nil, err
 	}
-	reader.SetMaxOpenConns(options.ReaderPoolSize)
-	reader.SetMaxIdleConns(options.ReaderPoolSize)
-	// Idle readers are recycled so a pool that spiked to its ceiling during a
-	// burst gives the memory back (each connection holds a libc.TLS and page
-	// cache). No MaxLifetime: a read connection has no server-side state that
-	// goes stale, and forcibly closing a busy one only costs a reopen.
-	reader.SetConnMaxIdleTime(5 * time.Minute)
-	reader.SetConnMaxLifetime(0)
-	if err := verifyPragmas(ctx, reader, options.ReaderPoolSize); err != nil {
-		_ = reader.Close()
-		_ = writer.Close()
-		return nil, fmt.Errorf("reader pool: %w", err)
-	}
 	store.readDB = reader
 	return store, nil
-}
-
-// verifyPragmas reads back the per-connection pragmas that must hold on every
-// connection a pool hands out. modernc.org/sqlite silently accepts a
-// misspelled pragma name, so without this a typo in buildDSN would disable FK
-// enforcement and busy-waiting with no error anywhere. conns connections are
-// held open simultaneously to force the pool to create distinct connections
-// rather than checking the same one repeatedly.
-func verifyPragmas(ctx context.Context, db *sql.DB, conns int) error {
-	if conns < 1 {
-		conns = 1
-	}
-	held := make([]*sql.Conn, 0, conns)
-	defer func() {
-		for _, c := range held {
-			_ = c.Close()
-		}
-	}()
-	for i := 0; i < conns; i++ {
-		c, err := db.Conn(ctx)
-		if err != nil {
-			return fmt.Errorf("open connection %d/%d: %w", i+1, conns, err)
-		}
-		held = append(held, c)
-
-		var foreignKeys int
-		if err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
-			return fmt.Errorf("read foreign_keys on connection %d: %w", i+1, err)
-		}
-		if foreignKeys != 1 {
-			return fmt.Errorf("connection %d has foreign_keys=%d, want 1", i+1, foreignKeys)
-		}
-
-		var busyTimeout int
-		if err := c.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
-			return fmt.Errorf("read busy_timeout on connection %d: %w", i+1, err)
-		}
-		if busyTimeout != busyTimeoutMS {
-			return fmt.Errorf("connection %d has busy_timeout=%d, want %d", i+1, busyTimeout, busyTimeoutMS)
-		}
-	}
-	return nil
 }
 
 func (s *Store) Close() error {
@@ -930,10 +793,9 @@ WHERE session_id = ?
 }
 
 // rowScanner is the shared abstraction over *sql.Row and *sql.Rows used by the
-// package's scan helpers.
-type rowScanner interface {
-	Scan(dest ...any) error
-}
+// package's scan helpers. Aliased to the sqlitex definition so a helper can be
+// passed between the control and memory stores without conversion.
+type rowScanner = sqlitex.RowScanner
 
 func scanSession(row rowScanner) (Session, error) {
 	var session Session
@@ -1009,31 +871,22 @@ func ModeForDriver(driverID string) string {
 	}
 }
 
-func nullableString(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func formatOptionalTime(t *time.Time) any {
-	if t == nil {
-		return nil
-	}
-	return formatTime(*t)
-}
-
-func formatTime(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
-}
+// The time/null/placeholder helpers below are the package-local spelling of the
+// shared sqlitex primitives. They stay as unexported aliases so the ~137 call
+// sites across this package keep reading the way they always have, while the
+// single implementation is shared with internal/memorystore.
+var (
+	nullableString     = sqlitex.NullableString
+	formatOptionalTime = sqlitex.FormatOptionalTime
+	formatTime         = sqlitex.FormatTime
+	parseTime          = sqlitex.ParseTime
+	optionalTimePtr    = sqlitex.OptionalTimePtr
+	sqlPlaceholders    = sqlitex.Placeholders
+	escapeLike         = sqlitex.EscapeLike
+)
 
 func formatEventTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
-}
-
-func parseTime(value string) time.Time {
-	t, _ := time.Parse(time.RFC3339Nano, value)
-	return t
 }
 
 func (s *Store) UpdateSessionStatusAndActivity(ctx context.Context, id, status string, restoreMS *int64, lastActivity time.Time) error {
@@ -1121,21 +974,10 @@ FROM sessions WHERE status = ? ORDER BY last_activity_at ASC`, status)
 	return sessions, rows.Err()
 }
 
-func sqlPlaceholders(count int) string {
-	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
-}
-
 func sqlStringList(values []string) string {
 	quoted := make([]string, len(values))
 	for i, value := range values {
 		quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(value, "'", "''"))
 	}
 	return strings.Join(quoted, ",")
-}
-
-func escapeLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	value = strings.ReplaceAll(value, `_`, `\_`)
-	return value
 }

@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // panelSize is the judge-panel count used to confirm a high-stakes "fixed"
@@ -40,13 +40,13 @@ const panelSize = 3
 // VerifyNode verifies candidate memories against the current codebase/sandbox.
 type VerifyNode struct {
 	agent *AgentRunner
-	store *store.Store
+	store *memorystore.Store
 	log   *slog.Logger
 	runID int64
 }
 
 // NewVerifyNode builds the Verify node.
-func NewVerifyNode(agent *AgentRunner, st *store.Store, log *slog.Logger, runID int64) *VerifyNode {
+func NewVerifyNode(agent *AgentRunner, st *memorystore.Store, log *slog.Logger, runID int64) *VerifyNode {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -161,7 +161,7 @@ func (n *VerifyNode) Run(ctx context.Context) (VerifyReport, error) {
 	// Filter to eligible items (cheap regex, no agent), then compute verdicts in
 	// parallel (agent + judge-panel, no store writes), then apply serially
 	// (SQLite single-writer) in input order.
-	var eligible []store.SemanticMemory
+	var eligible []memorystore.SemanticMemory
 	for _, it := range items {
 		if !verifyEligible(it.Statement, it.WhenToApply) {
 			report.Ineligible++
@@ -171,7 +171,7 @@ func (n *VerifyNode) Run(ctx context.Context) (VerifyReport, error) {
 	}
 	report.Eligible = len(eligible)
 
-	outcomes := parMap(ctx, eligible, func(ctx context.Context, it store.SemanticMemory) verifyOutcome {
+	outcomes := parMap(ctx, eligible, func(ctx context.Context, it memorystore.SemanticMemory) verifyOutcome {
 		return n.computeVerdict(ctx, it)
 	})
 
@@ -206,7 +206,7 @@ type verifyOutcome struct {
 // computeVerdict runs the agent (and the judge-panel for a "fixed" verdict) and
 // returns the verdict to apply, without touching the store. Safe to run
 // concurrently across items.
-func (n *VerifyNode) computeVerdict(ctx context.Context, it store.SemanticMemory) verifyOutcome {
+func (n *VerifyNode) computeVerdict(ctx context.Context, it memorystore.SemanticMemory) verifyOutcome {
 	var out verifyOutcome
 	res, ok := n.callAgent(ctx, it)
 	if !ok {
@@ -255,7 +255,7 @@ func (n *VerifyNode) computeVerdict(ctx context.Context, it store.SemanticMemory
 // apply persists the verdict. stale/fixed bump contradiction_count (excluding
 // the item from promotion); a non-empty correction on a stale verdict rewrites
 // the statement.
-func (n *VerifyNode) apply(ctx context.Context, it store.SemanticMemory, verdict string, res verifyResult, report *VerifyReport) {
+func (n *VerifyNode) apply(ctx context.Context, it memorystore.SemanticMemory, verdict string, res verifyResult, report *VerifyReport) {
 	corrected := ""
 	bump := false
 	switch verdict {
@@ -289,7 +289,7 @@ func (n *VerifyNode) apply(ctx context.Context, it store.SemanticMemory, verdict
 
 // callAgent runs one tool-using agent turn for an item and parses the verdict.
 // Returns ok=false on any error / unparseable output (the caller then holds).
-func (n *VerifyNode) callAgent(ctx context.Context, it store.SemanticMemory) (verifyResult, bool) {
+func (n *VerifyNode) callAgent(ctx context.Context, it memorystore.SemanticMemory) (verifyResult, bool) {
 	callCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -316,7 +316,7 @@ func (n *VerifyNode) callAgent(ctx context.Context, it store.SemanticMemory) (ve
 	}
 
 	// Best-effort audit; its error must never break the sweep.
-	if aerr := n.store.RecordAgentCall(ctx, store.AgentCall{
+	if aerr := n.store.RecordAgentCall(ctx, memorystore.AgentCall{
 		RunID: n.runID, Node: "verify", Ref: fmt.Sprint(it.ID),
 		PromptSHA: promptSHA(sys, data), Verdict: verdict,
 		LatencyMS: ms, OK: err == nil, Error: errString(err),
@@ -361,7 +361,7 @@ corrected_statement 仅在 verdict=stale 且可修正时非空；其余情况留
 {"verdict":"current|stale|fixed|unverifiable","corrected_statement":"","checked":["..."],"rationale":"..."}`
 
 // formatVerifyData renders the item as untrusted data for the agent to verify.
-func formatVerifyData(it store.SemanticMemory) string {
+func formatVerifyData(it memorystore.SemanticMemory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "type: %s\n", it.Type)
 	fmt.Fprintf(&b, "scope: %s\n", it.Scope)

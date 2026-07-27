@@ -5,11 +5,11 @@ import (
 	"sort"
 	"testing"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 func TestDistinctScopes(t *testing.T) {
-	cands := []store.SemanticMemory{
+	cands := []memorystore.SemanticMemory{
 		{Scope: "doris"},
 		{Scope: "doris"},
 		{Scope: " vhr_data "},
@@ -53,7 +53,7 @@ func TestCanonicalScope(t *testing.T) {
 func TestGroupCandidates(t *testing.T) {
 	// vhr_data and doris collapse to the same canonical scope; fact vs bug split.
 	mapping := map[string]string{"doris": "doris", "vhr_data": "doris", "gvisor": "gvisor"}
-	cands := []store.SemanticMemory{
+	cands := []memorystore.SemanticMemory{
 		{ID: 1, Scope: "doris", Type: "fact"},
 		{ID: 2, Scope: "vhr_data", Type: "fact"}, // same bucket as #1
 		{ID: 3, Scope: "doris", Type: "bug"},     // different type → own bucket
@@ -71,7 +71,7 @@ func TestGroupCandidates(t *testing.T) {
 
 func TestGroupCandidatesUnknownTypeNormalizes(t *testing.T) {
 	buckets := groupCandidates(
-		[]store.SemanticMemory{{ID: 1, Scope: "s", Type: "garbage"}},
+		[]memorystore.SemanticMemory{{ID: 1, Scope: "s", Type: "garbage"}},
 		map[string]string{"s": "s"},
 	)
 	if _, ok := buckets[bucketKey{scope: "s", typ: "fact"}]; !ok {
@@ -80,7 +80,7 @@ func TestGroupCandidatesUnknownTypeNormalizes(t *testing.T) {
 }
 
 func TestShardByBudget(t *testing.T) {
-	small := []store.SemanticMemory{
+	small := []memorystore.SemanticMemory{
 		{ID: 1, Statement: "a"},
 		{ID: 2, Statement: "b"},
 	}
@@ -90,7 +90,7 @@ func TestShardByBudget(t *testing.T) {
 	}
 
 	// Force sharding with a tiny budget: each candidate has ~48 base cost.
-	big := []store.SemanticMemory{
+	big := []memorystore.SemanticMemory{
 		{ID: 1, Statement: "aaaa"},
 		{ID: 2, Statement: "bbbb"},
 		{ID: 3, Statement: "cccc"},
@@ -118,7 +118,7 @@ func TestShardByBudget(t *testing.T) {
 
 func TestShardByBudgetSingleOversized(t *testing.T) {
 	// One candidate larger than the budget still gets processed (own shard).
-	big := []store.SemanticMemory{{ID: 1, Statement: string(make([]byte, 500))}}
+	big := []memorystore.SemanticMemory{{ID: 1, Statement: string(make([]byte, 500))}}
 	shards := shardByBudget(big, 10)
 	if len(shards) != 1 || len(shards[0]) != 1 {
 		t.Fatalf("single oversized candidate should be one shard of one, got %v", shards)
@@ -126,7 +126,7 @@ func TestShardByBudgetSingleOversized(t *testing.T) {
 }
 
 func TestUnionEvidence(t *testing.T) {
-	members := []store.SemanticMemory{
+	members := []memorystore.SemanticMemory{
 		{EvidenceSessionIDs: []string{"s1", "s2"}},
 		{EvidenceSessionIDs: []string{"s2", "s3", ""}}, // s2 dup, empty dropped
 		{EvidenceSessionIDs: []string{" s3 "}},         // trimmed → s3 dup
@@ -156,7 +156,7 @@ func TestConfidenceFromSupport(t *testing.T) {
 }
 
 func TestSingletons(t *testing.T) {
-	members := []store.SemanticMemory{
+	members := []memorystore.SemanticMemory{
 		{ID: 1, Type: "fact", Scope: "doris", Statement: "x"},
 		{ID: 2, Type: "bug", Scope: "doris", Statement: "y"},
 	}
@@ -179,7 +179,7 @@ func TestFilterKnownIDs(t *testing.T) {
 }
 
 func TestAppendMissingSingletons(t *testing.T) {
-	members := []store.SemanticMemory{
+	members := []memorystore.SemanticMemory{
 		{ID: 1, Statement: "a"},
 		{ID: 2, Statement: "b"},
 		{ID: 3, Statement: "c"},
@@ -251,7 +251,7 @@ func TestMergeClusterGroupsUnreferencedSurvive(t *testing.T) {
 }
 
 func TestResolveMembersAndFilterScope(t *testing.T) {
-	byID := indexByID([]store.SemanticMemory{
+	byID := indexByID([]memorystore.SemanticMemory{
 		{ID: 1, Scope: "doris"},
 		{ID: 2, Scope: "gvisor"},
 	})
@@ -260,7 +260,7 @@ func TestResolveMembersAndFilterScope(t *testing.T) {
 		t.Fatalf("resolveMembers should skip missing ids, got %d", len(mems))
 	}
 
-	all := []store.SemanticMemory{{ID: 1, Scope: "doris"}, {ID: 2, Scope: "gvisor"}}
+	all := []memorystore.SemanticMemory{{ID: 1, Scope: "doris"}, {ID: 2, Scope: "gvisor"}}
 	if got := filterScope(all, "doris"); len(got) != 1 || got[0].ID != 1 {
 		t.Fatalf("filterScope(doris) = %v, want [id 1]", got)
 	}

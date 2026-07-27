@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 	"harness-platform/orchestrator/internal/trajectory"
 )
 
@@ -31,15 +31,20 @@ const (
 // (owns its store + extractor + KB publisher) so main.go can launch it as a
 // background goroutine without touching the server package.
 type Pipeline struct {
-	store     *store.Store
+	// store is the MEMORY database. Every write the pipeline performs lands
+	// there; it holds no control-plane handle.
+	store *memorystore.Store
+	// ingest is the control -> memory boundary, used only for the lossy
+	// projection fallback (SnapshotSession) when native capture is disabled.
+	ingest    *memorystore.Ingestor
 	extractor *Extractor
 	kb        *KB
 	log       *slog.Logger
 
 	// capturer (re)builds full-fidelity trajectory_events from native pi files
 	// across all users before extraction. Nil when trajectory archiving is
-	// disabled, in which case the loop falls back to the lossy DB projection via
-	// store.SnapshotSession inside processSession.
+	// disabled, in which case the loop falls back to the lossy control-plane
+	// projection via the ingest boundary inside processSession.
 	capturer *trajectory.Capturer
 
 	// agent drives the agentic context-evolution graph (consolidate/verify/
@@ -57,7 +62,12 @@ type Pipeline struct {
 
 // PipelineOptions configures a Pipeline.
 type PipelineOptions struct {
-	Store     *store.Store
+	// Store is the memory database.
+	Store *memorystore.Store
+	// Ingest is the control -> memory boundary. Required only when Capturer is
+	// nil, i.e. when the loop must fall back to projecting the control plane's
+	// messages into trajectory_events itself.
+	Ingest    *memorystore.Ingestor
 	Extractor *Extractor
 	KB        *KB
 	Log       *slog.Logger
@@ -87,6 +97,7 @@ func NewPipeline(opts PipelineOptions) *Pipeline {
 	}
 	return &Pipeline{
 		store:     opts.Store,
+		ingest:    opts.Ingest,
 		extractor: opts.Extractor,
 		kb:        opts.KB,
 		log:       opts.Log,
@@ -165,7 +176,7 @@ func (p *Pipeline) sweep(ctx context.Context, since time.Time) {
 	// store, whose single-connection pool serializes the writes. parMap bounds
 	// concurrency (HARNESS_MEMORY_AGENT_CONCURRENCY) so we don't open unbounded
 	// upstream glm connections. Serial before this was the cold-start bottleneck.
-	oks := parMap(ctx, snaps, func(ctx context.Context, snap store.TrajectorySnapshot) bool {
+	oks := parMap(ctx, snaps, func(ctx context.Context, snap memorystore.TrajectorySnapshot) bool {
 		if err := p.processSession(ctx, snap.SessionID); err != nil {
 			p.log.Warn("distillation: session failed", "session_id", snap.SessionID, "error", err)
 			return false
@@ -203,11 +214,12 @@ func (p *Pipeline) sweep(ctx context.Context, since time.Time) {
 // processSession normalizes one session and runs the three lenses over it,
 // each gated by a cheap signal and its own per-stage watermark.
 func (p *Pipeline) processSession(ctx context.Context, sessionID string) error {
-	// Only project the lossy DB snapshot when native capture is disabled. When a
-	// capturer ran, trajectory_events already hold full-fidelity native data and
-	// SnapshotSession would overwrite them with the lossy projection.
-	if p.capturer == nil {
-		if err := p.store.SnapshotSession(ctx, sessionID); err != nil {
+	// Only project the lossy control-plane snapshot when native capture is
+	// disabled. When a capturer ran, trajectory_events already hold full-fidelity
+	// native data and SnapshotSession would overwrite them with the lossy
+	// projection.
+	if p.capturer == nil && p.ingest != nil {
+		if err := p.ingest.SnapshotSession(ctx, sessionID); err != nil {
 			return fmt.Errorf("snapshot: %w", err)
 		}
 	}
@@ -226,7 +238,7 @@ func (p *Pipeline) processSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-func (p *Pipeline) runFactsLens(ctx context.Context, sessionID string, events []store.TrajectoryEvent, turns int) {
+func (p *Pipeline) runFactsLens(ctx context.Context, sessionID string, events []memorystore.TrajectoryEvent, turns int) {
 	need, err := p.store.NeedsExtraction(ctx, sessionID, stageFacts, turns)
 	if err != nil || !need {
 		return
@@ -244,7 +256,7 @@ func (p *Pipeline) runFactsLens(ctx context.Context, sessionID string, events []
 	p.recordStage(ctx, sessionID, stageFacts, turns, "ok", nil)
 }
 
-func (p *Pipeline) runFailureLens(ctx context.Context, sessionID string, events []store.TrajectoryEvent, turns int) {
+func (p *Pipeline) runFailureLens(ctx context.Context, sessionID string, events []memorystore.TrajectoryEvent, turns int) {
 	// Hard gate: only spend an LLM call on a material failure.
 	if !hasFailureSignal(events) {
 		p.recordStage(ctx, sessionID, stageFailure, turns, "skipped", nil)
@@ -263,7 +275,7 @@ func (p *Pipeline) runFailureLens(ctx context.Context, sessionID string, events 
 	}
 	// Persist the episode summary.
 	lessons, _ := json.Marshal(out.Lessons)
-	if _, err := p.store.InsertEpisodeMemory(ctx, store.EpisodeMemory{
+	if _, err := p.store.InsertEpisodeMemory(ctx, memorystore.EpisodeMemory{
 		SessionID:       sessionID,
 		Task:            out.Task,
 		Outcome:         normalizeOutcome(out.Outcome),
@@ -280,7 +292,7 @@ func (p *Pipeline) runFailureLens(ctx context.Context, sessionID string, events 
 	p.recordStage(ctx, sessionID, stageFailure, turns, "ok", nil)
 }
 
-func (p *Pipeline) runSkillLens(ctx context.Context, sessionID string, events []store.TrajectoryEvent, turns int) {
+func (p *Pipeline) runSkillLens(ctx context.Context, sessionID string, events []memorystore.TrajectoryEvent, turns int) {
 	if turns < skillTurnThreshold {
 		p.recordStage(ctx, sessionID, stageSkill, turns, "skipped", nil)
 		return
@@ -307,7 +319,7 @@ func (p *Pipeline) upsertMemory(ctx context.Context, sessionID string, m Candida
 	if statement == "" {
 		return
 	}
-	if _, err := p.store.UpsertSemanticMemory(ctx, store.SemanticMemory{
+	if _, err := p.store.UpsertSemanticMemory(ctx, memorystore.SemanticMemory{
 		Type:        normalizeMemType(m.Type),
 		Scope:       defaultString(m.Scope, "global"),
 		Statement:   statement,
@@ -324,7 +336,7 @@ func (p *Pipeline) upsertSkillCandidate(ctx context.Context, sessionID string, s
 		return
 	}
 	body := renderSkillMarkdown(sk, sessionID)
-	if _, err := p.store.UpsertSkillCandidate(ctx, store.SkillCandidate{
+	if _, err := p.store.UpsertSkillCandidate(ctx, memorystore.SkillCandidate{
 		TargetSkillName:    slugify(name),
 		Operation:          "create",
 		Title:              name,
@@ -339,7 +351,7 @@ func (p *Pipeline) upsertSkillCandidate(ctx context.Context, sessionID string, s
 }
 
 func (p *Pipeline) recordStage(ctx context.Context, sessionID, stage string, turns int, status string, cause error) {
-	st := store.ExtractionState{
+	st := memorystore.ExtractionState{
 		SessionID:          sessionID,
 		Stage:              stage,
 		ProcessedTurnCount: turns,

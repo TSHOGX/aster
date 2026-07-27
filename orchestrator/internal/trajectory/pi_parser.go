@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // PiSessionMeta carries session-level fields derived from the native file head
@@ -85,9 +85,9 @@ type piContentBlock struct {
 // parent_id (Tree A). Text is stored full/untruncated. Empty-text events (except
 // tool calls, whose text is the args JSON) are dropped. pi records no token
 // usage, so no "usage" events are ever emitted.
-func ParsePiSession(r io.Reader) ([]store.TrajectoryEvent, PiSessionMeta, error) {
+func ParsePiSession(r io.Reader) ([]memorystore.TrajectoryEvent, PiSessionMeta, error) {
 	var (
-		events []store.TrajectoryEvent
+		events []memorystore.TrajectoryEvent
 		meta   PiSessionMeta
 		idx    int
 	)
@@ -98,7 +98,7 @@ func ParsePiSession(r io.Reader) ([]store.TrajectoryEvent, PiSessionMeta, error)
 		if text == "" && kind != "tool_call" {
 			return
 		}
-		events = append(events, store.TrajectoryEvent{
+		events = append(events, memorystore.TrajectoryEvent{
 			Kind:     kind,
 			Subtype:  subtype,
 			Name:     name,

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // KB writes content-addressed snapshots of the shared knowledge base and
@@ -40,7 +40,7 @@ func NewKB(root string) *KB {
 // facts) and the given skills, then atomically re-points `current` at it. It
 // returns the snapshot digest. If the content is byte-identical to what
 // `current` already points at, it is a no-op and returns the existing digest.
-func (k *KB) Publish(memories []store.SemanticMemory, skills []store.SkillCandidate) (string, error) {
+func (k *KB) Publish(memories []memorystore.SemanticMemory, skills []memorystore.SkillCandidate) (string, error) {
 	if k == nil {
 		return "", nil
 	}
@@ -148,14 +148,14 @@ func (k *KB) carryForward() map[string]string {
 // path → content): the index, per-scope facts, and one SKILL.md per distilled
 // skill. Carried-forward files (constitution, seeded skills, data/) are merged in
 // by Publish.
-func (k *KB) render(memories []store.SemanticMemory, skills []store.SkillCandidate) map[string]string {
+func (k *KB) render(memories []memorystore.SemanticMemory, skills []memorystore.SkillCandidate) map[string]string {
 	files := map[string]string{}
 
 	// INDEX.md — the navigation entry every session reads first.
 	files["facts/INDEX.md"] = renderIndex(memories, skills)
 
 	// One facts file per scope, grouping accepted memories.
-	byScope := map[string][]store.SemanticMemory{}
+	byScope := map[string][]memorystore.SemanticMemory{}
 	for _, m := range memories {
 		scope := defaultString(m.Scope, "global")
 		byScope[scope] = append(byScope[scope], m)
@@ -172,7 +172,7 @@ func (k *KB) render(memories []store.SemanticMemory, skills []store.SkillCandida
 	return files
 }
 
-func renderIndex(memories []store.SemanticMemory, skills []store.SkillCandidate) string {
+func renderIndex(memories []memorystore.SemanticMemory, skills []memorystore.SkillCandidate) string {
 	var b strings.Builder
 	b.WriteString("# Shared knowledge base\n\n")
 	b.WriteString("This directory is mounted read-only at `/agents` in every sandbox. ")
@@ -185,7 +185,7 @@ func renderIndex(memories []store.SemanticMemory, skills []store.SkillCandidate)
 	if len(skills) == 0 {
 		b.WriteString("_(none yet)_\n")
 	}
-	sorted := append([]store.SkillCandidate(nil), skills...)
+	sorted := append([]memorystore.SkillCandidate(nil), skills...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].TargetSkillName < sorted[j].TargetSkillName })
 	for _, sk := range sorted {
 		fmt.Fprintf(&b, "- **%s** (`%s`) — `skills/%s/SKILL.md`\n", sk.Title, sk.KBStatus, slugify(sk.TargetSkillName))
@@ -209,10 +209,10 @@ func renderIndex(memories []store.SemanticMemory, skills []store.SkillCandidate)
 	return b.String()
 }
 
-func renderFactsFile(scope string, mems []store.SemanticMemory) string {
+func renderFactsFile(scope string, mems []memorystore.SemanticMemory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Facts: %s\n\n", scope)
-	sorted := append([]store.SemanticMemory(nil), mems...)
+	sorted := append([]memorystore.SemanticMemory(nil), mems...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].SupportCount > sorted[j].SupportCount })
 	for _, m := range sorted {
 		fmt.Fprintf(&b, "- **[%s]** %s", m.Type, strings.TrimSpace(m.Statement))
@@ -224,7 +224,7 @@ func renderFactsFile(scope string, mems []store.SemanticMemory) string {
 	return b.String()
 }
 
-func renderSkillFile(sk store.SkillCandidate) string {
+func renderSkillFile(sk memorystore.SkillCandidate) string {
 	// The candidate body is already Markdown; prepend YAML frontmatter carrying
 	// the KB lifecycle status.
 	var b strings.Builder

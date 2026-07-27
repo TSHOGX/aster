@@ -9,10 +9,18 @@ import (
 	"time"
 )
 
-// PiSessionForCapture is one row of the enumeration a full-fidelity trajectory
+// PiSessionForCaptureRow is one row of the enumeration a full-fidelity trajectory
 // capture walks: everything needed to locate a session's native pi JSONL on the
 // host without any further per-session query.
-type PiSessionForCapture struct {
+//
+// This is the CONTROL-side half of the ingest boundary. The query below is a pure
+// control-plane 3-way join (sessions / session_driver_homes /
+// session_driver_states), so it stays here with the tables it reads. The memory
+// half declares the shape it wants as memorystore.PiSessionForCapture, and the
+// adapter in internal/controlsource maps this row onto it. Two structs rather
+// than one shared type is what keeps the dependency unidirectional: this package
+// must not know memorystore exists.
+type PiSessionForCaptureRow struct {
 	SessionID string
 	UserID    string
 	Status    string
@@ -34,7 +42,7 @@ type PiSessionForCapture struct {
 // that ended at/after it (or never recorded an ended_at) are returned, so a
 // nightly/replay run can scope to a window. Sessions without a driver home are
 // skipped (nothing to capture yet).
-func (s *Store) ListPiSessionsForCapture(ctx context.Context, since time.Time) ([]PiSessionForCapture, error) {
+func (s *Store) ListPiSessionsForCapture(ctx context.Context, since time.Time) ([]PiSessionForCaptureRow, error) {
 	query := `
 SELECT s.id, s.user_id, s.status, h.host_path, st.state_payload, s.ended_at
 FROM sessions s
@@ -55,10 +63,10 @@ ORDER BY s.ended_at`
 	}
 	defer rows.Close()
 
-	var out []PiSessionForCapture
+	var out []PiSessionForCaptureRow
 	for rows.Next() {
 		var (
-			rec     PiSessionForCapture
+			rec     PiSessionForCaptureRow
 			payload sql.NullString
 			endedAt sql.NullString
 		)
@@ -90,46 +98,4 @@ func parsePiSelectedSession(payload string) (relpath, nativeID string) {
 	relpath, _ = obj["selected_session_relpath"].(string)
 	nativeID, _ = obj["selected_session_id"].(string)
 	return strings.TrimSpace(relpath), strings.TrimSpace(nativeID)
-}
-
-// UpsertRawSource records (or refreshes) the pointer to a session's archived
-// native trace. Keyed by (session_id, path); bytes/mtime enable drift detection.
-func (s *Store) UpsertRawSource(ctx context.Context, sessionID, path, kind, nativeSessionID string, bytes int64, mtime time.Time) error {
-	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO raw_sources (session_id, path, kind, native_session_id, bytes, mtime, captured_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(session_id, path) DO UPDATE SET
-  kind = excluded.kind,
-  native_session_id = excluded.native_session_id,
-  bytes = excluded.bytes,
-  mtime = excluded.mtime,
-  captured_at = excluded.captured_at`,
-		sessionID, path, kind, nativeSessionID, bytes, formatTime(mtime), formatTime(now))
-	if err != nil {
-		return fmt.Errorf("upsert raw source: %w", err)
-	}
-	return nil
-}
-
-// ReplaceTrajectoryEvents wholesale-replaces a session's normalized event stream
-// (the rebuildable half) and upserts its trajectory_snapshots index row. It never
-// touches the distilled memory/skill tables. Used by the native-capture path;
-// events already carry NativeID/ParentID/CallID from the pi parser.
-//
-// The replace is chunked across several short transactions (see
-// rebuildTrajectoryEvents in trajectory.go) so it never holds the store's single
-// write connection for a whole multi-thousand-event capture.
-func (s *Store) ReplaceTrajectoryEvents(ctx context.Context, snap TrajectorySnapshot, events []TrajectoryEvent) error {
-	// The idx a caller passed in is not trusted here: this path has always
-	// renumbered events 0..n-1 by slice position.
-	renumbered := make([]TrajectoryEvent, len(events))
-	for i, ev := range events {
-		ev.Idx = i
-		renumbered[i] = ev
-	}
-	if err := s.rebuildTrajectoryEvents(ctx, snap, renumbered); err != nil {
-		return fmt.Errorf("replace trajectory events: %w", err)
-	}
-	return nil
 }

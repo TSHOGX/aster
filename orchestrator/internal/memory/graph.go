@@ -18,7 +18,7 @@ import (
 	"regexp"
 	"time"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // runAgenticGraph drives one full cycle. sessionsProcessed is the harvest count,
@@ -133,7 +133,7 @@ func (p *Pipeline) publishAgentic(ctx context.Context, vetoedSkills map[int64]bo
 		}
 		safeMems = append(safeMems, m)
 	}
-	var safeSkills []store.SkillCandidate
+	var safeSkills []memorystore.SkillCandidate
 	for _, sk := range skills {
 		if vetoedSkills[sk.ID] {
 			continue // critic veto

@@ -42,9 +42,14 @@ type Config struct {
 	RootFSPath           string
 	AgentManifestPath    string
 	RequireAgentManifest bool
-	DBPath               string
-	DefaultAgent         string
-	MaxSessions          int
+	// DBPath is the control-plane database (sessions, messages, turns, runtime
+	// state). MemoryDBPath is the physically separate trajectory-distillation
+	// database, so an LLM sweep cannot contend for the control plane's write
+	// lock. It defaults to memory.db alongside DBPath in the same state dir.
+	DBPath       string
+	MemoryDBPath string
+	DefaultAgent string
+	MaxSessions  int
 	// MaxUploadBytes caps the total decoded size of a single workspace upload
 	// request; MaxEditBytes caps a single online-edit body; MaxUploadFiles caps
 	// how many files one upload request may create. These bound memory and disk
@@ -291,19 +296,25 @@ type IsolationRoots struct {
 	PreparedBundleRoot     string
 	RootFSPath             string
 	DBPath                 string
+	MemoryDBPath           string
 	DataVolumeEvidenceRoot string
 	ProxyInternalRoot      string
 	ProviderCredentialRoot string
 }
 
 type CanonicalIsolationRoots struct {
-	SessionsRoot           string
-	AgentHomesRoot         string
-	RunDir                 string
-	CheckpointsRoot        string
-	PreparedBundleRoot     string
-	RootFSPath             string
-	DBStateRoot            string
+	SessionsRoot       string
+	AgentHomesRoot     string
+	RunDir             string
+	CheckpointsRoot    string
+	PreparedBundleRoot string
+	RootFSPath         string
+	DBStateRoot        string
+	// MemoryDBStateRoot is the directory holding the memory database. It equals
+	// DBStateRoot in the default layout (memory.db sits beside the control db);
+	// it differs only when HARNESS_MEMORY_DB_PATH is pointed somewhere else, in
+	// which case it is validated as its own top-level isolation root.
+	MemoryDBStateRoot      string
 	DataVolumeEvidenceRoot string
 	ProxyInternalRoot      string
 	ProviderCredentialRoot string
@@ -426,6 +437,12 @@ func Load() (Config, error) {
 		TrajectoryRoot:       getenv("HARNESS_TRAJECTORY_ROOT", "/var/lib/harness/trajectories"),
 		MemoryLLM:            memoryLLM,
 	}
+	// The memory database defaults to memory.db in the same state dir as the
+	// control database, so it moves with HARNESS_DB_PATH (deployments and tests
+	// override that to a temp dir) without needing a second env var set. The
+	// default is resolved here rather than in the literal above because it is
+	// derived from DBPath.
+	cfg.MemoryDBPath = getenv("HARNESS_MEMORY_DB_PATH", filepath.Join(filepath.Dir(cfg.DBPath), "memory.db"))
 	cfg.Harness.SessionRetention = Duration{Duration: sessionRetention}
 	cfg.Harness.MaxSessions = maxSessions
 	cfg.Harness.DefaultAgent = string(defaultDriver)
@@ -759,6 +776,7 @@ func (c Config) IsolationRoots() IsolationRoots {
 		PreparedBundleRoot:     c.BundleRoot,
 		RootFSPath:             c.RootFSPath,
 		DBPath:                 c.DBPath,
+		MemoryDBPath:           c.MemoryDBPath,
 		DataVolumeEvidenceRoot: filepath.Join(filepath.Dir(c.DBPath), "volume-evidence"),
 		ProxyInternalRoot:      filepath.Join(c.Harness.RunDir, "proxy-internal"),
 	}
@@ -790,6 +808,23 @@ func ValidateIsolationRoots(roots IsolationRoots) (CanonicalIsolationRoots, erro
 		return CanonicalIsolationRoots{}, err
 	}
 	canonical.DBStateRoot = filepath.Dir(dbPath)
+	// The memory database is validated the same way as the control one: canonical
+	// path, then its parent directory becomes a root. In the default layout it
+	// resolves to the same directory as DBStateRoot, so it is NOT added to the
+	// top-level disjointness set below (it would trivially overlap itself). It is
+	// only added when an operator has moved it elsewhere via
+	// HARNESS_MEMORY_DB_PATH, where it does need to be checked against the other
+	// roots. An empty value is permitted for callers that do not use the memory
+	// database (e.g. cmd/notify, and IsolationRoots literals in tests).
+	if strings.TrimSpace(roots.MemoryDBPath) != "" {
+		memoryDBPath, err := canonicalIsolationRoot("memory db path", roots.MemoryDBPath)
+		if err != nil {
+			return CanonicalIsolationRoots{}, err
+		}
+		canonical.MemoryDBStateRoot = filepath.Dir(memoryDBPath)
+	} else {
+		canonical.MemoryDBStateRoot = canonical.DBStateRoot
+	}
 	if strings.TrimSpace(roots.DataVolumeEvidenceRoot) != "" {
 		canonical.DataVolumeEvidenceRoot, err = canonicalIsolationRoot("data volume evidence root", roots.DataVolumeEvidenceRoot)
 		if err != nil {
@@ -824,6 +859,9 @@ func ValidateIsolationRoots(roots IsolationRoots) (CanonicalIsolationRoots, erro
 	}
 	if canonical.ProviderCredentialRoot != "" {
 		topLevel = append(topLevel, isolationRoot{label: "provider credential root", path: canonical.ProviderCredentialRoot})
+	}
+	if canonical.MemoryDBStateRoot != canonical.DBStateRoot {
+		topLevel = append(topLevel, isolationRoot{label: "memory db state root", path: canonical.MemoryDBStateRoot})
 	}
 	if !pathutil.Within(canonical.DBStateRoot, canonical.DataVolumeEvidenceRoot) {
 		topLevel = append(topLevel, isolationRoot{label: "data volume evidence root", path: canonical.DataVolumeEvidenceRoot})

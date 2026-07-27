@@ -6,23 +6,23 @@ import (
 	"strings"
 	"testing"
 
-	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/memorystore"
 )
 
 func TestHasFailureSignal(t *testing.T) {
 	cases := []struct {
 		name   string
-		events []store.TrajectoryEvent
+		events []memorystore.TrajectoryEvent
 		want   bool
 	}{
 		{
 			name:   "no tool results",
-			events: []store.TrajectoryEvent{{Kind: "user"}, {Kind: "assistant"}},
+			events: []memorystore.TrajectoryEvent{{Kind: "user"}, {Kind: "assistant"}},
 			want:   false,
 		},
 		{
 			name: "single recovered error is not material",
-			events: []store.TrajectoryEvent{
+			events: []memorystore.TrajectoryEvent{
 				{Kind: "tool_result", IsError: true},
 				{Kind: "tool_result", IsError: false},
 			},
@@ -30,7 +30,7 @@ func TestHasFailureSignal(t *testing.T) {
 		},
 		{
 			name: "last tool result errors",
-			events: []store.TrajectoryEvent{
+			events: []memorystore.TrajectoryEvent{
 				{Kind: "tool_result", IsError: false},
 				{Kind: "tool_result", IsError: true},
 			},
@@ -38,7 +38,7 @@ func TestHasFailureSignal(t *testing.T) {
 		},
 		{
 			name: "two errors is material",
-			events: []store.TrajectoryEvent{
+			events: []memorystore.TrajectoryEvent{
 				{Kind: "tool_result", IsError: true},
 				{Kind: "tool_result", IsError: true},
 				{Kind: "tool_result", IsError: false},
@@ -78,11 +78,11 @@ func TestKBPublishAndRepoint(t *testing.T) {
 		t.Fatal("NewKB returned nil for non-empty root")
 	}
 
-	mems := []store.SemanticMemory{{
+	mems := []memorystore.SemanticMemory{{
 		Type: "fact", Scope: "doris", Statement: "vhr_data schema changes over time; discover it live.",
 		SupportCount: 4, Confidence: 0.8, Status: "accepted",
 	}}
-	skills := []store.SkillCandidate{{
+	skills := []memorystore.SkillCandidate{{
 		TargetSkillName: "charging-analysis", Title: "Charging analysis",
 		BodyMD: "# Charging analysis\n\n## Procedure\n1. step\n", KBStatus: "observing",
 		SupportCount: 3, Confidence: 0.78,
@@ -145,7 +145,7 @@ func TestKBPublishCarriesForwardSeed(t *testing.T) {
 	}
 
 	// Publish a distilled skill; no memories.
-	_, err := kb.Publish(nil, []store.SkillCandidate{{
+	_, err := kb.Publish(nil, []memorystore.SkillCandidate{{
 		TargetSkillName: "charging-analysis", Title: "Charging analysis",
 		BodyMD: "# Charging analysis\n", KBStatus: "observing", SupportCount: 3, Confidence: 0.8,
 	}})
