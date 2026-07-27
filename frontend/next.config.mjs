@@ -46,16 +46,15 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
-  // Dev-only: hosts the browser may load the dev server from. Deployments differ
-  // (ECS public IP vs. a local VM's address), so extra hosts come from
-  // HARNESS_DEV_ORIGINS (comma-separated) rather than being hardcoded per env.
-  allowedDevOrigins: [
-    "123.249.65.231",
-    ...(process.env.HARNESS_DEV_ORIGINS ?? "")
-      .split(",")
-      .map((origin) => origin.trim())
-      .filter(Boolean)
-  ],
+  // Dev-only: hosts the browser may load the dev server from. Every deployment
+  // is reached at a different address (a cloud VM's public IP, a local VM's LAN
+  // address), so the list comes entirely from HARNESS_DEV_ORIGINS
+  // (comma-separated) — no address is committed here. Unset means localhost only,
+  // which is all `next dev` allows by default.
+  allowedDevOrigins: (process.env.HARNESS_DEV_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   async headers() {
     return [
       {

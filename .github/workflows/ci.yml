@@ -30,6 +30,10 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      # A lockfile committed from a host with an npm mirror configured pins every
+      # `resolved` URL to that mirror, and is then only installable from that one
+      # network. Catch it here rather than as an ECONNRESET on someone's machine.
+      - run: ../scripts/check-lockfile-registry.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
