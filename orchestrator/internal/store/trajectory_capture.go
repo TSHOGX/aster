@@ -116,34 +116,20 @@ ON CONFLICT(session_id, path) DO UPDATE SET
 // (the rebuildable half) and upserts its trajectory_snapshots index row. It never
 // touches the distilled memory/skill tables. Used by the native-capture path;
 // events already carry NativeID/ParentID/CallID from the pi parser.
+//
+// The replace is chunked across several short transactions (see
+// rebuildTrajectoryEvents in trajectory.go) so it never holds the store's single
+// write connection for a whole multi-thousand-event capture.
 func (s *Store) ReplaceTrajectoryEvents(ctx context.Context, snap TrajectorySnapshot, events []TrajectoryEvent) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("replace trajectory events: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM trajectory_events WHERE session_id = ?`, snap.SessionID); err != nil {
-		return fmt.Errorf("replace trajectory events: clear: %w", err)
-	}
+	// The idx a caller passed in is not trusted here: this path has always
+	// renumbered events 0..n-1 by slice position.
+	renumbered := make([]TrajectoryEvent, len(events))
 	for i, ev := range events {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO trajectory_events (
-  session_id, idx, kind, subtype, name, call_id, is_error, native_id, parent_id, message_id, tokens, text, ts
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			snap.SessionID, i, ev.Kind,
-			nullableString(ev.Subtype), nullableString(ev.Name), nullableString(ev.CallID),
-			boolInt(ev.IsError), ev.NativeID, ev.ParentID, ev.MessageID, ev.Tokens, ev.Text, formatOptionalTime(ev.TS),
-		); err != nil {
-			return fmt.Errorf("replace trajectory events: insert %d: %w", i, err)
-		}
+		ev.Idx = i
+		renumbered[i] = ev
 	}
-
-	if err := upsertTrajectorySnapshotTx(ctx, tx, snap); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("replace trajectory events: commit: %w", err)
+	if err := s.rebuildTrajectoryEvents(ctx, snap, renumbered); err != nil {
+		return fmt.Errorf("replace trajectory events: %w", err)
 	}
 	return nil
 }

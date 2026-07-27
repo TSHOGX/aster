@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -223,5 +225,353 @@ func TestNeedsExtractionWatermark(t *testing.T) {
 	}
 	if !need {
 		t.Fatal("expected extraction after session grew")
+	}
+}
+
+// countTrajectoryEvents returns the row count and the number of DISTINCT idx
+// values for a session, so a caller can prove there are no duplicate idx rows.
+func countTrajectoryEvents(t *testing.T, st *Store, ctx context.Context, sessionID string) (rows, distinctIdx int) {
+	t.Helper()
+	if err := st.DBForTest().QueryRowContext(ctx,
+		`SELECT COUNT(*), COUNT(DISTINCT idx) FROM trajectory_events WHERE session_id = ?`,
+		sessionID).Scan(&rows, &distinctIdx); err != nil {
+		t.Fatalf("count trajectory events: %v", err)
+	}
+	return rows, distinctIdx
+}
+
+// TestReplaceTrajectoryEventsChunkedAcrossBatches drives a replace with an event
+// count well above trajectoryEventBatchSize (so the write spans several
+// transactions) and asserts the chunked path is equivalent to the old single-tx
+// one: every event lands, idx ordering is preserved end to end, and a re-replace
+// replaces rather than duplicates.
+func TestReplaceTrajectoryEventsChunkedAcrossBatches(t *testing.T) {
+	st, ctx := newTrajectoryTestStore(t)
+	const sessionID = "sess_chunked"
+	seedTrajectorySession(t, st, ctx, sessionID)
+
+	// 1200 events over a batch size of 500 => 3 chunks, the last one partial.
+	const total = 1200
+	if total <= trajectoryEventBatchSize {
+		t.Fatalf("test needs total (%d) > batch size (%d)", total, trajectoryEventBatchSize)
+	}
+	build := func(tag string) []TrajectoryEvent {
+		events := make([]TrajectoryEvent, total)
+		for i := range events {
+			events[i] = TrajectoryEvent{
+				SessionID: sessionID,
+				Idx:       i,
+				Kind:      "user",
+				Text:      fmt.Sprintf("%s-%d", tag, i),
+				NativeID:  fmt.Sprintf("n%d", i),
+			}
+		}
+		return events
+	}
+	snap := TrajectorySnapshot{
+		SessionID:    sessionID,
+		Status:       "created",
+		Agent:        "pi",
+		UserID:       "lab",
+		TurnCount:    total,
+		MessageCount: total,
+		Fingerprint:  "fp-1",
+		Fidelity:     "full",
+	}
+
+	if err := st.ReplaceTrajectoryEvents(ctx, snap, build("first")); err != nil {
+		t.Fatalf("replace (first): %v", err)
+	}
+
+	events, err := st.GetTrajectoryEvents(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("get events: %v", err)
+	}
+	if len(events) != total {
+		t.Fatalf("event count = %d, want %d", len(events), total)
+	}
+	for i, ev := range events {
+		if ev.Idx != i {
+			t.Fatalf("event %d has idx %d, want %d (ordering by idx broken)", i, ev.Idx, i)
+		}
+		if want := fmt.Sprintf("first-%d", i); ev.Text != want {
+			t.Fatalf("event %d text = %q, want %q", i, ev.Text, want)
+		}
+	}
+	if rows, distinct := countTrajectoryEvents(t, st, ctx, sessionID); rows != total || distinct != total {
+		t.Fatalf("after first replace: rows = %d, distinct idx = %d, want %d/%d", rows, distinct, total, total)
+	}
+
+	// The final chunk must have published the index row (normalized_at non-NULL).
+	snaps, err := st.ListSessionsForDistillation(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("list for distillation: %v", err)
+	}
+	if len(snaps) != 1 || snaps[0].NormalizedAt == nil {
+		t.Fatalf("expected one snapshot with normalized_at set, got %+v", snaps)
+	}
+
+	// A second replace of the same session must overwrite, not accumulate.
+	snap.Fingerprint = "fp-2"
+	if err := st.ReplaceTrajectoryEvents(ctx, snap, build("second")); err != nil {
+		t.Fatalf("replace (second): %v", err)
+	}
+	rows, distinct := countTrajectoryEvents(t, st, ctx, sessionID)
+	if rows != total {
+		t.Fatalf("after re-replace: rows = %d, want exactly %d (duplicated instead of replaced)", rows, total)
+	}
+	if distinct != total {
+		t.Fatalf("after re-replace: distinct idx = %d, want %d (duplicate idx present)", distinct, total)
+	}
+	events2, err := st.GetTrajectoryEvents(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("get events after re-replace: %v", err)
+	}
+	for i, ev := range events2 {
+		if want := fmt.Sprintf("second-%d", i); ev.Text != want {
+			t.Fatalf("event %d text = %q, want %q (stale row survived)", i, ev.Text, want)
+		}
+	}
+}
+
+// TestSnapshotSessionChunkedManyMessages exercises the same chunked path through
+// SnapshotSession (the lossy projection), where idx is assigned by normalizeEvents
+// rather than by the caller.
+func TestSnapshotSessionChunkedManyMessages(t *testing.T) {
+	st, ctx := newTrajectoryTestStore(t)
+	const sessionID = "sess_chunk_snap"
+	seedTrajectorySession(t, st, ctx, sessionID)
+
+	// 1200 user messages -> 1200 events, spanning 3 batches of 500.
+	const total = 1200
+	for i := 0; i < total; i++ {
+		if _, err := st.AddMessage(ctx, sessionID, "user", fmt.Sprintf("msg-%d", i)); err != nil {
+			t.Fatalf("add message %d: %v", i, err)
+		}
+	}
+
+	if err := st.SnapshotSession(ctx, sessionID); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	events, err := st.GetTrajectoryEvents(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("get events: %v", err)
+	}
+	if len(events) != total {
+		t.Fatalf("event count = %d, want %d", len(events), total)
+	}
+	for i, ev := range events {
+		if ev.Idx != i {
+			t.Fatalf("event %d has idx %d, want %d", i, ev.Idx, i)
+		}
+		if want := fmt.Sprintf("msg-%d", i); ev.Text != want {
+			t.Fatalf("event %d text = %q, want %q", i, ev.Text, want)
+		}
+	}
+
+	// Re-snapshot: exact same row count, no duplicate idx.
+	if err := st.SnapshotSession(ctx, sessionID); err != nil {
+		t.Fatalf("re-snapshot: %v", err)
+	}
+	rows, distinct := countTrajectoryEvents(t, st, ctx, sessionID)
+	if rows != total || distinct != total {
+		t.Fatalf("after re-snapshot: rows = %d, distinct idx = %d, want %d/%d", rows, distinct, total, total)
+	}
+}
+
+// TestSnapshotSessionPreservesDistilledMemory pins the rebuildable-vs-non-
+// rebuildable invariant: rebuilding trajectory_events for a session must never
+// cascade into the expensive LLM output keyed by the same session_id.
+func TestSnapshotSessionPreservesDistilledMemory(t *testing.T) {
+	st, ctx := newTrajectoryTestStore(t)
+	const sessionID = "sess_keep_memory"
+	seedTrajectorySession(t, st, ctx, sessionID)
+
+	if _, err := st.AddMessage(ctx, sessionID, "user", "hello"); err != nil {
+		t.Fatalf("add message: %v", err)
+	}
+	if err := st.SnapshotSession(ctx, sessionID); err != nil {
+		t.Fatalf("first snapshot: %v", err)
+	}
+
+	// Seed one row in each non-rebuildable table, all tied to this session.
+	if _, err := st.InsertEpisodeMemory(ctx, EpisodeMemory{
+		SessionID: sessionID,
+		Task:      "ship the fix",
+		Outcome:   "success",
+	}); err != nil {
+		t.Fatalf("insert episode memory: %v", err)
+	}
+	if _, err := st.UpsertSemanticMemory(ctx, SemanticMemory{
+		Type:      "heuristic",
+		Scope:     "global",
+		Statement: "chunk long writes on a single-connection store",
+	}, sessionID); err != nil {
+		t.Fatalf("upsert semantic memory: %v", err)
+	}
+	if _, err := st.UpsertSkillCandidate(ctx, SkillCandidate{
+		TargetSkillName:    "chunked-writes",
+		Title:              "Chunked writes",
+		BodyMD:             "# body",
+		EvidenceSessionIDs: []string{sessionID},
+	}); err != nil {
+		t.Fatalf("upsert skill candidate: %v", err)
+	}
+
+	countRows := func(query string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := st.DBForTest().QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+			t.Fatalf("count (%s): %v", query, err)
+		}
+		return n
+	}
+	const episodeQ = `SELECT COUNT(*) FROM episode_memories WHERE session_id = ?`
+	const semanticQ = `SELECT COUNT(*) FROM semantic_memories WHERE evidence_session_ids_json LIKE ?`
+	const skillQ = `SELECT COUNT(*) FROM skill_candidates WHERE evidence_session_ids_json LIKE ?`
+	like := "%" + sessionID + "%"
+
+	beforeEpisodes := countRows(episodeQ, sessionID)
+	beforeSemantic := countRows(semanticQ, like)
+	beforeSkills := countRows(skillQ, like)
+	if beforeEpisodes != 1 || beforeSemantic != 1 || beforeSkills != 1 {
+		t.Fatalf("seed failed: episodes=%d semantic=%d skills=%d", beforeEpisodes, beforeSemantic, beforeSkills)
+	}
+
+	// Grow the session and rebuild the event stream across more than one chunk.
+	for i := 0; i < trajectoryEventBatchSize+10; i++ {
+		if _, err := st.AddMessage(ctx, sessionID, "user", fmt.Sprintf("more-%d", i)); err != nil {
+			t.Fatalf("add message %d: %v", i, err)
+		}
+	}
+	if err := st.SnapshotSession(ctx, sessionID); err != nil {
+		t.Fatalf("re-snapshot: %v", err)
+	}
+
+	if got := countRows(episodeQ, sessionID); got != beforeEpisodes {
+		t.Fatalf("episode_memories rows = %d after re-snapshot, want %d (rebuild cascaded into LLM output)", got, beforeEpisodes)
+	}
+	if got := countRows(semanticQ, like); got != beforeSemantic {
+		t.Fatalf("semantic_memories rows = %d after re-snapshot, want %d", got, beforeSemantic)
+	}
+	if got := countRows(skillQ, like); got != beforeSkills {
+		t.Fatalf("skill_candidates rows = %d after re-snapshot, want %d", got, beforeSkills)
+	}
+}
+
+// TestRebuildTrajectoryEventsMarksIncompleteRebuild proves the crash-detection
+// half of the chunking design: after the clearing transaction the index row has
+// normalized_at = NULL, and ListSessionsForDistillation surfaces the session so a
+// later sweep redoes the interrupted rebuild.
+func TestRebuildTrajectoryEventsMarksIncompleteRebuild(t *testing.T) {
+	st, ctx := newTrajectoryTestStore(t)
+	const sessionID = "sess_interrupted"
+	seedTrajectorySession(t, st, ctx, sessionID)
+
+	if _, err := st.AddMessage(ctx, sessionID, "user", "hello"); err != nil {
+		t.Fatalf("add message: %v", err)
+	}
+	if err := st.SnapshotSession(ctx, sessionID); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	// A completed rebuild leaves the session extractable-but-normalized.
+	if _, err := st.DBForTest().ExecContext(ctx,
+		`UPDATE trajectory_snapshots SET extracted_at = ? WHERE session_id = ?`,
+		formatTime(time.Now().UTC()), sessionID); err != nil {
+		t.Fatalf("mark extracted: %v", err)
+	}
+	snaps, err := st.ListSessionsForDistillation(ctx, time.Now().UTC().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list (settled): %v", err)
+	}
+	if len(snaps) != 0 {
+		t.Fatalf("expected a settled session to be skipped, got %+v", snaps)
+	}
+
+	// Simulate a rebuild that died right after the clear transaction.
+	if err := st.beginTrajectoryRebuild(ctx, sessionID); err != nil {
+		t.Fatalf("begin rebuild: %v", err)
+	}
+	if rows, _ := countTrajectoryEvents(t, st, ctx, sessionID); rows != 0 {
+		t.Fatalf("clear transaction left %d event rows, want 0", rows)
+	}
+	snaps, err = st.ListSessionsForDistillation(ctx, time.Now().UTC().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list (interrupted): %v", err)
+	}
+	if len(snaps) != 1 || snaps[0].SessionID != sessionID {
+		t.Fatalf("interrupted rebuild not surfaced for retry, got %+v", snaps)
+	}
+	if snaps[0].NormalizedAt != nil {
+		t.Fatalf("expected normalized_at NULL mid-rebuild, got %v", snaps[0].NormalizedAt)
+	}
+
+	// The retry re-stamps normalized_at and restores the stream.
+	if err := st.SnapshotSession(ctx, sessionID); err != nil {
+		t.Fatalf("retry snapshot: %v", err)
+	}
+	if rows, _ := countTrajectoryEvents(t, st, ctx, sessionID); rows != 1 {
+		t.Fatalf("after retry: %d event rows, want 1", rows)
+	}
+	snaps, err = st.ListSessionsForDistillation(ctx, time.Now().UTC().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list (retried): %v", err)
+	}
+	if len(snaps) != 0 {
+		t.Fatalf("expected the retried session to settle again, got %+v", snaps)
+	}
+}
+
+// TestRebuildTrajectoryEventsConcurrentSessions mirrors the pipeline's parMap
+// fan-out: overlapping rebuilds of DIFFERENT sessions must not interfere, since
+// each is scoped to its own session_id.
+func TestRebuildTrajectoryEventsConcurrentSessions(t *testing.T) {
+	st, ctx := newTrajectoryTestStore(t)
+
+	const sessions = 4
+	const perSession = trajectoryEventBatchSize + 123
+	ids := make([]string, sessions)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("sess_par_%d", i)
+		seedTrajectorySession(t, st, ctx, ids[i])
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, sessions)
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			events := make([]TrajectoryEvent, perSession)
+			for j := range events {
+				events[j] = TrajectoryEvent{Idx: j, Kind: "user", Text: fmt.Sprintf("%s-%d", id, j)}
+			}
+			errs[i] = st.ReplaceTrajectoryEvents(ctx, TrajectorySnapshot{
+				SessionID: id, Status: "created", Agent: "pi", UserID: "lab",
+				MessageCount: perSession, Fingerprint: "fp", Fidelity: "full",
+			}, events)
+		}(i, id)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent replace %s: %v", ids[i], err)
+		}
+	}
+	for _, id := range ids {
+		rows, distinct := countTrajectoryEvents(t, st, ctx, id)
+		if rows != perSession || distinct != perSession {
+			t.Fatalf("session %s: rows = %d, distinct idx = %d, want %d/%d", id, rows, distinct, perSession, perSession)
+		}
+		events, err := st.GetTrajectoryEvents(ctx, id)
+		if err != nil {
+			t.Fatalf("get events %s: %v", id, err)
+		}
+		for j, ev := range events {
+			if want := fmt.Sprintf("%s-%d", id, j); ev.Text != want {
+				t.Fatalf("session %s event %d text = %q, want %q (cross-session bleed)", id, j, ev.Text, want)
+			}
+		}
 	}
 }

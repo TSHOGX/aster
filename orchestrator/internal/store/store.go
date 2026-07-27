@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
@@ -90,6 +91,12 @@ type Artifact struct {
 type Store struct {
 	db      *sql.DB
 	options Options
+
+	// trajRebuildLocks holds one mutex per session_id being rebuilt into
+	// trajectory_events. A rebuild spans several short transactions rather than one
+	// long one (see rebuildTrajectoryEvents), so same-session rebuilds must be
+	// serialized in-process. map[string]*sync.Mutex.
+	trajRebuildLocks sync.Map
 }
 
 type Options struct {

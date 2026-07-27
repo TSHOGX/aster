@@ -1015,6 +1015,13 @@ func TestMonitorIdleSessionsReleasesEligibleGeneration(t *testing.T) {
 		errCh <- srv.MonitorIdleSessions(runCtx)
 	}()
 	waitForSessionStatus(t, ctx, st, session.ID, string(sessionstate.Checkpointed))
+	// Reaching 'checkpointed' only means the DB transition landed;
+	// releaseIdleGeneration tears the sandbox down *after* that, on the same
+	// context. Cancelling here would race that teardown — the monitor would
+	// abort mid-cleanup ("teardown deferred to reaper") and the destroy
+	// assertion below would see nothing. Wait for the teardown the test is
+	// actually asserting on before cancelling.
+	waitForDestroyRequest(t, rt, allocation.GenerationID)
 	cancel()
 	if err := <-errCh; !errors.Is(err, context.Canceled) {
 		t.Fatalf("monitor exit err=%v, want context canceled", err)
@@ -6001,6 +6008,24 @@ func createServerGenerationFilesystem(t *testing.T, details store.RuntimeGenerat
 			t.Fatalf("write generation filesystem marker %s: %v", path, err)
 		}
 	}
+}
+
+// waitForDestroyRequest blocks until the runtime has been asked to destroy the
+// given generation. Use it when a background loop tears a sandbox down after the
+// DB transition a test synchronised on, so the test does not cancel the loop's
+// context out from under the teardown it is about to assert.
+func waitForDestroyRequest(t *testing.T, rt *recordingRuntime, generationID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, destroy := range rt.destroyGenerationRequests() {
+			if destroy.GenerationID == generationID {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("runtime was never asked to destroy generation %s, got %+v", generationID, rt.destroyGenerationRequests())
 }
 
 func waitForSessionStatus(t *testing.T, ctx context.Context, st *store.Store, sessionID, want string) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -182,32 +183,9 @@ func (s *Store) SnapshotSession(ctx context.Context, sessionID string) error {
 	fingerprint := trajectoryFingerprint(turnCount, messages)
 	now := time.Now().UTC()
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("snapshot session %q: begin tx: %w", sessionID, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Rebuildable half: wholesale replace the event stream.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM trajectory_events WHERE session_id = ?`, sessionID); err != nil {
-		return fmt.Errorf("snapshot session %q: clear events: %w", sessionID, err)
-	}
-	for _, ev := range events {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO trajectory_events (
-  session_id, idx, kind, subtype, name, call_id, is_error, message_id, tokens, text, ts
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			ev.SessionID, ev.Idx, ev.Kind,
-			nullableString(ev.Subtype), nullableString(ev.Name), nullableString(ev.CallID),
-			boolInt(ev.IsError), ev.MessageID, ev.Tokens, ev.Text, formatOptionalTime(ev.TS),
-		); err != nil {
-			return fmt.Errorf("snapshot session %q: insert event %d: %w", sessionID, ev.Idx, err)
-		}
-	}
-
-	// Index row (fidelity=partial: this is the lossy messages/traces projection).
-	if err := upsertTrajectorySnapshotTx(ctx, tx, TrajectorySnapshot{
+	// Rebuildable half: wholesale replace the event stream, then publish the index
+	// row (fidelity=partial: this is the lossy messages/traces projection).
+	if err := s.rebuildTrajectoryEvents(ctx, TrajectorySnapshot{
 		SessionID:    session.ID,
 		Status:       session.Status,
 		Agent:        session.Agent,
@@ -219,14 +197,159 @@ INSERT INTO trajectory_events (
 		Fingerprint:  fingerprint,
 		Fidelity:     "partial",
 		NormalizedAt: &now,
-	}); err != nil {
+	}, events); err != nil {
 		return fmt.Errorf("snapshot session %q: %w", sessionID, err)
 	}
+	return nil
+}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("snapshot session %q: commit: %w", sessionID, err)
+// trajectoryEventBatchSize bounds how many event rows one rebuild transaction
+// inserts. The store runs a single SQLite connection (SetMaxOpenConns(1)), so an
+// open write transaction blocks ALL control-plane traffic — session state, turn
+// leases, HTTP handlers. A long pi session normalizes to thousands of events, so
+// one DELETE + N INSERTs in a single transaction stalls the process for the whole
+// rebuild. Chunking caps that stall at one batch.
+const trajectoryEventBatchSize = 500
+
+const trajectoryEventInsertSQL = `
+INSERT INTO trajectory_events (
+  session_id, idx, kind, subtype, name, call_id, is_error, native_id, parent_id, message_id, tokens, text, ts
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+// rebuildTrajectoryEvents replaces one session's normalized event stream and then
+// commits its trajectory_snapshots index row. Shared by the lossy projection
+// (SnapshotSession) and the native full-fidelity capture (ReplaceTrajectoryEvents);
+// events must already carry their final Idx.
+//
+// Why this is safe to split across transactions (approach (a): chunk the data,
+// commit the index row last):
+//
+//   - trajectory_events is REBUILDABLE by design (see the table-group comment in
+//     schema.go): it is a mechanical projection of messages/message_traces, so
+//     losing a partial rebuild costs nothing but the CPU to redo it. The
+//     NON-REBUILDABLE LLM output (episode_memories, semantic_memories,
+//     skill_candidates) is joined only by soft keys and is never read or written
+//     here, so no amount of interruption can damage it.
+//   - The rebuild opens by clearing normalized_at on the existing index row in the
+//     SAME transaction as the DELETE, and only re-stamps it in the FINAL
+//     transaction alongside the last chunk. normalized_at IS NULL therefore means
+//     exactly "a rebuild started and did not finish" — no other writer produces
+//     that state, since upsertTrajectorySnapshotTx always writes a non-NULL
+//     normalized_at. ListSessionsForDistillation treats that marker as
+//     "reprocess me", so an interrupted rebuild is redone on the next sweep
+//     instead of sitting truncated behind a snapshot row that claims otherwise.
+//     Note the fingerprint alone would NOT have delivered that: nothing in the
+//     codebase compares a stored fingerprint against a freshly computed one, so
+//     fingerprint drift is inert as a retry signal. The explicit normalized_at
+//     marker is what makes the interrupted state detectable.
+//   - Concurrency: internal/memory/pipeline.go sweeps sessions through parMap, so
+//     rebuilds of DIFFERENT sessions overlap. Every statement here is scoped to a
+//     single session_id, and trajectory_events is keyed (session_id, idx), so
+//     concurrent rebuilds touch disjoint rows. Two rebuilds of the SAME session
+//     would no longer be mutually atomic once the work spans transactions, so they
+//     are serialized on a per-session lock below.
+//
+// The trade-off accepted: a reader can observe a partially rebuilt stream for one
+// session while its rebuild is in flight. Both callers run only in the background
+// pipeline/CLI, never in an HTTP request path, and the index row marks the stream
+// as unfinished for that whole window.
+func (s *Store) rebuildTrajectoryEvents(ctx context.Context, snap TrajectorySnapshot, events []TrajectoryEvent) error {
+	sessionID := snap.SessionID
+
+	unlock := s.lockTrajectoryRebuild(sessionID)
+	defer unlock()
+
+	if err := s.beginTrajectoryRebuild(ctx, sessionID); err != nil {
+		return err
+	}
+	for start := 0; start < len(events); start += trajectoryEventBatchSize {
+		end := min(start+trajectoryEventBatchSize, len(events))
+		if err := s.writeTrajectoryEventChunk(ctx, snap, events[start:end], end == len(events)); err != nil {
+			return err
+		}
+	}
+	if len(events) == 0 {
+		// No data chunks: the index row still has to land to mark the (empty)
+		// rebuild complete.
+		return s.writeTrajectoryEventChunk(ctx, snap, nil, true)
 	}
 	return nil
+}
+
+// beginTrajectoryRebuild clears the session's stale event rows and marks its index
+// row as mid-rebuild (normalized_at = NULL) in one short transaction.
+func (s *Store) beginTrajectoryRebuild(ctx context.Context, sessionID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("rebuild trajectory events %q: begin tx: %w", sessionID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE trajectory_snapshots SET normalized_at = NULL WHERE session_id = ?`, sessionID); err != nil {
+		return fmt.Errorf("rebuild trajectory events %q: mark incomplete: %w", sessionID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM trajectory_events WHERE session_id = ?`, sessionID); err != nil {
+		return fmt.Errorf("rebuild trajectory events %q: clear events: %w", sessionID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("rebuild trajectory events %q: commit clear: %w", sessionID, err)
+	}
+	return nil
+}
+
+// writeTrajectoryEventChunk inserts one batch of events in its own transaction,
+// through a single prepared statement rather than re-parsing the INSERT per row.
+// When final is set, the trajectory_snapshots index row is upserted in the same
+// transaction, which is what publishes the rebuild as complete.
+func (s *Store) writeTrajectoryEventChunk(ctx context.Context, snap TrajectorySnapshot, events []TrajectoryEvent, final bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("rebuild trajectory events %q: begin tx: %w", snap.SessionID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if len(events) > 0 {
+		stmt, err := tx.PrepareContext(ctx, trajectoryEventInsertSQL)
+		if err != nil {
+			return fmt.Errorf("rebuild trajectory events %q: prepare insert: %w", snap.SessionID, err)
+		}
+		defer func() { _ = stmt.Close() }()
+
+		for _, ev := range events {
+			if _, err := stmt.ExecContext(ctx,
+				snap.SessionID, ev.Idx, ev.Kind,
+				nullableString(ev.Subtype), nullableString(ev.Name), nullableString(ev.CallID),
+				boolInt(ev.IsError), ev.NativeID, ev.ParentID, ev.MessageID, ev.Tokens, ev.Text,
+				formatOptionalTime(ev.TS),
+			); err != nil {
+				return fmt.Errorf("rebuild trajectory events %q: insert event %d: %w", snap.SessionID, ev.Idx, err)
+			}
+		}
+	}
+
+	if final {
+		if err := upsertTrajectorySnapshotTx(ctx, tx, snap); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("rebuild trajectory events %q: commit: %w", snap.SessionID, err)
+	}
+	return nil
+}
+
+// lockTrajectoryRebuild serializes rebuilds of the same session_id within this
+// process. Rebuilds of different sessions are unaffected, which is the point: the
+// write lock is no longer held for a whole session's rebuild, so the pipeline's
+// parMap fan-out must not be allowed to interleave two rebuilds of one session
+// into a mixed event stream. The returned func releases the lock.
+func (s *Store) lockTrajectoryRebuild(sessionID string) func() {
+	value, _ := s.trajRebuildLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // upsertTrajectorySnapshotTx inserts-or-updates the index row for a session,
@@ -441,14 +564,20 @@ func scanTrajectoryEvent(sc interface{ Scan(...any) error }) (TrajectoryEvent, e
 	return ev, nil
 }
 
-// ListSessionsForDistillation returns snapshots that changed or were never
-// extracted: ended_at >= since OR extracted_at IS NULL, ordered by ended_at.
+// ListSessionsForDistillation returns snapshots that changed, were never
+// extracted, or whose event-stream rebuild did not finish: normalized_at IS NULL
+// OR extracted_at IS NULL OR ended_at >= since, ordered by ended_at.
+//
+// normalized_at IS NULL is the incomplete-rebuild marker set by
+// rebuildTrajectoryEvents: it is cleared with the DELETE and only re-stamped in
+// the final chunk's transaction, so a rebuild interrupted by a crash is picked up
+// again here regardless of how the window or extraction watermark falls.
 func (s *Store) ListSessionsForDistillation(ctx context.Context, since time.Time) ([]TrajectorySnapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT session_id, status, agent, user_id, started_at, ended_at,
        turn_count, message_count, fingerprint, fidelity, normalized_at, extracted_at, created_at
 FROM trajectory_snapshots
-WHERE extracted_at IS NULL OR (ended_at IS NOT NULL AND ended_at >= ?)
+WHERE normalized_at IS NULL OR extracted_at IS NULL OR (ended_at IS NOT NULL AND ended_at >= ?)
 ORDER BY ended_at ASC`, formatTime(since))
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for distillation: %w", err)
