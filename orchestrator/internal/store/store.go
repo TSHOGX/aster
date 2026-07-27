@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -131,20 +132,26 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // deliberately SKIPS migrate(): schema setup includes ALTER TABLE statements
 // and an FTS rebuild, which a side process must not run under a live server.
 // A missing database file is an error here rather than something to create.
+//
+// The PRAGMAs come from the shared DSN builder rather than a one-shot
+// ExecContext. They are per-connection in SQLite, so configuring them after
+// Open only reaches whichever connection happened to serve that statement —
+// which works by accident at one connection and silently drops FK enforcement
+// the moment the pool can hold more. VerifyPragmas reads them back so a
+// misspelled pragma (which the driver accepts silently) fails here instead of
+// disabling foreign keys in a maintenance command.
+//
+// No reader pool: this is a short-lived single-threaded command, so readDB
+// stays nil and every method runs on the writer as usual.
 func OpenForMaintenance(ctx context.Context, path string) (*Store, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sqlitex.OpenWriter(path)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if _, err := db.ExecContext(ctx, `
-PRAGMA busy_timeout=5000;
-PRAGMA foreign_keys=ON;
-`); err != nil {
+	if err := sqlitex.VerifyPragmas(ctx, db, 1); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("configure database %s: %w", path, err)
 	}
