@@ -51,9 +51,188 @@ func newFixture(t *testing.T) (controlPath, memoryPath string) {
 
 	db := openRaw(t, controlPath)
 	defer db.Close()
+	createLegacyMemoryTables(t, db)
 	seed(t, db)
 	return controlPath, memoryPath
 }
+
+// createLegacyMemoryTables recreates the 9 memory tables as they existed in
+// orchestrator.db BEFORE the control/memory split, including the 5 FKs into
+// sessions(id) and the columns that were added by incremental ALTER migrations
+// (trajectory_events.native_id/parent_id, semantic_memories.canonical_of_json
+// and friends, skill_candidates.curator_reason/verify_verdict).
+//
+// This DDL is deliberately a literal here rather than being obtained from
+// store.Open: the current control schema no longer creates these tables, so the
+// production code path can no longer produce a pre-split database. The migration
+// under test runs against OLD production files, so the fixture has to reproduce
+// that historical shape. Copied verbatim from internal/store/schema.go as of
+// commit 02c004f (the last commit before the split), with the ALTER-added
+// columns folded in at the position ALTER TABLE would have appended them.
+func createLegacyMemoryTables(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(legacyMemorySchema); err != nil {
+		t.Fatalf("create legacy memory tables: %v", err)
+	}
+}
+
+const legacyMemorySchema = `
+CREATE TABLE IF NOT EXISTS trajectory_snapshots (
+  session_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  started_at TEXT,
+  ended_at TEXT,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  fingerprint TEXT NOT NULL DEFAULT '',
+  fidelity TEXT NOT NULL DEFAULT 'full' CHECK(fidelity IN ('full','partial')),
+  normalized_at TEXT,
+  extracted_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS trajectory_snapshots_extracted_idx
+  ON trajectory_snapshots (extracted_at);
+
+CREATE TABLE IF NOT EXISTS trajectory_events (
+  session_id TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('user','assistant','thinking','tool_call','tool_result','system','usage')),
+  subtype TEXT,
+  name TEXT,
+  call_id TEXT,
+  is_error INTEGER NOT NULL DEFAULT 0 CHECK(is_error IN (0,1)),
+  message_id INTEGER,
+  tokens INTEGER,
+  text TEXT NOT NULL,
+  ts TEXT,
+  native_id TEXT NOT NULL DEFAULT '',
+  parent_id TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(session_id, idx),
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS trajectory_events_kind_idx
+  ON trajectory_events (session_id, kind);
+
+CREATE TABLE IF NOT EXISTS extraction_state (
+  session_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  processed_turn_count INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  status TEXT NOT NULL DEFAULT 'ok' CHECK(status IN ('ok','error','skipped')),
+  error TEXT,
+  PRIMARY KEY(session_id, stage),
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS episode_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  task TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL DEFAULT 'unknown' CHECK(outcome IN ('success','partial','failed','abandoned','unknown')),
+  domains_json TEXT NOT NULL DEFAULT '[]',
+  worked_steps_json TEXT NOT NULL DEFAULT '[]',
+  failed_steps_json TEXT NOT NULL DEFAULT '[]',
+  user_frustration TEXT NOT NULL DEFAULT 'unknown' CHECK(user_frustration IN ('none','mild','high','unknown')),
+  candidate_memories_json TEXT NOT NULL DEFAULT '[]',
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  model TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS episode_memories_session_idx
+  ON episode_memories (session_id);
+
+CREATE TABLE IF NOT EXISTS semantic_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL CHECK(type IN ('fact','heuristic','procedure','bug','preference')),
+  scope TEXT NOT NULL DEFAULT 'global',
+  statement TEXT NOT NULL,
+  when_to_apply TEXT NOT NULL DEFAULT '',
+  support_count INTEGER NOT NULL DEFAULT 1,
+  contradiction_count INTEGER NOT NULL DEFAULT 0,
+  evidence_session_ids_json TEXT NOT NULL DEFAULT '[]',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate','accepted','deprecated')),
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  canonical_of_json TEXT NOT NULL DEFAULT '[]',
+  agent_rationale TEXT NOT NULL DEFAULT '',
+  verify_verdict TEXT NOT NULL DEFAULT '',
+  verify_checked_at TEXT,
+  corrected_statement TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS semantic_memories_status_idx
+  ON semantic_memories (status, scope);
+
+CREATE TABLE IF NOT EXISTS skill_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_skill_name TEXT NOT NULL,
+  operation TEXT NOT NULL DEFAULT 'create' CHECK(operation IN ('create','update','deprecate')),
+  title TEXT NOT NULL DEFAULT '',
+  body_md TEXT NOT NULL DEFAULT '',
+  source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+  evidence_session_ids_json TEXT NOT NULL DEFAULT '[]',
+  support_count INTEGER NOT NULL DEFAULT 1,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','needs_review','accepted','published','rejected')),
+  kb_status TEXT NOT NULL DEFAULT 'observing' CHECK(kb_status IN ('observing','in-use','deprecated')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  published_at TEXT,
+  curator_reason TEXT NOT NULL DEFAULT '',
+  verify_verdict TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS skill_candidates_status_idx
+  ON skill_candidates (status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS skill_candidates_name_uq
+  ON skill_candidates (target_skill_name);
+
+CREATE TABLE IF NOT EXISTS raw_sources (
+  session_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  native_session_id TEXT NOT NULL DEFAULT '',
+  bytes INTEGER NOT NULL DEFAULT 0,
+  mtime TEXT,
+  captured_at TEXT NOT NULL,
+  PRIMARY KEY(session_id, path),
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS evolution_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  phase0_plan_json TEXT NOT NULL DEFAULT '{}',
+  counts_json TEXT NOT NULL DEFAULT '{}',
+  digest TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS agent_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER,
+  node TEXT NOT NULL,
+  ref TEXT NOT NULL DEFAULT '',
+  prompt_sha TEXT NOT NULL DEFAULT '',
+  verdict TEXT NOT NULL DEFAULT '',
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_calls_run ON agent_calls(run_id);
+`
 
 // openRaw opens a SQLite file directly, with FKs ON so seeding and the orphan
 // rejection test exercise real enforcement.
