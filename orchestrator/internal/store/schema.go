@@ -17,6 +17,12 @@ type dbRunner interface {
 }
 
 func (s *Store) ensureSchema(ctx context.Context) error {
+	// These two lists bake the session status and driver enums into CHECK
+	// constraints. This is persistence, not domain policy leaking downward: the
+	// constraint is the schema's own integrity guarantee, and generating it from
+	// the canonical enum is what keeps the DDL from drifting out of sync with the
+	// Go definition. It is also the backstop that keeps CreateSession rejecting a
+	// bogus status now that the explicit pre-check moved to the caller.
 	statusCheck := sqlStringList(sessionstate.AllStatuses())
 	driverCheck := sqlStringList([]string{string(agents.Pi), string(agents.Shell)})
 	_, err := s.db.ExecContext(ctx, `

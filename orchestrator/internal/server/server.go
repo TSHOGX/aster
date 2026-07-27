@@ -62,7 +62,7 @@ const (
 
 type Server struct {
 	cfg       config.Config
-	store     *store.Store
+	store     serverStore
 	runtime   runtimeDriver
 	watcher   *artifacts.Watcher
 	hub       *events.Hub
@@ -103,6 +103,10 @@ type runtimeDriver interface {
 	Interrupt(string) error
 }
 
+// bridgeStore is the bridge-facing slice of the store. It is kept as a named
+// role (rather than folded into serverStore's body) because maintenance.go and
+// bridge_startup.go hand exactly this subset to internal/bridge. The role
+// interfaces live in store_iface.go; serverStore embeds this one.
 type bridgeStore interface {
 	bridge.Store
 	ListBridgePollGenerations(context.Context, string, time.Time, time.Duration) ([]store.BridgePollGeneration, error)
@@ -135,7 +139,7 @@ type proxyPeerCredentialsContextKey struct{}
 
 func New(
 	cfg config.Config,
-	store *store.Store,
+	store serverStore,
 	runtime runtimeDriver,
 	watcher *artifacts.Watcher,
 	hub *events.Hub,
@@ -648,6 +652,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:             now,
 		UpdatedAt:             now,
 		ExpiresAt:             expiresAt,
+	}
+	// Domain admission check, moved out of store.CreateSession: a bad status or
+	// an unsupported driver is a bad request, not a persistence failure.
+	if err := validateNewSession(session); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if err := s.store.CreateSession(r.Context(), session); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

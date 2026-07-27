@@ -1,0 +1,143 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"harness-platform/orchestrator/internal/store"
+)
+
+// The interfaces in this file are the server's own view of persistence. They
+// follow the consumer-side rule: the package that needs the behaviour declares
+// the interface it needs, and *store.Store satisfies all of them implicitly.
+// This mirrors the pre-existing bridgeStore/runtimeDriver precedent in
+// server.go and bridge.Store in internal/bridge.
+//
+// The 73 methods the server reaches for are grouped by concern rather than
+// declared as one god interface, so that a handler file, a test double, or a
+// future extraction only has to satisfy the slice it actually uses. serverStore
+// composes the roles and is what the Server struct holds; handlers that only
+// need one role can take the narrow role type directly.
+
+// sessionStore covers the sessions table: lifecycle, ownership, status, titles,
+// expiry sweeps, and the quota/idle bookkeeping that reads session rows.
+type sessionStore interface {
+	CreateSession(context.Context, store.Session) error
+	GetSession(context.Context, string) (store.Session, error)
+	ListSessionsByUser(context.Context, string) ([]store.Session, error)
+	UpdateSessionStatusAndActivity(context.Context, string, string, *int64, time.Time) error
+	UpdateSessionTitle(context.Context, string, string, bool) error
+	DestroySession(context.Context, string, time.Time) (store.DestroySessionResult, error)
+	SessionHasActiveTurn(context.Context, string) (bool, error)
+	CountSandboxOccupyingSessions(context.Context) (int, error)
+	GetResourceQuota(context.Context) (store.ResourceQuota, error)
+	SweepExpiredSessions(context.Context, time.Time) (int64, error)
+	ClearActiveSessionExpiry(context.Context, time.Time) (int64, error)
+	ListColdFallbackSessions(context.Context) ([]store.ColdFallbackSession, error)
+	ListIdleReleaseCandidates(context.Context, string, time.Time, time.Duration) ([]store.CheckpointCandidate, error)
+}
+
+// messageStore covers messages, turn enqueueing, per-message traces, feedback,
+// and search. stream_parser.go reaches this role through p.srv.
+type messageStore interface {
+	AddMessage(context.Context, string, string, string) (store.Message, error)
+	AddAssistantMessage(context.Context, string, string, string, string) (store.Message, error)
+	ListMessagesForUser(context.Context, string, string) ([]store.Message, error)
+	MessageSession(context.Context, int64) (string, bool, error)
+	SetMessageFeedback(context.Context, int64, string, string) (string, error)
+	SaveMessageTrace(context.Context, int64, string, json.RawMessage) error
+	SearchMessages(context.Context, string, string, int) ([]store.SearchHit, error)
+	EnqueueTurnMessage(context.Context, store.EnqueueTurnMessageParams) (store.EnqueueTurnMessageResult, error)
+	CancelTerminalSessionPendingTurns(context.Context, time.Time) (int64, error)
+}
+
+// authStore covers login/auth sessions: issue, look up, revoke, sweep.
+type authStore interface {
+	CreateAuthSession(context.Context, store.AuthSession) error
+	LookupAuthSession(context.Context, string, time.Time) (string, error)
+	RevokeAuthSession(context.Context, string, time.Time) error
+	SweepExpiredAuthSessions(context.Context, time.Time) (int64, error)
+}
+
+// generationStore covers the runtime_generations lifecycle: allocation, start
+// leases, live/destroyed resource transitions, checkpoint restore and retirement.
+type generationStore interface {
+	AllocateGeneration(context.Context, store.AllocateGenerationParams) (store.GenerationAllocation, error)
+	ClaimCheckpointedGenerationForRestore(context.Context, store.ClaimCheckpointedGenerationParams) (store.GenerationAllocation, error)
+	GetRuntimeGenerationDetails(context.Context, string, string) (store.RuntimeGenerationDetails, error)
+	GetRuntimeGenerationStatus(context.Context, string, string) (string, error)
+	MarkGenerationStarting(context.Context, string, string, string, time.Time) error
+	MarkGenerationResourcesLive(context.Context, string, string, string, time.Time) error
+	MarkGenerationResourcesDestroyed(context.Context, store.DestroyGenerationResourcesParams) error
+	FailGenerationStart(context.Context, store.FailGenerationStartParams) (int64, error)
+	RenewGenerationStartLease(context.Context, store.RenewGenerationStartLeaseParams) error
+	RenewLiveGenerationLeases(context.Context, store.RenewLiveGenerationsParams) (int64, error)
+	ReleaseIdleGeneration(context.Context, string, string, string, time.Time) error
+	RetireExpiredCheckpoints(context.Context, store.RetireExpiredCheckpointsParams) ([]store.RetiredCheckpoint, error)
+	RetireRestoreFallback(context.Context, store.RetireRestoreFallbackParams) (store.RetiredRestoreFallback, error)
+	ListDestroyableReclaimableGenerations(context.Context, time.Time, time.Duration) ([]store.ReclaimableGeneration, error)
+	ListExpiredRuntimeRecoveryCandidates(context.Context, store.StartupRecoveryParams) ([]store.ExpiredRuntimeRecoveryCandidate, error)
+	RepairExpiredRuntimeRecovery(context.Context, store.StartupRecoveryParams, []store.ExpiredRuntimeRecoveryCandidate) (store.StartupRecoveryResult, error)
+	RecordGenerationRuntimeArtifactDigests(context.Context, string, store.GenerationRuntimeArtifactDigests) error
+	ReapResources(context.Context, store.ReaperParams) (store.ReaperResult, error)
+}
+
+// runtimeResourceStore covers the runtime_resource_instances worker state
+// machine driven by runtime_resource_http.go and generation_lifecycle.go.
+type runtimeResourceStore interface {
+	CreateRuntimeResourceInstance(context.Context, store.RuntimeResourceInstanceParams) (store.RuntimeResourceInstance, error)
+	GetRuntimeResourceInstance(context.Context, string) (store.RuntimeResourceInstance, error)
+	GetRuntimeResourceCleanupIdentity(context.Context, string) (store.RuntimeResourceInstance, error)
+	ClaimRuntimeResourceMaterialization(context.Context, store.RuntimeResourceMaterializationClaimParams) error
+	ClaimRuntimeResourceCheckpointRestore(context.Context, store.RuntimeResourceMaterializationClaimParams) error
+	ClaimRuntimeResourceRetiring(context.Context, store.RuntimeResourceRetireParams) error
+	MarkRuntimeResourceReady(context.Context, store.RuntimeResourceWorkerTransitionParams) error
+	MarkRuntimeResourceLive(context.Context, store.RuntimeResourceWorkerTransitionParams) error
+	MarkRuntimeResourceReconciling(context.Context, store.RuntimeResourceEvidenceParams) error
+	MarkRuntimeResourceAbsentVerified(context.Context, store.RuntimeResourceEvidenceParams) error
+	MarkRuntimeResourceDestroyed(context.Context, store.RuntimeResourceRetireParams) error
+	RenewRuntimeResourceWorkerLease(context.Context, store.RuntimeResourceWorkerLeaseRenewalParams) error
+}
+
+// eventStore covers the durable event log behind SSE/WebSocket replay.
+type eventStore interface {
+	GetEvent(context.Context, int64) (store.EventRecord, bool, error)
+	ListEvents(context.Context, store.ListEventsParams) ([]store.EventRecord, error)
+	OldestEventID(context.Context, string) (int64, bool, error)
+	PruneEvents(context.Context, store.PruneEventsParams) (int64, error)
+}
+
+// notificationStore covers user-facing notifications.
+type notificationStore interface {
+	CreateNotification(context.Context, store.Notification) error
+	ListNotificationsForUser(context.Context, string) ([]store.NotificationWithReadState, error)
+	MarkNotificationRead(context.Context, string, string, time.Time) error
+}
+
+// contractVolumeStore covers sandbox contracts, artifact listings, the data
+// volumes backing a session workspace/driver home, and proxy request accounting.
+type contractVolumeStore interface {
+	StoreSandboxContract(context.Context, store.StoreSandboxContractParams) (store.SandboxContractRecord, error)
+	RecordSandboxContractArtifacts(context.Context, store.RecordSandboxContractArtifactsParams) (store.SandboxContractArtifacts, error)
+	ListArtifacts(context.Context, string) ([]store.Artifact, error)
+	ProvisionSessionWorkspace(context.Context, store.ProvisionSessionWorkspaceParams) (store.SessionWorkspaceVolume, error)
+	ProvisionSessionDriverHome(context.Context, store.ProvisionSessionDriverHomeParams) (store.SessionDriverHomeVolume, error)
+	VerifySessionWorkspaceVolume(context.Context, store.VerifySessionWorkspaceVolumeParams) (store.SessionWorkspaceVolume, error)
+	StartProxyRequest(context.Context, store.StartProxyRequestParams) (store.StartProxyRequestResult, error)
+	FinishProxyRequest(context.Context, store.FinishProxyRequestParams) (store.FinishProxyRequestResult, error)
+}
+
+// serverStore is the union of the roles the Server needs. It embeds bridge.Store
+// (via bridgeStore) so the bridge handoff keeps compiling off the same value.
+type serverStore interface {
+	sessionStore
+	messageStore
+	authStore
+	generationStore
+	runtimeResourceStore
+	eventStore
+	notificationStore
+	contractVolumeStore
+	bridgeStore
+}

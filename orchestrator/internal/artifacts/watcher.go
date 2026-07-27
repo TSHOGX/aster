@@ -17,9 +17,20 @@ import (
 	"harness-platform/orchestrator/internal/store"
 )
 
+// Store is the artifacts watcher's own view of persistence: the verified
+// workspace volumes it derives watch roots from, plus the artifact rows it
+// upserts and deletes as files appear and disappear. *store.Store satisfies it
+// implicitly, so the watcher no longer depends on the concrete store type.
+type Store interface {
+	ListVerifiedSessionWorkspaceVolumes(context.Context, store.DataVolumeProvisionerConfig) ([]store.SessionWorkspaceVolume, error)
+	VerifySessionWorkspaceVolume(context.Context, store.VerifySessionWorkspaceVolumeParams) (store.SessionWorkspaceVolume, error)
+	UpsertArtifact(context.Context, store.Artifact) error
+	DeleteArtifactPath(context.Context, string, string) error
+}
+
 type Watcher struct {
 	volumeConfig store.DataVolumeProvisionerConfig
-	store        *store.Store
+	store        Store
 	hub          *events.Hub
 	log          *slog.Logger
 
@@ -31,7 +42,7 @@ type Watcher struct {
 	workspaceCacheReady bool
 }
 
-func New(volumeConfig store.DataVolumeProvisionerConfig, store *store.Store, hub *events.Hub, log *slog.Logger) *Watcher {
+func New(volumeConfig store.DataVolumeProvisionerConfig, store Store, hub *events.Hub, log *slog.Logger) *Watcher {
 	return &Watcher{volumeConfig: volumeConfig, store: store, hub: hub, log: log}
 }
 

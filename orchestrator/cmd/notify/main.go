@@ -44,16 +44,26 @@ func main() {
 	defer func() { _ = st.Close() }()
 
 	id := newID("notif")
-	if err := st.CreateNotification(ctx, store.Notification{
-		ID:        id,
-		Title:     *title,
-		Body:      *body,
-		CreatedAt: time.Now().UTC(),
-	}); err != nil {
+	if err := publish(ctx, st, id, *title, *body); err != nil {
 		fmt.Fprintln(os.Stderr, "error: create notification:", err)
 		os.Exit(1)
 	}
 	fmt.Println(id)
+}
+
+// notificationCreator is the single store behaviour this command needs.
+// *store.Store satisfies it implicitly.
+type notificationCreator interface {
+	CreateNotification(context.Context, store.Notification) error
+}
+
+func publish(ctx context.Context, sink notificationCreator, id, title, body string) error {
+	return sink.CreateNotification(ctx, store.Notification{
+		ID:        id,
+		Title:     title,
+		Body:      body,
+		CreatedAt: time.Now().UTC(),
+	})
 }
 
 func newID(prefix string) string {

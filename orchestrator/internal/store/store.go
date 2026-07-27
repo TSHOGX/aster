@@ -224,13 +224,17 @@ ON CONFLICT(id) DO NOTHING`, id, name, now)
 	return err
 }
 
+// CreateSession persists a new session row.
+//
+// Domain admission rules -- "is this status a real session state" and "is this
+// driver one the product supports" -- are the caller's job (see
+// server.validateNewSession); they are policy about what a user may ask for, not
+// invariants of the sessions table. Two persistence-level guards remain here and
+// still reject the same bad input: the mode derivation below fails closed for any
+// driver not in the agents catalog, and the sessions table's own
+// CHECK(status IN ...) / CHECK(driver_id IN ...) constraints (schema.go) reject a
+// bogus status or driver at write time.
 func (s *Store) CreateSession(ctx context.Context, session Session) error {
-	if err := sessionstate.Validate(session.Status); err != nil {
-		return err
-	}
-	if _, ok := agents.Lookup(session.Agent); !ok {
-		return fmt.Errorf("unsupported driver %q", session.Agent)
-	}
 	session.Mode = strings.TrimSpace(session.Mode)
 	if session.Mode == "" {
 		session.Mode = ModeForDriver(session.Agent)

@@ -29,6 +29,61 @@ func TestModeForDriverUsesDriverRegistryKind(t *testing.T) {
 	}
 }
 
+// TestCreateSessionStillRejectsBadStatusAndDriver pins the persistence-level
+// guards that remain after the domain admission rules (sessionstate.Validate /
+// agents.Lookup) moved out to server.validateNewSession. Even with the explicit
+// pre-checks gone, an unsupported driver fails mode derivation and a bogus
+// status is refused by the sessions table CHECK constraint, so bad input never
+// lands in control.db.
+func TestCreateSessionStillRejectsBadStatusAndDriver(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Now().UTC()
+	base := func() Session {
+		return Session{
+			ID:        "sess_reject",
+			UserID:    "lab",
+			Status:    string(sessionstate.Created),
+			Agent:     "pi",
+			Workspace: t.TempDir(),
+			RestoreID: "phase3-sess_reject",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+	}
+
+	for _, driver := range []string{"claude", "unknown", ""} {
+		session := base()
+		session.Agent = driver
+		if err := st.CreateSession(ctx, session); err == nil {
+			t.Fatalf("expected rejection for driver %q, got nil", driver)
+		}
+	}
+
+	for _, status := range []string{"bogus_status", "not_a_state"} {
+		session := base()
+		session.Status = status
+		if err := st.CreateSession(ctx, session); err == nil {
+			t.Fatalf("expected rejection for status %q, got nil", status)
+		}
+	}
+
+	// Nothing above should have been persisted.
+	var count int
+	if err := st.DBForTest().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sessions WHERE id = ?`, "sess_reject").Scan(&count); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no persisted rows, got %d", count)
+	}
+}
+
 func TestListMessagesAndUUID(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
