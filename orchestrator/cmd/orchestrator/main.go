@@ -44,6 +44,12 @@ func main() {
 	// boot below.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "db-split":
+			if err := runDBSplit(ctx, log, os.Args[2:]); err != nil {
+				log.Error("db-split failed", "error", err)
+				os.Exit(1)
+			}
+			return
 		case "backfill":
 			if err := runBackfill(ctx, log, os.Args[2:]); err != nil {
 				log.Error("backfill failed", "error", err)

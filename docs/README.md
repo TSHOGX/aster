@@ -23,6 +23,7 @@ These docs are the source of truth for how the system works today. Start with
 | [verification.md](./verification.md) | How to verify a change: test commands, CI, live smoke, platform notes |
 | [release-process.md](./release-process.md) | Versioning (git tags only), requirements as lightweight RFCs, CI, cutting a release |
 | [operations.md](./operations.md) | `publish` deployment & operations runbook (中文；systemd/nginx/proxy) |
+| [db-split-runbook.md](./db-split-runbook.md) | One-window `orchestrator.db` → `memory.db` split: forward migration, verification, rollback |
 | [parallel-development.md](./parallel-development.md) | Parallel dev on `main` via `git worktree` (中文) |
 
 ## Proposals (`proposals/`)
