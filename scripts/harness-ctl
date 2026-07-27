@@ -6,6 +6,9 @@
 #   inflight              列出正在进行的 turn（queued/leased/running），标注时长与僵尸 lease
 #   zombies               扫描僵尸 session（running_active 但沙箱 bridge 心跳失联，前端永卡 thinking）
 #   traffic [N]           从 nginx access.log 汇总最近 N 行流量（QPS/状态码/top IP/top 路径），默认 5000
+#   stats [天数]          每日新增提问/回复/会话/活跃用户/新用户，表格 + 纵向柱状图 + sparkline
+#   users [N] [--by=…]    用户维度：会话数/提问数/存储占用/首末活跃日，表格 + 横向条形图
+#   storage [N]           存储总览：数据根目录按子目录 + Top N 会话占用
 #   maintenance on|off    上/下维护页（nginx 层 503，不动后端）
 #   maintenance status    只看当前是否维护模式
 #   safe-restart <svc>    零打断重启：上维护页→等活跃对话跑完→重启→下维护页（维护页强制）
@@ -25,6 +28,9 @@ DB="/var/lib/harness-publish/state/orchestrator.db"
 NGINX_SITE="/etc/nginx/sites-available/harness-publish"
 MAINT_HTML_DIR="/var/www/harness-maintenance"
 ACCESS_LOG="/var/log/nginx/access.log"
+DATA_ROOT="/var/lib/harness-publish"
+SESS_DIR="$DATA_ROOT/sessions"      # 每 session 的 workspace
+HOME_DIR="$DATA_ROOT/agent-homes"   # 每 session 的 agent HOME（含 pi/claude 轨迹）
 BACKEND_HEALTH="http://127.0.0.1:9090/healthz"
 FRONTEND_URL="http://127.0.0.1:9001/"
 PUBLIC_URL="https://127.0.0.1/"
@@ -232,6 +238,268 @@ cmd_traffic() {
   awk '{print $7}' "$tmp" | sort | uniq -c | sort -rn | head -10 | awk '{printf "    %6s  %s\n",$1,$2}'
 
   rm -f "$tmp"
+}
+
+# ---- 存储采集 ----
+# 输出 "session_id<TAB>KB"，覆盖 workspace + agent-home 两处（同 session 相加）
+_session_sizes() {
+  # 注意：session workspace 是 0750 nobody:nogroup，父目录可读但子目录不可读，
+  # 非 root 直接 du 会静默少算 -> 统一走 as_root（内部按需 sudo）。
+  local out; out=$(mktemp)
+  for base in "$SESS_DIR" "$HOME_DIR"; do
+    as_root du -sk "$base"/* 2>/dev/null
+  done | awk -F'\t' '{n=split($2,p,"/"); kb[p[n]]+=$1}
+                     END{for(s in kb) printf "%s\t%d\n", s, kb[s]}' > "$out"
+  echo "$out"
+}
+
+human_kb() { awk -v k="$1" 'BEGIN{
+  if(k>=1048576) printf "%.1fG",k/1048576; else if(k>=1024) printf "%.0fM",k/1024;
+  else printf "%dK",k }'; }
+
+# ---- 命令：users ----
+cmd_users() {
+  local top="${1:-20}" sort_key="msgs"
+  for a in "$@"; do case "$a" in --by=*) sort_key="${a#--by=}";; esac; done
+  [[ "$top" =~ ^[0-9]+$ ]] || top=20
+  case "$sort_key" in msgs|storage|sessions) ;; *) die "--by 只支持 msgs|storage|sessions";; esac
+
+  local sizes; sizes=$(_session_sizes)
+  # session -> user 映射
+  local map; map=$(mktemp)
+  dbq "SELECT id||CHAR(9)||user_id FROM sessions;" > "$map"
+
+  local peruser; peruser=$(mktemp)
+  dbq "
+    SELECT s.user_id ||'|'|| COUNT(DISTINCT s.id) ||'|'||
+           SUM(CASE WHEN m.role='user' THEN 1 ELSE 0 END) ||'|'||
+           COALESCE(MIN(date(m.created_at,'+8 hours')),'-') ||'|'||
+           COALESCE(MAX(date(m.created_at,'+8 hours')),'-')
+    FROM sessions s LEFT JOIN messages m ON m.session_id=s.id
+    GROUP BY s.user_id;" > "$peruser"
+
+  # 汇总每用户存储（含 DB 中已无记录的孤儿目录）
+  local joined; joined=$(mktemp)
+  awk -F'\t' 'NR==FNR{u[$1]=$2; next}
+              { uid=($1 in u)? u[$1] : "(孤儿目录)"; kb[uid]+=$2 }
+              END{for(x in kb) printf "%s|%d\n", x, kb[x]}' "$map" "$sizes" > "$joined"
+
+  echo "${c_bold}== 用户用量（按 ${sort_key} 排序，Top ${top}）==${c_rst}"
+  # 表头手工对齐（CJK 双宽，见 cmd_stats 同处注释）
+  printf "  ${c_bold}%s${c_rst}\n" "用户               会话     提问       存储         首次         最近"
+  printf "  %s\n" "──────────────────────────────────────────────────────────────────────"
+  local table; table=$(awk -F'|' -v key="$sort_key" '
+    NR==FNR{ kb[$1]=$2; next }
+    { u=$1; s=$2; q=$3; f=$4; l=$5; k=(u in kb)?kb[u]:0
+      sk=(key=="storage")?k:((key=="sessions")?s:q)
+      printf "%d|%s|%s|%s|%d|%s|%s\n", sk, u, s, q, k, f, l }
+    ' "$joined" "$peruser" | sort -t'|' -k1,1rn)
+  local shown=0
+  while IFS='|' read -r _ u s q k f l; do
+    [[ -z "$u" ]] && continue
+    shown=$((shown+1)); [[ "$shown" -gt "$top" ]] && continue
+    printf "  %-14s %8s %8s %10s %12s %12s\n" "$u" "$s" "$q" "$(human_kb "$k")" "$f" "$l"
+  done <<<"$table"
+  printf "  %s\n" "──────────────────────────────────────────────────────────────────────"
+  # 合计覆盖全部用户（不止 Top N）；标签按显示宽度补空格
+  # 合计覆盖全部用户（不止 Top N）。"合计" 显示宽 4，用户数占 ${#shown} 列，
+  # 补到 14 列宽 -> 14-4-1-len-1 个空格（bash 侧算好，避免依赖 awk 的 locale 宽度）
+  local pad=$(( 14 - 6 - ${#shown} )); (( pad < 1 )) && pad=1
+  awk -F'|' -v sp="$(printf '%*s' "$pad" '')" -v n="$shown" '{s+=$3;q+=$4;k+=$5}
+    END{ printf "  合计 %s 人%s %8d %8d %10s\n", n, sp, s, q,
+           (k>=1048576?sprintf("%.1fG",k/1048576):sprintf("%.0fM",k/1024))}' <<<"$table"
+
+  echo
+  echo "  ${c_bold}存储占用${c_rst}"
+  awk -F'|' -v t="$top" '{if(++i<=t) printf "%s|%d|%s\n",$2,$5,($5>=1048576?sprintf("%.1fG",$5/1048576):($5>=1024?sprintf("%.0fM",$5/1024):sprintf("%dK",$5)))}' \
+    <<<"$(sort -t'|' -k5,5rn <<<"$table")" | hbar 40 14
+  echo
+  echo "  ${c_bold}提问量${c_rst}"
+  awk -F'|' -v t="$top" '{if(++i<=t) print $2"|"$4}' <<<"$(sort -t'|' -k4,4rn <<<"$table")" | hbar 40 14
+
+  rm -f "$sizes" "$map" "$peruser" "$joined"
+}
+
+# ---- 命令：storage ----
+cmd_storage() {
+  local top="${1:-15}"
+  [[ "$top" =~ ^[0-9]+$ ]] || top=15
+  echo "${c_bold}== 存储总览（${DATA_ROOT}）==${c_rst}"
+  local totals; totals=$(as_root du -sk "$DATA_ROOT"/* 2>/dev/null | sort -rn)
+  local grand; grand=$(as_root du -sk "$DATA_ROOT" 2>/dev/null | awk '{print $1}')
+  printf "  总计 ${c_bold}%s${c_rst}   磁盘: %s\n\n" "$(human_kb "${grand:-0}")" \
+    "$(df -h "$DATA_ROOT" | awk 'NR==2{printf "%s 已用 / %s (%s)",$3,$2,$5}')"
+  echo "  ${c_bold}按目录${c_rst}"
+  awk -F'\t' '{n=split($2,p,"/"); k=$1
+    h=(k>=1048576)?sprintf("%.1fG",k/1048576):((k>=1024)?sprintf("%.0fM",k/1024):sprintf("%dK",k))
+    print p[n]"|"k"|"h}' <<<"$totals" | hbar 40 16
+
+  local dbsz; dbsz=$(as_root du -ck "$DB" "$DB-wal" 2>/dev/null | awk 'END{print $1}')
+  printf "\n  ${c_dim}orchestrator.db(+wal): %s；messages 表 %s 行${c_rst}\n" \
+    "$(human_kb "${dbsz:-0}")" "$(dbq 'SELECT COUNT(*) FROM messages;')"
+
+  echo
+  echo "  ${c_bold}Top ${top} 会话（workspace + agent-home）${c_rst}"
+  local sizes; sizes=$(_session_sizes)
+  local map; map=$(mktemp)
+  dbq "SELECT id||CHAR(9)||user_id||' '||substr(COALESCE(NULLIF(title,''),'(无标题)'),1,20) FROM sessions;" > "$map"
+  awk -F'\t' 'NR==FNR{u[$1]=$2; next}
+    { lab=($1 in u)? u[$1] : "(孤儿) " substr($1,6,10); k=$2
+      h=(k>=1048576)?sprintf("%.1fG",k/1048576):((k>=1024)?sprintf("%.0fM",k/1024):sprintf("%dK",k))
+      print lab"|"k"|"h }' "$map" "$sizes" | sort -t'|' -k2,2rn | head -n "$top" | hbar 36 30
+  rm -f "$sizes" "$map"
+}
+
+# ---- 命令：stats ----
+# 每日新增：user message / assistant reply / session / 活跃用户 / 新用户
+# 口径见 docs/operations.md：用户身份来自 sessions.user_id（users 表只有内置账号），
+# created_at 为 UTC，统一 +8h 归到本地自然日。
+_stats_sql() {
+  local days="$1"
+  cat <<SQL
+WITH RECURSIVE spine(d) AS (
+  SELECT date('now','+8 hours', '-$((days-1)) day')
+  UNION ALL SELECT date(d,'+1 day') FROM spine WHERE d < date('now','+8 hours')
+),
+msg AS (
+  SELECT date(created_at,'+8 hours') d,
+         SUM(role='user') uq, SUM(role='assistant') ar
+  FROM messages GROUP BY d
+),
+sess AS (
+  SELECT date(created_at,'+8 hours') d, COUNT(*) ns FROM sessions GROUP BY d
+),
+act AS (
+  SELECT date(m.created_at,'+8 hours') d, COUNT(DISTINCT s.user_id) au
+  FROM messages m JOIN sessions s ON s.id=m.session_id
+  WHERE m.role='user' GROUP BY d
+),
+firstseen AS (
+  SELECT s.user_id u, MIN(date(m.created_at,'+8 hours')) fd
+  FROM messages m JOIN sessions s ON s.id=m.session_id
+  WHERE m.role='user' GROUP BY u
+),
+newu AS (SELECT fd d, COUNT(*) nu FROM firstseen GROUP BY fd)
+SELECT spine.d,
+       COALESCE(msg.uq,0), COALESCE(msg.ar,0), COALESCE(sess.ns,0),
+       COALESCE(act.au,0), COALESCE(newu.nu,0)
+FROM spine
+LEFT JOIN msg  ON msg.d=spine.d
+LEFT JOIN sess ON sess.d=spine.d
+LEFT JOIN act  ON act.d=spine.d
+LEFT JOIN newu ON newu.d=spine.d
+ORDER BY spine.d;
+SQL
+}
+
+cmd_stats() {
+  local days="${1:-14}"
+  [[ "$days" =~ ^[0-9]+$ && "$days" -ge 1 ]] || die "天数须为正整数，收到：$days"
+  local rows; rows=$(dbq "$(_stats_sql "$days")")
+  [[ -n "$rows" ]] || die "查不到数据（DB: $DB）"
+
+  # 全量累计 + 窗口内去重用户
+  local tot; tot=$(dbq "
+    SELECT (SELECT COUNT(*) FROM messages WHERE role='user'),
+           (SELECT COUNT(*) FROM sessions),
+           (SELECT COUNT(DISTINCT user_id) FROM sessions),
+           (SELECT MIN(date(created_at,'+8 hours')) FROM messages);")
+  local win_users; win_users=$(dbq "
+    SELECT COUNT(DISTINCT s.user_id) FROM messages m JOIN sessions s ON s.id=m.session_id
+    WHERE m.role='user' AND date(m.created_at,'+8 hours') >= date('now','+8 hours','-$((days-1)) day');")
+  IFS='|' read -r t_uq t_ns t_nu t_since <<<"$tot"
+
+  echo "${c_bold}== 使用量统计（最近 ${days} 天，本地时区 UTC+8）==${c_rst}"
+  printf "  ${c_dim}累计: %s 提问 / %s 会话 / %s 用户，自 %s 起；窗口内活跃用户 %s${c_rst}\n" \
+    "$t_uq" "$t_ns" "$t_nu" "$t_since" "$win_users"
+  echo
+  # 表头手工对齐：CJK 为双宽字符，printf 按字符数计宽会错位，故按显示宽度补空格
+  printf "  ${c_bold}%s${c_rst}\n" "日期             提问     回复   新会话 活跃用户   新用户"
+  printf "  %s\n" "────────────────────────────────────────────────────────────"
+  local today; today=$(date -d "@$(( $(date -u +%s) + 28800 ))" -u +%F)
+  while IFS='|' read -r d uq ar ns au nu; do
+    [[ -z "$d" ]] && continue
+    local mark="" rst=""
+    [[ "$d" == "$today" ]] && { mark="$c_grn"; rst="$c_rst"; }
+    printf "  ${mark}%-12s %8s %8s %8s %8s %8s${rst}\n" "$d" "$uq" "$ar" "$ns" "$au" "$nu"
+  done <<<"$rows"
+  printf "  %s\n" "────────────────────────────────────────────────────────────"
+  # "合计" 显示宽 4，日期列宽 12 -> 补 8 空格（同表头，不用 %-12s 免踩 CJK 宽度）
+  awk -F'|' '{q+=$2;a+=$3;s+=$4;n+=$6}
+    END{printf "  合计         %8d %8d %8d %8s %8d\n",q,a,s,"—",n}' <<<"$rows"
+
+  echo
+  echo "  ${c_bold}每日提问量${c_rst}"
+  awk -F'|' '{print $1"|"$2}' <<<"$rows" | vbar 9
+  echo
+  printf "  ${c_bold}趋势${c_rst}  新会话 %s\n" "$(awk -F'|' '{print $4}' <<<"$rows" | spark)"
+  printf "        活跃用户 %s\n" "$(awk -F'|' '{print $5}' <<<"$rows" | spark)"
+}
+
+# ---- 图表辅助（纯 awk/gawk，无外部依赖）----
+# hbar: stdin 每行 "label|value[|display]"，画横向条形图（按最大值归一）
+hbar() {
+  local width="${1:-42}" label_w="${2:-18}"
+  awk -F'|' -v W="$width" -v LW="$label_w" '
+    # 显示宽度：非 ASCII 一律按双宽算（标签里只会有中文/数字，够用）；
+    # gawk 在 UTF-8 locale 下 substr/length 按字符计，故可逐字符累加。
+    # 按显示宽度截断到 n 列，右侧补空格
+    function fit(s,n,   i,w,c,cw,o) { o=""; w=0
+      for (i=1;i<=length(s);i++) { c=substr(s,i,1); cw=(c ~ /^[\x00-\x7F]$/)?1:2
+        if (w+cw>n) break; o=o c; w+=cw }
+      while (w++<n) o=o " "
+      return o }
+    { lab[NR]=$1; val[NR]=$2+0; disp[NR]=($3==""?$2:$3); if ($2+0>max) max=$2+0; n=NR }
+    END {
+      if (n==0) { print "    (无数据)"; exit }
+      split("▏▎▍▌▋▊▉",f,"")
+      for (i=1;i<=n;i++) {
+        cells=(max>0)? val[i]*W/max : 0
+        full=int(cells); bar=""
+        for (j=0;j<full;j++) bar=bar "█"
+        frac=cells-full
+        if (frac>0.10) { k=int(frac*8)+1; if(k>7)k=7; bar=bar f[k] }
+        printf "    %s %9s  %s\n", fit(lab[i], LW), disp[i], bar
+      }
+    }'
+}
+
+# vbar: stdin 每行 "xlabel|value"（按时间正序），画纵向柱状图；xlabel 取末 2 字符
+vbar() {
+  local height="${1:-9}"
+  awk -F'|' -v H="$height" '
+    { lab[NR]=$1; val[NR]=$2+0; if ($2+0>max) max=$2+0; n=NR }
+    END {
+      if (n==0) { print "    (无数据)"; exit }
+      if (max<=0) max=1
+      for (r=H;r>=1;r--) {
+        line=""
+        for (i=1;i<=n;i++) {
+          cells=val[i]*H/max
+          c=(cells>=r-0.25)? "█" : ((cells>=r-0.72)? "▄" : " ")
+          line=line " " c " "
+        }
+        ytick=""
+        if (r==H) ytick=sprintf("%d",max)
+        else if (r==int((H+1)/2)) ytick=sprintf("%d",int(max/2))
+        else if (r==1) ytick="0"
+        printf "  %6s│%s\n", ytick, line
+      }
+      ax=""; for(i=1;i<=n;i++) ax=ax "───"
+      printf "  %6s└%s\n", "", ax
+      lb=""; for(i=1;i<=n;i++) lb=lb sprintf("%3s", substr(lab[i],length(lab[i])-1))
+      printf "  %6s %s\n", "", lb
+    }'
+}
+
+# spark: stdin 每行 "value"，输出单行迷你折线（sparkline）
+spark() {
+  awk '{v[NR]=$1+0; if($1+0>max)max=$1+0; n=NR}
+       END{ if(n==0){printf "(无数据)\n"; exit}
+            split("▁▂▃▄▅▆▇█",s,"")
+            out=""
+            for(i=1;i<=n;i++){ k=(max>0)? int(v[i]*7/max)+1 : 1; if(v[i]==0)k=1; out=out s[k] }
+            printf "%s\n", out }'
 }
 
 # ---- 维护模式 ----
@@ -451,6 +719,9 @@ harness-ctl — publish 环境运维 CLI
   harness-ctl inflight              列出正在进行的 turn（含时长、僵尸 lease 标注）
   harness-ctl zombies               扫描僵尸 session（running_active 但沙箱心跳失联）
   harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
+  harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
+  harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
+  harness-ctl storage [N]           存储总览：按目录 + Top N 会话占用
   harness-ctl maintenance on        上维护页（nginx 503，后端不动）
   harness-ctl maintenance off       下维护页，恢复服务
   harness-ctl maintenance status    只看维护模式开关
@@ -470,6 +741,9 @@ main() {
     inflight)     cmd_inflight ;;
     zombies)      cmd_zombies ;;
     traffic)      cmd_traffic "$@" ;;
+    stats|usage)  cmd_stats "$@" ;;
+    users)        cmd_users "$@" ;;
+    storage|disk) cmd_storage "$@" ;;
     maintenance|maint) cmd_maintenance "$@" ;;
     safe-restart) cmd_safe_restart "$@" ;;
     -h|--help|help|"") usage ;;

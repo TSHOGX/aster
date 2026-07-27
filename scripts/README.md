@@ -26,6 +26,9 @@ publish 环境的运维脚本。
 harness-ctl status                服务/入口/在途对话 一屏总览
 harness-ctl inflight              列出正在进行的 turn（含时长、僵尸 lease 标注）
 harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
+harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
+harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
+harness-ctl storage [N]           存储总览：按目录 + Top N 会话占用
 harness-ctl maintenance on        上维护页（nginx 503，后端不动）
 harness-ctl maintenance off       下维护页，恢复服务
 harness-ctl maintenance status    只看维护模式开关
@@ -53,6 +56,34 @@ harness-ctl safe-restart <svc>                  零打断重启：上维护页�
 #### `traffic [N]`
 从 `/var/log/nginx/access.log` 取最近 N 行（默认 5000），汇总：时间窗口与粗略 QPS、
 HTTP 状态码分布、Top 10 客户端 IP、Top 10 请求路径。纯只读。
+
+#### `stats [天数]`（别名 `usage`）
+按**本地自然日**（UTC+8）列出每日新增：user message（提问）、assistant message（回复）、
+新会话、活跃用户、新用户，末尾给合计。表格下方是提问量纵向柱状图（Unicode 方块，
+带 y 轴刻度与日期轴）和新会话/活跃用户的 sparkline。默认 14 天，纯只读。
+
+口径（踩过坑，别改错）：
+
+- **用户身份看 `sessions.user_id`，不要查 `users` 表**——后者只有 1 行内置账号 `lab`，
+  真实工号由外部系统托管、直接写在 `sessions.user_id`。
+- **不要用 nginx `remote_addr` 数人**——前面有代理，access.log 全是 `127.0.0.1`。
+- `created_at` 是 UTC（带 Z），一律 `date(created_at,'+8 hours')` 归到本地日。
+- 无活动的日子由 SQL 里的 `spine` 递归 CTE 补 0 行，折线/柱状图才不会错位。
+
+#### `users [N] [--by=msgs|storage|sessions]`
+用户维度一张表：会话数、提问数、存储占用、首次/最近活跃日，默认按提问数排序取 Top 20。
+下方两张横向条形图（存储占用、提问量）。合计行统计**全部**用户，不止 Top N。
+
+存储 = 该用户所有 session 的 `sessions/<id>`（workspace）+ `agent-homes/<id>`（agent HOME）
+之和。DB 里已无记录、目录还在的算到 `(孤儿目录)` 一行，方便发现该清的残留。
+
+#### `storage [N]`
+数据根目录 `/var/lib/harness-publish` 的总览：磁盘水位、按子目录占用条形图、
+`orchestrator.db(+wal)` 单独一行，以及 Top N 会话占用（标签为「工号 + 会话标题」）。
+默认 Top 15。
+
+> `du` 必须以 root 跑：session workspace 是 `0750 nobody:nogroup`，父目录可读但子目录不可读，
+> 非 root 直接 `du` 会**静默少算**。脚本内部统一走 `as_root`。
 
 #### `maintenance on|off|status`
 在 **nginx 层**挂/撤维护页，**完全不动后端**（orchestrator/frontend/DB/会话照常跑）。
@@ -99,7 +130,9 @@ harness-ctl safe-restart harness-publish-orchestrator --timeout=1800 --interval=
 ### 依赖与权限
 
 - 依赖：`bash`、`sqlite3`、`curl`、`systemctl`、`nginx`、`awk`（机器上均已有）。
-- 只读命令（`status`/`inflight`/`traffic`）普通用户即可（DB `0644` 可读、日志需属 `adm` 组或 sudo）。
+- 只读命令（`status`/`inflight`/`traffic`/`stats`）普通用户即可（DB `0644` 可读、日志需属 `adm` 组或 sudo）。
+- `users`/`storage` 只读，但要统计 session workspace 大小需 root `du`（目录 `0750 nobody`），
+  非 root 下会走 `sudo`。图表用 gawk 渲染，依赖 UTF-8 locale（机器上 `en_US.UTF-8`）。
 - `maintenance`/`safe-restart` 需要能 reload nginx / 控制 systemd。脚本内部按需 `sudo`：
   以 root 运行时直接执行，否则走 `sudo`。
   - `systemctl start/stop/restart/status` 这两个 publish 服务：watt 已有免密 sudoers
@@ -115,6 +148,9 @@ harness-ctl safe-restart harness-publish-orchestrator --timeout=1800 --interval=
 | 维护模式 | live nginx 配置里是否有生效的 `return 503` |
 | 在途对话 | 只读查 SQLite `/var/lib/harness-publish/state/orchestrator.db` 的 `turns` 表 |
 | 流量 | nginx `/var/log/nginx/access.log`（combined 格式） |
+| 提问/回复量 | `messages` 表按 `role`（`user`/`assistant`）分组，`created_at` +8h 归日 |
+| 会话/用户 | `sessions` 表（`id`、`user_id`、`created_at`、`title`） |
+| 存储占用 | `du -sk` 扫 `sessions/<id>` + `agent-homes/<id>`，按 `sessions.user_id` 归并 |
 
 `turns.status` 的取值由 DB CHECK 约束固定为
 `queued|leased|running|completed|failed|canceled`，前三个即「在途」。
