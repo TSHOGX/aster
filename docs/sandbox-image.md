@@ -134,9 +134,22 @@ the baked overlay at `sandbox-image/files/usr/local/share/agents-kb-seed/`:
   `SKILL.md.example` is committed. Copy it to `SKILL.md` with real values (or
   provision on the host) before `build-rootfs.sh`, and keep egress locked to the
   Doris host (see [security.md](./security.md)).
+- **obs-parquet-duckdb** (`skills/obs-parquet-duckdb/SKILL.md`, `status: in-use`) —
+  read raw vehicle-signal Parquet on Huawei Cloud OBS **in place** with DuckDB
+  `httpfs` (`s3_url_style='vhost'`, the one non-obvious requirement; `path`/
+  `virtual` 404). Covers the 5,844-column sparse wide-table layout, the
+  metadata→schema-search→`COLUMNS()`→filter workflow, glob/sampling costs, and the
+  hard rule that source objects are **never downloaded to local disk** (~17 MB ×
+  1.1M files). Embeds a live read-only OBS key, so same handling as doris-query:
+  real `SKILL.md` **git-ignored**, redacted `SKILL.md.example` committed.
 - **matplotlib-cjk-fonts** (`skills/matplotlib-cjk-fonts/SKILL.md`, `status:
   in-use`) — select the installed WenQuanYi CJK fonts in matplotlib/Pillow so
   Chinese chart text doesn't render as tofu boxes.
+
+`obs-parquet-duckdb` depends on a baked DuckDB extension: `build-rootfs.sh`'s
+`install_duckdb_extensions` installs `httpfs` into
+`/usr/local/share/duckdb-extensions/v<duckdb-version>/<platform>/`, so a session
+does `LOAD httpfs` against that `extension_directory` with **no network fetch**.
 
 > **Deprecated:** `sandbox-image/files/usr/local/share/harness-skills/` (still
 > git-ignored) is superseded by the `/agents` KB seed above and is no longer

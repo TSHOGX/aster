@@ -21,6 +21,10 @@ first — this file is just the map.
 
 - `skills/doris-query` (`in-use`) — read-only Doris/`vhr_data` access: discover
   the live schema, safe SQL, and streaming large exports.
+- `skills/obs-parquet-duckdb` (`in-use`) — read raw vehicle-signal Parquet on
+  Huawei OBS in place with DuckDB httpfs: connection values, the 5,844-column
+  sparse wide-table layout, the metadata→schema→columns→filter workflow, glob and
+  sampling costs, and the no-local-download rule.
 - `skills/matplotlib-cjk-fonts` (`in-use`) — render Chinese text in matplotlib /
   Pillow charts without tofu boxes.
 

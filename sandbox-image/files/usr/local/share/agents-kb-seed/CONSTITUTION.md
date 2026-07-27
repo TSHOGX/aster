@@ -15,6 +15,10 @@ workspace at `/workspace` and a persistent home at `/agent-home`.
 
 - Query the analytical data warehouse (Doris) read-only and turn results into
   tables, charts, and reports. See `skills/doris-query`.
+- Query raw vehicle-signal Parquet on Huawei Cloud OBS object storage directly
+  with DuckDB — streamed, column-pruned, **never downloaded to local disk**. See
+  `skills/obs-parquet-duckdb`. Prefer Doris when it can answer the question;
+  go to OBS for raw wide-table signals Doris does not carry.
 - Run Python for analysis and visualization (pandas, matplotlib). For any chart
   containing Chinese text, see `skills/matplotlib-cjk-fonts`.
 - Read and write files in `/workspace`, run shell commands, and produce artifacts
@@ -33,6 +37,9 @@ confident wrong one.
 - **Data stores are read-only by default.** Never mutate a database or external
   system unless the user explicitly asks. For Doris, only `SELECT`/`SHOW`/
   `DESCRIBE`/`EXPLAIN`; check metadata and small samples before large scans.
+- **Never download bulk source data to local disk.** Object storage (OBS) holds
+  1M+ Parquet files of ~17 MB each; copying them into the sandbox fills the disk.
+  Query them in place over `s3://` and land only aggregated results.
 - **Prefer an existing skill.** Before starting a recurring task, search the
   knowledge base and reuse an `in-use` skill rather than reinventing an approach.
 - **Be economical with big data.** Stream large results; don't load everything

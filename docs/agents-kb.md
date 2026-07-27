@@ -40,8 +40,8 @@ baked system prompt is split by change-rate and owner into two layers:
   later become a curator candidate (behind human review). Modeled on the local
   `~/.agents` spec style.
 
-Domain skills (Doris, matplotlib-CJK) are no longer inlined in the prompt or the
-legacy `harness-skills/` dir — they are seeded skills in the KB
+Domain skills (Doris, OBS-Parquet/DuckDB, matplotlib-CJK) are no longer inlined in
+the prompt or the legacy `harness-skills/` dir — they are seeded skills in the KB
 (`agents-kb-seed/skills/`, `status: in-use`) and follow the same
 snapshot/promotion lifecycle as distilled ones.
 

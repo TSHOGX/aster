@@ -140,6 +140,28 @@ copy_overlay_files() {
   rsync -a --chmod=F755,D755 "${SCRIPT_DIR}/files/" "${ROOTFS_DIR}/"
 }
 
+# DuckDB's httpfs extension is needed to read Parquet straight off Huawei OBS
+# (skills/obs-parquet-duckdb). Sessions must not have to `INSTALL httpfs` at
+# runtime, so bake it into a shared extension dir agents point at via
+# `SET extension_directory=...` / connect(config={"extension_directory": ...}).
+install_duckdb_extensions() {
+  log "installing DuckDB extensions (httpfs)"
+  chroot "${ROOTFS_DIR}" /bin/sh -lc '
+set -eu
+version="$(python3 -c "import duckdb; print(duckdb.__version__)")"
+dest="/usr/local/share/duckdb-extensions"
+python3 - "$dest" <<PY
+import duckdb, sys
+# INSTALL writes into the given extension_directory; LOAD then needs no network.
+c = duckdb.connect(config={"extension_directory": sys.argv[1]})
+c.execute("INSTALL httpfs;")
+c.execute("LOAD httpfs;")
+PY
+chmod -R a+rX "${dest}"
+test -s "${dest}/v${version}/"*"/httpfs.duckdb_extension"
+'
+}
+
 install_modern_node_for_pi() {
   if ! driver_selected pi; then
     return
@@ -409,6 +431,8 @@ chroot "${ROOTFS_DIR}" /bin/sh -lc "apt-get update && DEBIAN_FRONTEND=noninterac
 
 log "installing Python packages"
 chroot "${ROOTFS_DIR}" /bin/sh -lc "python3 -m pip install --break-system-packages --no-cache-dir ${PIP_PACKAGES[*]}"
+
+install_duckdb_extensions
 
 install_modern_node_for_pi
 install_agent_drivers
