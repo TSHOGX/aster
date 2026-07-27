@@ -19,16 +19,20 @@ So there is no local-vs-ECS branch to reconcile, and no diff to carry. Three
 mechanisms, in order of preference:
 
 1. **Auto-detect** when the environment can be observed. `build-rootfs.sh` picks
-   `ports.ubuntu.com` vs `archive.ubuntu.com` from the host architecture, and
-   applies DNS pinning only when it detects an intercepting resolver — a no-op on
-   a normal host. `dev/start-all.sh` detects the VM IP and the checkout's owner.
+   `ports.ubuntu.com` vs `archive.ubuntu.com` from the host architecture.
+   `dev/start-all.sh` detects the VM IP and the checkout's owner.
 2. **Derive from a signal that already exists.** The CSP adds `'unsafe-eval'` only
    when `NODE_ENV=development`, because `next dev` needs it and production does
    not. The deployed policy is byte-identical to before (verified against
    `next build` + `next start`).
 3. **Read from a gitignored file** when neither applies: `dev/local.env`
-   (see `dev/local.env.example`) for paths/IPs/ports, `dev/model-proxy/.env` for
-   the upstream key. Both are covered by `.gitignore`.
+   (see `dev/local.env.example`) for paths/IPs/ports, `sandbox-image/build.env`
+   (see `build.env.example`) for package mirrors and the DNS baked into the image,
+   `dev/model-proxy/.env` for the upstream key. All are covered by `.gitignore`.
+
+Mechanism 3 is the one to reach for when the value belongs to a *deployment* — a
+mirror, a resolver, a public IP. Committed defaults are upstream-canonical and name
+no environment, so neither machine's setup rides along into the other's build.
 
 What this means in practice: commit normally. If a change would only be right on
 one machine, that is the signal to convert it into one of the three forms above
@@ -61,8 +65,14 @@ gate (see the root README).
 - `dev/model-proxy/.env` — upstream key for the proxy stand-in.
 - rootfs built with `SANDBOX_AGENT_DRIVERS=pi,sh` so Agent and Shell both work.
 
-Rebuild the rootfs after changing the sandbox image (no env overrides needed —
-mirror and DNS are detected):
+- `sandbox-image/build.env` — this VM needs only the DNS hook; the arm64 mirror is
+  picked automatically and upstream indexes are reachable once hosts are pinned:
+
+  ```bash
+  SANDBOX_BUILD_DNS_HOOK=/home/hsw/batterygpt/dev/build-dns-pin.sh
+  ```
+
+Rebuild the rootfs after changing the sandbox image:
 
 ```bash
 sudo SANDBOX_AGENT_DRIVERS=pi,sh FORCE=1 ./sandbox-image/build-rootfs.sh
@@ -93,16 +103,18 @@ If the host runs a fake-ip proxy (clash and similar), **every** hostname resolve
 inside the VM to an unroutable `198.18.0.0/15` address — including when querying
 1.1.1.1 directly, because the interception is upstream of the VM. Changing
 nameservers does nothing. The VM works around it with pinned IPs in its own
-`/etc/hosts` (`# sbx-doh-pin`), and `build-rootfs.sh` now does the same for the
-chroot.
+`/etc/hosts` (`# sbx-doh-pin`), and `dev/build-dns-pin.sh` does the same for the
+build chroot — wired in via `SANDBOX_BUILD_DNS_HOOK` in `sandbox-image/build.env`,
+so `build-rootfs.sh` itself carries none of this. Extend `PIN_HOSTS` in that script
+when a build stage starts downloading from a new host.
 
 Symptoms, each of which looks like an unrelated network flake:
 
 | Symptom | Cause / fix |
 |---|---|
-| `build-rootfs.sh`: hundreds of `Failed to fetch ... [IP: 198.18.0.39]` | the chroot had no `/etc/hosts`; handled by `prepare_build_time_dns` |
+| `build-rootfs.sh`: hundreds of `Failed to fetch ... [IP: 198.18.0.39]` | the chroot's DNS is unusable — set `SANDBOX_BUILD_DNS_HOOK=dev/build-dns-pin.sh` in `sandbox-image/build.env` |
 | model proxy: `SSLEOFError` on every upstream call | `api.modelarts-maas.com` needs a pin in the VM's `/etc/hosts` |
-| `npm install`: `ECONNRESET` from `repo.huaweicloud.com` | 27 lockfile `resolved` URLs pointed at that mirror; rewritten to registry.npmjs.org (integrity hashes unchanged) |
+| `npm install`: `ECONNRESET` from a mirror host | lockfile `resolved` URLs were committed from a host with an npm mirror configured. `scripts/check-lockfile-registry.sh` now fails CI on this; keep mirrors in `~/.npmrc`, not the lockfile |
 | `npm install`: `ENOTEMPTY` / "Exit handler never called" | a previous failed install left `node_modules` corrupt — `rm -rf node_modules` and retry |
 | blank page, `Uncaught EvalError` in console | CSP was missing `'unsafe-eval'` for `next dev`; fixed in `next.config.mjs` |
 
