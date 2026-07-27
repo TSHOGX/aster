@@ -39,10 +39,43 @@ APT_PACKAGES=(
   xz-utils
 )
 
+# The data-analysis stack agents are expected to have available. Everything a
+# user's code imports directly is listed explicitly, even when another entry
+# would pull it in transitively (matplotlib/pandas/scipy arrive via
+# seaborn/statsmodels, lxml via python-docx) — otherwise an upstream dependency
+# change silently removes it from the image.
 PIP_PACKAGES=(
+  # core numerics / dataframes
   matplotlib
+  numpy
   pandas
+  scipy
+  seaborn
+  statsmodels
+  # columnar & analytical engines
+  duckdb
+  fastparquet
+  pyarrow
+  # interactive charts (kaleido renders them to static images)
+  kaleido
+  plotly
+  # databases
+  psycopg2-binary
   pymysql
+  sqlalchemy
+  # office documents
+  lxml
+  openpyxl
+  python-docx
+  python-pptx
+  xlrd
+  xlsxwriter
+  # pdf
+  fpdf2
+  pypdf
+  reportlab
+  # misc formatting
+  tabulate
 )
 
 log() {
