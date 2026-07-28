@@ -138,6 +138,20 @@ image manifest during resolution ([drivers.md](./drivers.md)).
   the same `404` as a nonexistent session. A reader's session DTO drops `user_id`,
   `failure_reason`, and `error_class`; a `summary` grant also drops execution traces
   and intermediate tool steps.
+- **Public links**: `/api/shared/{token}` is an unauthenticated subtree registered
+  outside `requireAuth`, deliberately as a *separate* read path rather than by
+  minting a cookie from a token — the authed routes never learn about an anonymous
+  principal, so a missed check there cannot become anonymous access. It is
+  GET-only (no CSRF surface), sends `Referrer-Policy: no-referrer` because the
+  token is in the URL path, and its DTOs are built field by field so a field added
+  to the authed DTO is not published by accident. Tokens are 32 random bytes stored
+  only as a SHA-256 hash and returned exactly once at creation; rotating replaces
+  the hash and kills the old URL immediately. Every link **must** expire (capped by
+  `HARNESS_MAX_SHARE_LINK_TTL`, default 30 days) and unknown/expired/revoked all
+  return the same `404`. Anonymous requests are not admitted to the event streams.
+  Note the per-IP rate limiter is shared with logged-in users on the same address:
+  a link forwarded widely inside one NAT can throttle that egress IP's authenticated
+  traffic too.
 - **Username reuse**: identity is a username string with no stable id, so
   `orchestrator user rm` revokes every share referencing the name (grants to them,
   grants they made, links they created) and **exits non-zero** if it cannot. A

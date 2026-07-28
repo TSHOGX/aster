@@ -8,7 +8,11 @@
 
 The orchestrator serves three trees:
 
-1. **Public HTTP** (`Server.Routes`) — the browser-facing API, on `cfg.Addr`.
+1. **Public HTTP** (`Server.Routes`) — the browser-facing API, on `cfg.Addr`. It
+   contains one **unauthenticated** subtree, `/api/shared/`, registered outside
+   `requireAuth`; Go's ServeMux prefers the more specific pattern, so it wins over
+   `/api/`. That precedence is load-bearing and pinned by a test in both
+   directions.
 2. **Operator** (`Server.OperatorRoutes`) — `GET /api/agents`; defined but not wired
    into `main.go` today.
 3. **Proxy correlation** (`Server.ProxyCorrelationRoutes`) — served over a Unix
@@ -37,6 +41,13 @@ The orchestrator serves three trees:
 | GET | `/api/sessions/{id}/shares` | required (owner) | list live grants on the session |
 | DELETE | `/api/sessions/{id}/shares/{shareID}` | required (owner) | revoke one grant |
 | GET | `/api/users` | required | usernames for the share picker |
+| POST | `/api/sessions/{id}/share-links` | required (owner) | mint a public read link |
+| GET | `/api/sessions/{id}/share-links` | required (owner) | list a session's public links |
+| POST | `/api/sessions/{id}/share-links/{linkID}/rotate` | required (owner) | reissue the token, invalidating the old URL |
+| DELETE | `/api/sessions/{id}/share-links/{linkID}` | required (owner) | revoke a public link |
+| GET | `/api/shared/{token}` | **none** | trimmed session behind a public link |
+| GET | `/api/shared/{token}/messages` | **none** | the link's frozen conversation |
+| GET | `/api/shared/{token}/artifacts` | **none** | the link's file whitelist |
 | GET | `/api/quota` | required | session & `/30` pool ceilings |
 | GET | `/api/deployment-capabilities` | required | creatable product modes |
 | GET | `/api/search` | required | full-text search over the caller's sessions & messages |
@@ -152,6 +163,50 @@ someone whose name you cannot type.
 **`GET /api/sessions`** → `{"sessions":[...]}` where each entry is an `apiSession`
 plus `access` (`owner`|`reader`) and, on reader rows, `shared_by` and `share_id`.
 The caller's own sessions come first, then sessions shared with them.
+
+## Public links (`/api/shared/*`)
+
+**`POST /api/sessions/{id}/share-links`** — `{"visibility":"summary"|"full",
+"ttl_seconds":<int>}`. Owner-only. Defaults: `summary`, and `ttl_seconds` of 0 or
+omitted means the configured cap (`HARNESS_MAX_SHARE_LINK_TTL`, default 30 days).
+A TTL above the cap is `400`; **a link can never be permanent**. A shell session
+is forced to `full` and an explicit `summary` is rejected with `400` — in shell
+mode the command output *is* the content, so a summary would be an empty page. →
+`201 {"link": apiShareLink, "token": "<raw>", "path": "/s/<raw>"}`.
+
+The raw token is returned **only here** (and from rotate). Only its SHA-256 is
+stored, so no endpoint can echo it later; a lost link is replaced by rotating.
+
+The link freezes `max_message_id` at creation, so turns added afterwards never
+appear in a URL that has already been handed out.
+
+**`POST .../share-links/{linkID}/rotate`** → `200 {"token","path"}` — issues a new
+token and invalidates the previous URL, keeping the link's window, visibility, and
+expiry. **`DELETE .../share-links/{linkID}`** → `200 {"status":"revoked"}`. Both
+`404` when the id belongs to another session.
+
+**`GET /api/shared/{token}`** (no auth) → a deliberately minimal DTO: `id`,
+`title`, `mode`, `mode_label`, `status`, `created_at`, `updated_at`, `visibility`,
+`link_expires_at`, `shared_at`, `frozen`, `frozen_at`. `status` is coarsened to
+`active`|`idle`|`ended` rather than exposing the internal state machine. Built
+field by field, so a field added to `apiSession` is not published here by accident.
+
+**`GET /api/shared/{token}/messages`** → `{"messages":[{id, role, content,
+created_at, stop_reason?, trace?}]}` — windowed by `max_message_id` and trimmed by
+the link's visibility. No `session_id`, no `feedback`.
+
+**`GET /api/shared/{token}/artifacts`** → `{"artifacts":[{path,size}]}` — the
+link's **whitelist**, never the live workspace listing. Empty until the snapshot
+store lands.
+
+Unknown, expired, revoked, and rotated-away tokens are all `404`. The subtree is
+GET-only (`405` otherwise) and sends `Referrer-Policy: no-referrer`, because the
+token is in the URL path. Access counters are buffered in memory and flushed by
+the maintenance loop, so anonymous reads never contend for the writer connection;
+a restart loses at most one window of counts.
+
+Anonymous requests are **not** admitted to the SSE/WebSocket streams, so a shared
+page is a snapshot with an explicit refresh rather than a live view.
 
 ## Session DTO (`session_dto.go`)
 

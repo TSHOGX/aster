@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"harness-platform/orchestrator/internal/store"
 )
@@ -45,6 +46,59 @@ func validateCreateShare(grantee, visibility string, session store.Session, owne
 		return createShareRequest{}, err
 	}
 	return createShareRequest{Grantee: grantee, Visibility: normalized}, nil
+}
+
+// createShareLinkRequest is the validated form of a POST /share-links body.
+type createShareLinkRequest struct {
+	Visibility string
+	TTL        time.Duration
+	ExpiresAt  time.Time
+}
+
+// validateCreateShareLink checks a public-link request.
+//
+// Two rules carry weight here. First, a public link MUST expire: TTL is capped
+// and a zero TTL means "use the cap", never "never". Second, a shell session's
+// link is forced to "full" -- in shell mode the command output IS the content, so
+// a "summary" that drops execution detail is not a redaction, it is an empty
+// page. Asking for summary on a shell session is a mistake worth reporting
+// rather than silently satisfying.
+func validateCreateShareLink(visibility string, ttl time.Duration, session store.Session, maxTTL time.Duration, now time.Time) (createShareLinkRequest, error) {
+	if maxTTL <= 0 {
+		return createShareLinkRequest{}, fmt.Errorf("share link ttl cap is not configured")
+	}
+	normalized, err := validateShareVisibility(visibility, store.ShareVisibilitySummary)
+	if err != nil {
+		return createShareLinkRequest{}, err
+	}
+	if isShellSession(session) {
+		if strings.TrimSpace(visibility) == store.ShareVisibilitySummary {
+			return createShareLinkRequest{}, fmt.Errorf(
+				"shell sessions cannot be shared with %q visibility: the command output is the content",
+				store.ShareVisibilitySummary)
+		}
+		normalized = store.ShareVisibilityFull
+	}
+	if ttl < 0 {
+		return createShareLinkRequest{}, fmt.Errorf("ttl must not be negative")
+	}
+	if ttl == 0 {
+		ttl = maxTTL
+	}
+	if ttl > maxTTL {
+		return createShareLinkRequest{}, fmt.Errorf("ttl exceeds the maximum of %s", maxTTL)
+	}
+	return createShareLinkRequest{Visibility: normalized, TTL: ttl, ExpiresAt: now.Add(ttl)}, nil
+}
+
+// isShellSession reports whether a session is a shell session, by mode with a
+// driver fallback for rows written before mode was populated.
+func isShellSession(session store.Session) bool {
+	mode := strings.TrimSpace(session.Mode)
+	if mode == "" {
+		mode = store.ModeForDriver(session.Agent)
+	}
+	return mode == "shell"
 }
 
 // validateShareVisibility normalizes the visibility enum, substituting fallback

@@ -80,8 +80,22 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   `Sidebar | Conversation | ArtifactPane`.
 - `workbench/sidebar.tsx` — session list: single-line rows (`title` → `id`, status
   dot), collapse toggle with hover flyout, active/ended split, connection status,
-  "New session". A per-row `…` menu offers Rename and Delete; Rename (or double-click)
-  switches to an inline editor.
+  "New session". A per-row `…` menu offers Rename, Share and Delete; Rename (or
+  double-click) switches to an inline editor. Rows with `access: "reader"` (shared
+  *with* the caller) show none of those actions — the server 404s every write for a
+  reader, so the UI does not offer buttons that can only fail.
+- `workbench/share-dialog.tsx` — owner-only sharing: read grants to named users
+  (`/api/users` feeds the picker) and public links. A freshly minted or rotated
+  token is displayed once, held only in component state, and copied to the
+  clipboard on request; it is never refetchable.
+- `app/s/[token]/page.tsx` + `components/shared/shared-session-view.tsx` — the
+  public read-only page. It mounts **no** `HarnessProvider`: that provider owns
+  auth, SSE and the session list, so rendering it would fire an authenticated
+  request and bounce an anonymous visitor to the login screen. The page fetches
+  `/api/shared/*` itself and reuses only the presentational leaves
+  (`message-bubble.tsx`, `shell-entry.tsx`), which take their data as props. There
+  is no live stream for anonymous viewers, so the page carries an explicit Refresh
+  control rather than appearing stuck.
 - `workbench/conversation.tsx` — routes to the agent chat or `shell-conversation.tsx`;
   renders committed messages + streaming bubbles + a runtime footer, with the
   notification bell in the header.

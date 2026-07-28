@@ -125,6 +125,7 @@ Loaded via `HARNESS_TITLE_LLM_PATH` (default `<repo>/config/title-llm.yaml`).
 | `HARNESS_AUTH_USERS_PATH` | `<repo>/config/auth-users.yaml` | login users file; re-read on change (no restart) |
 | `HARNESS_TITLE_LLM_PATH` | `<repo>/config/title-llm.yaml` | session-title LLM secret file (optional) |
 | `HARNESS_AUTH_SESSION_TTL` | 24h | login session TTL |
+| `HARNESS_MAX_SHARE_LINK_TTL` | 720h (30d) | ceiling on a public share link's lifetime; must be positive, so a link can never be permanent |
 | `HARNESS_SESSION_RETENTION` | config `0s` | session expiry (0 = never); invalid values fail startup |
 | `HARNESS_SESSION_TTL` | — | **obsolete; fatal if set** |
 | `HARNESS_DEFAULT_AGENT` | config `pi` | product Agent driver |

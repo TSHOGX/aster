@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Share2,
   Trash2
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { NotificationBell } from "@/components/notifications/notification-bell";
+import { ShareDialog } from "./share-dialog";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { formatRelative, isTerminal, statusLabel } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -49,7 +51,13 @@ const SessionRow = memo(function SessionRow({
   onRename
 }: SessionRowProps) {
   const displayTitle = session.title?.trim() || session.id;
+  // Sessions shared with the caller are read-only: no rename, no delete, no
+  // re-share. The server enforces this (every write route is owner-gated and
+  // 404s for a reader); hiding the entry points keeps the UI from offering
+  // actions that can only fail.
+  const readOnly = session.access === "reader";
   const [menuOpen, setMenuOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(displayTitle);
   const [saving, setSaving] = useState(false);
@@ -135,8 +143,12 @@ const SessionRow = memo(function SessionRow({
         <button
           className="min-w-0 flex-1 truncate text-left text-sm leading-tight"
           onClick={() => onSelect(session.id)}
-          onDoubleClick={startEditing}
-          title={`${displayTitle} · ${statusLabel(session.status)} · ${formatRelative(session.updated_at)}`}
+          onDoubleClick={readOnly ? undefined : startEditing}
+          title={
+            readOnly
+              ? `${displayTitle} · shared by ${session.shared_by ?? "another user"} · read-only`
+              : `${displayTitle} · ${statusLabel(session.status)} · ${formatRelative(session.updated_at)}`
+          }
         >
           {displayTitle}
         </button>
@@ -158,30 +170,57 @@ const SessionRow = memo(function SessionRow({
               role="menu"
               className="absolute right-0 top-8 z-30 min-w-[9rem] overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
             >
-              <button
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
-                onClick={startEditing}
-              >
-                <Pencil className="h-3.5 w-3.5" />
-                Rename
-              </button>
-              <button
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:opacity-50"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onClose(session.id);
-                }}
-                disabled={closing || session.status === "destroyed"}
-              >
-                {closing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                Delete
-              </button>
+              {readOnly ? (
+                <p className="px-3 py-1.5 text-xs text-[var(--color-foreground-muted)]">
+                  Shared with you · read-only
+                </p>
+              ) : (
+                <>
+                  <button
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                    onClick={startEditing}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Rename
+                  </button>
+                  <button
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShareOpen(true);
+                    }}
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                    Share
+                  </button>
+                  <button
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:opacity-50"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onClose(session.id);
+                    }}
+                    disabled={closing || session.status === "destroyed"}
+                  >
+                    {closing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
           ) : null}
         </div>
       </div>
+      {shareOpen ? (
+        <ShareDialog
+          sessionId={session.id}
+          sessionTitle={displayTitle}
+          isShell={session.mode === "shell"}
+          onClose={() => setShareOpen(false)}
+        />
+      ) : null}
     </li>
   );
 });

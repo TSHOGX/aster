@@ -4,30 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Send, Square, TerminalSquare } from "lucide-react";
 
 import { useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
+import { ShellEntry } from "./shell-entry";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
 import { isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 import { useComposerState } from "@/lib/use-composer-state";
 import type { ApiMessage } from "@/lib/types";
-
-function ShellEntry({ message }: { message: ApiMessage }) {
-  const isUser = message.role === "user";
-  return isUser ? (
-    <div className="flex gap-2 px-6 py-3">
-      <span className="shrink-0 font-mono text-[11px] leading-6 text-[var(--color-foreground-muted)]">$</span>
-      <pre className="min-w-0 whitespace-pre-wrap break-words font-mono text-sm leading-6 text-[var(--color-foreground)]">
-        {message.content}
-      </pre>
-    </div>
-  ) : (
-    <div className="px-6 py-2">
-      <pre className="min-w-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-6 text-[var(--color-foreground)]">
-        {message.content}
-      </pre>
-    </div>
-  );
-}
 
 function ShellComposer({
   disabled,

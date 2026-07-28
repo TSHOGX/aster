@@ -43,6 +43,9 @@ type sessionStore interface {
 type messageStore interface {
 	AddMessage(context.Context, string, string, string) (store.Message, error)
 	AddAssistantMessage(context.Context, string, string, string, string) (store.Message, error)
+	// ListMessages has no per-viewer feedback join. The public-link path uses it
+	// because an anonymous viewer has no identity to join against.
+	ListMessages(context.Context, string) ([]store.Message, error)
 	ListMessagesForUser(context.Context, string, string) ([]store.Message, error)
 	MessageSession(context.Context, int64) (string, bool, error)
 	SetMessageFeedback(context.Context, int64, string, string) (string, error)

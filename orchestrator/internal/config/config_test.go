@@ -940,6 +940,39 @@ func TestLoadRejectsInvalidSessionRetentionEnv(t *testing.T) {
 	}
 }
 
+// A public share link must always expire, so the cap defaults to a real value
+// and an override that would remove the cap is rejected rather than accepted as
+// "unlimited".
+func TestLoadShareLinkTTLCap(t *testing.T) {
+	repo := writeMinimalLoadConfig(t)
+	chdirForLoadTest(t, repo)
+	unsetEnvForTest(t, "HARNESS_SESSION_TTL")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxShareLinkTTL != 30*24*time.Hour {
+		t.Fatalf("expected a 30 day default share link cap, got %s", cfg.MaxShareLinkTTL)
+	}
+
+	t.Setenv("HARNESS_MAX_SHARE_LINK_TTL", "72h")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load with override: %v", err)
+	}
+	if cfg.MaxShareLinkTTL != 72*time.Hour {
+		t.Fatalf("expected the override to apply, got %s", cfg.MaxShareLinkTTL)
+	}
+
+	for _, bad := range []string{"0", "-1h", "30d", "forever"} {
+		t.Setenv("HARNESS_MAX_SHARE_LINK_TTL", bad)
+		if _, err := Load(); err == nil {
+			t.Fatalf("expected %q to be rejected as a share link ttl cap", bad)
+		}
+	}
+}
+
 func TestLoadExposesModelProxyConfig(t *testing.T) {
 	repo := t.TempDir()
 	configDir := filepath.Join(repo, "config")

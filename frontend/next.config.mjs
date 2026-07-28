@@ -66,6 +66,15 @@ const nextConfig = {
         // frame, which is exactly the "refused to connect" preview bug.
         source: "/((?!artifacts/).*)",
         headers: securityHeaders
+      },
+      {
+        // The public share page carries its bearer token in the URL PATH, so the
+        // app-wide strict-origin-when-cross-origin is not enough: it would send
+        // the origin, but any outbound navigation from a shared page must not
+        // send the path. This rule is listed after the catch-all so it wins for
+        // /s/*; everything else in securityHeaders still applies.
+        source: "/s/:token*",
+        headers: [...securityHeaders, { key: "Referrer-Policy", value: "no-referrer" }]
       }
     ];
   }

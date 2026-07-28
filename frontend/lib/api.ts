@@ -3,10 +3,17 @@ import type {
   ApiMessage,
   ApiNotification,
   ApiSession,
+  ApiSessionShare,
+  ApiShareLink,
   DeploymentCapabilities,
   SearchResponse,
   SessionMode,
-  SessionStatus
+  SessionStatus,
+  ShareLinkToken,
+  ShareVisibility,
+  SharedLinkFile,
+  SharedLinkMessage,
+  SharedLinkSession
 } from "./types";
 
 export type RequestResult<T> =
@@ -156,6 +163,84 @@ export async function postMessageFeedback(
 export async function fetchArtifacts(sessionId: string) {
   return request<{ artifacts: ApiArtifact[] | null }>(
     `/api/sessions/${encodeURIComponent(sessionId)}/artifacts`
+  );
+}
+
+export async function fetchUsers() {
+  return request<{ users: { user_id: string }[] }>("/api/users");
+}
+
+export async function fetchSessionShares(sessionId: string) {
+  return request<{ shares: ApiSessionShare[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/shares`);
+}
+
+export async function createSessionShare(sessionId: string, grantee: string, visibility: ShareVisibility) {
+  return request<ApiSessionShare>(`/api/sessions/${encodeURIComponent(sessionId)}/shares`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ grantee, visibility })
+  });
+}
+
+export async function revokeSessionShare(sessionId: string, shareId: string) {
+  return request<{ status: string }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/shares/${encodeURIComponent(shareId)}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function fetchShareLinks(sessionId: string) {
+  return request<{ links: ApiShareLink[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/share-links`);
+}
+
+/**
+ * Mint a public link. The raw token comes back exactly once, in this response:
+ * the server stores only its hash, so it can never be shown again. A lost link
+ * is replaced by rotating, which invalidates the old URL.
+ */
+export async function createShareLink(
+  sessionId: string,
+  visibility: ShareVisibility,
+  ttlSeconds?: number
+) {
+  return request<ShareLinkToken>(`/api/sessions/${encodeURIComponent(sessionId)}/share-links`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ visibility, ttl_seconds: ttlSeconds ?? 0 })
+  });
+}
+
+export async function rotateShareLink(sessionId: string, linkId: string) {
+  return request<ShareLinkToken>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/share-links/${encodeURIComponent(linkId)}/rotate`,
+    { method: "POST" }
+  );
+}
+
+export async function revokeShareLink(sessionId: string, linkId: string) {
+  return request<{ status: string }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/share-links/${encodeURIComponent(linkId)}`,
+    { method: "DELETE" }
+  );
+}
+
+// The anonymous read surface. These hit /api/shared/*, which is served OUTSIDE
+// the orchestrator's auth middleware, so they must never send credentials and
+// must never be retried through the authed client on failure.
+
+export async function fetchSharedSession(token: string) {
+  return request<SharedLinkSession>(`/api/shared/${encodeURIComponent(token)}`);
+}
+
+export async function fetchSharedMessages(token: string) {
+  return request<{ messages: SharedLinkMessage[] | null }>(
+    `/api/shared/${encodeURIComponent(token)}/messages`
+  );
+}
+
+export async function fetchSharedArtifacts(token: string) {
+  return request<{ artifacts: SharedLinkFile[] | null }>(
+    `/api/shared/${encodeURIComponent(token)}/artifacts`
   );
 }
 

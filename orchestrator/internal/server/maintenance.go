@@ -50,6 +50,13 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		if _, err := s.store.SweepExpiredAuthSessions(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
 			s.log.Warn("expired auth-session sweep failed", "error", err)
 		}
+		// Public-link access counters are buffered in memory by the anonymous read
+		// handlers and land here, off the request path, so an anonymous fetch never
+		// queues behind the writer pool's single connection.
+		if err := s.flushShareLinkAccess(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.log.Warn("share link access flush failed", "error", err)
+		}
+		s.sweepExpiredShareLinks(ctx, now)
 		s.loginLimiter.GC()
 		s.ipLimiter.GC()
 		if _, err := s.store.CancelTerminalSessionPendingTurns(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
@@ -356,4 +363,28 @@ func bridgeParserKey(envelope bridge.Envelope) (bridgeStreamParserKey, bool) {
 		GenerationID: envelope.GenerationID,
 		TurnID:       *envelope.TurnID,
 	}, true
+}
+
+// sweepExpiredShareLinks deletes expired public links and reclaims the blobs
+// that lost their last reference.
+//
+// Phase 2 links carry no files, so the returned digest list is empty; the unlink
+// step arrives with the blob store. The sweep runs now anyway so expired rows do
+// not accumulate, and so the reclamation path has one owner from the start rather
+// than being bolted on next to a table that already has stale rows in it.
+func (s *Server) sweepExpiredShareLinks(ctx context.Context, now time.Time) {
+	orphaned, err := s.store.SweepExpiredShareLinks(ctx, now)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			s.log.Warn("expired share-link sweep failed", "error", err)
+		}
+		return
+	}
+	if len(orphaned) == 0 {
+		return
+	}
+	// Reachable only once links can reference files (phase 3). Logged rather than
+	// silently dropped so an unreclaimed blob is visible instead of invisible.
+	s.log.Warn("share link sweep reported unreferenced blobs with no reclaimer configured",
+		"blob_count", len(orphaned))
 }

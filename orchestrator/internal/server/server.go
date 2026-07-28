@@ -86,6 +86,14 @@ type Server struct {
 	// event id so a single event fanned out to N subscribers is sanitized once
 	// rather than N times on the SSE/WebSocket delivery path.
 	publicPayloads publicPayloadCache
+
+	// shareLinkCache memoizes public-link token resolutions, and shareAccess
+	// buffers their access counters. Both exist to keep anonymous traffic off the
+	// writer pool's single connection: a public link is the only unauthenticated
+	// surface here and the only one that can be pulled in bulk.
+	shareLinkCacheMu sync.Mutex
+	shareLinkCache   map[string]sharedLinkResolution
+	shareAccess      shareLinkAccessBuffer
 }
 
 type sessionOwnerEntry struct {
@@ -184,6 +192,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("GET /api/me", s.me)
 	mux.Handle("POST /api/logout", s.requireAuth(http.HandlerFunc(s.logout)))
+	// The public-link subtree is registered OUTSIDE requireAuth. ServeMux picks
+	// the most specific pattern, so "/api/shared/" wins over "/api/" for these
+	// paths -- which is load-bearing, not incidental: if it ever fell through to
+	// the authed branch every anonymous request would 401, and if the authed tree
+	// ever swallowed it the handlers would run with a synthesized identity.
+	// TestSharedSubtreeBypassesAuthWhileAPIRequiresIt pins both directions.
+	mux.Handle("/api/shared/", http.HandlerFunc(s.sharedAPI))
 	mux.Handle("/api/", s.requireAuth(http.HandlerFunc(s.api)))
 	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.artifactFile)))
 	return s.rateLimit(mux)
@@ -490,6 +505,14 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 		s.listSessionShares(w, r, sessionID)
 	case len(parts) == 3 && parts[1] == "shares" && r.Method == http.MethodDelete:
 		s.deleteSessionShare(w, r, sessionID, parts[2])
+	case len(parts) == 2 && parts[1] == "share-links" && r.Method == http.MethodPost:
+		s.createShareLink(w, r, sessionID)
+	case len(parts) == 2 && parts[1] == "share-links" && r.Method == http.MethodGet:
+		s.listShareLinks(w, r, sessionID)
+	case len(parts) == 4 && parts[1] == "share-links" && parts[3] == "rotate" && r.Method == http.MethodPost:
+		s.rotateShareLink(w, r, sessionID, parts[2])
+	case len(parts) == 3 && parts[1] == "share-links" && r.Method == http.MethodDelete:
+		s.deleteShareLink(w, r, sessionID, parts[2])
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}

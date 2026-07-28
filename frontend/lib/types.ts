@@ -37,6 +37,81 @@ export type ApiSession = {
 
 export type SessionMode = "agent" | "shell";
 
+/**
+ * How much of a session a share exposes. `summary` keeps the conversation but
+ * drops execution traces and intermediate tool steps; `full` includes them.
+ */
+export type ShareVisibility = "summary" | "full";
+
+export type ApiSessionShare = {
+  id: string;
+  session_id: string;
+  grantee: string;
+  role: "reader";
+  visibility: ShareVisibility;
+  created_by: string;
+  created_at: string;
+};
+
+/** Owner-facing view of a public link. The token is never included here. */
+export type ApiShareLink = {
+  id: string;
+  session_id: string;
+  visibility: ShareVisibility;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  expired: boolean;
+  last_accessed_at?: string | null;
+  access_count: number;
+  max_message_id?: number | null;
+  file_count: number;
+};
+
+/**
+ * The one and only time a raw link token is returned. Show it, let the user copy
+ * it, and do not persist it anywhere you cannot clear: it is a bearer credential
+ * and the server keeps only its hash.
+ */
+export type ShareLinkToken = {
+  link?: ApiShareLink;
+  token: string;
+  path: string;
+};
+
+/** The trimmed session a public link exposes. Note there is no `user_id`. */
+export type SharedLinkSession = {
+  id: string;
+  title: string;
+  mode: SessionMode;
+  mode_label: string;
+  /** Coarsened on the server: "active" | "idle" | "ended". */
+  status: "active" | "idle" | "ended";
+  created_at: string;
+  updated_at: string;
+  visibility: ShareVisibility;
+  link_expires_at: string;
+  shared_at: string;
+  /** True when the link is pinned to the conversation as of `frozen_at`. */
+  frozen: boolean;
+  frozen_at?: string | null;
+};
+
+export type SharedLinkMessage = {
+  id: number;
+  role: "user" | "assistant" | string;
+  content: string;
+  created_at: string;
+  /** Same values as ApiMessage.stop_reason; "toolUse" never appears at summary visibility. */
+  stop_reason?: "stop" | "toolUse" | "";
+  trace?: TraceNode[];
+};
+
+export type SharedLinkFile = {
+  path: string;
+  size: number;
+};
+
 export type DeploymentSessionMode = {
   mode: SessionMode;
   label: string;

@@ -29,6 +29,7 @@ func newAuthTestServer(t *testing.T, dir string, st *store.Store, users []config
 		CookieName:       "harness_auth",
 		AuthUsers:        users,
 		AuthSessionTTL:   time.Hour,
+		MaxShareLinkTTL:  30 * 24 * time.Hour,
 	}
 	return &Server{
 		cfg:               cfg,

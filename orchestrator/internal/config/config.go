@@ -24,12 +24,17 @@ import (
 )
 
 type Config struct {
-	Addr                 string
-	SharedSecret         string
-	CookieName           string
-	AuthUsers            []AuthUser
-	AuthUsersPath        string
-	AuthSessionTTL       time.Duration
+	Addr           string
+	SharedSecret   string
+	CookieName     string
+	AuthUsers      []AuthUser
+	AuthUsersPath  string
+	AuthSessionTTL time.Duration
+	// MaxShareLinkTTL caps how long a public share link may live. An anonymous
+	// link is not allowed to be permanent: expiry is the cheapest backstop when a
+	// URL is forwarded somewhere it should not have gone, and it is the only one
+	// that works without anybody noticing the leak.
+	MaxShareLinkTTL      time.Duration
 	CookieSecure         bool
 	TrustForwardedProto  bool
 	TrustProxyHeaders    bool
@@ -150,6 +155,11 @@ const (
 	defaultMaxEditBytes   int64 = 1 << 20   // 1 MiB
 	defaultMaxUploadFiles int   = 2000
 )
+
+// defaultMaxShareLinkTTL bounds a public share link's lifetime. 30 days is long
+// enough for a link pasted into a review thread to stay useful and short enough
+// that a forwarded URL stops working on its own.
+const defaultMaxShareLinkTTL = 30 * 24 * time.Hour
 
 const defaultModelProxyBindPort = 8082
 const defaultModelProxyBindURL = "http://0.0.0.0:8082"
@@ -397,6 +407,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	maxShareLinkTTL, err := positiveDurationEnv("HARNESS_MAX_SHARE_LINK_TTL", defaultMaxShareLinkTTL)
+	if err != nil {
+		return Config{}, err
+	}
 	titleLLM, err := loadTitleLLM(getenv("HARNESS_TITLE_LLM_PATH", filepath.Join(repoRoot, "config", "title-llm.yaml")))
 	if err != nil {
 		return Config{}, err
@@ -412,6 +426,7 @@ func Load() (Config, error) {
 		AuthUsers:            authUsers,
 		AuthUsersPath:        authUsersPath,
 		AuthSessionTTL:       authSessionTTL,
+		MaxShareLinkTTL:      maxShareLinkTTL,
 		CookieSecure:         !boolEnvDefault("HARNESS_COOKIE_INSECURE", false),
 		TrustForwardedProto:  boolEnvDefault("HARNESS_TRUST_FORWARDED_PROTO", true),
 		TrustProxyHeaders:    boolEnvDefault("HARNESS_TRUST_PROXY_HEADERS", true),
@@ -1587,6 +1602,21 @@ func loadMemoryLLM(path string) (MemoryLLMConfig, error) {
 		cfg.Agentic = v
 	}
 	return cfg, nil
+}
+
+// positiveDurationEnv reads a duration override that must be strictly positive.
+// Used for caps where zero would mean "no cap", which is exactly the posture the
+// setting exists to prevent.
+func positiveDurationEnv(key string, fallback time.Duration) (time.Duration, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("invalid %s duration %q (must be a positive duration)", key, value)
+	}
+	return duration, nil
 }
 
 func authSessionTTLEnv(fallback time.Duration) (time.Duration, error) {
