@@ -58,6 +58,7 @@ export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
       key={session.id}
       sessionId={session.id}
       status={session.status}
+      readOnly={session.access === "reader"}
       artifacts={artifacts}
       onExpandedChange={onExpandedChange}
     />
@@ -71,11 +72,16 @@ type UploadState =
 function ArtifactPaneInner({
   sessionId,
   status,
+  readOnly = false,
   artifacts,
   onExpandedChange
 }: {
   sessionId: string;
   status: SessionStatus;
+  // True for a session shared with the caller. Reads work (the read gate admits
+  // a grant holder); uploads and edits are owner-only and would 404, so the
+  // entry points are withheld rather than left to fail.
+  readOnly?: boolean;
   artifacts: ApiArtifact[];
   onExpandedChange?: (expanded: boolean) => void;
 }) {
@@ -97,7 +103,7 @@ function ArtifactPaneInner({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
-  const writable = isSessionWritable(status);
+  const writable = !readOnly && isSessionWritable(status);
   const busy = upload.phase === "uploading";
   const canUpload = writable && !busy;
 
@@ -145,6 +151,10 @@ function ArtifactPaneInner({
       event.preventDefault();
       dragDepth.current = 0;
       setDragging(false);
+      if (readOnly) {
+        toast.error("This session was shared with you and is read-only.");
+        return;
+      }
       if (!isSessionWritable(status)) {
         toast.error("Can't upload while the agent is working. Try again once the turn finishes.");
         return;
@@ -153,7 +163,7 @@ function ArtifactPaneInner({
         .then((entries) => runUpload(entries))
         .catch(() => toast.error("Couldn't read the dropped files."));
     },
-    [runUpload, status]
+    [runUpload, status, readOnly]
   );
 
   const onDragEnter = useCallback(
@@ -261,6 +271,7 @@ function ArtifactPaneInner({
           sessionId={sessionId}
           path={livePath}
           artifact={activeArtifact}
+          readOnly={readOnly}
           fullScreen={fullScreen}
           onToggleFullScreen={() => setFullScreen((v) => !v)}
           onClose={closePreview}
@@ -278,7 +289,7 @@ function ArtifactPaneInner({
                   </span>
                 ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className={readOnly ? "hidden" : "flex shrink-0 items-center gap-1.5"}>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -312,6 +323,10 @@ function ArtifactPaneInner({
                   />
                 </div>
               </div>
+            ) : readOnly ? (
+              <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
+                Shared with you — read-only.
+              </p>
             ) : !writable ? (
               <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
                 Uploads paused while the agent is working.

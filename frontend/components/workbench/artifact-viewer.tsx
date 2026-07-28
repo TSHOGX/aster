@@ -45,6 +45,9 @@ type Props = {
   sessionId: string;
   path: string;
   artifact?: ApiArtifact | null;
+  // True for a session shared with the caller: downloads work, inline editing is
+  // owner-only upstream and would 404, so the Edit affordance is withheld.
+  readOnly?: boolean;
   fullScreen?: boolean;
   onToggleFullScreen?: () => void;
   onClose?: () => void;
@@ -74,7 +77,15 @@ type EditState =
   | { phase: "saving"; text: string }
   | { phase: "stale"; text: string };
 
-export function ArtifactViewer({ sessionId, path, artifact, fullScreen, onToggleFullScreen, onClose }: Props) {
+export function ArtifactViewer({
+  sessionId,
+  path,
+  artifact,
+  readOnly = false,
+  fullScreen,
+  onToggleFullScreen,
+  onClose
+}: Props) {
   const meta = classifyArtifact(path);
   const href = buildArtifactHref(sessionId, path);
   const html = isHtmlPath(path);
@@ -122,6 +133,7 @@ export function ArtifactViewer({ sessionId, path, artifact, fullScreen, onToggle
   };
 
   const editable =
+    !readOnly &&
     EDITABLE_KINDS.has(meta.kind) &&
     load.phase === "ok" &&
     (!artifact || artifact.size <= MAX_EDIT_BYTES);

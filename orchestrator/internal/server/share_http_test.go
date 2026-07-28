@@ -465,3 +465,51 @@ func TestListUsersExcludesCallerAndIsEmptyInOpenMode(t *testing.T) {
 		t.Fatalf("expected empty user list in open mode, got %s", body)
 	}
 }
+
+// Sharing notifies the recipient and nobody else.
+func TestCreateShareNotifiesOnlyTheGrantee(t *testing.T) {
+	f := newShareFixture(t)
+	ctx := context.Background()
+	// A pre-existing broadcast, to prove directed rows are additive rather than
+	// replacing the broadcast semantics.
+	if _, err := f.srv.CreateNotification(ctx, "Release notes", "for everyone"); err != nil {
+		t.Fatalf("create broadcast: %v", err)
+	}
+	f.grant(t, "bob", store.ShareVisibilityFull)
+
+	titles := func(userID string) []string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		f.srv.listNotifications(rec, asUser(httptest.NewRequest(http.MethodGet, "/api/notifications", nil), userID))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list notifications for %s: %d", userID, rec.Code)
+		}
+		var payload struct {
+			Notifications []apiNotification `json:"notifications"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		out := make([]string, 0, len(payload.Notifications))
+		for _, n := range payload.Notifications {
+			out = append(out, n.Title)
+		}
+		return out
+	}
+
+	bob := strings.Join(titles("bob"), "|")
+	if !strings.Contains(bob, "A session was shared with you") || !strings.Contains(bob, "Release notes") {
+		t.Fatalf("bob should see his share notice and the broadcast, got %q", bob)
+	}
+	carol := strings.Join(titles("carol"), "|")
+	if strings.Contains(carol, "shared with you") {
+		t.Fatalf("carol must not see bob's share notice, got %q", carol)
+	}
+	if !strings.Contains(carol, "Release notes") {
+		t.Fatalf("carol should still see the broadcast, got %q", carol)
+	}
+	alice := strings.Join(titles("alice"), "|")
+	if strings.Contains(alice, "shared with you") {
+		t.Fatalf("the owner must not be told they shared with themselves, got %q", alice)
+	}
+}

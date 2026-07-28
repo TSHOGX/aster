@@ -112,10 +112,15 @@ export function ShellConversation() {
     return null;
   }
 
-  const accepting = isAcceptingInput(session.status);
+  // Same read-only gate as the chat view: a shared session's write routes 404, so
+  // the command bar is disabled instead of accepting input that cannot run.
+  const readOnly = session.access === "reader";
+  const accepting = !readOnly && isAcceptingInput(session.status);
   const busy = session.status === "running_active";
   const terminal = isTerminal(session.status);
-  const placeholder = terminal
+  const placeholder = readOnly
+    ? `Read-only — shared by ${session.shared_by ?? "another user"}`
+    : terminal
     ? "Session ended. Start a new one to continue."
     : busy
     ? "Command running…"

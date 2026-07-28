@@ -686,8 +686,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS runtime_resource_instances_log_dir_path_active
   WHERE log_dir_path IS NOT NULL
     AND state NOT IN ('absent_verified','destroyed');
 
+-- user_id is the audience: NULL means broadcast to everyone (the original and
+-- still the default for release notes), non-NULL means only that user sees it.
+--
+-- OBLIGATION: every read of this table must carry the audience predicate
+-- "(user_id IS NULL OR user_id = ?)". There are two such reads --
+-- ListNotificationsForUser and CountUnreadNotifications -- and adding the
+-- predicate to only one of them yields an unread badge that disagrees with the
+-- list it opens, which is worse than either being wrong on its own.
 CREATE TABLE IF NOT EXISTS notifications (
   id TEXT PRIMARY KEY,
+  user_id TEXT,
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   created_at TEXT NOT NULL
@@ -695,6 +704,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS notifications_created_at_idx
   ON notifications (created_at);
+
+CREATE INDEX IF NOT EXISTS notifications_user_idx
+  ON notifications (user_id);
 
 CREATE TABLE IF NOT EXISTS notification_reads (
   notification_id TEXT NOT NULL,
@@ -839,6 +851,9 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 	if err := s.ensureMessageColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureNotificationColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureRuntimeGenerationColumns(ctx); err != nil {
 		return err
 	}
@@ -969,6 +984,35 @@ func (s *Store) ensureMessageColumns(ctx context.Context) error {
 	}
 	for _, column := range columns {
 		exists, err := s.columnExists(ctx, "messages", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureNotificationColumns adds the notification audience column to existing
+// databases. Same O(1) metadata-only ALTER and idempotency as
+// ensureSessionColumns.
+//
+// It is nullable with no default on purpose: existing rows read back NULL, which
+// is exactly the broadcast semantics they already had, so the migration needs no
+// backfill and a rollback keeps working.
+func (s *Store) ensureNotificationColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"user_id", `ALTER TABLE notifications ADD COLUMN user_id TEXT`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "notifications", column.name)
 		if err != nil {
 			return err
 		}

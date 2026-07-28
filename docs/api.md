@@ -52,7 +52,7 @@ The orchestrator serves three trees:
 | GET | `/api/quota` | required | session & `/30` pool ceilings |
 | GET | `/api/deployment-capabilities` | required | creatable product modes |
 | GET | `/api/search` | required | full-text search over the caller's sessions & messages |
-| GET | `/api/notifications` | required | list broadcast notifications with per-caller read state |
+| GET | `/api/notifications` | required | list the caller's notifications (broadcasts + directed) with read state |
 | POST | `/api/notifications/{id}/read` | required | mark one notification read (idempotent) |
 | GET | `/api/events` | required | WebSocket event stream (compatibility) |
 | GET | `/api/events/stream` | required | SSE event stream (used by the workbench) |

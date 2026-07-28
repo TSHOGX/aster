@@ -140,3 +140,96 @@ func TestMarkNotificationReadIdempotent(t *testing.T) {
 		t.Fatalf("expected 0 unread, got %d", unread)
 	}
 }
+
+// A directed notification reaches its target and nobody else, while broadcasts
+// still reach everyone.
+func TestDirectedNotificationsAreScopedToTheirAudience(t *testing.T) {
+	st := openNotificationsTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := st.CreateNotification(ctx, Notification{
+		ID: "notif_broadcast", Title: "Release notes", Body: "everyone", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("create broadcast: %v", err)
+	}
+	if err := st.CreateNotification(ctx, Notification{
+		ID: "notif_bob", UserID: "bob", Title: "Shared with you", Body: "just bob", CreatedAt: now.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("create directed: %v", err)
+	}
+
+	visible := func(userID string) []string {
+		t.Helper()
+		notifications, err := st.ListNotificationsForUser(ctx, userID)
+		if err != nil {
+			t.Fatalf("list for %s: %v", userID, err)
+		}
+		ids := make([]string, 0, len(notifications))
+		for _, n := range notifications {
+			ids = append(ids, n.ID)
+		}
+		return ids
+	}
+
+	bobIDs := visible("bob")
+	if len(bobIDs) != 2 {
+		t.Fatalf("bob should see the broadcast and his own, got %v", bobIDs)
+	}
+	carolIDs := visible("carol")
+	if len(carolIDs) != 1 || carolIDs[0] != "notif_broadcast" {
+		t.Fatalf("carol should see only the broadcast, got %v", carolIDs)
+	}
+
+	// The unread count MUST agree with the list. A predicate applied to one query
+	// and not the other yields a badge the user cannot clear.
+	assertUnread := func(userID string, want int) {
+		t.Helper()
+		count, err := st.CountUnreadNotifications(ctx, userID)
+		if err != nil {
+			t.Fatalf("count for %s: %v", userID, err)
+		}
+		if count != want {
+			t.Fatalf("unread for %s: want %d got %d", userID, want, count)
+		}
+	}
+	assertUnread("bob", 2)
+	assertUnread("carol", 1)
+
+	// Reading clears only the reader's own count, and stays consistent with the list.
+	if err := st.MarkNotificationRead(ctx, "notif_bob", "bob", now); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	assertUnread("bob", 1)
+	assertUnread("carol", 1)
+
+	// Carol cannot clear a notification she cannot see: marking it read must not
+	// change what either user's count reports.
+	if err := st.MarkNotificationRead(ctx, "notif_bob", "carol", now); err != nil {
+		t.Fatalf("mark read as carol: %v", err)
+	}
+	assertUnread("carol", 1)
+	if got := visible("carol"); len(got) != 1 {
+		t.Fatalf("carol still should see only the broadcast, got %v", got)
+	}
+}
+
+// Rows written before the audience column existed read back as broadcasts.
+func TestNotificationsWithoutAudienceRemainBroadcast(t *testing.T) {
+	st := openNotificationsTestStore(t)
+	ctx := context.Background()
+	if _, err := st.DBForTest().ExecContext(ctx,
+		`INSERT INTO notifications (id, title, body, created_at) VALUES ('legacy', 'Old', 'body', ?)`,
+		time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	for _, userID := range []string{"alice", "bob"} {
+		notifications, err := st.ListNotificationsForUser(ctx, userID)
+		if err != nil {
+			t.Fatalf("list for %s: %v", userID, err)
+		}
+		if len(notifications) != 1 || notifications[0].ID != "legacy" || notifications[0].UserID != "" {
+			t.Fatalf("%s should see the legacy row as a broadcast, got %+v", userID, notifications)
+		}
+	}
+}

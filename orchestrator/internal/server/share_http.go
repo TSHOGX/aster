@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -70,7 +71,26 @@ func (s *Server) createSessionShare(w http.ResponseWriter, r *http.Request, sess
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.notifyShareRecipient(r.Context(), share, session)
 	writeJSON(w, http.StatusCreated, publicSessionShare(share))
+}
+
+// notifyShareRecipient tells the grantee they have been given access.
+//
+// Best-effort: the grant is already committed and is the thing that matters, so a
+// notification failure is logged rather than failing the request or, worse,
+// rolling back a share the owner was told nothing about.
+func (s *Server) notifyShareRecipient(ctx context.Context, share store.SessionShare, session store.Session) {
+	title := strings.TrimSpace(session.Title)
+	if title == "" {
+		title = session.ID
+	}
+	if _, err := s.createNotification(ctx, share.GranteeUserID,
+		"A session was shared with you",
+		share.CreatedBy+" shared \""+title+"\" with you (read-only)."); err != nil {
+		s.log.Warn("failed to notify share recipient",
+			"session_id", share.SessionID, "grantee", share.GranteeUserID, "error", err)
+	}
 }
 
 // listSessionShares handles GET /api/sessions/{id}/shares.

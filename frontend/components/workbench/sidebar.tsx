@@ -383,6 +383,17 @@ function SidebarPanel({
       new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     return sessions.filter((session) => !isTerminal(session.status)).sort(byRecentActivity);
   }, [sessions]);
+  // Sessions shared with the caller get their own group. They are read-only and
+  // somebody else's work, so mixing them into History would make the list look
+  // like the user owns work they cannot rename, delete, or continue.
+  const ownedSessions = useMemo(
+    () => activeSessions.filter((session) => session.access !== "reader"),
+    [activeSessions]
+  );
+  const sharedSessions = useMemo(
+    () => activeSessions.filter((session) => session.access === "reader"),
+    [activeSessions]
+  );
   const agentCapability = capabilities?.session_modes.find((mode) => mode.mode === "agent");
   const agentCreateDisabled = agentCapability ? !agentCapability.create_enabled : false;
 
@@ -492,7 +503,7 @@ function SidebarPanel({
         <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
           History
         </span>
-        <span className="text-[11px] text-[var(--color-foreground-muted)]">{activeSessions.length}</span>
+        <span className="text-[11px] text-[var(--color-foreground-muted)]">{ownedSessions.length}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -503,7 +514,7 @@ function SidebarPanel({
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto">
             <ul className="space-y-0.5 px-2 pb-3">
-              {activeSessions.map((s) => (
+              {ownedSessions.map((s) => (
                 <SessionRow
                   key={s.id}
                   session={s}
@@ -515,6 +526,31 @@ function SidebarPanel({
                 />
               ))}
             </ul>
+            {sharedSessions.length > 0 ? (
+              <>
+                <div className="flex items-center justify-between px-4 pb-1.5 pt-2">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
+                    Shared with me
+                  </span>
+                  <span className="text-[11px] text-[var(--color-foreground-muted)]">
+                    {sharedSessions.length}
+                  </span>
+                </div>
+                <ul className="space-y-0.5 px-2 pb-3">
+                  {sharedSessions.map((s) => (
+                    <SessionRow
+                      key={s.id}
+                      session={s}
+                      selected={s.id === selectedId}
+                      closing={closingId === s.id}
+                      onSelect={handleSelect}
+                      onClose={handleClose}
+                      onRename={renameSession}
+                    />
+                  ))}
+                </ul>
+              </>
+            ) : null}
           </div>
         )}
       </div>

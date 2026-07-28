@@ -586,15 +586,28 @@ func (s *Server) markNotificationRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// CreateNotification persists a new system notification and broadcasts a
-// lightweight "notification.created" signal over SSE to all connected
-// clients. It is invoked internally (deploy tooling, startup logic) and is
-// not exposed as a public HTTP endpoint.
+// CreateNotification persists a new broadcast notification and signals connected
+// clients to refetch. It is invoked internally (deploy tooling, startup logic)
+// and is not exposed as a public HTTP endpoint.
 func (s *Server) CreateNotification(ctx context.Context, title, body string) (string, error) {
+	return s.createNotification(ctx, "", title, body)
+}
+
+// createNotification persists a notification for one user ("" = everyone) and
+// publishes the lightweight "notification.created" refetch signal.
+//
+// The signal itself is not audience-filtered, and deliberately so: its payload is
+// an opaque notification id and nothing else, while the content is gated by the
+// audience predicate in the list query. A user who refetches on someone else's
+// directed notification simply sees no new row. Filtering event delivery per user
+// would mean teaching the hub about recipients to save a refetch that costs one
+// query.
+func (s *Server) createNotification(ctx context.Context, userID, title, body string) (string, error) {
 	id := newID("notif")
 	now := time.Now().UTC()
 	if err := s.store.CreateNotification(ctx, store.Notification{
 		ID:        id,
+		UserID:    userID,
 		Title:     title,
 		Body:      body,
 		CreatedAt: now,

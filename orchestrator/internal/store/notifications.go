@@ -2,16 +2,30 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
-// Notification is a system-wide message (e.g. release notes) broadcast to all users.
+// Notification is a message shown in the workbench. An empty UserID is a
+// broadcast (release notes, system status); a non-empty one is directed at that
+// user alone.
 type Notification struct {
-	ID        string
+	ID string
+	// UserID is the audience. "" means everyone.
+	UserID    string
 	Title     string
 	Body      string
 	CreatedAt time.Time
 }
+
+// notificationAudiencePredicate restricts a notification read to what userID may
+// see: broadcasts plus their own directed rows.
+//
+// It is a shared constant rather than inline SQL because it MUST appear in every
+// read of the table. There are two, and if only one carried it the unread badge
+// and the list it opens would disagree -- the failure mode is a user seeing a
+// count they cannot account for, or a notification that never clears.
+const notificationAudiencePredicate = `(n.user_id IS NULL OR n.user_id = ?)`
 
 // NotificationWithReadState is a Notification annotated with whether the
 // requesting user has read it.
@@ -27,19 +41,20 @@ func (s *Store) CreateNotification(ctx context.Context, n Notification) error {
 		n.CreatedAt = time.Now().UTC()
 	}
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO notifications (id, title, body, created_at) VALUES (?, ?, ?, ?)`,
-		n.ID, n.Title, n.Body, formatTime(n.CreatedAt))
+INSERT INTO notifications (id, user_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)`,
+		n.ID, nullableString(n.UserID), n.Title, n.Body, formatTime(n.CreatedAt))
 	return err
 }
 
-// ListNotificationsForUser returns all notifications, newest first, annotated
-// with whether userID has read each one.
+// ListNotificationsForUser returns the notifications userID may see -- broadcasts
+// plus rows directed at them -- newest first, annotated with read state.
 func (s *Store) ListNotificationsForUser(ctx context.Context, userID string) ([]NotificationWithReadState, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT n.id, n.title, n.body, n.created_at, nr.user_id IS NOT NULL
+SELECT n.id, n.user_id, n.title, n.body, n.created_at, nr.user_id IS NOT NULL
 FROM notifications n
 LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = ?
-ORDER BY n.created_at DESC`, userID)
+WHERE `+notificationAudiencePredicate+`
+ORDER BY n.created_at DESC`, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,10 +64,14 @@ ORDER BY n.created_at DESC`, userID)
 	for rows.Next() {
 		var (
 			n         NotificationWithReadState
+			target    sql.NullString
 			createdAt string
 		)
-		if err := rows.Scan(&n.ID, &n.Title, &n.Body, &createdAt, &n.Read); err != nil {
+		if err := rows.Scan(&n.ID, &target, &n.Title, &n.Body, &createdAt, &n.Read); err != nil {
 			return nil, err
+		}
+		if target.Valid {
+			n.UserID = target.String
 		}
 		n.CreatedAt = parseTime(createdAt)
 		notifications = append(notifications, n)
@@ -60,15 +79,20 @@ ORDER BY n.created_at DESC`, userID)
 	return notifications, rows.Err()
 }
 
-// CountUnreadNotifications returns the number of notifications userID has not
-// yet marked read.
+// CountUnreadNotifications returns how many of the notifications userID may see
+// they have not yet read.
+//
+// The audience predicate here must match ListNotificationsForUser exactly: this
+// count labels the badge that opens that list, so a divergence shows up as a
+// badge the user cannot clear.
 func (s *Store) CountUnreadNotifications(ctx context.Context, userID string) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM notifications n
-WHERE NOT EXISTS (
-  SELECT 1 FROM notification_reads nr WHERE nr.notification_id = n.id AND nr.user_id = ?
-)`, userID).Scan(&count)
+WHERE `+notificationAudiencePredicate+`
+  AND NOT EXISTS (
+    SELECT 1 FROM notification_reads nr WHERE nr.notification_id = n.id AND nr.user_id = ?
+  )`, userID, userID).Scan(&count)
 	return count, err
 }
 

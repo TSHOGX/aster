@@ -90,9 +90,15 @@ function ChatConversation() {
     );
   }
 
-  const accepting = isAcceptingInput(session.status);
+  // A session shared with the caller is read-only: sendMessage would 404 (every
+  // write route is owner-gated), so the composer is disabled and says why rather
+  // than accepting text that cannot be delivered.
+  const readOnly = session.access === "reader";
+  const accepting = !readOnly && isAcceptingInput(session.status);
   const terminal = isTerminal(session.status);
-  const placeholder = terminal
+  const placeholder = readOnly
+    ? `Read-only — shared by ${session.shared_by ?? "another user"}`
+    : terminal
     ? "Session ended. Start a new one to continue."
     : accepting
     ? "Send a message…"

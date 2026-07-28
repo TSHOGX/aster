@@ -90,7 +90,11 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   "New session". A per-row `…` menu offers Rename, Share and Delete; Rename (or
   double-click) switches to an inline editor. Rows with `access: "reader"` (shared
   *with* the caller) show none of those actions — the server 404s every write for a
-  reader, so the UI does not offer buttons that can only fail.
+  reader, so the UI does not offer buttons that can only fail — and are listed under
+  a separate **Shared with me** group rather than mixed into History, which would
+  make the list look like the user owns work they cannot touch. The same
+  `access === "reader"` check disables the composer (chat and shell), the artifact
+  upload/drag-drop entry points, and the inline file editor.
 - `workbench/share-dialog.tsx` — owner-only sharing: read grants to named users
   (`/api/users` feeds the picker) and public links. A freshly minted or rotated
   token is displayed once, held only in component state, and copied to the

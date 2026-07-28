@@ -1,7 +1,8 @@
 # System Notifications (Inbox)
 
-> Broadcast system messages (e.g. release notes) to all users, with per-user
-> durable read state. Backend in `orchestrator/internal/store/notifications.go`
+> Broadcast system messages (e.g. release notes) to all users, plus notifications
+> directed at one user, with per-user durable read state. Backend in
+> `orchestrator/internal/store/notifications.go`
 > + `orchestrator/internal/server/server.go`; frontend bell in
 > `frontend/components/notifications/notification-bell.tsx`. Builds on the
 > existing event/SSE and auth infrastructure documented in
@@ -14,11 +15,30 @@ duplicated per user:
 
 | Table | Purpose |
 |---|---|
-| `notifications` | `id`, `title`, `body`, `created_at` — one row per broadcast message |
+| `notifications` | `id`, `user_id` (nullable audience), `title`, `body`, `created_at` — one row per message |
 | `notification_reads` | `(notification_id, user_id)` PK, `read_at` — per-user read marker, `INSERT OR IGNORE` for idempotent "mark read" |
 
-Notifications are global: every user sees the same content, scoped only by
-their own read state via a `LEFT JOIN` in `ListNotificationsForUser`.
+`notifications.user_id` is the **audience**: `NULL` means broadcast (release
+notes, system status), non-null means only that user sees it. Rows written before
+the column existed read back `NULL`, so the migration needs no backfill and a
+rollback keeps working.
+
+**Both** reads of the table must carry the audience predicate
+`(user_id IS NULL OR user_id = ?)`. There are exactly two —
+`ListNotificationsForUser` and `CountUnreadNotifications` — and they share a
+single `notificationAudiencePredicate` constant for that reason: applying it to
+one and not the other produces an unread badge that disagrees with the list it
+opens, which is a worse bug than either being wrong alone.
+
+Directed notifications are currently emitted when a session is shared with
+someone (see [api.md](./api.md) sharing routes). That send is best-effort: the
+grant is already committed and is what matters, so a notification failure is
+logged rather than failing the request.
+
+The `notification.created` SSE signal is **not** audience-filtered. Its payload is
+an opaque `notification_id` and nothing else, and the content is gated by the
+audience predicate in the list query, so a user who refetches on someone else's
+directed notification simply sees no new row.
 
 ## HTTP routes
 
@@ -41,7 +61,9 @@ below).
 
 ## Creating a notification
 
-`Server.CreateNotification(ctx, title, body)` does two things:
+`Server.CreateNotification(ctx, title, body)` creates a **broadcast**; the
+internal `createNotification(ctx, userID, title, body)` takes an audience (`""`
+for everyone). Both do two things:
 
 1. Inserts the row via `Store.CreateNotification`.
 2. Publishes a `notification.created` event on the existing `events.Hub` with
