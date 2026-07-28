@@ -127,7 +127,8 @@ func runReplay(ctx context.Context, log *slog.Logger, args []string) error {
 			Model:    cfg.MemoryLLM.AgentModel,
 			WorkDir:  cfg.RepoRoot,
 		}),
-		Agentic: cfg.MemoryLLM.Agentic,
+		Agentic:     cfg.MemoryLLM.Agentic,
+		AutoPublish: cfg.MemoryLLM.AutoPublish,
 	})
 	if pipeline == nil {
 		return fmt.Errorf("distillation disabled (no memory LLM configured)")

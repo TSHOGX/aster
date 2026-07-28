@@ -16,3 +16,9 @@ agentic: false
 agent_bin: pi
 agent_provider: modelarts
 agent_model: glm-5.2
+
+# Expert-approval gate for KB publication. false (default) = a finished cycle
+# only stages a snapshot under agents-kb/ plus a `pending` marker, and a human
+# must approve it (`harness-ctl kb approve <digest>`) before sandboxes mount it.
+# true = the cycle re-points `current` itself. Env: HARNESS_MEMORY_AUTO_PUBLISH.
+auto_publish: false

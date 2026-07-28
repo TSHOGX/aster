@@ -102,11 +102,28 @@ func (p *Pipeline) curateAndPublish(ctx context.Context) (Report, error) {
 		return report, nil
 	}
 
-	// 4. Write a new snapshot (facts from accepted memories + skills) and
-	// atomically re-point `current`.
-	digest, err := p.kb.Publish(accepted, publish)
-	if err != nil {
-		return report, fmt.Errorf("publish kb snapshot: %w", err)
+	// 4. Write a new snapshot (facts from accepted memories + skills). With
+	// autoPublish it goes live immediately; by default it is only staged and an
+	// expert must approve it before any sandbox mounts it. Same gate as the
+	// agentic path — no back door.
+	var digest string
+	if p.autoPublish {
+		d, err := p.kb.Publish(accepted, publish)
+		if err != nil {
+			return report, fmt.Errorf("publish kb snapshot: %w", err)
+		}
+		digest = d
+	} else {
+		d, changed, err := p.kb.Stage(accepted, publish, 0, nil)
+		if err != nil {
+			return report, fmt.Errorf("stage kb snapshot: %w", err)
+		}
+		digest = d
+		if changed {
+			report.Notes = append(report.Notes,
+				"STAGED awaiting expert approval — not live. Review: harness-ctl kb diff / approve "+digest)
+			p.log.Info("curator: snapshot STAGED, awaiting expert approval", "digest", digest)
+		}
 	}
 	report.Digest = digest
 

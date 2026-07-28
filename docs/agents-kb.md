@@ -69,7 +69,8 @@ At sandbox spec-build time the runtime resolves `current` → the concrete
 mount source is the resolved snapshot, a running generation stays pinned to the
 snapshot it started with; a **new** session picks up whatever `current` points at
 then. Publishing a new KB = write a fresh `snapshots/<digest>/` tree, then
-atomically re-point `current`. No rootfs rebuild, no orchestrator/front-end
+atomically re-point `current` — which, by default, only an expert approval does
+(see the approval gate below). No rootfs rebuild, no orchestrator/front-end
 restart. Old sessions refresh on their next generation (restart).
 
 The mount is disabled (absent) when `AgentsKBRoot` is empty or no `current`
@@ -106,10 +107,12 @@ is infrastructure-centric, and even drops pi's `toolUse` turn boundaries). It:
    - **skill** → `skill_candidates`. Gated on `turn_count >= 6`.
 3. **Consolidate** candidate memories into `semantic_memories` with
    support/contradiction counts driving confidence.
-4. **Curate & publish**: promote a memory/skill into a new KB snapshot when it is
+4. **Curate & stage**: promote a memory/skill into a new KB snapshot when it is
    stable and well-supported (`support_count >= 3 && confidence >= 0.75 &&
    contradiction_count == 0`). Promoted skills first land as `status: observing`;
-   sustained support flips them to `in-use`. A daily report is written to
+   sustained support flips them to `in-use`. The snapshot is **staged, not
+   published** — see [Expert-approval gate](#expert-approval-gate-publication-is-never-automatic)
+   — unless `auto_publish: true`. A daily report is written to
    `agents-kb/reports/`.
 
 ### Storage lifecycle split (from sess-cli)
@@ -141,6 +144,69 @@ The orchestrator binary has two one-shot subcommands for bootstrapping the store
 
 Both need `HARNESS_TRAJECTORY_ROOT` (default `/var/lib/harness/trajectories`);
 `replay` also needs `config/memory-llm.yaml`.
+
+## Expert-approval gate (publication is never automatic)
+
+Distilled knowledge lands in the context of **every new sandbox**, so a cycle does
+not publish by default. With `auto_publish: false` (the default in
+`memory-llm.yaml`, env `HARNESS_MEMORY_AUTO_PUBLISH`) both the agentic and scalar
+paths **stage** instead of publishing:
+
+```
+agents-kb/
+  current      -> snapshots/<digest>/   # live: what sandboxes mount
+  pending      -> snapshots/<digest>/   # staged, awaiting approval
+  pending.json                          # digest, prev_digest, staged_at, run_id, counts
+  approvals.log                         # append-only approve/reject audit trail
+```
+
+`KB.Stage` writes the snapshot tree and the `pending` marker but never touches
+`current`, so nothing is visible to any sandbox until a human promotes it. Staging
+content byte-identical to what is already live is a no-op (`changed=false`, no
+marker) — there is nothing to review.
+
+Review and decide with `harness-ctl kb …` (forwards to `orchestrator kb …` with
+the publish env wired up):
+
+```bash
+harness-ctl kb status                 # current vs pending + file +/-/~ counts
+harness-ctl kb diff                   # diff -ruN between the two snapshot trees
+harness-ctl kb approve <digest>       # atomic repoint of current + audit line
+harness-ctl kb reject  <digest> --reason "overfit to one session"
+```
+
+The digest is mandatory on approve/reject and must match the current `pending`, so
+a stale terminal cannot promote a snapshot the reviewer never looked at. A reject
+clears the marker, leaves `current` alone, and **keeps the snapshot on disk** as
+the evidence behind the decision. Approval only affects **new** sessions: a running
+sandbox stays pinned to the snapshot it resolved at spec-build time.
+
+Setting `auto_publish: true` restores unreviewed self-publishing. The PII/secret
+regex backstop and the consistency-critic veto run before staging either way —
+they are a floor, not a substitute for review.
+
+## Nightly schedule (cron, not the server timer)
+
+`memory-llm.yaml` stays `enabled: false` on this box, so the orchestrator serves
+the `/agents` mount but runs no sweep of its own. `memory.db` is a single-writer
+SQLite (WAL) database: the server's own loop and an out-of-band CLI writing at the
+same time is `SQLITE_BUSY`. So the CLI is the sole distiller, driven by
+`/etc/cron.d/harness-kb` → `scripts/harness-kb-nightly.sh` (CST local time):
+
+| 时间 | 模式 | 做什么 | 成本 |
+|---|---|---|---|
+| 23:00 | `ingest` | `orchestrator backfill` — 归档+解析 pi 原生轨迹入 `trajectory_*` | 零 LLM |
+| 00:00 | `evolve` | `orchestrator replay --date <昨天>` — 抽取+agentic 图 → **暂存**待审批 | LLM + pi |
+
+Both modes share `flock -n /var/lock/harness-kb.lock`, so a still-running 23:00
+ingest makes the 00:00 evolve skip rather than contend. The wrapper exports
+`HARNESS_MEMORY_AUTO_PUBLISH=false` unconditionally, so a scheduled run can never
+publish regardless of what the config file says. Logs:
+`/var/log/harness-kb-nightly-{ingest,evolve}.log` (self-rotating at 32 MB).
+
+`replay --date <yesterday>` also catches up on history: the distillation query is
+`normalized_at IS NULL OR extracted_at IS NULL OR ended_at >= since`, so any
+never-extracted session is swept in regardless of age.
 
 ## LLM configuration
 

@@ -65,6 +65,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "kb":
+			if err := runKB(ctx, log, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			return
 		case "user":
 			if err := runUser(ctx, os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
@@ -252,9 +258,11 @@ func main() {
 			Model:    cfg.MemoryLLM.AgentModel,
 			WorkDir:  cfg.RepoRoot, // Node C reads the live tree from here
 		}),
-		Agentic: cfg.MemoryLLM.Agentic,
+		Agentic:     cfg.MemoryLLM.Agentic,
+		AutoPublish: cfg.MemoryLLM.AutoPublish,
 	}); pipeline != nil {
-		log.Info("nightly distillation pipeline enabled", "agentic", cfg.MemoryLLM.Agentic)
+		log.Info("nightly distillation pipeline enabled",
+			"agentic", cfg.MemoryLLM.Agentic, "auto_publish", cfg.MemoryLLM.AutoPublish)
 		go func() {
 			if err := pipeline.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("distillation pipeline stopped", "error", err)

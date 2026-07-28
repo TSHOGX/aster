@@ -26,6 +26,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,11 +82,36 @@ const (
 // payload extracted from the final assistant message; callers json.Unmarshal it.
 //
 // The caller owns the deadline via ctx; a nil-safe timeout backstop is applied.
+// Run calls the agent, retrying once when the reply came back the wrong SHAPE
+// (no assistant turn, or no JSON payload — the model narrated instead of
+// answering). Those are transient generation slips, and without a retry a single
+// one permanently degrades a node for the whole nightly cycle: an observed B0
+// block-key failure cost that run its scope canonicalization entirely. Process
+// failures and context cancellation are NOT retried — those are real.
 func (r *AgentRunner) Run(ctx context.Context, systemPrompt, data string, withTools bool) (string, error) {
 	if !r.Enabled() {
 		return "", fmt.Errorf("memory: agent runner not enabled")
 	}
+	payload, err := r.runOnce(ctx, systemPrompt, data, withTools)
+	if err == nil || !isShapeError(err) || ctx.Err() != nil {
+		return payload, err
+	}
+	return r.runOnce(ctx, systemPrompt, data, withTools)
+}
 
+// isShapeError reports whether the failure was the model answering in the wrong
+// shape, as opposed to the subprocess or context failing.
+func isShapeError(err error) bool {
+	return errors.Is(err, errNoAssistantOutput) || errors.Is(err, errNoJSONPayload)
+}
+
+var (
+	errNoAssistantOutput = errors.New("memory: pi produced no assistant output")
+	errNoJSONPayload     = errors.New("memory: agent reply had no JSON payload")
+)
+
+// runOnce performs a single pi invocation.
+func (r *AgentRunner) runOnce(ctx context.Context, systemPrompt, data string, withTools bool) (string, error) {
 	userMsg := data
 	if strings.TrimSpace(data) != "" {
 		userMsg = dataFenceOpen + data + dataFenceClose
@@ -125,11 +151,11 @@ func (r *AgentRunner) Run(ctx context.Context, systemPrompt, data string, withTo
 
 	final := finalAssistantText(stdout.String())
 	if final == "" {
-		return "", fmt.Errorf("memory: pi produced no assistant output")
+		return "", errNoAssistantOutput
 	}
 	payload := extractLastJSON(final)
 	if payload == "" {
-		return "", fmt.Errorf("memory: agent reply had no JSON payload")
+		return "", errNoJSONPayload
 	}
 	return payload, nil
 }

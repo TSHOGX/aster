@@ -9,6 +9,8 @@
 #   stats [天数]          每日新增提问/回复/会话/活跃用户/新用户，表格 + 纵向柱状图 + sparkline
 #   users [N] [--by=…]    用户维度：会话数/提问数/存储占用/首末活跃日，表格 + 横向条形图
 #   storage [N]           存储总览：数据根目录按子目录 + Top N 会话占用
+#   kb status|diff        共享知识库（/agents）：线上快照 vs 夜间进化暂存的待审批快照
+#   kb approve|reject     专家放行/驳回待审批快照（自进化永不自动上线）
 #   maintenance on|off    上/下维护页（nginx 层 503，不动后端）
 #   maintenance status    只看当前是否维护模式
 #   safe-restart <svc>    零打断重启：上维护页→等活跃对话跑完→重启→下维护页（维护页强制）
@@ -275,6 +277,40 @@ unit_env() {
   local key="$1"
   systemctl show harness-publish-orchestrator -p Environment --value 2>/dev/null \
     | tr ' ' '\n' | sed -n "s/^${key}=//p" | tail -1
+}
+
+# ---- 命令：kb（共享知识库的专家审批门禁）----
+# 定时进化只暂存快照(pending)不上线，专家在这里看 diff 后决定 approve/reject。
+# approve 之后也只影响新会话：运行中的沙箱钉死在自己启动时那份快照上。
+cmd_kb() {
+  local action="${1:-}"; shift || true
+  [[ -x "$ORCH_BIN" ]] || die "找不到可执行的 orchestrator 二进制：$ORCH_BIN"
+
+  # 与服务对齐：unit 里显式设过就用 unit 的，否则用本文件常量兜底。
+  local kb_path db_path traj_root
+  kb_path="$(unit_env HARNESS_AGENTS_KB_PATH)";  kb_path="${kb_path:-$DATA_ROOT/agents-kb}"
+  traj_root="$(unit_env HARNESS_TRAJECTORY_ROOT)"; traj_root="${traj_root:-$DATA_ROOT/trajectories}"
+  db_path="$(unit_env HARNESS_DB_PATH)";         db_path="${db_path:-$DB}"
+
+  case "$action" in
+    status|diff|approve|reject) ;;
+    -h|--help|"")
+      cat <<'EOF'
+harness-ctl kb — 共享知识库（/agents）审批门禁
+
+  kb status                    当前上线快照 / 待审批快照 + 文件增删改计数
+  kb diff                      current vs pending 逐文件 diff（diff -ruN）
+  kb approve <digest>          批准上线：原子 repoint current，写 approvals.log
+  kb reject <digest> --reason  驳回：不动 current，快照留档，写 approvals.log
+
+digest 必填（防手滑批准没看过的快照）。审批记录在 agents-kb/approvals.log。
+EOF
+      return 0 ;;
+    *) die "未知 kb 子命令：$action（支持 status|diff|approve|reject）" ;;
+  esac
+
+  as_root env HARNESS_AGENTS_KB_PATH="$kb_path" HARNESS_TRAJECTORY_ROOT="$traj_root" \
+    HARNESS_DB_PATH="$db_path" "$ORCH_BIN" kb "$action" "$@"
 }
 
 cmd_user() {
@@ -786,6 +822,11 @@ harness-ctl — publish 环境运维 CLI
   harness-ctl user rm <名>          删除登录账号（删最后一个需 --force）
                                     以上四条改完立即生效，无需重启、无需维护页
   harness-ctl storage [N]           存储总览：按目录 + Top N 会话占用
+  harness-ctl kb status             知识库：当前上线快照 / 待审批快照 + 增删改计数
+  harness-ctl kb diff               待审批快照与线上快照逐文件 diff
+  harness-ctl kb approve <digest>   批准上线（原子 repoint，只影响新会话）
+  harness-ctl kb reject <digest>    驳回（--reason 记原因，不动线上）
+                                    夜间自进化只暂存不上线，靠这四条人工放行
   harness-ctl maintenance on        上维护页（nginx 503，后端不动）
   harness-ctl maintenance off       下维护页，恢复服务
   harness-ctl maintenance status    只看维护模式开关
@@ -809,6 +850,7 @@ main() {
     users)        cmd_users "$@" ;;
     user)         cmd_user "$@" ;;
     storage|disk) cmd_storage "$@" ;;
+    kb)           cmd_kb "$@" ;;
     maintenance|maint) cmd_maintenance "$@" ;;
     safe-restart) cmd_safe_restart "$@" ;;
     -h|--help|help|"") usage ;;

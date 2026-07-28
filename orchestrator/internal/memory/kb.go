@@ -17,6 +17,9 @@ import (
 // atomically re-points the `current` symlink the runtime mounts. Layout:
 //
 //	<root>/current -> snapshots/<digest>/
+//	<root>/pending -> snapshots/<digest>/   (staged, awaiting expert approval)
+//	<root>/pending.json                    (metadata for the staged snapshot)
+//	<root>/approvals.log                   (append-only approve/reject audit trail)
 //	<root>/snapshots/<digest>/{facts/INDEX.md, facts/*.md, skills/<name>/SKILL.md}
 //	<root>/reports/YYYY-MM-DD.md
 //
@@ -44,6 +47,18 @@ func (k *KB) Publish(memories []memorystore.SemanticMemory, skills []memorystore
 	if k == nil {
 		return "", nil
 	}
+	digest, err := k.stage(memories, skills)
+	if err != nil {
+		return "", err
+	}
+	return digest, k.repointCurrent(digest)
+}
+
+// stage writes the snapshot tree for the given content and returns its digest
+// WITHOUT touching `current`. Both the auto-publish path (Publish) and the
+// review-gated path (Stage) build on it, so the bytes a reviewer inspects are
+// exactly the bytes an approval promotes.
+func (k *KB) stage(memories []memorystore.SemanticMemory, skills []memorystore.SkillCandidate) (string, error) {
 	// Start from everything the current snapshot carries that the publisher does
 	// NOT itself regenerate — the constitution, human-seeded skills, and data/.
 	// Otherwise a republish (which only knows about distilled memories/skills)
@@ -61,8 +76,8 @@ func (k *KB) Publish(memories []memorystore.SemanticMemory, skills []memorystore
 
 	snapDir := filepath.Join(snapshotsDir, digest)
 	if _, err := os.Stat(snapDir); err == nil {
-		// Identical snapshot already exists; just ensure current points at it.
-		return digest, k.repointCurrent(digest)
+		// Identical snapshot already exists on disk; nothing to write.
+		return digest, nil
 	}
 
 	// Write into a temp dir then rename into place (atomic within snapshots/).
@@ -87,7 +102,7 @@ func (k *KB) Publish(memories []memorystore.SemanticMemory, skills []memorystore
 			return "", fmt.Errorf("kb: promote snapshot: %w", err)
 		}
 	}
-	return digest, k.repointCurrent(digest)
+	return digest, nil
 }
 
 // repointCurrent atomically updates <root>/current -> snapshots/<digest> using a

@@ -54,6 +54,11 @@ type Pipeline struct {
 	// is enabled.
 	agentic bool
 
+	// autoPublish re-points the KB `current` symlink as soon as a cycle finishes.
+	// False (the default) means a cycle only stages a snapshot for expert
+	// approval — see kb_approval.go.
+	autoPublish bool
+
 	// runInterval is how often the loop wakes; runAt is the target hour (local)
 	// for the daily run. A tick that isn't near runAt is a no-op unless a run is
 	// due (never ran today).
@@ -79,6 +84,9 @@ type PipelineOptions struct {
 	Agent *AgentRunner
 	// Agentic selects the agentic graph when true and Agent is enabled.
 	Agentic bool
+	// AutoPublish skips the expert-approval gate and publishes straight to
+	// `current`. Default false: cycles stage snapshots for review.
+	AutoPublish bool
 	// Interval between wake-ups. Defaults to 1h; the loop runs the full sweep
 	// each wake but only reprocesses sessions whose fingerprint moved, so a
 	// smaller interval just means fresher KB at negligible cost when idle.
@@ -102,9 +110,10 @@ func NewPipeline(opts PipelineOptions) *Pipeline {
 		kb:        opts.KB,
 		log:       opts.Log,
 		capturer:  opts.Capturer,
-		agent:     opts.Agent,
-		agentic:   opts.Agentic && opts.Agent.Enabled(),
-		interval:  interval,
+		agent:       opts.Agent,
+		agentic:     opts.Agentic && opts.Agent.Enabled(),
+		autoPublish: opts.AutoPublish,
+		interval:    interval,
 	}
 }
 

@@ -90,36 +90,50 @@ func (p *Pipeline) runAgenticGraph(ctx context.Context, sessionsProcessed int) e
 	}
 
 	// E. Publish — assemble the final set (post-critic), run the PII backstop,
-	// write a content-addressed snapshot, atomically repoint current.
-	digest, published, err := p.publishAgentic(ctx, vetoedSkills)
+	// write a content-addressed snapshot. Whether that snapshot goes live or waits
+	// for expert approval is decided by autoPublish inside publishAgentic.
+	digest, published, staged, err := p.publishAgentic(ctx, runID, counts, vetoedSkills)
 	if err != nil {
 		p.log.Warn("agentic: publish failed", "error", err)
 	}
 	counts["published_skills"] = published
-	p.log.Info("agentic cycle complete", "run_id", runID, "digest", digest, "published_skills", published)
+	if staged {
+		counts["staged"] = 1
+		p.log.Info("agentic cycle complete: snapshot STAGED, awaiting expert approval",
+			"run_id", runID, "digest", digest, "skills", published,
+			"approve_with", "orchestrator kb approve "+digest)
+	} else {
+		p.log.Info("agentic cycle complete", "run_id", runID, "digest", digest, "published_skills", published)
+	}
 
 	notes := "digest=" + digest
+	if staged {
+		notes = "staged=" + digest
+	}
 	_ = p.store.FinishEvolutionRun(ctx, runID, mustJSONCounts(counts), digest, notes)
 	if p.kb != nil {
-		_ = p.kb.WriteReport(p.agenticReport(counts, digest))
+		_ = p.kb.WriteReport(p.agenticReport(counts, digest, staged))
 	}
 	return nil
 }
 
 // publishAgentic gathers the accepted memories + published skills (minus critic
-// vetoes), applies the secret/PII backstop, and writes+repoints the KB snapshot.
-// Returns the snapshot digest and the count of skills actually published.
-func (p *Pipeline) publishAgentic(ctx context.Context, vetoedSkills map[int64]bool) (string, int, error) {
+// vetoes), applies the secret/PII backstop, and writes the KB snapshot. With
+// autoPublish it re-points `current` immediately; otherwise the snapshot is only
+// staged for expert approval (staged=true) and no sandbox can see it yet.
+// Returns the snapshot digest, the count of skills in it, and whether it is
+// awaiting approval.
+func (p *Pipeline) publishAgentic(ctx context.Context, runID int64, counts map[string]int, vetoedSkills map[int64]bool) (string, int, bool, error) {
 	if p.kb == nil {
-		return "", 0, nil
+		return "", 0, false, nil
 	}
 	accepted, err := p.store.ListSemanticMemories(ctx, "accepted")
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 	skills, err := p.store.ListSkillCandidates(ctx, "published")
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 
 	// Secret/PII backstop: the curator prompt already rejects these, but a
@@ -148,11 +162,20 @@ func (p *Pipeline) publishAgentic(ctx context.Context, vetoedSkills map[int64]bo
 		safeSkills = append(safeSkills, sk)
 	}
 
-	digest, err := p.kb.Publish(safeMems, safeSkills)
-	if err != nil {
-		return "", 0, err
+	if p.autoPublish {
+		digest, err := p.kb.Publish(safeMems, safeSkills)
+		if err != nil {
+			return "", 0, false, err
+		}
+		return digest, len(safeSkills), false, nil
 	}
-	return digest, len(safeSkills), nil
+	// Review-gated (default): stage only. changed=false means the cycle produced
+	// content identical to what is already live, so there is nothing to approve.
+	digest, changed, err := p.kb.Stage(safeMems, safeSkills, runID, counts)
+	if err != nil {
+		return "", 0, false, err
+	}
+	return digest, len(safeSkills), changed, nil
 }
 
 // secretPatterns backstops the curator: obvious credential/PII shapes that must
@@ -179,12 +202,17 @@ func containsSecret(s string) bool {
 }
 
 // agenticReport builds the daily report for an agentic cycle.
-func (p *Pipeline) agenticReport(counts map[string]int, digest string) Report {
+func (p *Pipeline) agenticReport(counts map[string]int, digest string, staged bool) Report {
 	notes := []string{
 		"agentic graph: reflect→consolidate→verify→curate→critic→publish",
 	}
 	if counts["verified_stale"] > 0 || counts["verified_fixed"] > 0 {
 		notes = append(notes, "verify pruned stale/fixed knowledge against live code")
+	}
+	if staged {
+		notes = append(notes, "STAGED awaiting expert approval — not live. Review: harness-ctl kb diff / approve "+digest)
+	} else if digest != "" {
+		notes = append(notes, "published live (auto_publish)")
 	}
 	return Report{
 		GeneratedAt:      time.Now().UTC(),

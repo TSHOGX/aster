@@ -116,6 +116,11 @@ type MemoryLLMConfig struct {
 	AgentBin      string `yaml:"agent_bin"`
 	AgentProvider string `yaml:"agent_provider"`
 	AgentModel    string `yaml:"agent_model"`
+	// AutoPublish re-points the KB `current` symlink as soon as a cycle finishes.
+	// Default FALSE: a cycle only STAGES the snapshot plus a `pending` marker and
+	// a human must approve it (`orchestrator kb approve <digest>`) before any
+	// sandbox can mount it. Keeps distilled knowledge behind expert review.
+	AutoPublish bool `yaml:"auto_publish"`
 }
 
 // TitleLLMConfig configures the optional LLM-based session-title generator.
@@ -1624,6 +1629,11 @@ func loadMemoryLLM(path string) (MemoryLLMConfig, error) {
 	// Env override so the agentic path can be toggled without editing the secret.
 	if v, ok := boolEnv("HARNESS_MEMORY_AGENTIC"); ok {
 		cfg.Agentic = v
+	}
+	// Same for the publish gate, so a scheduled run can force staging-only mode
+	// regardless of what the file says.
+	if v, ok := boolEnv("HARNESS_MEMORY_AUTO_PUBLISH"); ok {
+		cfg.AutoPublish = v
 	}
 	return cfg, nil
 }

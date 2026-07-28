@@ -4,7 +4,8 @@ publish 环境的运维脚本。
 
 | 脚本 | 用途 |
 | --- | --- |
-| [`harness-ctl`](#harness-ctl) | publish 环境运维 CLI：监控流量/在途对话、安全上下维护页、防打断重启 |
+| [`harness-ctl`](#harness-ctl) | publish 环境运维 CLI：监控流量/在途对话、安全上下维护页、防打断重启、知识库审批 |
+| [`harness-kb-nightly.sh`](#harness-kb-nightlysh) | 夜间轨迹入库（23:00）与上下文自进化（00:00），由 `/etc/cron.d/harness-kb` 触发 |
 | `verify-refactor.sh` | 重构验证脚本 |
 
 ---
@@ -30,6 +31,8 @@ harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状
 harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
 harness-ctl user list|add|passwd|rm  登录账号管理（改完免重启生效）
 harness-ctl storage [N]           存储总览：按目录 + Top N 会话占用
+harness-ctl kb status|diff        知识库：线上快照 vs 夜间进化暂存的待审批快照
+harness-ctl kb approve|reject     专家放行/驳回待审批快照（自进化永不自动上线）
 harness-ctl maintenance on        上维护页（nginx 503，后端不动）
 harness-ctl maintenance off       下维护页，恢复服务
 harness-ctl maintenance status    只看维护模式开关
@@ -85,6 +88,21 @@ HTTP 状态码分布、Top 10 客户端 IP、Top 10 请求路径。纯只读。
 
 > `du` 必须以 root 跑：session workspace 是 `0750 nobody:nogroup`，父目录可读但子目录不可读，
 > 非 root 直接 `du` 会**静默少算**。脚本内部统一走 `as_root`。
+
+#### `kb status|diff|approve <digest>|reject <digest>`
+共享知识库（沙箱里的 `/agents`）的专家审批门禁。夜间自进化跑完**只暂存**一个
+`pending` 快照，不动线上的 `current`，必须人工放行：
+
+```bash
+harness-ctl kb status                  # current / pending digest + 文件 +新 -删 ~改 计数
+harness-ctl kb diff                    # 两棵快照树逐文件 diff（diff -ruN）
+harness-ctl kb approve <digest>        # 原子 repoint current，写 approvals.log
+harness-ctl kb reject  <digest> --reason "过拟合单个会话"
+```
+
+digest 必填且必须等于当前 pending（防手滑批准没看过的快照）。approve 只影响**新**
+会话：运行中的沙箱钉死在自己启动时解析到的那份快照。reject 不动线上、保留快照留档。
+审批流水在 `agents-kb/approvals.log`。详见 `docs/agents-kb.md`「Expert-approval gate」。
 
 #### `user list|add <名>|passwd <名>|rm <名>`
 登录账号管理。注意和只读统计命令 `users`（复数）区分：**`user` 改凭据，`users` 看用量**。
@@ -190,3 +208,26 @@ harness-ctl safe-restart harness-publish-orchestrator --timeout=1800 --interval=
 - 只读监控零副作用；有副作用的操作（维护/重启）一律「先备份 → 校验 → 执行 → 探活」。
 - 维护配置从当前 live 配置动态生成，不硬编码模板，避免证书/端口漂移。
 - 破坏性前置检查：`safe-restart` 默认拦截、`maintenance on` 自动回滚坏配置。
+
+---
+
+## harness-kb-nightly.sh
+
+共享知识库的两个夜间任务，由 `/etc/cron.d/harness-kb` 按 CST 本地时间触发：
+
+| 时间 | 命令 | 做什么 | 成本 |
+| --- | --- | --- | --- |
+| 23:00 | `harness-kb-nightly.sh ingest` | `orchestrator backfill`：pi 原生轨迹归档 + 解析入 `trajectory_*` 表 | 零 LLM |
+| 00:00 | `harness-kb-nightly.sh evolve` | `orchestrator replay --date <昨天>`：三 lens 抽取 + agentic 图 → 暂存待审批 | LLM + pi 子进程 |
+
+要点：
+
+- **单写者**：`memory.db` 是 SQLite WAL 单写者。`memory-llm.yaml` 保持 `enabled:false`，
+  服务只挂 KB 不跑自己的 ticker，cron 的 CLI 是唯一写者，避免 `SQLITE_BUSY`。
+- **不并发**：两个模式共用 `flock -n /var/lock/harness-kb.lock`，23:00 没跑完时
+  00:00 直接跳过（日志留 `SKIP:` 行），不排队不打架。
+- **永不自动上线**：脚本无条件导出 `HARNESS_MEMORY_AUTO_PUBLISH=false`，配置文件写啥都盖掉。
+- **自动补欠账**：`replay --date 昨天` 的筛选条件含 `extracted_at IS NULL`，历史上
+  没抽取过的会话会被一并纳入，不需要逐天回放。
+- 日志 `/var/log/harness-kb-nightly-{ingest,evolve}.log`，超 32MB 自转一份 `.1`。
+- cron 的 `PATH` 很窄，脚本内显式把 node（pi 依赖）加回 `PATH`。

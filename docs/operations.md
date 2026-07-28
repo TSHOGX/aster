@@ -228,6 +228,34 @@ curl -s http://127.0.0.1:8083/healthz                 # 期望 {"status":"ok"}
 
 ---
 
+### 2.x 知识库夜间任务与审批（context layer 自进化）
+
+沙箱里的 `/agents` 共享知识库由两个 cron 任务喂养，**产出永不自动上线**：
+
+```bash
+harness-ctl kb status                  # 线上快照 vs 待审批快照
+harness-ctl kb diff                    # 逐文件 diff
+harness-ctl kb approve <digest>        # 放行（只影响新会话）
+harness-ctl kb reject  <digest> --reason "…"
+```
+
+| 时间 | 任务 | 说明 |
+| --- | --- | --- |
+| 23:00 | `harness-kb-nightly.sh ingest` | 轨迹入库，零 LLM 成本，幂等 |
+| 00:00 | `harness-kb-nightly.sh evolve` | 蒸馏 + agentic 图 → 暂存待审批 |
+
+- 定义在 `/etc/cron.d/harness-kb`，脚本 `main/scripts/harness-kb-nightly.sh`。
+- 日志 `/var/log/harness-kb-nightly-{ingest,evolve}.log`。
+- `config/memory-llm.yaml` 必须保持 `enabled: false`：`memory.db` 是 SQLite 单写者，
+  服务自带的 sweep 和 cron 的 CLI 同时写会 `SQLITE_BUSY`。cron 是唯一写者。
+- 两个任务共用 `flock -n /var/lock/harness-kb.lock`，不会并发。
+- 审批 approve 只改 `current` 符号链接，不重启任何服务；运行中的沙箱钉死在自己
+  启动时那份快照，只有新会话/新 generation 读到新的。
+
+细节见 `docs/agents-kb.md`（Expert-approval gate / Nightly schedule 两节）。
+
+---
+
 ## 3. 登录（workbench 登录闸）
 
 - 用户配置在 `config/auth-users.yaml`，密码**只存 PBKDF2-SHA256 哈希，无明文、不可逆**。
