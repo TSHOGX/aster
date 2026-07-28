@@ -69,6 +69,27 @@ function emptyReduction<TConversation extends SessionEventConversation>(
   return { ...slice, handled, notifications: [] };
 }
 
+/**
+ * Swap in a freshly fetched session list while preserving the invariant that
+ * every listed session has a conversations entry (callers index that map by
+ * session id, so a session without one would read undefined). Conversation
+ * state already loaded is left untouched, and the map keeps its identity when
+ * nothing had to be back-filled so background refetches don't churn renders.
+ */
+export function mergeSessionList<TConversation extends SessionEventConversation>(
+  slice: SessionEventSlice<TConversation>,
+  sessions: ApiSession[],
+  options: { emptyConversation: () => TConversation }
+): SessionEventSlice<TConversation> {
+  let conversations = slice.conversations;
+  for (const session of sessions) {
+    if (conversations[session.id]) continue;
+    if (conversations === slice.conversations) conversations = { ...conversations };
+    conversations[session.id] = options.emptyConversation();
+  }
+  return { sessions, conversations };
+}
+
 export function reduceSessionEvent<TConversation extends SessionEventConversation>(
   slice: SessionEventSlice<TConversation>,
   event: HarnessEvent,

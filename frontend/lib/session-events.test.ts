@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { reduceSessionEvent, type SessionEventSlice } from "./session-events";
+import { mergeSessionList, reduceSessionEvent, type SessionEventSlice } from "./session-events";
 import type { ApiSession, HarnessEvent } from "./types";
 
 type TestConversation = {
@@ -130,5 +130,38 @@ describe("reduceSessionEvent", () => {
     });
     expect(failedTurn.sessions[0].status).toBe("running_idle");
     expect(failedTurn.notifications).toEqual([{ level: "error", message: "turn failed" }]);
+  });
+});
+
+describe("mergeSessionList", () => {
+  function merge(base: SessionEventSlice<TestConversation>, sessions: ApiSession[]) {
+    return mergeSessionList(base, sessions, { emptyConversation: () => ({ streaming: [] }) });
+  }
+
+  it("back-fills conversations for newly visible sessions and keeps loaded ones", () => {
+    const base = slice();
+    const shared = session({ id: "sess_2", access: "reader", shared_by: "alice", user_id: undefined });
+    const next = merge(base, [session(), shared]);
+
+    expect(next.sessions.map((s) => s.id)).toEqual(["sess_1", "sess_2"]);
+    expect(next.conversations.sess_2).toEqual({ streaming: [] });
+    // Existing conversation state must survive the swap untouched.
+    expect(next.conversations.sess_1).toBe(base.conversations.sess_1);
+  });
+
+  it("replaces the list wholesale and keeps the conversations map identity when nothing is new", () => {
+    const base = slice();
+    const next = merge(base, [session({ title: "renamed" })]);
+
+    expect(next.sessions).toEqual([session({ title: "renamed" })]);
+    expect(next.conversations).toBe(base.conversations);
+  });
+
+  it("keeps conversations of sessions that dropped out of the list", () => {
+    const base = slice();
+    const next = merge(base, []);
+
+    expect(next.sessions).toEqual([]);
+    expect(next.conversations.sess_1).toBe(base.conversations.sess_1);
   });
 });

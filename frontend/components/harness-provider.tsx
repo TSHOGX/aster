@@ -51,7 +51,7 @@ import {
   type ConversationActivity,
   type ConversationState
 } from "@/lib/harness-events";
-import { reduceSessionEvent } from "@/lib/session-events";
+import { mergeSessionList, reduceSessionEvent } from "@/lib/session-events";
 import { useEventStream } from "@/lib/use-event-stream";
 import { buildEventsStreamUrl } from "@/lib/ws";
 import type {
@@ -342,6 +342,24 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     setState((p) => ({ ...p, notifications: res.data.notifications ?? [] }));
   }, [setState]);
 
+  // Re-fetch only the session list, leaving selection and loaded conversations
+  // alone. Deliberately narrower than refresh(): callers below run this in the
+  // background while the user is reading something.
+  const refreshSessions = useCallback(async () => {
+    const res = await fetchSessions();
+    // Bail silently on failure: a transient error must not empty a healthy list.
+    if (!res.ok) return;
+    const list = res.data.sessions ?? [];
+    setState((p) => {
+      const next = mergeSessionList(
+        { sessions: p.sessions, conversations: p.conversations },
+        list,
+        { emptyConversation: emptyConvo }
+      );
+      return { ...p, sessions: next.sessions, conversations: next.conversations };
+    });
+  }, [setState]);
+
   const handleEvent = useCallback(
     (event: HarnessEvent) => {
       const sessionId = event.session_id;
@@ -574,6 +592,11 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         }
         case "notification.created": {
           void refreshNotifications();
+          // A notification can also mean the caller's session list changed: a
+          // share grant notifies the grantee, and that grant is what makes the
+          // session visible to them. Without this the sidebar's "Shared with
+          // me" group stays empty until a full reload.
+          void refreshSessions();
           toast.info("New notification", { duration: 3000 });
           return;
         }
@@ -581,7 +604,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           return;
       }
     },
-    [ensureConvo, upsertConvo, refreshNotifications, setState, stateRef]
+    [ensureConvo, upsertConvo, refreshNotifications, refreshSessions, setState, stateRef]
   );
 
 
