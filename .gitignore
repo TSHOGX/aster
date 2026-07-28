@@ -47,6 +47,8 @@ orchestrator.db.bak.*
 
 # 本地 agent 运维笔记,不入库
 AGENTS.md
+# Claude Code 的本地状态(worktrees / 会话配置),不入库
+.claude/
 
 # 通用
 .DS_Store
