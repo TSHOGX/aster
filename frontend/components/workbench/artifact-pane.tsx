@@ -29,6 +29,7 @@ import { entriesFromDataTransfer, entriesFromFileList, isSessionWritable } from 
 import { formatBytes, formatRelative } from "@/lib/format";
 import { classifyArtifact } from "@/lib/mime";
 import { cn } from "@/lib/cn";
+import { uploadUiEnabled } from "@/lib/ui-config";
 import type { ApiArtifact, SessionStatus } from "@/lib/types";
 
 // Backend-enforced upload limits, mirrored client-side for fast friendly errors.
@@ -105,7 +106,9 @@ function ArtifactPaneInner({
 
   const writable = !readOnly && isSessionWritable(status);
   const busy = upload.phase === "uploading";
-  const canUpload = writable && !busy;
+  // uploadUiEnabled is a build-time flag (default off): with it off there are no
+  // upload buttons, no drop target, and no upload status text at all.
+  const canUpload = uploadUiEnabled && writable && !busy;
 
   const runUpload = useCallback(
     async (entries: UploadEntry[]) => {
@@ -151,6 +154,9 @@ function ArtifactPaneInner({
       event.preventDefault();
       dragDepth.current = 0;
       setDragging(false);
+      // Flag off: the drop is swallowed silently rather than uploading through a
+      // path whose UI affordances were withheld.
+      if (!uploadUiEnabled) return;
       if (readOnly) {
         toast.error("This session was shared with you and is read-only.");
         return;
@@ -235,29 +241,33 @@ function ArtifactPaneInner({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files) void runUpload(entriesFromFileList(e.target.files));
-          e.target.value = "";
-        }}
-      />
-      <input
-        ref={folderInputRef}
-        type="file"
-        multiple
-        // @ts-expect-error non-standard directory-picker attributes
-        webkitdirectory=""
-        directory=""
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files) void runUpload(entriesFromFileList(e.target.files));
-          e.target.value = "";
-        }}
-      />
+      {uploadUiEnabled ? (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) void runUpload(entriesFromFileList(e.target.files));
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            // @ts-expect-error non-standard directory-picker attributes
+            webkitdirectory=""
+            directory=""
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) void runUpload(entriesFromFileList(e.target.files));
+              e.target.value = "";
+            }}
+          />
+        </>
+      ) : null}
       {livePath && activeArtifact ? (
         // ── Preview mode: the panel becomes a full-height Artifact Preview. ──
         <ArtifactViewer
@@ -289,7 +299,7 @@ function ArtifactPaneInner({
                   </span>
                 ) : null}
               </div>
-              <div className={readOnly ? "hidden" : "flex shrink-0 items-center gap-1.5"}>
+              <div className={readOnly || !uploadUiEnabled ? "hidden" : "flex shrink-0 items-center gap-1.5"}>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -327,7 +337,7 @@ function ArtifactPaneInner({
               <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
                 Shared with you — read-only.
               </p>
-            ) : !writable ? (
+            ) : uploadUiEnabled && !writable ? (
               <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
                 Uploads paused while the agent is working.
               </p>
