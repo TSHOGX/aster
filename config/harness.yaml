@@ -1,8 +1,14 @@
 harness:
   default_agent: pi
   agents:
+    # Shell mode is not served in production: one sh session was ever created
+    # (destroyed 2026-06-24) against 236 pi sessions. Disabling it here makes
+    # resolveModeDeployment("shell") fail, which the session-modes endpoint
+    # turns into Visible:false, so the UI stops offering it. The driver spec
+    # stays in the code; this is the only switch needed to take it out of
+    # service. Matches SANDBOX_AGENT_DRIVERS=pi in sandbox-image/build.env.
     sh:
-      enabled: true
+      enabled: false
       driver_id: sh
       runtime_provider: local_runsc
     pi:

@@ -6,8 +6,6 @@ docs/doris-connection.md
 config/auth-users.yaml
 config/title-llm.yaml
 config/memory-llm.yaml
-# harness-skills embeds live credentials (e.g. doris-query); keep local-only, see docs/sandbox-image.md
-sandbox-image/files/usr/local/share/harness-skills/
 # The seeded doris-query SKILL.md embeds a live read-only credential; the .example
 # (redacted) is committed instead. Provision the real file on the host.
 sandbox-image/files/usr/local/share/agents-kb-seed/skills/doris-query/SKILL.md
