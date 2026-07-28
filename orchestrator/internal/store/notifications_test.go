@@ -233,3 +233,84 @@ func TestNotificationsWithoutAudienceRemainBroadcast(t *testing.T) {
 		}
 	}
 }
+
+// Opening a database whose notifications table predates the audience column must
+// upgrade it in place. The pre-existing table is created here from the ORIGINAL
+// DDL (no user_id) rather than by inserting a legacy row into the current
+// schema, because the failure this guards against is in schema setup itself:
+// indexing user_id inside the main DDL batch aborts it with "no such column:
+// user_id" before the ALTER can add the column, so the process never starts and
+// cannot self-heal on a retry. Every existing deployment hits that path on
+// upgrade; a fresh database does not, which is why it needs its own test.
+func TestOpenUpgradesPreAudienceNotificationsTable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy-notifications.db")
+
+	legacy, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open to seed legacy schema: %v", err)
+	}
+	for _, ddl := range []string{
+		`DROP INDEX IF EXISTS notifications_user_idx`,
+		`DROP TABLE IF EXISTS notifications`,
+		`CREATE TABLE notifications (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+)`,
+	} {
+		if _, err := legacy.DBForTest().ExecContext(ctx, ddl); err != nil {
+			t.Fatalf("seed legacy notifications table (%s): %v", ddl, err)
+		}
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := legacy.DBForTest().ExecContext(ctx,
+		`INSERT INTO notifications (id, title, body, created_at) VALUES ('legacy', 'Old', 'body', ?)`,
+		now); err != nil {
+		t.Fatalf("insert pre-audience row: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close seeded store: %v", err)
+	}
+
+	st, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen must migrate the pre-audience table, got: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	exists, err := st.columnExists(ctx, "notifications", "user_id")
+	if err != nil {
+		t.Fatalf("columnExists: %v", err)
+	}
+	if !exists {
+		t.Fatal("user_id column was not added to the pre-audience table")
+	}
+
+	var indexes int
+	if err := st.DBForTest().QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='notifications_user_idx'`,
+	).Scan(&indexes); err != nil {
+		t.Fatalf("count index: %v", err)
+	}
+	if indexes != 1 {
+		t.Fatalf("notifications_user_idx should exist after upgrade, found %d", indexes)
+	}
+
+	// The row written before the column existed still reads back as a broadcast.
+	got, err := st.ListNotificationsForUser(ctx, "alice")
+	if err != nil {
+		t.Fatalf("list after upgrade: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "legacy" || got[0].UserID != "" {
+		t.Fatalf("pre-audience row should read as a broadcast, got %+v", got)
+	}
+
+	// Reopening again must stay a clean no-op.
+	again, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("second reopen should be idempotent, got: %v", err)
+	}
+	_ = again.Close()
+}

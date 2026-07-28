@@ -705,8 +705,13 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS notifications_created_at_idx
   ON notifications (created_at);
 
-CREATE INDEX IF NOT EXISTS notifications_user_idx
-  ON notifications (user_id);
+-- NOTE: the index on user_id is deliberately NOT here. On a database created
+-- before the audience column existed, the CREATE TABLE above is a no-op, so the
+-- column only appears once ensureNotificationColumns runs its ALTER -- which
+-- happens after this whole DDL batch. Indexing user_id here would fail with
+-- "no such column: user_id" on exactly those pre-existing databases, abort the
+-- batch before the ALTER could fix it, and crash-loop the process on every
+-- start. It is created in ensureNotificationColumns instead.
 
 CREATE TABLE IF NOT EXISTS notification_reads (
   notification_id TEXT NOT NULL,
@@ -1022,6 +1027,14 @@ func (s *Store) ensureNotificationColumns(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
 			return err
 		}
+	}
+	// Indexed here rather than in the schema DDL because the column above may not
+	// exist until the ALTER just ran; see the note next to
+	// notifications_created_at_idx.
+	if _, err := s.db.ExecContext(ctx, `
+CREATE INDEX IF NOT EXISTS notifications_user_idx
+  ON notifications (user_id)`); err != nil {
+		return err
 	}
 	return nil
 }
