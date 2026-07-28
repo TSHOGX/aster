@@ -161,10 +161,15 @@ func (n *CriticNode) Run(ctx context.Context) (CriticReport, error) {
 // Returns ok=false on any error / unparseable output (the caller then holds:
 // no veto). The call is recorded for audit best-effort.
 func (n *CriticNode) callAgent(ctx context.Context, memories []memorystore.SemanticMemory, skills []memorystore.SkillCandidate) (criticResult, bool) {
+	// The critic reads the WHOLE accepted set in one turn, so it needs the looser
+	// consolidate-class ceiling rather than defaultAgentTimeout. Observed: a run
+	// with 367 promoted memories + 12 skills was killed at exactly 300s, and
+	// because a critic failure means "no veto", the global consistency gate
+	// silently did not run at all — the worst possible way for it to fail.
 	callCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, defaultAgentTimeout)
+		callCtx, cancel = context.WithTimeout(ctx, consolidateAgentTimeout)
 		defer cancel()
 	}
 

@@ -188,6 +188,43 @@ func TestKBStageCarriesForwardSeed(t *testing.T) {
 	}
 }
 
+// A human-authored facts/ file must survive a republish, while a generated facts
+// file whose scope no longer has memories must NOT. Regression test for a real
+// miss: the publisher used to treat all of facts/ as generated, so a seeded
+// facts/battery-domain-reference.md vanished from every new snapshot.
+func TestKBPublishKeepsSeededFactDropsRetiredGenerated(t *testing.T) {
+	root := t.TempDir()
+	kb := NewKB(root)
+
+	// A live snapshot holding one seeded fact (no marker) and one generated fact
+	// from a previous publish (marker) for a scope we will not publish again.
+	base := filepath.Join(root, "snapshots", "base", "facts")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "battery-domain-reference.md"), []byte("# hand-written domain reference\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "retired-scope.md"), []byte(generatedMarker+"\n# Facts: retired-scope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("snapshots", "base"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+
+	mems, skills := sampleKBContent("a fact in a different scope.")
+	digest, err := kb.Publish(mems, skills)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(kb.SnapshotDir(digest), "facts", "battery-domain-reference.md")); err != nil {
+		t.Fatalf("seeded fact must be carried forward: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(kb.SnapshotDir(digest), "facts", "retired-scope.md")); !os.IsNotExist(err) {
+		t.Fatalf("retired generated fact must be dropped, stat err = %v", err)
+	}
+}
+
 // A stale digest must not be approvable — it protects against a terminal that
 // approves a snapshot the reviewer never saw.
 func TestKBApproveWrongDigestRejected(t *testing.T) {
