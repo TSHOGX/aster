@@ -152,66 +152,65 @@ const SessionRow = memo(function SessionRow({
         >
           {displayTitle}
         </button>
-        <div className="relative shrink-0" ref={menuRef}>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 opacity-0 group-hover:opacity-70 hover:opacity-100 focus:opacity-100 aria-expanded:opacity-100"
-            onClick={() => setMenuOpen((open) => !open)}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            aria-label={`Session actions for ${displayTitle}`}
-            title="Session actions"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-          {menuOpen ? (
-            <div
-              role="menu"
-              className="absolute right-0 top-8 z-30 min-w-[9rem] overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+        {/* No actions menu on a shared row. Every item in it is owner-only, so a
+            reader's menu held nothing but a "read-only" label -- a button that
+            opens a menu with no actions reads as broken rather than as a
+            restriction. The row's tooltip already says it is shared and
+            read-only. */}
+        {readOnly ? null : (
+          <div className="relative shrink-0" ref={menuRef}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 opacity-0 group-hover:opacity-70 hover:opacity-100 focus:opacity-100 aria-expanded:opacity-100"
+              onClick={() => setMenuOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`Session actions for ${displayTitle}`}
+              title="Session actions"
             >
-              {readOnly ? (
-                <p className="px-3 py-1.5 text-xs text-[var(--color-foreground-muted)]">
-                  Shared with you · read-only
-                </p>
-              ) : (
-                <>
-                  <button
-                    role="menuitem"
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
-                    onClick={startEditing}
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                    Rename
-                  </button>
-                  <button
-                    role="menuitem"
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setShareOpen(true);
-                    }}
-                  >
-                    <Share2 className="h-3.5 w-3.5" />
-                    Share
-                  </button>
-                  <button
-                    role="menuitem"
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:opacity-50"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onClose(session.id);
-                    }}
-                    disabled={closing || session.status === "destroyed"}
-                  >
-                    {closing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                    Delete
-                  </button>
-                </>
-              )}
-            </div>
-          ) : null}
-        </div>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+            {menuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-8 z-30 min-w-[9rem] overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+              >
+                <button
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                  onClick={startEditing}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Rename
+                </button>
+                <button
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setShareOpen(true);
+                  }}
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  Share
+                </button>
+                <button
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:opacity-50"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onClose(session.id);
+                  }}
+                  disabled={closing || session.status === "destroyed"}
+                >
+                  {closing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  Delete
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
       {shareOpen ? (
         <ShareDialog
