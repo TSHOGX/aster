@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/store"
@@ -210,6 +213,98 @@ func TestUserPasswdAndRemoveRevokeSessions(t *testing.T) {
 	}
 	if users[0].PasswordHash == "pbkdf2-sha256$600000$c2FsdA$aGFzaA" {
 		t.Fatalf("alice's hash should have been replaced")
+	}
+}
+
+// Username reuse: `rm` must revoke every share touching the name, and `passwd`
+// must not (same person, new credential). --keep-sessions covers cookies only;
+// a share has no expiry, so it is revoked regardless.
+func TestUserRemoveRevokesSharesAndPasswdDoesNot(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state", "orchestrator.db")
+	db, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	cfg := config.Config{AuthUsersPath: filepath.Join(dir, "auth-users.yaml"), DBPath: dbPath}
+	if err := writeAuthUsers(cfg.AuthUsersPath, []config.AuthUser{
+		{Username: "alice", PasswordHash: "pbkdf2-sha256$600000$c2FsdA$aGFzaA"},
+		{Username: "bob", PasswordHash: "pbkdf2-sha256$600000$c2FsdA$b3RoZXI"},
+	}); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+
+	now := time.Now().UTC()
+	session := store.Session{
+		ID: "sess_1", UserID: "alice", Status: "created", Agent: "pi", Mode: "agent",
+		Workspace: filepath.Join(dir, "sess_1"), RestoreID: "r1", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.CreateSession(ctx, session); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := db.CreateSessionShare(ctx, store.SessionShare{
+		ID: "share_1", SessionID: "sess_1", GranteeUserID: "bob", Role: store.ShareRoleReader,
+		Visibility: store.ShareVisibilityFull, CreatedBy: "alice", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("create share: %v", err)
+	}
+	shareLive := func() bool {
+		t.Helper()
+		_, ok, err := db.ResolveSessionShare(ctx, "sess_1", "bob")
+		if err != nil {
+			t.Fatalf("resolve share: %v", err)
+		}
+		return ok
+	}
+
+	// passwd on the grantee leaves the grant alone.
+	t.Setenv("HARNESS_PASSWORD", "rotated-pw")
+	if err := userPasswd(ctx, cfg, "bob", false, false); err != nil {
+		t.Fatalf("passwd: %v", err)
+	}
+	if !shareLive() {
+		t.Fatal("passwd must not revoke shares")
+	}
+
+	// rm revokes it, even with --keep-sessions.
+	if err := userRemove(ctx, cfg, "bob", true, false); err != nil {
+		t.Fatalf("rm: %v", err)
+	}
+	if shareLive() {
+		t.Fatal("rm must revoke the removed user's shares")
+	}
+}
+
+// A database that exists but has no share tables must be a hard error, not
+// silently read as "no shares to revoke". OpenForMaintenance skips migrate(), so
+// this is reachable in production against an un-migrated file.
+func TestRevokeSharesFailsOnMissingShareTables(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "orchestrator.db")
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TABLE placeholder (id TEXT)`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	if err := revokeShares(ctx, dbPath, "bob"); err == nil {
+		t.Fatal("expected an error when the share tables are absent")
+	}
+}
+
+// A database file that does not exist at all is unambiguous: there are no shares.
+func TestRevokeSharesSucceedsWhenDatabaseAbsent(t *testing.T) {
+	if err := revokeShares(context.Background(), filepath.Join(t.TempDir(), "missing.db"), "bob"); err != nil {
+		t.Fatalf("absent database should not be an error, got %v", err)
 	}
 }
 

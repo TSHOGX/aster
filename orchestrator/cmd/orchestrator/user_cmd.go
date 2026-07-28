@@ -213,6 +213,7 @@ func readPassword(fromStdin bool) (string, error) {
 // database without running migrations (the server owns the schema) and is
 // best-effort by design: the credentials file has already been updated at this
 // point, so a DB problem must be reported without failing the whole operation.
+// A cookie that escapes revocation still expires on its own.
 func revokeSessions(ctx context.Context, dbPath, username string) {
 	db, err := store.OpenForMaintenance(ctx, dbPath)
 	if err != nil {
@@ -226,6 +227,44 @@ func revokeSessions(ctx context.Context, dbPath, username string) {
 		return
 	}
 	fmt.Printf("revoked existing login sessions for %q\n", username)
+}
+
+// revokeShares revokes every share touching a username: grants to them, grants
+// they made, and public links they created.
+//
+// Unlike revokeSessions this is NOT best-effort, and the difference is the point.
+// Usernames are reusable and carry no stable id, so a share left live is
+// inherited whole by the next person created under the same name -- and a share,
+// unlike a cookie, has no expiry to eventually close the hole. One silent
+// failure here is permanent unauthorized read access, so any failure is fatal
+// and the caller exits non-zero.
+//
+// OpenForMaintenance deliberately skips migrate(), so a database predating the
+// share tables reports "no such table". That is NOT treated as "no shares to
+// revoke": the tables are missing because this binary has not run its schema
+// setup against that file, and guessing would be the same silent failure. It is
+// reported as an error for an operator to resolve.
+// The one exception is a database file that does not exist at all: the
+// orchestrator has never run against this path, so there is no share table and
+// no share rows either. That is unambiguous, unlike a database that exists but
+// lacks the tables.
+func revokeShares(ctx context.Context, dbPath, username string) error {
+	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Printf("no database at %s yet; no shares to revoke for %q\n", dbPath, username)
+		return nil
+	}
+	db, err := store.OpenForMaintenance(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("could not open %s to revoke shares for %q: %w", dbPath, username, err)
+	}
+	defer db.Close()
+	revoked, err := db.RevokeSharesForUser(ctx, username, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("failed to revoke shares for %q (a share does not expire on its own; "+
+			"resolve this before recreating a user with that name): %w", username, err)
+	}
+	fmt.Printf("revoked %d share(s) referencing %q\n", revoked, username)
+	return nil
 }
 
 func userList(ctx context.Context, cfg config.Config) error {
@@ -373,6 +412,14 @@ func userRemove(ctx context.Context, cfg config.Config, username string, keepSes
 	fmt.Printf("removed user %q from %s\n", username, cfg.AuthUsersPath)
 	if !keepSessions {
 		revokeSessions(ctx, cfg.DBPath, username)
+	}
+	// Share revocation is NOT gated on --keep-sessions. That flag means "leave
+	// existing login cookies valid", which is a convenience; leaving shares live
+	// is the username-reuse hole itself, and a share has no expiry to close it.
+	// `passwd` deliberately does not do this: the same person changing their own
+	// password should not lose their grants.
+	if err := revokeShares(ctx, cfg.DBPath, username); err != nil {
+		return err
 	}
 	if len(users) == 0 {
 		fmt.Println("WARNING: no users remain — the login gate is now OPEN to everyone.")

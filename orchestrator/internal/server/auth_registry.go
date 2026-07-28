@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -120,6 +121,32 @@ func (r *authRegistry) lookup(username string) (config.AuthUser, bool) {
 	defer r.mu.RUnlock()
 	user, ok := r.users[username]
 	return user, ok
+}
+
+// usernames returns the configured usernames, sorted. It reads the in-memory
+// snapshot under RLock behind the throttled stat, so the user picker cannot be
+// used to hammer the credentials file.
+//
+// It returns nil in open mode (no users configured), which callers must
+// distinguish from an empty list: nil means "there is no user list", not "there
+// are no users". cfg.AuthUsers is deliberately not consulted -- that snapshot is
+// from process start and goes stale the moment `orchestrator user add` runs.
+func (r *authRegistry) usernames() []string {
+	if r == nil {
+		return nil
+	}
+	r.refresh(false)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.users) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(r.users))
+	for username := range r.users {
+		names = append(names, username)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (r *authRegistry) hasUsers() bool {

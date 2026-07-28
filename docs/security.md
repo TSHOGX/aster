@@ -127,9 +127,23 @@ image manifest during resolution ([drivers.md](./drivers.md)).
 - **Sessions**: server-side, stored as a SHA-256 token hash in `auth_sessions`,
   revocable, 24h TTL. Cookie is HttpOnly, SameSite=Strict, `Secure` + `__Host-` over
   HTTPS; HSTS is emitted by the TLS-terminating nginx layer.
-- **Owner scoping**: users see and act on only their own sessions; a missing session
-  or an owner mismatch returns `404` (not `403`), so sessions cannot be enumerated.
-  Event streams and artifact downloads re-check ownership.
+- **Owner scoping**: users act on only their own sessions. Writes — rename, destroy,
+  send message, upload, artifact `PUT`, and share management — are owner-only, and a
+  missing session or an owner mismatch returns `404` (not `403`), so sessions cannot
+  be enumerated. Event streams re-check ownership.
+- **Read grants**: four read-only routes (`GET /api/sessions/{id}`, `.../messages`,
+  `.../artifacts`, and `GET /artifacts/{sessionID}/{path...}`) additionally admit a
+  user holding a live grant in `session_shares`. Everything else stays owner-only,
+  so a route that was never converted is still closed. A revoked or absent grant is
+  the same `404` as a nonexistent session. A reader's session DTO drops `user_id`,
+  `failure_reason`, and `error_class`; a `summary` grant also drops execution traces
+  and intermediate tool steps.
+- **Username reuse**: identity is a username string with no stable id, so
+  `orchestrator user rm` revokes every share referencing the name (grants to them,
+  grants they made, links they created) and **exits non-zero** if it cannot. A
+  leaked cookie eventually expires; a share does not, so a silent failure here would
+  be permanent unauthorized read access for the next namesake. `user passwd` does
+  not revoke shares — same person, new credential.
 
 ## Output scrubbing
 
@@ -141,11 +155,19 @@ only ever sees product-level fields (`mode`, `mode_label`, status, timestamps).
 ## Artifact access safety
 
 `GET /artifacts/{session}/{path}` streams only regular files under the verified
-workspace, re-checking ownership first, and rejecting traversal, symlink components,
-symlink escape, directories, and non-regular files. `PUT` on the same path is the
-online editor (owner-checked, `If-Unmodified-Since` guards against clobbering a newer
-agent write); `POST /api/sessions/{id}/artifacts` is the multipart upload. Every
-write path applies the same traversal/symlink validation as download.
+workspace, and rejects traversal, symlink components, symlink escape, directories,
+and non-regular files. Path validation runs *before* any session lookup, so a
+malformed path returns `400` without revealing whether the session exists. `PUT` on
+the same path is the online editor (owner-only, `If-Unmodified-Since` guards against
+clobbering a newer agent write); `POST /api/sessions/{id}/artifacts` is the multipart
+upload. Every write path applies the same traversal/symlink validation as download.
+
+`openArtifactFile` is shared by the download, the editor's staleness probe, and the
+upload path, so it does **not** decide access itself: the caller passes the access
+level it already established (readers pass the read gate's result, writers pass
+owner). Relaxing a check inside that shared function would otherwise have relaxed
+the write paths along with the read, and omitting the argument is a compile error
+rather than a silent reliance on call ordering.
 
 Downloaded content is served inert by default (`Content-Security-Policy:
 default-src 'none'; sandbox`, `X-Frame-Options: DENY`, `nosniff`). HTML and PDF

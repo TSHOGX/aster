@@ -33,6 +33,10 @@ The orchestrator serves three trees:
 | GET | `/api/sessions/{id}/artifacts` | required | list workspace artifacts |
 | POST | `/api/sessions/{id}/artifacts` | required | multipart upload into the workspace |
 | POST | `/api/sessions/{id}/interrupt` | required | interrupt a running shell turn |
+| POST | `/api/sessions/{id}/shares` | required (owner) | share the session read-only with a user |
+| GET | `/api/sessions/{id}/shares` | required (owner) | list live grants on the session |
+| DELETE | `/api/sessions/{id}/shares/{shareID}` | required (owner) | revoke one grant |
+| GET | `/api/users` | required | usernames for the share picker |
 | GET | `/api/quota` | required | session & `/30` pool ceilings |
 | GET | `/api/deployment-capabilities` | required | creatable product modes |
 | GET | `/api/search` | required | full-text search over the caller's sessions & messages |
@@ -43,8 +47,21 @@ The orchestrator serves three trees:
 | GET | `/artifacts/{sessionID}/{path...}` | required | stream a workspace file |
 | PUT | `/artifacts/{sessionID}/{path...}` | required | online-edit a workspace text file |
 
-Ownership is enforced everywhere: a missing session **or** an owner mismatch returns
-`404`, so sessions cannot be probed across users.
+### Owner gate vs. read gate
+
+Every `/api/sessions/{id}/*` route is owner-gated except four, which run a
+**read gate** instead: `GET /api/sessions/{id}`, `GET .../messages`,
+`GET .../artifacts`, and `GET /artifacts/{sessionID}/{path...}`. The read gate
+admits the owner **or** a user holding a live read grant (`session_shares`).
+
+Everything else — including `PATCH`/`DELETE` on the session, `POST .../messages`,
+uploads, `PUT /artifacts/...`, and the share-management routes themselves — stays
+owner-only. The split is deliberately in this direction: a route nobody converted
+is still owner-only, so a missed route fails closed rather than becoming an
+unauthorized write.
+
+In all cases a missing session, an owner mismatch with no grant, and a revoked
+grant return the same `404`, so nothing about another user's sessions is probeable.
 
 ## Selected request/response shapes
 
@@ -113,6 +130,29 @@ a newer agent write → `409 stale_edit` if stale. Capped by `MaxEditBytes`
 (empty/`none` clears). → `200 {"feedback":"<effective rating>"}`. `404` if the message
 is not in the session.
 
+**`POST /api/sessions/{id}/shares`** — `{"grantee":"<username>","visibility":"summary"|"full"}`
+(`visibility` defaults to `full` for identity shares). Owner-only. `400` for a
+missing/unknown grantee, sharing with yourself, or an unrecognized visibility;
+`409 {"error_class":"share_exists"}` when a live grant already exists for that
+user. → `201` an `apiSessionShare`: `id`, `session_id`, `grantee`, `role`
+(`reader`), `visibility`, `created_by`, `created_at`.
+
+**`GET /api/sessions/{id}/shares`** → `{"shares":[apiSessionShare...]}` — live
+grants only; revoked rows are omitted. **`DELETE .../shares/{shareID}`** →
+`200 {"status":"revoked"}`, `404` when the id is unknown *or* belongs to another
+session (the store scopes the revoke by `(session_id, id)`, not id alone).
+
+**`GET /api/users`** → `{"users":[{"user_id":"..."}]}` — the configured usernames,
+sorted, with the caller removed. Read from the live credentials registry, not the
+boot-time config snapshot, so a user added by `orchestrator user add` appears
+without a restart. Empty in open mode. Note this exposes the full user list to any
+logged-in caller; acceptable for an internal tool, and you cannot share with
+someone whose name you cannot type.
+
+**`GET /api/sessions`** → `{"sessions":[...]}` where each entry is an `apiSession`
+plus `access` (`owner`|`reader`) and, on reader rows, `shared_by` and `share_id`.
+The caller's own sessions come first, then sessions shared with them.
+
 ## Session DTO (`session_dto.go`)
 
 `apiSession` fields: `id`, `user_id`, `title`, `status`, `mode`, `mode_label`
@@ -125,6 +165,18 @@ frontend falls back to the `id` when it is empty. The `title_custom` flag
 The internal `driver_id`/`agent` are **deliberately not exposed** — the browser only
 sees the product mode. Internal `workspace`, `agent_home_path`, `restore_id` are
 omitted from the DTO.
+
+**Non-owner readers get a trimmed DTO** (`sharedSession()` in `share_dto.go`):
+`user_id`, `failure_reason`, and `error_class` are dropped. A failure reason can
+carry host paths and internal detail, and the owner's username is not the reader's
+business — being inside the same organization is not a reason to relax either.
+
+Message trimming follows the grant's `visibility`: `full` returns the messages the
+owner sees minus `feedback` (per-viewer state a reader cannot set); `summary` also
+drops `trace` and the intermediate `stop_reason: "toolUse"` steps. `summary` is
+defined by *excluding* `toolUse` rather than requiring `stop_reason == "stop"`,
+because shell output and pre-trace history carry an empty `stop_reason` and would
+otherwise vanish from a shared shell session.
 
 ## Message DTO
 

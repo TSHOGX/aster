@@ -7,9 +7,19 @@ export type SessionStatus =
   | "failed"
   | "destroyed";
 
+/** How the caller reaches a session: their own, or shared read-only with them. */
+export type SessionAccess = "owner" | "reader";
+
 export type ApiSession = {
   id: string;
-  user_id: string;
+  /** Absent on sessions shared with the caller: the owner's identity is not exposed. */
+  user_id?: string;
+  /** Present on /api/sessions listings. Absent means treat as "owner". */
+  access?: SessionAccess;
+  /** Who shared the session, on reader rows only. */
+  shared_by?: string;
+  /** The grant's id, on reader rows only. */
+  share_id?: string;
   title?: string;
   status: SessionStatus;
   mode: SessionMode;

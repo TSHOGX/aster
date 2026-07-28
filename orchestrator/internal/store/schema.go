@@ -738,6 +738,81 @@ CREATE TABLE IF NOT EXISTS message_feedback (
 CREATE INDEX IF NOT EXISTS message_feedback_message_idx
   ON message_feedback (message_id);
 
+-- Read-only sharing of a session with a named, logged-in user. role is an enum
+-- with one member today so widening it later ('commenter', 'writer') is an
+-- ALTER-free CHECK change rather than a column addition. grantee_user_id is a
+-- username string, not a stable id: see the OBLIGATION on username reuse below.
+CREATE TABLE IF NOT EXISTS session_shares (
+  id               TEXT PRIMARY KEY,
+  session_id       TEXT NOT NULL,
+  grantee_user_id  TEXT NOT NULL,
+  role             TEXT NOT NULL CHECK(role IN ('reader')),
+  visibility       TEXT NOT NULL CHECK(visibility IN ('summary','full')),
+  created_by       TEXT NOT NULL,
+  created_at       TEXT NOT NULL,
+  revoked_at       TEXT,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+-- Uniqueness constrains only LIVE grants; without the partial predicate,
+-- revoking a share and re-sharing with the same person would collide.
+CREATE UNIQUE INDEX IF NOT EXISTS session_shares_live_idx
+  ON session_shares (session_id, grantee_user_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS session_shares_grantee_idx ON session_shares (grantee_user_id);
+
+CREATE TABLE IF NOT EXISTS share_links (
+  id               TEXT PRIMARY KEY,
+  token_hash       TEXT NOT NULL UNIQUE,
+  session_id       TEXT NOT NULL,
+  visibility       TEXT NOT NULL CHECK(visibility IN ('summary','full')),
+  max_message_id   INTEGER,
+  created_by       TEXT NOT NULL,
+  created_at       TEXT NOT NULL,
+  expires_at       TEXT NOT NULL,
+  revoked_at       TEXT,
+  last_accessed_at TEXT,
+  access_count     INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS share_links_session_idx ON share_links (session_id);
+
+-- The file whitelist a public link exposes. Each row freezes the blob that was
+-- current when the link was created; an empty set means "session text only".
+CREATE TABLE IF NOT EXISTS share_link_files (
+  link_id      TEXT NOT NULL,
+  path         TEXT NOT NULL,
+  blob_sha256  TEXT NOT NULL,
+  size         INTEGER NOT NULL,
+  PRIMARY KEY(link_id, path),
+  FOREIGN KEY(link_id) REFERENCES share_links(id) ON DELETE CASCADE
+);
+
+-- ============================================================================
+-- OBLIGATION: share reclamation is NOT automatic.
+--
+-- 1. Blob bytes live OUTSIDE SQLite. share_link_files.blob_sha256 points at a
+--    content-addressed file in the share blob store; ON DELETE CASCADE removes
+--    the table row and nothing on disk. Reclamation runs only through the
+--    explicit path: SweepExpiredShareLinks returns the blob digests that just
+--    lost their last reference, and the maintenance loop unlinks them. The
+--    reference check and the delete MUST stay inside one write transaction --
+--    a concurrent CreateShareLink that hashes to the same digest would
+--    otherwise have its file deleted out from under it.
+--
+-- 2. The two sessions(id) ON DELETE CASCADE constraints above never fire in
+--    this repository: session destruction is a soft delete (status flips to
+--    'destroyed'). They are the backstop for a future hard delete, not the
+--    mechanism this feature relies on.
+--
+-- 3. Identity is a username string with no stable id and no FK (the users table
+--    holds only the built-in lab row). Deleting a user and recreating the same
+--    name would hand the new person the old one's grants, so the
+--    "orchestrator user rm" command MUST call RevokeSharesForUser -- and must
+--    fail loudly if it cannot, because unlike a login cookie a share never
+--    expires on its own.
+-- ============================================================================
+
 -- ============================================================================
 -- MOVED OUT: trajectory distillation (agents-kb pipeline)
 --

@@ -437,6 +437,8 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.eventsStream(w, r)
 	case r.URL.Path == "/api/search" && r.Method == http.MethodGet:
 		s.search(w, r)
+	case r.URL.Path == "/api/users" && r.Method == http.MethodGet:
+		s.listUsers(w, r)
 	case r.URL.Path == "/api/notifications" && r.Method == http.MethodGet:
 		s.listNotifications(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/notifications/") && strings.HasSuffix(r.URL.Path, "/read") && r.Method == http.MethodPost:
@@ -482,18 +484,43 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 		s.uploadArtifacts(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "interrupt" && r.Method == http.MethodPost:
 		s.interruptSession(w, r, sessionID)
+	case len(parts) == 2 && parts[1] == "shares" && r.Method == http.MethodPost:
+		s.createSessionShare(w, r, sessionID)
+	case len(parts) == 2 && parts[1] == "shares" && r.Method == http.MethodGet:
+		s.listSessionShares(w, r, sessionID)
+	case len(parts) == 3 && parts[1] == "shares" && r.Method == http.MethodDelete:
+		s.deleteSessionShare(w, r, sessionID, parts[2])
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
 }
 
+// listSessions returns the caller's own sessions followed by the ones shared
+// with them, each annotated with the access level so the sidebar can separate
+// them and withhold rename/destroy from a shared row.
+//
+// ListSessionsByUser keeps its owner-only meaning: quota and the idle monitor
+// read it too, so the shared half arrives through a second query instead.
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.store.ListSessionsByUser(r.Context(), userIDFromContext(r.Context()))
+	viewer := userIDFromContext(r.Context())
+	sessions, err := s.store.ListSessionsByUser(r.Context(), viewer)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": publicSessions(sessions)})
+	shared, err := s.store.ListSessionsSharedWith(r.Context(), viewer)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	listings := make([]apiSharedSessionListing, 0, len(sessions)+len(shared))
+	for _, session := range sessions {
+		listings = append(listings, ownedSessionListing(session))
+	}
+	for _, entry := range shared {
+		listings = append(listings, sharedSessionListing(entry))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": listings})
 }
 
 func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
@@ -695,9 +722,15 @@ func (s *Server) authorizeSession(w http.ResponseWriter, r *http.Request, sessio
 	return session, true
 }
 
+// getSession is one of the four read-only routes behind the read gate rather
+// than the owner gate (see resolveAccess). A reader gets the trimmed DTO.
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request, sessionID string) {
-	session, ok := s.authorizeSession(w, r, sessionID)
+	session, level, _, ok := s.authorizeRead(w, r, sessionID)
 	if !ok {
+		return
+	}
+	if level < accessOwner {
+		writeJSON(w, http.StatusOK, sharedSession(session))
 		return
 	}
 	writeJSON(w, http.StatusOK, publicSession(session))
@@ -965,7 +998,8 @@ func cidrPool30Capacity(prefix netip.Prefix) int {
 }
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if _, ok := s.authorizeSession(w, r, sessionID); !ok {
+	_, level, visibility, ok := s.authorizeRead(w, r, sessionID)
+	if !ok {
 		return
 	}
 	userID := userIDFromContext(r.Context())
@@ -973,6 +1007,9 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, sessionID 
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if level < accessOwner {
+		messages = sharedMessages(messages, visibility)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
 }
@@ -1612,8 +1649,11 @@ func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionI
 	writeJSON(w, http.StatusOK, map[string]string{"status": status})
 }
 
+// listArtifacts lists the whole verified workspace. An identity share exposes
+// that full set by design (see the proposal's trace-vs-artifact section); the
+// per-file whitelist exists only for anonymous links.
 func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if _, ok := s.authorizeSession(w, r, sessionID); !ok {
+	if _, _, _, ok := s.authorizeRead(w, r, sessionID); !ok {
 		return
 	}
 	items, err := s.store.ListArtifacts(r.Context(), sessionID)
@@ -1644,7 +1684,21 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid artifact path")
 		return
 	}
-	file, info, status, message := s.openArtifactFile(r.Context(), parts[0], parts[1], userIDFromContext(r.Context()))
+	// Syntactic rejection first, so a malformed path costs no session lookup and
+	// leaks nothing about which sessions exist.
+	if _, status, message := validateArtifactRequestPath(parts[0], parts[1]); status != 0 {
+		writeError(w, status, message)
+		return
+	}
+	// The read gate runs here, in the handler, and its result is passed down.
+	// openArtifactFile no longer decides for itself who may read: it is shared
+	// with the PUT path, so relaxing its internal owner comparison would have
+	// relaxed writes too.
+	_, level, _, ok := s.authorizeRead(w, r, parts[0])
+	if !ok {
+		return
+	}
+	file, info, status, message := s.openArtifactFile(r.Context(), parts[0], parts[1], level)
 	if file == nil {
 		writeError(w, status, message)
 		return
@@ -1704,23 +1758,50 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
-func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath, userID string) (*os.File, os.FileInfo, int, string) {
+// openArtifactFile opens one file under a session's verified live workspace.
+//
+// granted is the access level the CALLER already established, passed in
+// explicitly rather than re-derived here. This function is shared by the read
+// path (artifact GET), the online editor's optimistic-concurrency probe, and the
+// workspace download, so widening its notion of "may read" in place would widen
+// the write paths with it. Read callers pass the read gate's result; write
+// callers pass accessOwner. Forgetting to pass anything is a compile error,
+// which is stronger than the previous arrangement where PUT was safe only
+// because authorizeSession happened to run first.
+// validateArtifactRequestPath applies the syntactic hardening shared by every
+// artifact read path and returns the cleaned relative path. It touches no state,
+// so a malformed request is rejected with a 400 before any session lookup --
+// preserving the property that a bad path says nothing about whether the session
+// exists.
+func validateArtifactRequestPath(sessionID, artifactPath string) (string, int, string) {
 	if !safePathSegment(sessionID) || artifactPath == "" || strings.Contains(artifactPath, `\`) {
-		return nil, nil, http.StatusBadRequest, "invalid artifact path"
+		return "", http.StatusBadRequest, "invalid artifact path"
 	}
 	for _, segment := range strings.Split(artifactPath, "/") {
 		if !safePathSegment(segment) {
-			return nil, nil, http.StatusBadRequest, "invalid artifact path"
+			return "", http.StatusBadRequest, "invalid artifact path"
 		}
 	}
-
 	cleanPath := pathpkg.Clean(artifactPath)
 	if cleanPath == "." || strings.HasPrefix(cleanPath, "../") || cleanPath == ".." {
-		return nil, nil, http.StatusBadRequest, "invalid artifact path"
+		return "", http.StatusBadRequest, "invalid artifact path"
+	}
+	return cleanPath, 0, ""
+}
+
+func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath string, granted accessLevel) (*os.File, os.FileInfo, int, string) {
+	if granted < accessReader {
+		return nil, nil, http.StatusNotFound, "artifact not found"
+	}
+	cleanPath, status, message := validateArtifactRequestPath(sessionID, artifactPath)
+	if status != 0 {
+		return nil, nil, status, message
 	}
 
-	// Enforce session ownership before exposing any file metadata or content.
-	if session, err := s.store.GetSession(ctx, sessionID); errors.Is(err, sql.ErrNoRows) || (err == nil && session.UserID != userID) {
+	// Access was decided by the caller (see granted). Confirm the session row
+	// still exists before exposing any file metadata, so a deleted session cannot
+	// be probed through a stale grant.
+	if _, err := s.store.GetSession(ctx, sessionID); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, http.StatusNotFound, "artifact not found"
 	} else if err != nil {
 		return nil, nil, http.StatusInternalServerError, err.Error()

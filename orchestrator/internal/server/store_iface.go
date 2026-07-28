@@ -128,6 +128,30 @@ type contractVolumeStore interface {
 	FinishProxyRequest(context.Context, store.FinishProxyRequestParams) (store.FinishProxyRequestResult, error)
 }
 
+// shareStore covers session_shares / share_links / share_link_files: grants,
+// public link tokens, the owner-facing listings that manage them, and the
+// revocation sweep `user rm` depends on.
+//
+// Revokes and the token rotate are scoped by (sessionID, id) rather than id
+// alone: the route layer's owner gate is not the only thing standing between a
+// guessed id and a cross-session write.
+type shareStore interface {
+	CreateSessionShare(context.Context, store.SessionShare) error
+	ListSessionShares(context.Context, string) ([]store.SessionShare, error)
+	ListSessionsSharedWith(context.Context, string) ([]store.SharedSession, error)
+	ResolveSessionShare(context.Context, string, string) (store.SessionShare, bool, error)
+	RevokeSessionShare(context.Context, store.RevokeShareParams) error
+	RevokeSharesForUser(context.Context, string, time.Time) (int64, error)
+	CreateShareLink(context.Context, store.ShareLink, []store.ShareLinkFile) error
+	LookupShareLink(context.Context, string, time.Time) (store.ShareLink, bool, error)
+	ListShareLinkFiles(context.Context, string) ([]store.ShareLinkFile, error)
+	ListShareLinks(context.Context, string) ([]store.ShareLink, error)
+	RotateShareLinkToken(context.Context, store.RevokeShareParams, string) error
+	RevokeShareLink(context.Context, store.RevokeShareParams) error
+	TouchShareLinkAccess(context.Context, []store.ShareLinkAccess) error
+	SweepExpiredShareLinks(context.Context, time.Time) ([]string, error)
+}
+
 // serverStore is the union of the roles the Server needs. It embeds bridge.Store
 // (via bridgeStore) so the bridge handoff keeps compiling off the same value.
 type serverStore interface {
@@ -139,5 +163,6 @@ type serverStore interface {
 	eventStore
 	notificationStore
 	contractVolumeStore
+	shareStore
 	bridgeStore
 }

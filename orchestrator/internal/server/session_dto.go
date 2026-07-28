@@ -7,8 +7,10 @@ import (
 )
 
 type apiSession struct {
-	ID                    string     `json:"id"`
-	UserID                string     `json:"user_id"`
+	ID string `json:"id"`
+	// UserID is omitted for non-owner readers (see sharedSession). An owner's
+	// payload is unchanged: their user_id is never empty.
+	UserID                string     `json:"user_id,omitempty"`
 	Status                string     `json:"status"`
 	Mode                  string     `json:"mode"`
 	ModeLabel             string     `json:"mode_label"`

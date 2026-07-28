@@ -203,10 +203,12 @@ func (s *Server) writeArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 // artifactIsStale reports whether the target file's modification time is newer
-// than since. It reuses openArtifactFile so the same ownership + path hardening
-// gates apply. A missing file is not stale (the edit creates it).
+// than since. It reuses openArtifactFile for the same path hardening, and passes
+// accessOwner because it only ever runs on the owner-gated PUT path (writeArtifact
+// calls authorizeSession before reaching here). A missing file is not stale (the
+// edit creates it).
 func (s *Server) artifactIsStale(r *http.Request, sessionID, artifactPath string, since time.Time) (bool, int, string) {
-	file, info, status, message := s.openArtifactFile(r.Context(), sessionID, artifactPath, userIDFromContext(r.Context()))
+	file, info, status, message := s.openArtifactFile(r.Context(), sessionID, artifactPath, accessOwner)
 	if file == nil {
 		if status == http.StatusNotFound {
 			return false, 0, ""

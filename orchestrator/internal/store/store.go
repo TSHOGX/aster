@@ -263,6 +263,27 @@ INSERT INTO sessions (
 // in lockstep with the scan helper; only the WHERE/ORDER clauses differ.
 const sessionSelectColumns = `id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom`
 
+// prefixedSessionSelectColumns is sessionSelectColumns qualified with a table
+// alias, for joins where a bare column name would be ambiguous.
+func prefixedSessionSelectColumns(alias string) string {
+	columns := strings.Split(sessionSelectColumns, ", ")
+	for i, column := range columns {
+		columns[i] = alias + "." + column
+	}
+	return strings.Join(columns, ", ")
+}
+
+// reader returns the reader pool, falling back to the writer when no reader
+// exists (OpenForMaintenance leaves readDB nil). Read-only queries that were
+// added after the pool split use this; pre-existing queries stay on the writer
+// until their migration is reviewed on its own.
+func (s *Store) reader() *sql.DB {
+	if s.readDB != nil {
+		return s.readDB
+	}
+	return s.db
+}
+
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT `+sessionSelectColumns+`
@@ -834,65 +855,81 @@ WHERE session_id = ?
 // passed between the control and memory stores without conversion.
 type rowScanner = sqlitex.RowScanner
 
+// sessionScan holds the nullable landing spots for the sessionSelectColumns
+// projection. It exists so a query that selects session columns PLUS extra
+// columns (see ListSessionsSharedWith) can reuse the one canonical scan instead
+// of duplicating the 21-column mapping: dest() supplies the targets to append
+// to, and finish() folds them into the Session.
+type sessionScan struct {
+	session               Session
+	restoreMS             sql.NullInt64
+	agentHomePath         sql.NullString
+	activeGenerationID    sql.NullString
+	createdAt             string
+	updatedAt             string
+	expiresAt             sql.NullString
+	endedAt               sql.NullString
+	lastActivityAt        sql.NullString
+	checkpointPath        sql.NullString
+	failureReason         sql.NullString
+	errorClass            sql.NullString
+	autoCheckpointEnabled int
+	titleCustom           int
+}
+
+func (sc *sessionScan) dest() []any {
+	return []any{
+		&sc.session.ID, &sc.session.UserID, &sc.session.Status, &sc.session.Agent, &sc.session.Mode,
+		&sc.session.Workspace, &sc.agentHomePath, &sc.activeGenerationID, &sc.session.RestoreID,
+		&sc.restoreMS, &sc.createdAt, &sc.updatedAt, &sc.expiresAt, &sc.endedAt, &sc.lastActivityAt,
+		&sc.checkpointPath, &sc.autoCheckpointEnabled, &sc.failureReason, &sc.errorClass,
+		&sc.session.Title, &sc.titleCustom,
+	}
+}
+
+func (sc *sessionScan) finish() Session {
+	session := sc.session
+	if sc.restoreMS.Valid {
+		session.RestoreMS = &sc.restoreMS.Int64
+	}
+	if sc.agentHomePath.Valid {
+		session.AgentHomePath = sc.agentHomePath.String
+	}
+	if sc.activeGenerationID.Valid {
+		session.ActiveGenerationID = sc.activeGenerationID.String
+	}
+	session.CreatedAt = parseTime(sc.createdAt)
+	session.UpdatedAt = parseTime(sc.updatedAt)
+	session.ExpiresAt = optionalTimePtr(sc.expiresAt)
+	session.EndedAt = optionalTimePtr(sc.endedAt)
+	session.LastActivityAt = optionalTimePtr(sc.lastActivityAt)
+	if sc.checkpointPath.Valid {
+		session.CheckpointPath = sc.checkpointPath.String
+	}
+	session.AutoCheckpointEnabled = sc.autoCheckpointEnabled != 0
+	if sc.failureReason.Valid {
+		session.FailureReason = sc.failureReason.String
+	}
+	if sc.errorClass.Valid {
+		session.ErrorClass = sc.errorClass.String
+	}
+	session.TitleCustom = sc.titleCustom != 0
+	if strings.TrimSpace(session.Mode) == "" {
+		session.Mode = ModeForDriver(session.Agent)
+	}
+	return session
+}
+
 func scanSession(row rowScanner) (Session, error) {
-	var session Session
-	var restoreMS sql.NullInt64
-	var agentHomePath, activeGenerationID sql.NullString
-	var createdAt, updatedAt string
-	var expiresAt, endedAt, lastActivityAt sql.NullString
-	var checkpointPath, failureReason, errorClass sql.NullString
-	var autoCheckpointEnabled int
-	var titleCustom int
-	err := row.Scan(
-		&session.ID, &session.UserID, &session.Status, &session.Agent, &session.Mode, &session.Workspace, &agentHomePath,
-		&activeGenerationID, &session.RestoreID, &restoreMS, &createdAt, &updatedAt,
-		&expiresAt, &endedAt, &lastActivityAt, &checkpointPath, &autoCheckpointEnabled, &failureReason, &errorClass,
-		&session.Title, &titleCustom,
-	)
+	var sc sessionScan
+	err := row.Scan(sc.dest()...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, err
 	}
 	if err != nil {
 		return Session{}, err
 	}
-	if restoreMS.Valid {
-		session.RestoreMS = &restoreMS.Int64
-	}
-	if agentHomePath.Valid {
-		session.AgentHomePath = agentHomePath.String
-	}
-	if activeGenerationID.Valid {
-		session.ActiveGenerationID = activeGenerationID.String
-	}
-	session.CreatedAt = parseTime(createdAt)
-	session.UpdatedAt = parseTime(updatedAt)
-	if expiresAt.Valid {
-		t := parseTime(expiresAt.String)
-		session.ExpiresAt = &t
-	}
-	if endedAt.Valid {
-		t := parseTime(endedAt.String)
-		session.EndedAt = &t
-	}
-	if lastActivityAt.Valid {
-		t := parseTime(lastActivityAt.String)
-		session.LastActivityAt = &t
-	}
-	if checkpointPath.Valid {
-		session.CheckpointPath = checkpointPath.String
-	}
-	session.AutoCheckpointEnabled = autoCheckpointEnabled != 0
-	if failureReason.Valid {
-		session.FailureReason = failureReason.String
-	}
-	if errorClass.Valid {
-		session.ErrorClass = errorClass.String
-	}
-	session.TitleCustom = titleCustom != 0
-	if strings.TrimSpace(session.Mode) == "" {
-		session.Mode = ModeForDriver(session.Agent)
-	}
-	return session, nil
+	return sc.finish(), nil
 }
 
 func ModeForDriver(driverID string) string {
