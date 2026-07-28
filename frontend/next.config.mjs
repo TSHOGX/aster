@@ -58,13 +58,14 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Everything EXCEPT /artifacts/*. Artifact responses carry their own
-        // framing + CSP headers straight from the orchestrator (see
-        // getArtifact): HTML is framable SAMEORIGIN so the workbench preview
-        // iframe can load it. If we also emitted X-Frame-Options here the two
+        // Everything EXCEPT /artifacts/* and /shared/*. Both carry their own
+        // framing + CSP headers straight from the orchestrator (see getArtifact
+        // and sharedFile): HTML and PDF are framable SAMEORIGIN so a preview
+        // iframe can load them. If we also emitted X-Frame-Options here the two
         // values would collide and the browser would fall back to blocking the
-        // frame, which is exactly the "refused to connect" preview bug.
-        source: "/((?!artifacts/).*)",
+        // frame, which is exactly the "refused to connect" preview bug — on the
+        // public share page that would be a blank panel with no explanation.
+        source: "/((?!artifacts/|shared/).*)",
         headers: securityHeaders
       },
       {

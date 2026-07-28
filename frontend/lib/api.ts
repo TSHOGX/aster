@@ -201,12 +201,15 @@ export async function fetchShareLinks(sessionId: string) {
 export async function createShareLink(
   sessionId: string,
   visibility: ShareVisibility,
-  ttlSeconds?: number
+  ttlSeconds?: number,
+  // Workspace-relative paths to freeze into the link. Anything not listed here
+  // is not reachable through the link at all.
+  files?: string[]
 ) {
   return request<ShareLinkToken>(`/api/sessions/${encodeURIComponent(sessionId)}/share-links`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ visibility, ttl_seconds: ttlSeconds ?? 0 })
+    body: JSON.stringify({ visibility, ttl_seconds: ttlSeconds ?? 0, files: files ?? [] })
   });
 }
 

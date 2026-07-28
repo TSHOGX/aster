@@ -48,47 +48,104 @@ func validateCreateShare(grantee, visibility string, session store.Session, owne
 	return createShareRequest{Grantee: grantee, Visibility: normalized}, nil
 }
 
+// createShareLinkInput is the raw POST /share-links body.
+type createShareLinkInput struct {
+	Visibility string
+	TTL        time.Duration
+	Files      []string
+}
+
+// shareLinkLimits are the deployment caps a link request is checked against.
+type shareLinkLimits struct {
+	MaxTTL   time.Duration
+	MaxFiles int
+}
+
 // createShareLinkRequest is the validated form of a POST /share-links body.
 type createShareLinkRequest struct {
 	Visibility string
 	TTL        time.Duration
 	ExpiresAt  time.Time
+	Files      []string
 }
 
 // validateCreateShareLink checks a public-link request.
 //
-// Two rules carry weight here. First, a public link MUST expire: TTL is capped
+// Three rules carry weight here. First, a public link MUST expire: TTL is capped
 // and a zero TTL means "use the cap", never "never". Second, a shell session's
 // link is forced to "full" -- in shell mode the command output IS the content, so
 // a "summary" that drops execution detail is not a redaction, it is an empty
-// page. Asking for summary on a shell session is a mistake worth reporting
-// rather than silently satisfying.
-func validateCreateShareLink(visibility string, ttl time.Duration, session store.Session, maxTTL time.Duration, now time.Time) (createShareLinkRequest, error) {
-	if maxTTL <= 0 {
+// page. Asking for summary on a shell session is a mistake worth reporting rather
+// than silently satisfying. Third, the file whitelist is deduplicated and capped
+// by count here; the byte cap is enforced during the copy, where the sizes are
+// actually known.
+func validateCreateShareLink(input createShareLinkInput, session store.Session, limits shareLinkLimits, now time.Time) (createShareLinkRequest, error) {
+	if limits.MaxTTL <= 0 {
 		return createShareLinkRequest{}, fmt.Errorf("share link ttl cap is not configured")
 	}
-	normalized, err := validateShareVisibility(visibility, store.ShareVisibilitySummary)
+	normalized, err := validateShareVisibility(input.Visibility, store.ShareVisibilitySummary)
 	if err != nil {
 		return createShareLinkRequest{}, err
 	}
 	if isShellSession(session) {
-		if strings.TrimSpace(visibility) == store.ShareVisibilitySummary {
+		if strings.TrimSpace(input.Visibility) == store.ShareVisibilitySummary {
 			return createShareLinkRequest{}, fmt.Errorf(
 				"shell sessions cannot be shared with %q visibility: the command output is the content",
 				store.ShareVisibilitySummary)
 		}
 		normalized = store.ShareVisibilityFull
 	}
+	ttl := input.TTL
 	if ttl < 0 {
 		return createShareLinkRequest{}, fmt.Errorf("ttl must not be negative")
 	}
 	if ttl == 0 {
-		ttl = maxTTL
+		ttl = limits.MaxTTL
 	}
-	if ttl > maxTTL {
-		return createShareLinkRequest{}, fmt.Errorf("ttl exceeds the maximum of %s", maxTTL)
+	if ttl > limits.MaxTTL {
+		return createShareLinkRequest{}, fmt.Errorf("ttl exceeds the maximum of %s", limits.MaxTTL)
 	}
-	return createShareLinkRequest{Visibility: normalized, TTL: ttl, ExpiresAt: now.Add(ttl)}, nil
+	files, err := validateShareLinkFiles(input.Files, limits.MaxFiles)
+	if err != nil {
+		return createShareLinkRequest{}, err
+	}
+	return createShareLinkRequest{
+		Visibility: normalized,
+		TTL:        ttl,
+		ExpiresAt:  now.Add(ttl),
+		Files:      files,
+	}, nil
+}
+
+// validateShareLinkFiles normalizes the requested whitelist: blanks dropped,
+// duplicates collapsed (they would collide on the share_link_files primary key),
+// order preserved so the reported list matches what was asked for. Path shape is
+// validated later by the same hardening the owner's own download uses; here we
+// only bound the count.
+func validateShareLinkFiles(paths []string, maxFiles int) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	if maxFiles <= 0 {
+		return nil, fmt.Errorf("share link file cap is not configured")
+	}
+	seen := make(map[string]struct{}, len(paths))
+	files := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, duplicate := seen[path]; duplicate {
+			continue
+		}
+		seen[path] = struct{}{}
+		files = append(files, path)
+	}
+	if len(files) > maxFiles {
+		return nil, fmt.Errorf("a share link may include at most %d files", maxFiles)
+	}
+	return files, nil
 }
 
 // isShellSession reports whether a session is a shell session, by mode with a

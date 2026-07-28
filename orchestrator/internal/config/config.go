@@ -34,7 +34,16 @@ type Config struct {
 	// link is not allowed to be permanent: expiry is the cheapest backstop when a
 	// URL is forwarded somewhere it should not have gone, and it is the only one
 	// that works without anybody noticing the leak.
-	MaxShareLinkTTL      time.Duration
+	MaxShareLinkTTL time.Duration
+	// ShareBlobRoot holds the content-addressed snapshots a public link serves.
+	// Defaults to a "share-blobs" directory beside the control database.
+	ShareBlobRoot string
+	// MaxShareLinkBytes caps the TOTAL bytes one public link may snapshot, and
+	// MaxShareLinkFiles how many files. Without a cap, one "select all" over a
+	// session that dumped intermediate tables would copy gigabytes inside a single
+	// request.
+	MaxShareLinkBytes    int64
+	MaxShareLinkFiles    int
 	CookieSecure         bool
 	TrustForwardedProto  bool
 	TrustProxyHeaders    bool
@@ -160,6 +169,16 @@ const (
 // enough for a link pasted into a review thread to stay useful and short enough
 // that a forwarded URL stops working on its own.
 const defaultMaxShareLinkTTL = 30 * 24 * time.Hour
+
+// Snapshot caps for a public link. These are deliberately the same order of
+// magnitude as defaultMaxEditBytes rather than as defaultMaxUploadBytes: an
+// upload is one user waiting on their own request, while a link snapshot copies
+// files synchronously inside a request and then keeps them on disk until the link
+// expires. Start conservative and raise it if a real share needs more.
+const (
+	defaultMaxShareLinkBytes int64 = 8 << 20 // 8 MiB per link, all files combined
+	defaultMaxShareLinkFiles int   = 25
+)
 
 const defaultModelProxyBindPort = 8082
 const defaultModelProxyBindURL = "http://0.0.0.0:8082"
@@ -427,6 +446,8 @@ func Load() (Config, error) {
 		AuthUsersPath:        authUsersPath,
 		AuthSessionTTL:       authSessionTTL,
 		MaxShareLinkTTL:      maxShareLinkTTL,
+		MaxShareLinkBytes:    int64Env("HARNESS_MAX_SHARE_LINK_BYTES", defaultMaxShareLinkBytes),
+		MaxShareLinkFiles:    intEnv("HARNESS_MAX_SHARE_LINK_FILES", defaultMaxShareLinkFiles),
 		CookieSecure:         !boolEnvDefault("HARNESS_COOKIE_INSECURE", false),
 		TrustForwardedProto:  boolEnvDefault("HARNESS_TRUST_FORWARDED_PROTO", true),
 		TrustProxyHeaders:    boolEnvDefault("HARNESS_TRUST_PROXY_HEADERS", true),
@@ -461,6 +482,9 @@ func Load() (Config, error) {
 	// default is resolved here rather than in the literal above because it is
 	// derived from DBPath.
 	cfg.MemoryDBPath = getenv("HARNESS_MEMORY_DB_PATH", filepath.Join(filepath.Dir(cfg.DBPath), "memory.db"))
+	// Same reasoning as MemoryDBPath: derived from DBPath so it follows a
+	// deployment or test that redirects the state directory.
+	cfg.ShareBlobRoot = getenv("HARNESS_SHARE_BLOB_ROOT", filepath.Join(filepath.Dir(cfg.DBPath), "share-blobs"))
 	cfg.Harness.SessionRetention = Duration{Duration: sessionRetention}
 	cfg.Harness.MaxSessions = maxSessions
 	cfg.Harness.DefaultAgent = string(defaultDriver)

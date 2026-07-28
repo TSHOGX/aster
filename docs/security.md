@@ -138,6 +138,17 @@ image manifest during resolution ([drivers.md](./drivers.md)).
   the same `404` as a nonexistent session. A reader's session DTO drops `user_id`,
   `failure_reason`, and `error_class`; a `summary` grant also drops execution traces
   and intermediate tool steps.
+- **Public link files**: `/shared/{token}/files/{path}` serves *snapshots*, not the
+  live workspace. The path is an exact `share_link_files` lookup rather than a
+  filesystem join, so an unshared path does not exist and there is no traversal
+  surface; bytes come from a content-addressed store, so a later agent write cannot
+  change what a published URL returns and the anonymous path never touches a live
+  workspace (`VerifySessionWorkspaceVolume` is not in the loop). Snapshotting is
+  capped per link by file count and total bytes, since the copy happens inside the
+  create request. Blob reclamation is reference-counted: the sweep decides
+  "unreferenced" and deletes the referencing rows in one transaction, and only the
+  digests it returns are unlinked — deciding reachability outside that transaction
+  would let a concurrent link creation have its file deleted underneath it.
 - **Public links**: `/api/shared/{token}` is an unauthenticated subtree registered
   outside `requireAuth`, deliberately as a *separate* read path rather than by
   minting a cookie from a token — the authed routes never learn about an anonymous

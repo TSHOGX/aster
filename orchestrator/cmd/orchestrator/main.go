@@ -20,6 +20,7 @@ import (
 	"harness-platform/orchestrator/internal/memorystore"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/server"
+	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/trajectory"
 )
@@ -153,6 +154,14 @@ func main() {
 			app = server.New(cfg, db, rt, watcher, hub, log)
 			app.SetOwnerUUID(owner.UUID)
 			app.SetVersion(version)
+			// Snapshots for public share links. A failure here is fatal rather
+			// than degrading to text-only links: the alternative is a deployment
+			// that silently rejects every file share with a 503.
+			shareBlobs, err := shareblob.New(cfg.ShareBlobRoot)
+			if err != nil {
+				return fmt.Errorf("open share blob store: %w", err)
+			}
+			app.SetShareBlobStore(shareBlobs)
 			return nil
 		},
 		RecoverExpiredRuntimeResources: func(ctx context.Context, now time.Time) (store.StartupRecoveryResult, error) {

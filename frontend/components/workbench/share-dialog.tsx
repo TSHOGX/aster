@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
   createSessionShare,
   createShareLink,
+  fetchArtifacts,
   fetchSessionShares,
   fetchShareLinks,
   fetchUsers,
@@ -14,7 +15,8 @@ import {
   revokeShareLink,
   rotateShareLink
 } from "@/lib/api";
-import type { ApiSessionShare, ApiShareLink, ShareVisibility } from "@/lib/types";
+import type { ApiArtifact, ApiSessionShare, ApiShareLink, ShareVisibility } from "@/lib/types";
+import { formatBytes } from "@/lib/format";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { formatFullTimestamp } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -42,6 +44,10 @@ export function ShareDialog({
   const [shares, setShares] = useState<ApiSessionShare[]>([]);
   const [links, setLinks] = useState<ApiShareLink[]>([]);
   const [users, setUsers] = useState<string[]>([]);
+  const [artifacts, setArtifacts] = useState<ApiArtifact[]>([]);
+  // Files to freeze into the next link. Empty means a text-only link: a public
+  // link exposes only what is checked here, never the whole workspace.
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [grantee, setGrantee] = useState("");
   // Identity shares default to full: inside the org, seeing the work is the point.
@@ -61,15 +67,17 @@ export function ShareDialog({
   useDismissOnOutside(true, [dialogRef], onClose, { escape: true });
 
   const load = useCallback(async () => {
-    const [sharesRes, linksRes, usersRes] = await Promise.all([
+    const [sharesRes, linksRes, usersRes, artifactsRes] = await Promise.all([
       fetchSessionShares(sessionId),
       fetchShareLinks(sessionId),
-      fetchUsers()
+      fetchUsers(),
+      fetchArtifacts(sessionId)
     ]);
     return {
       shares: sharesRes.ok ? sharesRes.data.shares ?? [] : [],
       links: linksRes.ok ? linksRes.data.links ?? [] : [],
-      users: usersRes.ok ? (usersRes.data.users ?? []).map((user) => user.user_id) : []
+      users: usersRes.ok ? (usersRes.data.users ?? []).map((user) => user.user_id) : [],
+      artifacts: artifactsRes.ok ? artifactsRes.data.artifacts ?? [] : []
     };
   }, [sessionId]);
 
@@ -80,6 +88,7 @@ export function ShareDialog({
       setShares(next.shares);
       setLinks(next.links);
       setUsers(next.users);
+      setArtifacts(next.artifacts);
       setLoading(false);
     });
     return () => {
@@ -92,6 +101,13 @@ export function ShareDialog({
     setShares(next.shares);
     setLinks(next.links);
     setUsers(next.users);
+    setArtifacts(next.artifacts);
+  };
+
+  const toggleFile = (path: string) => {
+    setSelectedFiles((current) =>
+      current.includes(path) ? current.filter((entry) => entry !== path) : [...current, path]
+    );
   };
 
   const addShare = async () => {
@@ -121,7 +137,7 @@ export function ShareDialog({
 
   const mintLink = async () => {
     setBusy(true);
-    const res = await createShareLink(sessionId, linkVisibility);
+    const res = await createShareLink(sessionId, linkVisibility, undefined, selectedFiles);
     setBusy(false);
     if (!res.ok) {
       toast.error(res.error);
@@ -129,6 +145,7 @@ export function ShareDialog({
     }
     setFreshToken(res.data.path);
     setCopied(false);
+    setSelectedFiles([]);
     await refresh();
   };
 
@@ -290,6 +307,34 @@ export function ShareDialog({
                 <p className="mt-1.5 text-[11px] text-[var(--color-warning,var(--color-foreground-muted))]">
                   Full includes shell commands, file contents and queries from the execution trace.
                 </p>
+              ) : null}
+
+              {artifacts.length > 0 ? (
+                <div className="mt-3">
+                  <p className="text-[11px] font-medium">Files to include</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--color-foreground-muted)]">
+                    Only what you check is reachable through the link, and a copy is frozen now — later
+                    changes to these files will not appear. Nothing checked means the conversation only.
+                  </p>
+                  <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto rounded-[var(--radius)] border border-[var(--color-border)] p-1">
+                    {artifacts.map((artifact) => (
+                      <li key={artifact.path}>
+                        <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 hover:bg-[var(--color-surface-muted)]">
+                          <input
+                            type="checkbox"
+                            checked={selectedFiles.includes(artifact.path)}
+                            onChange={() => toggleFile(artifact.path)}
+                            className="h-3.5 w-3.5"
+                          />
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{artifact.path}</span>
+                          <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
+                            {formatBytes(artifact.size)}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
 
               {freshToken ? (

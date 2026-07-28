@@ -24,6 +24,13 @@ the orchestrator:
 - `app/api/[...path]/route.ts` — forwards `/api/*` to orchestrator `/api/*` (all
   methods), special-casing `/api/healthz` → orchestrator `/healthz`.
 - `app/artifacts/[sessionId]/[...path]/route.ts` — streams artifact downloads.
+- `app/shared/[token]/files/[...path]/route.ts` — streams public-link snapshot
+  files. A separate handler because the other two cover `/api/*` and `/artifacts/*`
+  only; GET/HEAD are the only verbs exported, matching the read-only surface
+  upstream. `next.config.mjs` excepts `/shared/` from the app-wide
+  `X-Frame-Options: DENY` for the same reason `/artifacts/` is excepted: the
+  orchestrator sends `SAMEORIGIN` for HTML/PDF, and two conflicting values make the
+  browser block the frame.
 
 The proxy drops hop-by-hop headers plus `origin`/`referer` (decoupling CORS) but
 forwards cookies, injects `x-forwarded-*`, streams the upstream body unbuffered (so
@@ -96,6 +103,10 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   (`message-bubble.tsx`, `shell-entry.tsx`), which take their data as props. There
   is no live stream for anonymous viewers, so the page carries an explicit Refresh
   control rather than appearing stuck.
+- `components/shared/shared-file-panel.tsx` — the link's whitelisted files, with
+  inline preview for HTML/PDF (same-origin iframe) and images, and download for
+  everything else. The list is the whitelist, so nothing the owner did not select
+  is reachable.
 - `workbench/conversation.tsx` — routes to the agent chat or `shell-conversation.tsx`;
   renders committed messages + streaming bubbles + a runtime footer, with the
   notification bell in the header.

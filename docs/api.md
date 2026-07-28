@@ -48,6 +48,7 @@ The orchestrator serves three trees:
 | GET | `/api/shared/{token}` | **none** | trimmed session behind a public link |
 | GET | `/api/shared/{token}/messages` | **none** | the link's frozen conversation |
 | GET | `/api/shared/{token}/artifacts` | **none** | the link's file whitelist |
+| GET | `/shared/{token}/files/{path...}` | **none** | frozen bytes of one whitelisted file |
 | GET | `/api/quota` | required | session & `/30` pool ceilings |
 | GET | `/api/deployment-capabilities` | required | creatable product modes |
 | GET | `/api/search` | required | full-text search over the caller's sessions & messages |
@@ -196,8 +197,29 @@ created_at, stop_reason?, trace?}]}` — windowed by `max_message_id` and trimme
 the link's visibility. No `session_id`, no `feedback`.
 
 **`GET /api/shared/{token}/artifacts`** → `{"artifacts":[{path,size}]}` — the
-link's **whitelist**, never the live workspace listing. Empty until the snapshot
-store lands.
+link's **whitelist**, never the live workspace listing. The blob digest is an
+internal storage key and is not published.
+
+**`GET /shared/{token}/files/{path...}`** (no auth) → the file's bytes. Note this
+is a **top-level** path, not under `/api/`, so an HTML/PDF preview iframe has a
+URL that is obviously not an API call and the frontend proxy for it is its own
+route handler.
+
+The path is resolved against `share_link_files` — an exact whitelist lookup, not a
+filesystem join — so a path that was not shared simply does not exist, and there is
+no traversal surface. Bytes come from the content-addressed snapshot store, so an
+agent's later write cannot change what a published URL returns and the link keeps
+working after the session is destroyed. HTML and PDF carry a framable-same-origin
+CSP (`connect-src 'none'`, `form-action 'none'`) so the shared page can preview
+them; everything else is served inert. A whitelist row whose bytes are missing is
+a `404`, not a `500`.
+
+Include files at creation with `"files":["report.html", ...]` (workspace-relative
+paths). They are copied into the snapshot store during the request, so both a file
+count cap (`HARNESS_MAX_SHARE_LINK_FILES`, default 25) and a total byte cap
+(`HARNESS_MAX_SHARE_LINK_BYTES`, default 8 MiB) apply — `400` for too many files,
+`413` for too many bytes, `404` for a path that is not in the workspace. A rejected
+create leaves no link row. Omit `files` for a conversation-only link.
 
 Unknown, expired, revoked, and rotated-away tokens are all `404`. The subtree is
 GET-only (`405` otherwise) and sends `Referrer-Policy: no-referrer`, because the

@@ -101,6 +101,25 @@ var rules = []rule{
 		why:       "the artifacts watcher is a leaf consumer; the server depends on it, not the reverse.",
 	},
 	{
+		pkg: "internal/shareblob",
+		forbidden: []string{
+			"internal/store",
+			"internal/memorystore",
+			"internal/server",
+			"internal/config",
+			"internal/artifacts",
+			"internal/runtime",
+			"internal/sessionstate",
+			"internal/agents",
+		},
+		why: "shareblob is the content-addressed byte store for public share links and must stay a " +
+			"leaf: write bytes / read by digest / unlink, with no knowledge of sessions, links, or " +
+			"who references what. Reference counting belongs with the table holding the references " +
+			"(share_link_files), because only there can it be decided in the same transaction as " +
+			"the delete -- a blob store that knew about links would invite deciding it somewhere " +
+			"a concurrent link creation could race it.",
+	},
+	{
 		pkg:       "internal/dbsplit",
 		forbidden: []string{"internal/server", "internal/store", "internal/memorystore"},
 		why: "dbsplit performs a one-window migration over raw SQLite and must not couple to the " +

@@ -383,8 +383,13 @@ func (s *Server) sweepExpiredShareLinks(ctx context.Context, now time.Time) {
 	if len(orphaned) == 0 {
 		return
 	}
-	// Reachable only once links can reference files (phase 3). Logged rather than
-	// silently dropped so an unreclaimed blob is visible instead of invisible.
-	s.log.Warn("share link sweep reported unreferenced blobs with no reclaimer configured",
-		"blob_count", len(orphaned))
+	if s.shareBlobs == nil {
+		// Rows referenced blobs but no store is configured (file sharing was turned
+		// off after links were made). Say so rather than dropping it silently: the
+		// bytes are on disk and nothing else will report them.
+		s.log.Warn("share link sweep reported unreferenced blobs with no blob store configured",
+			"blob_count", len(orphaned))
+		return
+	}
+	s.reclaimShareBlobs(orphaned)
 }

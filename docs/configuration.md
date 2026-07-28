@@ -126,6 +126,9 @@ Loaded via `HARNESS_TITLE_LLM_PATH` (default `<repo>/config/title-llm.yaml`).
 | `HARNESS_TITLE_LLM_PATH` | `<repo>/config/title-llm.yaml` | session-title LLM secret file (optional) |
 | `HARNESS_AUTH_SESSION_TTL` | 24h | login session TTL |
 | `HARNESS_MAX_SHARE_LINK_TTL` | 720h (30d) | ceiling on a public share link's lifetime; must be positive, so a link can never be permanent |
+| `HARNESS_SHARE_BLOB_ROOT` | `share-blobs` beside `HARNESS_DB_PATH` | content-addressed snapshots served by public links |
+| `HARNESS_MAX_SHARE_LINK_BYTES` | `8 MiB` | total bytes one public link may snapshot (all files combined) |
+| `HARNESS_MAX_SHARE_LINK_FILES` | 25 | how many files one public link may snapshot |
 | `HARNESS_SESSION_RETENTION` | config `0s` | session expiry (0 = never); invalid values fail startup |
 | `HARNESS_SESSION_TTL` | — | **obsolete; fatal if set** |
 | `HARNESS_DEFAULT_AGENT` | config `pi` | product Agent driver |

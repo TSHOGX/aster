@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
 )
 
@@ -23,15 +24,22 @@ func (s *Server) createShareLink(w http.ResponseWriter, r *http.Request, session
 		return
 	}
 	var req struct {
-		Visibility string `json:"visibility"`
-		TTLSeconds int64  `json:"ttl_seconds"`
+		Visibility string   `json:"visibility"`
+		TTLSeconds int64    `json:"ttl_seconds"`
+		Files      []string `json:"files"`
 	}
 	if !decodeJSONBody(w, r, maxControlBodyBytes, &req) {
 		return
 	}
 	now := time.Now().UTC()
-	validated, err := validateCreateShareLink(
-		req.Visibility, time.Duration(req.TTLSeconds)*time.Second, session, s.cfg.MaxShareLinkTTL, now)
+	validated, err := validateCreateShareLink(createShareLinkInput{
+		Visibility: req.Visibility,
+		TTL:        time.Duration(req.TTLSeconds) * time.Second,
+		Files:      req.Files,
+	}, session, shareLinkLimits{
+		MaxTTL:   s.cfg.MaxShareLinkTTL,
+		MaxFiles: s.cfg.MaxShareLinkFiles,
+	}, now)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -60,19 +68,76 @@ func (s *Server) createShareLink(w http.ResponseWriter, r *http.Request, session
 		CreatedAt:    now,
 		ExpiresAt:    validated.ExpiresAt,
 	}
-	// Phase 2 mints text-only links: the file whitelist stays empty until the
-	// content-addressed snapshot store exists. Serving files before then would
-	// mean reading the live workspace on an anonymous request, which is exactly
-	// what the snapshot design forbids.
-	if err := s.store.CreateShareLink(r.Context(), link, nil); err != nil {
+	// Snapshot the whitelisted files BEFORE inserting the link, so a link row
+	// never exists pointing at bytes that were not stored. The reverse order would
+	// leave a link serving 404s for its own files.
+	files, status, message := s.snapshotShareLinkFiles(r, link.ID, sessionID, validated.Files)
+	if status != 0 {
+		writeErrorClass(w, status, errorClassForStatus(status), message)
+		return
+	}
+	if err := s.store.CreateShareLink(r.Context(), link, files); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"link":  publicShareLink(link, 0, now),
+		"link":  publicShareLink(link, len(files), now),
 		"token": token,
 		"path":  "/s/" + token,
 	})
+}
+
+// snapshotShareLinkFiles copies each whitelisted workspace file into the
+// content-addressed blob store and returns the rows to persist.
+//
+// Snapshotting, rather than reading the live workspace at serve time, buys three
+// things: the bytes behind a published URL cannot change under an agent's later
+// write, the link keeps working after the session is destroyed and its workspace
+// reclaimed, and the anonymous request path never touches a live workspace at all
+// (so the VerifySessionWorkspaceVolume evidence chain is not in the loop).
+//
+// The copy runs inside this request, which is why the caps are enforced here: a
+// whole-session "select all" would otherwise be an unbounded synchronous copy.
+func (s *Server) snapshotShareLinkFiles(r *http.Request, linkID, sessionID string, paths []string) ([]store.ShareLinkFile, int, string) {
+	if len(paths) == 0 {
+		return nil, 0, ""
+	}
+	if s.shareBlobs == nil {
+		return nil, http.StatusServiceUnavailable, "file sharing is not configured on this deployment"
+	}
+	remaining := s.cfg.MaxShareLinkBytes
+	if remaining <= 0 {
+		return nil, http.StatusServiceUnavailable, "share link byte cap is not configured"
+	}
+	files := make([]store.ShareLinkFile, 0, len(paths))
+	for _, path := range paths {
+		// accessOwner: only the owner reaches this handler, and the snapshot reads
+		// the live workspace exactly as an owner download would.
+		file, _, status, message := s.openArtifactFile(r.Context(), sessionID, path, accessOwner)
+		if file == nil {
+			return nil, status, message
+		}
+		sum, size, err := s.shareBlobs.Put(file, remaining)
+		_ = file.Close()
+		if errors.Is(err, shareblob.ErrTooLarge) {
+			return nil, http.StatusRequestEntityTooLarge, "selected files exceed the share link size limit"
+		}
+		if err != nil {
+			return nil, http.StatusInternalServerError, err.Error()
+		}
+		remaining -= size
+		cleanPath, status, message := validateArtifactRequestPath(sessionID, path)
+		if status != 0 {
+			return nil, status, message
+		}
+		files = append(files, store.ShareLinkFile{
+			LinkID:     linkID,
+			Path:       cleanPath,
+			BlobSHA256: sum,
+			Size:       size,
+		})
+	}
+	return files, 0, ""
 }
 
 // listShareLinks handles GET /api/sessions/{id}/share-links.

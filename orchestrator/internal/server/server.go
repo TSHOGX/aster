@@ -35,6 +35,7 @@ import (
 	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
+	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/titler"
 )
@@ -75,6 +76,11 @@ type Server struct {
 	creds        *authRegistry
 	loginLimiter *auth.RateLimiter
 	ipLimiter    *auth.IPRateLimiter
+
+	// shareBlobs holds the frozen bytes public links serve. Nil disables file
+	// sharing: links still work for conversation text, and the whitelist endpoints
+	// report an empty set rather than falling back to the live workspace.
+	shareBlobs *shareblob.Store
 
 	sessionOwnerMu    sync.Mutex
 	sessionOwnerCache map[string]sessionOwnerEntry
@@ -178,6 +184,13 @@ func New(
 	}
 }
 
+// SetShareBlobStore installs the snapshot store for public link files. It is
+// injected rather than opened in New so the leaf package stays independent of
+// config and so a deployment can leave it unset (text-only links).
+func (s *Server) SetShareBlobStore(store *shareblob.Store) {
+	s.shareBlobs = store
+}
+
 func (s *Server) SetOwnerUUID(ownerUUID string) {
 	s.ownerUUID = strings.TrimSpace(ownerUUID)
 }
@@ -199,6 +212,10 @@ func (s *Server) Routes() http.Handler {
 	// ever swallowed it the handlers would run with a synthesized identity.
 	// TestSharedSubtreeBypassesAuthWhileAPIRequiresIt pins both directions.
 	mux.Handle("/api/shared/", http.HandlerFunc(s.sharedAPI))
+	// Snapshot file bytes live on their own top-level path rather than under
+	// /api/, so the frontend proxy for them is a separate route handler and an
+	// HTML/PDF preview iframe has a URL that is clearly not an API call.
+	mux.Handle("/shared/", http.HandlerFunc(s.sharedFile))
 	mux.Handle("/api/", s.requireAuth(http.HandlerFunc(s.api)))
 	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.artifactFile)))
 	return s.rateLimit(mux)
