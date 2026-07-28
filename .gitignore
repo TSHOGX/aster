@@ -13,6 +13,12 @@ sandbox-image/files/usr/local/share/harness-skills/
 sandbox-image/files/usr/local/share/agents-kb-seed/skills/doris-query/SKILL.md
 # Same for obs-parquet-duckdb: embeds the live OBS access/secret key.
 sandbox-image/files/usr/local/share/agents-kb-seed/skills/obs-parquet-duckdb/SKILL.md
+# KB data/ holds each deployment's own reference corpora — private domain
+# knowledge, not part of the generic runtime. Nothing under it is committed (not
+# even file listings or manifests: those leak source filenames). Provision the
+# datasets on the host KB snapshot out-of-band, plus their skills/*/SKILL.md and
+# facts/*.md entry points. See data/README.md for the conventions.
+sandbox-image/files/usr/local/share/agents-kb-seed/data/*/
 
 # 每台构建机自己的镜像源 / DNS 配置（已被 **/*.env 覆盖，此处仅作说明）
 # sandbox-image/build.env — 见 sandbox-image/build.env.example
