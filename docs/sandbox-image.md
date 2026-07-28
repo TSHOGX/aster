@@ -63,12 +63,36 @@ use — e.g. a fake-ip proxy that answers every query with an unroutable
 `/etc/hosts`); it no-ops on a host with working DNS. Nothing it writes reaches the
 image — sanitize resets `/etc/hosts`.
 
-Full-build steps: `debootstrap` → apt (`ca-certificates curl fonts-wqy-microhei
-fonts-wqy-zenhei git nodejs npm python3 python3-pip python3-venv xz-utils`) → pip
-(`matplotlib pandas pymysql`) → install a modern Node for Pi if selected → install
-the selected driver CLIs (`pi` via npm pinned to 0.77.0, `sh` uses the bundled
-shim) → `rsync` the overlay → generate `/etc/harness-image/agents.json`
-→ sanitize.
+Full-build steps: `debootstrap` → apt → pip → bake the DuckDB `httpfs` extension →
+install a modern Node for Pi if selected → install the selected driver CLIs (`pi`
+via npm pinned to 0.77.0, `sh` uses the bundled shim) → `rsync` the overlay →
+generate `/etc/harness-image/agents.json` → sanitize.
+
+The apt and pip sets live in `APT_PACKAGES` / `PIP_PACKAGES` at the top of
+`build-rootfs.sh`; read them there rather than from a copy here. Two notes on
+what's in them:
+
+- **`mysql-client-core-8.0`** gives the `mysql` CLI that the **doris-query** skill
+  documents as its quick-check path. Upstream MySQL's client rather than
+  `mariadb-client`, deliberately: Doris FE reports itself as `5.7.99` and offers
+  only `mysql_native_password`, which is the path mysql-client negotiates
+  natively, whereas mariadb-client diverges on auth-plugin preference and
+  `--ssl-mode` defaults. Worth keeping to one implementation — a credential
+  gateway that terminates the handshake has to match a known client.
+- **Nothing is version-pinned**; every rebuild takes current releases. That is a
+  deliberate call — the two packages that talk to something outside the image
+  (DuckDB to OBS, pymysql to Doris FE) are both self-aligning rather than
+  pin-dependent: the `httpfs` directory name is derived from the engine version at
+  build time (see below), and pymysql negotiates the FE handshake by protocol, not
+  by version. So a rebuild can move minor versions; treat that as expected and
+  re-run the compatibility checks after one, rather than freezing versions.
+
+Reading either version back has a trap in both directions, so verify per package:
+`pymysql.__version__` reports `2.2.8`, a deliberate `mysqlclient` impersonation
+for Django's version check — the real value is `pymysql.VERSION_STRING`, which
+matches dist-info. And `duckdb.__version__` is the Python wrapper's version read
+from dist-info, not the engine's — that one is `duckdb.__duckdb_version__`. There
+is no single symbol to trust across both.
 
 The two `fonts-wqy-*` packages (WenQuanYi Zen Hei / Micro Hei) give matplotlib and
 Pillow CJK glyph coverage — without them, Chinese text in generated charts/images
@@ -183,8 +207,18 @@ the baked overlay at `sandbox-image/files/usr/local/share/agents-kb-seed/`:
 
 `obs-parquet-duckdb` depends on a baked DuckDB extension: `build-rootfs.sh`'s
 `install_duckdb_extensions` installs `httpfs` into
-`/usr/local/share/duckdb-extensions/v<duckdb-version>/<platform>/`, so a session
+`/usr/local/share/duckdb-extensions/v<engine-version>/<platform>/`, so a session
 does `LOAD httpfs` against that `extension_directory` with **no network fetch**.
+
+That path segment is the **bundled engine** version (`duckdb.__duckdb_version__`),
+and DuckDB resolves extensions from its own version at load time. So the directory
+name and the engine must agree or `LOAD httpfs` fails with `Extension not found` —
+loudly, never by silently falling back to a network fetch. They stay matched
+without a pin because `install_duckdb_extensions` reads
+`duckdb.__duckdb_version__` from the just-installed wheel to name the directory —
+so whatever version a rebuild lands on, the extension is fetched and stored for
+that engine. A working `LOAD httpfs` inside a sandbox is itself evidence the two
+agree, which is the check worth running after a rebuild.
 
 > **Deprecated:** `sandbox-image/files/usr/local/share/harness-skills/` (still
 > git-ignored) is superseded by the `/agents` KB seed above and is no longer

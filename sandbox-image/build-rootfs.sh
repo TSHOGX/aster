@@ -59,6 +59,14 @@ APT_PACKAGES=(
   fonts-wqy-microhei
   fonts-wqy-zenhei
   git
+  # Doris speaks the MySQL wire protocol on its FE, and the doris-query skill
+  # documents the `mysql` CLI as the quick-check path. Upstream MySQL's client,
+  # not mariadb-client: Doris FE reports itself as 5.7.99 and offers only
+  # mysql_native_password, which is the negotiation path mysql-client takes
+  # natively (mariadb-client diverges on auth-plugin preference and TLS
+  # defaults). Keep this pinned to one implementation — a future credential
+  # gateway terminates the handshake itself and has to match a known client.
+  mysql-client-core-8.0
   nodejs
   npm
   python3
@@ -72,6 +80,24 @@ APT_PACKAGES=(
 # would pull it in transitively (matplotlib/pandas/scipy arrive via
 # seaborn/statsmodels, lxml via python-docx) — otherwise an upstream dependency
 # change silently removes it from the image.
+#
+# Nothing here is version-pinned: a rebuild takes whatever is current, so minor
+# versions do move between images (numpy and matplotlib have crossed minor
+# versions this way, which can affect user analysis code). The two packages that
+# talk to something outside the image are self-aligning rather than pin-dependent:
+#   duckdb  — install_duckdb_extensions names the extension directory from the
+#             engine version it finds after install, so httpfs always matches.
+#   pymysql — negotiates the Doris FE handshake by protocol, not by version.
+# After a rebuild, verify rather than freeze: LOAD httpfs offline, and a Doris
+# connect.
+#
+# Version-checking hazard, because both packages misreport in different
+# directions: pymysql's `__version__` is "2.2.8", which is a deliberate
+# mysqlclient impersonation for Django's version check (PyMySQL has no 2.x
+# series) — the real version is `pymysql.VERSION_STRING`. And duckdb's
+# `__version__` is read from dist-info and is the Python wrapper's version, not
+# the bundled engine's — that one is `duckdb.__duckdb_version__`. Verify per
+# package; there is no single symbol to trust.
 PIP_PACKAGES=(
   # core numerics / dataframes
   matplotlib
@@ -176,7 +202,11 @@ install_duckdb_extensions() {
   log "installing DuckDB extensions (httpfs)"
   chroot "${ROOTFS_DIR}" /bin/sh -lc '
 set -eu
-version="$(python3 -c "import duckdb; print(duckdb.__version__)")"
+# __duckdb_version__, not __version__: the extension directory is named after the
+# bundled engine version, while __version__ is the Python wrapper version read
+# from dist-info. They match today, so the old check passed, but they are
+# independent values and only the engine one addresses this path.
+version="$(python3 -c "import duckdb; print(duckdb.__duckdb_version__)")"
 dest="/usr/local/share/duckdb-extensions"
 python3 - "$dest" <<PY
 import duckdb, sys
@@ -187,6 +217,70 @@ c.execute("LOAD httpfs;")
 PY
 chmod -R a+rX "${dest}"
 test -s "${dest}/v${version}/"*"/httpfs.duckdb_extension"
+'
+}
+
+# matplotlib ships a matplotlibrc whose font.family is plain `sans-serif`, which
+# resolves to DejaVu Sans and renders every Chinese glyph as a tofu box (□□□).
+# Users here title almost every chart in Chinese, so the CJK families have to be
+# the image default rather than something each session remembers to set.
+#
+# Both keys are patched on purpose. matplotlib's per-glyph fallback only walks the
+# `font.family` LIST — it does not consult the `font.sans-serif` sublist for
+# fallback — so a CJK family must appear in font.family itself to survive code
+# that does `rcParams["font.family"] = "monospace"`. font.sans-serif is patched
+# too so the normal sans path also has a CJK entry.
+#
+# This was previously a hand-edit inside the deployed rootfs and was silently
+# reverted by the first clean rebuild; keep it in the script so it survives.
+patch_matplotlibrc_for_cjk() {
+  log "patching matplotlibrc for CJK default fonts"
+  chroot "${ROOTFS_DIR}" /bin/sh -lc '
+set -eu
+rc="$(python3 -c "import matplotlib, pathlib; print(pathlib.Path(matplotlib.matplotlib_fname()))")"
+test -f "$rc"
+python3 - "$rc" <<PY
+import re, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+# Uncomment-and-extend, matching the commented default or an already-set key.
+text = re.sub(r"^#?font\.family:.*$",
+              "font.family:  sans-serif, WenQuanYi Zen Hei",
+              text, count=1, flags=re.M)
+text = re.sub(r"^#?font\.sans-serif:(.*)$",
+              lambda m: "font.sans-serif:" + m.group(1).rstrip()
+                        + ", WenQuanYi Zen Hei, WenQuanYi Micro Hei",
+              text, count=1, flags=re.M)
+p.write_text(text)
+PY
+grep -q "^font.family:.*WenQuanYi" "$rc"
+grep -q "^font.sans-serif:.*WenQuanYi" "$rc"
+# Prove Chinese actually renders with these defaults. Do NOT check this with
+# findfont(): given a family LIST it returns the first match (DejaVu Sans for
+# `sans-serif`), because CJK fallback is per-glyph at draw time, not a lookup
+# result. The real signal is whether drawing emits "Glyph ... missing from font".
+MPLCONFIGDIR=/tmp/mplbuild python3 - <<PY
+import warnings
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.font_manager import findfont, FontProperties
+
+# The faces must at least be registered.
+face = findfont(FontProperties(family="WenQuanYi Zen Hei"))
+assert "wqy" in face.lower(), f"WenQuanYi not registered: {face}"
+
+fig, ax = plt.subplots()
+ax.set_title("电池健康度分布")
+ax.set_xlabel("充电次数")
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    fig.canvas.draw()
+missing = [str(w.message) for w in caught if "missing from font" in str(w.message)]
+assert not missing, f"CJK glyphs did not fall back: {missing[:3]}"
+print("matplotlibrc CJK default OK; WenQuanYi at", face)
+PY
+rm -rf /tmp/mplbuild
 '
 }
 
@@ -474,6 +568,7 @@ fi
 chroot "${ROOTFS_DIR}" /bin/sh -lc "python3 -m pip install --break-system-packages --no-cache-dir ${pip_args} ${PIP_PACKAGES[*]}"
 
 install_duckdb_extensions
+patch_matplotlibrc_for_cjk
 
 install_modern_node_for_pi
 install_agent_drivers
