@@ -42,6 +42,12 @@ import (
 // and take the B2 reduce path.
 const clusterCharBudget = 12000
 
+// consolidateAgentTimeout bounds one B0/B1/B2 call. Looser than
+// defaultAgentTimeout because these are no-tool calls whose payload is a whole
+// bucket of candidate statements: the largest scope in a real run was still
+// generating past 6 minutes, so the ceiling only has to catch a true hang.
+const consolidateAgentTimeout = 12 * time.Minute
+
 // ConsolidateNode drives Node B.
 type ConsolidateNode struct {
 	agent *AgentRunner
@@ -442,8 +448,15 @@ func (n *ConsolidateNode) dedupAgainstKB(ctx context.Context, newID int64, scope
 // ---- agent call wrapper (audit) ---------------------------------------------
 
 func (n *ConsolidateNode) callAgent(ctx context.Context, ref, sys, data, verdict string) (string, error) {
+	// Bound the call like verify/curate/critic do — without a ceiling a hung B1/B2
+	// generation waits on the sweep's context, i.e. effectively forever. The cap is
+	// deliberately looser than defaultAgentTimeout: these are no-tool calls with a
+	// large payload, and an observed run had legitimate doris blocks still
+	// generating at ~6.5min, so a 5min cap would guillotine real work.
+	callCtx, cancel := context.WithTimeout(ctx, consolidateAgentTimeout)
+	defer cancel()
 	start := time.Now()
-	payload, err := n.agent.Run(ctx, sys, data, false)
+	payload, err := n.agent.Run(callCtx, sys, data, false)
 	ms := time.Since(start).Milliseconds()
 	v := verdict
 	if err != nil {
