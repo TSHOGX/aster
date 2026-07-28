@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useSyncExternalStore } from "react";
-import { Bot } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Bot, RefreshCw } from "lucide-react";
 
 import { useActivity, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
@@ -26,7 +26,8 @@ function ChatConversation() {
   const session = useSelectedSession();
   const convo = useConversation(session?.id ?? null);
   const activity = useActivity(session?.id ?? null);
-  const { sendMessage } = useHarness();
+  const { sendMessage, refresh } = useHarness();
+  const [refreshing, setRefreshing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
 
@@ -119,6 +120,25 @@ function ChatConversation() {
           </span>
         </div>
         <div className="flex items-center gap-3">
+          {/* A shared session gets no live events: eventVisibleTo filters them to
+              the owner, so without an explicit control the view would silently
+              stop updating while the owner keeps working. */}
+          {readOnly ? (
+            <button
+              type="button"
+              onClick={async () => {
+                setRefreshing(true);
+                await refresh();
+                setRefreshing(false);
+              }}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-[11px] hover:bg-[var(--color-surface-muted)] disabled:opacity-60"
+              title="Shared sessions do not update live"
+            >
+              <RefreshCw className={refreshing ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
+              Refresh
+            </button>
+          ) : null}
           <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
         </div>
       </header>

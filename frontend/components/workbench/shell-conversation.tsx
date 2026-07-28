@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, Square, TerminalSquare } from "lucide-react";
+import { Loader2, RefreshCw, Send, Square, TerminalSquare } from "lucide-react";
 
 import { useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { ShellEntry } from "./shell-entry";
@@ -99,7 +99,8 @@ function ShellComposer({
 export function ShellConversation() {
   const session = useSelectedSession();
   const convo = useConversation(session?.id ?? null);
-  const { sendMessage, interruptSession } = useHarness();
+  const { sendMessage, interruptSession, refresh } = useHarness();
+  const [refreshing, setRefreshing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -135,6 +136,24 @@ export function ShellConversation() {
           <span className="text-[11px] text-[var(--color-foreground-muted)]">· {sessionModeLabel(session.mode, session.mode_label)}</span>
         </div>
         <div className="flex items-center gap-3">
+          {/* Same reason as the chat view: a shared session receives no live
+              events, so without this the transcript would silently go stale. */}
+          {readOnly ? (
+            <button
+              type="button"
+              onClick={async () => {
+                setRefreshing(true);
+                await refresh();
+                setRefreshing(false);
+              }}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-[11px] hover:bg-[var(--color-surface-muted)] disabled:opacity-60"
+              title="Shared sessions do not update live"
+            >
+              <RefreshCw className={refreshing ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
+              Refresh
+            </button>
+          ) : null}
           <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
         </div>
       </header>

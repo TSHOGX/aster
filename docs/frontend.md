@@ -94,7 +94,10 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   a separate **Shared with me** group rather than mixed into History, which would
   make the list look like the user owns work they cannot touch. The same
   `access === "reader"` check disables the composer (chat and shell), the artifact
-  upload/drag-drop entry points, and the inline file editor.
+  upload/drag-drop entry points, and the inline file editor. A reader's conversation
+  header gains a **Refresh** button: `eventVisibleTo` filters session events to the
+  owner, so a shared view receives nothing live and would otherwise go stale
+  silently.
 - `workbench/share-dialog.tsx` — owner-only sharing: read grants to named users
   (`/api/users` feeds the picker) and public links. A freshly minted or rotated
   token is displayed once, held only in component state, and copied to the
