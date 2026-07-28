@@ -7,9 +7,19 @@ confidence: 1.0
 
 ## When To Use
 
-Any question that needs data from the internal Apache Doris warehouse (the
-`vhr_data` schema): vehicle charging analysis, raw signal inspection, or any
-read-only analytical query.
+**This is the default data source — use it for every data question** unless the
+user explicitly asked for OBS / object storage / Parquet / raw signal files. Daily
+querying, statistics, reports, trend analysis and charts all belong here, not in
+`skills/obs-parquet-duckdb`.
+
+Three databases are available under the same read-only credential:
+
+- **`vhr_data`** — vehicle charging analysis, raw signal inspection, general
+  analytical queries (largest schema, primary target).
+- **`vehicle_signal`** — signal dimension/attribute tables and ODS layer
+  (`dim_vehicle_signal_f2`, `dim_vhcl_attr`, `ods_vhcl_sgnl_f2`, etc.).
+- **`watt`** — battery algorithm outputs: SOH signals, DTW charge/discharge
+  segments, gongkuang工况 results, and demo/probe material.
 
 ## Context
 
@@ -24,11 +34,12 @@ Doris FE speaks the MySQL wire protocol:
 - Port: `<DORIS_FE_PORT>`
 - User: `<DORIS_RO_USER>`
 - Password: `<DORIS_RO_PASSWORD>`
-- Database: `vhr_data`
+- Databases: `vhr_data` (default), `vehicle_signal`, `watt`
 - Intent: read-only
 
 ```bash
 MYSQL_PWD='<DORIS_RO_PASSWORD>' mysql --batch --raw -h <DORIS_FE_HOST> -P <DORIS_FE_PORT> -u <DORIS_RO_USER> -D vhr_data -e "SHOW FULL TABLES;"
+# vehicle_signal / watt — same credential, different -D
 ```
 
 Use `pymysql` for Python analysis. Avoid `mysql-connector-python >= 8.0.16`
@@ -36,11 +47,18 @@ Use `pymysql` for Python analysis. Avoid `mysql-connector-python >= 8.0.16`
 
 ```python
 import pymysql
-conn = pymysql.connect(
-    host="<DORIS_FE_HOST>", port=<DORIS_FE_PORT>, user="<DORIS_RO_USER>", password="<DORIS_RO_PASSWORD>",
-    database="vhr_data", cursorclass=pymysql.cursors.DictCursor,
-    connect_timeout=10, read_timeout=120,
-)
+
+def doris(db="vhr_data"):
+    """Connect to one of the three Doris databases: vhr_data, vehicle_signal, watt."""
+    return pymysql.connect(
+        host="<DORIS_FE_HOST>", port=<DORIS_FE_PORT>, user="<DORIS_RO_USER>", password="<DORIS_RO_PASSWORD>",
+        database=db, cursorclass=pymysql.cursors.DictCursor,
+        connect_timeout=10, read_timeout=120,
+    )
+
+conn = doris()           # vhr_data (default)
+conn = doris("vehicle_signal")
+conn = doris("watt")
 ```
 
 ## Procedure
@@ -48,27 +66,38 @@ conn = pymysql.connect(
 The schema changes over time — never rely on a remembered table/column list.
 Discover it live every session:
 
-1. List what exists:
+1. Choose the right database for the question:
+   - `vhr_data` — general vehicle data, charging analysis, raw signals.
+   - `vehicle_signal` — signal dimension/attribute tables and ODS layer.
+   - `watt` — battery algorithm outputs (SOH, DTW segments, gongkuang工况).
+2. List what exists in the chosen database:
    ```sql
    SHOW FULL TABLES;
    SELECT table_name, COUNT(*) AS column_count
    FROM information_schema.columns
-   WHERE table_schema = 'vhr_data'
+   WHERE table_schema = '<database>'
    GROUP BY table_name ORDER BY table_name;
    ```
-2. Inspect a candidate table's columns before using it:
+3. Inspect a candidate table's columns before using it:
    ```sql
    SELECT column_name, column_type, is_nullable, ordinal_position
    FROM information_schema.columns
-   WHERE table_schema = 'vhr_data' AND table_name = '<table_name>'
+   WHERE table_schema = '<database>' AND table_name = '<table_name>'
    ORDER BY ordinal_position;
    ```
-3. Judge from names/types/a small sample which table fits. Find a time/partition
+4. Judge from names/types/a small sample which table fits. Find a time/partition
    column (`*_time`, `*_date`, `ts`) and a key column (`vehicle_id`, `vid`) before
    querying — tables are large and unfiltered scans are expensive or will fail.
-4. Only `SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN`. No DDL/DML/admin SQL.
-5. For samples, select explicit columns + `LIMIT`; check `COUNT(*)` before any
-   `SELECT *`.
+5. Only `SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN`. No DDL/DML/admin SQL.
+6. For samples, select explicit columns + `LIMIT`. **Never `SELECT *` on a wide or
+   raw signal table** — check `COUNT(*)` and the column count first, and only use
+   `SELECT *` once you know the table is small.
+
+### `ods_vhcl_sgnl_f2_gongkuang`
+
+The raw signal wide table, and the one most likely to blow up a session. Always:
+explicit column list (never `*`), a narrow `ts` range, and a `vid` filter whenever
+the question allows one.
 
 ## Known Pitfalls
 
@@ -78,8 +107,10 @@ Discover it live every session:
 - Prefer smaller derived/summary tables over raw/wide ones; tell them apart via
   `information_schema` counts, not naming.
 - Avoid large in-memory results: don't `fetchall()` or
-  `pandas.read_sql(...).to_csv(...)`. Stream with `fetchmany(batch_size)`, write
-  to a temp file, atomically rename on success. Split large exports by
-  date/partition/key and report progress.
+  `pandas.read_sql(...).to_csv(...)`, or any script that collects every row before
+  writing. The sandbox has **1 GiB of RAM** — broad SQL plus full materialization
+  is what actually kills sessions. Stream with `fetchmany(batch_size)`, write
+  incrementally to a temp file, atomically rename on success. Split large exports
+  by date/partition/key and report progress.
 - On compute-group or permission errors, report the exact Doris error and do NOT
   retry with broader SQL — it is an environment permission issue, not SQL syntax.

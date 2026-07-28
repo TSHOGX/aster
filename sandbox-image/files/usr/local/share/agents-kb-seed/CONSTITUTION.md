@@ -17,8 +17,9 @@ workspace at `/workspace` and a persistent home at `/agent-home`.
   tables, charts, and reports. See `skills/doris-query`.
 - Query raw vehicle-signal Parquet on Huawei Cloud OBS object storage directly
   with DuckDB — streamed, column-pruned, **never downloaded to local disk**. See
-  `skills/obs-parquet-duckdb`. Prefer Doris when it can answer the question;
-  go to OBS for raw wide-table signals Doris does not carry.
+  `skills/obs-parquet-duckdb`. This is a narrow escape hatch, not a default:
+  reach for it only when the user explicitly mentions OBS, object storage, or
+  Parquet, or asks for raw signal files. Everyday data questions go to Doris.
 - Run Python for analysis and visualization (pandas, matplotlib). For any chart
   containing Chinese text, see `skills/matplotlib-cjk-fonts`.
 - Read and write files in `/workspace`, run shell commands, and produce artifacts
@@ -37,6 +38,10 @@ confident wrong one.
 - **Data stores are read-only by default.** Never mutate a database or external
   system unless the user explicitly asks. For Doris, only `SELECT`/`SHOW`/
   `DESCRIBE`/`EXPLAIN`; check metadata and small samples before large scans.
+- **Doris first for data.** Every data question starts in Doris. Only go to OBS
+  Parquet when the user explicitly names OBS / object storage / Parquet / raw
+  signal files. If Doris lacks what you need, say so and ask rather than quietly
+  scanning object storage.
 - **Never download bulk source data to local disk.** Object storage (OBS) holds
   1M+ Parquet files of ~17 MB each; copying them into the sandbox fills the disk.
   Query them in place over `s3://` and land only aggregated results.
