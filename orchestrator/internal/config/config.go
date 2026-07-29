@@ -207,6 +207,11 @@ type HarnessConfig struct {
 	SandboxIdentity      SandboxIdentity                  `yaml:"sandbox_identity"`
 	ProxyServiceIdentity ProxyServiceIdentity             `yaml:"proxy_service_identity"`
 	ModelProxy           ModelProxyConfig                 `yaml:"model_proxy"`
+	// DataProxies are host-side gateways for data stores (Doris, OBS), keyed by
+	// name. Absent by default: a config without this key behaves exactly as
+	// before, which is what lets the binary be deployed ahead of the yaml. See
+	// dataproxy.go.
+	DataProxies map[string]DataProxyConfig `yaml:"data_proxies"`
 }
 
 func (c HarnessConfig) ControlRoot() string {
@@ -564,6 +569,9 @@ func finalizeProjectConfig(path string, cfg projectConfig) (projectConfig, error
 	if err := validateModelProxyConfig(cfg.Harness.ModelProxy); err != nil {
 		return cfg, fmt.Errorf("load %s: %w", path, err)
 	}
+	if err := validateDataProxies(cfg.Harness.DataProxies); err != nil {
+		return cfg, fmt.Errorf("load %s: %w", path, err)
+	}
 	return cfg, nil
 }
 
@@ -647,6 +655,7 @@ func normalizeHarnessConfig(cfg HarnessConfig) HarnessConfig {
 	cfg.RuntimeProviders = normalizeRuntimeProviderConfigs(cfg.RuntimeProviders)
 	cfg.SandboxIdentity = NormalizeSandboxIdentity(cfg.SandboxIdentity)
 	cfg.ModelProxy = normalizeModelProxyConfig(cfg.ModelProxy)
+	cfg.DataProxies = normalizeDataProxies(cfg.DataProxies)
 	return cfg
 }
 
@@ -779,6 +788,9 @@ func validateHarnessConfig(cfg HarnessConfig) error {
 		return err
 	}
 	if err := validateModelProxyConfig(cfg.ModelProxy); err != nil {
+		return err
+	}
+	if err := validateDataProxies(cfg.DataProxies); err != nil {
 		return err
 	}
 	return nil
