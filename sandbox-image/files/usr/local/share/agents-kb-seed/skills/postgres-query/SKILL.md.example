@@ -22,9 +22,9 @@ PostgreSQL connection:
 
 | Item | Value |
 |------|--------|
-| Host | `10.70.83.134` |
-| Port | `5432` |
-| Database | `postgres` |
+| Host | `<PG_HOST>` |
+| Port | `<PG_PORT>` |
+| Database | `<PG_DATABASE>` |
 | User | `<PG_RO_USER>` |
 | Password | `<PG_RO_PASSWORD>` |
 | Intent | **read-only** |
@@ -36,9 +36,9 @@ installed; do not rely on it.
 import psycopg2
 
 conn = psycopg2.connect(
-    host="10.70.83.134",
-    port=5432,
-    dbname="postgres",
+    host="<PG_HOST>",
+    port=<PG_PORT>,
+    dbname="<PG_DATABASE>",
     user="<PG_RO_USER>",
     password="<PG_RO_PASSWORD>",
     connect_timeout=10,
@@ -88,9 +88,8 @@ cur.execute("""
 
 ## Known pitfalls
 
-- Port **5432** is PostgreSQL — use `psycopg2`, not `pymysql` / MySQL CLI.
-- If connect times out, check sandbox egress (host `10.70.83.134`, port `5432`)
+- Use `psycopg2` for PostgreSQL — not `pymysql` / MySQL CLI.
+- If connect times out, check sandbox egress to `<PG_HOST>:<PG_PORT>`
   and that the DB allows this sandbox/host IP.
-- Default DB name `postgres` may be empty of business tables; look at other
+- The configured database may be empty of business tables; look at other
   schemas/databases only if the user asks and credentials allow.
-```
