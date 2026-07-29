@@ -25,7 +25,7 @@ publish 环境的运维脚本。
 
 ```
 harness-ctl status                服务/入口/在途对话 一屏总览
-harness-ctl inflight              列出正在进行的 turn（含时长、僵尸 lease 标注）
+harness-ctl inflight              列出正在进行的 turn（含归属用户、会话标题、时长、僵尸 lease 标注）
 harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
 harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
 harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
@@ -48,12 +48,16 @@ harness-ctl safe-restart <svc>                  零打断重启：上维护页�
 以及当前在途对话数。重启前先跑它。
 
 #### `inflight`
-列出所有「正在进行」的 turn（`turns.status` ∈ `queued|leased|running`），
-标注每个的时长和 lease 是否过期，并区分：
+列出所有「正在进行」的 turn（`turns.status` ∈ `queued|leased|running`），每行给出
+**归属用户**（`USER`）、状态、时长、lease 是否过期、会话标题，并区分：
 
 - **真活跃**：lease 未过期的 `running`/`leased` + 所有 `queued`（用户在等回复）。
 - **僵尸 lease**：`leased`/`running` 但 `lease_expires_at` 已过期——是卡死残留，
   不代表有人在等，重启它们无害。
+
+末尾除总计外还有**按用户聚合**一行（`工号:N活/M僵`），一眼看出重启会打断谁。
+`USER` 取 `sessions.user_id`（外部系统工号，不落 `users` 表，口径同 `stats`/`users`）；
+turn 对应的 session 已被删时显示 `?`。用户维度的历史用量见 `users`。
 
 这是「防止重启打断对话」的依据。
 

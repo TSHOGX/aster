@@ -3,7 +3,7 @@
 #
 # 子命令：
 #   status                服务状态 + 是否处于维护模式 + 在途对话数（一屏总览）
-#   inflight              列出正在进行的 turn（queued/leased/running），标注时长与僵尸 lease
+#   inflight              列出正在进行的 turn（queued/leased/running），含归属用户/会话标题、时长与僵尸 lease
 #   zombies               扫描僵尸 session（running_active 但沙箱 bridge 心跳失联，前端永卡 thinking）
 #   traffic [N]           从 nginx access.log 汇总最近 N 行流量（QPS/状态码/top IP/top 路径），默认 5000
 #   stats [天数]          每日新增提问/回复/会话/活跃用户/新用户，表格 + 纵向柱状图 + sparkline
@@ -109,39 +109,66 @@ cmd_status() {
 cmd_inflight() {
   local now_epoch; now_epoch=$(date -u +%s)
   echo "${c_bold}正在进行的 turn（queued/leased/running）：${c_rst}"
+  # 归属信息来自 sessions（user_id 由外部系统托管、不落 users 表，见 operations.md 统计口径）。
+  # title 里可能有 '|'（本函数用 '|' 拆列），SQL 侧先替换掉；substr 按字符数截断（UTF-8 安全）。
   local rows
-  rows=$(dbq "SELECT session_id, status,
-                     COALESCE(started_at,''), COALESCE(lease_expires_at,''), created_at
-              FROM turns WHERE status IN ($INFLIGHT_STATES)
-              ORDER BY created_at DESC;")
+  rows=$(dbq "SELECT t.session_id, COALESCE(NULLIF(s.user_id,''),'?'), t.status,
+                     COALESCE(t.started_at,''), COALESCE(t.lease_expires_at,''), t.created_at,
+                     REPLACE(substr(COALESCE(NULLIF(s.title,''),'(无标题)'),1,24),'|','/')
+              FROM turns t LEFT JOIN sessions s ON s.id = t.session_id
+              WHERE t.status IN ($INFLIGHT_STATES)
+              ORDER BY t.created_at DESC;")
   if [[ -z "$rows" ]]; then
     echo "  ${c_grn}(无)${c_rst}"
     return 0
   fi
-  printf "  %-24s %-8s %-9s %-9s %s\n" "SESSION" "STATUS" "AGE" "LEASE" "NOTE"
+  printf "  %-22s %-10s %-8s %-6s %-9s %s\n" "SESSION" "USER" "STATUS" "AGE" "LEASE" "会话 / 备注"
   local zombies=0 realactive=0
-  while IFS='|' read -r sid status started lease created; do
+  local -A user_live=() user_zomb=()
+  while IFS='|' read -r sid uid status started lease created title; do
     [[ -z "$sid" ]] && continue
     # 年龄按 created_at 算（ISO8601 带纳秒，截到秒交给 date）
     local age="-" note=""
     local cts; cts=$(date -u -d "${created%.*}Z" +%s 2>/dev/null || echo "")
     [[ -n "$cts" ]] && age="$(( (now_epoch - cts) / 60 ))m"
-    local leasestate="-"
+    # 颜色与文本分开：先按纯文本宽度补齐再上色，否则转义序列会被算进列宽导致错位
+    local leasetxt="-" leaseclr=""
     if [[ -n "$lease" ]]; then
       local lts; lts=$(date -u -d "${lease%.*}Z" +%s 2>/dev/null || echo "")
       if [[ -n "$lts" ]]; then
-        if (( lts < now_epoch )); then leasestate="${c_red}expired${c_rst}"; note="${c_dim}僵尸lease/已过期,不算真活跃${c_rst}"; zombies=$((zombies+1))
-        else leasestate="${c_grn}ok${c_rst}"; realactive=$((realactive+1)); fi
+        if (( lts < now_epoch )); then
+          leasetxt="expired"; leaseclr="$c_red"; note="  ${c_dim}僵尸lease/已过期,不算真活跃${c_rst}"
+          zombies=$((zombies+1)); user_zomb["$uid"]=$(( ${user_zomb["$uid"]:-0} + 1 ))
+        else
+          leasetxt="ok"; leaseclr="$c_grn"
+          realactive=$((realactive+1)); user_live["$uid"]=$(( ${user_live["$uid"]:-0} + 1 ))
+        fi
       fi
     else
       # queued 无 lease：真在途（等待处理）
-      realactive=$((realactive+1))
+      realactive=$((realactive+1)); user_live["$uid"]=$(( ${user_live["$uid"]:-0} + 1 ))
     fi
-    printf "  %-24s %-8s %-9s %-18b %b\n" "$sid" "$status" "$age" "$leasestate" "$note"
+    printf "  %-22s %-10s %-8s %-6s %s%-9s%s %s%b\n" \
+      "$sid" "$uid" "$status" "$age" \
+      "$leaseclr" "$leasetxt" "${leaseclr:+$c_rst}" "$title" "$note"
   done <<< "$rows"
   echo
   echo "  ${c_bold}真活跃 ~${realactive}${c_rst}，僵尸/过期 lease ${zombies}"
+  # 按用户聚合：谁在跑、跑几个（重启/维护前判断"打断谁"）
+  if (( ${#user_live[@]} + ${#user_zomb[@]} > 0 )); then
+    local uids; uids=$(printf '%s\n' "${!user_live[@]}" "${!user_zomb[@]}" | sort -u)
+    local parts=()
+    while read -r u; do
+      [[ -z "$u" ]] && continue
+      local lv=${user_live["$u"]:-0} zb=${user_zomb["$u"]:-0}
+      local seg="$u:${lv}活"
+      (( zb > 0 )) && seg="$seg/${zb}僵"
+      parts+=("$seg")
+    done <<< "$uids"
+    echo "  ${c_bold}按用户${c_rst}：${parts[*]}"
+  fi
   echo "  ${c_dim}判定：lease 未过期的 running/leased + 所有 queued 视为真活跃；过期 lease 是卡死残留。${c_rst}"
+  echo "  ${c_dim}USER = sessions.user_id（外部系统工号）；单用户明细见 harness-ctl users。${c_rst}"
 }
 
 # ---- 命令：zombies ----
@@ -811,7 +838,7 @@ harness-ctl — publish 环境运维 CLI
 
 用法：
   harness-ctl status                服务/入口/在途对话 一屏总览
-  harness-ctl inflight              列出正在进行的 turn（含时长、僵尸 lease 标注）
+  harness-ctl inflight              列出正在进行的 turn（含归属用户、会话标题、时长、僵尸 lease 标注）
   harness-ctl zombies               扫描僵尸 session（running_active 但沙箱心跳失联）
   harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
   harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
