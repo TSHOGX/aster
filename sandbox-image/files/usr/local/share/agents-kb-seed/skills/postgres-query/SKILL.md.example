@@ -1,0 +1,96 @@
+---
+status: in-use
+support_count: 999
+confidence: 1.0
+---
+# PostgreSQL Query (read-only)
+
+## When To Use
+
+Any question that needs data from the analytical / business PostgreSQL
+database on this platform: schema discovery, read-only SQL, small samples,
+aggregations, and exports of query results into `/workspace`.
+
+## Context
+
+This skill embeds a **read-only** connection so a session can query without
+rediscovering project docs. The real `SKILL.md` (with password) is git-ignored
+and provisioned on the host. Copy this file to `SKILL.md` and fill in the
+password before use.
+
+PostgreSQL connection:
+
+| Item | Value |
+|------|--------|
+| Host | `10.70.83.134` |
+| Port | `5432` |
+| Database | `postgres` |
+| User | `<PG_RO_USER>` |
+| Password | `<PG_RO_PASSWORD>` |
+| Intent | **read-only** |
+
+Prefer `psycopg2` (already in the sandbox image). CLI `psql` may or may not be
+installed; do not rely on it.
+
+```python
+import psycopg2
+
+conn = psycopg2.connect(
+    host="10.70.83.134",
+    port=5432,
+    dbname="postgres",
+    user="<PG_RO_USER>",
+    password="<PG_RO_PASSWORD>",
+    connect_timeout=10,
+)
+conn.set_session(readonly=True, autocommit=True)
+cur = conn.cursor()
+cur.execute("SELECT 1 AS ok;")
+print(cur.fetchall())
+cur.close()
+conn.close()
+```
+
+List tables in `public` (adjust schema if needed):
+
+```python
+cur.execute("""
+    SELECT table_schema, table_name
+    FROM information_schema.tables
+    WHERE table_type = 'BASE TABLE'
+      AND table_schema NOT IN ('pg_catalog', 'information_schema')
+    ORDER BY 1, 2
+    LIMIT 50;
+""")
+```
+
+## Hard rules
+
+1. **Read-only.** Only `SELECT` / `WITH`…`SELECT` / `SHOW` / `EXPLAIN` /
+   reading `information_schema` / `pg_catalog` metadata. Never
+   `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`DDL`/`COPY … FROM` that writes,
+   or create/drop objects, unless the user explicitly orders a write.
+2. **Probe before large scans.** Check table/column names and `LIMIT` a sample
+   before full-table aggregates.
+3. **Do not download bulk dumps to local disk.** Stream or paginate; land only
+   small result tables/plots under `/workspace`.
+4. **Never print the password** in reports or chat; refer to this skill by name.
+
+## Procedure
+
+1. Read this skill; substitute the real user/password from the host-provisioned
+   `SKILL.md` (not the `.example` placeholders).
+2. `SELECT 1` to verify connectivity.
+3. Discover schema via `information_schema` (or `\dt`-equivalent SQL above).
+4. Run the analytical query with explicit `LIMIT` / filters; write CSV/PNG/
+   `report.md` under `/workspace` if the user needs artifacts.
+5. Report what succeeded, what failed (actual error text), and what was skipped.
+
+## Known pitfalls
+
+- Port **5432** is PostgreSQL — use `psycopg2`, not `pymysql` / MySQL CLI.
+- If connect times out, check sandbox egress (host `10.70.83.134`, port `5432`)
+  and that the DB allows this sandbox/host IP.
+- Default DB name `postgres` may be empty of business tables; look at other
+  schemas/databases only if the user asks and credentials allow.
+```
