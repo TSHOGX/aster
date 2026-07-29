@@ -202,31 +202,54 @@ func (n *ConsolidateNode) Run(ctx context.Context) (ConsolidateReport, error) {
 
 // ---- B0: blocking key -------------------------------------------------------
 
-// blockKey asks one agent to collapse the raw scope labels into canonical ones.
-// On any failure it returns the identity map (canonical = raw), so bucketing
-// still runs (just without synonym collapsing).
-func (n *ConsolidateNode) blockKey(ctx context.Context, rawScopes []string, rep *ConsolidateReport) map[string]string {
-	identity := identityMap(rawScopes)
-	if n.agent == nil || !n.agent.Enabled() || len(rawScopes) == 0 {
-		rep.Notes = append(rep.Notes, "B0: identity block-key (agent disabled or no scopes)")
-		return identity
-	}
+// scopeShardBudget bounds how many scope labels go into one B0 call. Labels are
+// short (a few words), so this is a count rather than a char budget; 120 keeps a
+// shard well inside a single comfortable generation.
+const scopeShardBudget = 120
 
-	data := "scopes:\n" + strings.Join(rawScopes, "\n")
-	payload, err := n.callAgent(ctx, "B0", blockKeySystemPrompt, data, "block-key")
+// shardScopes splits scope labels into chunks of at most budget entries.
+func shardScopes(scopes []string, budget int) [][]string {
+	if budget < 1 {
+		budget = 1
+	}
+	var out [][]string
+	for start := 0; start < len(scopes); start += budget {
+		end := start + budget
+		if end > len(scopes) {
+			end = len(scopes)
+		}
+		out = append(out, scopes[start:end])
+	}
+	return out
+}
+
+// sortedKeys returns a set's keys in deterministic order (agent prompts must not
+// vary run to run for the same input).
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// blockKeyShard runs one B0 call over a subset of scope labels and returns the
+// raw→canonical pairs it produced. ok=false means the caller should keep identity
+// for these labels.
+func (n *ConsolidateNode) blockKeyShard(ctx context.Context, ref string, scopes []string) (map[string]string, bool) {
+	data := "scopes:\n" + strings.Join(scopes, "\n")
+	payload, err := n.callAgent(ctx, ref, blockKeySystemPrompt, data, "block-key")
 	if err != nil {
-		n.log.Warn("consolidate: B0 block-key failed; identity fallback", "error", err)
-		rep.Notes = append(rep.Notes, "B0: identity fallback ("+errString(err)+")")
-		return identity
+		n.log.Warn("consolidate: B0 shard failed; identity fallback", "ref", ref, "error", err)
+		return nil, false
 	}
 	var res blockKeyResult
 	if err := json.Unmarshal([]byte(payload), &res); err != nil || len(res.Canonical) == 0 {
-		n.log.Warn("consolidate: B0 unparseable; identity fallback", "error", err)
-		rep.Notes = append(rep.Notes, "B0: identity fallback (unparseable)")
-		return identity
+		n.log.Warn("consolidate: B0 shard unparseable; identity fallback", "ref", ref, "error", err)
+		return nil, false
 	}
-	// Merge over identity so any scope the agent dropped keeps a canonical.
-	out := identity
+	out := make(map[string]string, len(res.Canonical))
 	for raw, canon := range res.Canonical {
 		raw = strings.TrimSpace(raw)
 		canon = strings.TrimSpace(canon)
@@ -237,6 +260,56 @@ func (n *ConsolidateNode) blockKey(ctx context.Context, rawScopes []string, rep 
 			canon = raw
 		}
 		out[raw] = canon
+	}
+	return out, true
+}
+
+// blockKey asks one agent to collapse the raw scope labels into canonical ones.
+// On any failure it returns the identity map (canonical = raw), so bucketing
+// still runs (just without synonym collapsing).
+func (n *ConsolidateNode) blockKey(ctx context.Context, rawScopes []string, rep *ConsolidateReport) map[string]string {
+	identity := identityMap(rawScopes)
+	if n.agent == nil || !n.agent.Enabled() || len(rawScopes) == 0 {
+		rep.Notes = append(rep.Notes, "B0: identity block-key (agent disabled or no scopes)")
+		return identity
+	}
+
+	// B0 used to send every raw scope in ONE call. At real scale that is 686
+	// labels, which blew past even a 12-minute ceiling and fell back to identity —
+	// costing the whole cycle its synonym collapsing (doris / Doris SQL /
+	// 车辆信号数据仓库 stayed separate buckets). Shard like B1/B2 do, then run one
+	// reduce pass over the per-shard canonicals: that set is far smaller than the
+	// raw input, so the cross-shard view still fits in a single call.
+	shards := shardScopes(rawScopes, scopeShardBudget)
+	out := identity
+	perShardCanonicals := map[string]bool{}
+	failed := 0
+	for i, shard := range shards {
+		res, ok := n.blockKeyShard(ctx, fmt.Sprintf("B0:%d/%d", i+1, len(shards)), shard)
+		if !ok {
+			failed++
+			continue // that shard keeps identity
+		}
+		for raw, canon := range res {
+			out[raw] = canon
+			perShardCanonicals[canon] = true
+		}
+	}
+	if failed > 0 {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("B0: %d/%d shards fell back to identity", failed, len(shards)))
+	}
+	// Reduce: shards cannot see each other, so two of them may have coined
+	// different canonicals for the same concept. Collapse those once.
+	if len(shards) > 1 && len(perShardCanonicals) > 1 {
+		canons := sortedKeys(perShardCanonicals)
+		if res, ok := n.blockKeyShard(ctx, "B0:reduce", canons); ok {
+			for raw, canon := range out {
+				if merged, hit := res[canon]; hit && merged != "" {
+					out[raw] = merged
+				}
+			}
+			rep.Notes = append(rep.Notes, fmt.Sprintf("B0: reduce merged %d shard canonicals", len(canons)))
+		}
 	}
 	rep.Notes = append(rep.Notes, fmt.Sprintf("B0: %d raw scopes → %d canonical", len(rawScopes), countDistinctValues(out)))
 	return out

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"testing"
@@ -263,5 +264,59 @@ func TestResolveMembersAndFilterScope(t *testing.T) {
 	all := []memorystore.SemanticMemory{{ID: 1, Scope: "doris"}, {ID: 2, Scope: "gvisor"}}
 	if got := filterScope(all, "doris"); len(got) != 1 || got[0].ID != 1 {
 		t.Fatalf("filterScope(doris) = %v, want [id 1]", got)
+	}
+}
+
+// B0 used to send every scope label in one call; at 686 labels that blew past a
+// 12-minute ceiling and fell back to identity, losing synonym collapsing for the
+// whole cycle. Sharding is what keeps each call bounded.
+func TestShardScopes(t *testing.T) {
+	scopes := make([]string, 250)
+	for i := range scopes {
+		scopes[i] = fmt.Sprintf("scope-%d", i)
+	}
+	shards := shardScopes(scopes, 120)
+	if len(shards) != 3 {
+		t.Fatalf("len(shards) = %d, want 3 (120+120+10)", len(shards))
+	}
+	if len(shards[0]) != 120 || len(shards[2]) != 10 {
+		t.Fatalf("shard sizes = %d/%d/%d", len(shards[0]), len(shards[1]), len(shards[2]))
+	}
+	// Every label must survive exactly once — a dropped scope silently loses its
+	// candidates from bucketing.
+	seen := map[string]int{}
+	for _, sh := range shards {
+		for _, s := range sh {
+			seen[s]++
+		}
+	}
+	if len(seen) != len(scopes) {
+		t.Fatalf("covered %d labels, want %d", len(seen), len(scopes))
+	}
+	for s, n := range seen {
+		if n != 1 {
+			t.Fatalf("%s appeared %d times", s, n)
+		}
+	}
+}
+
+func TestShardScopesSmallInputStaysOneCall(t *testing.T) {
+	shards := shardScopes([]string{"a", "b", "c"}, 120)
+	if len(shards) != 1 || len(shards[0]) != 3 {
+		t.Fatalf("small input should stay a single shard, got %v", shards)
+	}
+	if shards := shardScopes(nil, 120); len(shards) != 0 {
+		t.Fatalf("no scopes should yield no shards, got %v", shards)
+	}
+}
+
+func TestSortedKeysIsDeterministic(t *testing.T) {
+	set := map[string]bool{"doris": true, "obs": true, "bms": true}
+	got := sortedKeys(set)
+	want := []string{"bms", "doris", "obs"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sortedKeys = %v, want %v", got, want)
+		}
 	}
 }
