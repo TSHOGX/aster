@@ -6387,3 +6387,118 @@ func TestDownloadArtifactRejectsTraversal(t *testing.T) {
 		t.Fatalf("expected status 400, got %d body %s", rec.Code, rec.Body.String())
 	}
 }
+
+// The dataplane authorize route must sit behind the same SO_PEERCRED gate as the
+// model-proxy correlation routes, and must not be reachable on the public mux.
+// A sandbox can reach the gateway; it must not be able to reach this.
+func TestDataProxyAuthorizeRouteIsGatedAndAuthorizes(t *testing.T) {
+	ctx := context.Background()
+	dir, err := os.MkdirTemp("", "hp-dataproxy-")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	cfg := testServerConfig(dir)
+	now := time.Now().UTC()
+	allocation, turnID, sandboxSourceIP := createServerRunningProxyTurn(t, ctx, st, cfg, owner.UUID, dir, "sess_dataproxy_http", now)
+
+	hub := events.NewHub()
+	srv := &Server{
+		cfg:     cfg,
+		store:   st,
+		runtime: instantRuntime{},
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, hub),
+		hub:     hub,
+		log:     slog.Default(),
+	}
+
+	body := fmt.Sprintf(`{"domain":"doris","sandbox_source_ip":%q}`, sandboxSourceIP)
+
+	// Not on the public mux at all.
+	publicRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(publicRec, httptest.NewRequest(http.MethodPost,
+		"/internal/dataplane/requests/authorize", strings.NewReader(body)))
+	if publicRec.Code != http.StatusNotFound {
+		t.Fatalf("public dataplane route status=%d body=%s", publicRec.Code, publicRec.Body.String())
+	}
+
+	// On the correlation mux, but refused without peer credentials.
+	directRec := httptest.NewRecorder()
+	srv.ProxyCorrelationRoutes().ServeHTTP(directRec, httptest.NewRequest(http.MethodPost,
+		"/internal/dataplane/requests/authorize", strings.NewReader(body)))
+	if directRec.Code != http.StatusForbidden {
+		t.Fatalf("dataplane route without peer credentials status=%d body=%s", directRec.Code, directRec.Body.String())
+	}
+
+	// Over the Unix socket, with peer credentials, it authorizes.
+	listener, _, err := srv.ListenProxyCorrelation()
+	if err != nil {
+		t.Fatalf("listen proxy correlation: %v", err)
+	}
+	proxyServer := srv.ProxyCorrelationServer()
+	go func() { _ = proxyServer.Serve(listener) }()
+	t.Cleanup(func() { _ = proxyServer.Close() })
+
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", listener.Addr().String())
+		},
+	}}
+	resp, err := client.Post("http://unix/internal/dataplane/requests/authorize",
+		"application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("authorize over socket: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("authorize status=%d body=%s", resp.StatusCode, payload)
+	}
+	var decoded struct {
+		Authorized   bool   `json:"authorized"`
+		SessionID    string `json:"session_id"`
+		GenerationID string `json:"generation_id"`
+		TurnID       int64  `json:"turn_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !decoded.Authorized || decoded.SessionID != "sess_dataproxy_http" ||
+		decoded.GenerationID != allocation.GenerationID || decoded.TurnID != turnID {
+		t.Errorf("decoded = %+v, want an authorization for turn %d", decoded, turnID)
+	}
+
+	// An unknown source IP is a 403 carrying a reason the agent can act on,
+	// never a 200 with authorized=false.
+	denyResp, err := client.Post("http://unix/internal/dataplane/requests/authorize",
+		"application/json", strings.NewReader(`{"domain":"doris","sandbox_source_ip":"10.255.255.254"}`))
+	if err != nil {
+		t.Fatalf("deny request: %v", err)
+	}
+	defer denyResp.Body.Close()
+	if denyResp.StatusCode != http.StatusForbidden {
+		t.Errorf("unknown source ip status=%d, want 403", denyResp.StatusCode)
+	}
+	var denied struct {
+		Authorized bool   `json:"authorized"`
+		Reason     string `json:"reason"`
+	}
+	if err := json.NewDecoder(denyResp.Body).Decode(&denied); err != nil {
+		t.Fatalf("decode denial: %v", err)
+	}
+	if denied.Authorized || denied.Reason == "" {
+		t.Errorf("denial = %+v, want authorized=false with a reason", denied)
+	}
+
+	// A missing source IP is a client error, never a grant.
+	badResp, err := client.Post("http://unix/internal/dataplane/requests/authorize",
+		"application/json", strings.NewReader(`{"domain":"doris"}`))
+	if err != nil {
+		t.Fatalf("bad request: %v", err)
+	}
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Errorf("missing source ip status=%d, want 400", badResp.StatusCode)
+	}
+}

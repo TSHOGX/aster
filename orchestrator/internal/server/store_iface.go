@@ -128,6 +128,10 @@ type contractVolumeStore interface {
 	ProvisionSessionDriverHome(context.Context, store.ProvisionSessionDriverHomeParams) (store.SessionDriverHomeVolume, error)
 	VerifySessionWorkspaceVolume(context.Context, store.VerifySessionWorkspaceVolumeParams) (store.SessionWorkspaceVolume, error)
 	StartProxyRequest(context.Context, store.StartProxyRequestParams) (store.StartProxyRequestResult, error)
+	// Data-plane authorization is a pure decision — no events, no counters, and
+	// deliberately no next_request_sequence bump. See store.AuthorizeDataProxyRequest.
+	AuthorizeDataProxyRequest(context.Context, store.AuthorizeDataProxyRequestParams) (store.DataProxyAuthorization, error)
+	DataProxyDenialReason(context.Context, string) string
 	FinishProxyRequest(context.Context, store.FinishProxyRequestParams) (store.FinishProxyRequestResult, error)
 }
 

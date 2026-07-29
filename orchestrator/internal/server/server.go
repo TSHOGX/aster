@@ -250,6 +250,11 @@ func (s *Server) ProxyCorrelationRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST /internal/proxy/requests/start", s.requireProxyPeerCredentials(http.HandlerFunc(s.internalProxyRequestStart)))
 	mux.Handle("POST /internal/proxy/requests/finish", s.requireProxyPeerCredentials(http.HandlerFunc(s.internalProxyRequestFinish)))
+	// Data-plane gateways (Doris, OBS) authorize here. Same SO_PEERCRED gate as
+	// the model-proxy routes: only a process running as the proxy service
+	// identity may ask, so a sandbox cannot reach this even though it can reach
+	// the gateway.
+	mux.Handle("POST /internal/dataplane/requests/authorize", s.requireProxyPeerCredentials(http.HandlerFunc(s.internalDataProxyAuthorize)))
 	return mux
 }
 
@@ -2080,4 +2085,51 @@ func (s *Server) releaseIdleGeneration(ctx context.Context, candidate store.Chec
 	}
 	s.hub.Publish(events.Event{Type: "session." + string(sessionstate.Checkpointed), SessionID: candidate.SessionID, GenerationID: candidate.GenerationID})
 	return nil
+}
+
+// internalDataProxyAuthorize answers a data-plane gateway's per-connection and
+// per-query authorization question.
+//
+// It is a pure decision: no events, no counters, nothing written. In particular it
+// does not touch next_request_sequence, which belongs to the model proxy — see the
+// note on store.AuthorizeDataProxyRequest.
+//
+// A denial is 403 with a short, agent-readable reason, because the gateway puts
+// that reason into an ERR packet the agent actually reads. Anything unexpected is
+// an error rather than a grant: the gateway must fail closed.
+func (s *Server) internalDataProxyAuthorize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Domain          string `json:"domain"`
+		SandboxSourceIP string `json:"sandbox_source_ip"`
+	}
+	if !decodeJSONBody(w, r, maxControlBodyBytes, &req) {
+		return
+	}
+	if strings.TrimSpace(req.SandboxSourceIP) == "" {
+		writeError(w, http.StatusBadRequest, "sandbox_source_ip is required")
+		return
+	}
+
+	auth, err := s.store.AuthorizeDataProxyRequest(r.Context(), store.AuthorizeDataProxyRequestParams{
+		Domain:          store.DataProxyDomain(req.Domain),
+		SandboxSourceIP: req.SandboxSourceIP,
+		Now:             time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrDataProxyContextUnavailable) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"authorized": false,
+			"reason":     s.store.DataProxyDenialReason(r.Context(), req.SandboxSourceIP),
+		})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authorized":    true,
+		"session_id":    auth.SessionID,
+		"generation_id": auth.GenerationID,
+		"turn_id":       auth.TurnID,
+	})
 }
