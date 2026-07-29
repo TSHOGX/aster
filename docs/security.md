@@ -240,6 +240,25 @@ as sensitive. Note the Doris user is read-only, but with open egress the sandbox
 still route those credentials (and query results) off-box; lock egress
 (`allow_all: false`) for deployments where that matters.
 
+Any agent in any sandbox can `cat` that file, and agents routinely echo it into
+traces and share links. Treat the Doris credential as compromised-by-design:
+every user of this platform effectively holds it.
+
+**A gateway that removes this is built but NOT deployed** (as of 2026-07-29). It
+lives outside this repo in `/home/agent-runtime-platform/data-proxies/doris/`
+(design in its `PLAN.md`, operation in its `README.md`, deployment risk in its
+`PHASE2-RISK.md`). Nothing in `main/` routes through it yet — no config key, no
+systemd unit installed, no skill or rootfs change — so everything above still
+describes the live system. Do not describe the credential as hidden until that
+work lands.
+
+When it does land, two limits will still hold and are worth stating plainly: the
+gateway hides the *credential*, not the *data*, so under open egress a
+prompt-injected agent can still `SELECT` and POST the rows elsewhere; and the
+already-leaked credential stays valid until someone rotates it, so an agent
+reading an old trace in its own workspace could still recover the old value.
+Rotation is later hardening, deliberately not a rollout gate.
+
 ## Residual limitations
 
 gVisor is one tier weaker than a KVM microVM (Firecracker) but far stronger than
