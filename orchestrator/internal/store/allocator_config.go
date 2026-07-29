@@ -177,12 +177,23 @@ func modelProxyHostIsHostLocal(host string) bool {
 		strings.HasSuffix(host, ".local")
 }
 
+// dorisFEHostLiteral is the production Doris FE address. Kept in sync with the
+// runtime-side twin in driverconfig.go: a sandbox-facing alias resolving to it
+// would let the sandbox reach Doris directly, making the gateway one route among
+// two rather than a chokepoint.
+const dorisFEHostLiteral = "172.16.0.138"
+
 func modelProxyHostIsProviderUpstream(host string) bool {
 	switch host {
 	case "api.anthropic.com", "anthropic.com", "api.openai.com", "openai.com":
 		return true
+	case dorisFEHostLiteral, "myhuaweicloud.com", "amazonaws.com":
+		return true
 	default:
-		return strings.HasSuffix(host, ".anthropic.com") || strings.HasSuffix(host, ".openai.com")
+		return strings.HasSuffix(host, ".anthropic.com") ||
+			strings.HasSuffix(host, ".openai.com") ||
+			strings.HasSuffix(host, ".myhuaweicloud.com") ||
+			strings.HasSuffix(host, ".amazonaws.com")
 	}
 }
 

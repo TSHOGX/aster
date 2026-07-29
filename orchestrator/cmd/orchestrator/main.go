@@ -140,6 +140,7 @@ func main() {
 				BundleRoot:              cfg.BundleRoot,
 				RootFSPath:              cfg.RootFSPath,
 				AgentsKBRoot:            cfg.AgentsKBRoot,
+				SandboxDataProxyAliases: sandboxDataProxyAliases(cfg.Harness),
 				DefaultAgent:            cfg.DefaultAgent,
 				SandboxUID:              cfg.Harness.SandboxIdentity.UID,
 				SandboxGID:              cfg.Harness.SandboxIdentity.GID,
@@ -335,4 +336,22 @@ func dataVolumeProvisionerConfig(cfg config.Config) (store.DataVolumeProvisioner
 			SupplementalGIDs: identity.SupplementalGIDs,
 		},
 	}, nil
+}
+
+// sandboxDataProxyAliases collects the /etc/hosts aliases for enabled data
+// proxies, in the sorted order EnabledDataProxies guarantees so the projection
+// stays byte-stable. Returns nil when no data proxies are configured, which
+// leaves the hosts file exactly as it was before harness.data_proxies existed.
+func sandboxDataProxyAliases(h config.HarnessConfig) []string {
+	proxies := h.EnabledDataProxies()
+	if len(proxies) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(proxies))
+	for _, p := range proxies {
+		if alias := p.Config.SandboxAlias; alias != "" {
+			out = append(out, alias)
+		}
+	}
+	return out
 }

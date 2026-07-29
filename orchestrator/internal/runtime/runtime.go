@@ -35,7 +35,14 @@ type Config struct {
 	// base. Its `current` symlink is resolved at spec-build time and the
 	// concrete snapshot dir is bind-mounted read-only into every sandbox at
 	// /agents. Empty disables the mount.
-	AgentsKBRoot            string
+	AgentsKBRoot string
+	// SandboxDataProxyAliases are the /etc/hosts aliases for host-side data
+	// proxies (Doris, OBS), each resolving to the host gateway IP. Sourced from
+	// harness.data_proxies at startup rather than persisted per generation,
+	// because they are deployment config, not generation state — which is what
+	// keeps this change free of a schema migration. Empty reproduces the
+	// previous hosts projection byte-for-byte.
+	SandboxDataProxyAliases []string
 	DefaultAgent            string
 	SandboxUID              int
 	SandboxGID              int
@@ -420,7 +427,7 @@ func (r *Runtime) writeNetworkHostsProjection(details store.RuntimeGenerationDet
 	if strings.TrimSpace(details.NetworkHostsPath) == "" {
 		return nil
 	}
-	payload, err := renderNetworkHostsProjection(details)
+	payload, err := renderNetworkHostsProjection(details, r.cfg.SandboxDataProxyAliases)
 	if err != nil {
 		return err
 	}

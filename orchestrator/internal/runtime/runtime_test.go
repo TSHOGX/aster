@@ -2004,7 +2004,7 @@ func TestRenderNetworkHostsProjectionRejectsNonAliasModelProxyHosts(t *testing.T
 			details := testGenerationDetails(dir, "gen_hosts_"+strings.ReplaceAll(tt.name, " ", "_"))
 			details.ManifestAnthropicBaseURL = tt.baseURL
 			details.HostGatewayIP = "10.200.1.1"
-			if _, err := renderNetworkHostsProjection(details); err == nil || !strings.Contains(err.Error(), tt.want) {
+			if _, err := renderNetworkHostsProjection(details, nil); err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("expected %q rejection, got %v", tt.want, err)
 			}
 		})

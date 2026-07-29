@@ -45,6 +45,12 @@ type ResourceAllocatorConfig struct {
 	ModelAccessAllowed          *bool
 	ProviderCredentialsHostOnly bool
 	SandboxModelProxyBaseURL    string
+	// SandboxDataProxyAliases are the /etc/hosts aliases for host-side data
+	// proxies (Doris, OBS), each resolving to the host gateway IP. Plain strings
+	// rather than a config type so this package does not depend on config.
+	// Empty means no data proxies, which reproduces the previous hosts
+	// projection byte-for-byte.
+	SandboxDataProxyAliases []string
 }
 
 type AllocateGenerationParams struct {
@@ -128,25 +134,28 @@ type RuntimeGenerationDetails struct {
 	DorisFEHosts                    string
 	DorisBEHosts                    string
 	DorisPorts                      string
-	DNSPolicy                       string
-	NetworkAllocationState          string
-	AutoCheckpointEnabled           bool
-	Agent                           string
-	Model                           string
-	OutputFormat                    string
-	DisableNonessentialTraffic      bool
-	SandboxUID                      int
-	SandboxGID                      int
-	SandboxSupplementalGIDs         []int
-	ModelAccessAllowed              bool
-	RequiresSecretDrop              bool
-	ManifestAnthropicBaseURL        string
-	AnthropicAPIKeySecretID         string
-	AnthropicAuthTokenSecretID      string
-	SecretVersion                   string
-	DriverStateDigest               string
-	DriverStateVersion              int
-	DriverStatePayload              []byte
+	// SandboxDataProxyAliases feeds the /etc/hosts projection. See the field of
+	// the same name on ResourceAllocatorConfig.
+	SandboxDataProxyAliases    []string
+	DNSPolicy                  string
+	NetworkAllocationState     string
+	AutoCheckpointEnabled      bool
+	Agent                      string
+	Model                      string
+	OutputFormat               string
+	DisableNonessentialTraffic bool
+	SandboxUID                 int
+	SandboxGID                 int
+	SandboxSupplementalGIDs    []int
+	ModelAccessAllowed         bool
+	RequiresSecretDrop         bool
+	ManifestAnthropicBaseURL   string
+	AnthropicAPIKeySecretID    string
+	AnthropicAuthTokenSecretID string
+	SecretVersion              string
+	DriverStateDigest          string
+	DriverStateVersion         int
+	DriverStatePayload         []byte
 }
 
 type BridgePollGeneration struct {
