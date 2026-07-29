@@ -505,13 +505,19 @@ function SidebarPanel({
         <span className="text-[11px] text-[var(--color-foreground-muted)]">{ownedSessions.length}</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      {/* The scroll container is this element itself, not a nested child: it is a
+          direct flex child of the <aside>, so flex-1 + min-h-0 give it a bounded
+          height to scroll within. A wrapper with overflow-hidden around an inner
+          flex-1 child does not work -- the wrapper is not a flex container, so
+          the child's flex-1 is inert and its height grows with the list, which
+          silently clips rows instead of scrolling them. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {activeSessions.length === 0 ? (
           <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">
             {ready || connection === "live" ? "No sessions yet. Create one to get started." : "Loading…"}
           </p>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <>
             <ul className="space-y-0.5 px-2 pb-3">
               {ownedSessions.map((s) => (
                 <SessionRow
@@ -550,7 +556,7 @@ function SidebarPanel({
                 </ul>
               </>
             ) : null}
-          </div>
+          </>
         )}
       </div>
 
