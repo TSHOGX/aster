@@ -817,14 +817,26 @@ func validateCredentialPolicyGrantSemantics(policy normalizedCredentialPolicy, d
 			if !stringSliceContains(grant.AllowedRuntimeProviders, providerSpec.ID) {
 				return fmt.Errorf("model provider grant does not allow runtime provider %s", providerSpec.ID)
 			}
+		case "data_provider":
+			// The gateway holds the real credential, so there is nothing to
+			// expose in the sandbox and no driver/runtime-provider coupling to
+			// check: any driver may read data through it. Exposure mode and
+			// grant id are already checked against the registry above.
 		default:
+			// Default-deny stays: an unregistered domain is rejected, so adding
+			// one domain does not open the switch.
 			return fmt.Errorf("unsupported credential grant domain %q", grant.Domain)
 		}
 	}
 	if modelAccessEnabled && !modelGrant {
 		return fmt.Errorf("model access contract requires model_provider grant")
 	}
-	if !modelAccessEnabled && len(policy.SecretGrants) != 0 {
+	// A non-model contract must carry no MODEL grants, but a data-plane grant is
+	// legitimate on its own: a data-only profile reads Doris without model
+	// access. Checking modelGrant rather than len(SecretGrants) is what allows
+	// that, while still rejecting a model grant smuggled into a non-model
+	// contract.
+	if !modelAccessEnabled && modelGrant {
 		return fmt.Errorf("non-model contract must not carry model provider grants")
 	}
 	return nil

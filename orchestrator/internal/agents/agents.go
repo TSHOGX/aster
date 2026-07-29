@@ -335,6 +335,24 @@ var secretGrantSpecs = map[string]SecretGrantSpec{
 		ExposureMode:  "proxy_only",
 		TTLMaxSeconds: 86400,
 	},
+	// data_provider covers host-side data-store gateways. As with the model
+	// proxy, the real credential stays on the host and the sandbox holds only a
+	// fake one — hence exposure gateway_only: there is nothing to drop into the
+	// sandbox, and a grant asking for anything else is a misconfiguration.
+	//
+	// Registering a domain here does NOT change the credential-policy digest.
+	// That test's input is a hardcoded model-provider-only policy, and it guards
+	// normalizeCredentialPolicy's field set and ordering rather than this
+	// registry. Do not regenerate the digest literal on account of this entry.
+	secretGrantSpecKey("data_provider", "doris_mysql"): {
+		Domain:       "data_provider",
+		GrantID:      "data_provider:doris_gateway",
+		Scope:        "doris_mysql",
+		ExposureMode: "gateway_only",
+		// Access is bounded by the sandbox's own active turn, re-checked per
+		// query by source IP, so this TTL is not the limiting factor.
+		TTLMaxSeconds: 86400,
+	},
 }
 
 func Lookup(value string) (Definition, bool) {

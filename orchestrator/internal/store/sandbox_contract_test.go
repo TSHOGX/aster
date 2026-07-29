@@ -710,3 +710,38 @@ func refreshCredentialPolicyDigestForTest(t *testing.T, payload map[string]any) 
 	}
 	policy["digest"] = digest
 }
+
+// The data_provider domain must be accepted where model_provider is, since the
+// Doris gateway needs a grant of its own. It carries no driver or
+// runtime-provider coupling: the gateway holds the credential, so any driver may
+// read through it.
+func TestSecretGrantSpecForDataProvider(t *testing.T) {
+	spec, ok := agents.SecretGrantSpecFor("data_provider", "doris_mysql")
+	if !ok {
+		t.Fatal("data_provider/doris_mysql is not registered")
+	}
+	if spec.GrantID != "data_provider:doris_gateway" {
+		t.Errorf("GrantID = %q", spec.GrantID)
+	}
+	// gateway_only is the point: the real credential never enters the sandbox,
+	// so there is nothing to drop and no other exposure mode is coherent.
+	if spec.ExposureMode != "gateway_only" {
+		t.Errorf("ExposureMode = %q, want gateway_only", spec.ExposureMode)
+	}
+}
+
+// Registering one domain must not open the switch. This is the companion to
+// TestStoreSandboxContractRejectsInvalidSecretGrantSemantics: if an arbitrary
+// domain starts being accepted, the default-deny posture has been lost.
+func TestSecretGrantSpecStillRejectsUnregisteredDomains(t *testing.T) {
+	for _, tc := range []struct{ domain, scope string }{
+		{"git", "repo"},
+		{"data_provider", "postgres"},    // right domain, unregistered scope
+		{"data_proivder", "doris_mysql"}, // typo'd domain
+		{"", ""},
+	} {
+		if _, ok := agents.SecretGrantSpecFor(tc.domain, tc.scope); ok {
+			t.Errorf("SecretGrantSpecFor(%q, %q) was accepted; default-deny lost", tc.domain, tc.scope)
+		}
+	}
+}
