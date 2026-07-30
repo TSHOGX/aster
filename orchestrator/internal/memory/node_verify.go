@@ -37,6 +37,12 @@ import (
 // verdict before a lesson is dropped. Deliberately small (design §Panel depth).
 const panelSize = 3
 
+// verifyAgentTimeout bounds one tool-using verification. Looser than
+// defaultAgentTimeout because this node does real filesystem round-trips (grep,
+// read, test -e) before answering; a hard 5min cap turned legitimate slow checks
+// into "unverifiable" holds.
+const verifyAgentTimeout = 9 * time.Minute
+
 // VerifyNode verifies candidate memories against the current codebase/sandbox.
 type VerifyNode struct {
 	agent *AgentRunner
@@ -290,10 +296,15 @@ func (n *VerifyNode) apply(ctx context.Context, it memorystore.SemanticMemory, v
 // callAgent runs one tool-using agent turn for an item and parses the verdict.
 // Returns ok=false on any error / unparseable output (the caller then holds).
 func (n *VerifyNode) callAgent(ctx context.Context, it memorystore.SemanticMemory) (verifyResult, bool) {
+	// Verification is the one node that actually uses tools: it greps and reads the
+	// live tree to decide whether a claim still holds, so several sequential tool
+	// round-trips are normal. Observed 4 of 168 items killed at exactly 300s, each
+	// of which then "holds" — a timeout silently becomes an unverified claim, so
+	// the ceiling is worth a few extra minutes.
 	callCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, defaultAgentTimeout)
+		callCtx, cancel = context.WithTimeout(ctx, verifyAgentTimeout)
 		defer cancel()
 	}
 

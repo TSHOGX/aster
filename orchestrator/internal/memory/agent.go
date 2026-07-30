@@ -99,6 +99,38 @@ func (r *AgentRunner) Run(ctx context.Context, systemPrompt, data string, withTo
 	return r.runOnce(ctx, systemPrompt, data, withTools)
 }
 
+// maxArgPayload is the largest user message we are willing to pass as a single
+// argv entry. Linux's MAX_ARG_STRLEN is 128 KiB; 64 KiB leaves generous headroom
+// for the rest of argv and for any multi-byte accounting surprises.
+const maxArgPayload = 64 * 1024
+
+// writeTempPrompt spills a large prompt to a private temp file for pi's `@file`
+// syntax, returning the path and a cleanup func. Mode 0600: trajectory-derived
+// text can contain user data, so it must not be world-readable while it sits on
+// disk.
+func writeTempPrompt(content string) (string, func(), error) {
+	f, err := os.CreateTemp("", "harness-agent-prompt-*.md")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("memory: temp prompt: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(f.Name()) }
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("memory: chmod temp prompt: %w", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("memory: write temp prompt: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("memory: close temp prompt: %w", err)
+	}
+	return f.Name(), cleanup, nil
+}
+
 // isShapeError reports whether the failure was the model answering in the wrong
 // shape, as opposed to the subprocess or context failing.
 func isShapeError(err error) bool {
@@ -115,6 +147,23 @@ func (r *AgentRunner) runOnce(ctx context.Context, systemPrompt, data string, wi
 	userMsg := data
 	if strings.TrimSpace(data) != "" {
 		userMsg = dataFenceOpen + data + dataFenceClose
+	}
+
+	// Linux caps a SINGLE argv entry at MAX_ARG_STRLEN (128 KiB) regardless of the
+	// total ARG_MAX budget, and exceeding it fails the exec outright with E2BIG.
+	// The critic, which reviews the whole accepted set in one turn, hit this on
+	// every real run and never once executed — and because a critic failure is
+	// read as "no veto", the run reported a clean bill of health. Hand pi a
+	// `@file` reference instead when the payload is large; pi inlines the contents
+	// (wrapped in a <file name=…> element, which also keeps the data visibly
+	// framed as data).
+	if len(userMsg) > maxArgPayload {
+		path, cleanup, err := writeTempPrompt(userMsg)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		userMsg = "@" + path
 	}
 
 	args := []string{
@@ -207,8 +256,15 @@ func extractLastJSON(s string) string {
 		end = strings.LastIndexByte(s[:end], '}')
 	next:
 	}
-	// Fallback: first-object scan (handles the simple no-prose case).
-	return extractJSON(s)
+	// Fallback: first-object scan (handles the simple no-prose case). Validate it
+	// too — extractJSON slices on brace depth alone, and returning something
+	// unparseable here just moves the failure downstream, where a node reports
+	// "unmarshal verdict: invalid character 'C' after object" and drops the item.
+	// Returning "" instead surfaces it as a shape error, which Run retries.
+	if candidate := extractJSON(s); json.Valid([]byte(candidate)) {
+		return candidate
+	}
+	return ""
 }
 
 // isEscaped reports whether the character at index i is preceded by an odd

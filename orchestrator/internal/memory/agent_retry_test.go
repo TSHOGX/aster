@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +56,70 @@ func TestAgentRunRetriesOnMissingJSON(t *testing.T) {
 	}
 	if payload != `{"canonical":{"doris":"doris"}}` {
 		t.Fatalf("payload = %q", payload)
+	}
+}
+
+// A payload larger than a single argv entry may hold (Linux MAX_ARG_STRLEN,
+// 128 KiB) must still reach the agent. Passing it as an argument fails the exec
+// outright with E2BIG — which is how the critic silently never ran: it reviews the
+// whole accepted set in one turn, and a critic failure reads as "no veto".
+func TestAgentRunSpillsOversizePayloadToFile(t *testing.T) {
+	// The stub echoes back whether it was handed an @file reference, proving the
+	// large payload took the spill path rather than argv.
+	script := `#!/usr/bin/env bash
+last="${@: -1}"
+case "$last" in
+  @*) path="${last#@}"
+      if [[ -s "$path" ]]; then echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"via\":\"file\"}"}]}}'
+      else echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"via\":\"empty\"}"}]}}'; fi ;;
+  *)  echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"via\":\"argv\"}"}]}}' ;;
+esac
+`
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "pi")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := NewAgentRunner(AgentConfig{Bin: bin, Provider: "modelarts", Model: "glm-5.2"})
+
+	big := strings.Repeat("政策数据 candidate statement. ", 20000) // well past 64 KiB
+	if len(big) <= maxArgPayload {
+		t.Fatalf("test payload too small: %d bytes", len(big))
+	}
+	payload, err := r.Run(context.Background(), "sys", big, false)
+	if err != nil {
+		t.Fatalf("Run with oversize payload: %v", err)
+	}
+	if payload != `{"via":"file"}` {
+		t.Fatalf("oversize payload should spill to a file, got %s", payload)
+	}
+
+	// A small payload keeps the plain argv path — no needless temp files.
+	payload, err = r.Run(context.Background(), "sys", "small", false)
+	if err != nil {
+		t.Fatalf("Run with small payload: %v", err)
+	}
+	if payload != `{"via":"argv"}` {
+		t.Fatalf("small payload should stay in argv, got %s", payload)
+	}
+}
+
+// The spilled prompt must not be world-readable, and must not outlive the call.
+func TestWriteTempPromptIsPrivateAndCleanedUp(t *testing.T) {
+	path, cleanup, err := writeTempPrompt("trajectory text with user data")
+	if err != nil {
+		t.Fatalf("writeTempPrompt: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("temp prompt mode = %o, want 600", perm)
+	}
+	cleanup()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("temp prompt should be removed, stat err = %v", err)
 	}
 }
 

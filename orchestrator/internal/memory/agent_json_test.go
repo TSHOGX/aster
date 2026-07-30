@@ -84,3 +84,36 @@ func TestParMapEmpty(t *testing.T) {
 		t.Fatalf("expected empty, got %v", got)
 	}
 }
+
+// The fallback scan slices on brace depth alone, so it could hand back a prefix
+// that is not valid JSON. Returning it moved the failure downstream, where verify
+// logged "unmarshal verdict: invalid character 'C' after object" and dropped the
+// item; returning "" makes it a shape error the runner retries instead.
+func TestExtractLastJSONRejectsUnparseableFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"trailing prose after object", `{"verdict":"current"} Continued analysis below.`},
+		{"truncated object", `{"verdict":"current", "note": "cut off`},
+		{"no object at all", `I could not determine the verdict.`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractLastJSON(tc.in)
+			if got != "" && !json.Valid([]byte(got)) {
+				t.Fatalf("returned invalid JSON %q", got)
+			}
+		})
+	}
+}
+
+// A well-formed object preceded by narration must still be found — the retry
+// change must not make extraction stricter than it was.
+func TestExtractLastJSONStillFindsObjectAfterProse(t *testing.T) {
+	in := "Let me check the tree.\nI ran grep and found it.\n{\"verdict\":\"stale\",\"why\":\"path gone\"}"
+	got := extractLastJSON(in)
+	if !json.Valid([]byte(got)) || got != `{"verdict":"stale","why":"path gone"}` {
+		t.Fatalf("extractLastJSON = %q", got)
+	}
+}
