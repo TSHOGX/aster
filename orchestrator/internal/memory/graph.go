@@ -67,26 +67,62 @@ func (p *Pipeline) runAgenticGraph(ctx context.Context, sessionsProcessed int) e
 	}
 
 	// D. Curate — the promotion gate (memory one-pass, skill reflect-loop).
+	// The promoted ids feed the critic below: reviewing only THIS cycle's additions
+	// is what keeps that node's single call bounded as the KB grows.
+	newMemoryIDs := map[int64]bool{}
+	newSkillIDs := map[int64]bool{}
 	if r, err := NewCurateNode(p.agent, p.store, p.log, runID).Run(ctx); err != nil {
 		p.log.Warn("agentic: curate failed", "error", err)
 	} else {
 		counts["mem_promoted"] = r.MemPromoted
 		counts["skill_promoted"] = r.SkillPromoted
+		for _, id := range r.PromotedMemoryIDs {
+			newMemoryIDs[id] = true
+		}
+		for _, id := range r.PromotedSkillIDs {
+			newSkillIDs[id] = true
+		}
 		p.log.Info("agentic: curate done", "mem_promoted", r.MemPromoted, "skill_promoted", r.SkillPromoted)
 	}
 
 	// F. Consistency critic — the final global gate. Memory vetoes are applied
 	// in-node (accepted→candidate); skill vetoes come back as ids to exclude.
+	// Scoped to this cycle's promotions: the critic used to re-read the ENTIRE
+	// accepted set (715 memories by run 4), which grows without bound and was
+	// killed at the 12-minute ceiling every time — so the gate never once ran.
+	// Everything already accepted was reviewed by the cycle that promoted it.
 	vetoedSkills := map[int64]bool{}
-	if r, err := NewCriticNode(p.agent, p.store, p.log, runID).Run(ctx); err != nil {
-		p.log.Warn("agentic: critic failed", "error", err)
-	} else {
-		for _, id := range r.VetoedSkillIDs {
-			vetoedSkills[id] = true
+	switch {
+	case len(newMemoryIDs) == 0 && len(newSkillIDs) == 0:
+		// Nothing was promoted (or curate failed), so there is nothing new to
+		// review. Skipping matters: an empty review set means "review everything"
+		// to filterMemoryReviewSet, which would put the whole accepted set back in
+		// one call — exactly the unbounded shape this scoping removes.
+		p.log.Info("agentic: critic skipped (no new promotions this cycle)")
+	default:
+		critic := NewCriticNode(p.agent, p.store, p.log, runID)
+		critic.NewMemoryIDs = newMemoryIDs
+		critic.NewSkillIDs = newSkillIDs
+		if r, err := critic.Run(ctx); err != nil {
+			p.log.Warn("agentic: critic failed", "error", err)
+		} else {
+			for _, id := range r.VetoedSkillIDs {
+				vetoedSkills[id] = true
+			}
+			counts["vetoed_memories"] = r.VetoedMemories
+			counts["vetoed_skills"] = r.VetoedSkills
+			counts["critic_reviewed"] = r.ReviewedMemories + r.ReviewedSkills
+			if r.Held {
+				// The critic fails safe (no veto), which is right — but for four runs
+				// that made "vetoed_memories=0" indistinguishable from a gate that
+				// never ran. Record the distinction where a reviewer will see it.
+				counts["critic_held"] = 1
+				p.log.Warn("agentic: critic held (agent error) — no veto was applied; gate did NOT run")
+			}
+			p.log.Info("agentic: critic done",
+				"reviewed", r.ReviewedMemories+r.ReviewedSkills,
+				"vetoed_mem", r.VetoedMemories, "vetoed_skill", r.VetoedSkills)
 		}
-		counts["vetoed_memories"] = r.VetoedMemories
-		counts["vetoed_skills"] = r.VetoedSkills
-		p.log.Info("agentic: critic done", "vetoed_mem", r.VetoedMemories, "vetoed_skill", r.VetoedSkills)
 	}
 
 	// E. Publish — assemble the final set (post-critic), run the PII backstop,
@@ -208,6 +244,9 @@ func (p *Pipeline) agenticReport(counts map[string]int, digest string, staged bo
 	}
 	if counts["verified_stale"] > 0 || counts["verified_fixed"] > 0 {
 		notes = append(notes, "verify pruned stale/fixed knowledge against live code")
+	}
+	if counts["critic_held"] > 0 {
+		notes = append(notes, "⚠ consistency critic FAILED — no veto pass ran; vetoed counts below are absence of a check, not a clean result")
 	}
 	if staged {
 		notes = append(notes, "STAGED awaiting expert approval — not live. Review: harness-ctl kb diff / approve "+digest)
