@@ -3,7 +3,7 @@
 #
 #   orchestrator  :8090  (root — needs netns/nft/runsc + /var/lib/harness*)
 #   model proxy   :8083  (root — correlation socket dir is root:root 0750)
-#   frontend      :8000  (hsw — Next.js dev, proxies /api to the orchestrator)
+#   frontend      :8000  (checkout owner — Next.js dev, proxies /api to the orchestrator)
 #
 # Logs land in dev/logs/. Use dev/stop-all.sh to tear everything down.
 set -Eeuo pipefail
