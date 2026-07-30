@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": ".cursor/hooks/pull-fork-on-start.sh",
+        "timeout": 60
+      }
+    ]
+  }
+}

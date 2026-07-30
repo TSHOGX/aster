@@ -1,0 +1,17 @@
+---
+description: Before each run, pull the latest code from the user's fork (origin)
+alwaysApply: true
+---
+
+# Pull fork before work
+
+At the start of every agent run (before other work):
+
+1. Treat `origin` as the user's fork: `https://github.com/wei0py/agent-runtime-platform.git`
+2. Run `git fetch origin`
+3. Pull the current branch from origin when tracking is set:
+   - `git pull --ff-only origin <current-branch>`
+4. If the current branch has no remote tracking branch yet, still fetch and report `origin/main` and `origin/<branch>` status; do not force-reset local work
+5. Briefly report whether the branch was already up to date or which commits were pulled
+
+Do this first on every new run. Do not skip it because the working tree looks clean.
