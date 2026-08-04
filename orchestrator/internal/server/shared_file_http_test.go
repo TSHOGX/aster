@@ -150,9 +150,12 @@ func TestSharedFileFollowsLinkLifecycle(t *testing.T) {
 	}
 }
 
-// HTML and PDF must be framable same-origin so the public page can preview them;
-// everything else stays inert. This is the pairing that broke previews before
-// (X-Frame-Options collision), so it is pinned.
+// HTML and PDF must be framable so the public page can preview them, including
+// when that page is itself inside a third-party embed; everything else stays
+// inert. This is the pairing that broke previews before (X-Frame-Options
+// collision), so it is pinned: the previewable types carry NO X-Frame-Options,
+// because any value would disagree with frame-ancestors * and make browsers block
+// the frame regardless of the CSP.
 func TestSharedFileContentHeaders(t *testing.T) {
 	f, workspace := newFileShareFixture(t)
 	for _, name := range []string{"page.html", "doc.pdf", "data.csv"} {
@@ -166,8 +169,8 @@ func TestSharedFileContentHeaders(t *testing.T) {
 		frameOptions string
 		cspContains  string
 	}{
-		"page.html": {frameOptions: "SAMEORIGIN", cspContains: "connect-src 'none'"},
-		"doc.pdf":   {frameOptions: "SAMEORIGIN", cspContains: "frame-ancestors 'self'"},
+		"page.html": {frameOptions: "", cspContains: "connect-src 'none'"},
+		"doc.pdf":   {frameOptions: "", cspContains: "frame-ancestors *"},
 		"data.csv":  {frameOptions: "DENY", cspContains: "sandbox"},
 	}
 	for name, want := range cases {

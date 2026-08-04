@@ -45,6 +45,14 @@ type Config struct {
 	MaxShareLinkBytes    int64
 	MaxShareLinkFiles    int
 	CookieSecure         bool
+	// CookieSameSiteNone is unconditionally true: the app is embeddable in any
+	// page (frame-ancestors *), and a SameSite=Strict cookie is not sent from
+	// inside a cross-site iframe, which would leave the embedded app showing a
+	// login page that can never be satisfied. Kept as a field, not inlined at the
+	// use site, so the CSRF consequence stays documented in one place — see
+	// isCrossOriginWrite in frontend/lib/orchestrator-proxy.ts for the check that
+	// replaces SameSite as the CSRF defense.
+	CookieSameSiteNone   bool
 	TrustForwardedProto  bool
 	TrustProxyHeaders    bool
 	SessionRetention     time.Duration
@@ -459,6 +467,7 @@ func Load() (Config, error) {
 		MaxShareLinkBytes:    int64Env("HARNESS_MAX_SHARE_LINK_BYTES", defaultMaxShareLinkBytes),
 		MaxShareLinkFiles:    intEnv("HARNESS_MAX_SHARE_LINK_FILES", defaultMaxShareLinkFiles),
 		CookieSecure:         !boolEnvDefault("HARNESS_COOKIE_INSECURE", false),
+		CookieSameSiteNone:   true,
 		TrustForwardedProto:  boolEnvDefault("HARNESS_TRUST_FORWARDED_PROTO", true),
 		TrustProxyHeaders:    boolEnvDefault("HARNESS_TRUST_PROXY_HEADERS", true),
 		SessionRetention:     sessionRetention,

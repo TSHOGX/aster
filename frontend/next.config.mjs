@@ -18,6 +18,25 @@ const scriptSrc = ["'self'", "'unsafe-inline'", ...(isDev ? ["'unsafe-eval'"] : 
 // the browser used rather than to 'self'.
 const connectSrc = ["'self'", "blob:", ...(isDev ? ["ws:", "wss:"] : [])].join(" ");
 
+// The app is embeddable in any page's iframe by default: it is deployed as a
+// component of third-party portals, so `frame-ancestors *` is the intended
+// posture rather than an escape hatch.
+//
+// This deliberately gives up clickjacking protection — a hostile page can frame
+// the authenticated workbench and bait clicks onto real controls (destroy
+// session, edit file). Two things carry that weight instead: the auth cookie is
+// HttpOnly (framed script cannot read it) and every mutating /api call is
+// origin-checked in the proxy layer (frontend/lib/orchestrator-proxy.ts), so a
+// cross-site page cannot drive state changes even with the cookie attached.
+// Clicks the USER is tricked into making are not covered; that is the residual
+// risk accepted here.
+//
+// X-Frame-Options is omitted entirely rather than set: it has no wildcard form
+// (ALLOW-FROM is dead in every current browser), and a browser that sees it
+// disagree with frame-ancestors blocks the frame outright — the "refused to
+// connect" failure this default exists to avoid.
+const frameAncestorsDirective = "frame-ancestors *";
+
 const csp = [
   "default-src 'self'",
   `script-src ${scriptSrc}`,
@@ -29,7 +48,7 @@ const csp = [
   // fetched ArrayBuffer. blob: URLs are same-origin, opaque, and can't exfiltrate
   // to a remote host, so this does not weaken the exfiltration guarantee.
   `connect-src ${connectSrc}`,
-  "frame-ancestors 'none'",
+  frameAncestorsDirective,
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'"
@@ -37,7 +56,7 @@ const csp = [
 
 const securityHeaders = [
   { key: "Content-Security-Policy", value: csp },
-  { key: "X-Frame-Options", value: "DENY" },
+  // No X-Frame-Options: see frameAncestorsDirective above.
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },

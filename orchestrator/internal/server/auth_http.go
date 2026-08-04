@@ -73,6 +73,21 @@ func (s *Server) useSecureCookie(r *http.Request) bool {
 	return s.cfg.CookieSecure && s.requestIsHTTPS(r)
 }
 
+// cookieSameSite returns None when the deployment is embedded cross-site, so the
+// auth cookie is attached to requests made from inside the parent's iframe.
+// Strict (the default) is dropped in that context and the iframe shows a login
+// page that can never be satisfied.
+//
+// Gated on useSecureCookie: browsers reject SameSite=None without Secure, which
+// would drop the cookie entirely rather than degrade. On plain http we therefore
+// keep Strict — cross-site framing over http cannot work regardless.
+func (s *Server) cookieSameSite(r *http.Request) http.SameSite {
+	if s.cfg.CookieSameSiteNone && s.useSecureCookie(r) {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteStrictMode
+}
+
 func (s *Server) authCookie(r *http.Request, token string, expiresAt time.Time) *http.Cookie {
 	return &http.Cookie{
 		Name:     s.cookieName(r),
@@ -80,7 +95,7 @@ func (s *Server) authCookie(r *http.Request, token string, expiresAt time.Time) 
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.useSecureCookie(r),
-		SameSite: http.SameSiteStrictMode,
+		SameSite: s.cookieSameSite(r),
 		Expires:  expiresAt,
 	}
 }
@@ -92,7 +107,7 @@ func (s *Server) expireCookie(r *http.Request) *http.Cookie {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.useSecureCookie(r),
-		SameSite: http.SameSiteStrictMode,
+		SameSite: s.cookieSameSite(r),
 		MaxAge:   -1,
 	}
 }

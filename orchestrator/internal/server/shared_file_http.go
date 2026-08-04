@@ -63,7 +63,7 @@ func (s *Server) sharedFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer blob.Close()
 
-	applySharedFileContentHeaders(w, file.Path)
+	s.applySharedFileContentHeaders(w, file.Path)
 	// The snapshot is immutable, so its modtime is meaningless as a cache
 	// validator and the link's creation time is the honest answer. Served through
 	// ServeContent for range support on large PDFs.
@@ -96,11 +96,11 @@ func (s *Server) whitelistedFile(w http.ResponseWriter, r *http.Request, link st
 // Anonymous exposure makes the rest of the policy more important, not less:
 // connect-src 'none' and form-action 'none' mean a shared HTML artifact can
 // render but cannot phone home or post anywhere.
-func applySharedFileContentHeaders(w http.ResponseWriter, path string) {
+func (s *Server) applySharedFileContentHeaders(w http.ResponseWriter, path string) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".html", ".htm":
-		w.Header().Set("Content-Security-Policy", strings.Join([]string{
+		s.setPreviewFraming(w, []string{
 			"default-src 'self'",
 			"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
 			"style-src 'self' 'unsafe-inline'",
@@ -112,18 +112,14 @@ func applySharedFileContentHeaders(w http.ResponseWriter, path string) {
 			"frame-src 'none'",
 			"object-src 'none'",
 			"base-uri 'none'",
-			"frame-ancestors 'self'",
-		}, "; "))
-		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		})
 	case ".pdf":
-		w.Header().Set("Content-Security-Policy", strings.Join([]string{
+		s.setPreviewFraming(w, []string{
 			"default-src 'none'",
 			"img-src 'self' data: blob:",
 			"object-src 'self'",
 			"plugin-types application/pdf",
-			"frame-ancestors 'self'",
-		}, "; "))
-		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		})
 	default:
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 		w.Header().Set("X-Frame-Options", "DENY")

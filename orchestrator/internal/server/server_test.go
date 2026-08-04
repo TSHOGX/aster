@@ -4730,17 +4730,19 @@ func TestDownloadArtifactPDFAllowsSameOriginFraming(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d body %s", rec.Code, rec.Body.String())
 	}
-	// The workbench previews PDFs in a same-origin iframe; DENY/sandbox would make
-	// the browser refuse to frame the file ("<host> refused to connect").
-	if got := rec.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
-		t.Fatalf("expected X-Frame-Options SAMEORIGIN, got %q", got)
+	// The workbench previews PDFs in an iframe; DENY/sandbox would make the browser
+	// refuse to frame the file ("<host> refused to connect"). X-Frame-Options must
+	// be absent rather than SAMEORIGIN: the app is embeddable in third-party pages,
+	// and a legacy header disagreeing with frame-ancestors * blocks the frame.
+	if got := rec.Header().Get("X-Frame-Options"); got != "" {
+		t.Fatalf("expected no X-Frame-Options, got %q", got)
 	}
 	csp := rec.Header().Get("Content-Security-Policy")
 	if strings.Contains(csp, "sandbox") {
 		t.Fatalf("PDF CSP must not use sandbox, got %q", csp)
 	}
-	if !strings.Contains(csp, "frame-ancestors 'self'") {
-		t.Fatalf("expected frame-ancestors 'self' in PDF CSP, got %q", csp)
+	if !strings.Contains(csp, "frame-ancestors *") {
+		t.Fatalf("expected frame-ancestors * in PDF CSP, got %q", csp)
 	}
 }
 
