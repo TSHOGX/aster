@@ -117,7 +117,7 @@ const SessionRow = memo(function SessionRow({
             disabled={saving}
             maxLength={200}
             aria-label="Session title"
-            className="w-full rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-sm leading-tight outline-none focus:border-[var(--color-accent)]"
+            className="w-full rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-sm leading-tight outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
           />
         </div>
       </li>

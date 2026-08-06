@@ -39,7 +39,7 @@ function MessageBubbleImpl({
         <time
           dateTime={message.created_at}
           title={formatFullTimestamp(message.created_at)}
-          className="px-1 font-mono text-2xs text-[var(--color-foreground-muted)] opacity-70 cursor-default"
+          className="px-1 font-mono text-2xs text-[var(--color-foreground-muted)] cursor-default"
         >
           {formatTime(message.created_at)}
         </time>
@@ -58,7 +58,7 @@ function MessageBubbleImpl({
           <time
             dateTime={message.created_at}
             title={formatFullTimestamp(message.created_at)}
-            className="font-mono opacity-70 cursor-default"
+            className="font-mono cursor-default"
           >
             {formatTime(message.created_at)}
           </time>

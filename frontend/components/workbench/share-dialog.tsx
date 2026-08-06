@@ -226,7 +226,7 @@ export function ShareDialog({
                     }
                   }}
                   placeholder={shareable.length > 0 ? "Username" : "No other users configured"}
-                  className="min-w-0 flex-1 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-sm outline-none focus:border-[var(--color-accent)]"
+                  className="min-w-0 flex-1 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-sm outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
                 />
                 <datalist id="share-users">
                   {shareable.map((user) => (

@@ -256,8 +256,10 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
         className="flex max-h-[70vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]"
         onKeyDown={onKeyDown}
       >
-        <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
-          <Search className="h-4 w-4 shrink-0 text-[var(--color-foreground-muted)]" />
+        {/* The field is autofocused and is the palette's only input, so it needs no
+            focus ring of its own; the leading icon takes the accent instead. */}
+        <div className="group flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
+          <Search className="h-4 w-4 shrink-0 text-[var(--color-foreground-muted)] transition-colors group-focus-within:text-[var(--color-accent)]" />
           <input
             ref={inputRef}
             value={query}

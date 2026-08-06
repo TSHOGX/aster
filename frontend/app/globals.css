@@ -466,17 +466,72 @@ input:focus-visible {
   padding: 0.08em 0.34em;
   border-radius: var(--radius-xs);
 }
-/* Fenced blocks: a defined trough distinct from the surrounding surface. */
+/*
+  Fenced blocks: a defined trough distinct from the surrounding surface, wrapped
+  by a header strip carrying the language and a copy button (markdown-view.tsx).
+  The frame lives on the wrapper so the header and the code share one outline.
+*/
+.markdown-body .code-block {
+  margin: 0.8em 0;
+  border: 1px solid var(--color-code-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-code-bg);
+}
+.markdown-body .code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3em 0.45em 0.3em 0.85em;
+  background: color-mix(in oklab, var(--color-surface-muted) 60%, var(--color-code-bg));
+  border-bottom: 1px solid var(--color-code-border);
+}
+.markdown-body .code-block-lang {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-foreground-muted);
+  text-transform: lowercase;
+}
+.markdown-body .code-block-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2em 0.5em;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs);
+  color: var(--color-foreground-muted);
+  background: transparent;
+  /* Revealed on hover/focus so a wall of code blocks is not also a wall of
+     buttons; focus-visible keeps it reachable by keyboard. */
+  opacity: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+.markdown-body .code-block:hover .code-block-copy,
+.markdown-body .code-block-copy:focus-visible {
+  opacity: 1;
+}
+.markdown-body .code-block-copy:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-foreground);
+}
 .markdown-body pre {
   font-family: var(--font-mono);
   font-size: 0.86em;
   line-height: 1.6;
   background: var(--color-code-bg);
   color: var(--color-code-ink);
-  border: 1px solid var(--color-code-border);
   padding: 0.85em 1em;
-  border-radius: var(--radius);
   overflow-x: auto;
+  margin: 0;
+}
+/* A <pre> that is not inside .code-block (none today, but markdown can nest one
+   inside a list or blockquote) still needs its own frame. */
+.markdown-body > pre,
+.markdown-body li > pre,
+.markdown-body blockquote > pre {
+  border: 1px solid var(--color-code-border);
+  border-radius: var(--radius);
   margin: 0.7em 0;
 }
 .markdown-body pre code {
@@ -497,23 +552,76 @@ input:focus-visible {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/*
+  Tables. The agent emits these constantly (cell comparisons, cycle summaries,
+  measurement runs), so they get the full data-grid treatment rather than default
+  markdown borders: the wrapper scrolls, the header sticks to the top of that
+  scroll so column meaning survives a long table, and rows zebra.
+*/
+.markdown-body .table-scroll {
+  margin: 0.8em 0;
+  max-height: 26rem;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
 .markdown-body table {
-  border-collapse: collapse;
-  margin: 0.7em 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0;
+  width: 100%;
   font-size: 0.95em;
+}
+/* A bare table (no wrapper) still needs its own frame. */
+.markdown-body > table {
+  margin: 0.8em 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
 }
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid var(--color-border);
-  padding: 0.35em 0.7em;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.45em 0.8em;
+  text-align: left;
+  vertical-align: top;
 }
-.markdown-body th {
+/* Vertical rules between columns only — horizontal ones come from the cells. */
+.markdown-body th + th,
+.markdown-body td + td {
+  border-left: 1px solid var(--color-border);
+}
+.markdown-body tr:last-child td {
+  border-bottom: 0;
+}
+.markdown-body thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background: var(--color-surface-muted);
   font-weight: 600;
-  text-align: left;
+  white-space: nowrap;
+  /* A sticky cell's own border does not travel with it, so the divider under the
+     header row is drawn as a shadow instead. */
+  box-shadow: inset 0 -1px 0 var(--color-border);
 }
-.markdown-body tr:nth-child(even) td {
-  background: color-mix(in oklab, var(--color-surface-muted) 45%, transparent);
+.markdown-body tbody tr:nth-child(even) td {
+  background: color-mix(in oklab, var(--color-surface-muted) 40%, transparent);
+}
+.markdown-body tbody tr:hover td {
+  background: var(--color-accent-soft);
+}
+/*
+  Numeric cells right-align so digits line up by place value, and use tabular
+  figures so columns stay in register. Detected in markdown-view.tsx, which tags
+  cells whose text is purely numeric — CSS cannot inspect content itself.
+*/
+.markdown-body td[data-numeric="true"],
+.markdown-body th[data-numeric="true"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 0.94em;
 }
 /* GFM task lists render a checkbox as the list marker. */
 .markdown-body li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.1em; }

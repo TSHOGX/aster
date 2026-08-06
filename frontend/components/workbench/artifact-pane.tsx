@@ -515,7 +515,7 @@ function TreeNode({
         <a
           href={buildArtifactHref(node.artifact.session_id, node.path)}
           download
-          className="shrink-0 text-[var(--color-foreground-muted)] opacity-70 hover:text-[var(--color-foreground)] group-hover:opacity-100"
+          className="shrink-0 text-[var(--color-foreground-muted)] transition-opacity hover:text-[var(--color-foreground)] focus-visible:opacity-100 group-hover:opacity-100 sm:opacity-0"
           title="Download"
         >
           <Download className="h-3.5 w-3.5" />

@@ -71,7 +71,8 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
             rows={1}
             disabled={disabled || sending}
             className={cn(
-              "min-h-[24px] resize-none border-0 bg-transparent p-0 leading-6 focus:border-0 focus:outline-none focus-visible:outline-none",
+              // The wrapping bar owns the focus ring here (see ui/textarea.tsx).
+              "min-h-[24px] resize-none border-0 bg-transparent p-0 leading-6 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none",
               multiline ? "max-h-[220px] px-1" : "h-6"
             )}
           />

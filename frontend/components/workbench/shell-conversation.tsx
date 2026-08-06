@@ -66,7 +66,7 @@ function ShellComposer({
             placeholder={placeholder}
             rows={1}
             disabled={disabled || sending || busy}
-            className="h-8 min-h-8 resize-none border-0 bg-transparent px-0 py-1 font-mono text-sm leading-6 focus:border-0 focus:outline-none focus-visible:outline-none"
+            className="h-8 min-h-8 resize-none border-0 bg-transparent px-0 py-1 font-mono text-sm leading-6 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none"
           />
           {busy ? (
             <button
