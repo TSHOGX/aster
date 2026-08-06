@@ -339,16 +339,26 @@ func validateDataProxyBindAddr(raw, field string) error {
 	if err != nil {
 		return fmt.Errorf("%s must be host:port, got %q", field, raw)
 	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
+	if _, err := netip.ParseAddr(host); err != nil {
 		return fmt.Errorf("%s host must be an IP literal the gateway can bind, got %q", field, host)
 	}
-	// A wildcard bind would expose the gateway on every interface, including any
-	// public one. It must be bound to the host-gateway address the sandbox netns
-	// reaches, and nothing wider.
-	if addr.IsUnspecified() {
-		return fmt.Errorf("%s must not bind a wildcard address (%q); bind the host gateway IP", field, host)
-	}
+	// A wildcard bind is expected here, not a mistake. One gateway serves every
+	// sandbox, but each generation gets its own /30 veth pair and therefore its
+	// own host-gateway address (10.201.0.1, 10.201.0.5, 10.201.0.21, ...), which
+	// is what renderNetworkHostsProjection points the sandbox alias at. There is
+	// no single stable host address to bind: the ones that exist are created and
+	// destroyed with the sandboxes themselves.
+	//
+	// This matches harness.model_proxy.bind_url, which does not merely permit a
+	// wildcard but requires one — see parseModelProxyBindPort ("host must be an
+	// unspecified address"); its default is http://0.0.0.0:8082.
+	//
+	// The exposure a wildcard creates is real, and is handled outside the config
+	// layer: the listener also answers on this host's LAN address while holding
+	// the real upstream credential, so a packet filter restricting the port to
+	// loopback plus the sandbox CIDR is a hard deployment prerequisite. The
+	// gateway's systemd unit refuses to start unless that filter is present,
+	// because iptables rules do not survive a reboot.
 	port, err := strconv.Atoi(portRaw)
 	if err != nil || port <= 0 || port > 65535 {
 		return fmt.Errorf("%s has an invalid port %q", field, portRaw)

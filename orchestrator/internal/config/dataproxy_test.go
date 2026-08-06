@@ -98,6 +98,34 @@ func TestDataProxyKindInferredForDoris(t *testing.T) {
 	}
 }
 
+// TestDataProxyAcceptsWildcardBind pins the wildcard bind as intentional rather
+// than an oversight. One gateway serves every sandbox, but each generation gets
+// its own /30 veth pair and therefore its own host-gateway address (10.201.0.1,
+// 10.201.0.5, 10.201.0.21, ...), which is what renderNetworkHostsProjection
+// points the sandbox alias at. There is no single stable host address to bind:
+// the ones that exist are created and destroyed with the sandboxes.
+//
+// harness.model_proxy.bind_url goes further and *requires* an unspecified host
+// (parseModelProxyBindPort: "host must be an unspecified address"), defaulting
+// to http://0.0.0.0:8082, so this matches the surrounding architecture.
+//
+// The exposure a wildcard creates is real and is handled at deploy time, not
+// here: the listener also answers on this host's LAN address while holding the
+// real upstream credential, so a packet filter restricting the port to loopback
+// plus the sandbox CIDR is a prerequisite, and the gateway's systemd unit
+// refuses to start without it (iptables rules do not survive a reboot).
+func TestDataProxyAcceptsWildcardBind(t *testing.T) {
+	for _, bind := range []string{"0.0.0.0:9030", "[::]:9030"} {
+		in := dorisProxy()
+		cfg := in["doris"]
+		cfg.BindAddr = bind
+		in["doris"] = cfg
+		if err := validateDataProxies(normalizeDataProxies(in)); err != nil {
+			t.Errorf("bind_addr %q rejected: %v", bind, err)
+		}
+	}
+}
+
 func TestDataProxyDatabasesNormalized(t *testing.T) {
 	in := dorisProxy()
 	cfg := in["doris"]
@@ -126,13 +154,6 @@ func TestDataProxyValidationRejects(t *testing.T) {
 			name:    "unknown kind",
 			mutate:  func(c *DataProxyConfig) { c.Upstream.Kind = "postgres_wire" },
 			wantSub: "not a known data proxy kind",
-		},
-		{
-			// A wildcard bind would expose the gateway — which holds the real
-			// credential — on every interface, including any public one.
-			name:    "wildcard bind",
-			mutate:  func(c *DataProxyConfig) { c.BindAddr = "0.0.0.0:9030" },
-			wantSub: "must not bind a wildcard address",
 		},
 		{
 			name:    "bind without port",

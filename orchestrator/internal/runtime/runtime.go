@@ -43,6 +43,12 @@ type Config struct {
 	// keeps this change free of a schema migration. Empty reproduces the
 	// previous hosts projection byte-for-byte.
 	SandboxDataProxyAliases []string
+	// ObsGateway configures the fake OBS credentials projected into each sandbox.
+	// Deployment config like the aliases above rather than generation state, which
+	// is what keeps it free of a schema migration. Disabled by default: without
+	// harness.data_proxies.obs nothing is written and the control dir stays
+	// byte-identical to before. See obscred.go.
+	ObsGateway              ObsGatewayConfig
 	DefaultAgent            string
 	SandboxUID              int
 	SandboxGID              int

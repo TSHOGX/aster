@@ -35,6 +35,58 @@ harness:
   model_proxy:
     bind_url: http://0.0.0.0:8083
     sandbox_base_url: http://harness-model-proxy.internal:8083
+  # Host-side data-store gateways. One shared gateway process serves every
+  # sandbox: it terminates auth with the fake sandbox credential below and
+  # relays to Doris with the real one, which never enters a sandbox.
+  #
+  # bind_addr is a wildcard on purpose. Each generation gets its own /30 veth
+  # pair and therefore its own host-gateway address (10.201.0.1, 10.201.0.5,
+  # ...), which is what the sandbox_alias resolves to, so there is no single
+  # stable address to bind. model_proxy.bind_url above is a wildcard for the
+  # same reason. The wildcard also answers on this host's LAN address while
+  # holding the real credential, so the packet filter installed by
+  # data-proxies/doris/deploy/gateway-up.sh is a hard prerequisite — start the
+  # gateway with that script, not by hand.
+  data_proxies:
+    doris:
+      enabled: true
+      bind_addr: 0.0.0.0:9030
+      sandbox_alias: harness-doris-gateway.internal
+      sandbox_port: 9030
+      sandbox_user: sandbox
+      upstream:
+        kind: doris_mysql
+        addr: 172.16.0.138:9030
+        databases:
+          - vhr_data
+          - vehicle_signal
+          - watt
+
+    # OBS object store behind a host-side HTTP gateway. The real AK/SK live only
+    # in the gateway's EnvironmentFile (/etc/harness/obs-gateway.env); each
+    # sandbox gets a per-generation fake pair via /harness-control/obs.json.
+    # Start the gateway with data-proxies/obs/obs-gateway.sh, which also applies
+    # the iptables rules the 0.0.0.0 bind requires.
+    #
+    # Requires OBS_GATEWAY_MASTER_KEY in the orchestrator's own environment,
+    # matching the gateway's: the orchestrator ISSUES the per-generation fake
+    # credentials that the gateway VERIFIES. Delivered by the systemd drop-in at
+    # /etc/systemd/system/harness-publish-orchestrator.service.d/10-obs-gateway.conf.
+    # If it is ever missing, generation start still succeeds — the projection is
+    # skipped with a loud log and only OBS reads fail. See data-proxies/obs/.
+    obs:
+      enabled: true
+      bind_addr: 0.0.0.0:8084
+      sandbox_alias: harness-obs.internal
+      sandbox_port: 8084
+      # Vestigial for OBS: the sandbox authenticates with a fake AK/SK, not a
+      # username. Present because this schema is shared with the MySQL-shaped
+      # Doris gateway. Authorization is by source IP against the live turn.
+      sandbox_user: sandbox
+      upstream:
+        kind: obs_http
+        base_url: https://obs.cn-north-4.myhuaweicloud.com
+
   sandbox_identity:
     uid: 65534
     gid: 65534

@@ -353,6 +353,22 @@ var secretGrantSpecs = map[string]SecretGrantSpec{
 		// query by source IP, so this TTL is not the limiting factor.
 		TTLMaxSeconds: 86400,
 	},
+	// The OBS gateway is the same shape as the Doris one: the real AK/SK stay on
+	// the host and the sandbox holds a per-generation fake pair, so the exposure
+	// mode is gateway_only for the same reason — there is nothing to drop into
+	// the sandbox, and a grant asking for anything else is a misconfiguration.
+	//
+	// Reuses the data_provider domain deliberately. The grant-semantics switch
+	// already treats every data_provider grant identically, so a separate
+	// object_store domain would only add a case that behaves the same.
+	secretGrantSpecKey("data_provider", "obs_s3_readonly"): {
+		Domain:       "data_provider",
+		GrantID:      "data_provider:obs_gateway",
+		Scope:        "obs_s3_readonly",
+		ExposureMode: "gateway_only",
+		// Bounded per request by the sandbox's active turn, same as Doris.
+		TTLMaxSeconds: 86400,
+	},
 }
 
 func Lookup(value string) (Definition, bool) {

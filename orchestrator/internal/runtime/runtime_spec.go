@@ -38,6 +38,12 @@ type controlManifest struct {
 	EgressPolicyDigest       string         `json:"egress_policy_digest"`
 	ManifestVersion          int            `json:"manifest_version"`
 	DriverRuntime            map[string]any `json:"driver_runtime,omitempty"`
+	// DataProxyOBS pins the fake-credential projection written into the control
+	// dir, so a swapped or tampered obs.json is detectable. omitempty keeps the
+	// manifest and its digest byte-identical when the OBS gateway is not
+	// configured. Carries the access key id (public by nature) but never the
+	// derived secret. See obscred.go.
+	DataProxyOBS map[string]any `json:"data_proxy_obs,omitempty"`
 }
 
 type controlManifestFile struct {
@@ -97,6 +103,12 @@ func (r *Runtime) renderGenerationArtifacts(ctx context.Context, req StartReques
 		return GenerationArtifacts{}, err
 	}
 	if err := r.writeNetworkHostsProjection(details); err != nil {
+		return GenerationArtifacts{}, err
+	}
+	// The sandbox's fake OBS credentials, into the same read-only control dir.
+	// No-op unless harness.data_proxies.obs is configured. Covered by the
+	// control-manifest digest below, so a tampered projection is detectable.
+	if err := r.writeObsProjection(details); err != nil {
 		return GenerationArtifacts{}, err
 	}
 	materializedDriverConfig, err := r.writeDriverConfigProjection(req)
@@ -192,6 +204,9 @@ func (r *Runtime) buildGenerationManifest(req StartRequest, runscVersion, bundle
 	if layout, ok := agents.DriverRuntimeLayoutSpecFor(agents.ID(selectedDriver)); ok {
 		applyDriverControlManifestSpec(&manifest, layout.ControlManifest)
 	}
+	// Pin the OBS fake-credential projection. nil when the gateway is disabled,
+	// which omitempty keeps out of the manifest entirely.
+	manifest.DataProxyOBS = r.obsProjectionDigestInput(details)
 	return manifest, nil
 }
 
@@ -274,6 +289,11 @@ func controlManifestProjectionFields() (map[string]struct{}, map[string]struct{}
 		"egress_policy_digest":         {},
 		"manifest_version":             {},
 		"driver_runtime":               {},
+		// Strict, not regenerable: the whole point of pinning the OBS credential
+		// projection is that a swapped or tampered obs.json changes the digest.
+		// Listing it as regenerable would silently drop it from the comparison
+		// and undo the tamper-evidence.
+		"data_proxy_obs": {},
 	}
 	regenerableFields := map[string]struct{}{
 		"created_at": {},
