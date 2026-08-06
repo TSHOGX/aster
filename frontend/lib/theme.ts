@@ -4,8 +4,8 @@ export const THEME_STORAGE_KEY = "art-theme";
 
 /** Page background per theme; mirrors --bg in globals.css. Used for mobile chrome. */
 const THEME_COLOR: Record<Theme, string> = {
-  light: "#f7f6f2",
-  dark: "#1e1e2e"
+  light: "#f6f8fb",
+  dark: "#0f1419"
 };
 
 /** Persist a user-selected theme and reflect it onto <html> so the CSS variables switch. */

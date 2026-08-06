@@ -6,18 +6,23 @@
   All UI colors flow through the semantic `--color-*` custom properties below.
   Components reference them via `var(--color-*)`, so switching the whole app is
   just a matter of redefining these variables. `:root` holds the light theme
-  (quiet-light: warm off-white + restrained green accent); `[data-theme="dark"]`
-  overrides them with catppuccin-mocha. The `@theme` block registers the tokens
-  with Tailwind so `bg-background` / `text-foreground` utilities resolve to the
-  same live variables and pick up the active theme automatically.
+  (white surfaces on a cool pale blue-grey canvas); `[data-theme="dark"]`
+  overrides them with a neutral deep blue-grey. Both share one indigo accent —
+  the only saturated hue in the chrome, so it always reads as "interactive".
+  The `@theme` block registers the tokens with Tailwind so `bg-background` /
+  `text-foreground` utilities resolve to the same live variables and pick up the
+  active theme automatically.
 
-  Palettes ported from the design system:
-    - light → palettes/quiet-light.css
-    - dark  → palettes/catppuccin-mocha.css
+  Beyond color, three scales are tokens too, so components never hardcode a
+  literal: --text-* (type), --shadow-* (elevation), --measure (reading width).
 */
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* CJK faces follow the Latin ones: Inter has no Chinese coverage, so without
+     an explicit stack the browser picks an arbitrary fallback whose weight and
+     metrics clash with Inter in mixed Chinese/English runs. */
+  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
+    "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* Registered with Tailwind; concrete values live in :root / [data-theme] below. */
@@ -53,134 +58,212 @@
   --color-scrollbar: var(--scrollbar);
   --color-scrollbar-hover: var(--scrollbar-hover);
 
+  /* Categorical palette for agent-produced charts. Ordered for adjacent-hue
+     separation, so the first few series stay distinguishable without tuning. */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+
   --radius-xs: 0.25rem;
   --radius-sm: 0.375rem;
   --radius: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+
+  /*
+    Type scale. 12px is the floor: the previous 10px/11px labels were below the
+    comfortable-reading threshold for secondary text. Registered as Tailwind
+    `text-*` sizes so `text-2xs` … `text-xl` resolve here.
+  */
+  --text-2xs: 0.75rem;    /* 12px — dense metadata (sizes, timestamps) */
+  --text-xs: 0.8125rem;   /* 13px — secondary text, dense controls */
+  --text-sm: 0.875rem;    /* 14px — body default */
+  --text-base: 0.9375rem; /* 15px — emphasized body */
+  --text-lg: 1.0625rem;   /* 17px — panel titles */
+  --text-xl: 1.25rem;     /* 20px — page/screen titles */
+
+  /*
+    Elevation. Cool-tinted and deliberately shallow: the enterprise look comes
+    from hairline borders plus a barely-there lift, not from drop shadows. Dark
+    mode overrides these below (a black shadow is invisible on a dark canvas, so
+    depth there comes from the border instead).
+  */
+  --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.04);
+  --shadow-sm: 0 1px 3px rgb(15 23 42 / 0.06), 0 1px 2px rgb(15 23 42 / 0.04);
+  --shadow-md: 0 2px 8px rgb(15 23 42 / 0.07), 0 1px 3px rgb(15 23 42 / 0.05);
+  --shadow-lg: 0 8px 24px rgb(15 23 42 / 0.09), 0 2px 6px rgb(15 23 42 / 0.05);
+  --shadow-xl: 0 16px 48px rgb(15 23 42 / 0.12), 0 4px 12px rgb(15 23 42 / 0.06);
 }
 
-/* ── Light: quiet-light ─────────────────────────────────────────────── */
+/*
+  Reading measure: the conversation column and the composer share this width so
+  they align into one vertical channel instead of a full-bleed log sitting above
+  a narrow centered input.
+*/
+:root {
+  --measure: 46rem;
+}
+
+/* ── Light: white + pale blue-grey ──────────────────────────────────── */
 :root {
   color-scheme: light;
 
-  --bg: #f7f6f2;
+  /* Panels are pure white and lift off a faintly blue-tinted canvas, so the
+     structure reads from the surface change alone — no heavy dividers needed. */
+  --bg: #f6f8fb;
   --surface: #ffffff;
-  --surface-muted: #edece6;
-  --foreground: #1c1e21;
-  --foreground-muted: #62676f;
-  --border: #e6e4de;
-  --border-strong: #d2cec5;
+  --surface-muted: #eef2f7;
+  --foreground: #0f172a;
+  --foreground-muted: #5a687d; /* 4.9:1 on --surface, 4.6:1 on --bg */
+  --border: #e4e9f0;
+  --border-strong: #cbd5e1;
 
-  --accent: #4f6f61;
-  --accent-hover: #415a4f;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
   --accent-foreground: #ffffff;
-  --accent-soft: #cdd8d2;
+  --accent-soft: #e5e7fb;
 
-  /* Primary button: a lighter, less saturated sage than --accent so it sits
-     comfortably next to body text instead of reading as a dark, heavy slab. */
-  --button-primary: #6b8b7d;
-  --button-primary-hover: #5c7a6d;
+  /* Primary button: the deeper end of the indigo ramp, so white label text
+     clears 4.5:1 (the lighter --accent does not). */
+  --button-primary: #4f46e5;
+  --button-primary-hover: #4338ca;
   --button-primary-foreground: #ffffff;
 
-  --success: #4f6f61;
-  --warning: #c7a36f;
-  --danger: #b3524a;
-  --danger-soft: #f1e0dd;
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --danger-soft: #fdeaea;
 
-  --user-bubble: #e3ebe6;
+  --user-bubble: #e8eafd;
 
-  /* Code slab: a touch warmer/darker than the page so code reads as its own
-     surface, with a hairline to define the trough. */
-  --code-bg: #f4f2ec;
-  --code-border: #e0ddd4;
-  --code-ink: #383a42;
+  /* Code slab: a cool tint of the canvas so code reads as its own surface,
+     with a hairline to define the trough. */
+  --code-bg: #f8fafc;
+  --code-border: #e2e8f0;
+  --code-ink: #334155;
 
-  --overlay: rgba(28, 30, 33, 0.32);
+  --overlay: rgba(15, 23, 42, 0.32);
 
-  /* Text selection + scrollbar, aligned with the quiet-light palette. */
-  --selection-bg: #cdd8d2;
-  --selection-ink: #111111;
-  --scrollbar: #d2cec5;
-  --scrollbar-hover: #b9b4a8;
+  /* Text selection + scrollbar, aligned with the indigo accent. */
+  --selection-bg: #d9dcfa;
+  --selection-ink: #0f172a;
+  --scrollbar: #cbd5e1;
+  --scrollbar-hover: #94a3b8;
 
-  /* syntax highlighting — Quiet Light (VS Code) palette, tuned to sit on the
-     warm off-white code slab so it reads as one family with the UI. */
+  /* Chart series — saturated enough to read on white, spaced around the wheel. */
+  --chart-1: #4f46e5;
+  --chart-2: #0891b2;
+  --chart-3: #059669;
+  --chart-4: #d97706;
+  --chart-5: #dc2626;
+  --chart-6: #c026d3;
+  --chart-7: #2563eb;
+  --chart-8: #65a30d;
+
+  /* syntax highlighting — GitHub Light family, cool-toned to match the slab. */
   --hl-base: var(--code-ink);
-  --hl-keyword: #7a3e9d;   /* violet — keywords / storage */
-  --hl-entity: #9c5d27;    /* ochre-brown — function & type names */
-  --hl-constant: #4b83cd;  /* soft blue — numbers / constants */
-  --hl-string: #448c27;    /* olive green — strings */
-  --hl-variable: #7a3e9d;  /* violet — variables / built-ins */
-  --hl-comment: #a0a1a7;   /* muted grey — comments */
-  --hl-tag: #4f6f61;       /* domain green — tags / selectors */
-  --hl-section: #4b83cd;
-  --hl-bullet: #9c5d27;
-  --hl-addition-fg: #448c27;
-  --hl-addition-bg: #eaf3e3;
-  --hl-deletion-fg: #b3524a;
-  --hl-deletion-bg: #f6e5e3;
+  --hl-keyword: #cf222e;   /* red — keywords / storage */
+  --hl-entity: #8250df;    /* purple — function & type names */
+  --hl-constant: #0550ae;  /* blue — numbers / constants */
+  --hl-string: #0a3069;    /* deep navy — strings */
+  --hl-variable: #953800;  /* orange-brown — variables / built-ins */
+  --hl-comment: #6e7781;   /* grey — comments */
+  --hl-tag: #116329;       /* green — tags / selectors */
+  --hl-section: #0550ae;
+  --hl-bullet: #953800;
+  --hl-addition-fg: #116329;
+  --hl-addition-bg: #e6ffec;
+  --hl-deletion-fg: #82071e;
+  --hl-deletion-bg: #ffebe9;
 }
 
-/* ── Dark: catppuccin-mocha ─────────────────────────────────────────── */
+/* ── Dark: neutral deep blue-grey ───────────────────────────────────── */
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #1e1e2e;          /* base */
-  --surface: #181825;     /* mantle — panels sit slightly darker than the canvas */
-  --surface-muted: #313244; /* surface0 — hover states and subtle fills */
-  --foreground: #cdd6f4;  /* text */
-  --foreground-muted: #a6adc8; /* subtext0 */
-  --border: #45475a;      /* surface1 */
-  --border-strong: #585b70; /* surface2 */
+  /* Inverted from light: panels sit *above* the canvas here. On a dark screen a
+     lighter surface is what reads as raised, so --surface is lighter than --bg
+     (in light mode the relationship is the other way round). */
+  --bg: #0f1419;
+  --surface: #161b22;
+  --surface-muted: #1f2733;
+  --foreground: #e6edf3;
+  --foreground-muted: #93a1b1; /* 6.4:1 on --surface */
+  --border: #262d38;
+  --border-strong: #364152;
 
-  --accent: #cba6f7;      /* mauve */
-  --accent-hover: #b491e8;
-  --accent-foreground: #1e1e2e;
-  --accent-soft: #383a52;
+  /* Lighter end of the indigo ramp: #6366f1 on a near-black canvas is too dim
+     for text/icons, so the accent brightens while the button stays deep. */
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-foreground: #0f1419;
+  --accent-soft: #262a45;
 
-  /* Primary button: a deeper, muted violet than mauve --accent so it reads as
-     a calm surface instead of a bright pastel slab against the dark canvas. */
-  --button-primary: #7c6f9e;
-  --button-primary-hover: #6c5f8d;
-  --button-primary-foreground: #eae6f7;
+  --button-primary: #4f46e5;
+  --button-primary-hover: #6366f1;
+  --button-primary-foreground: #ffffff;
 
-  --success: #a6e3a1;     /* green */
-  --warning: #f9e2af;     /* yellow */
-  --danger: #f38ba8;      /* red */
-  --danger-soft: #3c2934;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --danger-soft: #3b1f22;
 
-  --user-bubble: #2b2b40;
+  --user-bubble: #1e2438;
 
-  /* Code slab: crust (darker than base/mantle) so code sinks below panels,
-     with a surface1 hairline — the classic Catppuccin editor trough. */
-  --code-bg: #11111b;      /* crust */
-  --code-border: #313244;  /* surface0 */
-  --code-ink: #cdd6f4;     /* text */
+  /* Code slab: darker than both canvas and panels so code sinks into a trough. */
+  --code-bg: #0b0f14;
+  --code-border: #212936;
+  --code-ink: #d7e0ea;
 
-  --overlay: rgba(17, 17, 27, 0.62); /* crust @ opacity */
+  --overlay: rgba(3, 7, 12, 0.66);
 
-  /* Text selection + scrollbar, aligned with the Catppuccin Mocha palette. */
-  --selection-bg: #45475a;   /* surface1 */
-  --selection-ink: #cdd6f4;  /* text */
-  --scrollbar: #45475a;      /* surface1 */
-  --scrollbar-hover: #585b70;/* surface2 */
+  /* Text selection + scrollbar. */
+  --selection-bg: #31365c;
+  --selection-ink: #e6edf3;
+  --scrollbar: #2f3947;
+  --scrollbar-hover: #46536b;
 
-  /* syntax highlighting — official Catppuccin Mocha syntax mapping. */
+  /* Chart series — lightened so each reads against the near-black canvas. */
+  --chart-1: #818cf8;
+  --chart-2: #22d3ee;
+  --chart-3: #34d399;
+  --chart-4: #fbbf24;
+  --chart-5: #f87171;
+  --chart-6: #e879f9;
+  --chart-7: #60a5fa;
+  --chart-8: #a3e635;
+
+  /*
+    Elevation in dark mode: a black shadow is invisible against a near-black
+    canvas, so shallow lifts fall back to borders and only the genuinely
+    floating layers (popovers, dialogs) keep a deep, wide shadow.
+  */
+  --shadow-xs: 0 0 0 1px rgb(0 0 0 / 0.2);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 10px 28px rgb(0 0 0 / 0.55);
+  --shadow-xl: 0 20px 56px rgb(0 0 0 / 0.65);
+
+  /* syntax highlighting — GitHub Dark family, matching the light theme's roles. */
   --hl-base: var(--code-ink);
-  --hl-keyword: #cba6f7;   /* mauve — keywords / storage */
-  --hl-entity: #89b4fa;    /* blue — function & type names */
-  --hl-constant: #fab387;  /* peach — numbers / constants */
-  --hl-string: #a6e3a1;    /* green — strings */
-  --hl-variable: #f5c2e7;  /* pink — variables / built-ins */
-  --hl-comment: #6c7086;   /* overlay0 — comments */
-  --hl-tag: #f38ba8;       /* red — tags / selectors */
-  --hl-section: #89b4fa;
-  --hl-bullet: #f9e2af;    /* yellow */
-  --hl-addition-fg: #a6e3a1;
-  --hl-addition-bg: #24352e;
-  --hl-deletion-fg: #f38ba8;
-  --hl-deletion-bg: #3c2934;
+  --hl-keyword: #ff7b72;   /* coral — keywords / storage */
+  --hl-entity: #d2a8ff;    /* purple — function & type names */
+  --hl-constant: #79c0ff;  /* blue — numbers / constants */
+  --hl-string: #a5d6ff;    /* pale blue — strings */
+  --hl-variable: #ffa657;  /* orange — variables / built-ins */
+  --hl-comment: #8b949e;   /* grey — comments */
+  --hl-tag: #7ee787;       /* green — tags / selectors */
+  --hl-section: #79c0ff;
+  --hl-bullet: #ffa657;
+  --hl-addition-fg: #7ee787;
+  --hl-addition-bg: #12261e;
+  --hl-deletion-fg: #ffa198;
+  --hl-deletion-bg: #29161a;
 }
 
 * {
@@ -195,9 +278,13 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--text-sm);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Proportional digits reflow as values change; lining tabular digits keep
+     counters, durations and sizes from shifting width mid-update. */
+  font-variant-numeric: tabular-nums;
 }
 
 /*

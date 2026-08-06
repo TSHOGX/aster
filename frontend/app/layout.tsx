@@ -24,7 +24,7 @@ export default function RootLayout({
         {/* Mobile browser chrome. The init script sets the correct value before
             first paint (stored choice → OS fallback) and setTheme() updates it
             on every toggle, so it always tracks the in-app theme. */}
-        <meta name="theme-color" content="#f7f6f2" />
+        <meta name="theme-color" content="#f6f8fb" />
         {/* Set data-theme before first paint to avoid a light-mode flash. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
