@@ -47,6 +47,8 @@ dev/local.env
 *.backup.*
 config/auth-users.yaml.bak.*
 frontend/.next.backup.*/
+# 手工运维备份常写成 .next.bak-<原因>-<日期>/，连字符不匹配上面的 *.bak.*
+frontend/.next.bak-*/
 orchestrator.db.bak.*
 
 # 本地 agent 运维笔记,不入库
