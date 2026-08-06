@@ -1,6 +1,18 @@
 @import "tailwindcss";
 
 /*
+  Self-hosted code face (variable weight axis, normal style).
+
+  --font-mono previously named JetBrains Mono and Fira Code without ever loading
+  either, so every user fell through to a system monospace — DejaVu Sans Mono on
+  most Linux boxes, which is what made long code blocks tiring to read. Served
+  from our own origin rather than a font CDN, matching how the rest of the app
+  keeps browser traffic same-origin; the file carries unicode-range subsets, so a
+  latin-only page fetches ~40KB and nothing else.
+*/
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+
+/*
   Two themes, one token contract.
 
   All UI colors flow through the semantic `--color-*` custom properties below.
@@ -23,7 +35,11 @@
      metrics clash with Inter in mixed Chinese/English runs. */
   --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
     "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* "JetBrains Mono Variable" is the family name @fontsource registers. CJK faces
+     follow because it carries no Chinese glyphs — comments in Chinese would
+     otherwise fall through to an arbitrary system font mid-line. */
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    SFMono-Regular, Menlo, Consolas, "PingFang SC", "Noto Sans SC", monospace;
 
   /* Registered with Tailwind; concrete values live in :root / [data-theme] below. */
   --color-background: var(--bg);
@@ -76,18 +92,19 @@
   --radius-xl: 1rem;
 
   /*
-    Type scale. 13px is the floor: the original 10px/11px labels were well below
-    a comfortable reading size, and the first pass at 12px still read small on a
-    dense analysis screen. Registered as Tailwind `text-*` sizes so `text-2xs` …
-    `text-xl` resolve here — shifting the whole UI is a matter of editing these
-    six values, since no component hardcodes a pixel size.
+    Type scale. 14px is the floor and 16px is body text: the original 10px/11px
+    labels were far below a comfortable reading size, and two rounds of raising
+    them (12px, then 13px) still read small on a dense analysis screen.
+    Registered as Tailwind `text-*` sizes so `text-2xs` … `text-xl` resolve here —
+    shifting the whole UI is a matter of editing these six values, since no
+    component hardcodes a pixel size.
   */
-  --text-2xs: 0.8125rem;  /* 13px — dense metadata (sizes, timestamps) */
-  --text-xs: 0.875rem;    /* 14px — secondary text, dense controls */
-  --text-sm: 0.9375rem;   /* 15px — body default */
-  --text-base: 1rem;      /* 16px — emphasized body */
-  --text-lg: 1.125rem;    /* 18px — panel titles */
-  --text-xl: 1.375rem;    /* 22px — page/screen titles */
+  --text-2xs: 0.875rem;   /* 14px — dense metadata (sizes, timestamps) */
+  --text-xs: 0.9375rem;   /* 15px — secondary text, dense controls */
+  --text-sm: 1rem;        /* 16px — body default */
+  --text-base: 1.0625rem; /* 17px — emphasized body */
+  --text-lg: 1.1875rem;   /* 19px — panel titles */
+  --text-xl: 1.5rem;      /* 24px — page/screen titles */
 
   /*
     Elevation. Cool-tinted and deliberately shallow: the enterprise look comes
@@ -272,99 +289,113 @@
   --hl-deletion-bg: #29161a;
 }
 
-* {
-  box-sizing: border-box;
-  border-color: var(--color-border);
-}
-
-html,
-body {
-  height: 100%;
-  margin: 0;
-  background: var(--color-background);
-  color: var(--color-foreground);
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  /* Proportional digits reflow as values change; lining tabular digits keep
-     counters, durations and sizes from shifting width mid-update. */
-  font-variant-numeric: tabular-nums;
-}
-
 /*
-  Ease the palette swap on toggle. The init script sets data-theme before first
-  paint, so there is no initial value change to animate — this only smooths an
-  actual user toggle. Disabled entirely under reduced-motion.
+  Element resets live in @layer base, alongside Tailwind's own preflight.
+  Unlayered CSS outranks every layer, so a bare `button { color: inherit }` here
+  would beat `.text-*` utilities and silently strip color from every styled
+  button — visible in light mode as near-black label text on the primary button,
+  and invisible in dark mode only because the inherited color happens to be light.
 */
-@media (prefers-reduced-motion: no-preference) {
-  body,
-  aside,
-  header,
-  main,
-  .markdown-body pre,
-  .markdown-body code {
-    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--color-border);
   }
-}
 
-button,
-select,
-textarea,
-input {
-  font: inherit;
-  color: inherit;
-}
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Proportional digits reflow as values change; lining tabular digits keep
+       counters, durations and sizes from shifting width mid-update. */
+    font-variant-numeric: tabular-nums;
+  }
 
-button {
-  cursor: pointer;
-}
+  /*
+    Ease the palette swap on toggle. The init script sets data-theme before first
+    paint, so there is no initial value change to animate — this only smooths an
+    actual user toggle. Disabled entirely under reduced-motion.
+  */
+  @media (prefers-reduced-motion: no-preference) {
+    body,
+    aside,
+    header,
+    main,
+    .markdown-body pre,
+    .markdown-body code {
+      transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    }
+  }
 
-button:disabled {
-  cursor: not-allowed;
-}
+  /*
+    `font: inherit` is the point of this rule — form controls otherwise fall back
+    to the OS widget font. `color: inherit` only supplies a starting point, and
+    being in @layer base lets any text-* utility override it.
+  */
+  button,
+  select,
+  textarea,
+  input {
+    font: inherit;
+    color: inherit;
+  }
 
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
+  button {
+    cursor: pointer;
+  }
 
-textarea:focus-visible {
-  outline: none;
-}
+  button:disabled {
+    cursor: not-allowed;
+  }
 
-input:focus-visible {
-  outline: none;
-}
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
 
-::selection {
-  background: var(--color-selection-bg);
-  color: var(--color-selection-ink);
-}
+  textarea:focus-visible {
+    outline: none;
+  }
 
-/* Themed scrollbars so overflow areas match the palette instead of falling
-   back to a bright OS scrollbar in dark mode. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-scrollbar) transparent;
-}
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-scrollbar);
-  border: 2px solid transparent;
-  background-clip: content-box;
-  border-radius: 999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-scrollbar-hover);
-  background-clip: content-box;
+  input:focus-visible {
+    outline: none;
+  }
+
+  ::selection {
+    background: var(--color-selection-bg);
+    color: var(--color-selection-ink);
+  }
+
+  /* Themed scrollbars so overflow areas match the palette instead of falling
+     back to a bright OS scrollbar in dark mode. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scrollbar) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar);
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-scrollbar-hover);
+    background-clip: content-box;
+  }
 }
 
 @keyframes pulse-dot {
@@ -523,13 +554,20 @@ input:focus-visible {
 }
 .markdown-body pre {
   font-family: var(--font-mono);
-  font-size: 0.86em;
-  line-height: 1.6;
+  font-size: 0.92em;
+  line-height: 1.65;
   background: var(--color-code-bg);
   color: var(--color-code-ink);
   padding: 0.85em 1em;
   overflow-x: auto;
   margin: 0;
+  /* JetBrains Mono ships coding ligatures (=>, !==, ->). `calt` also keeps the
+     arrow/operator forms it was designed around, which is most of why it reads
+     more easily than a system monospace at the same size. */
+  font-variant-ligatures: contextual;
+  font-feature-settings: "calt" 1;
+  /* Code is where a run of digits matters most — keep them in register. */
+  font-variant-numeric: tabular-nums;
 }
 /* A <pre> that is not inside .code-block (none today, but markdown can nest one
    inside a list or blockquote) still needs its own frame. */
