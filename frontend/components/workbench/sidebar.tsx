@@ -26,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Wordmark } from "@/components/ui/wordmark";
+import { SessionListSkeleton } from "@/components/ui/skeleton";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { ShareDialog } from "./share-dialog";
 import { StatusDot, statusTone } from "@/components/ui/badge";
@@ -129,7 +130,7 @@ const SessionRow = memo(function SessionRow({
         className={cn(
           "group relative flex h-9 w-full items-center gap-2.5 rounded-[var(--radius)] px-2.5 text-left transition-colors",
           selected
-            ? "bg-[var(--color-surface-muted)] text-[var(--color-foreground)]"
+            ? "bg-[var(--color-accent-soft)] font-medium text-[var(--color-foreground)]"
             : "text-[var(--color-foreground)] hover:bg-[var(--color-surface-muted)]"
         )}
       >
@@ -522,9 +523,13 @@ function SidebarPanel({
           silently clips rows instead of scrolling them. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {activeSessions.length === 0 ? (
-          <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">
-            {ready || connection === "live" ? "No sessions yet. Create one to get started." : "Loading…"}
-          </p>
+          ready || connection === "live" ? (
+            <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">
+              No sessions yet. Create one to get started.
+            </p>
+          ) : (
+            <SessionListSkeleton />
+          )
         ) : (
           <>
             <ul className="space-y-0.5 px-2 pb-3">

@@ -370,6 +370,17 @@ input:focus-visible {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
+/* Loading placeholders: a slow opacity breathe rather than a sweeping gradient,
+   which stays quiet when several blocks animate at once. */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.skeleton-pulse {
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
 /* Activity strip: three-dot "thinking" shimmer, staggered per dot. */
 @keyframes activity-bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
@@ -405,7 +416,8 @@ input:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-dot,
-  .activity-dot {
+  .activity-dot,
+  .skeleton-pulse {
     animation: none;
   }
   .msg-jump-flash {

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bot, RefreshCw } from "lucide-react";
+import { Bot, RefreshCw, Sparkles } from "lucide-react";
 
 import { useActivity, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
@@ -9,7 +9,10 @@ import { ShellConversation } from "./shell-conversation";
 import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
 import { Composer } from "./composer";
-import { StatusDot, statusTone } from "@/components/ui/badge";
+import { PromptSuggestions } from "./prompt-suggestions";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ConversationSkeleton } from "@/components/ui/skeleton";
+import { StatusPill, statusTone } from "@/components/ui/badge";
 import { isFinalReply } from "@/lib/message-grouping";
 import { sessionModeLabel } from "@/lib/agents";
 import { dayKey, formatDayDivider, isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
@@ -79,14 +82,12 @@ function ChatConversation() {
 
   if (!session) {
     return (
-      <main className="flex flex-col items-center justify-center text-center bg-[var(--color-background)]">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-surface-muted)]">
-          <Bot className="h-5 w-5 text-[var(--color-foreground-muted)]" />
-        </div>
-        <h2 className="mt-3 text-sm font-medium">No session selected</h2>
-        <p className="mt-1 max-w-xs text-xs text-[var(--color-foreground-muted)]">
-          Pick a session from the left, or create a new one to start a conversation.
-        </p>
+      <main className="flex h-full flex-col items-center justify-center bg-[var(--color-background)]">
+        <EmptyState
+          icon={<Bot className="h-5 w-5" />}
+          title="No session selected"
+          description="Pick a session from the list, or create a new one to start a conversation."
+        />
       </main>
     );
   }
@@ -110,13 +111,12 @@ function ChatConversation() {
   return (
     <main className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
       <header className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="flex min-w-0 items-center gap-2">
-          <StatusDot tone={statusTone(session.status)} />
+        <div className="flex min-w-0 items-center gap-2.5">
           <span className="truncate text-sm font-medium" title={session.id}>
             {session.title?.trim() || session.id}
           </span>
-          <span className="text-2xs text-[var(--color-foreground-muted)]">
-            · {sessionModeLabel(session.mode, session.mode_label)}
+          <span className="hidden shrink-0 text-2xs text-[var(--color-foreground-muted)] sm:inline">
+            {sessionModeLabel(session.mode, session.mode_label)}
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -139,21 +139,31 @@ function ChatConversation() {
               Refresh
             </button>
           ) : null}
-          <span className="text-2xs text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
+          <StatusPill tone={statusTone(session.status)}>{statusLabel(session.status)}</StatusPill>
         </div>
       </header>
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-36">
         {convo.loading && convo.messages.length === 0 ? (
-          <p className="px-6 py-8 text-xs text-[var(--color-foreground-muted)]">Loading conversation…</p>
+          <ConversationSkeleton />
         ) : convo.messages.length === 0 && convo.streaming.length === 0 && !activityLive ? (
-          <div className="flex h-full items-center justify-center px-6 text-center">
-            <div className="max-w-md">
-              <h3 className="text-base font-semibold">Ready when you are.</h3>
-              <p className="mt-1.5 text-sm text-[var(--color-foreground-muted)]">
-                Type a prompt below. The agent will work in <code className="font-mono text-xs bg-[var(--color-surface-muted)] px-1 rounded">/workspace</code>{" "}
-                inside its sandbox and stream replies back here.
-              </p>
+          <div className="flex min-h-full items-center justify-center px-4 py-10 sm:px-6">
+            <div className="w-full max-w-[var(--measure)]">
+              <EmptyState
+                icon={<Sparkles className="h-5 w-5" />}
+                title="What are we looking at today?"
+                description={
+                  <>
+                    Describe the analysis you need, or start from one of these. The agent works in{" "}
+                    <code className="rounded bg-[var(--color-surface-muted)] px-1 font-mono text-xs">
+                      /workspace
+                    </code>{" "}
+                    inside its sandbox and streams results back here.
+                  </>
+                }
+              >
+                {accepting ? <PromptSuggestions /> : null}
+              </EmptyState>
             </div>
           </div>
         ) : (

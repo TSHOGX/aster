@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
+import { X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 
@@ -32,13 +33,13 @@ export function Tabs({ value, onValueChange, items, className }: TabsProps) {
             {item.onClose ? (
               <button
                 aria-label="Close tab"
-                className="opacity-50 hover:opacity-100"
+                className="flex h-4 w-4 items-center justify-center rounded-[var(--radius-xs)] text-[var(--color-foreground-muted)] opacity-60 transition-opacity hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] hover:opacity-100"
                 onClick={(e) => {
                   e.stopPropagation();
                   item.onClose?.();
                 }}
               >
-                ×
+                <X className="h-3 w-3" />
               </button>
             ) : null}
           </div>

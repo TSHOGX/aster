@@ -6,7 +6,9 @@ import { Loader2, RefreshCw, Send, Square, TerminalSquare } from "lucide-react";
 import { useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { ShellEntry } from "./shell-entry";
 import { Textarea } from "@/components/ui/textarea";
-import { StatusDot, statusTone } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ConversationSkeleton } from "@/components/ui/skeleton";
+import { StatusPill, statusTone } from "@/components/ui/badge";
 import { sessionModeLabel } from "@/lib/agents";
 import { isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 import { useComposerState } from "@/lib/use-composer-state";
@@ -129,11 +131,10 @@ export function ShellConversation() {
 
   return (
     <main className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-6 py-3 backdrop-blur">
-        <div className="flex min-w-0 items-center gap-2">
-          <StatusDot tone={statusTone(session.status)} />
+      <header className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-4 py-3 backdrop-blur sm:px-6">
+        <div className="flex min-w-0 items-center gap-2.5">
           <span className="truncate text-sm font-medium" title={session.id}>{session.title?.trim() || session.id}</span>
-          <span className="text-2xs text-[var(--color-foreground-muted)]">· {sessionModeLabel(session.mode, session.mode_label)}</span>
+          <span className="hidden shrink-0 text-2xs text-[var(--color-foreground-muted)] sm:inline">{sessionModeLabel(session.mode, session.mode_label)}</span>
         </div>
         <div className="flex items-center gap-3">
           {/* Same reason as the chat view: a shared session receives no live
@@ -154,26 +155,28 @@ export function ShellConversation() {
               Refresh
             </button>
           ) : null}
-          <span className="text-2xs text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
+          <StatusPill tone={statusTone(session.status)}>{statusLabel(session.status)}</StatusPill>
         </div>
       </header>
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-32">
         {convo.loading && convo.messages.length === 0 ? (
-          <p className="px-6 py-8 text-xs text-[var(--color-foreground-muted)]">Loading shell…</p>
+          <ConversationSkeleton />
         ) : convo.messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center px-6 text-center">
-            <div className="max-w-md">
-              <div className="flex items-center justify-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-surface-muted)]">
-                  <TerminalSquare className="h-5 w-5 text-[var(--color-foreground-muted)]" />
-                </div>
-              </div>
-              <h3 className="mt-3 text-base font-semibold">Ready when you are.</h3>
-              <p className="mt-1.5 text-sm text-[var(--color-foreground-muted)]">
-                Type a shell command below. The session runs in <code className="font-mono text-xs bg-[var(--color-surface-muted)] px-1 rounded">/workspace</code>.
-              </p>
-            </div>
+          <div className="flex min-h-full items-center justify-center px-4 py-10 sm:px-6">
+            <EmptyState
+              icon={<TerminalSquare className="h-5 w-5" />}
+              title="Ready when you are."
+              description={
+                <>
+                  Type a shell command below. The session runs in{" "}
+                  <code className="rounded bg-[var(--color-surface-muted)] px-1 font-mono text-xs">
+                    /workspace
+                  </code>
+                  .
+                </>
+              }
+            />
           </div>
         ) : (
           /* A shell transcript really is a log, so unlike the chat view it keeps

@@ -22,6 +22,8 @@ import {
 import { toast } from "sonner";
 
 import { useArtifacts, useSelectedSession } from "@/components/harness-provider";
+import { InputWithIcon } from "@/components/ui/input";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ArtifactViewer } from "./artifact-viewer";
 import { buildArtifactHref, uploadArtifacts, type UploadEntry } from "@/lib/api";
 import { buildArtifactTree, type ArtifactTreeDirectory, type ArtifactTreeNode } from "@/lib/artifact-tree";
@@ -49,8 +51,12 @@ export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
 
   if (!session) {
     return (
-      <aside className="flex h-full min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-surface)] px-6 text-center text-xs text-[var(--color-foreground-muted)]">
-        <span>Files will appear here once a session is running.</span>
+      <aside className="flex h-full min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-surface)]">
+        <EmptyState
+          icon={<Folder className="h-5 w-5" />}
+          title="No files yet"
+          description="Files will appear here once a session is running."
+        />
       </aside>
     );
   }
@@ -343,15 +349,14 @@ function ArtifactPaneInner({
               </p>
             ) : null}
             {artifacts.length > 0 ? (
-              <label className="mt-2.5 flex h-8 items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] px-2.5 text-xs">
-                <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-foreground-muted)]" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search files"
-                  className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-[var(--color-foreground-muted)]"
-                />
-              </label>
+              <InputWithIcon
+                icon={<Search className="h-3.5 w-3.5" />}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search files"
+                aria-label="Search files"
+                className="mt-2.5"
+              />
             ) : null}
           </div>
 

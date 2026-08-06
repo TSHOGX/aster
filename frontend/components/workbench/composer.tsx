@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ArrowUp } from "lucide-react";
 
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
+import { clearComposerDraft, getComposerDraft, subscribeComposerDraft } from "@/lib/composer-draft";
 import { useComposerState } from "@/lib/use-composer-state";
 
 type ComposerProps = {
@@ -18,6 +19,19 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
   const { value, setValue, sending, error, submit, onKey } = useComposerState(onSend, disabled);
   const [multiline, setMultiline] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // A suggested-prompt card fills the box and focuses it, leaving the send to the
+  // user — the prompts are starting points meant to be edited, not one-click
+  // sends. Keyed on `seq` so picking the same card twice still lands.
+  const draft = useSyncExternalStore(subscribeComposerDraft, getComposerDraft, () => null);
+  const appliedSeq = useRef(0);
+  useEffect(() => {
+    if (draft === null || draft.seq === appliedSeq.current) return;
+    appliedSeq.current = draft.seq;
+    setValue(draft.text);
+    clearComposerDraft();
+    ref.current?.focus();
+  }, [draft, setValue]);
 
   // Auto-grow the textarea and flip to the expanded "card" form once the content
   // spills past a single line (either a wrap or an explicit newline).

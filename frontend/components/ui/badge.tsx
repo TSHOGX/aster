@@ -14,20 +14,64 @@ export function Badge({ className, ...rest }: HTMLAttributes<HTMLSpanElement>) {
   );
 }
 
-type DotProps = { tone?: "running" | "idle" | "ready" | "failed" | "muted"; className?: string };
+type Tone = "running" | "idle" | "ready" | "failed" | "muted";
+type DotProps = { tone?: Tone; className?: string };
+
+function dotColor(tone: Tone): string {
+  switch (tone) {
+    case "running":
+      return "bg-[var(--color-accent)] animate-pulse-dot";
+    case "idle":
+      return "bg-[var(--color-success)]";
+    case "ready":
+      return "bg-[var(--color-warning)]";
+    case "failed":
+      return "bg-[var(--color-danger)]";
+    default:
+      return "bg-[var(--color-border-strong)]";
+  }
+}
 
 export function StatusDot({ tone = "muted", className }: DotProps) {
-  const color =
+  return <span className={cn("inline-block h-2 w-2 rounded-full shrink-0", dotColor(tone), className)} />;
+}
+
+/**
+ * Dot plus label in one tinted chip.
+ *
+ * A bare dot next to free-floating grey text made status read as two unrelated
+ * scraps; binding them into a chip with a tinted ground makes the state legible
+ * at a glance, and gives the label a color that is not just "muted".
+ */
+export function StatusPill({
+  tone = "muted",
+  children,
+  className,
+  title
+}: DotProps & { children: React.ReactNode; title?: string }) {
+  const ink =
     tone === "running"
-      ? "bg-[var(--color-accent)] animate-pulse-dot"
+      ? "text-[var(--color-accent)] bg-[var(--color-accent-soft)]"
       : tone === "idle"
-      ? "bg-[var(--color-success)]"
+      ? "text-[var(--color-success)] bg-[var(--color-surface-muted)]"
       : tone === "ready"
-      ? "bg-[var(--color-warning)]"
+      ? "text-[var(--color-warning)] bg-[var(--color-surface-muted)]"
       : tone === "failed"
-      ? "bg-[var(--color-danger)]"
-      : "bg-[var(--color-border-strong)]";
-  return <span className={cn("inline-block h-2 w-2 rounded-full", color, className)} />;
+      ? "text-[var(--color-danger)] bg-[var(--color-danger-soft)]"
+      : "text-[var(--color-foreground-muted)] bg-[var(--color-surface-muted)]";
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium",
+        ink,
+        className
+      )}
+    >
+      <StatusDot tone={tone} className="h-1.5 w-1.5" />
+      {children}
+    </span>
+  );
 }
 
 export function statusTone(status: string): DotProps["tone"] {
