@@ -1,12 +1,19 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <!--
-    BatteryGPT mark — "charge ring".
-    An open ring (a charge gauge / energy loop with a gap at top-right)
-    wrapping a lightning bolt: charge + energy, fully abstract.
-    Single colour on a transparent ground so it inverts cleanly on
-    light and dark browser chrome.
+    BatteryGPT mark — a cell whose interior is a charge/discharge trace.
+    Mirrors components/ui/wordmark.tsx (LogoMark) so the tab icon and the in-app
+    logo are the same drawing; the trace is reduced to three strokes here because
+    the in-app version's finer zig-zag turns to mud at 16px.
+
+    Indigo (--accent) on a transparent ground, which holds up against both light
+    and dark browser chrome. A favicon cannot follow the in-app theme, so the
+    accent is used rather than a foreground color that would need to invert.
   -->
-  <path d="M256 96 a160 160 0 1 1 -113 47"
-        fill="none" stroke="#4f6f61" stroke-width="58" stroke-linecap="round" />
-  <path d="M276 168 L196 288 L250 288 L236 372 L326 244 L268 244 Z" fill="#4f6f61" />
+  <rect x="48" y="128" width="342" height="256" rx="64"
+        fill="none" stroke="#6366f1" stroke-width="38" />
+  <path d="M448 218 L448 294"
+        stroke="#6366f1" stroke-width="38" stroke-linecap="round" />
+  <path d="M120 300 L176 220 L232 288 L288 196"
+        fill="none" stroke="#6366f1" stroke-width="38"
+        stroke-linecap="round" stroke-linejoin="round" />
 </svg>

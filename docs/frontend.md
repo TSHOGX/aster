@@ -7,7 +7,13 @@
 ## Stack
 
 - Next.js 16 (App Router), React 19, TypeScript (strict).
-- Tailwind CSS v4 (CSS-first `@theme` in `app/globals.css`, OKLCH tokens, light theme).
+- Tailwind CSS v4 (CSS-first `@theme` in `app/globals.css`). One token contract
+  drives both themes: light is white panels on a pale blue-grey canvas, dark is a
+  neutral deep blue-grey, and both share a single indigo accent as the only
+  saturated hue in the chrome. Type (`--text-*`, 12px floor), elevation
+  (`--shadow-*`, cool and shallow; border-led in dark mode), reading width
+  (`--measure`) and chart series (`--chart-1..8`) are tokens too — components
+  reference the variables rather than hardcoding literals.
 - `react-markdown` + `remark-gfm` + `rehype-highlight` for content; `highlight.js`
   for code; `lucide-react` icons; `sonner` toasts.
 - Vitest for `lib/` unit tests (the pure reducers, trace/message-grouping,
@@ -63,8 +69,15 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   trace UI. `message-grouping.ts`, `message-jump.ts` — conversation layout + scroll
   targeting (used by search-result jumps).
 - `upload-entries.ts` — normalizes drag-drop / folder `File` entries into relative
-  upload paths. `use-composer-state.ts`, `use-event-stream.ts`, `use-popover.ts` —
-  React hooks for the composer, SSE lifecycle, and popovers.
+  upload paths. `use-composer-state.ts`, `use-event-stream.ts`, `use-popover.ts`,
+  `use-media-query.ts` — React hooks for the composer, SSE lifecycle, popovers, and
+  the narrow-width layout switch.
+- `composer-draft.ts` — module-level pub/sub for "put this text in the composer",
+  modeled on `message-jump.ts` and used by the suggested-prompt cards. Carries a
+  monotonic sequence number so picking the same prompt twice still registers.
+- `table-cells.ts` — `isNumericText`, the predicate deciding which markdown table
+  cells right-align as figures. Unit-tested, because what counts as numeric ("80%"
+  yes, "3 cycles" no) is easy to regress silently.
 - `ws.ts` — despite the name, builds the **SSE** URL (`/api/events/stream` with
   `session_id` / `last_event_id`); WebSocket names are aliases.
 - `agents.ts`, `artifact-tree.ts`, `mime.ts`, `languages.ts`, `format.ts`, `guards.ts`,
@@ -84,7 +97,11 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   on every store change.
 - `workbench/workbench.tsx` — the shell: a blank hold until auth is checked, then
   `LoginScreen`, backend-unreachable card, or the 3-column grid
-  `Sidebar | Conversation | ArtifactPane`.
+  `Sidebar | Conversation | ArtifactPane` (viewport-relative clamps, not fixed
+  widths). Below 1024px — where three columns cannot all be usable — the side
+  panels become Escape-dismissable overlay drawers behind a compact top bar. The
+  open drawer is *derived* from the media query rather than synced in an effect, so
+  widening the window cannot leave one floating over a layout that has room for it.
 - `workbench/sidebar.tsx` — session list: single-line rows (`title` → `id`, status
   dot), collapse toggle with hover flyout, active/ended split, connection status,
   "New session". A per-row `…` menu offers Rename, Share and Delete; Rename (or
@@ -116,7 +133,16 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   is reachable.
 - `workbench/conversation.tsx` — routes to the agent chat or `shell-conversation.tsx`;
   renders committed messages + streaming bubbles + a runtime footer, with the
-  notification bell in the header.
+  notification bell in the header. The chat is one centered column at `--measure`,
+  the same width the composer uses, and turns are separated by whitespace: the user
+  side is a right-aligned bubble, the assistant side has no card or row fill. A
+  shell transcript keeps its per-entry rules (it really is a log) but shares the
+  centered column. `MessageBubble`/`ShellEntry` own only vertical rhythm, so every
+  caller — including the shared-link page — supplies the centering wrapper.
+- `workbench/prompt-suggestions.tsx` — four battery-domain starting points on an
+  empty session (capacity fade, dQ/dV peaks, thermal review, variant comparison).
+  Picking one fills the composer via `composer-draft.ts` rather than sending, since
+  each prompt needs the user's own file substituted in.
 - `workbench/activity-indicator.tsx` — per-turn status (thinking / tool / streaming /
   compacting / retrying) with request count + elapsed time.
 - `workbench/trace-list.tsx` + `trace-node.tsx` — progressive-disclosure execution
@@ -136,8 +162,19 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   match highlighting; selecting a hit opens the session and jumps to the message.
 - `notifications/notification-bell.tsx` + `notification-detail-modal.tsx` — unread
   badge, dropdown, and detail modal for broadcast notifications.
-- `workbench/login-screen.tsx` — username/password form; maps 429 to "too many
-  attempts". `theme/`, `ui/` — theme script and shared primitives.
+- `workbench/markdown-view.tsx` — `react-markdown` with component overrides that
+  give the agent's two main outputs a real treatment: tables get a bounded scroll
+  wrapper with a sticky header, zebra rows and right-aligned numeric columns
+  (classified by `lib/table-cells.ts`, since CSS cannot inspect text); fenced code
+  gets a header strip with the language and a hover-revealed copy button. Both are
+  styled in `globals.css` under `.markdown-body`.
+- `workbench/login-screen.tsx` — wordmark, username/password form; maps 429 to "too
+  many attempts". `theme/` — theme script. `ui/` — shared primitives: `Button`,
+  `Input`/`InputWithIcon`, `Card` (elevation bound to the `--shadow-*` scale),
+  `Skeleton`, `EmptyState`, `Badge`/`StatusDot`/`StatusPill`, `Tabs`, `Textarea`,
+  `Separator`, `ThemeToggle`, and `Wordmark`/`LogoMark` (shared by the sidebar
+  header, the narrow-width top bar and the login screen; `public/favicon.svg` is
+  the same drawing simplified for 16px).
 
 ## Boot & event flow
 
