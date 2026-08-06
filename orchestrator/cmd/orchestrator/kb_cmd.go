@@ -23,7 +23,7 @@ import (
 // runKB dispatches the kb subcommands.
 func runKB(ctx context.Context, log *slog.Logger, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: orchestrator kb <status|diff|approve|reject>")
+		return fmt.Errorf("usage: orchestrator kb <status|diff|approve|reject|reseed>")
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -43,8 +43,10 @@ func runKB(ctx context.Context, log *slog.Logger, args []string) error {
 		return kbApprove(kb, log, args[1:])
 	case "reject":
 		return kbReject(kb, log, args[1:])
+	case "reseed":
+		return kbReseed(kb, cfg, log, args[1:])
 	default:
-		return fmt.Errorf("unknown kb subcommand %q (want status|diff|approve|reject)", args[0])
+		return fmt.Errorf("unknown kb subcommand %q (want status|diff|approve|reject|reseed)", args[0])
 	}
 }
 
@@ -152,6 +154,66 @@ func kbReject(kb *memory.KB, log *slog.Logger, args []string) error {
 	}
 	log.Info("kb snapshot rejected", "digest", digest, "actor", *actor, "reason", *reason)
 	fmt.Printf("rejected: %s (current unchanged; snapshot kept on disk for provenance)\n", digest)
+	return nil
+}
+
+// kbReseed re-applies the baked seed tree over the live snapshot and stages the
+// result for the same review gate as a distillation cycle. This is the supported
+// way to correct a human-seeded file that is already published: the distillation
+// pipeline never rewrites those (carryForward copies them verbatim), so without
+// this the alternatives are editing a published snapshot in place — which breaks
+// the content-addressing invariant that a digest names its own bytes — or
+// deleting `current` and losing every distilled fact along with the fix.
+//
+// It deliberately does NOT publish. `current` moves only via `kb approve`, so a
+// reseed is reviewable with `kb diff` like anything else.
+func kbReseed(kb *memory.KB, cfg config.Config, log *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("reseed", flag.ContinueOnError)
+	seedDir := fs.String("seed", "", "seed tree to overlay (default: the baked sandbox-image seed)")
+	pathList := fs.String("path", "", "comma-separated seed-relative paths to apply (default: the whole seed tree)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: orchestrator kb reseed [--path REL[,REL…]] [--seed DIR]")
+	}
+	src := strings.TrimSpace(*seedDir)
+	if src == "" {
+		src = agentsKBSeedDir(cfg.RepoRoot)
+	}
+	var paths []string
+	for _, p := range strings.Split(*pathList, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			paths = append(paths, p)
+		}
+	}
+
+	res, err := kb.Reseed(src, paths, 0)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("seed    : %s\n", src)
+	fmt.Printf("base    : %s\n", res.Base)
+	if !res.Changed {
+		fmt.Printf("result  : no change — the seed is already what %s serves\n", res.Base)
+		if len(res.Skipped) > 0 {
+			fmt.Printf("checked : %d seed file(s), all byte-identical\n", len(res.Skipped))
+		}
+		return nil
+	}
+	for _, rel := range res.Updated {
+		fmt.Printf("  ~ %s\n", rel)
+	}
+	for _, rel := range res.Added {
+		fmt.Printf("  + %s\n", rel)
+	}
+	if len(res.Skipped) > 0 {
+		fmt.Printf("unchanged: %d seed file(s) already identical\n", len(res.Skipped))
+	}
+	log.Info("kb seed overlay staged", "digest", res.Digest, "base", res.Base,
+		"updated", len(res.Updated), "added", len(res.Added))
+	fmt.Printf("\npending : %s   ← awaiting approval (current still %s)\n", res.Digest, res.Base)
+	fmt.Printf("review  : orchestrator kb diff\napprove : orchestrator kb approve %s\n", res.Digest)
 	return nil
 }
 

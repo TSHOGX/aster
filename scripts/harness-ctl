@@ -320,7 +320,7 @@ cmd_kb() {
   db_path="$(unit_env HARNESS_DB_PATH)";         db_path="${db_path:-$DB}"
 
   case "$action" in
-    status|diff|approve|reject) ;;
+    status|diff|approve|reject|reseed) ;;
     -h|--help|"")
       cat <<'EOF'
 harness-ctl kb — 共享知识库（/agents）审批门禁
@@ -329,15 +329,21 @@ harness-ctl kb — 共享知识库（/agents）审批门禁
   kb diff                      current vs pending 逐文件 diff（diff -ruN）
   kb approve <digest>          批准上线：原子 repoint current，写 approvals.log
   kb reject <digest> --reason  驳回：不动 current，快照留档，写 approvals.log
+  kb reseed [--path REL,…]     把仓库里的种子树覆盖到 current 之上，暂存待审批
 
 digest 必填（防手滑批准没看过的快照）。审批记录在 agents-kb/approvals.log。
+
+reseed 用于修正「人工种入」的文件（例如 skills/doris-query/SKILL.md）：这类文件
+蒸馏管线不会重写，只会被 carryForward 原样复制到每个新快照，所以里面的错误靠
+定时进化永远消不掉。reseed 也只暂存不上线，仍需 kb diff 复核 + kb approve。
 EOF
       return 0 ;;
-    *) die "未知 kb 子命令：$action（支持 status|diff|approve|reject）" ;;
+    *) die "未知 kb 子命令：$action（支持 status|diff|approve|reject|reseed）" ;;
   esac
 
+  # reseed 的默认种子路径由 RepoRoot 推导，必须与服务看到的仓库一致。
   as_root env HARNESS_AGENTS_KB_PATH="$kb_path" HARNESS_TRAJECTORY_ROOT="$traj_root" \
-    HARNESS_DB_PATH="$db_path" "$ORCH_BIN" kb "$action" "$@"
+    HARNESS_DB_PATH="$db_path" HARNESS_REPO_ROOT="$REPO_ROOT" "$ORCH_BIN" kb "$action" "$@"
 }
 
 cmd_user() {
@@ -854,6 +860,8 @@ harness-ctl — publish 环境运维 CLI
   harness-ctl kb approve <digest>   批准上线（原子 repoint，只影响新会话）
   harness-ctl kb reject <digest>    驳回（--reason 记原因，不动线上）
                                     夜间自进化只暂存不上线，靠这四条人工放行
+  harness-ctl kb reseed [--path …]  用仓库种子树修正人工种入的文件，暂存待审批
+                                    （蒸馏管线不会重写这类文件，只会原样复制）
   harness-ctl maintenance on        上维护页（nginx 503，后端不动）
   harness-ctl maintenance off       下维护页，恢复服务
   harness-ctl maintenance status    只看维护模式开关

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -141,6 +141,7 @@ func main() {
 				RootFSPath:              cfg.RootFSPath,
 				AgentsKBRoot:            cfg.AgentsKBRoot,
 				SandboxDataProxyAliases: sandboxDataProxyAliases(cfg.Harness),
+				ObsGateway:              obsGatewayConfig(cfg.Harness),
 				DefaultAgent:            cfg.DefaultAgent,
 				SandboxUID:              cfg.Harness.SandboxIdentity.UID,
 				SandboxGID:              cfg.Harness.SandboxIdentity.GID,
@@ -201,7 +202,7 @@ func main() {
 		log.Error("failed to create agent homes root", "error", err)
 		os.Exit(1)
 	}
-	if err := ensureAgentsKB(cfg.AgentsKBRoot, filepath.Join(cfg.RepoRoot, "sandbox-image", "files", "usr", "local", "share", "agents-kb-seed")); err != nil {
+	if err := ensureAgentsKB(cfg.AgentsKBRoot, agentsKBSeedDir(cfg.RepoRoot)); err != nil {
 		log.Error("failed to ensure agents knowledge base", "error", err)
 		os.Exit(1)
 	}
@@ -354,4 +355,54 @@ func sandboxDataProxyAliases(h config.HarnessConfig) []string {
 		}
 	}
 	return out
+}
+
+// obsGatewayConfig builds the OBS fake-credential settings from the configured
+// data proxies. Disabled unless an enabled proxy declares kind obs_http, so a
+// deployment without one writes no projection and keeps the control dir and its
+// manifest digest byte-identical to before.
+//
+// The master key comes from the environment, never from harness.yaml, which is
+// checked into git. It must match the gateway's own OBS_GATEWAY_MASTER_KEY or
+// every signature the sandbox produces fails verification.
+func obsGatewayConfig(h config.HarnessConfig) runtime.ObsGatewayConfig {
+	for _, p := range h.EnabledDataProxies() {
+		if p.Config.Upstream.Kind != config.DataProxyKindOBS {
+			continue
+		}
+		region, bucket := obsUpstreamCoordinates(p.Config.Upstream.BaseURL)
+		return runtime.ObsGatewayConfig{
+			Enabled:   true,
+			Alias:     p.Config.SandboxAlias,
+			Port:      p.Config.SandboxPort,
+			Region:    region,
+			Bucket:    bucket,
+			MasterKey: os.Getenv("OBS_GATEWAY_MASTER_KEY"),
+		}
+	}
+	return runtime.ObsGatewayConfig{}
+}
+
+// obsUpstreamCoordinates extracts the region and bucket the skill needs.
+//
+// The region is the second dotted label of an OBS endpoint
+// (obs.<region>.myhuaweicloud.com). The bucket is not part of the upstream URL —
+// the gateway owns it — so it is read from the environment alongside the
+// credentials, defaulting to the one bucket this gateway fronts.
+func obsUpstreamCoordinates(baseURL string) (region, bucket string) {
+	bucket = strings.TrimSpace(os.Getenv("OBS_BUCKET"))
+	if bucket == "" {
+		bucket = "vhr-parquets"
+	}
+	region = strings.TrimSpace(os.Getenv("OBS_REGION"))
+	if region != "" {
+		return region, bucket
+	}
+	host := strings.TrimSpace(baseURL)
+	host = strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
+	host = strings.TrimSuffix(strings.SplitN(host, "/", 2)[0], ".")
+	if parts := strings.Split(host, "."); len(parts) >= 2 {
+		return parts[1], bucket
+	}
+	return "", bucket
 }

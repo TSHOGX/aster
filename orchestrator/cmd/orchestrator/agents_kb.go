@@ -70,6 +70,14 @@ func ensureAgentsKB(root, seedSrc string) error {
 	return nil
 }
 
+// agentsKBSeedDir is the baked seed tree in the repo: the authoritative source
+// for human-seeded KB content. Boot seeding (ensureAgentsKB) and `kb reseed` must
+// read the SAME tree — if they diverge, fixing a seeded file via reseed would be
+// undone the next time an empty KB is seeded from a different path.
+func agentsKBSeedDir(repoRoot string) string {
+	return filepath.Join(repoRoot, "sandbox-image", "files", "usr", "local", "share", "agents-kb-seed")
+}
+
 const minimalAgentsKBIndex = `# Shared Knowledge Base
 
 Layout:

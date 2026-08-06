@@ -68,6 +68,15 @@ func (k *KB) stage(memories []memorystore.SemanticMemory, skills []memorystore.S
 	for rel, content := range generated {
 		files[rel] = content
 	}
+	return k.writeSnapshot(files)
+}
+
+// writeSnapshot content-addresses a complete file set and writes it as a snapshot
+// dir, returning the digest. It does NOT touch `current` or the pending marker —
+// callers decide whether the result is published, staged for review, or neither.
+// Every snapshot on disk goes through here, so a snapshot's digest always names
+// the bytes actually stored under it, whatever produced them.
+func (k *KB) writeSnapshot(files map[string]string) (string, error) {
 	digest := contentDigest(files)
 
 	snapshotsDir := filepath.Join(k.root, "snapshots")
@@ -87,6 +96,15 @@ func (k *KB) stage(memories []memorystore.SemanticMemory, skills []memorystore.S
 		return "", fmt.Errorf("kb: mkdtemp: %w", err)
 	}
 	defer os.RemoveAll(tmp)
+	// MkdirTemp creates 0700 and Rename preserves it, which would leave the
+	// snapshot root untraversable by the sandbox uid — /agents is bind-mounted
+	// read-only into every sandbox and read as an unprivileged user, so a 0700
+	// root makes the whole knowledge base unreadable even though every file
+	// inside it is 0644. The subdirectories below get 0755 from MkdirAll; this
+	// makes the root agree with them.
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		return "", fmt.Errorf("kb: chmod staging dir: %w", err)
+	}
 
 	for rel, content := range files {
 		dst := filepath.Join(tmp, rel)
