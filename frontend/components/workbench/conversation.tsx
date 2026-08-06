@@ -109,13 +109,13 @@ function ChatConversation() {
 
   return (
     <main className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-6 py-3 backdrop-blur">
+      <header className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-4 py-3 backdrop-blur sm:px-6">
         <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={statusTone(session.status)} />
           <span className="truncate text-sm font-medium" title={session.id}>
             {session.title?.trim() || session.id}
           </span>
-          <span className="text-[11px] text-[var(--color-foreground-muted)]">
+          <span className="text-2xs text-[var(--color-foreground-muted)]">
             · {sessionModeLabel(session.mode, session.mode_label)}
           </span>
         </div>
@@ -132,14 +132,14 @@ function ChatConversation() {
                 setRefreshing(false);
               }}
               disabled={refreshing}
-              className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-[11px] hover:bg-[var(--color-surface-muted)] disabled:opacity-60"
+              className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-2xs hover:bg-[var(--color-surface-muted)] disabled:opacity-60"
               title="Shared sessions do not update live"
             >
               <RefreshCw className={refreshing ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
               Refresh
             </button>
           ) : null}
-          <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
+          <span className="text-2xs text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
         </div>
       </header>
 
@@ -157,14 +157,17 @@ function ChatConversation() {
             </div>
           </div>
         ) : (
-          <div>
+          /* One centered column at --measure, the same width the composer uses,
+             so message text and the input line up in a single channel. Turns are
+             separated by their own vertical padding — no rules, no row fills. */
+          <div className="mx-auto w-full max-w-[var(--measure)] px-4 sm:px-6">
             {convo.messages.map((m, i) => {
               const prev = convo.messages[i - 1];
               const showDivider = i === 0 || dayKey(prev?.created_at) !== dayKey(m.created_at);
               return (
                 <Fragment key={m.id}>
                   {showDivider && <DayDivider label={formatDayDivider(m.created_at)} />}
-                  <div id={`msg-${m.id}`} className={showDivider ? "" : "border-t border-[var(--color-border)]"}>
+                  <div id={`msg-${m.id}`}>
                     <MessageBubble
                       message={m}
                       sessionId={session.id}
@@ -175,20 +178,17 @@ function ChatConversation() {
               );
             })}
             {convo.streaming.map((stream, i) => (
-              <div
+              <StreamingBubble
                 key={stream.id}
-                className={i === 0 && convo.messages.length === 0 ? "" : "border-t border-[var(--color-border)]"}
-              >
-                <StreamingBubble text={stream.text} liveTrace={i === 0 ? convo.liveTrace : undefined} />
-              </div>
+                text={stream.text}
+                liveTrace={i === 0 ? convo.liveTrace : undefined}
+              />
             ))}
             {/* Tool activity can begin before any text streams. When the turn is
                 live with trace nodes but no streaming bubble exists yet, show a
                 standalone bubble so the work is visible immediately. */}
             {convo.streaming.length === 0 && activityLive && convo.liveTrace.length > 0 ? (
-              <div className={convo.messages.length === 0 ? "" : "border-t border-[var(--color-border)]"}>
-                <StreamingBubble text="" liveTrace={convo.liveTrace} />
-              </div>
+              <StreamingBubble text="" liveTrace={convo.liveTrace} />
             ) : null}
           </div>
         )}

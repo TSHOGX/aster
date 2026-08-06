@@ -122,7 +122,7 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
               ref={menuRef}
               role="menu"
               style={{ top: menuPos.top, left: menuPos.left, width: MENU_WIDTH }}
-              className="fixed z-20 overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+              className="fixed z-20 overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-lg)]"
             >
               <button
                 type="button"

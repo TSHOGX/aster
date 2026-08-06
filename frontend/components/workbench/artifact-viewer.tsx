@@ -250,7 +250,7 @@ export function ArtifactViewer({
         )}
       </div>
       {saving ? (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[10px] text-[var(--color-foreground-muted)]">
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-2xs text-[var(--color-foreground-muted)]">
           Saving…
         </div>
       ) : null}
@@ -305,7 +305,7 @@ function ViewerHeader({
       ) : null}
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium" title={path}>{name}</div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-[var(--color-foreground-muted)]">
+        <div className="mt-0.5 flex items-center gap-1.5 text-2xs text-[var(--color-foreground-muted)]">
           {artifact ? (
             <>
               <span>{formatBytes(artifact.size)}</span>
@@ -325,7 +325,7 @@ function ViewerHeader({
             className={cn(
               "flex h-7 items-center gap-1 rounded-[calc(var(--radius-lg)-2px)] px-2 text-xs transition-colors",
               view === "preview"
-                ? "bg-[var(--color-surface)] text-[var(--color-foreground)] shadow-sm"
+                ? "bg-[var(--color-surface)] text-[var(--color-foreground)] shadow-[var(--shadow-sm)]"
                 : "text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]"
             )}
           >
@@ -337,7 +337,7 @@ function ViewerHeader({
             className={cn(
               "flex h-7 items-center gap-1 rounded-[calc(var(--radius-lg)-2px)] px-2 text-xs transition-colors",
               view === "code"
-                ? "bg-[var(--color-surface)] text-[var(--color-foreground)] shadow-sm"
+                ? "bg-[var(--color-surface)] text-[var(--color-foreground)] shadow-[var(--shadow-sm)]"
                 : "text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]"
             )}
           >

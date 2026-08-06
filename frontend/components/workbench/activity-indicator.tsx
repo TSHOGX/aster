@@ -64,12 +64,12 @@ export function ActivityIndicator({ activity }: { activity: ConversationActivity
 
   return (
     <div
-      className="mb-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-1.5 shadow-sm"
+      className="mb-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-1.5 shadow-[var(--shadow-sm)]"
       role="status"
       aria-live="polite"
       aria-label={activityAccessibleLabel(activity.phase)}
     >
-      <div className="flex items-center gap-2.5 text-[12px]">
+      <div className="flex items-center gap-2.5 text-2xs">
         <Icon
           className={cn("h-3.5 w-3.5 shrink-0", spin && "animate-spin")}
           style={{ color: tone }}
@@ -91,7 +91,7 @@ export function ActivityIndicator({ activity }: { activity: ConversationActivity
 
         {activity.requestCount > 0 ? (
           <span
-            className="shrink-0 font-mono text-[11px] text-[var(--color-foreground-muted)]"
+            className="shrink-0 font-mono text-2xs text-[var(--color-foreground-muted)]"
             title={`${activity.requestCount} model request${activity.requestCount === 1 ? "" : "s"} this turn${
               activity.inflight > 0 ? `, ${activity.inflight} in flight` : ""
             }`}
@@ -102,7 +102,7 @@ export function ActivityIndicator({ activity }: { activity: ConversationActivity
         ) : null}
 
         {elapsed ? (
-          <span className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--color-foreground-muted)]">
+          <span className="shrink-0 font-mono text-2xs tabular-nums text-[var(--color-foreground-muted)]">
             {elapsed}
           </span>
         ) : null}

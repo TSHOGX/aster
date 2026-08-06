@@ -294,7 +294,7 @@ function ArtifactPaneInner({
               <div className="flex min-w-0 items-baseline gap-2">
                 <span className="text-sm font-semibold">Workspace</span>
                 {artifacts.length > 0 ? (
-                  <span className="text-[11px] text-[var(--color-foreground-muted)]">
+                  <span className="text-2xs text-[var(--color-foreground-muted)]">
                     {artifacts.length} · {formatBytes(tree.size)}
                   </span>
                 ) : null}
@@ -322,7 +322,7 @@ function ArtifactPaneInner({
             </div>
             {busy ? (
               <div className="mt-2">
-                <div className="mb-1 flex items-center justify-between text-[10px] text-[var(--color-foreground-muted)]">
+                <div className="mb-1 flex items-center justify-between text-2xs text-[var(--color-foreground-muted)]">
                   <span>Uploading {upload.count === 1 ? "1 file" : `${upload.count} files`}…</span>
                   <span>{Math.round(upload.fraction * 100)}%</span>
                 </div>
@@ -334,11 +334,11 @@ function ArtifactPaneInner({
                 </div>
               </div>
             ) : readOnly ? (
-              <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
+              <p className="mt-2 text-2xs text-[var(--color-foreground-muted)]">
                 Shared with you — read-only.
               </p>
             ) : uploadUiEnabled && !writable ? (
-              <p className="mt-2 text-[10px] text-[var(--color-foreground-muted)]">
+              <p className="mt-2 text-2xs text-[var(--color-foreground-muted)]">
                 Uploads paused while the agent is working.
               </p>
             ) : null}
@@ -462,7 +462,7 @@ function TreeNode({
             <Folder className="h-3.5 w-3.5 shrink-0 text-[var(--color-foreground-muted)]" />
           )}
           <span className="min-w-0 flex-1 truncate font-mono">{node.name}</span>
-          <span className="shrink-0 text-[10px] text-[var(--color-foreground-muted)]">
+          <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
             {node.fileCount} · {formatBytes(node.size)}
           </span>
         </button>
@@ -503,7 +503,7 @@ function TreeNode({
         >
           <ArtifactIcon path={node.path} />
           <span className="min-w-0 flex-1 truncate font-mono">{node.name}</span>
-          <span className="shrink-0 text-[10px] text-[var(--color-foreground-muted)]">
+          <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
             {formatBytes(node.artifact.size)} · {formatRelative(node.artifact.updated_at)}
           </span>
         </button>

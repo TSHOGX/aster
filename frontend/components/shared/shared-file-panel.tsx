@@ -33,7 +33,7 @@ export function SharedFilePanel({ token, files }: { token: string; files: Shared
   return (
     <aside className="flex w-full shrink-0 flex-col border-t border-[var(--color-border)] md:w-80 md:border-l md:border-t-0">
       <header className="border-b border-[var(--color-border)] px-4 py-2.5">
-        <h2 className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
+        <h2 className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
           Files
         </h2>
       </header>
@@ -56,8 +56,8 @@ export function SharedFilePanel({ token, files }: { token: string; files: Shared
                   aria-expanded={selected}
                 >
                   <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--color-foreground-muted)]" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{file.path}</span>
-                  <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
+                  <span className="min-w-0 flex-1 truncate font-mono text-2xs">{file.path}</span>
+                  <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
                     {formatBytes(file.size)}
                   </span>
                 </button>
@@ -109,7 +109,7 @@ function SharedFilePreview({ url, path }: { url: string; path: string }) {
   }
   return (
     <div className="border-t border-[var(--color-border)] p-3">
-      <p className="text-[11px] text-[var(--color-foreground-muted)]">
+      <p className="text-2xs text-[var(--color-foreground-muted)]">
         No inline preview for this file type.{" "}
         <a href={url} download className="underline">
           Download it

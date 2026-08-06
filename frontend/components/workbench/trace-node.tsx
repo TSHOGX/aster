@@ -66,7 +66,7 @@ function TraceNodeImpl({ node }: { node: TraceNodeData }) {
         />
       ) : null}
       {duration ? (
-        <span className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--color-foreground-muted)]">
+        <span className="shrink-0 font-mono text-2xs tabular-nums text-[var(--color-foreground-muted)]">
           {duration}
         </span>
       ) : null}
@@ -75,7 +75,7 @@ function TraceNodeImpl({ node }: { node: TraceNodeData }) {
 
   if (!expandable) {
     return (
-      <div className="flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-[12px]">
+      <div className="flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-2xs">
         {summary}
       </div>
     );
@@ -87,7 +87,7 @@ function TraceNodeImpl({ node }: { node: TraceNodeData }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-[12px] hover:bg-[var(--color-surface-muted)]"
+        className="flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-2xs hover:bg-[var(--color-surface-muted)]"
       >
         {open ? (
           <ChevronDown className="h-3 w-3 shrink-0 text-[var(--color-foreground-muted)]" aria-hidden />
@@ -99,14 +99,14 @@ function TraceNodeImpl({ node }: { node: TraceNodeData }) {
       {open ? (
         <div className="trace-expand mt-1 flex flex-col gap-2 px-2 pb-2 pl-7">
           {hasArgs ? (
-            <pre className="m-0 overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--color-code-border)] bg-[var(--color-code-bg)] px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-[var(--color-code-ink)]">
+            <pre className="m-0 overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--color-code-border)] bg-[var(--color-code-bg)] px-2.5 py-1.5 font-mono text-2xs leading-relaxed text-[var(--color-code-ink)]">
               {JSON.stringify(node.args, null, 2)}
             </pre>
           ) : null}
           {node.resultSummary ? (
             <pre
               className={cn(
-                "m-0 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-sm)] border border-[var(--color-code-border)] bg-[var(--color-code-bg)] px-2.5 py-1.5 font-mono text-[11px] leading-relaxed",
+                "m-0 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-sm)] border border-[var(--color-code-border)] bg-[var(--color-code-bg)] px-2.5 py-1.5 font-mono text-2xs leading-relaxed",
                 node.isError ? "text-[var(--color-danger)]" : "text-[var(--color-foreground-muted)]"
               )}
             >

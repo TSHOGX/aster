@@ -42,12 +42,12 @@ export function NotificationDetailModal({
         role="dialog"
         aria-modal="true"
         aria-label={notification.title}
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
+        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]"
       >
         <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-6 py-4">
           <div className="flex min-w-0 flex-col gap-1">
             <h2 className="text-base font-semibold leading-snug">{notification.title}</h2>
-            <span className="text-[11px] text-[var(--color-foreground-muted)]">
+            <span className="text-2xs text-[var(--color-foreground-muted)]">
               {formatTimestamp(notification.created_at)}
             </span>
           </div>

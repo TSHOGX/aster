@@ -36,11 +36,13 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center px-4 pb-4">
       {/* Soft fade so scrolled content dissolves under the floating bar. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-32 bg-gradient-to-t from-[var(--color-background)] via-[var(--color-background)] to-transparent" />
-      <div className="pointer-events-auto w-full max-w-3xl">
+      {/* Same --measure as the conversation column, so the input sits directly
+          under the text it answers instead of in its own narrower channel. */}
+      <div className="pointer-events-auto w-full max-w-[var(--measure)]">
         {topSlot}
         <div
           className={cn(
-            "flex gap-2 border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg shadow-black/5 backdrop-blur transition-all duration-200 ease-out",
+            "flex gap-2 border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)] backdrop-blur transition-all duration-200 ease-out focus-within:border-[var(--color-accent)]",
             multiline
               ? "flex-col rounded-[var(--radius-xl)] px-3 pb-2.5 pt-2.5"
               : "flex-row items-center rounded-full py-1.5 pl-4 pr-1.5"
@@ -75,7 +77,7 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
             </button>
           </div>
         </div>
-        <div className="mt-1.5 flex items-center justify-between px-3 text-[11px] text-[var(--color-foreground-muted)]">
+        <div className="mt-1.5 flex items-center justify-between gap-3 px-3 text-2xs text-[var(--color-foreground-muted)]">
           <span>{disabled ? "Session is busy or ended." : "Enter to send · Shift+Enter for newline"}</span>
           {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
         </div>

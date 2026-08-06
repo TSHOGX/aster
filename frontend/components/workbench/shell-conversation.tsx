@@ -53,8 +53,8 @@ function ShellComposer({
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center px-4 pb-4">
       <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-32 bg-gradient-to-t from-[var(--color-background)] via-[var(--color-background)] to-transparent" />
-      <div className="pointer-events-auto w-full max-w-3xl">
-        <div className="flex items-center gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2 shadow-lg shadow-black/5 backdrop-blur">
+      <div className="pointer-events-auto w-full max-w-[var(--measure)]">
+        <div className="flex items-center gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2 shadow-[var(--shadow-lg)] backdrop-blur focus-within:border-[var(--color-accent)]">
           <span className="shrink-0 font-mono text-sm text-[var(--color-foreground-muted)]">$</span>
           <Textarea
             ref={ref}
@@ -87,7 +87,7 @@ function ShellComposer({
             </button>
           )}
         </div>
-        <div className="mt-1.5 flex items-center justify-between px-3 text-[11px] text-[var(--color-foreground-muted)]">
+        <div className="mt-1.5 flex items-center justify-between px-3 text-2xs text-[var(--color-foreground-muted)]">
           <span>{busy ? "Command running. Stop to interrupt." : "Enter to run · Shift+Enter for newline"}</span>
           {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
         </div>
@@ -133,7 +133,7 @@ export function ShellConversation() {
         <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={statusTone(session.status)} />
           <span className="truncate text-sm font-medium" title={session.id}>{session.title?.trim() || session.id}</span>
-          <span className="text-[11px] text-[var(--color-foreground-muted)]">· {sessionModeLabel(session.mode, session.mode_label)}</span>
+          <span className="text-2xs text-[var(--color-foreground-muted)]">· {sessionModeLabel(session.mode, session.mode_label)}</span>
         </div>
         <div className="flex items-center gap-3">
           {/* Same reason as the chat view: a shared session receives no live
@@ -147,14 +147,14 @@ export function ShellConversation() {
                 setRefreshing(false);
               }}
               disabled={refreshing}
-              className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-[11px] hover:bg-[var(--color-surface-muted)] disabled:opacity-60"
+              className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-2xs hover:bg-[var(--color-surface-muted)] disabled:opacity-60"
               title="Shared sessions do not update live"
             >
               <RefreshCw className={refreshing ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
               Refresh
             </button>
           ) : null}
-          <span className="text-[11px] text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
+          <span className="text-2xs text-[var(--color-foreground-muted)]">{statusLabel(session.status)}</span>
         </div>
       </header>
 
@@ -176,7 +176,10 @@ export function ShellConversation() {
             </div>
           </div>
         ) : (
-          <div className="divide-y divide-[var(--color-border)]">
+          /* A shell transcript really is a log, so unlike the chat view it keeps
+             its per-entry rules — only the column is centered on --measure to
+             line up with the composer. */
+          <div className="mx-auto w-full max-w-[var(--measure)] divide-y divide-[var(--color-border)] px-4 sm:px-6">
             {convo.messages.map((m) => (
               <ShellEntry key={m.id} message={m} />
             ))}

@@ -63,7 +63,7 @@ export function NotificationBell() {
       >
         <Bell className="h-4 w-4" />
         {unreadCount > 0 ? (
-          <span className="absolute right-0.5 top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--color-danger)] px-1 text-[10px] font-medium leading-none text-white">
+          <span className="absolute right-0.5 top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--color-danger)] px-1 text-2xs font-medium leading-none text-white">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         ) : null}
@@ -73,7 +73,7 @@ export function NotificationBell() {
             <div
               ref={panelRef}
               style={{ top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH }}
-              className="fixed z-20 max-h-96 overflow-y-auto rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg"
+              className="fixed z-20 max-h-96 overflow-y-auto rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]"
             >
               {notifications.length === 0 ? (
                 <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">No notifications yet.</p>
@@ -88,7 +88,7 @@ export function NotificationBell() {
                         <span className="flex items-center gap-2">
                           {!n.read ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
                           <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.title}</span>
-                          <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
+                          <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
                             {formatRelativeTime(n.created_at)}
                           </span>
                         </span>

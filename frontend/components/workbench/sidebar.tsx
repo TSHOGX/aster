@@ -25,6 +25,7 @@ import {
 } from "@/components/harness-provider";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { Wordmark } from "@/components/ui/wordmark";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { ShareDialog } from "./share-dialog";
 import { StatusDot, statusTone } from "@/components/ui/badge";
@@ -174,7 +175,7 @@ const SessionRow = memo(function SessionRow({
             {menuOpen ? (
               <div
                 role="menu"
-                className="absolute right-0 top-8 z-30 min-w-[9rem] overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+                className="absolute right-0 top-8 z-30 min-w-[9rem] overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-lg)]"
               >
                 <button
                   role="menuitem"
@@ -229,9 +230,12 @@ type SidebarProps = {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onOpenSearch?: () => void;
+  // Set when the sidebar is a narrow-width drawer: selecting or creating a
+  // session dismisses the overlay so the conversation is visible underneath.
+  onNavigate?: () => void;
 };
 
-export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch }: SidebarProps) {
+export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onNavigate }: SidebarProps) {
   const [peek, setPeek] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -251,7 +255,12 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch }: S
 
   if (!collapsed) {
     return (
-      <SidebarPanel variant="docked" onOpenSearch={onOpenSearch} onToggleCollapse={onToggleCollapse} />
+      <SidebarPanel
+        variant="docked"
+        onOpenSearch={onOpenSearch}
+        onToggleCollapse={onToggleCollapse}
+        onNavigate={onNavigate}
+      />
     );
   }
 
@@ -265,7 +274,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch }: S
       {/* Floating flyout: a full sidebar that hovers above the conversation. */}
       <div
         className={cn(
-          "absolute left-2 top-2 bottom-2 z-40 w-[288px] origin-left overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl transition-all duration-200 ease-out",
+          "absolute left-2 top-2 bottom-2 z-40 w-[288px] origin-left overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)] transition-all duration-200 ease-out",
           peek ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none -translate-x-1 scale-[0.98] opacity-0"
         )}
       >
@@ -337,7 +346,7 @@ function CollapsedRail({
       ) : null}
       <div className="mt-auto flex flex-col items-center gap-1">
         <span
-          className="flex h-6 min-w-6 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-[11px] font-medium text-[var(--color-foreground-muted)]"
+          className="flex h-6 min-w-6 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-2xs font-medium text-[var(--color-foreground-muted)]"
           title={`${activeCount} active session${activeCount === 1 ? "" : "s"}`}
         >
           {activeCount}
@@ -447,7 +456,7 @@ function SidebarPanel({
               <PanelLeftClose className="h-[18px] w-[18px]" />
             </button>
           ) : null}
-          <span className="truncate text-base font-semibold tracking-tight">BatteryGPT</span>
+          <Wordmark className="min-w-0" />
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           {onOpenSearch ? (
@@ -499,10 +508,10 @@ function SidebarPanel({
       </div>
 
       <div className="flex items-center justify-between px-4 pb-1.5 pt-2">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
+        <span className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
           History
         </span>
-        <span className="text-[11px] text-[var(--color-foreground-muted)]">{ownedSessions.length}</span>
+        <span className="text-2xs text-[var(--color-foreground-muted)]">{ownedSessions.length}</span>
       </div>
 
       {/* The scroll container is this element itself, not a nested child: it is a
@@ -534,10 +543,10 @@ function SidebarPanel({
             {sharedSessions.length > 0 ? (
               <>
                 <div className="flex items-center justify-between px-4 pb-1.5 pt-2">
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
+                  <span className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
                     Shared with me
                   </span>
-                  <span className="text-[11px] text-[var(--color-foreground-muted)]">
+                  <span className="text-2xs text-[var(--color-foreground-muted)]">
                     {sharedSessions.length}
                   </span>
                 </div>
@@ -561,7 +570,7 @@ function SidebarPanel({
       </div>
 
       {connection !== "live" && connection !== "idle" ? (
-        <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-[11px] text-[var(--color-foreground-muted)]">
+        <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-2xs text-[var(--color-foreground-muted)]">
           {connection === "connecting"
             ? "Connecting to event stream…"
             : connection === "reconnecting"

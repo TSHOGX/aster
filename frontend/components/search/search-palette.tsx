@@ -118,7 +118,7 @@ function ResultRow({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm text-[var(--color-foreground)]">{title}</span>
           {meta ? (
-            <span className="mt-0.5 block truncate text-[11px] text-[var(--color-foreground-muted)]">{meta}</span>
+            <span className="mt-0.5 block truncate text-2xs text-[var(--color-foreground-muted)]">{meta}</span>
           ) : null}
           {hit.kind === "message" ? (
             <span className="mt-1 block">
@@ -253,7 +253,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Search sessions and messages"
-        className="flex max-h-[70vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
+        className="flex max-h-[70vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]"
         onKeyDown={onKeyDown}
       >
         <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
@@ -281,7 +281,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
               {titleHits.length > 0 ? (
                 <li
                   aria-hidden
-                  className="px-3 pb-1 pt-2 text-[11px] uppercase tracking-wider text-[var(--color-foreground-muted)]"
+                  className="px-3 pb-1 pt-2 text-2xs uppercase tracking-wider text-[var(--color-foreground-muted)]"
                 >
                   {trimmed ? "Sessions" : "Recent"}
                 </li>
@@ -302,7 +302,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
               {messageHits.length > 0 ? (
                 <li
                   aria-hidden
-                  className="px-3 pb-1 pt-2 text-[11px] uppercase tracking-wider text-[var(--color-foreground-muted)]"
+                  className="px-3 pb-1 pt-2 text-2xs uppercase tracking-wider text-[var(--color-foreground-muted)]"
                 >
                   Messages
                 </li>
@@ -324,7 +324,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
           )}
         </ul>
 
-        <div className="flex shrink-0 items-center gap-4 border-t border-[var(--color-border)] px-4 py-2 text-[11px] text-[var(--color-foreground-muted)]">
+        <div className="flex shrink-0 items-center gap-4 border-t border-[var(--color-border)] px-4 py-2 text-2xs text-[var(--color-foreground-muted)]">
           <span>↑↓ navigate</span>
           <span>↵ open</span>
           <span>esc close</span>

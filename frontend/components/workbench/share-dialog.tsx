@@ -194,12 +194,12 @@ export function ShareDialog({
         role="dialog"
         aria-modal="true"
         aria-label={`Share ${sessionTitle}`}
-        className="w-full max-w-md overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
+        className="w-full max-w-md overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]"
       >
         <header className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-medium">Share</h2>
-            <p className="truncate text-[11px] text-[var(--color-foreground-muted)]">{sessionTitle}</p>
+            <p className="truncate text-2xs text-[var(--color-foreground-muted)]">{sessionTitle}</p>
           </div>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close">
             <X className="h-4 w-4" />
@@ -211,7 +211,7 @@ export function ShareDialog({
         ) : (
           <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
             <section>
-              <h3 className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
+              <h3 className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
                 People
               </h3>
               <div className="mt-2 flex gap-2">
@@ -256,7 +256,7 @@ export function ShareDialog({
                       className="flex items-center justify-between gap-2 rounded-[var(--radius)] px-2 py-1.5 hover:bg-[var(--color-surface-muted)]"
                     >
                       <span className="min-w-0 truncate text-sm">{share.grantee}</span>
-                      <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
+                      <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
                         {share.visibility === "full" ? "full" : "summary"} · read-only
                       </span>
                       <Button
@@ -276,10 +276,10 @@ export function ShareDialog({
             </section>
 
             <section className="mt-5 border-t border-[var(--color-border)] pt-4">
-              <h3 className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
+              <h3 className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
                 Public link
               </h3>
-              <p className="mt-1 text-[11px] text-[var(--color-foreground-muted)]">
+              <p className="mt-1 text-2xs text-[var(--color-foreground-muted)]">
                 Anyone with the link can read this conversation without logging in. The link expires, and
                 shows the conversation as it stands now — later messages are not included.
               </p>
@@ -300,19 +300,19 @@ export function ShareDialog({
                 </Button>
               </div>
               {isShell ? (
-                <p className="mt-1.5 text-[11px] text-[var(--color-foreground-muted)]">
+                <p className="mt-1.5 text-2xs text-[var(--color-foreground-muted)]">
                   Shell sessions are always shared in full: the command output is the content.
                 </p>
               ) : linkVisibility === "full" ? (
-                <p className="mt-1.5 text-[11px] text-[var(--color-warning,var(--color-foreground-muted))]">
+                <p className="mt-1.5 text-2xs text-[var(--color-warning,var(--color-foreground-muted))]">
                   Full includes shell commands, file contents and queries from the execution trace.
                 </p>
               ) : null}
 
               {artifacts.length > 0 ? (
                 <div className="mt-3">
-                  <p className="text-[11px] font-medium">Files to include</p>
-                  <p className="mt-0.5 text-[11px] text-[var(--color-foreground-muted)]">
+                  <p className="text-2xs font-medium">Files to include</p>
+                  <p className="mt-0.5 text-2xs text-[var(--color-foreground-muted)]">
                     Only what you check is reachable through the link, and a copy is frozen now — later
                     changes to these files will not appear. Nothing checked means the conversation only.
                   </p>
@@ -326,8 +326,8 @@ export function ShareDialog({
                             onChange={() => toggleFile(artifact.path)}
                             className="h-3.5 w-3.5"
                           />
-                          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{artifact.path}</span>
-                          <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
+                          <span className="min-w-0 flex-1 truncate font-mono text-2xs">{artifact.path}</span>
+                          <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
                             {formatBytes(artifact.size)}
                           </span>
                         </label>
@@ -339,9 +339,9 @@ export function ShareDialog({
 
               {freshToken ? (
                 <div className="mt-3 rounded-[var(--radius)] border border-[var(--color-accent)] bg-[var(--color-surface-muted)] p-2.5">
-                  <p className="text-[11px] font-medium">Copy this link now — it is not shown again.</p>
+                  <p className="text-2xs font-medium">Copy this link now — it is not shown again.</p>
                   <div className="mt-1.5 flex items-center gap-2">
-                    <code className="min-w-0 flex-1 truncate rounded bg-[var(--color-background)] px-2 py-1 font-mono text-[11px]">
+                    <code className="min-w-0 flex-1 truncate rounded bg-[var(--color-background)] px-2 py-1 font-mono text-2xs">
                       {freshToken}
                     </code>
                     <Button size="sm" variant="ghost" onClick={() => void copyLink()}>
@@ -361,7 +361,7 @@ export function ShareDialog({
                       key={link.id}
                       className="flex items-center justify-between gap-2 rounded-[var(--radius)] px-2 py-1.5 hover:bg-[var(--color-surface-muted)]"
                     >
-                      <span className="min-w-0 flex-1 truncate text-[11px]">
+                      <span className="min-w-0 flex-1 truncate text-2xs">
                         {link.visibility} ·{" "}
                         {link.expired ? (
                           <span className="text-[var(--color-foreground-muted)]">expired</span>

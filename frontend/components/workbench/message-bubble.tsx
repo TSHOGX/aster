@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { User, Bot } from "lucide-react";
+import { Bot } from "lucide-react";
 
 import { MarkdownView } from "./markdown-view";
 import { TraceList } from "./trace-list";
@@ -23,44 +23,50 @@ function MessageBubbleImpl({
   showActions?: boolean;
 }) {
   const isUser = message.role === "user";
+
+  // A user turn is a short quoted prompt: it gets a right-aligned bubble that
+  // shrinks to its content. An assistant turn is the substance of the page, so
+  // it runs the full measure with no card around it — the whitespace between
+  // turns is the separator, which is why neither side draws a row background.
+  if (isUser) {
+    return (
+      <div className="flex flex-col items-end gap-1 py-4">
+        <div className="max-w-[85%] rounded-[var(--radius-xl)] rounded-br-[var(--radius-xs)] bg-[var(--color-user-bubble)] px-3.5 py-2.5">
+          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+            {message.content}
+          </div>
+        </div>
+        <time
+          dateTime={message.created_at}
+          title={formatFullTimestamp(message.created_at)}
+          className="px-1 font-mono text-2xs text-[var(--color-foreground-muted)] opacity-70 cursor-default"
+        >
+          {formatTime(message.created_at)}
+        </time>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={cn(
-        "flex gap-3 px-6 py-4",
-        isUser ? "bg-transparent" : "bg-[var(--color-surface)]"
-      )}
-    >
-      <div
-        className={cn(
-          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-medium",
-          isUser
-            ? "bg-[var(--color-user-bubble)] text-[var(--color-foreground)]"
-            : "bg-[var(--color-foreground)] text-[var(--color-accent-foreground)]"
-        )}
-      >
-        {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+    <div className="flex gap-3 py-4">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+        <Bot className="h-3.5 w-3.5" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-1.5 text-[11px] uppercase tracking-wider text-[var(--color-foreground-muted)]">
-          <span>{isUser ? "You" : "Assistant"}</span>
+        <div className="flex items-baseline gap-1.5 text-2xs text-[var(--color-foreground-muted)]">
+          <span className="font-medium text-[var(--color-foreground)]">Assistant</span>
           <time
             dateTime={message.created_at}
             title={formatFullTimestamp(message.created_at)}
-            className="normal-case tracking-normal font-mono tabular-nums text-[var(--color-foreground-muted)] opacity-70 cursor-default"
+            className="font-mono opacity-70 cursor-default"
           >
             {formatTime(message.created_at)}
           </time>
         </div>
-        <div className="mt-1">
-          {isUser ? (
-            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</div>
-          ) : (
-            <>
-              <TraceList nodes={message.trace ?? []} />
-              <MarkdownView content={message.content} />
-              {showActions ? <MessageActions message={message} sessionId={sessionId} /> : null}
-            </>
-          )}
+        <div className="mt-1.5">
+          <TraceList nodes={message.trace ?? []} />
+          <MarkdownView content={message.content} />
+          {showActions ? <MessageActions message={message} sessionId={sessionId} /> : null}
         </div>
       </div>
     </div>
@@ -111,16 +117,16 @@ function StreamingBubbleImpl({ text, liveTrace }: { text: string; liveTrace?: Tr
   // immediately below.
   const throttled = useThrottledValue(text, 80);
   return (
-    <div className="flex gap-3 px-6 py-4 bg-[var(--color-surface)]">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-foreground)] text-[var(--color-accent-foreground)]">
+    <div className="flex gap-3 py-4">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
         <Bot className="h-3.5 w-3.5" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[11px] uppercase tracking-wider text-[var(--color-foreground-muted)]">
-          Assistant
-          <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse-dot" />
+        <div className="flex items-center gap-1.5 text-2xs text-[var(--color-foreground-muted)]">
+          <span className="font-medium text-[var(--color-foreground)]">Assistant</span>
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse-dot" />
         </div>
-        <div className="mt-1">
+        <div className="mt-1.5">
           <TraceList nodes={liveTrace ?? []} defaultOpen />
           <MarkdownView content={throttled || "…"} />
         </div>
@@ -134,9 +140,9 @@ StreamingBubble.displayName = "StreamingBubble";
 
 function DayDividerImpl({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 px-6 py-2.5 bg-[var(--color-background)]">
+    <div className="flex items-center gap-3 py-4">
       <div className="h-px flex-1 bg-[var(--color-border)]" />
-      <span className="text-[11px] font-medium text-[var(--color-foreground-muted)]">{label}</span>
+      <span className="text-2xs font-medium text-[var(--color-foreground-muted)]">{label}</span>
       <div className="h-px flex-1 bg-[var(--color-border)]" />
     </div>
   );

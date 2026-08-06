@@ -55,7 +55,7 @@ function TraceListImpl({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-[12px] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)]"
+        className="flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-2xs text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)]"
       >
         {open ? (
           <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />

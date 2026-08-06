@@ -13,16 +13,18 @@ import type { ApiMessage } from "@/lib/types";
  */
 export function ShellEntry({ message }: { message: ApiMessage }) {
   const isUser = message.role === "user";
+  // Horizontal padding belongs to the centering wrapper in the parent, so the
+  // entry itself only owns its vertical rhythm.
   return isUser ? (
-    <div className="flex gap-2 px-6 py-3">
-      <span className="shrink-0 font-mono text-[11px] leading-6 text-[var(--color-foreground-muted)]">$</span>
+    <div className="flex gap-2 py-3">
+      <span className="shrink-0 font-mono text-2xs leading-6 text-[var(--color-accent)]">$</span>
       <pre className="min-w-0 whitespace-pre-wrap break-words font-mono text-sm leading-6 text-[var(--color-foreground)]">
         {message.content}
       </pre>
     </div>
   ) : (
-    <div className="px-6 py-2">
-      <pre className="min-w-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-6 text-[var(--color-foreground)]">
+    <div className="py-2">
+      <pre className="min-w-0 whitespace-pre-wrap break-words font-mono text-xs leading-6 text-[var(--color-foreground-muted)]">
         {message.content}
       </pre>
     </div>

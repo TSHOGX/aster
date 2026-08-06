@@ -145,7 +145,7 @@ export function SharedSessionView({ token }: { token: string }) {
           <h1 className="truncate text-sm font-medium">
             {session.title?.trim() || "Shared session"}
           </h1>
-          <p className="mt-0.5 text-[11px] text-[var(--color-foreground-muted)]">
+          <p className="mt-0.5 text-2xs text-[var(--color-foreground-muted)]">
             {session.mode_label} · read-only
             {session.frozen ? " · snapshot" : null}
             {" · shared "}
@@ -184,7 +184,10 @@ export function SharedSessionView({ token }: { token: string }) {
               </div>
             </div>
           ) : isShell ? (
-            <div>
+            /* MessageBubble and ShellEntry own only their vertical rhythm, so the
+               centering + horizontal padding wrapper has to be repeated here —
+               the workbench conversation does the same. */
+            <div className="mx-auto w-full max-w-[var(--measure)] divide-y divide-[var(--color-border)] px-4 sm:px-6">
               {messages.map((message) => (
                 <ShellEntry
                   key={message.id}
@@ -193,7 +196,7 @@ export function SharedSessionView({ token }: { token: string }) {
               ))}
             </div>
           ) : (
-            <div>
+            <div className="mx-auto w-full max-w-[var(--measure)] px-4 sm:px-6">
               {messages.map((message, index) => {
                 const previous = messages[index - 1];
                 const showDivider =
@@ -206,22 +209,14 @@ export function SharedSessionView({ token }: { token: string }) {
                         label={formatDayDivider(message.created_at)}
                       />
                     )}
-                    <div
-                      className={
-                        showDivider
-                          ? ""
-                          : "border-t border-[var(--color-border)]"
-                      }
-                    >
-                      {/* showActions=false is load-bearing here: the action bar
+                    {/* showActions=false is load-bearing here: the action bar
                         reaches into the workbench provider for feedback, which an
                         anonymous viewer has neither identity nor permission for. */}
-                      <MessageBubble
-                        message={sharedToApiMessage(message)}
-                        sessionId={session.id}
-                        showActions={false}
-                      />
-                    </div>
+                    <MessageBubble
+                      message={sharedToApiMessage(message)}
+                      sessionId={session.id}
+                      showActions={false}
+                    />
                   </Fragment>
                 );
               })}
@@ -231,7 +226,7 @@ export function SharedSessionView({ token }: { token: string }) {
         <SharedFilePanel token={token} files={files} />
       </div>
 
-      <footer className="border-t border-[var(--color-border)] px-6 py-2.5 text-[11px] text-[var(--color-foreground-muted)]">
+      <footer className="border-t border-[var(--color-border)] px-6 py-2.5 text-2xs text-[var(--color-foreground-muted)]">
         {session.frozen
           ? "A snapshot of the conversation as it stood when the link was created. Later messages are not included."
           : "Read-only view. Refresh to pick up new messages."}

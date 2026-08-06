@@ -32,7 +32,7 @@ export function InlineDiff({ diff }: { diff: TraceDiff }) {
   return (
     <div className="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--color-code-border)] bg-[var(--color-code-bg)]">
       {diff.path ? (
-        <div className="border-b border-[var(--color-code-border)] px-2.5 py-1 font-mono text-[11px] text-[var(--color-foreground-muted)]">
+        <div className="border-b border-[var(--color-code-border)] px-2.5 py-1 font-mono text-2xs text-[var(--color-foreground-muted)]">
           {diff.path}
         </div>
       ) : null}
