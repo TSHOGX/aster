@@ -10,8 +10,12 @@ const button = cva(
   {
     variants: {
       variant: {
+        // Native theme utilities rather than text-[var(--…)] arbitrary values:
+        // `--color-button-primary*` is registered in @theme, so Tailwind emits
+        // these classes directly and the color resolves in one hop instead of
+        // chaining --color-button-primary-foreground → --button-primary-foreground.
         primary:
-          "bg-[var(--color-button-primary)] text-[var(--color-button-primary-foreground)] hover:bg-[var(--color-button-primary-hover)]",
+          "bg-button-primary text-button-primary-foreground hover:bg-button-primary-hover",
         ghost:
           "bg-transparent text-[var(--color-foreground)] hover:bg-[var(--color-surface-muted)]",
         outline:

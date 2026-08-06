@@ -76,16 +76,18 @@
   --radius-xl: 1rem;
 
   /*
-    Type scale. 12px is the floor: the previous 10px/11px labels were below the
-    comfortable-reading threshold for secondary text. Registered as Tailwind
-    `text-*` sizes so `text-2xs` … `text-xl` resolve here.
+    Type scale. 13px is the floor: the original 10px/11px labels were well below
+    a comfortable reading size, and the first pass at 12px still read small on a
+    dense analysis screen. Registered as Tailwind `text-*` sizes so `text-2xs` …
+    `text-xl` resolve here — shifting the whole UI is a matter of editing these
+    six values, since no component hardcodes a pixel size.
   */
-  --text-2xs: 0.75rem;    /* 12px — dense metadata (sizes, timestamps) */
-  --text-xs: 0.8125rem;   /* 13px — secondary text, dense controls */
-  --text-sm: 0.875rem;    /* 14px — body default */
-  --text-base: 0.9375rem; /* 15px — emphasized body */
-  --text-lg: 1.0625rem;   /* 17px — panel titles */
-  --text-xl: 1.25rem;     /* 20px — page/screen titles */
+  --text-2xs: 0.8125rem;  /* 13px — dense metadata (sizes, timestamps) */
+  --text-xs: 0.875rem;    /* 14px — secondary text, dense controls */
+  --text-sm: 0.9375rem;   /* 15px — body default */
+  --text-base: 1rem;      /* 16px — emphasized body */
+  --text-lg: 1.125rem;    /* 18px — panel titles */
+  --text-xl: 1.375rem;    /* 22px — page/screen titles */
 
   /*
     Elevation. Cool-tinted and deliberately shallow: the enterprise look comes
@@ -104,9 +106,13 @@
   Reading measure: the conversation column and the composer share this width so
   they align into one vertical channel instead of a full-bleed log sitting above
   a narrow centered input.
+
+  56rem (896px) is wider than a prose-optimal measure would be, deliberately: the
+  replies here are mostly tables, code and plots, and those want horizontal room
+  far more than a paragraph does.
 */
 :root {
-  --measure: 46rem;
+  --measure: 56rem;
 }
 
 /* ── Light: white + pale blue-grey ──────────────────────────────────── */
