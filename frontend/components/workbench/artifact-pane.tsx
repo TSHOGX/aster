@@ -31,7 +31,8 @@ import { entriesFromDataTransfer, entriesFromFileList, isSessionWritable } from 
 import { formatBytes, formatRelative } from "@/lib/format";
 import { classifyArtifact } from "@/lib/mime";
 import { cn } from "@/lib/cn";
-import { uploadUiEnabled } from "@/lib/ui-config";
+import { useT } from "@/lib/i18n";
+import { brandName, uploadUiEnabled } from "@/lib/ui-config";
 import type { ApiArtifact, SessionStatus } from "@/lib/types";
 
 // Backend-enforced upload limits, mirrored client-side for fast friendly errors.
@@ -46,6 +47,7 @@ type ArtifactPaneProps = {
 };
 
 export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
+  const t = useT();
   const session = useSelectedSession();
   const artifacts = useArtifacts(session?.id ?? null);
 
@@ -54,8 +56,8 @@ export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
       <aside className="flex h-full min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-surface)]">
         <EmptyState
           icon={<Folder className="h-5 w-5" />}
-          title="No files yet"
-          description="Files will appear here once a session is running."
+          title={t("workspace.noFilesTitle")}
+          description={t("workspace.noFilesBody")}
         />
       </aside>
     );
@@ -92,6 +94,7 @@ function ArtifactPaneInner({
   artifacts: ApiArtifact[];
   onExpandedChange?: (expanded: boolean) => void;
 }) {
+  const t = useT();
   // Artifacts-style: a single open file drives the Preview panel. Null → list view.
   const [openPath, setOpenPath] = useState<string | null>(null);
   // When true, the preview overlays the whole viewport instead of docking in the
@@ -120,17 +123,17 @@ function ArtifactPaneInner({
     async (entries: UploadEntry[]) => {
       if (entries.length === 0) return;
       if (!isSessionWritable(status)) {
-        toast.error("Can't upload while the agent is working. Try again once the turn finishes.");
+        toast.error(t("workspace.uploadBusy"));
         return;
       }
       // Client-side pre-checks mirroring backend limits (100 MiB/file, 2000 files).
       if (entries.length > MAX_UPLOAD_FILES) {
-        toast.error(`Too many files (limit ${MAX_UPLOAD_FILES}). Select fewer files.`);
+        toast.error(t("workspace.tooManyFiles", { limit: MAX_UPLOAD_FILES }));
         return;
       }
       const oversize = entries.find((e) => e.file.size > MAX_UPLOAD_BYTES);
       if (oversize) {
-        toast.error(`${oversize.relPath.split("/").pop()} is larger than 100 MiB.`);
+        toast.error(t("workspace.fileTooLarge", { name: oversize.relPath.split("/").pop() ?? "" }));
         return;
       }
       setUpload({ phase: "uploading", count: entries.length, fraction: 0 });
@@ -141,18 +144,18 @@ function ArtifactPaneInner({
       setUpload({ phase: "idle" });
       if (result.ok) {
         const n = result.uploaded.length || entries.length;
-        toast.success(`Uploaded ${n === 1 ? label : `${n} files`}`);
+        toast.success(n === 1 ? t("workspace.uploadedOne", { name: label ?? "" }) : t("workspace.uploadedMany", { count: n }));
         return;
       }
       if (result.errorClass === "turn_in_progress") {
-        toast.error("Can't upload while the agent is working. Try again once the turn finishes.");
+        toast.error(t("workspace.uploadBusy"));
       } else if (result.status === 413) {
-        toast.error("Upload exceeds the size or file-count limit.");
+        toast.error(t("workspace.uploadLimit"));
       } else {
-        toast.error(`Upload failed: ${result.error}`);
+        toast.error(t("workspace.uploadFailedReason", { error: result.error }));
       }
     },
-    [sessionId, status]
+    [sessionId, status, t]
   );
 
   const onDrop = useCallback(
@@ -164,18 +167,18 @@ function ArtifactPaneInner({
       // path whose UI affordances were withheld.
       if (!uploadUiEnabled) return;
       if (readOnly) {
-        toast.error("This session was shared with you and is read-only.");
+        toast.error(t("workspace.readOnlyShared"));
         return;
       }
       if (!isSessionWritable(status)) {
-        toast.error("Can't upload while the agent is working. Try again once the turn finishes.");
+        toast.error(t("workspace.uploadBusy"));
         return;
       }
       void entriesFromDataTransfer(event.dataTransfer)
         .then((entries) => runUpload(entries))
-        .catch(() => toast.error("Couldn't read the dropped files."));
+        .catch(() => toast.error(t("workspace.dropReadFailed")));
     },
-    [runUpload, status, readOnly]
+    [runUpload, status, readOnly, t]
   );
 
   const onDragEnter = useCallback(
@@ -298,7 +301,7 @@ function ArtifactPaneInner({
           <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-baseline gap-2">
-                <span className="text-sm font-semibold">Workspace</span>
+                <span className="text-sm font-semibold">{t("workspace.title")}</span>
                 {artifacts.length > 0 ? (
                   <span className="text-2xs text-[var(--color-foreground-muted)]">
                     {artifacts.length} · {formatBytes(tree.size)}
@@ -310,7 +313,7 @@ function ArtifactPaneInner({
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={!canUpload}
-                  title={writable ? "Upload files" : "Uploads are paused while the agent is working"}
+                  title={writable ? t("workspace.uploadFiles") : t("workspace.uploadPaused")}
                   className="flex h-7 w-7 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Upload className="h-3.5 w-3.5" />
@@ -319,7 +322,7 @@ function ArtifactPaneInner({
                   type="button"
                   onClick={() => folderInputRef.current?.click()}
                   disabled={!canUpload}
-                  title={writable ? "Upload folder" : "Uploads are paused while the agent is working"}
+                  title={writable ? t("workspace.uploadFolder") : t("workspace.uploadPaused")}
                   className="flex h-7 w-7 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <FolderUp className="h-3.5 w-3.5" />
@@ -329,7 +332,7 @@ function ArtifactPaneInner({
             {busy ? (
               <div className="mt-2">
                 <div className="mb-1 flex items-center justify-between text-2xs text-[var(--color-foreground-muted)]">
-                  <span>Uploading {upload.count === 1 ? "1 file" : `${upload.count} files`}…</span>
+                  <span>{upload.count === 1 ? t("workspace.uploadingOne") : t("workspace.uploading", { count: upload.count })}</span>
                   <span>{Math.round(upload.fraction * 100)}%</span>
                 </div>
                 <div className="h-1 overflow-hidden rounded-full bg-[var(--color-surface-muted)]">
@@ -345,7 +348,7 @@ function ArtifactPaneInner({
               </p>
             ) : uploadUiEnabled && !writable ? (
               <p className="mt-2 text-2xs text-[var(--color-foreground-muted)]">
-                Uploads paused while the agent is working.
+                {t("workspace.uploadsPausedNote")}
               </p>
             ) : null}
             {artifacts.length > 0 ? (
@@ -353,8 +356,8 @@ function ArtifactPaneInner({
                 icon={<Search className="h-3.5 w-3.5" />}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search files"
-                aria-label="Search files"
+                placeholder={t("workspace.searchFiles")}
+                aria-label={t("workspace.searchFiles")}
                 className="mt-2.5"
               />
             ) : null}
@@ -363,10 +366,10 @@ function ArtifactPaneInner({
           <div className="min-h-0 flex-1 overflow-y-auto">
             {artifacts.length === 0 ? (
               <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">
-                No artifacts yet. The agent writes files to <code className="font-mono">/workspace</code>.
+                {t("workspace.empty", { brand: brandName })}
               </p>
             ) : visibleArtifacts.length === 0 ? (
-              <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">No matching files.</p>
+              <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">{t("workspace.noMatches")}</p>
             ) : (
               <ArtifactTreeView
                 root={tree}
@@ -443,6 +446,7 @@ function TreeNode({
   onToggleDirectory: (path: string) => void;
   onOpenArtifact: (path: string) => void;
 }) {
+  const t = useT();
   const indent = 8 + depth * 14;
 
   if (node.kind === "directory") {
@@ -450,7 +454,7 @@ function TreeNode({
     return (
       <li>
         <button
-          className="flex h-7 w-full items-center gap-1.5 px-2 pr-3 text-left text-xs hover:bg-[var(--color-surface-muted)]"
+          className="flex h-7 w-full items-center gap-1.5 px-2 pr-3 text-left text-[13px] hover:bg-[var(--color-surface-muted)]"
           style={{ paddingLeft: indent }}
           onClick={() => onToggleDirectory(node.path)}
           aria-expanded={expanded}
@@ -467,7 +471,7 @@ function TreeNode({
             <Folder className="h-3.5 w-3.5 shrink-0 text-[var(--color-foreground-muted)]" />
           )}
           <span className="min-w-0 flex-1 truncate font-mono">{node.name}</span>
-          <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
+          <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
             {node.fileCount} · {formatBytes(node.size)}
           </span>
         </button>
@@ -496,7 +500,10 @@ function TreeNode({
     <li>
       <div
         className={cn(
-          "group flex h-7 items-center gap-1.5 px-2 pr-2 text-xs hover:bg-[var(--color-surface-muted)]",
+          // 13px rather than --text-xs (15px): the tree is a dense index of
+          // names, and the mono face reads a size larger than the UI sans at the
+          // same nominal size. The trailing size/mtime column follows it down.
+          "group flex h-7 items-center gap-1.5 px-2 pr-2 text-[13px] hover:bg-[var(--color-surface-muted)]",
           active && "bg-[var(--color-surface-muted)]"
         )}
         style={{ paddingLeft: indent + 21 }}
@@ -508,7 +515,7 @@ function TreeNode({
         >
           <ArtifactIcon path={node.path} />
           <span className="min-w-0 flex-1 truncate font-mono">{node.name}</span>
-          <span className="shrink-0 text-2xs text-[var(--color-foreground-muted)]">
+          <span className="shrink-0 text-[11px] text-[var(--color-foreground-muted)]">
             {formatBytes(node.artifact.size)} · {formatRelative(node.artifact.updated_at)}
           </span>
         </button>
@@ -516,7 +523,7 @@ function TreeNode({
           href={buildArtifactHref(node.artifact.session_id, node.path)}
           download
           className="shrink-0 text-[var(--color-foreground-muted)] transition-opacity hover:text-[var(--color-foreground)] focus-visible:opacity-100 group-hover:opacity-100 sm:opacity-0"
-          title="Download"
+          title={t("workspace.download")}
         >
           <Download className="h-3.5 w-3.5" />
         </a>

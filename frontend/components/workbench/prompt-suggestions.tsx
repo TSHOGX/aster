@@ -4,6 +4,7 @@ import { Activity, FlaskConical, LineChart, Thermometer } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { requestComposerDraft } from "@/lib/composer-draft";
+import { useT, type MessageKey } from "@/lib/i18n";
 
 /**
  * Starting points offered on an empty session.
@@ -14,43 +15,64 @@ import { requestComposerDraft } from "@/lib/composer-draft";
  * one fills the composer rather than sending, since every prompt needs the user's
  * own file or cell name substituted in.
  */
+/*
+  Only the icon and the key prefix live here; the three strings per card come from
+  the message catalog.
+
+  The `prompt` — the text dropped into the composer — is translated too, not just
+  the card's title and body. These prompts are starting points meant to be edited
+  before sending, so filling a Chinese user's composer with English defeats the
+  purpose: they would have to read English to change the file name. Domain
+  notation stays as-is in both locales (dQ/dV, SOH, C-rate, /workspace).
+*/
+/*
+  Keys are spelled out rather than built as `prompt.${key}.title`: a template
+  literal needs an `as MessageKey` cast to typecheck, and that cast is exactly
+  what would stop the compiler from catching a renamed or missing catalog entry.
+*/
 const SUGGESTIONS = [
   {
     Icon: LineChart,
-    title: "Capacity fade analysis",
-    body: "Plot capacity retention against cycle number, fit the fade curve, and report the projected cycle count at 80% state of health.",
-    prompt:
-      "I have cycling data in /workspace. Load it, plot capacity retention vs. cycle number, fit the fade trend, and estimate the cycle count at 80% SOH."
+    titleKey: "prompt.fade.title",
+    bodyKey: "prompt.fade.body",
+    promptKey: "prompt.fade.prompt"
   },
   {
     Icon: Activity,
-    title: "dQ/dV peak tracking",
-    body: "Compute differential capacity curves across cycles and track how the peaks shift to separate loss of lithium inventory from loss of active material.",
-    prompt:
-      "Compute dQ/dV curves from the charge data in /workspace, plot them by cycle, and track the peak positions to identify the dominant degradation mode."
+    titleKey: "prompt.dqdv.title",
+    bodyKey: "prompt.dqdv.body",
+    promptKey: "prompt.dqdv.prompt"
   },
   {
     Icon: Thermometer,
-    title: "Thermal log review",
-    body: "Scan a temperature log for excursions, correlate them with C-rate, and summarize which steps ran hottest.",
-    prompt:
-      "Review the thermal log in /workspace: find temperature excursions, correlate them with C-rate and step type, and summarize the hottest steps in a table."
+    titleKey: "prompt.thermal.title",
+    bodyKey: "prompt.thermal.body",
+    promptKey: "prompt.thermal.prompt"
   },
   {
     Icon: FlaskConical,
-    title: "Compare cell variants",
-    body: "Put several cells or formulations side by side on the metrics that matter and call out where they diverge.",
-    prompt:
-      "Compare the cells in /workspace on capacity, coulombic efficiency, and internal resistance. Produce a comparison table and flag where the variants diverge."
+    titleKey: "prompt.compare.title",
+    bodyKey: "prompt.compare.body",
+    promptKey: "prompt.compare.prompt"
   }
-] as const;
+] as const satisfies readonly {
+  Icon: typeof LineChart;
+  titleKey: MessageKey;
+  bodyKey: MessageKey;
+  promptKey: MessageKey;
+}[];
 
 export function PromptSuggestions() {
+  const t = useT();
   return (
     <div className="grid w-full gap-2.5 sm:grid-cols-2">
-      {SUGGESTIONS.map(({ Icon, title, body, prompt }) => (
+      {SUGGESTIONS.map(({ Icon, titleKey, bodyKey, promptKey }) => {
+        const title = t(titleKey);
+        const body = t(bodyKey);
+        const prompt = t(promptKey);
+        return (
         <Card
-          key={title}
+          key={titleKey}
           interactive
           role="button"
           tabIndex={0}
@@ -69,7 +91,8 @@ export function PromptSuggestions() {
           </div>
           <p className="mt-1.5 text-2xs leading-relaxed text-[var(--color-foreground-muted)]">{body}</p>
         </Card>
-      ))}
+        );
+      })}
     </div>
   );
 }

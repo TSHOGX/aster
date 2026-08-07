@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { NotificationDetailModal } from "@/components/notifications/notification-detail-modal";
 import { useAnchoredPosition, useDismissOnOutside } from "@/lib/use-popover";
 import type { ApiNotification } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 
 const PANEL_WIDTH = 320;
 const VIEWPORT_MARGIN = 8;
@@ -29,6 +30,7 @@ function formatRelativeTime(value: string) {
 }
 
 export function NotificationBell() {
+  const t = useT();
   const { notifications, markNotificationRead } = useNotifications();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<ApiNotification | null>(null);
@@ -58,8 +60,8 @@ export function NotificationBell() {
         variant="ghost"
         size="icon"
         onClick={() => setOpen((o) => !o)}
-        aria-label="Notifications"
-        title="Notifications"
+        aria-label={t("notifications.title")}
+        title={t("notifications.title")}
       >
         <Bell className="h-4 w-4" />
         {unreadCount > 0 ? (

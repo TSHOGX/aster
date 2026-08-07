@@ -15,6 +15,7 @@ import type { TraceNode as TraceNodeData } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { formatDuration } from "@/lib/format";
 import { InlineDiff } from "./inline-diff";
+import { useT } from "@/lib/i18n";
 
 // Render the node's glyph directly rather than aliasing a component to a
 // capitalized local (which trips react-hooks/static-components): the chosen
@@ -45,6 +46,7 @@ function headline(node: TraceNodeData): string {
 }
 
 function TraceNodeImpl({ node }: { node: TraceNodeData }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const duration = formatDuration(node.durationMs);
   const hasArgs = node.args !== undefined && Object.keys(node.args).length > 0;
@@ -61,7 +63,7 @@ function TraceNodeImpl({ node }: { node: TraceNodeData }) {
         <span
           className="h-1.5 w-1.5 shrink-0 rounded-full"
           style={{ backgroundColor: "var(--color-danger)" }}
-          title="Tool reported an error"
+          title={t("trace.toolError")}
           aria-label="error"
         />
       ) : null}

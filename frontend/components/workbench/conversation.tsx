@@ -9,8 +9,10 @@ import { ShellConversation } from "./shell-conversation";
 import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
 import { Composer } from "./composer";
+import { useT } from "@/lib/i18n";
 import { PromptSuggestions } from "./prompt-suggestions";
 import { EmptyState } from "@/components/ui/empty-state";
+import { MessageWithPath } from "@/components/ui/message-with-path";
 import { ConversationSkeleton } from "@/components/ui/skeleton";
 import { StatusPill, statusTone } from "@/components/ui/badge";
 import { isFinalReply } from "@/lib/message-grouping";
@@ -26,6 +28,7 @@ export function Conversation() {
 }
 
 function ChatConversation() {
+  const t = useT();
   const session = useSelectedSession();
   const convo = useConversation(session?.id ?? null);
   const activity = useActivity(session?.id ?? null);
@@ -85,8 +88,8 @@ function ChatConversation() {
       <main className="flex h-full flex-col items-center justify-center bg-[var(--color-background)]">
         <EmptyState
           icon={<Bot className="h-5 w-5" />}
-          title="No session selected"
-          description="Pick a session from the list, or create a new one to start a conversation."
+          title={t("conversation.noSessionTitle")}
+          description={t("conversation.noSessionBody")}
         />
       </main>
     );
@@ -101,10 +104,10 @@ function ChatConversation() {
   const placeholder = readOnly
     ? `Read-only — shared by ${session.shared_by ?? "another user"}`
     : terminal
-    ? "Session ended. Start a new one to continue."
+    ? t("composer.sessionEnded")
     : accepting
-    ? "Send a message…"
-    : "Agent is thinking…";
+    ? t("composer.placeholder")
+    : t("composer.thinking");
 
   const activityLive = activity.phase !== "idle";
 
@@ -133,7 +136,7 @@ function ChatConversation() {
               }}
               disabled={refreshing}
               className="flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-border)] px-2 py-1 text-2xs hover:bg-[var(--color-surface-muted)] disabled:opacity-60"
-              title="Shared sessions do not update live"
+              title={t("conversation.sharedNoLive")}
             >
               <RefreshCw className={refreshing ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
               Refresh
@@ -143,7 +146,9 @@ function ChatConversation() {
         </div>
       </header>
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-36">
+      {/* Bottom padding clears the floating composer, which starts at two lines
+          tall (composer.tsx) — the last message has to scroll clear of it. */}
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-40">
         {convo.loading && convo.messages.length === 0 ? (
           <ConversationSkeleton />
         ) : convo.messages.length === 0 && convo.streaming.length === 0 && !activityLive ? (
@@ -151,15 +156,13 @@ function ChatConversation() {
             <div className="w-full max-w-[var(--measure)]">
               <EmptyState
                 icon={<Sparkles className="h-5 w-5" />}
-                title="What are we looking at today?"
+                title={t("conversation.emptyTitle")}
                 description={
-                  <>
-                    Describe the analysis you need, or start from one of these. The agent works in{" "}
-                    <code className="rounded bg-[var(--color-surface-muted)] px-1 font-mono text-xs">
-                      /workspace
-                    </code>{" "}
-                    inside its sandbox and streams results back here.
-                  </>
+                  <MessageWithPath
+                    messageKey="conversation.emptyBody"
+                    path="/workspace"
+                    codeClassName="rounded bg-[var(--color-surface-muted)] px-1 text-xs"
+                  />
                 }
               >
                 {accepting ? <PromptSuggestions /> : null}

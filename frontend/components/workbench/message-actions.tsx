@@ -9,6 +9,7 @@ import { useHarness } from "@/components/harness-provider";
 import type { ApiMessage } from "@/lib/types";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
+import { useT } from "@/lib/i18n";
 import { stripMarkdown } from "@/lib/format";
 import { useAnchoredPosition, useDismissOnOutside } from "@/lib/use-popover";
 
@@ -35,6 +36,7 @@ const IconButton = forwardRef<
 IconButton.displayName = "IconButton";
 
 export function MessageActions({ message, sessionId }: { message: ApiMessage; sessionId: string }) {
+  const t = useT();
   const { submitFeedback } = useHarness();
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -70,16 +72,16 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
   const handleCopy = async () => {
     if (await copyText(stripMarkdown(message.content), "message")) {
       setCopied(true);
-      toast.success("Copied");
+      toast.success(t("message.copied"));
     }
   };
 
   const handleMenuAction = async (action: "sessionId" | "markdown") => {
     setMenuOpen(false);
     if (action === "sessionId") {
-      if (await copyText(sessionId, "session id")) toast.success("已复制 session id");
+      if (await copyText(sessionId, "session id")) toast.success(t("message.copiedSessionId"));
     } else {
-      if (await copyText(message.content, "markdown")) toast.success("已复制为 Markdown");
+      if (await copyText(message.content, "markdown")) toast.success(t("message.copiedMarkdown"));
     }
   };
 
@@ -87,31 +89,31 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
     <div className="mt-1.5 flex items-center gap-0.5">
       <IconButton
         active={rating === "up"}
-        aria-label="Good response"
+        aria-label={t("message.goodResponse")}
         aria-pressed={rating === "up"}
-        title="Good response"
+        title={t("message.goodResponse")}
         onClick={() => rate("up")}
       >
         <ThumbsUp className="h-3.5 w-3.5" fill={rating === "up" ? "currentColor" : "none"} />
       </IconButton>
       <IconButton
         active={rating === "down"}
-        aria-label="Bad response"
+        aria-label={t("message.badResponse")}
         aria-pressed={rating === "down"}
-        title="Bad response"
+        title={t("message.badResponse")}
         onClick={() => rate("down")}
       >
         <ThumbsDown className="h-3.5 w-3.5" fill={rating === "down" ? "currentColor" : "none"} />
       </IconButton>
-      <IconButton aria-label="Copy message" title="Copy message" onClick={handleCopy}>
+      <IconButton aria-label={t("message.copy")} title={t("message.copy")} onClick={handleCopy}>
         {copied ? <Check className="h-3.5 w-3.5 text-[var(--color-success)]" /> : <Copy className="h-3.5 w-3.5" />}
       </IconButton>
       <IconButton
         ref={menuButtonRef}
-        aria-label="More actions"
+        aria-label={t("message.moreActions")}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        title="More"
+        title={t("message.more")}
         onClick={() => setMenuOpen((o) => !o)}
       >
         <MoreHorizontal className="h-3.5 w-3.5" />

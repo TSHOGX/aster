@@ -56,6 +56,12 @@
   --color-button-primary: var(--button-primary);
   --color-button-primary-hover: var(--button-primary-hover);
   --color-button-primary-foreground: var(--button-primary-foreground);
+  /* Quieter sibling of the primary fill: a tinted surface with accent-colored
+     ink. Used where an action should read as the default without dominating the
+     panel it lives in (the sidebar's New session). */
+  --color-button-soft: var(--button-soft);
+  --color-button-soft-hover: var(--button-soft-hover);
+  --color-button-soft-foreground: var(--button-soft-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
@@ -156,6 +162,11 @@
   --button-primary: #4f46e5;
   --button-primary-hover: #4338ca;
   --button-primary-foreground: #ffffff;
+  /* Indigo wash + deep indigo ink: ~7:1 on the label, so it stays readable
+     while sitting far back from the saturated primary fill. */
+  --button-soft: #eceefc;
+  --button-soft-hover: #dfe2f8;
+  --button-soft-foreground: #3730a3;
 
   --success: #059669;
   --warning: #d97706;
@@ -230,6 +241,11 @@
   --button-primary: #4f46e5;
   --button-primary-hover: #6366f1;
   --button-primary-foreground: #ffffff;
+  /* Dark side of the soft fill: a lifted panel tint carrying the light accent
+     ink, so the button reads as raised rather than as a colored slab. */
+  --button-soft: #262a45;
+  --button-soft-hover: #313760;
+  --button-soft-foreground: #b6bdfb;
 
   --success: #34d399;
   --warning: #fbbf24;
@@ -466,10 +482,25 @@
   }
 }
 
+/*
+  Assistant replies are the substance of the page, so they run at the same size
+  as the user's own message (--text-sm, the body default) rather than a notch
+  smaller. The trace "steps" above a reply keep their own --text-2xs sizing
+  (trace-node.tsx) — they are metadata about the reply, not the reply.
+*/
 .markdown-body {
-  font-size: 14px;
+  font-size: var(--text-sm);
   line-height: 1.65;
   word-wrap: break-word;
+}
+
+/*
+  Denser prose for a file preview inside the right panel, which is an index-like
+  surface rather than a reading column. Two classes so it outranks the base rule
+  (both are unlayered, so a Tailwind text-* utility could not win here).
+*/
+.markdown-body.markdown-compact {
+  font-size: 13px;
 }
 
 .markdown-body h1,

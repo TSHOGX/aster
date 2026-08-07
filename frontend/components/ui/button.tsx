@@ -22,6 +22,11 @@ const button = cva(
           "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-foreground)] hover:bg-[var(--color-surface-muted)]",
         soft:
           "bg-[var(--color-surface-muted)] text-[var(--color-foreground)] hover:bg-[var(--color-border)]",
+        // A quieter default action: the primary's tinted twin. Same emphasis
+        // role, far less visual weight, for a button that lives inside a panel
+        // rather than at the end of a flow.
+        "primary-soft":
+          "bg-button-soft text-button-soft-foreground hover:bg-button-soft-hover",
         danger:
           "bg-transparent text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)]"
       },

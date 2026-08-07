@@ -10,6 +10,7 @@ import { Check, Copy } from "lucide-react";
 import { HIGHLIGHT_LANGUAGES } from "@/lib/highlight-languages";
 
 import { cn } from "@/lib/cn";
+import { useT } from "@/lib/i18n";
 import { isNumericText } from "@/lib/table-cells";
 
 /*
@@ -68,6 +69,7 @@ function CodeBlock({
   children,
   ...rest
 }: ComponentPropsWithoutRef<"pre"> & { node?: HastNode }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const language = codeLanguage(node);
   const source = nodeText(node);
@@ -91,11 +93,11 @@ function CodeBlock({
           type="button"
           onClick={() => void copy()}
           className="code-block-copy"
-          aria-label={copied ? "Copied" : "Copy code"}
-          title={copied ? "Copied" : "Copy code"}
+          aria-label={copied ? t("code.copied") : t("code.copyCode")}
+          title={copied ? t("code.copied") : t("code.copyCode")}
         >
           {copied ? <Check className="h-3 w-3" aria-hidden /> : <Copy className="h-3 w-3" aria-hidden />}
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("code.copied") : t("code.copy")}
         </button>
       </div>
       <pre {...rest}>{children}</pre>

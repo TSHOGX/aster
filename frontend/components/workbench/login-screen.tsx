@@ -7,12 +7,14 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Wordmark } from "@/components/ui/wordmark";
+import { useT } from "@/lib/i18n";
 
 type LoginScreenProps = {
   onSuccess: (userId: string) => void;
 };
 
 export function LoginScreen({ onSuccess }: LoginScreenProps) {
+  const t = useT();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +29,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
     const res = await login(username.trim(), password);
     setSubmitting(false);
     if (!res.ok) {
-      setError(res.status === 429 ? "Too many attempts. Try again later." : res.error || "Login failed");
+      setError(res.status === 429 ? t("login.rateLimited") : res.error || t("login.failed"));
       setPassword("");
       return;
     }
@@ -49,9 +51,9 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
 
         <Card elevation="sm" className="mt-6 p-6">
           <form onSubmit={handleSubmit}>
-            <h1 className="text-base font-semibold">Sign in</h1>
+            <h1 className="text-base font-semibold">{t("login.title")}</h1>
             <p className="mt-1 text-xs text-[var(--color-foreground-muted)]">
-              Enter your workbench credentials.
+              {t("login.subtitle")}
             </p>
 
             <label
@@ -99,7 +101,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
               className="mt-5 w-full"
               disabled={submitting || username.trim() === "" || password === ""}
             >
-              {submitting ? "Signing in…" : "Sign in"}
+              {submitting ? t("login.signingIn") : t("login.submit")}
             </Button>
           </form>
         </Card>

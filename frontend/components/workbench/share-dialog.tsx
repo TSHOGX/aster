@@ -21,6 +21,7 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { formatFullTimestamp } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { useDismissOnOutside } from "@/lib/use-popover";
+import { useT } from "@/lib/i18n";
 
 /**
  * Owner-only sharing controls for one session: read grants to named users, and
@@ -41,6 +42,7 @@ export function ShareDialog({
   isShell: boolean;
   onClose: () => void;
 }) {
+  const t = useT();
   const [shares, setShares] = useState<ApiSessionShare[]>([]);
   const [links, setLinks] = useState<ApiShareLink[]>([]);
   const [users, setUsers] = useState<string[]>([]);
@@ -159,7 +161,7 @@ export function ShareDialog({
     }
     setFreshToken(res.data.path);
     setCopied(false);
-    toast.success("Old link invalidated");
+    toast.success(t("share.oldLinkInvalidated"));
     await refresh();
   };
 
@@ -182,7 +184,7 @@ export function ShareDialog({
       setCopied(true);
       return;
     }
-    toast.error("Could not copy the link");
+    toast.error(t("share.copyFailed"));
   };
 
   const shareable = users.filter((user) => !shares.some((share) => share.grantee === user));
@@ -201,7 +203,7 @@ export function ShareDialog({
             <h2 className="truncate text-sm font-medium">Share</h2>
             <p className="truncate text-2xs text-[var(--color-foreground-muted)]">{sessionTitle}</p>
           </div>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label={t("common.close")}>
             <X className="h-4 w-4" />
           </Button>
         </header>
@@ -212,7 +214,7 @@ export function ShareDialog({
           <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
             <section>
               <h3 className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
-                People
+                {t("share.people")}
               </h3>
               <div className="mt-2 flex gap-2">
                 <input
@@ -225,7 +227,7 @@ export function ShareDialog({
                       void addShare();
                     }
                   }}
-                  placeholder={shareable.length > 0 ? "Username" : "No other users configured"}
+                  placeholder={shareable.length > 0 ? t("share.username") : t("share.noOtherUsers")}
                   className="min-w-0 flex-1 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-sm outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
                 />
                 <datalist id="share-users">
@@ -236,14 +238,14 @@ export function ShareDialog({
                 <select
                   value={shareVisibility}
                   onChange={(event) => setShareVisibility(event.target.value as ShareVisibility)}
-                  aria-label="Visibility"
+                  aria-label={t("share.visibility")}
                   className="rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-xs"
                 >
                   <option value="full">Full</option>
-                  <option value="summary">Summary</option>
+                  <option value="summary">{t("share.summary")}</option>
                 </select>
                 <Button size="sm" onClick={() => void addShare()} disabled={busy || !grantee.trim()}>
-                  Add
+                  {t("share.add")}
                 </Button>
               </div>
               <ul className="mt-2 space-y-1">
@@ -277,35 +279,34 @@ export function ShareDialog({
 
             <section className="mt-5 border-t border-[var(--color-border)] pt-4">
               <h3 className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
-                Public link
+                {t("share.publicLink")}
               </h3>
               <p className="mt-1 text-2xs text-[var(--color-foreground-muted)]">
-                Anyone with the link can read this conversation without logging in. The link expires, and
-                shows the conversation as it stands now — later messages are not included.
+                {t("share.publicLinkBody")}
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <select
                   value={linkVisibility}
                   onChange={(event) => setLinkVisibility(event.target.value as ShareVisibility)}
                   disabled={isShell}
-                  aria-label="Link visibility"
+                  aria-label={t("share.linkVisibility")}
                   className="rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-xs disabled:opacity-60"
                 >
-                  <option value="summary">Summary</option>
+                  <option value="summary">{t("share.summary")}</option>
                   <option value="full">Full, including execution trace</option>
                 </select>
                 <Button size="sm" onClick={() => void mintLink()} disabled={busy}>
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
-                  Create link
+                  {t("share.createLink")}
                 </Button>
               </div>
               {isShell ? (
                 <p className="mt-1.5 text-2xs text-[var(--color-foreground-muted)]">
-                  Shell sessions are always shared in full: the command output is the content.
+                  {t("share.shellAlwaysFull")}
                 </p>
               ) : linkVisibility === "full" ? (
                 <p className="mt-1.5 text-2xs text-[var(--color-warning,var(--color-foreground-muted))]">
-                  Full includes shell commands, file contents and queries from the execution trace.
+                  {t("share.fullIncludes")}
                 </p>
               ) : null}
 
@@ -313,8 +314,7 @@ export function ShareDialog({
                 <div className="mt-3">
                   <p className="text-2xs font-medium">Files to include</p>
                   <p className="mt-0.5 text-2xs text-[var(--color-foreground-muted)]">
-                    Only what you check is reachable through the link, and a copy is frozen now — later
-                    changes to these files will not appear. Nothing checked means the conversation only.
+                    {t("share.filesNote")}
                   </p>
                   <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto rounded-[var(--radius)] border border-[var(--color-border)] p-1">
                     {artifacts.map((artifact) => (
@@ -346,7 +346,7 @@ export function ShareDialog({
                     </code>
                     <Button size="sm" variant="ghost" onClick={() => void copyLink()}>
                       {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                      {copied ? "Copied" : "Copy"}
+                      {copied ? t("code.copied") : t("code.copy")}
                     </Button>
                   </div>
                 </div>
@@ -381,8 +381,8 @@ export function ShareDialog({
                         className="h-6 w-6 shrink-0"
                         onClick={() => void rotate(link.id)}
                         disabled={busy}
-                        aria-label="Replace link"
-                        title="Issue a new link and invalidate the old one"
+                        aria-label={t("share.replaceLink")}
+                        title={t("share.replaceLinkTitle")}
                       >
                         <RotateCcw className="h-3.5 w-3.5" />
                       </Button>
@@ -392,7 +392,7 @@ export function ShareDialog({
                         className="h-6 w-6 shrink-0"
                         onClick={() => void revoke(link.id)}
                         disabled={busy}
-                        aria-label="Revoke link"
+                        aria-label={t("share.revokeLink")}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>

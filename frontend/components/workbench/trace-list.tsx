@@ -6,16 +6,19 @@ import { ChevronDown, ChevronRight, ListTree } from "lucide-react";
 import type { TraceNode as TraceNodeData } from "@/lib/types";
 import { formatDuration } from "@/lib/format";
 import { TraceNode } from "./trace-node";
+import { useT, type TFunction } from "@/lib/i18n";
 
 // Above this many nodes the list collapses behind a one-line summary so a long
 // run of thinking/tool steps doesn't push the reply far down the page.
 const COLLAPSE_THRESHOLD = 2;
 
-function summarize(nodes: TraceNodeData[]): string {
+function summarize(nodes: TraceNodeData[], t: TFunction): string {
   const tools = nodes.filter((n) => n.kind === "tool").length;
   const total = nodes.reduce((sum, n) => sum + (n.durationMs ?? 0), 0);
-  const parts = [`${nodes.length} step${nodes.length === 1 ? "" : "s"}`];
-  if (tools > 0) parts.push(`${tools} tool${tools === 1 ? "" : "s"}`);
+  // Chinese has no plural inflection, so the count goes through the catalog
+  // rather than being pluralized with an English "s" here.
+  const parts = [t(nodes.length === 1 ? "trace.step" : "trace.steps", { count: nodes.length })];
+  if (tools > 0) parts.push(t(tools === 1 ? "trace.tool" : "trace.tools", { count: tools }));
   const dur = formatDuration(total);
   if (dur) parts.push(dur);
   return parts.join(" · ");
@@ -30,6 +33,7 @@ function TraceListImpl({
   nodes: TraceNodeData[];
   defaultOpen?: boolean;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(defaultOpen);
   if (!nodes || nodes.length === 0) return null;
 
@@ -64,13 +68,13 @@ function TraceListImpl({
         )}
         <ListTree className="h-3.5 w-3.5 shrink-0" aria-hidden />
         <span className="min-w-0 flex-1 truncate text-left">
-          {open ? "Execution trace" : summarize(nodes)}
+          {open ? t("trace.executionTrace") : summarize(nodes, t)}
         </span>
         {hasError ? (
           <span
             className="h-1.5 w-1.5 shrink-0 rounded-full"
             style={{ backgroundColor: "var(--color-danger)" }}
-            title="A step reported an error"
+            title={t("trace.stepError")}
             aria-label="error"
           />
         ) : null}

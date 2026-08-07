@@ -22,6 +22,20 @@
 Scripts: `dev` (`next dev`, binds `0.0.0.0`), `build`, `start`, `lint`, `typecheck`,
 `test`. Local dev: `PORT=8000 npm run dev`.
 
+Build-time UI toggles (`lib/ui-config.ts`). Next inlines `NEXT_PUBLIC_*` at build
+time, so changing one needs `npm run build` + a frontend restart — there is no
+runtime knob:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `NEXT_PUBLIC_HARNESS_BRAND_NAME` | `BatteryGPT` | Product name in the wordmark, the page title, and the byline on every assistant reply. Never translated — a brand reads the same in both locales, and the byline has to match the wordmark. |
+| `NEXT_PUBLIC_HARNESS_UPLOAD_UI` | unset (off) | Shows the workspace upload buttons and drop target. The backend route is unaffected; this only withholds the UI. |
+
+UI language follows the browser: Chinese for any `zh-*` tag, English otherwise.
+There is deliberately no in-app switcher — the browser already carries the user's
+answer, and a second control that can disagree with it is a bug surface. See
+`lib/i18n/` under Data layer.
+
 ## Same-origin proxy (`lib/orchestrator-proxy.ts`, `app/api/[...path]/route.ts`)
 
 The browser only ever calls the frontend origin. Two Node route handlers proxy to
@@ -72,6 +86,21 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   upload paths. `use-composer-state.ts`, `use-event-stream.ts`, `use-popover.ts`,
   `use-media-query.ts` — React hooks for the composer, SSE lifecycle, popovers, and
   the narrow-width layout switch.
+- `use-pane-width.ts` — persisted width for a resizable panel (the workspace rail).
+  The value lives in a module-level store read through `useSyncExternalStore`, not
+  component state, so the client's first render already has the stored width while
+  the server renders the responsive default — restoring it in an effect would mean
+  a setState-in-effect and a visible width jump on load. The raw preference is
+  stored and clamped at *read* time, so a temporarily narrow window never
+  overwrites the user's choice.
+- `i18n/` — `locale.ts` (browser-language detection: matches the `zh` primary
+  subtag, so every Chinese variant resolves, and honours preference *order* so
+  `["en","zh"]` stays English), `messages-en.ts` (the source of truth — `MessageKey`
+  derives from it), `messages-zh.ts` (typed `Record<MessageKey, string>`, so an
+  untranslated key is a build error, not a silent English fallback), and `index.ts`
+  (`useT`, `format`, `splitAround`). Translation is client-side, which is only safe
+  because the workbench holds a blank screen until `/api/me` resolves — there is no
+  translated text in the server HTML to mismatch on hydration.
 - `composer-draft.ts` — module-level pub/sub for "put this text in the composer",
   modeled on `message-jump.ts` and used by the suggested-prompt cards. Carries a
   monotonic sequence number so picking the same prompt twice still registers.
@@ -98,7 +127,9 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
 - `workbench/workbench.tsx` — the shell: a blank hold until auth is checked, then
   `LoginScreen`, backend-unreachable card, or the 3-column grid
   `Sidebar | Conversation | ArtifactPane` (viewport-relative clamps, not fixed
-  widths). Below 1024px — where three columns cannot all be usable — the side
+  widths, and the workspace column is drag-resizable via `workbench/pane-resizer.tsx`
+  — a focusable `separator` with arrow-key steps, persisted through
+  `lib/use-pane-width.ts`). Below 1024px — where three columns cannot all be usable — the side
   panels become Escape-dismissable overlay drawers behind a compact top bar. The
   open drawer is *derived* from the media query rather than synced in an effect, so
   widening the window cannot leave one floating over a layout that has room for it.

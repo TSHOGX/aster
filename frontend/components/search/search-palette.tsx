@@ -7,6 +7,7 @@ import { Bot, Hash, Loader2, MessageSquare, Search, User } from "lucide-react";
 import { useSessions } from "@/components/harness-provider";
 import { searchSessions } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { useT } from "@/lib/i18n";
 import { formatRelative, statusLabel } from "@/lib/format";
 import type { ApiSession, SearchHit } from "@/lib/types";
 
@@ -134,6 +135,7 @@ function ResultRow({
 // The palette only mounts while open (parent gates it), so open/close state and
 // the per-open reset are handled purely by mount/unmount.
 export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
+  const t = useT();
   const sessions = useSessions();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchHit[]>([]);
@@ -252,7 +254,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Search sessions and messages"
+        aria-label={t("sidebar.searchSessions")}
         className="flex max-h-[70vh] w-full max-w-3xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]"
         onKeyDown={onKeyDown}
       >
@@ -264,8 +266,8 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search sessions and messages"
-            placeholder="Search sessions and messages…"
+            aria-label={t("sidebar.searchSessions")}
+            placeholder={t("search.placeholder")}
             className="min-w-0 flex-1 bg-transparent text-sm text-[var(--color-foreground)] outline-none placeholder:text-[var(--color-foreground-muted)]"
           />
           {showLoading ? (
@@ -273,10 +275,10 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
           ) : null}
         </div>
 
-        <ul role="listbox" aria-label="Search results" className="min-h-0 flex-1 overflow-y-auto p-1.5">
+        <ul role="listbox" aria-label={t("search.results")} className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {flat.length === 0 ? (
             <li className="px-3 py-8 text-center text-xs text-[var(--color-foreground-muted)]">
-              {trimmed ? (showLoading ? "Searching…" : "No matches found.") : "No sessions yet."}
+              {trimmed ? (showLoading ? t("search.searching") : t("search.noMatches")) : t("search.noSessionsYet")}
             </li>
           ) : (
             <>
@@ -285,7 +287,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
                   aria-hidden
                   className="px-3 pb-1 pt-2 text-2xs uppercase tracking-wider text-[var(--color-foreground-muted)]"
                 >
-                  {trimmed ? "Sessions" : "Recent"}
+                  {trimmed ? t("search.sessions") : t("search.recent")}
                 </li>
               ) : null}
               {titleHits.map((hit) => {
@@ -306,7 +308,7 @@ export function SearchPalette({ onClose, onOpenResult }: SearchPaletteProps) {
                   aria-hidden
                   className="px-3 pb-1 pt-2 text-2xs uppercase tracking-wider text-[var(--color-foreground-muted)]"
                 >
-                  Messages
+                  {t("search.messages")}
                 </li>
               ) : null}
               {messageHits.map((hit) => {

@@ -23,6 +23,7 @@ import { formatBytes, formatRelative } from "@/lib/format";
 import { classifyArtifact, type ArtifactClassification } from "@/lib/mime";
 import { cn } from "@/lib/cn";
 import { MarkdownView } from "./markdown-view";
+import { useT } from "@/lib/i18n";
 import { CodeView } from "./viewers/code-view";
 import { CodeEditor } from "./viewers/code-editor";
 import type { OfficeKind } from "./viewers/office-view";
@@ -86,6 +87,7 @@ export function ArtifactViewer({
   onToggleFullScreen,
   onClose
 }: Props) {
+  const t = useT();
   const meta = classifyArtifact(path);
   const href = buildArtifactHref(sessionId, path);
   const html = isHtmlPath(path);
@@ -159,7 +161,7 @@ export function ArtifactViewer({
     const lastModified = load.phase === "ok" ? load.lastModified ?? undefined : undefined;
     const result = await writeArtifact(sessionId, path, text, lastModified);
     if (result.ok) {
-      toast.success(`Saved ${path.split("/").pop()}`);
+      toast.success(t("viewer.savedFile", { name: path.split("/").pop() ?? "" }));
       // The file re-renders via the artifact.updated SSE (key includes
       // updated_at); leave edit mode so the fresh read shows.
       setEdit({ phase: "off" });
@@ -170,16 +172,16 @@ export function ArtifactViewer({
       return;
     }
     if (result.busy) {
-      toast.error("Can't save while the agent is working. Try again once the turn finishes.");
+      toast.error(t("viewer.saveBusy"));
       setEdit({ phase: "editing", text, dirty: true });
       return;
     }
     if (result.status === 413) {
-      toast.error("File is too large to save (limit 1 MiB).");
+      toast.error(t("viewer.saveTooLarge"));
       setEdit({ phase: "editing", text, dirty: true });
       return;
     }
-    toast.error(`Save failed: ${result.error}`);
+    toast.error(t("viewer.saveFailedReason", { error: result.error }));
     setEdit({ phase: "editing", text, dirty: true });
   };
 
@@ -251,7 +253,7 @@ export function ArtifactViewer({
       </div>
       {saving ? (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-2xs text-[var(--color-foreground-muted)]">
-          Saving…
+          {t("viewer.saving")}
         </div>
       ) : null}
     </div>
@@ -287,6 +289,7 @@ function ViewerHeader({
   onSave: () => void;
   onClose?: () => void;
 }) {
+  const t = useT();
   const editing = editState.phase === "editing" || editState.phase === "saving" || editState.phase === "stale";
   const saving = editState.phase === "saving";
   const name = path.split("/").pop() ?? path;
@@ -296,8 +299,8 @@ function ViewerHeader({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Back to files"
-          title="Back to files"
+          aria-label={t("viewer.backToFiles")}
+          title={t("viewer.backToFiles")}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
         >
           <X className="h-4 w-4" />
@@ -352,7 +355,7 @@ function ViewerHeader({
             onClick={onSave}
             disabled={saving || editState.phase === "stale"}
             className="flex h-8 items-center gap-1.5 rounded-[var(--radius)] bg-[var(--color-accent,var(--color-foreground))] px-2.5 text-xs text-[var(--color-background)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            title="Save"
+            title={t("viewer.save")}
           >
             <Save className="h-3.5 w-3.5" /> Save
           </button>
@@ -361,7 +364,7 @@ function ViewerHeader({
             onClick={onCancel}
             disabled={saving}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
-            title="Cancel edit"
+            title={t("viewer.cancelEdit")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -373,7 +376,7 @@ function ViewerHeader({
               type="button"
               onClick={onEdit}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
-              title="Edit"
+              title={t("viewer.edit")}
             >
               <Pencil className="h-4 w-4" />
             </button>
@@ -383,7 +386,7 @@ function ViewerHeader({
               type="button"
               onClick={onToggleFullScreen}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
-              title={fullScreen ? "Exit full screen (dock to sidebar)" : "Full screen preview"}
+              title={fullScreen ? t("viewer.exitFullScreenDock") : t("viewer.fullScreenPreview")}
               aria-pressed={fullScreen}
             >
               {fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
@@ -394,7 +397,7 @@ function ViewerHeader({
             target="_blank"
             rel="noreferrer"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
-            title="Open raw"
+            title={t("viewer.openRaw")}
           >
             <ExternalLink className="h-4 w-4" />
           </a>
@@ -402,7 +405,7 @@ function ViewerHeader({
             href={href}
             download
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
-            title="Download"
+            title={t("workspace.download")}
           >
             <Download className="h-4 w-4" />
           </a>
@@ -427,6 +430,7 @@ function ViewerBody({
   load: LoadState;
   forceCode?: boolean;
 }) {
+  const t = useT();
   if (meta.kind === "spreadsheet" || meta.kind === "document" || meta.kind === "presentation") {
     return <OfficeView sessionId={sessionId} path={path} href={href} kind={meta.kind as OfficeKind} />;
   }
@@ -458,9 +462,9 @@ function ViewerBody({
     return (
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div>
-          <p className="text-sm">Binary file preview is not supported.</p>
+          <p className="text-sm">{t("viewer.binaryTitle")}</p>
           <p className="mt-1 text-xs text-[var(--color-foreground-muted)]">
-            Use the header actions to open or download the raw bytes.
+            {t("viewer.binaryHint")}
           </p>
         </div>
       </div>
@@ -483,9 +487,12 @@ function ViewerBody({
     if (forceCode) {
       return <CodeView code={load.text} language="markdown" />;
     }
+    // `markdown-compact` holds the panel's denser scale: .markdown-body runs at
+    // the conversation's body size (16px), which is right for a reply you are
+    // reading but too large for a file preview in a side panel.
     return (
       <div className="h-full overflow-auto px-6 py-4">
-        <MarkdownView content={load.text} />
+        <MarkdownView content={load.text} className="markdown-compact" />
       </div>
     );
   }
@@ -533,6 +540,7 @@ function JsonPreview({ text }: { text: string }) {
 const PREVIEW_ROW_LIMIT = 200;
 
 function DelimitedTable({ text, delimiter }: { text: string; delimiter: "," | "\t" }) {
+  const t = useT();
   // Cap the scan at header + the rows we render + one sentinel row. The sentinel
   // lets us tell "there are more rows" without walking the whole file; we no
   // longer know the exact total, so the footer reports "200+" in that case.
@@ -544,7 +552,7 @@ function DelimitedTable({ text, delimiter }: { text: string; delimiter: "," | "\
   if (rows.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-[var(--color-foreground-muted)]">
-        No rows to preview.
+        {t("viewer.noRows")}
       </div>
     );
   }

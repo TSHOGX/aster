@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ChevronRight,
   Loader2,
   LogOut,
   MoreHorizontal,
@@ -32,6 +33,7 @@ import { ShareDialog } from "./share-dialog";
 import { StatusDot, statusTone } from "@/components/ui/badge";
 import { formatRelative, isTerminal, statusLabel } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { useT } from "@/lib/i18n";
 import { useDismissOnOutside } from "@/lib/use-popover";
 import type { ApiSession } from "@/lib/types";
 
@@ -52,6 +54,7 @@ const SessionRow = memo(function SessionRow({
   onClose,
   onRename
 }: SessionRowProps) {
+  const t = useT();
   const displayTitle = session.title?.trim() || session.id;
   // Sessions shared with the caller are read-only: no rename, no delete, no
   // re-share. The server enforces this (every write route is owner-gated and
@@ -116,8 +119,8 @@ const SessionRow = memo(function SessionRow({
             onBlur={() => void commit()}
             disabled={saving}
             maxLength={200}
-            aria-label="Session title"
-            className="w-full rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-sm leading-tight outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
+            aria-label={t("sidebar.sessionTitle")}
+            className="w-full rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-2xs leading-tight outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
           />
         </div>
       </li>
@@ -143,13 +146,20 @@ const SessionRow = memo(function SessionRow({
           <StatusDot tone={statusTone(session.status)} />
         </span>
         <button
-          className="min-w-0 flex-1 truncate text-left text-sm leading-tight"
+          className="min-w-0 flex-1 truncate text-left text-2xs leading-tight"
           onClick={() => onSelect(session.id)}
           onDoubleClick={readOnly ? undefined : startEditing}
           title={
             readOnly
-              ? `${displayTitle} · shared by ${session.shared_by ?? "another user"} · read-only`
-              : `${displayTitle} · ${statusLabel(session.status)} · ${formatRelative(session.updated_at)}`
+              ? t("sidebar.sharedReadOnly", {
+                  title: displayTitle,
+                  owner: session.shared_by ?? t("sidebar.someoneElse")
+                })
+              : t("sidebar.rowTitle", {
+                  title: displayTitle,
+                  status: statusLabel(session.status),
+                  when: formatRelative(session.updated_at)
+                })
           }
         >
           {displayTitle}
@@ -168,8 +178,8 @@ const SessionRow = memo(function SessionRow({
               onClick={() => setMenuOpen((open) => !open)}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
-              aria-label={`Session actions for ${displayTitle}`}
-              title="Session actions"
+              aria-label={t("sidebar.sessionActions", { title: displayTitle })}
+              title={t("sidebar.sessionActions", { title: displayTitle })}
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>
@@ -180,26 +190,26 @@ const SessionRow = memo(function SessionRow({
               >
                 <button
                   role="menuitem"
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-2xs hover:bg-[var(--color-surface-muted)]"
                   onClick={startEditing}
                 >
                   <Pencil className="h-3.5 w-3.5" />
-                  Rename
+                  {t("sidebar.rename")}
                 </button>
                 <button
                   role="menuitem"
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-2xs hover:bg-[var(--color-surface-muted)]"
                   onClick={() => {
                     setMenuOpen(false);
                     setShareOpen(true);
                   }}
                 >
                   <Share2 className="h-3.5 w-3.5" />
-                  Share
+                  {t("sidebar.share")}
                 </button>
                 <button
                   role="menuitem"
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:opacity-50"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-2xs text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:opacity-50"
                   onClick={() => {
                     setMenuOpen(false);
                     onClose(session.id);
@@ -207,7 +217,7 @@ const SessionRow = memo(function SessionRow({
                   disabled={closing || session.status === "destroyed"}
                 >
                   {closing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                  Delete
+                  {t("sidebar.delete")}
                 </button>
               </div>
             ) : null}
@@ -226,6 +236,72 @@ const SessionRow = memo(function SessionRow({
   );
 });
 
+
+/**
+ * A labelled, collapsible group of session rows. The header is the toggle: a
+ * disclosure caret, the label, and the row count, which is what stays visible
+ * once the group is closed.
+ */
+function SessionSection({
+  label,
+  sessions,
+  open,
+  onToggle,
+  selectedId,
+  closingId,
+  onSelect,
+  onClose,
+  onRename
+}: {
+  label: string;
+  sessions: ApiSession[];
+  open: boolean;
+  onToggle: () => void;
+  selectedId: string | null;
+  closingId: string | null;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => void;
+  onRename: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
+}) {
+  const t = useT();
+  return (
+    <section>
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className="group/section flex w-full items-center gap-1 px-2 pb-1.5 pt-2 text-left"
+        title={open ? t("sidebar.collapseSection", { label }) : t("sidebar.expandSection", { label })}
+      >
+        <ChevronRight
+          className={cn(
+            "h-3 w-3 shrink-0 text-[var(--color-foreground-muted)] transition-transform duration-150",
+            open && "rotate-90"
+          )}
+          aria-hidden
+        />
+        <span className="min-w-0 flex-1 truncate text-[12px] font-medium uppercase tracking-wider text-[var(--color-foreground-muted)] transition-colors group-hover/section:text-[var(--color-foreground)]">
+          {label}
+        </span>
+        <span className="shrink-0 text-[12px] text-[var(--color-foreground-muted)]">{sessions.length}</span>
+      </button>
+      {open ? (
+        <ul className="space-y-0.5 px-2 pb-3">
+          {sessions.map((s) => (
+            <SessionRow
+              key={s.id}
+              session={s}
+              selected={s.id === selectedId}
+              closing={closingId === s.id}
+              onSelect={onSelect}
+              onClose={onClose}
+              onRename={onRename}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
 
 type SidebarProps = {
   collapsed?: boolean;
@@ -275,7 +351,8 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onN
       {/* Floating flyout: a full sidebar that hovers above the conversation. */}
       <div
         className={cn(
-          "absolute left-2 top-2 bottom-2 z-40 w-[288px] origin-left overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)] transition-all duration-200 ease-out",
+          // Matches the docked rail's ceiling so expanding does not jump width.
+          "absolute left-2 top-2 bottom-2 z-40 w-[264px] origin-left overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)] transition-all duration-200 ease-out",
           peek ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none -translate-x-1 scale-[0.98] opacity-0"
         )}
       >
@@ -299,6 +376,7 @@ function CollapsedRail({
   onOpenSearch?: () => void;
   onPeek?: () => void;
 }) {
+  const t = useT();
   const { createSession } = useHarness();
   const sessions = useSessions();
   const [creating, setCreating] = useState(false);
@@ -318,8 +396,8 @@ function CollapsedRail({
       <button
         onClick={onExpand}
         onMouseEnter={onPeek}
-        aria-label="Expand sidebar"
-        title="Expand sidebar"
+        aria-label={t("sidebar.expand")}
+        title={t("sidebar.expand")}
         className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
       >
         <PanelLeftOpen className="h-[18px] w-[18px]" />
@@ -330,16 +408,16 @@ function CollapsedRail({
         className="mt-1 h-9 w-9"
         onClick={() => void handleCreate()}
         disabled={creating}
-        aria-label="New session"
-        title="New session"
+        aria-label={t("sidebar.newSession")}
+        title={t("sidebar.newSession")}
       >
         {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
       </Button>
       {onOpenSearch ? (
         <button
           onClick={onOpenSearch}
-          aria-label="Search"
-          title="Search (⌘P / Ctrl+P)"
+          aria-label={t("sidebar.search")}
+          title={t("sidebar.searchTitle")}
           className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
         >
           <Search className="h-[18px] w-[18px]" />
@@ -348,7 +426,7 @@ function CollapsedRail({
       <div className="mt-auto flex flex-col items-center gap-1">
         <span
           className="flex h-6 min-w-6 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-2xs font-medium text-[var(--color-foreground-muted)]"
-          title={`${activeCount} active session${activeCount === 1 ? "" : "s"}`}
+          title={t(activeCount === 1 ? "sidebar.activeSession" : "sidebar.activeSessions", { count: activeCount })}
         >
           {activeCount}
         </span>
@@ -370,6 +448,7 @@ function SidebarPanel({
   onToggleCollapse?: () => void;
   onNavigate?: () => void;
 }) {
+  const t = useT();
   const { selectSession, createSession, destroySession, renameSession, logout } = useHarness();
   // Slice subscriptions: the sidebar reads only sessions/selection/meta, so it
   // is never re-rendered by a per-token agent.delta on the open conversation.
@@ -383,6 +462,10 @@ function SidebarPanel({
   const [createError, setCreateError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
+  // Both groups start open; collapsing one is a way to park it, so the state is
+  // per-mount and deliberately not persisted.
+  const [sharedOpen, setSharedOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(true);
 
   // Filter + sort only when the sessions array identity changes (the reducer
   // replaces it only on a real session change), not on every render. Terminal
@@ -411,7 +494,7 @@ function SidebarPanel({
     setCreateError(null);
     const res = await createSession("agent");
     setCreating(false);
-    if (!res.ok) setCreateError(res.error ?? "Failed to create session");
+    if (!res.ok) setCreateError(res.error ?? t("sidebar.createFailed"));
     else onNavigate?.();
   };
 
@@ -420,14 +503,14 @@ function SidebarPanel({
   const handleClose = useCallback(
     async (id: string) => {
       if (closingId) return;
-      if (!window.confirm(`Close session ${id}? History and workspace files are retained.`)) return;
+      if (!window.confirm(t("sidebar.confirmClose", { id }))) return;
       setClosingId(id);
       setCloseError(null);
       const res = await destroySession(id);
       setClosingId(null);
-      if (!res.ok) setCloseError(res.error ?? "Failed to close session");
+      if (!res.ok) setCloseError(res.error ?? t("sidebar.closeFailed"));
     },
-    [closingId, destroySession]
+    [closingId, destroySession, t]
   );
 
   const handleSelect = useCallback(
@@ -450,8 +533,8 @@ function SidebarPanel({
           {onToggleCollapse ? (
             <button
               onClick={onToggleCollapse}
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
+              aria-label={t("sidebar.collapse")}
+              title={t("sidebar.collapse")}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
             >
               <PanelLeftClose className="h-[18px] w-[18px]" />
@@ -465,8 +548,8 @@ function SidebarPanel({
               variant="ghost"
               size="icon"
               onClick={onOpenSearch}
-              aria-label="Search sessions and messages"
-              title="Search (⌘P / Ctrl+P)"
+              aria-label={t("sidebar.searchSessions")}
+              title={t("sidebar.searchTitle")}
             >
               <Search className="h-4 w-4" />
             </Button>
@@ -476,43 +559,20 @@ function SidebarPanel({
         </div>
       </div>
 
-      {auth.required && auth.userId ? (
-        <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-1">
-          <span className="truncate text-xs text-[var(--color-foreground-muted)]">
-            <span className="text-[var(--color-foreground)]">{auth.userId}</span>
-          </span>
-          <button
-            onClick={() => void logout()}
-            aria-label="Sign out"
-            title="Sign out"
-            className="flex h-7 w-7 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
-        </div>
-      ) : null}
-
       <div className="shrink-0 px-3 pb-2 pt-2">
         <Button
-          variant="primary"
+          variant="primary-soft"
           size="lg"
-          className="w-full justify-start gap-2 rounded-[var(--radius-lg)]"
+          className="w-full justify-start gap-2 rounded-[var(--radius-lg)] text-2xs"
           onClick={() => void handleCreate()}
           disabled={creating || agentCreateDisabled}
           title={agentCapability?.disabled_reason ?? undefined}
         >
           {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-          New session
+          {t("sidebar.newSession")}
         </Button>
         {createError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{createError}</p> : null}
         {closeError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{closeError}</p> : null}
-      </div>
-
-      <div className="flex items-center justify-between px-4 pb-1.5 pt-2">
-        <span className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
-          History
-        </span>
-        <span className="text-2xs text-[var(--color-foreground-muted)]">{ownedSessions.length}</span>
       </div>
 
       {/* The scroll container is this element itself, not a nested child: it is a
@@ -524,63 +584,78 @@ function SidebarPanel({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {activeSessions.length === 0 ? (
           ready || connection === "live" ? (
-            <p className="px-4 py-6 text-center text-xs text-[var(--color-foreground-muted)]">
-              No sessions yet. Create one to get started.
+            <p className="px-4 py-6 text-center text-2xs text-[var(--color-foreground-muted)]">
+              {t("sidebar.noSessions")}
             </p>
           ) : (
             <SessionListSkeleton />
           )
         ) : (
           <>
-            <ul className="space-y-0.5 px-2 pb-3">
-              {ownedSessions.map((s) => (
-                <SessionRow
-                  key={s.id}
-                  session={s}
-                  selected={s.id === selectedId}
-                  closing={closingId === s.id}
-                  onSelect={handleSelect}
-                  onClose={handleClose}
-                  onRename={renameSession}
-                />
-              ))}
-            </ul>
+            {/* Shared sessions lead the list. They are the smaller, more
+                volatile group (somebody hands you a session and you go look at
+                it now), so burying them under a long History meant scrolling
+                to find them. History is the archive and sits below. */}
             {sharedSessions.length > 0 ? (
-              <>
-                <div className="flex items-center justify-between px-4 pb-1.5 pt-2">
-                  <span className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
-                    Shared with me
-                  </span>
-                  <span className="text-2xs text-[var(--color-foreground-muted)]">
-                    {sharedSessions.length}
-                  </span>
-                </div>
-                <ul className="space-y-0.5 px-2 pb-3">
-                  {sharedSessions.map((s) => (
-                    <SessionRow
-                      key={s.id}
-                      session={s}
-                      selected={s.id === selectedId}
-                      closing={closingId === s.id}
-                      onSelect={handleSelect}
-                      onClose={handleClose}
-                      onRename={renameSession}
-                    />
-                  ))}
-                </ul>
-              </>
+              <SessionSection
+                label={t("sidebar.sharedWithMe")}
+                sessions={sharedSessions}
+                open={sharedOpen}
+                onToggle={() => setSharedOpen((v) => !v)}
+                selectedId={selectedId}
+                closingId={closingId}
+                onSelect={handleSelect}
+                onClose={handleClose}
+                onRename={renameSession}
+              />
             ) : null}
+            <SessionSection
+              label={t("sidebar.history")}
+              sessions={ownedSessions}
+              open={historyOpen}
+              onToggle={() => setHistoryOpen((v) => !v)}
+              selectedId={selectedId}
+              closingId={closingId}
+              onSelect={handleSelect}
+              onClose={handleClose}
+              onRename={renameSession}
+            />
           </>
         )}
       </div>
 
+      {/* Above the account block, so appearing/disappearing does not shove the
+          account row up and down under the pointer. */}
       {connection !== "live" && connection !== "idle" ? (
         <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-2xs text-[var(--color-foreground-muted)]">
           {connection === "connecting"
-            ? "Connecting to event stream…"
+            ? t("connection.connecting")
             : connection === "reconnecting"
-            ? "Reconnecting…"
-            : "Disconnected. Retrying."}
+            ? t("connection.reconnecting")
+            : t("connection.disconnected")}
+        </div>
+      ) : null}
+
+      {/* Account block, pinned to the floor of the rail — the conventional place
+          for "who am I / get me out", and out of the way of the session list. */}
+      {auth.required && auth.userId ? (
+        <div className="shrink-0 border-t border-[var(--color-border)] px-2 py-2">
+          <div className="flex items-center gap-2 rounded-[var(--radius)] px-1.5 py-1">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft)] text-2xs font-semibold uppercase text-[var(--color-accent)]">
+              {auth.userId.slice(0, 1)}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-2xs text-[var(--color-foreground)]" title={auth.userId}>
+              {auth.userId}
+            </span>
+            <button
+              onClick={() => void logout()}
+              aria-label={t("sidebar.signOut")}
+              title={t("sidebar.signOut")}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       ) : null}
     </aside>

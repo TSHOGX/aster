@@ -8,6 +8,7 @@ import { TraceList } from "./trace-list";
 import { MessageActions } from "./message-actions";
 import type { ApiMessage, TraceNode } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { brandName } from "@/lib/ui-config";
 import { formatFullTimestamp, formatTime } from "@/lib/format";
 
 function MessageBubbleImpl({
@@ -54,7 +55,7 @@ function MessageBubbleImpl({
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-1.5 text-2xs text-[var(--color-foreground-muted)]">
-          <span className="font-medium text-[var(--color-foreground)]">Assistant</span>
+          <span className="font-medium text-[var(--color-foreground)]">{brandName}</span>
           <time
             dateTime={message.created_at}
             title={formatFullTimestamp(message.created_at)}
@@ -123,7 +124,7 @@ function StreamingBubbleImpl({ text, liveTrace }: { text: string; liveTrace?: Tr
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 text-2xs text-[var(--color-foreground-muted)]">
-          <span className="font-medium text-[var(--color-foreground)]">Assistant</span>
+          <span className="font-medium text-[var(--color-foreground)]">{brandName}</span>
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse-dot" />
         </div>
         <div className="mt-1.5">

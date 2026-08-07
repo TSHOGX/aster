@@ -1,4 +1,5 @@
 import { cn } from "@/lib/cn";
+import { brandName } from "@/lib/ui-config";
 
 /**
  * The product name, shared by the sidebar header, the narrow-width top bar, and
@@ -25,7 +26,7 @@ export function Wordmark({
         className
       )}
     >
-      BatteryGPT
+      {brandName}
     </span>
   );
 }

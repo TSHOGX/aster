@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import { MarkdownView } from "@/components/workbench/markdown-view";
 import { Button } from "@/components/ui/button";
 import type { ApiNotification } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 
 function formatTimestamp(value: string) {
   const date = new Date(value);
@@ -21,6 +22,7 @@ export function NotificationDetailModal({
   notification: ApiNotification;
   onClose: () => void;
 }) {
+  const t = useT();
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -51,7 +53,7 @@ export function NotificationDetailModal({
               {formatTimestamp(notification.created_at)}
             </span>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close" title="Close">
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label={t("common.close")} title={t("common.close")}>
             <X className="h-4 w-4" />
           </Button>
         </div>
