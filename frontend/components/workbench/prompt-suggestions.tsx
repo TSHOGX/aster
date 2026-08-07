@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, FlaskConical, LineChart, Thermometer } from "lucide-react";
+import { BatteryCharging, Gauge, Thermometer, TriangleAlert } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { requestComposerDraft } from "@/lib/composer-draft";
@@ -10,10 +10,10 @@ import { useT, type MessageKey } from "@/lib/i18n";
  * Starting points offered on an empty session.
  *
  * Deliberately domain-specific: a generic "ask me anything" tells a new user
- * nothing about what this workbench is for, whereas these name the artifacts the
- * agent actually works with (cycling data, dQ/dV curves, thermal logs). Picking
- * one fills the composer rather than sending, since every prompt needs the user's
- * own file or cell name substituted in.
+ * nothing about what this workbench is for, whereas these name the questions the
+ * agent actually answers — fleet charging behaviour and BMS faults out of the
+ * warehouse, plus one file-based log review. Picking one fills the composer rather
+ * than sending, since the period, platform or file still wants adjusting.
  */
 /*
   Only the icon and the key prefix live here; the three strings per card come from
@@ -22,8 +22,8 @@ import { useT, type MessageKey } from "@/lib/i18n";
   The `prompt` — the text dropped into the composer — is translated too, not just
   the card's title and body. These prompts are starting points meant to be edited
   before sending, so filling a Chinese user's composer with English defeats the
-  purpose: they would have to read English to change the file name. Domain
-  notation stays as-is in both locales (dQ/dV, SOH, C-rate, /workspace).
+  purpose: they would have to read English to change the month or platform. Domain
+  notation stays as-is in both locales (SOC, BMS, F2, C-rate, /workspace).
 */
 /*
   Keys are spelled out rather than built as `prompt.${key}.title`: a template
@@ -32,16 +32,16 @@ import { useT, type MessageKey } from "@/lib/i18n";
 */
 const SUGGESTIONS = [
   {
-    Icon: LineChart,
-    titleKey: "prompt.fade.title",
-    bodyKey: "prompt.fade.body",
-    promptKey: "prompt.fade.prompt"
+    Icon: BatteryCharging,
+    titleKey: "prompt.acdc.title",
+    bodyKey: "prompt.acdc.body",
+    promptKey: "prompt.acdc.prompt"
   },
   {
-    Icon: Activity,
-    titleKey: "prompt.dqdv.title",
-    bodyKey: "prompt.dqdv.body",
-    promptKey: "prompt.dqdv.prompt"
+    Icon: Gauge,
+    titleKey: "prompt.startsoc.title",
+    bodyKey: "prompt.startsoc.body",
+    promptKey: "prompt.startsoc.prompt"
   },
   {
     Icon: Thermometer,
@@ -50,13 +50,13 @@ const SUGGESTIONS = [
     promptKey: "prompt.thermal.prompt"
   },
   {
-    Icon: FlaskConical,
-    titleKey: "prompt.compare.title",
-    bodyKey: "prompt.compare.body",
-    promptKey: "prompt.compare.prompt"
+    Icon: TriangleAlert,
+    titleKey: "prompt.faults.title",
+    bodyKey: "prompt.faults.body",
+    promptKey: "prompt.faults.prompt"
   }
 ] as const satisfies readonly {
-  Icon: typeof LineChart;
+  Icon: typeof BatteryCharging;
   titleKey: MessageKey;
   bodyKey: MessageKey;
   promptKey: MessageKey;
