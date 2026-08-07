@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"log/slog"
 	"os"
 	"sort"
@@ -10,9 +11,10 @@ import (
 	"harness-platform/orchestrator/internal/config"
 )
 
-// statThrottle bounds how often the registry stats the credentials file on the
-// hot request path. requireAuth runs per request; login/me force a fresh check
-// so a password change takes effect on the very next login attempt.
+// authRegistryStatThrottle bounds how often the registry re-reads the
+// credentials file on the hot request path. requireAuth runs per request;
+// login/me force a fresh check so a password change takes effect on the very
+// next login attempt.
 const authRegistryStatThrottle = time.Second
 
 // authRegistry holds the login credentials and reloads them from disk when the
@@ -29,12 +31,16 @@ type authRegistry struct {
 	sharedSecret bool
 	log          *slog.Logger
 
-	mu       sync.RWMutex
-	users    map[string]config.AuthUser
-	loaded   bool // a file was successfully read at least once
-	modTime  time.Time
-	size     int64
-	lastStat time.Time
+	mu     sync.RWMutex
+	users  map[string]config.AuthUser
+	loaded bool // a file was successfully read at least once
+	// sum is the SHA-256 of the last successfully parsed file content. Change
+	// detection is content-based rather than mtime+size based: rotating a
+	// password rewrites the file to the identical length (pbkdf2 hashes are
+	// fixed-length), and two writes moments apart share one filesystem
+	// timestamp tick, so a stat-only check misses the rotation entirely.
+	sum      [sha256.Size]byte
+	lastRead time.Time
 }
 
 func newAuthRegistry(cfg config.Config, log *slog.Logger) *authRegistry {
@@ -49,32 +55,31 @@ func newAuthRegistry(cfg config.Config, log *slog.Logger) *authRegistry {
 		users:        users,
 		loaded:       len(users) > 0,
 	}
-	// Seed the stat baseline from the file config.Load already read, so the
+	// Seed the content baseline from the file config.Load already read, so the
 	// first request does not pointlessly re-parse it.
-	if info, err := os.Stat(r.path); err == nil {
-		r.modTime = info.ModTime()
-		r.size = info.Size()
+	if data, err := os.ReadFile(r.path); err == nil {
+		r.sum = sha256.Sum256(data)
 	}
 	return r
 }
 
-// refresh reloads the credentials file if it changed. When force is false the
-// stat is throttled, keeping the per-request path at one RWMutex read.
+// refresh reloads the credentials file if its content changed. When force is
+// false the read is throttled, keeping the per-request path at one RWMutex read.
 func (r *authRegistry) refresh(force bool) {
 	if r == nil || r.path == "" {
 		return
 	}
 	now := time.Now()
 	r.mu.Lock()
-	if !force && now.Sub(r.lastStat) < authRegistryStatThrottle {
+	if !force && now.Sub(r.lastRead) < authRegistryStatThrottle {
 		r.mu.Unlock()
 		return
 	}
-	r.lastStat = now
-	knownMod, knownSize, loaded := r.modTime, r.size, r.loaded
+	r.lastRead = now
+	knownSum, loaded := r.sum, r.loaded
 	r.mu.Unlock()
 
-	info, err := os.Stat(r.path)
+	data, err := os.ReadFile(r.path)
 	if err != nil {
 		if loaded {
 			// The file was there and is now unreadable. Keep serving the last
@@ -84,11 +89,12 @@ func (r *authRegistry) refresh(force bool) {
 		}
 		return
 	}
-	if info.ModTime().Equal(knownMod) && info.Size() == knownSize {
+	sum := sha256.Sum256(data)
+	if sum == knownSum {
 		return
 	}
 
-	users, err := config.LoadAuthUsersFile(r.path)
+	users, err := config.ParseAuthUsers(data, r.path)
 	if err != nil {
 		r.log.Error("failed to reload auth users, keeping previous credentials",
 			"path", r.path, "error", err)
@@ -103,8 +109,7 @@ func (r *authRegistry) refresh(force bool) {
 	previous := len(r.users)
 	r.users = next
 	r.loaded = true
-	r.modTime = info.ModTime()
-	r.size = info.Size()
+	r.sum = sum
 	r.mu.Unlock()
 
 	r.log.Info("reloaded auth users", "path", r.path, "users", len(next), "previous_users", previous)

@@ -1567,6 +1567,15 @@ func LoadAuthUsersFile(path string) ([]AuthUser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read auth users %s: %w", path, err)
 	}
+	return ParseAuthUsers(data, path)
+}
+
+// ParseAuthUsers validates already-read auth users bytes. The server's auth
+// registry reads the file itself so it can compare content (mtime and size do
+// not change when a password is rotated within the same filesystem timestamp
+// tick -- pbkdf2 hashes are fixed-length), then parses those same bytes here.
+// path is used only for error messages.
+func ParseAuthUsers(data []byte, path string) ([]AuthUser, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, nil
 	}

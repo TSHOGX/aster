@@ -16,8 +16,10 @@ import (
 	"harness-platform/orchestrator/internal/store"
 )
 
-// writeUsersFile writes a credentials file and bumps its mtime past the
-// registry's stat baseline, mirroring what `orchestrator user` does.
+// writeUsersFile writes a credentials file, mirroring what `orchestrator user`
+// does. It deliberately does not touch mtime: a rotation in the field lands in
+// the same timestamp tick with an identical file size, and the registry must
+// detect it from content alone.
 func writeUsersFile(t *testing.T, path string, entries map[string]string) {
 	t.Helper()
 	body := "users:\n"
