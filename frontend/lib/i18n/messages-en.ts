@@ -245,7 +245,11 @@ export const EN = {
   "workspace.uploadsPausedNote": "Uploads paused while the agent is working.",
   "viewer.binaryTitle": "Binary file preview is not supported.",
   "viewer.binaryHint": "Use the header actions to open or download the raw bytes.",
-  "viewer.noRows": "No rows to preview."
+  "viewer.noRows": "No rows to preview.",
+  "mentioned.title": "In this reply",
+  "mentioned.allFiles": "All files",
+  "mentioned.collapse": "Hide the files this reply mentions",
+  "mentioned.expand": "Show the files this reply mentions"
 } as const;
 
 /** Every translatable key in the app. */

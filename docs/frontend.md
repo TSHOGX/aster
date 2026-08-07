@@ -82,6 +82,23 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
 - `trace.ts` — parses persisted execution-trace JSON into thinking/tool nodes for the
   trace UI. `message-grouping.ts`, `message-jump.ts` — conversation layout + scroll
   targeting (used by search-result jumps).
+- `mentioned-files.ts` — which workspace files an assistant reply refers to, for the
+  **In this reply** section. The session's real artifact list is a **whitelist**: a
+  token counts only when it resolves to a file that exists, so precision comes from
+  that intersection rather than from a path-shaped regex (which reads `v1.2`, `3.5%`
+  and `e.g.` as filenames). A basename seen on two different paths is marked
+  ambiguous and matches nothing — opening the wrong `report.md` is worse than
+  offering neither — and a slash-free token must contain a dot, or an artifact named
+  `data` would match every prose use of the word. Folds `./`, `~/` and the
+  `/workspace/` mount prefix away, strips CJK and markdown punctuation, and returns
+  paths in **first-appearance** order: the agent's own narrative order is the order
+  the user just read them in. Unit-tested, since every rule here is a false-positive
+  class someone would otherwise rediscover in production.
+- `use-persisted-flag.ts` — a boolean UI preference in localStorage, same
+  external-store shape as `use-pane-width.ts` and for the same reason: it must be
+  readable on the client's *first* render, or the section visibly flips itself shut
+  one frame in. Only a non-default value is written, so an untouched preference
+  leaves no key behind and a later change of default still reaches those users.
 - `upload-entries.ts` — normalizes drag-drop / folder `File` entries into relative
   upload paths. `use-composer-state.ts`, `use-event-stream.ts`, `use-popover.ts`,
   `use-media-query.ts` — React hooks for the composer, SSE lifecycle, popovers, and
@@ -121,7 +138,14 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   `notifications`, and `auth`. Exposes `selectSession`, `createSession`,
   `destroySession`, `renameSession` (optimistic, rolls back on failure),
   `interruptSession`, `sendMessage`, `setMessageFeedback`, `markNotificationRead`,
-  `refresh`, `onLogin`, `logout`. State is exposed through selector hooks
+  `refresh`, `onLogin`, `logout`. `useLastReply(sessionId)` selects just the last
+  committed turn-final assistant message (by the same `isFinalReply` rule the action
+  bar uses) so the workspace panel can derive its mentioned-files list without
+  subscribing to the whole conversation — which would re-render the file tree on
+  every streamed token. It deliberately ignores streaming text: extracting paths
+  from a half-typed reply would grow a filename character by character, so the
+  previous turn's list stays up until the new reply commits. State is exposed
+  through selector hooks
   (`useNotifications`, etc.) so components subscribe to slices instead of re-rendering
   on every store change.
 - `workbench/workbench.tsx` — the shell: a blank hold until auth is checked, then
@@ -145,7 +169,12 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   upload/drag-drop entry points, and the inline file editor. A reader's conversation
   header gains a **Refresh** button: `eventVisibleTo` filters session events to the
   owner, so a shared view receives nothing live and would otherwise go stale
-  silently.
+  silently. That also means the provider must *actually refetch* for a reader:
+  `refresh()` and `selectSession()` pass `skipLoaded` only for an **owner**, whose
+  updates arrive over SSE anyway. Passing it for a reader made their Refresh button
+  a no-op once messages existed, freezing both the conversation and the file list
+  at whatever was there on first load — which is what made the mentioned-files
+  section look unsupported on a shared session.
 - `workbench/share-dialog.tsx` — owner-only sharing: read grants to named users
   (`/api/users` feeds the picker) and public links. A freshly minted or rotated
   token is displayed once, held only in component state, and copied to the
@@ -161,7 +190,13 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
 - `components/shared/shared-file-panel.tsx` — the link's whitelisted files, with
   inline preview for HTML/PDF (same-origin iframe) and images, and download for
   everything else. The list is the whitelist, so nothing the owner did not select
-  is reachable.
+  is reachable. It also mounts the same `MentionedFiles` section the workbench
+  uses, over that whitelist rather than the live workspace: a file the reply
+  mentions but the owner did not publish resolves to nothing and is dropped, which
+  is correct twice over — the row would 404, and naming it would leak that it
+  exists. `shared-session-view.tsx` picks the reply with the same `isFinalReply`
+  rule the workbench uses, so a link and its owner's view agree on which message is
+  "the reply" even at `full` visibility, where the tool-use steps are still present.
 - `workbench/conversation.tsx` — routes to the agent chat or `shell-conversation.tsx`;
   renders committed messages + streaming bubbles + a runtime footer, with the
   notification bell in the header. The chat is one centered column at `--measure`,
@@ -182,6 +217,36 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   `setMessageFeedback`). `message-bubble.tsx`, `markdown-view.tsx`, `inline-diff.tsx`,
   `viewers/` — rendering primitives.
 - `workbench/composer.tsx` — floating auto-expanding chat bar.
+- `workbench/mentioned-files.tsx` — a collapsible **In this reply** section at the
+  top of the workspace panel listing the files the latest reply refers to, one per
+  row, styled as a section of the tree below it rather than a separate widget.
+  Which files those are is decided by `lib/mentioned-files.ts`, not by this
+  component. It renders nothing when the count is zero — an occasional pointer, not
+  a permanent empty strip — and keeps the count visible while collapsed so putting
+  it away does not look like a breakage. Collapse state is persisted **globally**
+  (`lib/use-persisted-flag.ts`), not per session: collapsing it once means "I don't
+  want this section", and re-opening it on every new reply would be nagging. The
+  list caps at ~5 rows and scrolls internally so a chatty turn cannot push the file
+  tree off screen. Mounted in both the pane's list and preview modes from two call
+  sites rather than hoisted above the branch — it belongs *under* the Workspace
+  header in list mode and on top in preview mode, and two call sites keep DOM order
+  equal to visual order (a CSS `order` on one shared node would desync focus and
+  screen-reader order). Alongside an open file it doubles as a switcher between the
+  turn's own outputs; it is hidden in the full-screen overlay. Its file list is
+  structurally typed (anything with a `path`), which is what lets the public-link
+  panel reuse it with `SharedLinkFile`. Suppressed for `mode === "shell"` in both
+  callers: shell entries are command output written with an empty `stop_reason`, so
+  the structural fallback would read one as a final reply when there is no prose to
+  mine at all. It also exports `SectionHeader` and `useMentionedPaths`: when the
+  section is present the tree below it gains an **All files** header, so the two
+  read as two labelled groups rather than one list split by an unexplained
+  hairline (the same job `SessionSection` does for the sidebar's "Shared with me" /
+  "History"). The tree's header is static text, not a button — only the mentioned
+  section collapses, and a disclosure chevron on something that does not toggle is
+  a lie. It appears *only* when the section is above it: alone in the panel the
+  tree is self-evidently the files, and the Workspace header already says so. The
+  parent asks `useMentionedPaths` rather than recomputing, so the two can never
+  disagree about the count.
 - `workbench/artifact-pane.tsx` + `artifact-viewer.tsx` — live metadata-backed file
   tree with search and tabs; upload entry (multi-file / folder / drag-drop),
   Artifacts-style preview panel with full-screen/sidebar toggle, and previews for

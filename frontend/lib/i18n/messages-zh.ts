@@ -245,5 +245,9 @@ export const ZH: Record<MessageKey, string> = {
   "workspace.uploadsPausedNote": "智能体工作期间暂停上传。",
   "viewer.binaryTitle": "二进制文件无法预览。",
   "viewer.binaryHint": "可以用右上角的操作打开或下载原始文件。",
-  "viewer.noRows": "没有可预览的数据行。"
+  "viewer.noRows": "没有可预览的数据行。",
+  "mentioned.title": "本次回复",
+  "mentioned.allFiles": "全部文件",
+  "mentioned.collapse": "收起本次回复提到的文件",
+  "mentioned.expand": "展开本次回复提到的文件"
 };

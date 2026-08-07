@@ -4,6 +4,11 @@ import { useState } from "react";
 import { Download, FileText } from "lucide-react";
 
 import type { SharedLinkFile } from "@/lib/types";
+import {
+  MentionedFiles,
+  SectionHeader,
+  useMentionedPaths
+} from "@/components/workbench/mentioned-files";
 import { formatBytes } from "@/lib/format";
 
 /**
@@ -18,8 +23,21 @@ import { formatBytes } from "@/lib/format";
  * excepts `/shared/` from the app-wide `DENY` — if both headers were sent the
  * browser would block the frame and the panel would just be blank.
  */
-export function SharedFilePanel({ token, files }: { token: string; files: SharedLinkFile[] }) {
+export function SharedFilePanel({
+  token,
+  files,
+  lastReplyContent = ""
+}: {
+  token: string;
+  files: SharedLinkFile[];
+  /**
+   * Raw markdown of the last reply, for the mentioned-files section. Optional and
+   * defaulting to "" so the panel still renders for a link with no conversation.
+   */
+  lastReplyContent?: string;
+}) {
   const [openPath, setOpenPath] = useState<string | null>(null);
+  const mentionedCount = useMentionedPaths(lastReplyContent, files).length;
   if (files.length === 0) return null;
 
   const fileUrl = (path: string) =>
@@ -37,6 +55,22 @@ export function SharedFilePanel({ token, files }: { token: string; files: Shared
           Files
         </h2>
       </header>
+      {/* Same two-group treatment as the workbench: when a mentioned section sits
+          above, the full list needs its own label, or the two read as one list
+          arbitrarily split by a rule. */}
+      {/* Same section the workbench shows, over the link's whitelist rather than
+          the live workspace: a mentioned file the owner did not publish simply
+          does not resolve. Selection is shared with the list below, so a row here
+          drives the same preview. */}
+      <MentionedFiles
+        content={lastReplyContent}
+        files={files}
+        activePath={openPath}
+        onOpen={(path) => setOpenPath((prev) => (prev === path ? null : path))}
+      />
+      {mentionedCount > 0 ? (
+        <SectionHeader labelKey="mentioned.allFiles" count={files.length} />
+      ) : null}
       <ul className="max-h-56 overflow-y-auto md:max-h-none md:flex-1">
         {files.map((file) => {
           const selected = file.path === openPath;

@@ -2,34 +2,26 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Braces,
   ChevronRight,
-  Code2,
   Download,
-  File,
-  FileText,
-  FileType,
   Folder,
   FolderOpen,
   FolderUp,
-  Image as ImageIcon,
-  Presentation,
   Search,
-  Sheet,
-  Table2,
   Upload
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useArtifacts, useSelectedSession } from "@/components/harness-provider";
+import { useArtifacts, useLastReply, useSelectedSession } from "@/components/harness-provider";
 import { InputWithIcon } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ArtifactViewer } from "./artifact-viewer";
+import { ArtifactIcon } from "./artifact-icon";
+import { MentionedFiles, SectionHeader, useMentionedPaths } from "./mentioned-files";
 import { buildArtifactHref, uploadArtifacts, type UploadEntry } from "@/lib/api";
 import { buildArtifactTree, type ArtifactTreeDirectory, type ArtifactTreeNode } from "@/lib/artifact-tree";
 import { entriesFromDataTransfer, entriesFromFileList, isSessionWritable } from "@/lib/upload-entries";
 import { formatBytes, formatRelative } from "@/lib/format";
-import { classifyArtifact } from "@/lib/mime";
 import { cn } from "@/lib/cn";
 import { useT } from "@/lib/i18n";
 import { brandName, uploadUiEnabled } from "@/lib/ui-config";
@@ -50,6 +42,8 @@ export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
   const t = useT();
   const session = useSelectedSession();
   const artifacts = useArtifacts(session?.id ?? null);
+  // Only the turn's final reply, so a streamed token does not re-render the tree.
+  const lastReply = useLastReply(session?.id ?? null);
 
   if (!session) {
     return (
@@ -69,6 +63,10 @@ export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
       status={session.status}
       readOnly={session.access === "reader"}
       artifacts={artifacts}
+      // A shell session has no reply: its entries are command output, written
+      // with an empty stop_reason, which the structural fallback would read as a
+      // final reply. Nothing there is prose that mentions a file.
+      lastReplyContent={session.mode === "shell" ? "" : lastReply?.content ?? ""}
       onExpandedChange={onExpandedChange}
     />
   );
@@ -83,6 +81,7 @@ function ArtifactPaneInner({
   status,
   readOnly = false,
   artifacts,
+  lastReplyContent,
   onExpandedChange
 }: {
   sessionId: string;
@@ -92,6 +91,8 @@ function ArtifactPaneInner({
   // entry points are withheld rather than left to fail.
   readOnly?: boolean;
   artifacts: ApiArtifact[];
+  /** Raw markdown of the last committed final reply; "" when there is none. */
+  lastReplyContent: string;
   onExpandedChange?: (expanded: boolean) => void;
 }) {
   const t = useT();
@@ -208,6 +209,10 @@ function ArtifactPaneInner({
     return artifacts.filter((a) => a.path.toLowerCase().includes(needle));
   }, [artifacts, debouncedQuery]);
   const tree = useMemo(() => buildArtifactTree(visibleArtifacts), [visibleArtifacts]);
+  // Whether the mentioned section will render, so the tree knows if it needs its
+  // own group label. Asking the same hook the section uses keeps the two from
+  // ever disagreeing about the count.
+  const mentionedCount = useMentionedPaths(lastReplyContent, artifacts).length;
   const activeArtifact = livePath ? artifacts.find((a) => a.path === livePath) ?? null : null;
 
   // Keep the parent grid in sync: the docked panel widens whenever a live file
@@ -277,24 +282,49 @@ function ArtifactPaneInner({
           />
         </>
       ) : null}
+      {/* Rendered in both modes, but from two places rather than hoisted above
+          the branch: in list mode it belongs *under* the Workspace header (it is
+          a section of the file index, not a banner over it), and in preview mode
+          the header is gone so it goes on top. Both call sites are in DOM order,
+          so focus and screen-reader order match what is on screen — a CSS `order`
+          on one shared node would not. Alongside an open file it doubles as a
+          switcher between the turn's outputs; hidden in the full-screen overlay,
+          which is a deliberate reading mode. */}
       {livePath && activeArtifact ? (
         // ── Preview mode: the panel becomes a full-height Artifact Preview. ──
-        <ArtifactViewer
-          // Key on file identity only, NOT updated_at. Including updated_at made
-          // every `artifact.updated` SSE for the open file change the key → a
-          // full unmount/remount + redundant (up to 2MB) refetch on each write
-          // while an agent streams the file, causing flicker. ArtifactViewer's
-          // own effect (deps include artifact.updated_at) already refetches the
-          // content on change, so the component can stay mounted across updates.
-          key={livePath}
-          sessionId={sessionId}
-          path={livePath}
-          artifact={activeArtifact}
-          readOnly={readOnly}
-          fullScreen={fullScreen}
-          onToggleFullScreen={() => setFullScreen((v) => !v)}
-          onClose={closePreview}
-        />
+        // The viewer sizes itself with h-full, so it needs a bounded flex track
+        // rather than the aside directly: with the mentioned-files section as a
+        // sibling above it, 100% of the aside would overflow by that section's
+        // height and push the viewer's own footer out of view.
+        <>
+          {overlay ? null : (
+            <MentionedFiles
+              content={lastReplyContent}
+              files={artifacts}
+              activePath={livePath}
+              onOpen={openArtifact}
+            />
+          )}
+          <div className="flex min-h-0 flex-1 flex-col">
+            <ArtifactViewer
+              // Key on file identity only, NOT updated_at. Including updated_at
+              // made every `artifact.updated` SSE for the open file change the
+              // key → a full unmount/remount + redundant (up to 2MB) refetch on
+              // each write while an agent streams the file, causing flicker.
+              // ArtifactViewer's own effect (deps include artifact.updated_at)
+              // already refetches the content on change, so the component can
+              // stay mounted across updates.
+              key={livePath}
+              sessionId={sessionId}
+              path={livePath}
+              artifact={activeArtifact}
+              readOnly={readOnly}
+              fullScreen={fullScreen}
+              onToggleFullScreen={() => setFullScreen((v) => !v)}
+              onClose={closePreview}
+            />
+          </div>
+        </>
       ) : (
         // ── List mode: workspace file browser. ──
         <>
@@ -363,7 +393,23 @@ function ArtifactPaneInner({
             ) : null}
           </div>
 
+          <MentionedFiles
+            content={lastReplyContent}
+            files={artifacts}
+            activePath={livePath}
+            onOpen={openArtifact}
+          />
+
           <div className="min-h-0 flex-1 overflow-y-auto">
+            {/* The tree only gets a label when something sits above it. Alone in
+                the panel it is self-evidently "the files" and the Workspace
+                header already says so; a lone group label on a single list is
+                noise. With the mentioned section above, the pair needs to read as
+                two groups of one list rather than two lists divided by a hairline
+                that says nothing about what changed across it. */}
+            {mentionedCount > 0 && visibleArtifacts.length > 0 ? (
+              <SectionHeader labelKey="mentioned.allFiles" count={artifacts.length} />
+            ) : null}
             {artifacts.length === 0 ? (
               <p className="px-4 py-4 text-xs text-[var(--color-foreground-muted)]">
                 {t("workspace.empty", { brand: brandName })}
@@ -532,28 +578,3 @@ function TreeNode({
   );
 }
 
-function ArtifactIcon({ path }: { path: string }) {
-  const kind = classifyArtifact(path).kind;
-  const className = "h-3.5 w-3.5 shrink-0 text-[var(--color-foreground-muted)]";
-  switch (kind) {
-    case "image":
-      return <ImageIcon className={className} />;
-    case "code":
-      return <Code2 className={className} />;
-    case "json":
-      return <Braces className={className} />;
-    case "table":
-      return <Table2 className={className} />;
-    case "spreadsheet":
-      return <Sheet className={className} />;
-    case "document":
-      return <FileType className={className} />;
-    case "presentation":
-      return <Presentation className={className} />;
-    case "markdown":
-    case "text":
-      return <FileText className={className} />;
-    default:
-      return <File className={className} />;
-  }
-}

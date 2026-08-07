@@ -14,6 +14,7 @@ import type {
   SharedLinkSession,
 } from "@/lib/types";
 import { dayKey, formatDayDivider, formatFullTimestamp } from "@/lib/format";
+import { isFinalReply } from "@/lib/message-grouping";
 import {
   DayDivider,
   MessageBubble,
@@ -223,7 +224,13 @@ export function SharedSessionView({ token }: { token: string }) {
             </div>
           )}
         </div>
-        <SharedFilePanel token={token} files={files} />
+        {/* A shell transcript has no "reply" — its entries are command output, so
+            there is no message whose prose could mention a file. */}
+        <SharedFilePanel
+          token={token}
+          files={files}
+          lastReplyContent={isShell ? "" : lastReplyContent(messages)}
+        />
       </div>
 
       <footer className="border-t border-[var(--color-border)] px-6 py-2.5 text-2xs text-[var(--color-foreground-muted)]">
@@ -241,6 +248,27 @@ export function SharedSessionView({ token }: { token: string }) {
  * by field on the server so a new authed field is not published by accident —
  * so the mapping is explicit here rather than a cast.
  */
+/**
+ * The last turn-final assistant reply's text, for the mentioned-files section.
+ *
+ * Reuses the same `isFinalReply` rule as the workbench so a link and its owner's
+ * view agree on which message is "the reply". At summary visibility the server
+ * has already dropped the tool-use steps, so the last assistant message is
+ * normally the answer anyway — but a `full` link keeps them, and picking the last
+ * assistant message blindly would read paths out of an intermediate step.
+ */
+function lastReplyContent(messages: SharedLinkMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "assistant") continue;
+    const next = messages[i + 1];
+    if (isFinalReply(sharedToApiMessage(message), next && sharedToApiMessage(next))) {
+      return message.content;
+    }
+  }
+  return "";
+}
+
 function sharedToApiMessage(message: SharedLinkMessage) {
   return {
     id: message.id,

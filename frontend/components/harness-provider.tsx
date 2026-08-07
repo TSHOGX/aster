@@ -51,6 +51,7 @@ import {
   type ConversationActivity,
   type ConversationState
 } from "@/lib/harness-events";
+import { isFinalReply } from "@/lib/message-grouping";
 import { mergeSessionList, reduceSessionEvent } from "@/lib/session-events";
 import { useEventStream } from "@/lib/use-event-stream";
 import { buildEventsStreamUrl } from "@/lib/ws";
@@ -656,8 +657,15 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       };
     });
     if (selectedId) {
-      loadSessionDetails(selectedId, true);
       const selected = list.find((s) => s.id === selectedId);
+      // A reader gets no session events at all (eventVisibleTo gates them to the
+      // owner), so an explicit refresh is their ONLY way to see new work. Skipping
+      // the fetch because messages are already present would make their Refresh
+      // button a no-op and freeze both the conversation and the file list at
+      // whatever existed on first load. An owner keeps the skip: SSE already
+      // delivers their updates, so refetching on every reconnect is pure waste.
+      const isReader = selected?.access === "reader";
+      loadSessionDetails(selectedId, !isReader);
       if (selected && isActiveStatus(selected.status)) {
         void pollConversation(selectedId);
       }
@@ -736,8 +744,10 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     (id: string | null) => {
       setState((p) => ({ ...p, selectedId: id }));
       if (!id) return;
-      loadSessionDetails(id, true);
       const session = stateRef.current.sessions.find((s) => s.id === id);
+      // Same reasoning as refresh(): a reader has no live stream, so re-opening a
+      // shared session must refetch rather than trust a cached first load.
+      loadSessionDetails(id, session?.access !== "reader");
       if (session && isActiveStatus(session.status)) {
         void pollConversation(id);
       }
@@ -983,6 +993,36 @@ export function useSelectedSession() {
 
 export function useConversation(sessionId: string | null) {
   return useStoreSelector((s) => (sessionId ? s.conversations[sessionId] ?? EMPTY_CONVO : EMPTY_CONVO));
+}
+
+/**
+ * The last committed assistant reply that ends a turn, or null.
+ *
+ * A narrow selector on purpose: it lets the workspace panel derive "files this
+ * reply mentions" without subscribing to the whole conversation, which would
+ * re-render the file tree on every streamed token. Committed messages are never
+ * mutated in place, so the selected reference is stable between turns and the
+ * cached-selector comparison skips the re-render.
+ *
+ * Streaming text is deliberately excluded. Reading it would extract paths from a
+ * half-typed reply, so a filename would appear character by character and change
+ * shape as it lands. The previous turn's list stays up — an honest stale value —
+ * until the new reply commits.
+ */
+export function useLastReply(sessionId: string | null): ApiMessage | null {
+  return useStoreSelector((s) => {
+    const messages = sessionId ? s.conversations[sessionId]?.messages : undefined;
+    if (!messages) return null;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role !== "assistant") continue;
+      // Same rule the conversation uses to decide where the action bar goes:
+      // trust stop_reason, and fall back to structure for salvaged or
+      // pre-migration history (see lib/message-grouping.ts).
+      if (isFinalReply(message, messages[i + 1])) return message;
+    }
+    return null;
+  });
 }
 
 export function useActivity(sessionId: string | null): ConversationActivity {
