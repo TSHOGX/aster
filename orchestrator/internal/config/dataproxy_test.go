@@ -348,6 +348,35 @@ func TestOBSDataProxyValidates(t *testing.T) {
 	}
 }
 
+func TestMCPDataProxyValidatesAndDefaults(t *testing.T) {
+	in := normalizeDataProxies(map[string]DataProxyConfig{
+		"mcp": {
+			BindAddr: "0.0.0.0:8103",
+			Upstream: DataProxyUpstreamConfig{
+				Kind:    DataProxyKindMcpSSE,
+				BaseURL: "http://example.invalid:8003/data-governance-service/api/v1/sse",
+			},
+		},
+	})
+	got := in["mcp"]
+	if got.SandboxAlias != defaultMcpSandboxAlias {
+		t.Errorf("SandboxAlias = %q, want %q", got.SandboxAlias, defaultMcpSandboxAlias)
+	}
+	if got.SandboxPort != defaultMcpSandboxPort {
+		t.Errorf("SandboxPort = %d, want %d", got.SandboxPort, defaultMcpSandboxPort)
+	}
+	if err := validateDataProxies(in); err != nil {
+		t.Fatalf("valid mcp proxy rejected: %v", err)
+	}
+
+	bad := in["mcp"]
+	bad.Upstream.Addr = "1.2.3.4:8003"
+	in["mcp"] = bad
+	if err := validateDataProxies(in); err == nil || !strings.Contains(err.Error(), "does not apply to kind") {
+		t.Errorf("err = %v, want addr rejection", err)
+	}
+}
+
 func TestDataProxyHostIsUpstream(t *testing.T) {
 	for _, host := range []string{
 		"172.16.0.138",

@@ -87,6 +87,23 @@ harness:
         kind: obs_http
         base_url: https://obs.cn-north-4.myhuaweicloud.com
 
+    # MCP SSE gateway (dev/mcp-gateway). Control plane only projects
+    # harness-mcp.internal -> HostGatewayIP into sandbox /etc/hosts. The
+    # gateway process and real token live in EnvironmentFile / .env — never
+    # here. Set enabled: true after copying UPSTREAM_* into
+    # dev/mcp-gateway/.env and starting gateway.py on :8103.
+    mcp:
+      enabled: false
+      bind_addr: 0.0.0.0:8103
+      sandbox_alias: harness-mcp.internal
+      sandbox_port: 8103
+      sandbox_user: sandbox
+      upstream:
+        kind: mcp_sse
+        # Replace with the real upstream SSE URL (informational for operators;
+        # gateway.py reads UPSTREAM_SSE_URL from its own env).
+        base_url: http://127.0.0.1:8003/data-governance-service/api/v1/sse
+
   sandbox_identity:
     uid: 65534
     gid: 65534
