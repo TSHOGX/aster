@@ -377,6 +377,24 @@ func TestMCPDataProxyValidatesAndDefaults(t *testing.T) {
 	}
 }
 
+func TestMCPStreamableHTTPDataProxyValidates(t *testing.T) {
+	in := normalizeDataProxies(map[string]DataProxyConfig{
+		"mcp": {
+			BindAddr: "0.0.0.0:8103",
+			Upstream: DataProxyUpstreamConfig{
+				Kind:    DataProxyKindMcpStreamableHTTP,
+				BaseURL: "http://mcpgateway.example.invalid/mcp/abc",
+			},
+		},
+	})
+	if in["mcp"].SandboxAlias != defaultMcpSandboxAlias {
+		t.Errorf("alias = %q", in["mcp"].SandboxAlias)
+	}
+	if err := validateDataProxies(in); err != nil {
+		t.Fatalf("valid streamable-http mcp proxy rejected: %v", err)
+	}
+}
+
 func TestDataProxyHostIsUpstream(t *testing.T) {
 	for _, host := range []string{
 		"172.16.0.138",
