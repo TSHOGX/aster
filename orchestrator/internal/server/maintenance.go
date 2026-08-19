@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"harness-platform/orchestrator/internal/bridge"
@@ -24,6 +25,10 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 	if pollInterval <= 0 {
 		pollInterval = 5 * time.Millisecond
 	}
+	coldFallbackInterval := s.cfg.Harness.Maintenance.ColdFallbackInterval.Duration
+	if coldFallbackInterval <= 0 {
+		coldFallbackInterval = 5 * time.Second
+	}
 	owner := store.GenerationLeaseOwner(s.ownerUUID)
 	processor := &bridge.Processor{
 		Store:           bridgeStore(s.store),
@@ -38,81 +43,200 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		}
 	}
 
-	runMaintenance := func(now time.Time) {
-		if s.cfg.SessionRetention == 0 {
-			if _, err := s.store.ClearActiveSessionExpiry(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
-				s.log.Warn("active-session expiry clear failed", "error", err)
+	// stage isolates one maintenance step. Each step gets its own deadline and
+	// runs on its own goroutine, so a step blocked in an unresponsive syscall
+	// (historically `runsc kill` against a half-dead sandbox) can no longer stall
+	// the whole loop and starve everything queued behind it. A step that outlives
+	// its deadline is left running and skipped on subsequent ticks until it
+	// returns, which also guarantees a step never overlaps itself.
+	//
+	// The goroutine is deliberately not abandoned-and-forgotten: `running` is only
+	// cleared when the work actually finishes, so a permanently wedged stage stays
+	// visible in the logs on every tick instead of silently piling up goroutines.
+	stageTimeout := s.cfg.Harness.Maintenance.StageTimeout.Duration
+	if stageTimeout <= 0 {
+		stageTimeout = 2 * time.Minute
+	}
+	var stageMu sync.Mutex
+	stageRunning := make(map[string]time.Time)
+	stage := func(name string, fn func(context.Context)) {
+		stageMu.Lock()
+		if since, busy := stageRunning[name]; busy {
+			stageMu.Unlock()
+			s.log.Warn("maintenance stage still running, skipping this tick",
+				"stage", name, "stuck_for", time.Since(since).Round(time.Second))
+			return
+		}
+		stageRunning[name] = time.Now()
+		stageMu.Unlock()
+
+		stageCtx, cancel := context.WithTimeout(ctx, stageTimeout)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer func() {
+				stageMu.Lock()
+				delete(stageRunning, name)
+				stageMu.Unlock()
+			}()
+			defer cancel()
+			fn(stageCtx)
+		}()
+		// Wait on an independent timer rather than stageCtx.Done(): the goroutine's
+		// own `defer cancel()` fires before `defer close(done)`, so watching the
+		// context here would report a deadline for a stage that had in fact just
+		// finished successfully.
+		timer := time.NewTimer(stageTimeout)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-ctx.Done():
+		case <-timer.C:
+			// Deadline hit. Return to the loop; the goroutine keeps draining in the
+			// background and blocks only its own stage.
+			s.log.Warn("maintenance stage exceeded deadline, continuing without it",
+				"stage", name, "timeout", stageTimeout)
+		}
+	}
+
+	// Cold fallback is the availability-critical stage: it starts a fresh sandbox
+	// for sessions whose generation died with turns still queued. When it is
+	// starved every user's next message hangs forever, so it gets both its own
+	// ticker and its own worker below — no cleanup stage is worth that.
+	runColdFallback := func() {
+		stage("cold_fallback", func(stageCtx context.Context) {
+			s.startColdFallbackSessions(stageCtx, owner)
+		})
+	}
+
+	// Ticks are dispatched to workers over one-slot channels, and the select loop
+	// below only ever does a non-blocking send. This is what actually keeps the
+	// loop responsive: `stage` blocks until its work finishes or its deadline
+	// expires, so calling it inline would stall the loop for the whole deadline
+	// and starve the other tickers — exactly the failure being fixed, just with a
+	// bound. A full channel means that worker is still busy, so the tick is
+	// dropped rather than queued; there is no value in replaying a stale one.
+	spawnWorker := func(run func(time.Time)) chan<- time.Time {
+		ticks := make(chan time.Time, 1)
+		go func() {
+			for {
+				select {
+				case now := <-ticks:
+					run(now)
+				case <-ctx.Done():
+					return
+				}
 			}
+		}()
+		return ticks
+	}
+	dispatch := func(ticks chan<- time.Time, now time.Time, label string) {
+		select {
+		case ticks <- now:
+		default:
+			s.log.Warn("maintenance worker still busy, dropping tick", "worker", label)
 		}
-		if _, err := s.store.SweepExpiredSessions(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("expired-session sweep failed", "error", err)
-		}
-		if _, err := s.store.SweepExpiredAuthSessions(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("expired auth-session sweep failed", "error", err)
-		}
-		// Public-link access counters are buffered in memory by the anonymous read
-		// handlers and land here, off the request path, so an anonymous fetch never
-		// queues behind the writer pool's single connection.
-		if err := s.flushShareLinkAccess(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("share link access flush failed", "error", err)
-		}
-		s.sweepExpiredShareLinks(ctx, now)
+	}
+
+	runMaintenance := func(now time.Time) {
+		stage("session_expiry", func(stageCtx context.Context) {
+			if s.cfg.SessionRetention == 0 {
+				if _, err := s.store.ClearActiveSessionExpiry(stageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
+					s.log.Warn("active-session expiry clear failed", "error", err)
+				}
+			}
+			if _, err := s.store.SweepExpiredSessions(stageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("expired-session sweep failed", "error", err)
+			}
+			if _, err := s.store.SweepExpiredAuthSessions(stageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("expired auth-session sweep failed", "error", err)
+			}
+		})
+		stage("share_links", func(stageCtx context.Context) {
+			// Public-link access counters are buffered in memory by the anonymous read
+			// handlers and land here, off the request path, so an anonymous fetch never
+			// queues behind the writer pool's single connection.
+			if err := s.flushShareLinkAccess(stageCtx); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("share link access flush failed", "error", err)
+			}
+			s.sweepExpiredShareLinks(stageCtx, now)
+		})
 		s.loginLimiter.GC()
 		s.ipLimiter.GC()
-		if _, err := s.store.CancelTerminalSessionPendingTurns(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("terminal-session turn cleanup failed", "error", err)
-		}
-		if _, err := s.RecoverExpiredRuntimeResources(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("allocation recovery failed", "error", err)
-		}
-		if _, err := s.store.RenewLiveGenerationLeases(ctx, store.RenewLiveGenerationsParams{
-			Owner:      owner,
-			LeaseTTL:   s.cfg.Harness.Bridge.LeaseTTL.Duration,
-			Now:        now,
-			StallGrace: s.cfg.Harness.Bridge.SandboxHeartbeatStallGrace.Duration,
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("generation lease renewal failed", "error", err)
-		}
-		s.startColdFallbackSessions(ctx, owner)
-		generations, err := s.store.ListBridgePollGenerations(ctx, owner, now, s.cfg.Harness.Bridge.AckStartedGrace.Duration)
-		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				s.log.Warn("bridge heartbeat generation list failed", "error", err)
+		stage("pending_turn_cleanup", func(stageCtx context.Context) {
+			if _, err := s.store.CancelTerminalSessionPendingTurns(stageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("terminal-session turn cleanup failed", "error", err)
 			}
-		} else {
+		})
+		// Shells out to `runsc kill`/`delete` — the stage that wedged in the 34h
+		// outage. Isolated so a half-dead sandbox can only block recovery itself.
+		stage("runtime_recovery", func(stageCtx context.Context) {
+			if _, err := s.RecoverExpiredRuntimeResources(stageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("allocation recovery failed", "error", err)
+			}
+		})
+		stage("lease_renewal", func(stageCtx context.Context) {
+			if _, err := s.store.RenewLiveGenerationLeases(stageCtx, store.RenewLiveGenerationsParams{
+				Owner:      owner,
+				LeaseTTL:   s.cfg.Harness.Bridge.LeaseTTL.Duration,
+				Now:        now,
+				StallGrace: s.cfg.Harness.Bridge.SandboxHeartbeatStallGrace.Duration,
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("generation lease renewal failed", "error", err)
+			}
+		})
+		// Cold fallback is deliberately absent here: it runs on its own goroutine
+		// and ticker (see below) so the cleanup stages can never delay it.
+		stage("host_heartbeat", func(stageCtx context.Context) {
+			generations, err := s.store.ListBridgePollGenerations(stageCtx, owner, now, s.cfg.Harness.Bridge.AckStartedGrace.Duration)
+			if err != nil {
+				if !errors.Is(err, context.Canceled) {
+					s.log.Warn("bridge heartbeat generation list failed", "error", err)
+				}
+				return
+			}
 			for _, generation := range generations {
 				touchHostHeartbeat(generation, now)
 			}
-		}
-		retiredCheckpoints, err := s.store.RetireExpiredCheckpoints(ctx, store.RetireExpiredCheckpointsParams{
-			OwnerUUID:                s.ownerUUID,
-			Now:                      now,
-			CheckpointImageRetention: s.cfg.Harness.Reaper.CheckpointImageRetention.Duration,
 		})
-		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				s.log.Warn("checkpoint retirement failed", "error", err)
+		stage("checkpoint_retirement", func(stageCtx context.Context) {
+			retiredCheckpoints, err := s.store.RetireExpiredCheckpoints(stageCtx, store.RetireExpiredCheckpointsParams{
+				OwnerUUID:                s.ownerUUID,
+				Now:                      now,
+				CheckpointImageRetention: s.cfg.Harness.Reaper.CheckpointImageRetention.Duration,
+			})
+			if err != nil {
+				if !errors.Is(err, context.Canceled) {
+					s.log.Warn("checkpoint retirement failed", "error", err)
+				}
+				return
 			}
-		} else {
 			for _, retired := range retiredCheckpoints {
-				s.publishDurableEvent(ctx, retired.EventID)
+				s.publishDurableEvent(stageCtx, retired.EventID)
 			}
-		}
-		if _, err := s.store.ReapResources(ctx, store.ReaperParams{
-			OwnerUUID:       s.ownerUUID,
-			FailedRetention: s.cfg.Harness.Reaper.FailedRetention.Duration,
-			Now:             now,
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("resource reaper failed", "error", err)
-		}
-		s.destroyReclaimableGenerationResources(ctx, now)
-		if _, err := s.store.PruneEvents(ctx, store.PruneEventsParams{
-			RetentionWindow: s.cfg.Harness.Events.RetentionWindow.Duration,
-			RetentionRows:   s.cfg.Harness.Events.RetentionRows,
-			Now:             now,
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Warn("event retention prune failed", "error", err)
-		}
+		})
+		stage("resource_reaper", func(stageCtx context.Context) {
+			if _, err := s.store.ReapResources(stageCtx, store.ReaperParams{
+				OwnerUUID:       s.ownerUUID,
+				FailedRetention: s.cfg.Harness.Reaper.FailedRetention.Duration,
+				Now:             now,
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("resource reaper failed", "error", err)
+			}
+		})
+		// Also shells out to runsc teardown.
+		stage("resource_destroy", func(stageCtx context.Context) {
+			s.destroyReclaimableGenerationResources(stageCtx, now)
+		})
+		stage("event_prune", func(stageCtx context.Context) {
+			if _, err := s.store.PruneEvents(stageCtx, store.PruneEventsParams{
+				RetentionWindow: s.cfg.Harness.Events.RetentionWindow.Duration,
+				RetentionRows:   s.cfg.Harness.Events.RetentionRows,
+				Now:             now,
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Warn("event retention prune failed", "error", err)
+			}
+		})
 	}
 	pollBridge := func(now time.Time) {
 		generations, err := s.store.ListBridgePollGenerations(ctx, owner, now, s.cfg.Harness.Bridge.AckStartedGrace.Duration)
@@ -133,8 +257,37 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		}
 	}
 
+	// Cold fallback drives itself on its own goroutine and ticker, entirely
+	// independent of the main loop. It must not be fed by the loop below: the
+	// synchronous startup pass and any wedged cleanup stage would delay its
+	// ticks, and starving this path is precisely what turned one dead sandbox
+	// into a platform-wide outage.
+	go func() {
+		runColdFallback()
+		ticker := time.NewTicker(coldFallbackInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				runColdFallback()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// One full pass synchronously before entering the loop, so startup recovery
+	// and the first host heartbeat are done before this returns — callers depend
+	// on that ordering. Unlike before, every stage here is bounded by
+	// stageTimeout, so a wedged teardown can no longer hang startup forever.
 	runMaintenance(time.Now().UTC())
 	pollBridge(time.Now().UTC())
+
+	// Steady state: cleanup stages and bridge polling get their own workers, so
+	// neither can delay the other. Bridge polling drives live turn I/O.
+	maintenanceTicks := spawnWorker(runMaintenance)
+	bridgeTicks := spawnWorker(pollBridge)
+
 	maintenanceTicker := time.NewTicker(heartbeatInterval)
 	defer maintenanceTicker.Stop()
 	bridgeTicker := time.NewTicker(pollInterval)
@@ -142,9 +295,9 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 	for {
 		select {
 		case now := <-maintenanceTicker.C:
-			runMaintenance(now.UTC())
+			dispatch(maintenanceTicks, now.UTC(), "maintenance")
 		case now := <-bridgeTicker.C:
-			pollBridge(now.UTC())
+			dispatch(bridgeTicks, now.UTC(), "bridge_poll")
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -256,6 +409,9 @@ func (s *Server) handleBridgeCommittedEnvelope(ctx context.Context, envelope bri
 		s.handleBridgeOutput(ctx, envelope)
 	case bridge.TypeAckTurnCompleted:
 		s.handleBridgeCompletion(ctx, envelope)
+		// See turn_resume.go: continue a turn whose model call died on a
+		// transient upstream fault, rather than leaving the reply truncated.
+		s.maybeResumeFailedTurn(ctx, envelope)
 	}
 }
 
