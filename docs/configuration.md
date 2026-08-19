@@ -44,6 +44,8 @@ harness:
   probe:       { accept_status: { get_healthz: [200], post_v1_messages: { unauthorized: [401], malformed_authenticated: [400] } },
                  pre_start_attempts: 3, pre_start_interval: 500ms, post_start_attempts: 5, post_start_interval: 1s }
   bridge:      { lease_ttl: 60s, heartbeat_interval: 30s, poll_interval: 5ms, ack_started_grace: 90s, reconnect_grace: 30s }
+  runtime:     { command_timeout: 30s, sandbox_memory_limit_bytes: 4294967296, sandbox_pids_limit: 256 }
+  maintenance: { stage_timeout: 2m, cold_fallback_interval: 5s }
   checkpoint:  { auto_enabled: true, idle_threshold: 2h, monitor_interval: 5m }
   reaper:      { failed_retention: 10m, checkpoint_image_retention: 720h }
 ```
@@ -68,6 +70,11 @@ harness:
 | `events` | durable-event retention + `emit_output` batching |
 | `probe` | accepted proxy statuses + pre/post-start attempt counts and intervals |
 | `bridge` | lease TTL, heartbeat/poll intervals, ack-started grace, reconnect grace |
+| `runtime.command_timeout` | ceiling per shelled-out command (`runsc`/`ip`/`nft`); bounds a half-dead sandbox wedging teardown (see below) |
+| `runtime.sandbox_memory_limit_bytes` | per-sandbox memcg ceiling (default 4 GiB; was a hardcoded 1 GiB) |
+| `runtime.sandbox_pids_limit` | per-sandbox pids cgroup limit |
+| `maintenance.stage_timeout` | ceiling per maintenance stage; must be `>= runtime.command_timeout` |
+| `maintenance.cold_fallback_interval` | how often cold fallback restarts sandboxes for sessions with queued turns |
 | `checkpoint.auto_enabled` | enable automatic **idle release** (see below) |
 | `checkpoint.idle_threshold` | idle time before release (checked-in `2h`) |
 | `reaper.failed_retention` | how long failed generations linger before physical cleanup |
@@ -91,6 +98,25 @@ checkpoint images: after `idle_threshold` the monitor tears down the idle sandbo
 free the compute slot, the session becomes `checkpointed` (logical "released"), and
 the next message cold-starts a fresh generation from the retained workspace +
 agent-home. See [sandbox-runtime.md](./sandbox-runtime.md).
+
+### Maintenance stage isolation
+
+The maintenance loop dispatches ticks to three independent workers — cleanup
+stages, cold fallback, and bridge polling — and each stage runs under
+`maintenance.stage_timeout`. A stage that overruns is left draining in the
+background and skipped on later ticks until it returns, so it can never overlap
+itself; the other workers keep running regardless.
+
+This exists because the loop used to be a single serial goroutine. When an
+OOM-killed sandbox left `runsc kill` hanging with no timeout, the stage blocked
+forever and starved everything behind it — including cold fallback, the step that
+starts a sandbox for a session whose generation died with turns still queued. The
+platform served HTTP 200 and looked healthy while no user could start a turn for
+34h. `runtime.command_timeout` bounds the individual command; this bounds the
+blast radius when something still hangs. See
+[proposals/runsc-cleanup-hang-blocks-maintenance.md](./proposals/runsc-cleanup-hang-blocks-maintenance.md)
+and `harness-ctl zombies`, which reports a stalled loop as a single fault rather
+than N affected sessions.
 
 ## `config/title-llm.yaml` (optional, gitignored)
 

@@ -206,9 +206,10 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   centered column. `MessageBubble`/`ShellEntry` own only vertical rhythm, so every
   caller — including the shared-link page — supplies the centering wrapper.
 - `workbench/prompt-suggestions.tsx` — four battery-domain starting points on an
-  empty session (capacity fade, dQ/dV peaks, thermal review, variant comparison).
-  Picking one fills the composer via `composer-draft.ts` rather than sending, since
-  each prompt needs the user's own file substituted in.
+  empty session (AC vs. DC session length, starting-SOC distribution, charge depth
+  by platform, F2 BMS fault mix). Picking one fills the composer via
+  `composer-draft.ts` rather than sending, since the period or platform in each
+  prompt still wants adjusting.
 - `workbench/activity-indicator.tsx` — per-turn status (thinking / tool / streaming /
   compacting / retrying) with request count + elapsed time.
 - `workbench/trace-list.tsx` + `trace-node.tsx` — progressive-disclosure execution
