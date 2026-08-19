@@ -152,6 +152,9 @@ func main() {
 				ProbeHealthzStatuses:    cfg.Harness.Probe.AcceptStatus.GetHealthz,
 				BridgeHeartbeat:         cfg.Harness.Bridge.HeartbeatInterval.Duration,
 				BridgePollInterval:      cfg.Harness.Bridge.PollInterval.Duration,
+				CommandTimeout:          cfg.Harness.Runtime.CommandTimeout.Duration,
+				SandboxMemoryLimitBytes: cfg.Harness.Runtime.SandboxMemoryLimitBytes,
+				SandboxPidsLimit:        cfg.Harness.Runtime.SandboxPidsLimit,
 			})
 			hub := events.NewHub()
 			volumeConfig, err := dataVolumeProvisionerConfig(cfg)

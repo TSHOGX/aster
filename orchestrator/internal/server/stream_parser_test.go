@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -445,5 +446,112 @@ func TestNativeEventsOutputNormalizerRejectsUnknownType(t *testing.T) {
 	}
 	if err := parser.Err(); err == nil || err.Error() != `unsupported native event type "agent.future"` {
 		t.Fatalf("unexpected native parser error: %v", err)
+	}
+}
+
+// A failed model call arrives as a message_end with stopReason "error", no
+// content text, and the detail in errorMessage. Before this was handled the
+// message was dropped for having no text, so the transcript simply stopped
+// mid-tool-loop with nothing in the database explaining why.
+func TestPiOutputNormalizerPersistsModelCallFailure(t *testing.T) {
+	srv, st := newParserTestServer(t)
+	parser := newStreamParser(srv, "sess_1", "pi")
+
+	rateLimit := `{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[{"type":"text","text":""}],` +
+		`"stopReason":"error","errorMessage":"Error code: 429 - Too many requests, the rate limit is 1000000 tokens per minute."}}`
+	parser.handle(runtime.Output{Stream: "stdout", Line: rateLimit})
+
+	messages, err := st.ListMessages(context.Background(), "sess_1")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected the failure to be recorded, got %d messages: %+v", len(messages), messages)
+	}
+	if messages[0].StopReason != piStopReasonError {
+		t.Fatalf("stop_reason = %q, want %q", messages[0].StopReason, piStopReasonError)
+	}
+	if messages[0].Content == "" {
+		t.Fatal("failure message must carry a user-facing notice")
+	}
+}
+
+// Text the model streamed before the call failed is real work; it must survive
+// alongside the failure notice rather than being discarded.
+func TestPiOutputNormalizerKeepsPartialTextOnFailure(t *testing.T) {
+	srv, st := newParserTestServer(t)
+	parser := newStreamParser(srv, "sess_1", "pi")
+
+	for _, line := range []string{
+		`{"type":"message_update","messageId":"msg_1","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"partial answer"}}`,
+		`{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"429 rate limit"}}`,
+	} {
+		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+	}
+
+	messages, err := st.ListMessages(context.Background(), "sess_1")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected one salvaged message, got %d: %+v", len(messages), messages)
+	}
+	if !strings.Contains(messages[0].Content, "partial answer") {
+		t.Fatalf("partial text was lost: %q", messages[0].Content)
+	}
+}
+
+// Two failures in one turn produce an identical notice. persistAssistant dedupes
+// on identical text, so the second must explicitly bypass that guard or the
+// transcript under-reports what happened.
+func TestPiOutputNormalizerRecordsRepeatedFailures(t *testing.T) {
+	srv, st := newParserTestServer(t)
+	parser := newStreamParser(srv, "sess_1", "pi")
+
+	line := `{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"429 rate limit"}}`
+	parser.handle(runtime.Output{Stream: "stdout", Line: line})
+	parser.handle(runtime.Output{Stream: "stdout", Line: line})
+
+	messages, err := st.ListMessages(context.Background(), "sess_1")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected both failures recorded, got %d: %+v", len(messages), messages)
+	}
+}
+
+func TestPiErrorClass(t *testing.T) {
+	// Classes drive both the operator log and which notice the user sees, so the
+	// real production error strings are pinned here verbatim.
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "upstream rate limit",
+			raw:  `{"type":"error","error":{"message":"Error code: 429 - {'code': 'ModelArts.81114', 'message': 'Too many requests, the rate limit is 1000000 tokens per minute.'}"}}`,
+			want: "upstream_rate_limit",
+		},
+		{
+			name: "proxy context torn down",
+			raw:  `403 {"detail":"Harness model proxy context unavailable"}`,
+			want: "proxy_context_lost",
+		},
+		{
+			name: "proxy correlation unavailable",
+			raw:  `503 {"detail":"Harness model proxy correlation unavailable"}`,
+			want: "proxy_context_lost",
+		},
+		{name: "empty", raw: "", want: "unknown"},
+		{name: "unrecognized", raw: "something else broke", want: "upstream_error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := piErrorClass(tc.raw); got != tc.want {
+				t.Fatalf("piErrorClass(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
 	}
 }

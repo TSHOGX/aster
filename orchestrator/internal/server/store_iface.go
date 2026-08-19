@@ -53,6 +53,10 @@ type messageStore interface {
 	SearchMessages(context.Context, string, string, int) ([]store.SearchHit, error)
 	EnqueueTurnMessage(context.Context, store.EnqueueTurnMessageParams) (store.EnqueueTurnMessageResult, error)
 	CancelTerminalSessionPendingTurns(context.Context, time.Time) (int64, error)
+	// ResumeFailedTurn appends a continuation turn for a turn that failed on a
+	// transient upstream fault. It writes no message row: the user did not type
+	// the continuation prompt.
+	ResumeFailedTurn(context.Context, store.ResumeFailedTurnParams) (store.ResumeFailedTurnResult, error)
 }
 
 // authStore covers login/auth sessions: issue, look up, revoke, sweep.

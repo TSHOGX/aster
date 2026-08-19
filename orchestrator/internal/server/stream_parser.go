@@ -36,6 +36,10 @@ type streamParser struct {
 	trace *traceCollector
 }
 
+// piStopReasonError is pi's terminator for a message whose model call failed.
+// The message carries no content text; the detail is in its errorMessage field.
+const piStopReasonError = "error"
+
 type outputNormalizer interface {
 	Handle(*streamParser, normalizerBridgeOutput)
 }
@@ -336,6 +340,16 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 	id := stringFromMap(event, "messageId")
 	stopReason := piEventStopReason(event)
 	text := piMessageText(event["message"])
+	// An upstream failure (rate limit, proxy rejection) arrives as a message_end
+	// whose content carries no text and whose detail lives in errorMessage. Left
+	// to the empty-text path below it would be dropped entirely, silently ending
+	// the reply mid-tool-loop: the transcript just stops, and nothing in the
+	// database records why. Persist it so the failure is visible to the user and
+	// to operators reading the messages table.
+	if stopReason == piStopReasonError {
+		p.persistAssistantError(id, event)
+		return
+	}
 	if text == "" {
 		// No authoritative inline text: salvage whatever streamed in under the
 		// real id and the empty-id fallback key, emitting it as this message's
@@ -351,6 +365,86 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 	p.dropPending(id)
 	p.dropPending("pi_assistant_pending")
 	p.persistAssistant(text, stopReason)
+}
+
+// persistAssistantError records a failed model call as an assistant message so
+// the transcript shows why the reply stopped instead of simply ending. Any text
+// the model had already streamed before failing is kept and the failure notice
+// appended, so partial work is never discarded.
+func (p *streamParser) persistAssistantError(id string, event map[string]any) {
+	notice := piErrorNotice(event)
+	salvaged := p.drainPending(id, "pi_assistant_pending")
+	text := notice
+	if salvaged = strings.TrimSpace(salvaged); salvaged != "" {
+		text = salvaged + "\n\n" + notice
+	}
+	p.srv.log.Warn("pi model call failed",
+		"session_id", p.sessionID,
+		"turn_id", p.turnID,
+		"error_class", piErrorClass(piMessageErrorMessage(event)),
+		"error", piMessageErrorMessage(event))
+	// Bypass persistAssistant's dedupe-on-identical-text guard: two consecutive
+	// failures in one turn produce the same notice, and the second must not be
+	// swallowed.
+	p.last = ""
+	p.persistAssistant(text, piStopReasonError)
+}
+
+// piMessageErrorMessage pulls pi's raw errorMessage off a message_end event.
+func piMessageErrorMessage(event map[string]any) string {
+	message, ok := event["message"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(stringFromMap(message, "errorMessage"))
+}
+
+// piErrorClass buckets a raw upstream error into a short, stable label. Used for
+// operator-facing logs and to choose the user-facing notice.
+func piErrorClass(raw string) string {
+	lowered := strings.ToLower(raw)
+	switch {
+	case raw == "":
+		return "unknown"
+	case strings.Contains(lowered, "429"), strings.Contains(lowered, "too many requests"),
+		strings.Contains(lowered, "rate limit"):
+		return "upstream_rate_limit"
+	case strings.Contains(lowered, "context unavailable"),
+		strings.Contains(lowered, "correlation unavailable"):
+		// Secondary fallout: the turn's proxy context was already torn down, so
+		// this call was rejected before it reached the model.
+		return "proxy_context_lost"
+	case strings.Contains(lowered, "401"), strings.Contains(lowered, "403"):
+		return "upstream_auth"
+	case strings.Contains(lowered, "timeout"), strings.Contains(lowered, "timed out"):
+		return "upstream_timeout"
+	case strings.Contains(lowered, "500"), strings.Contains(lowered, "502"),
+		strings.Contains(lowered, "503"), strings.Contains(lowered, "504"):
+		return "upstream_5xx"
+	default:
+		return "upstream_error"
+	}
+}
+
+// piErrorNotice renders the user-facing explanation for a failed model call.
+// Written in the session's own voice rather than as a raw stack of provider
+// JSON, which users cannot act on.
+func piErrorNotice(event map[string]any) string {
+	raw := piMessageErrorMessage(event)
+	switch piErrorClass(raw) {
+	case "upstream_rate_limit":
+		return "_模型服务达到速率上限，本次回复中断。请稍后重试或点击「继续」。_"
+	case "proxy_context_lost":
+		return "_模型连接已中断，本次回复未能完成。请点击「继续」重试。_"
+	case "upstream_auth":
+		return "_模型服务鉴权失败，本次回复中断。请联系管理员。_"
+	case "upstream_timeout":
+		return "_模型服务响应超时，本次回复中断。请点击「继续」重试。_"
+	case "upstream_5xx":
+		return "_模型服务暂时不可用，本次回复中断。请稍后点击「继续」重试。_"
+	default:
+		return "_模型调用失败，本次回复中断。请点击「继续」重试。_"
+	}
 }
 
 func piEventStopReason(event map[string]any) string {

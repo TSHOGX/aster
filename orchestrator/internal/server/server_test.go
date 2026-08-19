@@ -5904,6 +5904,10 @@ func testServerConfig(dir string) config.Config {
 			Reaper: config.ReaperConfig{
 				FailedRetention: config.Duration{Duration: 0},
 			},
+			Maintenance: config.MaintenanceConfig{
+				StageTimeout:         config.Duration{Duration: 10 * time.Second},
+				ColdFallbackInterval: config.Duration{Duration: 10 * time.Millisecond},
+			},
 			SandboxIdentity: config.SandboxIdentity{
 				UID: serverTestSandboxUID(),
 				GID: serverTestSandboxGID(),
@@ -6502,5 +6506,264 @@ func TestDataProxyAuthorizeRouteIsGatedAndAuthorizes(t *testing.T) {
 	defer badResp.Body.Close()
 	if badResp.StatusCode != http.StatusBadRequest {
 		t.Errorf("missing source ip status=%d, want 400", badResp.StatusCode)
+	}
+}
+
+// hangingDestroyRuntime blocks forever in Destroy, reproducing the 2026-08-17
+// outage: an OOM-killed sandbox left runsc unresponsive, so the `runsc kill`
+// inside Destroy never returned.
+type hangingDestroyRuntime struct {
+	recordingRuntime
+	destroyEntered chan struct{}
+	release        chan struct{}
+	enteredOnce    sync.Once
+}
+
+func newHangingDestroyRuntime() *hangingDestroyRuntime {
+	return &hangingDestroyRuntime{
+		destroyEntered: make(chan struct{}),
+		release:        make(chan struct{}),
+	}
+}
+
+func (r *hangingDestroyRuntime) Destroy(ctx context.Context, runtimeID string) error {
+	r.mu.Lock()
+	r.destroyRuntimeIDs = append(r.destroyRuntimeIDs, runtimeID)
+	r.mu.Unlock()
+	r.enteredOnce.Do(func() { close(r.destroyEntered) })
+	// Deliberately ignore ctx: a wedged runsc CLI does not observe cancellation
+	// either. Only the test releases this.
+	<-r.release
+	return nil
+}
+
+// TestRunMaintenanceColdFallbackSurvivesWedgedRecoveryStage is the regression
+// test for the 34h outage. Before stage isolation, runMaintenance ran every step
+// serially on one goroutine, so a Destroy that never returned starved every
+// later step — including startColdFallbackSessions, which is what starts a
+// sandbox for a session whose generation died with turns still queued. The
+// result was that no user could start a turn at all.
+//
+// Here recovery is wedged permanently while a separate session needs cold
+// fallback. Cold fallback must still run.
+func TestRunMaintenanceColdFallbackSurvivesWedgedRecoveryStage(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	cfg := testServerConfig(dir)
+	cfg.Harness.Network.CIDRPool = config.CIDRPrefix{Prefix: netip.MustParsePrefix("10.241.0.0/26")}
+	cfg.Harness.Bridge.HeartbeatInterval = config.Duration{Duration: 10 * time.Millisecond}
+	cfg.Harness.Bridge.ReconnectGrace = config.Duration{Duration: 10 * time.Millisecond}
+	cfg.Harness.Maintenance.ColdFallbackInterval = config.Duration{Duration: 10 * time.Millisecond}
+	// Long enough that the wedged stage stays wedged for the whole test: we are
+	// asserting isolation, not that the deadline eventually frees it.
+	cfg.Harness.Maintenance.StageTimeout = config.Duration{Duration: time.Minute}
+	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
+	now := time.Now().UTC()
+
+	// Session A: an expired-lease generation for recovery to trip over. Its
+	// Destroy call is the one that hangs.
+	stuckSession := createServerTestSession(t, ctx, st, dir, "sess_wedged_recovery", string(sessionstate.RunningIdle), now, nil)
+	stuck, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
+		SessionID: stuckSession.ID,
+		Owner:     leaseOwner,
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
+	})
+	if err != nil {
+		t.Fatalf("allocate stuck generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, stuckSession.ID, stuck.GenerationID, stuck.Owner, now); err != nil {
+		t.Fatalf("mark stuck generation live: %v", err)
+	}
+	if _, err := st.DBForTest().ExecContext(ctx, `
+UPDATE runtime_generations
+SET lease_owner = ?, lease_expires_at = ?, sandbox_last_seen_at = ?
+WHERE generation_id = ?`,
+		leaseOwner,
+		now.Add(-time.Minute).Format(time.RFC3339Nano),
+		now.Add(-time.Hour).Format(time.RFC3339Nano),
+		stuck.GenerationID,
+	); err != nil {
+		t.Fatalf("expire stuck generation lease: %v", err)
+	}
+
+	// Session B: a failed generation with a queued turn — the cold-fallback case.
+	waitingSession := createServerTestSession(t, ctx, st, dir, "sess_needs_fallback", string(sessionstate.RunningIdle), now, nil)
+	old, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
+		SessionID: waitingSession.ID,
+		Owner:     leaseOwner,
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
+	})
+	if err != nil {
+		t.Fatalf("allocate old generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, waitingSession.ID, old.GenerationID, old.Owner, now); err != nil {
+		t.Fatalf("mark old generation live: %v", err)
+	}
+	if err := st.FailGeneration(ctx, store.FailGenerationParams{
+		SessionID:    waitingSession.ID,
+		GenerationID: old.GenerationID,
+		Owner:        old.Owner,
+		ErrorClass:   "sandbox_oom",
+		Reason:       "sandbox_oom",
+		Now:          now,
+	}); err != nil {
+		t.Fatalf("fail old generation: %v", err)
+	}
+	if _, err := st.EnqueueTurn(ctx, waitingSession.ID, "message that must not hang forever", now); err != nil {
+		t.Fatalf("enqueue queued turn: %v", err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	rt := newHangingDestroyRuntime()
+	srv := &Server{
+		cfg:     cfg,
+		store:   st,
+		runtime: rt,
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, events.NewHub()),
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+	done := make(chan error, 1)
+	go func() {
+		done <- srv.RunMaintenance(runCtx)
+	}()
+	defer func() {
+		close(rt.release)
+		cancel()
+		<-done
+	}()
+
+	// Recovery must actually be wedged, otherwise the test proves nothing.
+	select {
+	case <-rt.destroyEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery stage never called Destroy; test cannot prove isolation")
+	}
+
+	// The payoff: cold fallback runs while recovery is stuck forever. Wait for the
+	// replacement generation AND the status flip — startColdFallbackSessions
+	// writes them in separate steps, so checking the status the moment the new
+	// generation appears would race.
+	deadline := time.Now().Add(10 * time.Second)
+	var got store.Session
+	for {
+		var err error
+		got, err = st.GetSession(ctx, waitingSession.ID)
+		if err != nil {
+			t.Fatalf("get waiting session: %v", err)
+		}
+		replaced := got.ActiveGenerationID != "" && got.ActiveGenerationID != old.GenerationID
+		if replaced && got.Status == string(sessionstate.RunningActive) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cold fallback did not complete while the recovery stage was wedged: session=%+v", got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// And the queued turn is now claimable on the new sandbox: the user's message
+	// actually proceeds rather than sitting in the queue forever.
+	grant, ok, err := st.ClaimNextTurn(ctx, store.ClaimNextTurnParams{
+		SessionID:    waitingSession.ID,
+		GenerationID: got.ActiveGenerationID,
+		Owner:        leaseOwner,
+		RequestID:    "req_wedged_isolation_claim",
+		LeaseTTL:     time.Minute,
+		Now:          time.Now().UTC(),
+	})
+	if err != nil || !ok {
+		t.Fatalf("queued turn not claimable after fallback: ok=%v err=%v", ok, err)
+	}
+	if grant.Content != "message that must not hang forever" {
+		t.Fatalf("claimed unexpected turn: %+v", grant)
+	}
+}
+
+// A stage that overruns its deadline must not be started again concurrently.
+func TestRunMaintenanceSkipsStageAlreadyRunning(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	cfg := testServerConfig(dir)
+	cfg.Harness.Bridge.HeartbeatInterval = config.Duration{Duration: 10 * time.Millisecond}
+	cfg.Harness.Bridge.ReconnectGrace = config.Duration{Duration: 10 * time.Millisecond}
+	// Short deadline so the loop gives up on the wedged stage and keeps ticking.
+	cfg.Harness.Maintenance.StageTimeout = config.Duration{Duration: 50 * time.Millisecond}
+	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
+	now := time.Now().UTC()
+
+	session := createServerTestSession(t, ctx, st, dir, "sess_stage_reentry", string(sessionstate.RunningIdle), now, nil)
+	gen, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
+		SessionID: session.ID,
+		Owner:     leaseOwner,
+		LeaseTTL:  time.Minute,
+		Now:       now,
+		Config:    serverTestAllocatorConfig(cfg, "pi"),
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, session.ID, gen.GenerationID, gen.Owner, now); err != nil {
+		t.Fatalf("mark generation live: %v", err)
+	}
+	if _, err := st.DBForTest().ExecContext(ctx, `
+UPDATE runtime_generations
+SET lease_owner = ?, lease_expires_at = ?, sandbox_last_seen_at = ?
+WHERE generation_id = ?`,
+		leaseOwner,
+		now.Add(-time.Minute).Format(time.RFC3339Nano),
+		now.Add(-time.Hour).Format(time.RFC3339Nano),
+		gen.GenerationID,
+	); err != nil {
+		t.Fatalf("expire generation lease: %v", err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	rt := newHangingDestroyRuntime()
+	srv := &Server{
+		cfg:     cfg,
+		store:   st,
+		runtime: rt,
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, events.NewHub()),
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+	done := make(chan error, 1)
+	go func() {
+		done <- srv.RunMaintenance(runCtx)
+	}()
+
+	select {
+	case <-rt.destroyEntered:
+	case <-time.After(5 * time.Second):
+		close(rt.release)
+		cancel()
+		<-done
+		t.Fatal("recovery stage never called Destroy")
+	}
+
+	// Many maintenance ticks elapse while the stage stays wedged; Destroy must
+	// not be re-entered, or a hung stage would pile up goroutines every tick.
+	time.Sleep(500 * time.Millisecond)
+	rt.mu.Lock()
+	calls := len(rt.destroyRuntimeIDs)
+	rt.mu.Unlock()
+
+	close(rt.release)
+	cancel()
+	<-done
+
+	if calls != 1 {
+		t.Fatalf("Destroy called %d times while wedged, want exactly 1 (stage must not overlap itself)", calls)
 	}
 }
