@@ -58,6 +58,11 @@ export const ZH: Record<MessageKey, string> = {
     "描述你需要的分析，或从下面的示例开始。智能体在沙箱中的 {path} 目录工作，结果会实时回传到这里。",
   "conversation.sharedNoLive": "共享会话不会实时更新",
   "conversation.jumpToLatest": "跳到最新",
+  "conversation.interrupted": "本次回复未完成就中断了。",
+  "conversation.continueTurn": "继续",
+  // Sent as the user's message when they click Continue, so it reads naturally
+  // in the transcript and tells the agent to resume rather than restart.
+  "conversation.continuePrompt": "请从刚才中断的地方继续。",
 
   // ── Composer ───────────────────────────────────────────────────────────────
   "composer.placeholder": "发送消息…",
@@ -235,9 +240,9 @@ export const ZH: Record<MessageKey, string> = {
   "prompt.startsoc.title": "充电起始 SOC 分布",
   "prompt.startsoc.body": "统计用户插枪时的 SOC 落在哪一档，区分随手补电和深放后再充。",
   "prompt.startsoc.prompt": "统计用户充电起始 SOC 的分布：按 <10%、10–20%、20–30%、30–40%、40–50%、≥50% 分档，给出各档的充电次数和占比。用户更习惯浅充补电还是深放后再充？",
-  "prompt.thermal.title": "温度日志分析",
-  "prompt.thermal.body": "扫描温度日志中的异常升温，与充放电倍率（C-rate）关联，总结哪些工步温度最高。",
-  "prompt.thermal.prompt": "分析 /workspace 里的温度日志：找出异常升温点，与 C-rate 和工步类型关联，并用表格总结温度最高的几个工步。",
+  "prompt.depth.title": "各平台充电深度对比",
+  "prompt.depth.body": "把各平台的单次充入电量、充电深度（DOD）和最高温度放在一起，看哪个平台充得最深。",
+  "prompt.depth.prompt": "对比 7 月各平台的平均单次充入电量（kWh）、平均充电深度（DOD）和最高温度：用一张表汇总，并告诉我哪个平台充得最深。",
   "prompt.faults.title": "F2 BMS 故障分布",
   "prompt.faults.body": "统计最近一天 F2 平台上报的 BMS 故障，排出占比最高的那一类。",
   "prompt.faults.prompt": "查一下最近 1 天 F2 平台的 BMS 故障分布：按故障分类统计次数和占比，并告诉我哪个故障占比最高。",

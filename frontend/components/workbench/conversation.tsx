@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bot, RefreshCw, Sparkles } from "lucide-react";
+import { Bot, RefreshCw, RotateCw, Sparkles } from "lucide-react";
 
 import { useActivity, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
@@ -15,7 +15,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { MessageWithPath } from "@/components/ui/message-with-path";
 import { ConversationSkeleton } from "@/components/ui/skeleton";
 import { StatusPill, statusTone } from "@/components/ui/badge";
-import { isFinalReply } from "@/lib/message-grouping";
+import { isFinalReply, wasInterrupted } from "@/lib/message-grouping";
 import { sessionModeLabel } from "@/lib/agents";
 import { dayKey, formatDayDivider, isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 
@@ -111,6 +111,16 @@ function ChatConversation() {
 
   const activityLive = activity.phase !== "idle";
 
+  // Offer to resume a turn that died without answering. Gated on the session
+  // being idle and writable: mid-stream, a toolUse tail is simply the turn still
+  // working, and on a read-only or ended session there is nothing to resume.
+  const interrupted =
+    accepting &&
+    !activityLive &&
+    convo.streaming.length === 0 &&
+    !convo.loading &&
+    wasInterrupted(convo.messages);
+
   return (
     <main className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
       <header className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-4 py-3 backdrop-blur sm:px-6">
@@ -203,6 +213,11 @@ function ChatConversation() {
             {convo.streaming.length === 0 && activityLive && convo.liveTrace.length > 0 ? (
               <StreamingBubble text="" liveTrace={convo.liveTrace} />
             ) : null}
+            {interrupted ? (
+              <InterruptedNotice
+                onContinue={() => sendMessage(session.id, t("conversation.continuePrompt"))}
+              />
+            ) : null}
           </div>
         )}
       </div>
@@ -214,5 +229,28 @@ function ChatConversation() {
         onSend={(content) => sendMessage(session.id, content)}
       />
     </main>
+  );
+}
+
+// Shown when the last turn ended without answering. The reason is already in the
+// transcript as an assistant notice, so this adds only the recovery action —
+// clicking it sends a short "carry on" prompt as the user, which resumes the work
+// in the existing sandbox with all its state intact.
+function InterruptedNotice({ onContinue }: { onContinue: () => void }) {
+  const t = useT();
+  return (
+    <div className="flex flex-wrap items-center gap-3 py-4">
+      <span className="text-xs text-[var(--color-foreground-muted)]">
+        {t("conversation.interrupted")}
+      </span>
+      <button
+        type="button"
+        onClick={onContinue}
+        className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-xs font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+      >
+        <RotateCw className="h-3 w-3" aria-hidden="true" />
+        {t("conversation.continueTurn")}
+      </button>
+    </div>
   );
 }

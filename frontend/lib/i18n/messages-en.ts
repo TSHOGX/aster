@@ -56,6 +56,11 @@ export const EN = {
     "Describe the analysis you need, or start from one of these. The agent works in {path} inside its sandbox and streams results back here.",
   "conversation.sharedNoLive": "Shared sessions do not update live",
   "conversation.jumpToLatest": "Jump to latest",
+  "conversation.interrupted": "This reply was cut short before it finished.",
+  "conversation.continueTurn": "Continue",
+  // Sent as the user's message when they click Continue, so it reads naturally
+  // in the transcript and tells the agent to resume rather than restart.
+  "conversation.continuePrompt": "Please continue from where you left off.",
 
   // ── Composer ───────────────────────────────────────────────────────────────
   "composer.placeholder": "Send a message…",
@@ -235,9 +240,9 @@ export const EN = {
   "prompt.startsoc.title": "Starting SOC distribution",
   "prompt.startsoc.body": "Bucket the SOC users plug in at, from below 10% up to 50% and above, to tell topping-up apart from running the pack down.",
   "prompt.startsoc.prompt": "Show the distribution of starting SOC across charging sessions, bucketed as <10%, 10–20%, 20–30%, 30–40%, 40–50%, ≥50%, with the session count per bucket. Do users mostly top up shallow or charge from deep discharge?",
-  "prompt.thermal.title": "Thermal log review",
-  "prompt.thermal.body": "Scan a temperature log for excursions, correlate them with C-rate, and summarize which steps ran hottest.",
-  "prompt.thermal.prompt": "Review the thermal log in /workspace: find temperature excursions, correlate them with C-rate and step type, and summarize the hottest steps in a table.",
+  "prompt.depth.title": "Charge depth by platform",
+  "prompt.depth.body": "Put the platforms side by side on energy per charge, depth of discharge and peak temperature, and name the one charging deepest.",
+  "prompt.depth.prompt": "For July, compare the platforms on average energy added per charging session (kWh), average depth of discharge (DOD), and peak temperature. Summarize them in one table and tell me which platform charges the deepest.",
   "prompt.faults.title": "F2 BMS fault mix",
   "prompt.faults.body": "Rank the BMS faults the F2 fleet reported in the last day and name the one that dominates.",
   "prompt.faults.prompt": "Look at BMS faults reported on the F2 platform over the last day. Break them down by fault, give the count and share of each, and tell me which fault dominates.",

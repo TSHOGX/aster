@@ -1,6 +1,6 @@
 "use client";
 
-import { BatteryCharging, Gauge, Thermometer, TriangleAlert } from "lucide-react";
+import { ArrowDownToLine, BatteryCharging, Gauge, TriangleAlert } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { requestComposerDraft } from "@/lib/composer-draft";
@@ -11,9 +11,9 @@ import { useT, type MessageKey } from "@/lib/i18n";
  *
  * Deliberately domain-specific: a generic "ask me anything" tells a new user
  * nothing about what this workbench is for, whereas these name the questions the
- * agent actually answers — fleet charging behaviour and BMS faults out of the
- * warehouse, plus one file-based log review. Picking one fills the composer rather
- * than sending, since the period, platform or file still wants adjusting.
+ * agent actually answers — fleet charging behaviour, charge depth per platform and
+ * BMS faults, all out of the warehouse. Picking one fills the composer rather than
+ * sending, since the period or platform still wants adjusting.
  */
 /*
   Only the icon and the key prefix live here; the three strings per card come from
@@ -23,7 +23,7 @@ import { useT, type MessageKey } from "@/lib/i18n";
   the card's title and body. These prompts are starting points meant to be edited
   before sending, so filling a Chinese user's composer with English defeats the
   purpose: they would have to read English to change the month or platform. Domain
-  notation stays as-is in both locales (SOC, BMS, F2, C-rate, /workspace).
+  notation stays as-is in both locales (SOC, DOD, kWh, BMS, F2).
 */
 /*
   Keys are spelled out rather than built as `prompt.${key}.title`: a template
@@ -44,10 +44,10 @@ const SUGGESTIONS = [
     promptKey: "prompt.startsoc.prompt"
   },
   {
-    Icon: Thermometer,
-    titleKey: "prompt.thermal.title",
-    bodyKey: "prompt.thermal.body",
-    promptKey: "prompt.thermal.prompt"
+    Icon: ArrowDownToLine,
+    titleKey: "prompt.depth.title",
+    bodyKey: "prompt.depth.body",
+    promptKey: "prompt.depth.prompt"
   },
   {
     Icon: TriangleAlert,
