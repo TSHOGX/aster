@@ -103,7 +103,7 @@ export type SharedLinkMessage = {
   content: string;
   created_at: string;
   /** Same values as ApiMessage.stop_reason; "toolUse" never appears at summary visibility. */
-  stop_reason?: "stop" | "toolUse" | "";
+  stop_reason?: "stop" | "toolUse" | "error" | "";
   trace?: TraceNode[];
 };
 
@@ -160,9 +160,10 @@ export type ApiMessage = {
   content: string;
   created_at: string;
   // pi's terminator for an assistant message: "stop" = a turn's final reply,
-  // "toolUse" = an intermediate tool-calling step, "" / absent = unknown
-  // (user messages, salvaged text, pre-migration history).
-  stop_reason?: "stop" | "toolUse" | "";
+  // "toolUse" = an intermediate tool-calling step, "error" = the model call
+  // failed and the reply was cut short, "" / absent = unknown (user messages,
+  // salvaged text, pre-migration history).
+  stop_reason?: "stop" | "toolUse" | "error" | "";
   trace?: TraceNode[];
   feedback?: "up" | "down" | "";
 };
