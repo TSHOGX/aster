@@ -62,6 +62,15 @@ type Config struct {
 	BridgePollInterval      time.Duration
 	BridgeMode              string
 	CommandRunner           CommandRunner
+	// CommandTimeout bounds each external command (runsc/ip/nft). Zero uses
+	// defaultCommandTimeout. Ignored when CommandRunner is supplied.
+	CommandTimeout time.Duration
+	// SandboxMemoryLimitBytes is the per-sandbox memcg limit in the OCI spec.
+	// Zero uses defaultSandboxMemoryLimitBytes.
+	SandboxMemoryLimitBytes int64
+	// SandboxPidsLimit is the per-sandbox pids cgroup limit. Zero uses
+	// defaultSandboxPidsLimit.
+	SandboxPidsLimit int64
 }
 
 const controlFileName = "session.json"
@@ -87,10 +96,61 @@ type CommandRunner interface {
 	CombinedOutput(context.Context, string, ...string) ([]byte, error)
 }
 
-type execCommandRunner struct{}
+// defaultCommandTimeout bounds every external command the runtime shells out to
+// (runsc introspection/teardown, ip, nft). All of them are short-lived probes or
+// teardown calls, so a generous ceiling costs nothing when things are healthy.
+//
+// It exists because an unbounded one took the whole platform down: after a
+// sandbox was OOM-killed its runsc control socket stayed open but stopped
+// answering, so `runsc kill` on that container never returned. The call inherited
+// the maintenance loop's service-lifetime ctx, so "no timeout" meant "forever",
+// and the single-goroutine maintenance loop stalled behind it for 34h — which
+// also starved cold-fallback, so no session could start a sandbox at all. See
+// docs/proposals/runsc-cleanup-hang-blocks-maintenance.md.
+const defaultCommandTimeout = 30 * time.Second
 
-func (execCommandRunner) CombinedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+// commandKillGrace is how long a timed-out command may take to die after its
+// context is cancelled before we stop waiting on its output pipes. Cancellation
+// SIGKILLs the direct child, but CombinedOutput also waits for every writer to
+// the pipes to close, and a wedged runsc leaves a gofer subprocess holding them.
+// Without this, cancelling the context would not actually unblock the caller.
+const commandKillGrace = 5 * time.Second
+
+// defaultSandboxMemoryLimitBytes is the per-sandbox memcg ceiling when config
+// leaves it unset. 4 GiB, up from a hardcoded 1 GiB that OOM-killed a
+// data-analysis session on 873 MB of pandas shared memory.
+const defaultSandboxMemoryLimitBytes int64 = 4 << 30
+
+// defaultSandboxPidsLimit is the per-sandbox pids cgroup limit when unset.
+const defaultSandboxPidsLimit int64 = 256
+
+type execCommandRunner struct {
+	// timeout bounds a single command. Zero means defaultCommandTimeout; use a
+	// negative value to opt out entirely (tests only).
+	timeout time.Duration
+}
+
+func (r execCommandRunner) CombinedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	timeout := r.timeout
+	if timeout == 0 {
+		timeout = defaultCommandTimeout
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
+	// Cancel already SIGKILLs the child; WaitDelay additionally abandons the
+	// output pipes so a surviving grandchild cannot keep us blocked forever.
+	cmd.WaitDelay = commandKillGrace
+	output, err := cmd.CombinedOutput()
+	if err != nil && ctx.Err() != nil {
+		// Surface the timeout itself rather than the generic "signal: killed",
+		// so callers and logs name the real failure.
+		return output, fmt.Errorf("command %q timed out after %s: %w", strings.Join(append([]string{name}, args...), " "), timeout, ctx.Err())
+	}
+	return output, err
 }
 
 type StartRequest struct {
@@ -187,7 +247,7 @@ type Container struct {
 func New(cfg Config) *Runtime {
 	runner := cfg.CommandRunner
 	if runner == nil {
-		runner = execCommandRunner{}
+		runner = execCommandRunner{timeout: cfg.CommandTimeout}
 	}
 	return &Runtime{
 		cfg:        cfg,
@@ -346,6 +406,9 @@ func (r *Runtime) deleteRunscContainer(ctx context.Context, runscBinary, contain
 
 func (r *Runtime) deleteRunscContainerDetailed(ctx context.Context, runscBinary, containerID string) (runscContainerDeleteResult, error) {
 	runscBinary = strutil.Default(runscBinary, "runsc")
+	// Best-effort: a half-dead sandbox (OOM-killed workload, control socket open
+	// but unresponsive) makes `kill` hang until it times out. That must not stop
+	// `delete -force`, which is the call that actually reclaims the container.
 	_, _ = r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "kill", containerID, "KILL")
 	output, err := r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "delete", "-force", containerID)
 	if err != nil {
@@ -619,6 +682,20 @@ func (r *Runtime) runscNetwork(details store.RuntimeGenerationDetails) string {
 
 func (r *Runtime) runscOverlay2(details store.RuntimeGenerationDetails) string {
 	return strutil.Default(details.RunscOverlay2, r.cfg.RunscOverlay2)
+}
+
+func (r *Runtime) sandboxMemoryLimitBytes() int64 {
+	if r.cfg.SandboxMemoryLimitBytes > 0 {
+		return r.cfg.SandboxMemoryLimitBytes
+	}
+	return defaultSandboxMemoryLimitBytes
+}
+
+func (r *Runtime) sandboxPidsLimit() int64 {
+	if r.cfg.SandboxPidsLimit > 0 {
+		return r.cfg.SandboxPidsLimit
+	}
+	return defaultSandboxPidsLimit
 }
 
 type runtimeSandboxIdentity struct {

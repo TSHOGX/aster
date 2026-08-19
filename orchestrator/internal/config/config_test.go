@@ -625,6 +625,49 @@ func TestValidateHarnessConfig(t *testing.T) {
 			want: "sandbox_heartbeat_stall_grace must be >= harness.bridge.lease_ttl",
 		},
 		{
+			name: "runtime command timeout positive",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Runtime.CommandTimeout.Duration = 0
+			},
+			want: "runtime.command_timeout must be > 0",
+		},
+		{
+			name: "sandbox memory limit positive",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Runtime.SandboxMemoryLimitBytes = 0
+			},
+			want: "sandbox_memory_limit_bytes must be > 0",
+		},
+		{
+			name: "sandbox pids limit positive",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Runtime.SandboxPidsLimit = 0
+			},
+			want: "sandbox_pids_limit must be > 0",
+		},
+		{
+			name: "maintenance stage timeout positive",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Maintenance.StageTimeout.Duration = 0
+			},
+			want: "maintenance.stage_timeout must be > 0",
+		},
+		{
+			name: "stage timeout below command timeout",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Runtime.CommandTimeout.Duration = time.Minute
+				cfg.Maintenance.StageTimeout.Duration = 30 * time.Second
+			},
+			want: "stage_timeout must be >= harness.runtime.command_timeout",
+		},
+		{
+			name: "cold fallback interval positive",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Maintenance.ColdFallbackInterval.Duration = 0
+			},
+			want: "cold_fallback_interval must be > 0",
+		},
+		{
 			name: "events bounds",
 			mutate: func(cfg *HarnessConfig) {
 				cfg.Events.RetentionWindow.Duration = 0
@@ -1229,4 +1272,47 @@ func sameInts(got, want []int) bool {
 		}
 	}
 	return true
+}
+
+// Turn resume is off by default: it re-enters a session that may already have run
+// tool calls with side effects, so it should be switched on knowingly.
+func TestTurnResumeDefaultsToDisabled(t *testing.T) {
+	cfg := defaultHarnessConfig()
+	if cfg.Bridge.TurnResume.Enabled {
+		t.Fatal("turn resume must default to disabled")
+	}
+	if cfg.Bridge.TurnResume.MaxAttempts <= 0 {
+		t.Fatalf("max_attempts default = %d, want > 0 so enabling needs no other edit", cfg.Bridge.TurnResume.MaxAttempts)
+	}
+	if err := validateHarnessConfig(cfg); err != nil {
+		t.Fatalf("defaults must validate: %v", err)
+	}
+}
+
+// Enabling resume with no attempt budget would silently never resume, which reads
+// as the feature being broken rather than misconfigured.
+func TestValidateHarnessConfigRejectsEnabledTurnResumeWithoutAttempts(t *testing.T) {
+	cfg := defaultHarnessConfig()
+	cfg.Bridge.TurnResume.Enabled = true
+	cfg.Bridge.TurnResume.MaxAttempts = 0
+
+	if err := validateHarnessConfig(cfg); err == nil {
+		t.Fatal("enabled turn resume with zero max_attempts must be rejected")
+	}
+}
+
+// Validated even while disabled, so switching the feature on cannot surface a
+// config error that was sitting latent in the file.
+func TestValidateHarnessConfigRejectsNegativeTurnResumeValues(t *testing.T) {
+	cfg := defaultHarnessConfig()
+	cfg.Bridge.TurnResume.MaxAttempts = -1
+	if err := validateHarnessConfig(cfg); err == nil {
+		t.Fatal("negative max_attempts must be rejected even while disabled")
+	}
+
+	cfg = defaultHarnessConfig()
+	cfg.Bridge.TurnResume.Backoff.Duration = -time.Second
+	if err := validateHarnessConfig(cfg); err == nil {
+		t.Fatal("negative backoff must be rejected even while disabled")
+	}
 }

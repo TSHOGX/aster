@@ -386,9 +386,9 @@ func (r *Runtime) renderSandboxIsolatedRuntimeSpec(req StartRequest) (runtimeSpe
 	spec.Mounts = append(pseudoMounts, plan.SpecMounts()...)
 	linux := map[string]any{
 		"resources": map[string]any{
-			"memory": map[string]any{"limit": 1073741824},
+			"memory": map[string]any{"limit": r.sandboxMemoryLimitBytes()},
 			"cpu":    map[string]any{"shares": 1024},
-			"pids":   map[string]any{"limit": 256},
+			"pids":   map[string]any{"limit": r.sandboxPidsLimit()},
 		},
 		"namespaces": []map[string]any{
 			{"type": "pid"},

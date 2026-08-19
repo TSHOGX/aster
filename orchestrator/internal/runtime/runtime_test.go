@@ -2694,3 +2694,140 @@ func testSandboxGID() int {
 	}
 	return 65534
 }
+
+// The 2026-08-17 outage: an OOM-killed sandbox left its runsc control socket
+// open but unresponsive, so `runsc kill` never returned. The call inherited the
+// maintenance loop's service-lifetime ctx, so it blocked forever and stalled the
+// whole loop. Every external command must now be bounded on its own.
+func TestExecCommandRunnerTimesOutHangingCommand(t *testing.T) {
+	runner := execCommandRunner{timeout: 150 * time.Millisecond}
+	start := time.Now()
+	// `sleep` stands in for a wedged runsc: it never returns on its own.
+	_, err := runner.CombinedOutput(context.Background(), "sleep", "30")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected the error to wrap context.DeadlineExceeded, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected the error to name the timeout, got %v", err)
+	}
+	// The point of the fix: the caller is released promptly rather than hanging
+	// for as long as the wedged command feels like living.
+	if elapsed > 5*time.Second {
+		t.Fatalf("runner blocked for %s, expected release near the 150ms timeout", elapsed)
+	}
+}
+
+// A grandchild holding the output pipes must not keep the caller blocked past
+// the timeout either: cancellation SIGKILLs the direct child, but CombinedOutput
+// also waits on the pipes. That is what WaitDelay covers. This reproduces the
+// real shape of the failure, where runsc left a gofer subprocess behind.
+func TestExecCommandRunnerTimesOutWhenGrandchildHoldsPipes(t *testing.T) {
+	runner := execCommandRunner{timeout: 200 * time.Millisecond}
+	start := time.Now()
+	// The shell exits immediately, but the backgrounded child inherits stdout
+	// and keeps the pipe open well past the deadline.
+	_, err := runner.CombinedOutput(context.Background(), "sh", "-c", "sleep 30 & exit 0")
+	elapsed := time.Since(start)
+
+	if elapsed > 10*time.Second {
+		t.Fatalf("runner blocked for %s despite WaitDelay; a grandchild can still wedge teardown", elapsed)
+	}
+	// Whether this surfaces an error depends on how the pipes are abandoned; the
+	// contract under test is bounded latency, not the specific error.
+	_ = err
+}
+
+func TestExecCommandRunnerRespectsCallerDeadline(t *testing.T) {
+	runner := execCommandRunner{timeout: time.Hour}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := runner.CombinedOutput(ctx, "sleep", "30"); err == nil {
+		t.Fatal("expected an error when the caller's deadline expires first")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("caller deadline ignored, blocked for %s", elapsed)
+	}
+}
+
+func TestExecCommandRunnerSucceedsWithinTimeout(t *testing.T) {
+	runner := execCommandRunner{}
+	out, err := runner.CombinedOutput(context.Background(), "echo", "healthy")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "healthy" {
+		t.Fatalf("unexpected output %q", out)
+	}
+}
+
+func TestNewRuntimeAppliesDefaultCommandTimeout(t *testing.T) {
+	rt := New(Config{})
+	runner, ok := rt.runner.(execCommandRunner)
+	if !ok {
+		t.Fatalf("expected execCommandRunner, got %T", rt.runner)
+	}
+	if runner.timeout != 0 {
+		t.Fatalf("expected zero timeout to defer to defaultCommandTimeout, got %s", runner.timeout)
+	}
+	// Zero must resolve to the default rather than "no timeout", which is the
+	// regression that caused the outage.
+	if defaultCommandTimeout <= 0 {
+		t.Fatal("defaultCommandTimeout must be positive")
+	}
+}
+
+func TestNewRuntimeHonorsConfiguredCommandTimeout(t *testing.T) {
+	rt := New(Config{CommandTimeout: 90 * time.Second})
+	runner, ok := rt.runner.(execCommandRunner)
+	if !ok {
+		t.Fatalf("expected execCommandRunner, got %T", rt.runner)
+	}
+	if runner.timeout != 90*time.Second {
+		t.Fatalf("expected the configured 90s timeout, got %s", runner.timeout)
+	}
+}
+
+// `delete -force` is what actually reclaims the container, so a hanging or
+// failing `kill` must never prevent it. Before the fix a wedged kill blocked the
+// delete outright.
+func TestDeleteRunscContainerProceedsWhenKillFails(t *testing.T) {
+	runner := &recordingCommandRunner{
+		fail: map[string]error{"runsc -root /root kill c1 KILL": errors.New("kill timed out")},
+	}
+	rt := New(Config{RunscRoot: "/root", CommandRunner: runner})
+
+	if _, err := rt.deleteRunscContainerDetailed(context.Background(), "runsc", "c1"); err != nil {
+		t.Fatalf("expected delete to succeed despite the kill failure: %v", err)
+	}
+	if !slices.Contains(runner.calls, "runsc -root /root delete -force c1") {
+		t.Fatalf("expected delete to run after the failed kill, calls: %v", runner.calls)
+	}
+}
+
+func TestSandboxResourceLimitsAreConfigurable(t *testing.T) {
+	rt := New(Config{})
+	if got := rt.sandboxMemoryLimitBytes(); got != defaultSandboxMemoryLimitBytes {
+		t.Fatalf("expected the default memory limit, got %d", got)
+	}
+	if got := rt.sandboxPidsLimit(); got != defaultSandboxPidsLimit {
+		t.Fatalf("expected the default pids limit, got %d", got)
+	}
+	// 1 GiB was the hardcoded value that OOM-killed a data-analysis session.
+	if defaultSandboxMemoryLimitBytes <= 1<<30 {
+		t.Fatalf("expected headroom above the old 1 GiB limit, got %d", defaultSandboxMemoryLimitBytes)
+	}
+
+	custom := New(Config{SandboxMemoryLimitBytes: 8 << 30, SandboxPidsLimit: 512})
+	if got := custom.sandboxMemoryLimitBytes(); got != 8<<30 {
+		t.Fatalf("expected the configured memory limit, got %d", got)
+	}
+	if got := custom.sandboxPidsLimit(); got != 512 {
+		t.Fatalf("expected the configured pids limit, got %d", got)
+	}
+}

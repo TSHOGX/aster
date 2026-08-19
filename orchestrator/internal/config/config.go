@@ -42,9 +42,9 @@ type Config struct {
 	// MaxShareLinkFiles how many files. Without a cap, one "select all" over a
 	// session that dumped intermediate tables would copy gigabytes inside a single
 	// request.
-	MaxShareLinkBytes    int64
-	MaxShareLinkFiles    int
-	CookieSecure         bool
+	MaxShareLinkBytes int64
+	MaxShareLinkFiles int
+	CookieSecure      bool
 	// CookieSameSiteNone is unconditionally true: the app is embeddable in any
 	// page (frame-ancestors *), and a SameSite=Strict cookie is not sent from
 	// inside a cross-site iframe, which would leave the embedded app showing a
@@ -210,6 +210,8 @@ type HarnessConfig struct {
 	Events               EventsConfig                     `yaml:"events"`
 	Probe                ProbeConfig                      `yaml:"probe"`
 	Bridge               BridgeConfig                     `yaml:"bridge"`
+	Runtime              RuntimeConfig                    `yaml:"runtime"`
+	Maintenance          MaintenanceConfig                `yaml:"maintenance"`
 	Checkpoint           CheckpointConfig                 `yaml:"checkpoint"`
 	Reaper               ReaperConfig                     `yaml:"reaper"`
 	SandboxIdentity      SandboxIdentity                  `yaml:"sandbox_identity"`
@@ -312,6 +314,58 @@ type BridgeConfig struct {
 	// "alive" forever by orchestrator-side lease renewal. Must be >= lease_ttl
 	// so a healthy sandbox is never gated between two heartbeats.
 	SandboxHeartbeatStallGrace Duration `yaml:"sandbox_heartbeat_stall_grace"`
+	// TurnResume controls automatic continuation of turns whose model call died
+	// on a transient upstream fault.
+	TurnResume TurnResumeConfig `yaml:"turn_resume"`
+}
+
+// TurnResumeConfig bounds automatic turn continuation. When a turn's model call
+// fails on a transient fault (upstream rate limit, lost proxy context) the reply
+// stops mid-work; the sandbox and its pi session are still healthy, so the turn
+// can be continued in place rather than lost.
+//
+// Deliberately conservative: continuation re-enters a session that may have
+// already run tool calls with side effects, so it is capped and only ever
+// triggered by error classes known to be transient.
+type TurnResumeConfig struct {
+	// Enabled gates the whole feature. Off by default: it re-drives a session
+	// that already executed side effects, so it should be switched on knowingly.
+	Enabled bool `yaml:"enabled"`
+	// MaxAttempts caps automatic continuations per user turn. Small on purpose —
+	// if two continuations do not finish the work, a human should look.
+	MaxAttempts int `yaml:"max_attempts"`
+	// Backoff is how long to wait after the failure before continuing, giving a
+	// per-minute upstream budget time to refill.
+	Backoff Duration `yaml:"backoff"`
+}
+
+// RuntimeConfig tunes how the orchestrator drives sandboxes on the host.
+type RuntimeConfig struct {
+	// CommandTimeout bounds each external command the runtime shells out to
+	// (runsc introspection/teardown, ip, nft). Guards against a half-dead
+	// sandbox wedging a teardown call forever and stalling the maintenance
+	// loop. See docs/proposals/runsc-cleanup-hang-blocks-maintenance.md.
+	CommandTimeout Duration `yaml:"command_timeout"`
+	// SandboxMemoryLimitBytes is the per-sandbox memcg limit written into the OCI
+	// spec. Exceeding it gets the workload OOM-killed inside the sandbox, so
+	// data-analysis sessions (pandas/pyarrow shared memory) need real headroom.
+	SandboxMemoryLimitBytes int64 `yaml:"sandbox_memory_limit_bytes"`
+	// SandboxPidsLimit is the per-sandbox pids cgroup limit.
+	SandboxPidsLimit int64 `yaml:"sandbox_pids_limit"`
+}
+
+// MaintenanceConfig bounds the periodic maintenance loop.
+type MaintenanceConfig struct {
+	// StageTimeout bounds a single maintenance stage. On expiry the loop stops
+	// waiting and moves to the next stage; the abandoned stage is skipped on
+	// later ticks until it finishes, so it can never run concurrently with
+	// itself. Keeps one wedged stage from starving the rest of the loop.
+	StageTimeout Duration `yaml:"stage_timeout"`
+	// ColdFallbackInterval paces the cold-fallback loop, which starts sandboxes
+	// for sessions whose generation died with turns still queued. It runs
+	// independently of the cleanup stages: this is the availability-critical
+	// path, and a stalled reaper must never keep new turns from starting.
+	ColdFallbackInterval Duration `yaml:"cold_fallback_interval"`
 }
 
 type CheckpointConfig struct {
@@ -621,6 +675,23 @@ func defaultHarnessConfig() HarnessConfig {
 			PostStartAttempts: 5,
 			PostStartInterval: Duration{Duration: time.Second},
 		},
+		Runtime: RuntimeConfig{
+			CommandTimeout: Duration{Duration: 30 * time.Second},
+			// 4 GiB, up from a hardcoded 1 GiB that OOM-killed a data-analysis
+			// session on 873 MB of pandas shared memory. This is a memcg ceiling,
+			// not a reservation, so max_sessions x limit may exceed host RAM —
+			// sandboxes are overwhelmingly idle and the kernel only enforces at the
+			// point of use. Lower it if a host runs genuinely concurrent heavy jobs.
+			SandboxMemoryLimitBytes: 4 << 30,
+			SandboxPidsLimit:        256,
+		},
+		Maintenance: MaintenanceConfig{
+			// Comfortably above runtime.command_timeout (30s) so a stage doing one
+			// teardown fails on its own command timeout with a clear error rather
+			// than being cut off mid-flight by the stage deadline.
+			StageTimeout:         Duration{Duration: 2 * time.Minute},
+			ColdFallbackInterval: Duration{Duration: 5 * time.Second},
+		},
 		Bridge: BridgeConfig{
 			LeaseTTL:                   Duration{Duration: time.Minute},
 			HeartbeatInterval:          Duration{Duration: 30 * time.Second},
@@ -628,6 +699,14 @@ func defaultHarnessConfig() HarnessConfig {
 			AckStartedGrace:            Duration{Duration: 90 * time.Second},
 			ReconnectGrace:             Duration{Duration: 30 * time.Second},
 			SandboxHeartbeatStallGrace: Duration{Duration: 90 * time.Second},
+			TurnResume: TurnResumeConfig{
+				Enabled:     false,
+				MaxAttempts: 2,
+				// Long enough for a per-minute upstream token budget to refill.
+				// The proxy already retries within a single call; this backoff
+				// covers the case where the whole turn still died.
+				Backoff: Duration{Duration: 30 * time.Second},
+			},
 		},
 		Checkpoint: CheckpointConfig{
 			AutoEnabled:     false,
@@ -762,6 +841,35 @@ func validateHarnessConfig(cfg HarnessConfig) error {
 	}
 	if cfg.Bridge.SandboxHeartbeatStallGrace.Duration < cfg.Bridge.LeaseTTL.Duration {
 		return fmt.Errorf("harness.bridge.sandbox_heartbeat_stall_grace must be >= harness.bridge.lease_ttl (else a healthy sandbox can be gated between heartbeats)")
+	}
+	// Validated even while disabled, so switching the feature on cannot surface a
+	// config error that was sitting latent in the file.
+	if cfg.Bridge.TurnResume.MaxAttempts < 0 {
+		return fmt.Errorf("harness.bridge.turn_resume.max_attempts must be >= 0")
+	}
+	if cfg.Bridge.TurnResume.Backoff.Duration < 0 {
+		return fmt.Errorf("harness.bridge.turn_resume.backoff must be >= 0")
+	}
+	if cfg.Bridge.TurnResume.Enabled && cfg.Bridge.TurnResume.MaxAttempts <= 0 {
+		return fmt.Errorf("harness.bridge.turn_resume.max_attempts must be > 0 when turn_resume is enabled")
+	}
+	if cfg.Runtime.CommandTimeout.Duration <= 0 {
+		return fmt.Errorf("harness.runtime.command_timeout must be > 0")
+	}
+	if cfg.Maintenance.StageTimeout.Duration <= 0 {
+		return fmt.Errorf("harness.maintenance.stage_timeout must be > 0")
+	}
+	if cfg.Maintenance.StageTimeout.Duration < cfg.Runtime.CommandTimeout.Duration {
+		return fmt.Errorf("harness.maintenance.stage_timeout must be >= harness.runtime.command_timeout (else a stage is cut off before its own command can time out)")
+	}
+	if cfg.Maintenance.ColdFallbackInterval.Duration <= 0 {
+		return fmt.Errorf("harness.maintenance.cold_fallback_interval must be > 0")
+	}
+	if cfg.Runtime.SandboxMemoryLimitBytes <= 0 {
+		return fmt.Errorf("harness.runtime.sandbox_memory_limit_bytes must be > 0")
+	}
+	if cfg.Runtime.SandboxPidsLimit <= 0 {
+		return fmt.Errorf("harness.runtime.sandbox_pids_limit must be > 0")
 	}
 	if cfg.Checkpoint.IdleThreshold.Duration < 0 {
 		return fmt.Errorf("harness.checkpoint.idle_threshold must be >= 0")
