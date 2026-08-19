@@ -26,6 +26,7 @@ publish 环境的运维脚本。
 ```
 harness-ctl status                服务/入口/在途对话 一屏总览
 harness-ctl inflight              列出正在进行的 turn（含归属用户、会话标题、时长、僵尸 lease 标注）
+harness-ctl zombies               扫僵尸 session（沙箱心跳失联）+ 检测 maintenance 循环卡死（单点故障）
 harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
 harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
 harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
@@ -60,6 +61,26 @@ harness-ctl safe-restart <svc>                  零打断重启：上维护页�
 turn 对应的 session 已被删时显示 `?`。用户维度的历史用量见 `users`。
 
 这是「防止重启打断对话」的依据。
+
+#### `zombies`
+两段输出，纯只读：
+
+1. **僵尸 session 扫描**：`running_active` 但沙箱 bridge 心跳静默 > 180s
+   （`ZOMBIE_STALL_SECS`）的会话。
+2. **maintenance 循环卡死检测**：上一段按 session 的判据只能看到*下游表象*，这段查
+   *单点根因*。两条独立判据——① orchestrator 名下有长寿命 `runsc`
+   **清理**子进程（`kill`/`delete`/`state`/`list` 跑成分钟级；不含 `run`，那是健康
+   沙箱的常驻监督进程）；② host-heartbeat 冻结（该文件由 maintenance 每 tick 写入，
+   所以它的新鲜度直接度量循环本身是否还在转）。
+
+只有 ② 才是循环停摆的直接证据；① 单独出现只说明某条清理命令挂住了，循环仍在转
+（每条命令现在都有 `runtime.command_timeout` 兜底，可自行恢复）。两者区分开，避免把
+「有个卡住的子进程」误报成「全平台故障」。
+
+为什么要单独查：2026-08-17 那次故障里，第 1 段把 7 个 session 全报成僵尸，容易把人
+引向逐个改库；真正的单点是一个永不返回的 `runsc kill` 卡住了整个 maintenance 循环，
+正确动作是清掉那个沙箱残骸。诊断与止血详见
+[../docs/proposals/runsc-cleanup-hang-blocks-maintenance.md](../docs/proposals/runsc-cleanup-hang-blocks-maintenance.md)。
 
 #### `traffic [N]`
 从 `/var/log/nginx/access.log` 取最近 N 行（默认 5000），汇总：时间窗口与粗略 QPS、

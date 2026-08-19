@@ -197,6 +197,9 @@ cmd_zombies() {
               ORDER BY s.id;")
   if [[ -z "$rows" ]]; then
     echo "  ${c_grn}(无 running_active session)${c_rst}"
+    # 仍要查循环健康度：循环停摆时新对话根本进不了 running_active,
+    # 所以"没有 running_active"绝不等于"平台健康"。
+    zombie_check_maintenance_stall
     return 0
   fi
   printf "  %-24s %-11s %-14s %s\n" "SESSION" "INFLIGHT" "SANDBOX-HB" "判定"
@@ -231,6 +234,110 @@ cmd_zombies() {
     echo "  ${c_dim}恢复需人工介入（备份DB→标 generation failed / turn canceled → session 回落 running_idle）。${c_rst}"
   fi
   echo "  ${c_dim}判据=沙箱 bridge 心跳文件(runtime_resource_instances.bridge_dir_path/heartbeat/bridge)新鲜度；纯只读。${c_rst}"
+  zombie_check_maintenance_stall
+}
+
+# 检测「orchestrator maintenance 循环卡死」这个单点故障。
+#
+# 为什么单独查：上面按 session 的判据只能看到下游表象。2026-08-17 那次故障里
+# 它把 7 个 session 全报成僵尸，但真正的单点是 orchestrator 卡在一个永不返回的
+# `runsc kill` 子进程上，导致整个 maintenance 循环停摆、所有新对话都起不了沙箱。
+# 报 N 个下游 session 会把人引向逐个改库，而正确动作是清掉那个卡住的子进程。
+#
+# 两条独立判据（纯只读）：
+#   ① orchestrator 有长寿命 runsc 子进程（正常的 teardown 是秒级）
+#   ② generation 行已建、资源标 live，但 run/logs/gen-*/ 是空的 → runsc 从未执行
+# 详见 docs/proposals/runsc-cleanup-hang-blocks-maintenance.md
+MAINT_STALL_CHILD_SECS="${MAINT_STALL_CHILD_SECS:-300}"
+# host-heartbeat 每个 maintenance tick(heartbeat_interval,默认30s)刷新一次。
+# 留足抖动余量,静默 > 180s(约 6 个 tick)视为循环停摆。
+MAINT_STALL_HB_SECS="${MAINT_STALL_HB_SECS:-180}"
+BRIDGE_HOST_HB_FILE="host"   # 与 bridge.HostHeartbeatFile 保持一致
+zombie_check_maintenance_stall() {
+  local now_epoch; now_epoch=$(date -u +%s)
+  local pid; pid=$(systemctl show -p MainPID --value harness-publish-orchestrator 2>/dev/null || true)
+  [[ -n "$pid" && "$pid" != "0" ]] || return 0
+
+  local findings=0 hb_frozen=0
+  echo
+  echo "${c_bold}maintenance 循环卡死检测（单点故障，优先于上面的 session 列表）：${c_rst}"
+
+  # ① 长寿命 runsc **teardown/introspection** 子进程：kill/delete/state/list 正常
+  #    秒级返回,跑成分钟级即为挂死。注意必须排除 `runsc ... run` ——那是健康沙箱的
+  #    常驻监督进程,本来就会跑几小时,把它算进来会对每个正常沙箱误报。
+  local kids
+  # `|| true`: ps 无匹配进程时退出码 1,在 set -e + pipefail 下会中断整个脚本。
+  kids=$(as_root ps -o pid=,etimes=,args= --ppid "$pid" 2>/dev/null \
+         | awk -v t="$MAINT_STALL_CHILD_SECS" '$2>t && /runsc/ && / (kill|delete|state|list)( |$)/' || true)
+  if [[ -n "$kids" ]]; then
+    findings=$((findings+1))
+    echo "  ${c_red}① orchestrator 有长寿命 runsc 清理子进程（> ${MAINT_STALL_CHILD_SECS}s）：${c_rst}"
+    while read -r kpid ksecs kargs; do
+      [[ -z "$kpid" ]] && continue
+      local kw; kw=$(as_root cat "/proc/$kpid/wchan" 2>/dev/null || true)
+      printf "     PID %-8s 已运行 %-8s wchan=%-22s %s\n" \
+        "$kpid" "$(printf '%dm%02ds' $((ksecs/60)) $((ksecs%60)))" "${kw:-?}" "$(echo "$kargs" | cut -c1-70)"
+    done <<< "$kids"
+    echo "     ${c_dim}多为半死沙箱(OOM 后控制面不应答)拖住 runsc CLI。${c_rst}"
+  fi
+
+  # ② host-heartbeat 冻结：这个文件由 maintenance 每 tick 写(bridge_dir 的 .host
+  #    兄弟目录/host-heartbeat/host),所以它的新鲜度**直接**度量循环自身是否还在转
+  #    ——比任何按 session 的判据都更接近根因。取所有 live 沙箱里最新的一个:只要
+  #    有一个在刷新,循环就是活的。
+  local newest=0 hb_seen=0
+  # 只取 generation 仍 active/idle 的沙箱:maintenance 本来就不给 failed/ended
+  # generation 写 host-heartbeat,把它们算进来会拿几个月前的泄漏行误报冻结。
+  local bdirs
+  bdirs=$(dbq "SELECT r.bridge_dir_path
+               FROM runtime_resource_instances r
+               JOIN runtime_generations g ON g.generation_id = r.generation_id
+               WHERE r.state='live' AND COALESCE(r.bridge_dir_path,'') <> ''
+                 AND g.status IN ('active','idle');" 2>/dev/null || true)
+  while read -r bdir; do
+    [[ -z "$bdir" ]] && continue
+    local hf="${bdir}.host/host-heartbeat/${BRIDGE_HOST_HB_FILE}"
+    local m; m=$(file_mtime "$hf")
+    [[ -z "$m" ]] && continue
+    hb_seen=1
+    (( m > newest )) && newest=$m
+  done <<< "$bdirs"
+  if (( hb_seen == 0 )); then
+    # 没有 live 沙箱 → 没有 host-heartbeat 可采样。退化为"循环是否响应"的直接探测:
+    # /healthz 只证明 HTTP 层活着(那次故障里它一直是 200),所以这里只做事实陈述,
+    # 不下结论,并给出人工复核入口。
+    echo "  ${c_dim}② 无 live 沙箱,host-heartbeat 无从采样;循环健康度待人工确认${c_rst}"
+    echo "     ${c_dim}复核:发一条消息看能否起沙箱,或 journalctl -u harness-publish-orchestrator -n 20${c_rst}"
+  else
+    local hb_age=$(( now_epoch - newest ))
+    if (( hb_age > MAINT_STALL_HB_SECS )); then
+      findings=$((findings+1)); hb_frozen=1
+      echo "  ${c_red}② host-heartbeat 已冻结 ${hb_age}s（阈值 ${MAINT_STALL_HB_SECS}s）${c_rst}"
+      echo "     ${c_dim}该文件由 maintenance 每 tick 写入,冻结即循环本身已停摆。${c_rst}"
+    else
+      echo "  ${c_grn}② host-heartbeat 新鲜（${hb_age}s 前）— maintenance 循环在转${c_rst}"
+    fi
+  fi
+
+  if (( findings == 0 )); then
+    echo "  ${c_grn}未发现 maintenance 卡死迹象${c_rst}"
+    return 0
+  fi
+  # 判据②(host-heartbeat 冻结)才是循环停摆的直接证据;①单独出现只说明有个清理
+  # 命令挂住了,循环仍在转(修复后每条命令都有超时,这是可以自行恢复的)。区分开,
+  # 避免把"有个卡住的子进程"误报成"全平台故障"。
+  if (( hb_frozen == 0 )); then
+    echo
+    echo "  ${c_yel}判定：循环仍在转(host-heartbeat 新鲜),但有清理命令挂住。${c_rst}"
+    echo "  ${c_dim}若持续不消退,按下面的止血清掉对应沙箱残骸;当前不影响新对话启动。${c_rst}"
+  else
+    echo
+    echo "  ${c_red}判定：maintenance 循环已停摆 —— 单点故障,不要逐个改库。${c_rst}"
+  fi
+  echo "  ${c_dim}止血：先 SIGKILL 半死沙箱的 runsc 残骸(boot/gofer/run 三个进程),卡住的${c_rst}"
+  echo "  ${c_dim}      runsc 子进程会自行返回,maintenance 复活后 cold-fallback 自动重启会话。${c_rst}"
+  echo "  ${c_dim}      顺序很重要:先杀残骸,否则紧随的 delete -force 会再次挂死。${c_rst}"
+  echo "  ${c_dim}辅助判据:host-heartbeat 是否冻结 —— ls -lt ${DATA_ROOT}/run/bridge/gen-*.host/ | head${c_rst}"
 }
 
 # ---- 命令：traffic ----
