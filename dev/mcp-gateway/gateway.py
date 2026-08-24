@@ -169,6 +169,21 @@ def filter_request_headers(raw_headers) -> dict:
     }
 
 
+def mcp_accept_header(existing: str | None = None) -> str:
+    """Streamable HTTP requires both application/json and text/event-stream.
+
+    Upstream servers (and the MCP spec) reject clients that only advertise one.
+    Always ensure both are present, regardless of what the sandbox sent.
+    """
+    parts = [p.strip() for p in (existing or "").split(",") if p.strip()]
+    lower = {p.split(";", 1)[0].strip().lower() for p in parts}
+    if "application/json" not in lower:
+        parts.append("application/json")
+    if "text/event-stream" not in lower:
+        parts.append("text/event-stream")
+    return ", ".join(parts) if parts else "application/json, text/event-stream"
+
+
 def rewrite_endpoint_data(data: str, public_base: str) -> str:
     """Rewrite an SSE endpoint event payload to this gateway's origin."""
     data = data.strip()
@@ -478,21 +493,14 @@ class Handler(BaseHTTPRequestHandler):
 
         headers = inject_upstream_auth(filter_request_headers(self.headers))
         headers["Accept-Encoding"] = "identity"
+        # Drop any client Accept (case variants) then force the MCP-required pair.
+        headers = {k: v for k, v in headers.items() if k.lower() != "accept"}
+        headers["Accept"] = mcp_accept_header(self.headers.get("Accept"))
         if method in ("POST", "PUT", "PATCH"):
             headers["Content-Type"] = (
                 self.headers.get("Content-Type") or "application/json"
             )
             headers["Content-Length"] = str(len(raw_body))
-            headers.setdefault(
-                "Accept",
-                self.headers.get("Accept") or "application/json, text/event-stream",
-            )
-        elif "Accept" not in {k.title(): k for k in headers}:
-            # Preserve client Accept when present (already in filtered headers).
-            if not any(k.lower() == "accept" for k in headers):
-                headers["Accept"] = self.headers.get("Accept") or (
-                    "text/event-stream, application/json"
-                )
 
         conn = None
         try:
