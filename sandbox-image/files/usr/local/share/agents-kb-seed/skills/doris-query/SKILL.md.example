@@ -1,16 +1,19 @@
 ---
-status: in-use
+status: deprecated
 support_count: 999
 confidence: 1.0
 ---
-# Doris Query
+# Doris Query (opt-in only — not the default)
 
 ## When To Use
 
-**This is the default data source — use it for every data question** unless the
-user explicitly asked for OBS / object storage / Parquet / raw signal files. Daily
-querying, statistics, reports, trend analysis and charts all belong here, not in
-`skills/obs-parquet-duckdb`.
+**Do not use this skill by default.** Everyday data questions go through MCP
+tools — see `skills/mcp-data-query`. Open this skill **only** when the user
+explicitly asks for direct Doris access / warehouse SQL (or an operator has
+directed you to bypass MCP).
+
+Do **not** fall back here because MCP felt slow or unfamiliar. If MCP cannot
+answer, report that and ask; do not silently switch to Doris.
 
 Three databases are available under the same read-only credential:
 

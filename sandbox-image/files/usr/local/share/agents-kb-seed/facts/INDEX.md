@@ -19,34 +19,32 @@ first — this file is just the map.
 
 ## Which data source (read before querying anything)
 
-There are two data stores, and they are not interchangeable:
+1. **MCP tools are the default for all data questions.** Statistics, reports,
+   trends, aggregations, charging analysis, signal lookups — start with MCP every
+   time. See `skills/mcp-data-query`. Discover tools in-session, then call them.
+2. **Doris direct SQL is opt-in only.** Open `skills/doris-query` only when the
+   user explicitly asks for Doris / direct warehouse SQL.
+3. **OBS Parquet is opt-in only.** Open `skills/obs-parquet-duckdb` only when the
+   user explicitly mentions OBS, object storage, Parquet, or raw signal files.
 
-1. **Doris is the default for all data questions.** Statistics, reports, trends,
-   aggregations, charging analysis, signal lookups — start here, every time. It is
-   modeled, indexed, and answers in seconds. See `skills/doris-query`.
-2. **OBS Parquet is the narrow exception.** Use it only when the user explicitly
-   mentions OBS, object storage, or Parquet, or explicitly asks to read raw signal
-   files. Do not use it for routine querying.
-
-If the user's question does not name Parquet/OBS, the answer comes from Doris. If
-Doris genuinely lacks the column, say so and ask — don't silently fall back to
-scanning object storage.
+If MCP cannot answer, say so and ask — do **not** silently fall back to Doris or
+scan object storage.
 
 ## Skills
 
-- `skills/doris-query` (`in-use`, **default data source**) — read-only Doris
-  access across `vhr_data` / `vehicle_signal` / `watt`: discover the live schema,
-  safe SQL, and streaming large exports. Use this for everyday data work.
-- `skills/obs-parquet-duckdb` (`in-use`, **narrow trigger — do not reach for it
-  by default**) — raw vehicle-signal Parquet on Huawei OBS, read in place with
-  DuckDB httpfs. **Only open this skill when the user explicitly says OBS, object
-  storage, Parquet, or asks for raw signal files.** Everyday data questions —
-  statistics, reports, trends, aggregations — belong in `skills/doris-query`; do
-  not go to Parquet for them. OBS is 1.13M+ bare objects where a single listing
-  costs tens of seconds, so scanning it when Doris would have answered wastes
-  minutes and returns worse data.
+- `skills/mcp-data-query` (`in-use`, **default data source**) — query live data
+  through session MCP tools (host gateway → upstream). Use this for everyday
+  data work.
+- `skills/doris-query` (**opt-in only** — not the default) — direct read-only
+  Doris SQL. Use only if the user explicitly requests Doris / raw SQL against the
+  warehouse.
+- `skills/obs-parquet-duckdb` (**opt-in only** — not the default) — raw
+  vehicle-signal Parquet on Huawei OBS via DuckDB. Only when the user explicitly
+  says OBS / object storage / Parquet / raw signal files.
 - `skills/matplotlib-cjk-fonts` (`in-use`) — render Chinese text in matplotlib /
   Pillow charts without tofu boxes.
+- `skills/battery-domain-reference` (`in-use`) — engineering specs / DTC / CAN
+  decode; for measured occurrences afterward, use `skills/mcp-data-query`.
 
 ## How to search
 
