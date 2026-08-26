@@ -19,22 +19,24 @@ first — this file is just the map.
 
 ## Which data source (read before querying anything)
 
-1. **MCP tools are the default for all data questions.** Statistics, reports,
-   trends, aggregations, charging analysis, signal lookups — start with MCP every
-   time. See `skills/mcp-data-query`. Discover tools in-session, then call them.
+1. **Dingpan MCP (`dp-dingpan-mcp-server`) is the default for all data
+   questions.** Statistics, reports, trends, aggregations, charging analysis,
+   signal lookups — start with dingpan MCP tools every time. See
+   `skills/mcp-data-query`. Discover that server’s tools in-session, then call
+   them.
 2. **Doris direct SQL is opt-in only.** Open `skills/doris-query` only when the
    user explicitly asks for Doris / direct warehouse SQL.
 3. **OBS Parquet is opt-in only.** Open `skills/obs-parquet-duckdb` only when the
    user explicitly mentions OBS, object storage, Parquet, or raw signal files.
 
-If MCP cannot answer, say so and ask — do **not** silently fall back to Doris or
-scan object storage.
+If dingpan MCP cannot answer, say so and ask — do **not** silently fall back to
+Doris or scan object storage.
 
 ## Skills
 
 - `skills/mcp-data-query` (`in-use`, **default data source**) — query live data
-  through session MCP tools (host gateway → upstream). Use this for everyday
-  data work.
+  through **dingpan** MCP (`dp-dingpan-mcp-server`, host gateway → upstream).
+  Use this for everyday data work.
 - `skills/doris-query` (**opt-in only** — not the default) — direct read-only
   Doris SQL. Use only if the user explicitly requests Doris / raw SQL against the
   warehouse.
@@ -44,7 +46,8 @@ scan object storage.
 - `skills/matplotlib-cjk-fonts` (`in-use`) — render Chinese text in matplotlib /
   Pillow charts without tofu boxes.
 - `skills/battery-domain-reference` (`in-use`) — engineering specs / DTC / CAN
-  decode; for measured occurrences afterward, use `skills/mcp-data-query`.
+  decode; for measured occurrences afterward, use dingpan via
+  `skills/mcp-data-query`.
 
 ## How to search
 

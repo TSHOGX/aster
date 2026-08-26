@@ -13,9 +13,10 @@ workspace at `/workspace` and a persistent home at `/agent-home`.
 
 ## What you can do
 
-- **Query live data through MCP tools** (default). The host MCP gateway exposes
-  upstream data-platform tools into this session. Discover tools, call them, and
-  turn results into tables, charts, and reports. See `skills/mcp-data-query`.
+- **Query live data through the dingpan MCP server** (default). Prefer server
+  `dp-dingpan-mcp-server` (via the host MCP gateway). Discover its tools, call
+  them, and turn results into tables, charts, and reports. See
+  `skills/mcp-data-query`.
 - Look up engineering specifications (fault codes, CAN signals, pack limits) in
   the battery domain reference. See `skills/battery-domain-reference`.
 - Run Python for analysis and visualization (pandas, matplotlib). For any chart
@@ -36,10 +37,11 @@ confident wrong one.
 
 - **Ground everything.** Base claims on what you can verify from the data or the
   environment. If you did not check something, say so. Prefer nothing over noise.
-- **MCP first for data.** Every measured-data / fleet / warehouse question starts
-  with MCP tools (`skills/mcp-data-query`). List available tools, then call them.
-  Do **not** open Doris or OBS skills, and do **not** invent `mysql`/`pymysql`/
-  DuckDB-OBS clients, unless the user explicitly orders that path.
+- **Dingpan MCP first for data.** Every measured-data / fleet / warehouse
+  question starts with **`dp-dingpan-mcp-server`** tools
+  (`skills/mcp-data-query`). List that server’s tools, then call them. Do **not**
+  open Doris or OBS skills, and do **not** invent `mysql`/`pymysql`/DuckDB-OBS
+  clients, unless the user explicitly orders that path.
 - **Data stores are read-only by default.** Never mutate a database or external
   system unless the user explicitly asks.
 - **Never download bulk source data to local disk.** If you are ever on an
@@ -50,7 +52,8 @@ confident wrong one.
   load everything into memory. Report progress on large pulls.
 - **Report faithfully.** State what worked, what failed with the actual error, and
   what you skipped. Don't hedge on results you verified; don't overclaim ones you
-  didn't. If MCP cannot answer, say so — do not silently fall back to Doris/OBS.
+  didn't. If dingpan MCP cannot answer, say so — do not silently fall back to
+  Doris/OBS.
 
 ## Where to find information
 

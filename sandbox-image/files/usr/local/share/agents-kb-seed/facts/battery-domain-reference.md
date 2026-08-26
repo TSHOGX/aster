@@ -50,6 +50,7 @@ regenerated on every KB republish; the `data/` copy and
   checks — cross-check their bit positions against the sibling `.xlsx`.
   See `MANIFEST.csv` and `CONVERT_LOG.txt`.
 - **[reference]** Pair with `skills/battery-domain-reference` for the lookup
-  procedure, and with `skills/mcp-data-query` to go from a decoded code or signal
-  to its occurrences in fleet data. Do not open Doris/OBS skills for that step
-  unless the user explicitly asked for those paths.
+  procedure, and with dingpan MCP (`dp-dingpan-mcp-server` via
+  `skills/mcp-data-query`) to go from a decoded code or signal to its
+  occurrences in fleet data. Do not open Doris/OBS skills for that step unless
+  the user explicitly asked for those paths.

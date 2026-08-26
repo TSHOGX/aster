@@ -19,8 +19,9 @@ are, or why a charge session stopped.
 This is the counterpart to the data-query skills: they give you what the fleet
 **did**; this gives you what the design **says**. Most real questions need both —
 decode a signal or fault code here, then query measured occurrences via MCP.
-For that second half use `skills/mcp-data-query` (the default data source).
-Do not open Doris/OBS skills unless the user explicitly asks for those paths.
+For that second half use dingpan MCP via `skills/mcp-data-query`
+(`dp-dingpan-mcp-server`, the default data source). Do not open Doris/OBS
+skills unless the user explicitly asks for those paths.
 
 ## Where it lives
 
