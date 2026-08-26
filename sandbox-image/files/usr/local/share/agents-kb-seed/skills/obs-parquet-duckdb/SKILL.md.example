@@ -7,14 +7,14 @@ confidence: 1.0
 
 ## When To Use
 
-**默认不用本 skill。** 日常数据问题一律走 MCP（`skills/mcp-data-query`），不要
-用本 skill，也不要改走 Doris。
+**默认不用本 skill。** 日常数据问题一律走 dingpan MCP
+（`skills/mcp-data-query` / `dp-dingpan-mcp-server`），不要用本 skill，也不要
+改走 Doris。
 
 只有当用户在提问里**明确点名** OBS、对象存储、Parquet、或明确要求「读原始文件/
-原始信号文件」时才打开。用户没提到这些 → 关掉本文件，去用
-`skills/mcp-data-query`。
+原始信号文件」时才打开。用户没提到这些 → 关掉本文件，去用 dingpan MCP。
 
-即使用户提到了 OBS，也优先确认 MCP 工具能否覆盖；MCP 答不了再走本 skill。
+即使用户提到了 OBS，也优先确认 dingpan MCP 工具能否覆盖；答不了再走本 skill。
 OBS 是海量裸对象，列目录与扫描成本极高——不要当成默认数仓。
 
 ## 硬性红线（先读这条）
@@ -294,7 +294,7 @@ print(len(peak), "vehicles")     # 结果已聚合到"每车一行"，可安全�
 
 ## Checklist（每次分析前自查）
 
-- [ ] 这个问题 MCP 能答吗？能就走 `skills/mcp-data-query`。
+- [ ] 这个问题 dingpan MCP（`dp-dingpan-mcp-server`）能答吗？能就走 `skills/mcp-data-query`。
 - [ ] 我有没有写下载/落地原始文件的代码？（有 → 删掉，改用 `read_parquet('s3://...')`）
 - [ ] 路径里写死了已知的批次/日期/小时分区吗？
 - [ ] 列名是这次搜 schema 搜出来的，不是记忆里的？
