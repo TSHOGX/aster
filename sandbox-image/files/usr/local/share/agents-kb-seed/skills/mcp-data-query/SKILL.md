@@ -16,9 +16,6 @@ analysis, and similar work must go through the **dingpan MCP server** tools
 exposed in this session — server name **`dp-dingpan-mcp-server`** (via the host
 MCP gateway at `http://harness-mcp.internal:8103/`).
 
-Do **not** open `skills/doris-query` or `skills/obs-parquet-duckdb` unless the
-user explicitly orders a direct Doris SQL or OBS/Parquet path.
-
 Specification / DTC / CAN decode questions still use
 `skills/battery-domain-reference`; after you decode a code or signal, come back
 here and query occurrences via **dingpan MCP tools**.
@@ -29,6 +26,11 @@ here and query occurrences via **dingpan MCP tools**.
   Transport is typically streamable-http to `http://harness-mcp.internal:8103/`.
   Real tokens stay on the host gateway; never invent or hard-code upstream
   credentials.
+- **Table / schema knowledge:** before writing filters or SQL-like arguments,
+  read `/agents/data/dingpan/README.md` (Dingpan MCP — 业务数据表知识库). It
+  documents the GaussDB (Gauss100) business tables under schema
+  `digital_operation` reachable via this MCP. Prefer that map over guessing
+  table or column names.
 - If other MCP servers appear in the session, still **prefer dingpan** for data
   queries unless the user names a different server.
 - Tool names and argument schemas come from the live dingpan server —
@@ -39,19 +41,23 @@ here and query occurrences via **dingpan MCP tools**.
 
 ## Procedure
 
-1. **Target dingpan.** Confirm `dp-dingpan-mcp-server` (or the dingpan-named
+1. **Read the dingpan table map.** Open `/agents/data/dingpan/README.md` and
+   identify the relevant tables / fields for the question (schema
+   `digital_operation` on GaussDB).
+2. **Target dingpan.** Confirm `dp-dingpan-mcp-server` (or the dingpan-named
    server) is available in this session’s MCP config.
-2. **List dingpan tools.** Inspect tool schemas from that server before the
+3. **List dingpan tools.** Inspect tool schemas from that server before the
    first call. Note each tool’s name, required args, and what it returns.
-3. **Pick the smallest fitting dingpan tool.** Prefer a purpose-built
+4. **Pick the smallest fitting dingpan tool.** Prefer a purpose-built
    query/search tool over a generic “run arbitrary SQL” tool when both exist.
-   Prefer filtered / paginated calls over unbounded dumps.
-4. **Call the dingpan tool** with explicit arguments. If a call fails, report
+   Prefer filtered / paginated calls over unbounded dumps. Align arguments with
+   names from `/agents/data/dingpan/README.md`.
+5. **Call the dingpan tool** with explicit arguments. If a call fails, report
    the exact MCP / upstream error; do not silently retry via Doris or OBS.
-5. **Ground the answer** in dingpan tool results. Cite which tool and key
+6. **Ground the answer** in dingpan tool results. Cite which tool and key
    filters you used. Turn tabular results into concise tables/charts in
    `/workspace` when useful (matplotlib CJK: `skills/matplotlib-cjk-fonts`).
-6. **If dingpan MCP cannot answer**, say so clearly and ask the user how to
+7. **If dingpan MCP cannot answer**, say so clearly and ask the user how to
    proceed. Only if they explicitly request Doris direct access or OBS/Parquet
    should you open those skills.
 
@@ -59,11 +65,6 @@ here and query occurrences via **dingpan MCP tools**.
 
 - **Dingpan MCP first.** Start every data question with
   `dp-dingpan-mcp-server` tools. Do not skip MCP to “try Doris first”.
-- **No Doris by default.** Do not connect with `mysql`/`pymysql` to Doris FE,
-  and do not follow `skills/doris-query`, unless the user explicitly asks for
-  direct Doris SQL.
-- **No OBS by default.** Do not open `skills/obs-parquet-duckdb` unless the user
-  explicitly names OBS / object storage / Parquet / raw signal files.
 - **No credential inventing.** Never put real tokens in workspace files or in
   shell history for the upstream MCP; the gateway injects auth.
 - **Read-only posture.** Do not call MCP tools that mutate external systems
@@ -81,3 +82,5 @@ here and query occurrences via **dingpan MCP tools**.
   as “fall back to Doris”.
 - Tool schemas change; rediscover after reconnect rather than reusing stale
   argument shapes from a previous session.
+- If `/agents/data/dingpan/README.md` is missing, say so and discover cautiously
+  via MCP metadata tools only — do not invent table names from memory.

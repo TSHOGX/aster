@@ -22,8 +22,8 @@ first — this file is just the map.
 1. **Dingpan MCP (`dp-dingpan-mcp-server`) is the default for all data
    questions.** Statistics, reports, trends, aggregations, charging analysis,
    signal lookups — start with dingpan MCP tools every time. See
-   `skills/mcp-data-query`. Discover that server’s tools in-session, then call
-   them.
+   `skills/mcp-data-query`. Read table/schema notes in `data/dingpan/README.md`
+   first, then discover that server’s tools in-session and call them.
 2. **Doris direct SQL is opt-in only.** Open `skills/doris-query` only when the
    user explicitly asks for Doris / direct warehouse SQL.
 3. **OBS Parquet is opt-in only.** Open `skills/obs-parquet-duckdb` only when the
@@ -36,7 +36,8 @@ Doris or scan object storage.
 
 - `skills/mcp-data-query` (`in-use`, **default data source**) — query live data
   through **dingpan** MCP (`dp-dingpan-mcp-server`, host gateway → upstream).
-  Use this for everyday data work.
+  Table map: `data/dingpan/README.md` (GaussDB `digital_operation`). Use this
+  for everyday data work.
 - `skills/doris-query` (**opt-in only** — not the default) — direct read-only
   Doris SQL. Use only if the user explicitly requests Doris / raw SQL against the
   warehouse.
