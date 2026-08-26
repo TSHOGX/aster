@@ -97,4 +97,5 @@ head -12 "$KB/tables/故障列表/23_故障列表_V2.0.5_20240330/故障诊断�
 grep -rn "FaultNum\|CellVolLow" "$KB/can/CAN信号矩阵/X2/"*.signals.csv
 ```
 
-Then take that signal / DTC to `skills/mcp-data-query` for occurrence counts.
+Then take that signal / DTC to dingpan MCP (`skills/mcp-data-query`) for
+occurrence counts.
