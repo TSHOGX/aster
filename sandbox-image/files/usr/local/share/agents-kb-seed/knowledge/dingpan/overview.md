@@ -19,7 +19,7 @@ explicitly asks for those.
   `curl` the gateway, never put secrets in `mcp.json`.
 - Server name in `mcp.json` is typically `dp-dingpan` or `dp-dingpan-mcp-server`.
 - Pi tool names are prefixed: `mcp_<server>_<tool>` (example:
-  `mcp_dp_dingpan_listBusinessTables`).
+  `mcp_dp_dingpan_listTables`).
 
 ## What this knowledge base covers
 

@@ -1,33 +1,36 @@
 ---
 id: dingpan/tools
 title: Dingpan MCP tools
-description: The three supported dingpan MCP tools (listBusinessTables, getTableSchemas, executeQuery) and how to call them
+description: The three dingpan MCP tools as registered on the wire — listTables, tableSchemas, executeQuery — and how to call them
 tags: [dingpan, mcp, tools]
 ---
 
 # Dingpan MCP tools
 
-**Only these three tools exist.** Do not invent other names. Wrong names
-(`listTables`, `tableSchemas`) often hang until the client timeout.
+**Trust `tools/list` names and `inputSchema`, not the upstream prose.** The
+server's own descriptions still mention `listBusinessTables` / `getTableSchemas`
+and have the three write-ups swapped. Those two names are **not registered**.
+Calling them returns `Unknown tool`.
 
-| Tool | Purpose |
-|---|---|
-| `listBusinessTables` | Tables this token can access (name, biz desc, source) |
-| `getTableSchemas` | DDL for one or more tables; names need `schema.table`; comma-separated for batch |
-| `executeQuery` | Read-only `SELECT`; server may auto `LIMIT 10000`; JSON with `rowCount` + `data` |
+Confirmed 2026-08-27 against `tools/list`:
 
-Pi-facing names are prefixed with the MCP server id, e.g.
-`mcp_dp_dingpan_listBusinessTables`. Discover the live names from the session
-tool list; do not hard-code a prefix if the list already shows them.
+| Wire name | Arguments | What it actually does |
+|---|---|---|
+| `listTables` | none | List tables this token can access (name, biz desc, source) |
+| `tableSchemas` | `tableNames` (string): `schema.table`, comma-separated for batch | DDL / CREATE TABLE for those tables |
+| `executeQuery` | `sql` (string): read-only `SELECT` | Run the query; server may auto `LIMIT 10000` |
+
+Pi-facing names are prefixed: `mcp_<server>_listTables` (example
+`mcp_dp_dingpan_listTables`). Use the names from the live tool list.
 
 ## Call order
 
 1. Pick tables from MCP `kb_get dingpan/tables` when the article already names them.
-2. Call `listBusinessTables` **only** if the table map does not cover the question.
-3. `getTableSchemas` with `schema.table` (example:
+2. Call `listTables` **only** if the table map does not cover the question.
+3. `tableSchemas` with `tableNames` = `schema.table` (example:
    `digital_operation.dwd_e2e_trace_barcode_material`). Batch with commas.
-4. `executeQuery` with a narrow `SELECT` (filters + explicit columns). Do not
-   `SELECT *` on huge tables.
+4. `executeQuery` with `sql` a narrow `SELECT` (filters + explicit columns). Do
+   not `SELECT *` on huge tables.
 
 ## Hard rules
 
@@ -35,8 +38,9 @@ tool list; do not hard-code a prefix if the list already shows them.
 - Read-only. No mutating SQL.
 - If dingpan tools are missing from the tool list, stop and report wiring
   failure.
+- Do not call `listBusinessTables` or `getTableSchemas`. They are not tools.
 
 ## TODO (human)
 
-- Paste real example arguments / JSON shapes from a successful session.
-- Note any extra tools this deployment actually exposes (only if confirmed).
+- Paste a successful `executeQuery` JSON shape (`rowCount` / `data` vs wrapped
+  `result` string).

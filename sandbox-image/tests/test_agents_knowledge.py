@@ -38,7 +38,7 @@ tags: [dingpan, mcp, tools]
 
 # Tools
 
-Use listBusinessTables, getTableSchemas, executeQuery.
+Use listTables, tableSchemas, executeQuery.
 """
 
 
@@ -129,10 +129,10 @@ class CatalogTest(unittest.TestCase):
             catalog = kb.render_catalog_message(entries)
             self.assertIn("<available_knowledge>", catalog)
             self.assertIn("`dingpan/tools`", catalog)
-            self.assertNotIn("listBusinessTables", catalog)
+            self.assertNotIn("listTables", catalog)
             body = kb.render_knowledge_content(articles[0])
             self.assertIn('<knowledge_content id="dingpan/tools">', body)
-            self.assertIn("listBusinessTables", body)
+            self.assertIn("listTables", body)
 
 
 class SeedTreeTest(unittest.TestCase):
@@ -168,7 +168,7 @@ class CliTest(unittest.TestCase):
             env=env,
         )
         self.assertIn("<knowledge_body>", got.stdout)
-        self.assertIn("listBusinessTables", got.stdout)
+        self.assertIn("listTables", got.stdout)
 
     def test_unknown_id_exits_2(self):
         proc = subprocess.run(
@@ -244,7 +244,7 @@ class McpStdioTest(unittest.TestCase):
             )
             body = got["result"]["content"][0]["text"]
             self.assertIn("<knowledge_body>", body)
-            self.assertIn("listBusinessTables", body)
+            self.assertIn("listTables", body)
             bad = self._rpc(
                 proc,
                 {

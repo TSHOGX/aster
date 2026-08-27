@@ -12,7 +12,7 @@ Patterns for `executeQuery`. Always:
 - Read-only `SELECT`.
 - Explicit columns (no `SELECT *` on large tables).
 - Filters that bound time / VIN / id before aggregating.
-- Confirm column names with `getTableSchemas` (or `dingpan/tables`) first.
+- Confirm column names with `tableSchemas` (or `dingpan/tables`) first.
 
 The server may auto-`LIMIT 10000`. If you need a true total, `COUNT(*)` with
 the same filters rather than paging locally.

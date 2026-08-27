@@ -8,9 +8,9 @@ tags: [dingpan, tables, schema]
 # Dingpan table map
 
 This is the **first place** to pick a table. Prefer it over a full remote
-`listBusinessTables` when the question already matches a row below.
+`listTables` when the question already matches a row below.
 
-Schema prefix is required for `getTableSchemas` (`schema.table`). The warehouse
+Schema prefix is required for `tableSchemas` (`schema.table`). The warehouse
 schema used here is `digital_operation` unless a row says otherwise.
 
 Bulky extras (full DDL dumps, sample extracts) belong in
@@ -42,12 +42,12 @@ above in sync if you add a whole new domain.
 ## digital_operation.dwd_e2e_trace_barcode_material
 
 - **Meaning (业务):** end-to-end barcode / material trace (example name from the
-  skill; confirm against live `getTableSchemas` before relying on columns).
+  skill; confirm against live `tableSchemas` before relying on columns).
 - **Grain:** _TODO_
 - **Key columns:** _TODO_
 - **Useful filters:** _TODO_
 - **When to use:** _TODO_
-- **Caveats:** confirm column names with `getTableSchemas` before `executeQuery`.
+- **Caveats:** confirm column names with `tableSchemas` before `executeQuery`.
 
 ## TODO (human)
 

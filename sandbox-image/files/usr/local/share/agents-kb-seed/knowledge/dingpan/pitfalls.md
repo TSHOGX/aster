@@ -1,29 +1,41 @@
 ---
 id: dingpan/pitfalls
 title: Dingpan MCP pitfalls
-description: Known dingpan MCP failure modes — wrong tool names that hang, schema prefixes, timeouts, missing README
+description: Known dingpan MCP failure modes — invented tool names, swapped descriptions, schema prefixes, missing table map
 tags: [dingpan, mcp, pitfalls]
 ---
 
 # Dingpan MCP pitfalls
 
-## Wrong tool names hang
+## Invented names are not tools
 
-Calling `listTables` or `tableSchemas` (wrong names) wastes a full client
-timeout (30s / 300s) and returns `-32001`. Use `listBusinessTables` and
-`getTableSchemas`. If a name is not in `dingpan/tools`, do not guess.
+The live tools are `listTables`, `tableSchemas`, `executeQuery`. The strings
+`listBusinessTables` and `getTableSchemas` appear only in **upstream
+descriptions**. Calling them returns `Unknown tool` (fast). Do not invent other
+names either.
+
+## Descriptions are swapped
+
+`tools/list` prose for the three tools is copy-pasted onto the wrong names
+(`tableSchemas` text talks about listing tables; `executeQuery` text talks about
+DDL). Ignore that prose. Use **name + inputSchema**:
+
+- `listTables` — no args
+- `tableSchemas` — `tableNames`
+- `executeQuery` — `sql`
 
 ## Schema prefix is required
 
-`getTableSchemas` needs `schema.table` (example:
-`digital_operation.dwd_e2e_trace_barcode_material`). Bare table names fail or
-hang. Batch with commas only after each name is fully qualified.
+`tableSchemas` needs `schema.table` (example:
+`digital_operation.dwd_e2e_trace_barcode_material`). Bare table names fail.
+Batch with commas only after each name is fully qualified.
 
 ## Heavy calls are slow, not broken
 
-`listBusinessTables` and large `executeQuery` can sit on upstream for a long
-time. Wait for the result. If the host needs it, raise
-`settings.requestTimeoutMs` in `mcp.json` — do not retry-spam.
+`listTables` and large `executeQuery` can sit on upstream for a long time. Wait
+for the result. If the host needs it, raise `settings.requestTimeoutMs` in
+`mcp.json` — do not retry-spam. A *steady* ~60s on every call was the old
+gateway SSE hang (fixed); do not treat that as a reason to skip `listTables`.
 
 ## Skip the filesystem scavenger hunt
 
@@ -34,8 +46,8 @@ MCP. If tools are missing from the session list, report a wiring failure.
 ## Missing table map
 
 If `kb_get dingpan/tables` is a stub and `/agents/data/dingpan/README.md` is
-absent, say so. Do not invent table names. `listBusinessTables` is the
-fallback for discovery, then `getTableSchemas` before any `executeQuery`.
+absent, say so. Do not invent table names. `listTables` is the fallback for
+discovery, then `tableSchemas` before any `executeQuery`.
 
 ## No silent fallback
 
@@ -44,6 +56,6 @@ OBS Parquet unless the user explicitly orders that path.
 
 ## TODO (human)
 
-- Record the exact error payloads you have seen (`-32001`, authz denials, empty
-  `data`, truncated `LIMIT`).
+- Record the exact error payloads you have seen (`Unknown tool`, authz denials,
+  empty `data`, truncated `LIMIT`).
 - Note tables that look queryable but are too large / wrong grain / PII.
