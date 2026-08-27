@@ -276,7 +276,19 @@ type ExpiredRuntimeRecoveryCandidate struct {
 	GenerationID string
 	RuntimeID    string
 	Status       string
-	ErrorClass   string
+	// ErrorClass selects which repair branch handles this candidate
+	// (see recoveryCandidateIDs); it is routing state, not a diagnosis.
+	ErrorClass string
+	// Cause is the diagnosed reason the sandbox died, when one could be
+	// established — currently "sandbox_oom" from the memcg oom_kill counter.
+	// Empty means undiagnosed, in which case ErrorClass is recorded as before.
+	//
+	// Kept separate from ErrorClass precisely because ErrorClass drives the
+	// repair branching: overwriting it with a diagnosis would silently reroute
+	// the candidate (an OOM during ack_started must still take the
+	// unknown_after_ack_started branch, which fails the turn rather than
+	// requeueing side effects).
+	Cause string
 }
 
 type GenerationRuntimeArtifactDigests struct {

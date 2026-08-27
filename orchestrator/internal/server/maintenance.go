@@ -228,6 +228,14 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		stage("resource_destroy", func(stageCtx context.Context) {
 			s.destroyReclaimableGenerationResources(stageCtx, now)
 		})
+		// Warn an agent whose sandbox is nearing its memory ceiling, while it can
+		// still act on it. Raising the ceiling has twice failed to prevent an OOM
+		// (873 MB against 1 GiB, then 3.9 GB against 4 GiB) because the shmem an
+		// analysis job wants scales with its input; a nudge to batch and flush is
+		// the only thing that converges.
+		stage("memory_pressure", func(stageCtx context.Context) {
+			s.warnPressuredSandboxes(stageCtx, now)
+		})
 		stage("event_prune", func(stageCtx context.Context) {
 			if _, err := s.store.PruneEvents(stageCtx, store.PruneEventsParams{
 				RetentionWindow: s.cfg.Harness.Events.RetentionWindow.Duration,
@@ -328,21 +336,81 @@ func (s *Server) RecoverExpiredRuntimeResources(ctx context.Context, now time.Ti
 			s.log.Warn("recovery candidate has no runtime id", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID)
 			continue
 		}
-		if err := s.runtime.Destroy(ctx, runtimeID); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return result, err
-			}
-			result.RuntimeCleanupSkipped++
-			s.log.Warn("runtime cleanup before recovery failed", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "runtime_id", runtimeID, "error", err)
+		destroyErr := s.runtime.Destroy(ctx, runtimeID)
+		if destroyErr == nil {
+			s.clearRuntimeCleanupFailures(candidate.GenerationID)
+			cleaned = append(cleaned, candidate)
 			continue
 		}
+		if errors.Is(destroyErr, context.Canceled) {
+			return result, destroyErr
+		}
+		// Teardown failed. Historically this did `continue`, which skipped the DB
+		// repair too — so a sandbox whose control socket had wedged left its
+		// generation in `active` forever, the one-nonterminal-per-session index
+		// blocked any replacement, and that session's turn stayed `running`
+		// indefinitely (22h and 1343 retries in the 2026-08-19 incident). The DB
+		// state and the host resources are separate concerns: the sandbox was
+		// already judged dead by the heartbeat stall gate, so it will not write
+		// bridge messages or claim turns again, and releasing the row lets
+		// cold-fallback restore service within seconds.
+		//
+		// The one thing that genuinely blocks release is a host process still
+		// alive: a replacement generation mounts the same overlay upperdir, and
+		// nothing else enforces single-attach (two sandboxes sharing an upperdir
+		// corrupts it). Destroy already escalates to SIGKILL, so by here the
+		// remnants are normally gone; verify that before releasing, and keep the
+		// generation locked if anything survives. Data integrity wins over
+		// availability for this one session.
+		gone, remnantErr := s.runtime.SandboxRemnantsGone(ctx, runtimeID)
+		if remnantErr != nil {
+			if errors.Is(remnantErr, context.Canceled) {
+				return result, remnantErr
+			}
+			result.RuntimeCleanupSkipped++
+			s.log.Warn("runtime cleanup failed and remnant check errored, holding generation",
+				"session_id", candidate.SessionID, "generation_id", candidate.GenerationID,
+				"runtime_id", runtimeID, "error", destroyErr, "remnant_error", remnantErr)
+			continue
+		}
+		if !gone {
+			// Unreclaimable for now: host processes survived even SIGKILL (a
+			// process wedged in an uninterruptible syscall). Leave the generation
+			// locked so no replacement can share the upperdir, and escalate once
+			// this stops looking transient — silent identical retries are what hid
+			// the last outage for 22h.
+			result.RuntimeCleanupSkipped++
+			attempts, escalate := s.recordRuntimeCleanupFailure(candidate.GenerationID)
+			if escalate {
+				s.log.Error("sandbox host processes keep surviving teardown; generation held to protect its overlay and the session stays unavailable — manual intervention needed",
+					"session_id", candidate.SessionID, "generation_id", candidate.GenerationID,
+					"runtime_id", runtimeID, "consecutive_failures", attempts, "error", destroyErr)
+			} else {
+				s.log.Warn("sandbox host processes survived teardown; holding generation",
+					"session_id", candidate.SessionID, "generation_id", candidate.GenerationID,
+					"runtime_id", runtimeID, "consecutive_failures", attempts, "error", destroyErr)
+			}
+			continue
+		}
+		// Host side is clean; only the runsc bookkeeping call failed. Safe to
+		// release the DB row so the session recovers.
+		s.clearRuntimeCleanupFailures(candidate.GenerationID)
+		s.log.Warn("runtime cleanup failed but no host processes remain; releasing generation so the session can recover",
+			"session_id", candidate.SessionID, "generation_id", candidate.GenerationID,
+			"runtime_id", runtimeID, "error", destroyErr)
 		cleaned = append(cleaned, candidate)
 	}
+	// Classify what actually killed each sandbox before the repair writes the
+	// reason down, so the user is told "ran out of memory" instead of "unknown".
+	cleaned = s.classifyRecoveryCauses(ctx, cleaned)
 	repaired, err := s.store.RepairExpiredRuntimeRecovery(ctx, params, cleaned)
 	if err != nil {
 		return result, err
 	}
 	repaired.RuntimeCleanupSkipped += result.RuntimeCleanupSkipped
+	// Explain the interruption in the transcript. After the repair, so a session
+	// only gets a notice once its recovery actually committed.
+	s.recordSandboxDeathNotices(ctx, cleaned)
 	for _, eventID := range repaired.EventIDs {
 		s.publishDurableEvent(ctx, eventID)
 	}

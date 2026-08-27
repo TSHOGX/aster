@@ -107,6 +107,14 @@ func generationRunscContainerID(generationID string) string {
 	return "harness-gen-" + strings.TrimSpace(generationID)
 }
 
+// GenerationRunscContainerID is generationRunscContainerID for callers outside
+// this package. The mapping is a fixed naming convention rather than stored
+// state, so deriving it is cheaper than threading the ID through query results
+// that do not already carry it.
+func GenerationRunscContainerID(generationID string) string {
+	return generationRunscContainerID(generationID)
+}
+
 func allowedEgressRules(hostGatewayIP string, cfg ResourceAllocatorConfig) []string {
 	rules := []string{fmt.Sprintf("tcp:%s:%d", hostGatewayIP, cfg.proxyPort())}
 	if cfg.EgressAllowAll {

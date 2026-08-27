@@ -100,6 +100,17 @@ type Server struct {
 	shareLinkCacheMu sync.Mutex
 	shareLinkCache   map[string]sharedLinkResolution
 	shareAccess      shareLinkAccessBuffer
+
+	// cleanupFailures counts consecutive teardown failures per generation, so a
+	// generation that can never be reclaimed escalates instead of retrying in
+	// silence. The 2026-08-19 outage logged 1343 identical WARNs over 22h and
+	// nothing ever raised the severity; see runtimeCleanupFailureAlertThreshold.
+	cleanupFailureMu sync.Mutex
+	cleanupFailures  map[string]int
+
+	// memoryPressureWarned rate-limits the per-generation memory-pressure notice.
+	memoryPressureMu     sync.Mutex
+	memoryPressureWarned map[string]time.Time
 }
 
 type sessionOwnerEntry struct {
@@ -115,6 +126,15 @@ type runtimeDriver interface {
 	Destroy(context.Context, string) error
 	DestroyGenerationResources(context.Context, store.RuntimeGenerationDetails) (runtime.GenerationResourceCleanup, error)
 	Interrupt(string) error
+	// SandboxRemnantsGone reports whether every host process for a container is
+	// gone, gating release of a generation whose teardown failed.
+	SandboxRemnantsGone(context.Context, string) (bool, error)
+	// SandboxOOMKilled reports whether the sandbox's memcg recorded an OOM kill.
+	// ok=false means unknown, not "no".
+	SandboxOOMKilled(context.Context, string) (killed bool, ok bool)
+	// SandboxMemoryUsage reports current memcg usage and ceiling, for warning an
+	// agent before the kernel kills it. ok=false means unavailable.
+	SandboxMemoryUsage(context.Context, string) (used int64, limit int64, ok bool)
 }
 
 // bridgeStore is the bridge-facing slice of the store. It is kept as a named

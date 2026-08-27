@@ -264,6 +264,42 @@ WHERE generation_id IN (`+sqlPlaceholders(len(reconnectIDs))+`)`, args...); err 
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 	}
+	// Overwrite the routing-derived error class with the diagnosed cause where we
+	// have one. The branches above record the class that selected them
+	// ("unknown_after_ack_started" and friends), which describes how recovery
+	// found the generation rather than why it died. When the memcg says the
+	// workload was OOM-killed, the generation row should say so: it is the only
+	// durable record of the cause, and support reads it long after the transcript
+	// notice scrolls away.
+	//
+	// Applied after the branches, and only to generations they actually repaired,
+	// so it can never route a candidate to a different branch (see the Cause field
+	// comment on ExpiredRuntimeRecoveryCandidate).
+	repairedSet := make(map[string]bool, len(repairedIDs))
+	for _, id := range repairedIDs {
+		repairedSet[id] = true
+	}
+	for _, candidate := range candidates {
+		if candidate.Cause == "" || !repairedSet[candidate.GenerationID] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_generations
+SET error_class = ?,
+    failure_reason = ?
+WHERE generation_id = ?`, candidate.Cause, candidate.Cause, candidate.GenerationID); err != nil {
+			return StartupRecoveryResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE turns
+SET error_class = ?,
+    error = ?
+WHERE generation_id = ?
+  AND status = 'failed'
+  AND completed_by_generation = generation_id`, candidate.Cause, candidate.Cause, candidate.GenerationID); err != nil {
+			return StartupRecoveryResult{}, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `
 DELETE FROM active_model_request_contexts
 WHERE lease_owner NOT LIKE ?`, p.OwnerUUID+":%"); err != nil {

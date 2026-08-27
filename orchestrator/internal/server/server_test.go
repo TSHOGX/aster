@@ -3814,7 +3814,14 @@ WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&errorClass, &leaseOwn
 	}
 }
 
-func TestExpiredRuntimeRecoverySkipsRepairWhenRuntimeCleanupFails(t *testing.T) {
+// Cleanup failure alone no longer blocks the repair. It used to: recovery
+// skipped the DB repair whenever `runsc delete` errored, so a sandbox whose
+// control socket had wedged kept its generation in a non-terminal status forever,
+// the one-nonterminal-per-session index blocked any replacement, and the
+// session's turn stayed running indefinitely (22h / 1343 failed retries in the
+// 2026-08-19 incident). When no host processes survive, the sandbox cannot touch
+// its overlay again and the row is safe to release.
+func TestExpiredRuntimeRecoveryRepairsWhenCleanupFailsButHostIsClean(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	st, owner := openServerOwnedStore(t, ctx, dir)
@@ -3842,7 +3849,77 @@ SET status = 'idle',
 WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(-time.Minute).Format(time.RFC3339Nano), allocation.GenerationID); err != nil {
 		t.Fatalf("expire generation: %v", err)
 	}
+	// Teardown fails, but nothing is left running on the host.
 	rt := &recordingRuntime{destroyRuntimeErr: errors.New("runsc delete failed")}
+	srv := &Server{
+		cfg:     cfg,
+		store:   st,
+		runtime: rt,
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, events.NewHub()),
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+
+	recovered, err := srv.RecoverExpiredRuntimeResources(ctx, now)
+	if err != nil {
+		t.Fatalf("recover expired runtime resources: %v", err)
+	}
+	if recovered.RuntimeCleanupSkipped != 0 {
+		t.Fatalf("clean host should not count as skipped, got %+v", recovered)
+	}
+	if recovered.ReconnectGraceFailed != 1 {
+		t.Fatalf("expected the generation to be released, got %+v", recovered)
+	}
+	runscID := serverRunscContainerID(t, ctx, st, session.ID, allocation.GenerationID)
+	if got := rt.runtimeDestroyRequests(); len(got) != 1 || got[0] != runscID {
+		t.Fatalf("expected runtime cleanup attempt for %q, got %+v", runscID, got)
+	}
+	var generationStatus, ownerAfter string
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT status, COALESCE(lease_owner, '')
+FROM runtime_generations
+WHERE generation_id = ?`, allocation.GenerationID).Scan(&generationStatus, &ownerAfter); err != nil {
+		t.Fatalf("query recovered generation: %v", err)
+	}
+	if generationStatus != "failed" || ownerAfter != "" {
+		t.Fatalf("generation should be released for cold fallback: status=%s owner=%s", generationStatus, ownerAfter)
+	}
+}
+
+// The safety gate: when host processes survive teardown the generation must stay
+// locked. A replacement generation would mount the same overlay upperdir, and
+// nothing else enforces single-attach, so releasing here risks corrupting the
+// user's workspace. Availability for this one session yields to data integrity.
+func TestExpiredRuntimeRecoveryHoldsGenerationWhenRemnantsSurvive(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	now := time.Now().UTC()
+	session := createServerTestSession(t, ctx, st, dir, "sess_recovery_remnants", string(sessionstate.RunningIdle), now.Add(-2*time.Minute), nil)
+	cfg := testServerConfig(dir)
+	allocation, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
+		SessionID: session.ID,
+		Owner:     store.GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Minute,
+		Now:       now.Add(-3 * time.Minute),
+		Config:    serverTestAllocatorConfig(cfg, session.Agent),
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, session.ID, allocation.GenerationID, allocation.Owner, now.Add(-3*time.Minute+time.Second)); err != nil {
+		t.Fatalf("mark generation live: %v", err)
+	}
+	if _, err := st.DBForTest().ExecContext(ctx, `
+UPDATE runtime_generations
+SET status = 'idle',
+    lease_owner = ?,
+    lease_expires_at = ?
+WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(-time.Minute).Format(time.RFC3339Nano), allocation.GenerationID); err != nil {
+		t.Fatalf("expire generation: %v", err)
+	}
+	rt := &survivingRemnantRuntime{recordingRuntime: recordingRuntime{destroyRuntimeErr: errors.New("runsc delete failed")}}
 	srv := &Server{
 		cfg:     cfg,
 		store:   st,
@@ -3861,11 +3938,7 @@ WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(
 		recovered.ReconnectGraceFailed != 0 ||
 		recovered.ExpiredLifecycleFailed != 0 ||
 		recovered.UnknownAfterAckStarted != 0 {
-		t.Fatalf("cleanup failure should skip repair, got %+v", recovered)
-	}
-	runscID := serverRunscContainerID(t, ctx, st, session.ID, allocation.GenerationID)
-	if got := rt.runtimeDestroyRequests(); len(got) != 1 || got[0] != runscID {
-		t.Fatalf("expected runtime cleanup attempt for %q, got %+v", runscID, got)
+		t.Fatalf("surviving remnants should hold the repair, got %+v", recovered)
 	}
 	var generationStatus, ownerAfter, networkState, resourceState string
 	if err := st.DBForTest().QueryRowContext(ctx, `
@@ -3874,14 +3947,24 @@ FROM runtime_generations g
 JOIN network_profiles n ON n.generation_id = g.generation_id
 JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
 WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&generationStatus, &ownerAfter, &networkState, &resourceState); err != nil {
-		t.Fatalf("query skipped recovery state: %v", err)
+		t.Fatalf("query held recovery state: %v", err)
 	}
 	if generationStatus != "idle" ||
 		ownerAfter != string(store.GenerationLeaseOwner("previous-owner")) ||
 		networkState != "live" ||
 		resourceState != "live" {
-		t.Fatalf("cleanup failure should leave DB non-reclaimable: generation=%s owner=%s network=%s resource=%s", generationStatus, ownerAfter, networkState, resourceState)
+		t.Fatalf("surviving remnants should leave DB non-reclaimable: generation=%s owner=%s network=%s resource=%s", generationStatus, ownerAfter, networkState, resourceState)
 	}
+}
+
+// survivingRemnantRuntime models the unreclaimable case: teardown failed and host
+// processes are still alive.
+type survivingRemnantRuntime struct {
+	recordingRuntime
+}
+
+func (r *survivingRemnantRuntime) SandboxRemnantsGone(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 func TestDestroyReclaimableGenerationResourcesMarksDestroyedOnlyAfterRuntimeCleanup(t *testing.T) {
@@ -4860,7 +4943,26 @@ func testArtifactDownloadConfig(t *testing.T, dir string) config.Config {
 	return cfg
 }
 
-type instantRuntime struct{}
+// cleanSandboxHost is the default host-inspection behaviour for the runtime
+// fakes: no surviving host processes and no OOM evidence. Embedded rather than
+// repeated so a fake only spells these out when the test is about them.
+type cleanSandboxHost struct{}
+
+func (cleanSandboxHost) SandboxRemnantsGone(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func (cleanSandboxHost) SandboxOOMKilled(context.Context, string) (bool, bool) {
+	return false, false
+}
+
+// No memcg reading in tests by default: memory-pressure warnings are opt-in per
+// test, so an unrelated test never has to reason about them.
+func (cleanSandboxHost) SandboxMemoryUsage(context.Context, string) (int64, int64, bool) {
+	return 0, 0, false
+}
+
+type instantRuntime struct{ cleanSandboxHost }
 
 var instantRuntimePrepareCalls int64
 
@@ -4889,6 +4991,7 @@ func (instantRuntime) Interrupt(string) error {
 }
 
 type recordingRuntime struct {
+	cleanSandboxHost
 	mu                sync.Mutex
 	prepareRequests   []runtime.StartRequest
 	startRequests     []runtime.StartRequest
@@ -5104,6 +5207,7 @@ func (r *restoreStartHookRuntime) Start(_ context.Context, req runtime.StartRequ
 }
 
 type restoreValidationRuntime struct {
+	cleanSandboxHost
 	restore       *runtime.Runtime
 	startRequests []runtime.StartRequest
 }
@@ -5149,6 +5253,7 @@ func (r serverCommandRunner) CombinedOutput(_ context.Context, name string, args
 }
 
 type failingRuntime struct {
+	cleanSandboxHost
 	prepareErr error
 	err        error
 }
