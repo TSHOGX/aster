@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isFinalReply, wasInterrupted } from "./message-grouping";
+import { isFinalReply, interruptionKind, wasInterrupted } from "./message-grouping";
 import type { ApiMessage } from "./types";
 
 function msg(partial: Partial<ApiMessage>): ApiMessage {
@@ -91,5 +91,61 @@ describe("wasInterrupted", () => {
     // Shell output and pre-migration history carry no stop_reason; claiming
     // interruption there would show the banner on healthy sessions.
     expect(wasInterrupted([msg({ role: "user" }), msg({ stop_reason: "" })])).toBe(false);
+  });
+
+  it("detects a sandbox death", () => {
+    expect(wasInterrupted([msg({ role: "user" }), msg({ stop_reason: "sandbox_died" })])).toBe(
+      true
+    );
+  });
+});
+
+describe("interruptionKind", () => {
+  it("reports undefined when the last turn answered", () => {
+    expect(interruptionKind([msg({ role: "user" }), msg({ stop_reason: "stop" })])).toBeUndefined();
+  });
+
+  it("classifies a failed model call as recoverable in place", () => {
+    // The sandbox is still alive and holds the agent's context, so "continue
+    // where you left off" is accurate here.
+    expect(interruptionKind([msg({ role: "user" }), msg({ stop_reason: "error" })])).toBe("model");
+  });
+
+  it("classifies a stalled tool loop as a model interruption", () => {
+    expect(interruptionKind([msg({ role: "user" }), msg({ stop_reason: "toolUse" })])).toBe(
+      "model"
+    );
+  });
+
+  it("classifies a sandbox death separately", () => {
+    // This is the distinction that matters: the agent's context did not survive,
+    // so the UI must not offer to resume mid-thought.
+    expect(interruptionKind([msg({ role: "user" }), msg({ stop_reason: "sandbox_died" })])).toBe(
+      "sandbox"
+    );
+  });
+
+  it("reports the most recent interruption when both kinds appear", () => {
+    // A sandbox death after an earlier model failure must win: the older failure
+    // is already resolved history.
+    expect(
+      interruptionKind([
+        msg({ role: "user" }),
+        msg({ stop_reason: "error" }),
+        msg({ role: "user" }),
+        msg({ stop_reason: "sandbox_died" })
+      ])
+    ).toBe("sandbox");
+  });
+
+  it("ignores an interruption the user already moved past", () => {
+    expect(
+      interruptionKind([
+        msg({ role: "user" }),
+        msg({ stop_reason: "sandbox_died" }),
+        msg({ role: "user" }),
+        msg({ stop_reason: "stop" })
+      ])
+    ).toBeUndefined();
   });
 });

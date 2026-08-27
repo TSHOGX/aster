@@ -103,7 +103,7 @@ export type SharedLinkMessage = {
   content: string;
   created_at: string;
   /** Same values as ApiMessage.stop_reason; "toolUse" never appears at summary visibility. */
-  stop_reason?: "stop" | "toolUse" | "error" | "";
+  stop_reason?: "stop" | "toolUse" | "error" | "sandbox_died" | "";
   trace?: TraceNode[];
 };
 
@@ -161,9 +161,10 @@ export type ApiMessage = {
   created_at: string;
   // pi's terminator for an assistant message: "stop" = a turn's final reply,
   // "toolUse" = an intermediate tool-calling step, "error" = the model call
-  // failed and the reply was cut short, "" / absent = unknown (user messages,
-  // salvaged text, pre-migration history).
-  stop_reason?: "stop" | "toolUse" | "error" | "";
+  // failed and the reply was cut short, "sandbox_died" = the sandbox itself was
+  // terminated (e.g. memory limit) so the agent's context did not survive,
+  // "" / absent = unknown (user messages, salvaged text, pre-migration history).
+  stop_reason?: "stop" | "toolUse" | "error" | "sandbox_died" | "";
   trace?: TraceNode[];
   feedback?: "up" | "down" | "";
 };

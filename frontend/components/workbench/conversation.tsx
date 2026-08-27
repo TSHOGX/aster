@@ -15,7 +15,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { MessageWithPath } from "@/components/ui/message-with-path";
 import { ConversationSkeleton } from "@/components/ui/skeleton";
 import { StatusPill, statusTone } from "@/components/ui/badge";
-import { isFinalReply, wasInterrupted } from "@/lib/message-grouping";
+import { isFinalReply, interruptionKind, type InterruptionKind } from "@/lib/message-grouping";
 import { sessionModeLabel } from "@/lib/agents";
 import { dayKey, formatDayDivider, isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 
@@ -114,12 +114,16 @@ function ChatConversation() {
   // Offer to resume a turn that died without answering. Gated on the session
   // being idle and writable: mid-stream, a toolUse tail is simply the turn still
   // working, and on a read-only or ended session there is nothing to resume.
+  //
+  // The kind matters: after a sandbox death the agent's context is gone, so the
+  // notice must not imply the work can be picked up mid-thought.
   const interrupted =
     accepting &&
     !activityLive &&
     convo.streaming.length === 0 &&
-    !convo.loading &&
-    wasInterrupted(convo.messages);
+    !convo.loading
+      ? interruptionKind(convo.messages)
+      : undefined;
 
   return (
     <main className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-background)]">
@@ -215,7 +219,15 @@ function ChatConversation() {
             ) : null}
             {interrupted ? (
               <InterruptedNotice
-                onContinue={() => sendMessage(session.id, t("conversation.continuePrompt"))}
+                kind={interrupted}
+                onContinue={() =>
+                  sendMessage(
+                    session.id,
+                    interrupted === "sandbox"
+                      ? t("conversation.continuePromptAfterSandboxDeath")
+                      : t("conversation.continuePrompt")
+                  )
+                }
               />
             ) : null}
           </div>
@@ -233,15 +245,27 @@ function ChatConversation() {
 }
 
 // Shown when the last turn ended without answering. The reason is already in the
-// transcript as an assistant notice, so this adds only the recovery action —
-// clicking it sends a short "carry on" prompt as the user, which resumes the work
-// in the existing sandbox with all its state intact.
-function InterruptedNotice({ onContinue }: { onContinue: () => void }) {
+// transcript as an assistant notice, so this adds only the recovery action.
+//
+// What clicking it means depends on the kind. After a model failure the sandbox
+// still holds the agent's context, so "carry on" resumes the work in place. After
+// a sandbox death the context is gone and only host-side files survived, so the
+// prompt asks the agent to re-establish its progress first — and the label says
+// so, because a bare "continue" would promise something the system cannot do.
+function InterruptedNotice({
+  kind,
+  onContinue
+}: {
+  kind: InterruptionKind;
+  onContinue: () => void;
+}) {
   const t = useT();
   return (
     <div className="flex flex-wrap items-center gap-3 py-4">
       <span className="text-xs text-[var(--color-foreground-muted)]">
-        {t("conversation.interrupted")}
+        {kind === "sandbox"
+          ? t("conversation.interruptedSandbox")
+          : t("conversation.interrupted")}
       </span>
       <button
         type="button"
@@ -249,7 +273,9 @@ function InterruptedNotice({ onContinue }: { onContinue: () => void }) {
         className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-xs font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
       >
         <RotateCw className="h-3 w-3" aria-hidden="true" />
-        {t("conversation.continueTurn")}
+        {kind === "sandbox"
+          ? t("conversation.restartTurn")
+          : t("conversation.continueTurn")}
       </button>
     </div>
   );

@@ -60,9 +60,18 @@ export const ZH: Record<MessageKey, string> = {
   "conversation.jumpToLatest": "跳到最新",
   "conversation.interrupted": "本次回复未完成就中断了。",
   "conversation.continueTurn": "继续",
+  // Shown instead of the above when the sandbox itself was terminated. Says the
+  // context is gone, so the user is not invited to trust state that no longer
+  // exists.
+  "conversation.interruptedSandbox": "沙箱被终止,本次任务中断。工作区文件已保留,但执行上下文已丢失。",
+  "conversation.restartTurn": "重新开始",
   // Sent as the user's message when they click Continue, so it reads naturally
   // in the transcript and tells the agent to resume rather than restart.
   "conversation.continuePrompt": "请从刚才中断的地方继续。",
+  // The sandbox-death counterpart: the agent has no memory of the previous run,
+  // so it must inspect the workspace before doing anything else.
+  "conversation.continuePromptAfterSandboxDeath":
+    "上一个沙箱已被终止,你不再持有之前的执行上下文。请先检查工作区里已有的文件、确认上次进展到哪一步,再继续未完成的部分;注意控制内存占用,分批处理并及时落盘。",
 
   // ── Composer ───────────────────────────────────────────────────────────────
   "composer.placeholder": "发送消息…",

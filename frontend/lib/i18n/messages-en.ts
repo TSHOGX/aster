@@ -58,9 +58,19 @@ export const EN = {
   "conversation.jumpToLatest": "Jump to latest",
   "conversation.interrupted": "This reply was cut short before it finished.",
   "conversation.continueTurn": "Continue",
+  // Shown instead of the above when the sandbox itself was terminated. Says the
+  // context is gone, so the user is not invited to trust state that no longer
+  // exists.
+  "conversation.interruptedSandbox":
+    "The sandbox was terminated, so this task stopped. Workspace files were kept, but the execution context was lost.",
+  "conversation.restartTurn": "Start over",
   // Sent as the user's message when they click Continue, so it reads naturally
   // in the transcript and tells the agent to resume rather than restart.
   "conversation.continuePrompt": "Please continue from where you left off.",
+  // The sandbox-death counterpart: the agent has no memory of the previous run,
+  // so it must inspect the workspace before doing anything else.
+  "conversation.continuePromptAfterSandboxDeath":
+    "The previous sandbox was terminated, so you no longer have your earlier execution context. Start by checking which files already exist in the workspace to work out how far the last run got, then carry on with what is left. Keep memory use down: process in batches and write results to disk as you go.",
 
   // ── Composer ───────────────────────────────────────────────────────────────
   "composer.placeholder": "Send a message…",
