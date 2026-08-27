@@ -186,6 +186,12 @@ OOM 的显式可观测性——目前沙箱被 OOM-kill 只能事后翻 `dmesg`�
 建议后续把 memcg OOM 计数暴露成 generation 上的 `error_class` 或事件，让「会话是被内存打死的」
 这件事在产品里能被看见。
 
+> **2026-08-20 更新**：本节预判的缺口在 08-19 实际复发（3.9 GB shmem 撞 4 GiB 上限），
+> 且暴露出第二个缺口：清理失败会连带跳过 DB 修复，导致单个会话锁死 22 小时。
+> 本次的超时与 stage 隔离按设计生效（未再全平台停摆），但不足以恢复该会话。
+> 已实现 OOM 归因（cgroup v2 `memory.events`）、用户可见提示、SIGKILL 兜底与内存压力预警，
+> 详见 [sandbox-oom-blocks-recovery-and-hides-cause.md](./sandbox-oom-blocks-recovery-and-hides-cause.md)。
+
 ## 关键证据位置（行号为故障当时，修复后已变动）
 
 - 无超时的 runner：`orchestrator/internal/runtime/runtime.go:92`
