@@ -78,6 +78,30 @@ class SseEarlyCompleteTest(unittest.TestCase):
         _, done = gw.completed_rpc_ids_from_sse_chunk(event, [9])
         self.assertEqual(done, [9])
 
+    def test_result_without_trailing_blank_line(self):
+        event = (
+            b"event: message\n"
+            b'data: {"jsonrpc":"2.0","id":3,"result":{"ok":true}}\n'
+        )
+        _, done = gw.completed_rpc_ids_from_sse_chunk(event, [3])
+        self.assertEqual(done, [3])
+
+
+class ReadUpstreamChunkTest(unittest.TestCase):
+    def test_prefers_http_response_read1_not_raw_fp(self):
+        class RawFp:
+            def read1(self, n=-1):
+                return b"1075\r\nraw\r\n0\r\n\r\n"
+
+        class Resp:
+            def __init__(self):
+                self.fp = RawFp()
+
+            def read1(self, n=-1):
+                return b"decoded-sse"
+
+        self.assertEqual(gw.read_upstream_stream_chunk(Resp()), b"decoded-sse")
+
 
 if __name__ == "__main__":
     unittest.main()

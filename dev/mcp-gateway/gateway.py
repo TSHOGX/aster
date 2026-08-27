@@ -289,6 +289,36 @@ def pop_complete_sse_events(buf: bytes) -> tuple:
             events.append(raw)
 
 
+def jsonrpc_ids_from_complete_data_lines(buf: bytes) -> list:
+    """JSON-RPC response ids from newline-terminated SSE data: lines.
+
+    Huawei sometimes emits the result line without the extra blank line that
+    officially ends an SSE event. Curl already prints that line; we should
+    still treat the RPC as complete instead of waiting for socket EOF.
+    """
+    ids = []
+    start = 0
+    while True:
+        nl = buf.find(b"\n", start)
+        if nl < 0:
+            break
+        line = buf[start:nl]
+        start = nl + 1
+        if line.endswith(b"\r"):
+            line = line[:-1]
+        if not line.startswith(b"data:"):
+            continue
+        val = line[5:]
+        if val.startswith(b" "):
+            val = val[1:]
+        try:
+            payload = json.loads(val)
+        except ValueError:
+            continue
+        ids.extend(jsonrpc_response_ids(payload))
+    return ids
+
+
 def sse_event_json(event: bytes):
     """Parse the JSON payload of an SSE event's data: fields, or None."""
     data_lines = []
@@ -312,18 +342,37 @@ def completed_rpc_ids_from_sse_chunk(buf: bytes, pending: list) -> tuple:
     if not pending:
         return buf, []
     events, rest = pop_complete_sse_events(buf)
-    done = []
-    still = list(pending)
+    found = []
     for event in events:
         payload = sse_event_json(event)
-        if payload is None:
-            continue
-        for rid in jsonrpc_response_ids(payload):
-            matched = [p for p in still if _id_matches(p, rid)]
-            for p in matched:
-                still.remove(p)
-                done.append(p)
+        if payload is not None:
+            found.extend(jsonrpc_response_ids(payload))
+    found.extend(jsonrpc_ids_from_complete_data_lines(rest))
+    done = []
+    still = list(pending)
+    for rid in found:
+        matched = [p for p in still if _id_matches(p, rid)]
+        for p in matched:
+            still.remove(p)
+            done.append(p)
     return rest, done
+
+
+def read_upstream_stream_chunk(resp, n: int = 4096) -> bytes:
+    """Read up to n bytes of the decoded HTTP body without waiting to fill n.
+
+    Use HTTPResponse.read1(), not resp.fp.read1(). The latter skips
+    Transfer-Encoding: chunked decoding, so clients see hex chunk sizes
+    (``1075``, then a trailing ``0``) and hang until the TCP connection dies.
+    resp.read(n) is also wrong: BufferedReader waits to fill n on long SSE.
+    """
+    read1 = getattr(resp, "read1", None)
+    if callable(read1):
+        return read1(n)
+    fp = getattr(resp, "fp", None)
+    if fp is not None:
+        return fp.read1(n)
+    return resp.read(n)
 
 
 def is_tools_call(body: bytes) -> bool:
@@ -519,6 +568,7 @@ class Handler(BaseHTTPRequestHandler):
             content_type = resp.getheader("Content-Type") or "text/event-stream"
             self.send_response(resp.status)
             self.send_header("Content-Type", content_type)
+            self.close_connection = True
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "close")
             self.end_headers()
@@ -601,6 +651,7 @@ class Handler(BaseHTTPRequestHandler):
                 if name.lower() in _PASSTHROUGH_RESPONSE_HEADERS:
                     self.send_header(name, value)
             if is_sse:
+                self.close_connection = True
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "close")
                 if not any(h[0].lower() == "content-type" for h in resp.getheaders()):
@@ -654,29 +705,15 @@ class Handler(BaseHTTPRequestHandler):
         the tool result, and pi-mcp waits for EOF before completing the call.
         Returns True when we closed early for that reason.
         """
-        # IMPORTANT: use fp.read1(), not resp.read().
-        # BufferedReader.read(n) blocks filling its buffer on long-lived streams.
         pending = list(close_after_rpc_ids or [])
         buf = b""
         while True:
+            eof_after = False
             try:
-                chunk = resp.fp.read1(4096)
+                chunk = read_upstream_stream_chunk(resp)
             except http.client.IncompleteRead as exc:
                 chunk = exc.partial or b""
-                if chunk:
-                    if rewrite_endpoints:
-                        chunk = rewrite_sse_chunk(chunk, PUBLIC_BASE_URL)
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-                    if pending:
-                        buf += chunk
-                        buf, done = completed_rpc_ids_from_sse_chunk(buf, pending)
-                        for item in done:
-                            if item in pending:
-                                pending.remove(item)
-                        if not pending:
-                            return True
-                break
+                eof_after = True
             except (socket.timeout, TimeoutError):
                 continue
             if not chunk:
@@ -692,7 +729,11 @@ class Handler(BaseHTTPRequestHandler):
                     if item in pending:
                         pending.remove(item)
                 if not pending:
+                    self.close_connection = True
                     return True
+            if eof_after:
+                break
+        self.close_connection = True
         return False
 
 

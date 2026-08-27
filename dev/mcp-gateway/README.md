@@ -95,7 +95,11 @@ A second, tokenless MCP (`trajectory-evolve` for on-demand KB evolution) does
 - **Streamable-HTTP POST:** Huawei's MCP gateway returns `text/event-stream` and
   keeps the socket open ~60s after the JSON-RPC result. This process forwards
   the result, then **closes as soon as the matching `id` has `result` or
-  `error`**, so pi-mcp does not wait for that idle timeout. GET SSE sessions
-  still stream until EOF. Restart `gateway.py` to pick this up (no orchestrator
-  rebuild). Logs look like
+  `error`**, so pi-mcp / curl do not wait for that idle timeout. GET SSE
+  sessions still stream until EOF. Restart `gateway.py` to pick this up (no
+  orchestrator rebuild). Logs look like
   `POST done ... sse=True rpc_complete=True elapsed_ms=800`.
+- Curl printing a hex number (`1075`) then a lone `0`, with the JSON already on
+  screen, is HTTP **chunked** framing leaking as body — not a slow query. After
+  this gateway, curl should return to the prompt. If you hit Huawei **directly**,
+  Ctrl+C or `--max-time 8` is expected; the payload already arrived.
