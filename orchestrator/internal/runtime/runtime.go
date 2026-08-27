@@ -411,13 +411,34 @@ func (r *Runtime) deleteRunscContainerDetailed(ctx context.Context, runscBinary,
 	// `delete -force`, which is the call that actually reclaims the container.
 	_, _ = r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "kill", containerID, "KILL")
 	output, err := r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "delete", "-force", containerID)
-	if err != nil {
-		if commandFailureContains(output, err, "does not exist", "not found", "no such container", "no such file") {
-			return runscContainerDeleteResult{Missing: true}, nil
-		}
+	if err == nil {
+		return runscContainerDeleteResult{}, nil
+	}
+	if commandFailureContains(output, err, "does not exist", "not found", "no such container", "no such file") {
+		return runscContainerDeleteResult{Missing: true}, nil
+	}
+	// Both calls above go through the control socket, so when that socket has
+	// stopped answering they burn their timeouts and change nothing — 1343
+	// consecutive retries over 22h in the 2026-08-19 incident. SIGKILL on the
+	// surviving host processes is the only thing that breaks the tie; after it
+	// `delete -force` returns immediately. See runtime_remnant.go.
+	killed, killErr := r.killSandboxRemnants(containerID)
+	if killErr != nil {
+		return runscContainerDeleteResult{}, fmt.Errorf("%w: %s (sigkill remnants: %v)", err, strings.TrimSpace(string(output)), killErr)
+	}
+	if len(killed) == 0 {
+		// No host processes left, yet delete still failed: not the wedged-socket
+		// shape, so report the original error rather than masking it.
 		return runscContainerDeleteResult{}, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
 	}
-	return runscContainerDeleteResult{}, nil
+	retryOutput, retryErr := r.runner.CombinedOutput(ctx, runscBinary, "-root", r.cfg.RunscRoot, "delete", "-force", containerID)
+	if retryErr == nil {
+		return runscContainerDeleteResult{}, nil
+	}
+	if commandFailureContains(retryOutput, retryErr, "does not exist", "not found", "no such container", "no such file") {
+		return runscContainerDeleteResult{Missing: true}, nil
+	}
+	return runscContainerDeleteResult{}, fmt.Errorf("%w: %s (after sigkilling %d remnant(s))", retryErr, strings.TrimSpace(string(retryOutput)), len(killed))
 }
 
 func (r *Runtime) cleanupRunscContainer(ctx context.Context, containerID string) {
