@@ -243,6 +243,89 @@ def rewrite_sse_chunk(chunk: bytes, public_base: str) -> bytes:
     return "".join(out).encode("utf-8")
 
 
+def jsonrpc_request_ids(body: bytes) -> list:
+    """JSON-RPC request ids in a POST body (skip notifications)."""
+    try:
+        payload = json.loads(body or b"{}")
+    except ValueError:
+        return []
+    items = payload if isinstance(payload, list) else [payload]
+    ids = []
+    for item in items:
+        if isinstance(item, dict) and item.get("id") is not None:
+            ids.append(item["id"])
+    return ids
+
+
+def _id_matches(left, right) -> bool:
+    return left == right or str(left) == str(right)
+
+
+def jsonrpc_response_ids(payload) -> list:
+    """Ids of JSON-RPC *responses* (have result or error). Notifications ignored."""
+    items = payload if isinstance(payload, list) else [payload]
+    ids = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        if "result" in item or "error" in item:
+            ids.append(item["id"])
+    return ids
+
+
+def pop_complete_sse_events(buf: bytes) -> tuple:
+    """Split a byte buffer into complete SSE events and a remainder."""
+    events = []
+    while True:
+        idx_rn = buf.find(b"\r\n\r\n")
+        idx_n = buf.find(b"\n\n")
+        if idx_rn < 0 and idx_n < 0:
+            return events, buf
+        if idx_rn >= 0 and (idx_n < 0 or idx_rn <= idx_n):
+            raw, buf = buf[:idx_rn], buf[idx_rn + 4 :]
+        else:
+            raw, buf = buf[:idx_n], buf[idx_n + 2 :]
+        if raw.strip():
+            events.append(raw)
+
+
+def sse_event_json(event: bytes):
+    """Parse the JSON payload of an SSE event's data: fields, or None."""
+    data_lines = []
+    for line in event.splitlines():
+        if not line.startswith(b"data:"):
+            continue
+        val = line[5:]
+        if val.startswith(b" "):
+            val = val[1:]
+        data_lines.append(val)
+    if not data_lines:
+        return None
+    try:
+        return json.loads(b"\n".join(data_lines))
+    except ValueError:
+        return None
+
+
+def completed_rpc_ids_from_sse_chunk(buf: bytes, pending: list) -> tuple:
+    """Feed SSE bytes; return leftover buffer and pending ids that got a response."""
+    if not pending:
+        return buf, []
+    events, rest = pop_complete_sse_events(buf)
+    done = []
+    still = list(pending)
+    for event in events:
+        payload = sse_event_json(event)
+        if payload is None:
+            continue
+        for rid in jsonrpc_response_ids(payload):
+            matched = [p for p in still if _id_matches(p, rid)]
+            for p in matched:
+                still.remove(p)
+                done.append(p)
+    return rest, done
+
+
 def is_tools_call(body: bytes) -> bool:
     try:
         payload = json.loads(body or b"{}")
@@ -475,9 +558,12 @@ class Handler(BaseHTTPRequestHandler):
         stream_sse: bool,
     ) -> None:
         req_id = next_id(method.lower())
+        started = time.monotonic()
         source_ip = self.client_address[0]
         method_name = method
+        rpc_ids = []
         if method == "POST" and raw_body:
+            rpc_ids = jsonrpc_request_ids(raw_body)
             try:
                 payload = json.loads(raw_body)
                 if isinstance(payload, dict):
@@ -520,7 +606,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not any(h[0].lower() == "content-type" for h in resp.getheaders()):
                     self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
-                self._stream_body(resp, rewrite_endpoints=False)
+                closed_early = self._stream_body(
+                    resp, rewrite_endpoints=False, close_after_rpc_ids=rpc_ids
+                )
             else:
                 body = resp.read()
                 if not any(h[0].lower() == "content-type" for h in resp.getheaders()):
@@ -528,9 +616,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+                closed_early = False
+            elapsed_ms = int((time.monotonic() - started) * 1000)
             log(
-                "%s done id=%s status=%s sse=%s"
-                % (method, req_id, resp.status, is_sse)
+                "%s done id=%s status=%s sse=%s rpc_complete=%s elapsed_ms=%d"
+                % (
+                    method,
+                    req_id,
+                    resp.status,
+                    is_sse,
+                    closed_early if is_sse else "-",
+                    elapsed_ms,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             log("%s error id=%s: %s: %s" % (method, req_id, type(exc).__name__, exc))
@@ -543,9 +640,24 @@ class Handler(BaseHTTPRequestHandler):
             if conn is not None:
                 conn.close()
 
-    def _stream_body(self, resp, rewrite_endpoints: bool) -> None:
+    def _stream_body(
+        self,
+        resp,
+        rewrite_endpoints: bool,
+        close_after_rpc_ids=None,
+    ) -> bool:
+        """Stream an upstream body to the client.
+
+        When close_after_rpc_ids is a non-empty list of JSON-RPC ids, return as
+        soon as SSE events have delivered a result/error for every id. Huawei's
+        streamable-http gateway otherwise keeps the SSE socket open ~60s after
+        the tool result, and pi-mcp waits for EOF before completing the call.
+        Returns True when we closed early for that reason.
+        """
         # IMPORTANT: use fp.read1(), not resp.read().
         # BufferedReader.read(n) blocks filling its buffer on long-lived streams.
+        pending = list(close_after_rpc_ids or [])
+        buf = b""
         while True:
             try:
                 chunk = resp.fp.read1(4096)
@@ -556,6 +668,14 @@ class Handler(BaseHTTPRequestHandler):
                         chunk = rewrite_sse_chunk(chunk, PUBLIC_BASE_URL)
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                    if pending:
+                        buf += chunk
+                        buf, done = completed_rpc_ids_from_sse_chunk(buf, pending)
+                        for item in done:
+                            if item in pending:
+                                pending.remove(item)
+                        if not pending:
+                            return True
                 break
             except (socket.timeout, TimeoutError):
                 continue
@@ -565,6 +685,15 @@ class Handler(BaseHTTPRequestHandler):
                 chunk = rewrite_sse_chunk(chunk, PUBLIC_BASE_URL)
             self.wfile.write(chunk)
             self.wfile.flush()
+            if pending:
+                buf += chunk
+                buf, done = completed_rpc_ids_from_sse_chunk(buf, pending)
+                for item in done:
+                    if item in pending:
+                        pending.remove(item)
+                if not pending:
+                    return True
+        return False
 
 
 def main() -> int:

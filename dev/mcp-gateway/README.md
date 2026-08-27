@@ -92,3 +92,10 @@ A second, tokenless MCP (`trajectory-evolve` for on-demand KB evolution) does
 - On authz denial return JSON-RPC error; do not drop the connection.
 - Hides the **credential**, not the **data**.
 - Upstream stream reads use `resp.fp.read1()` (plain `read()` stalls on SSE).
+- **Streamable-HTTP POST:** Huawei's MCP gateway returns `text/event-stream` and
+  keeps the socket open ~60s after the JSON-RPC result. This process forwards
+  the result, then **closes as soon as the matching `id` has `result` or
+  `error`**, so pi-mcp does not wait for that idle timeout. GET SSE sessions
+  still stream until EOF. Restart `gateway.py` to pick this up (no orchestrator
+  rebuild). Logs look like
+  `POST done ... sse=True rpc_complete=True elapsed_ms=800`.
