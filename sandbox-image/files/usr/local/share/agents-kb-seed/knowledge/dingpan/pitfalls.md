@@ -27,13 +27,13 @@ time. Wait for the result. If the host needs it, raise
 
 ## Skip the filesystem scavenger hunt
 
-Do not `find /` for `mcp.json`, credentials, or table maps. Knowledge is
-`kb catalog` / `kb get`. Live data is dingpan MCP. If tools are missing from
-the session list, report a wiring failure.
+Do not `find /` for `mcp.json`, credentials, or table maps. Knowledge is the
+`dingpan-knowledge` MCP tools (`kb_catalog` / `kb_get`). Live data is dingpan
+MCP. If tools are missing from the session list, report a wiring failure.
 
 ## Missing table map
 
-If `kb get dingpan/tables` is a stub and `/agents/data/dingpan/README.md` is
+If `kb_get dingpan/tables` is a stub and `/agents/data/dingpan/README.md` is
 absent, say so. Do not invent table names. `listBusinessTables` is the
 fallback for discovery, then `getTableSchemas` before any `executeQuery`.
 

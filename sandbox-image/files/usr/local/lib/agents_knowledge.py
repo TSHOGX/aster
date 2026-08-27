@@ -2,7 +2,7 @@
 
 Mirrors the DeepSeek Harness example plugin (`@deepseek-ai/dsh-knowledge`):
 articles live as unencrypted Markdown under a `knowledge/` tree, the model sees
-only an id/description/tags catalog, and `kb get <id>` loads one full body.
+only an id/description/tags catalog, and `kb_get` loads one full body.
 
 Malformed files and a missing root yield an empty catalog rather than a crash.
 """
@@ -173,15 +173,15 @@ def render_catalog_message(entries: Sequence[KnowledgeCatalogEntry], *, update: 
     )
     if update:
         availability = (
-            "No knowledge articles are currently available through `kb get`. "
+            "No knowledge articles are currently available through `kb_get`. "
             "Do not use ids from earlier knowledge catalogs."
             if len(entries) == 0
             else "Use only ids in this replacement catalog. If the user question "
-            "matches a listed description, call `kb get` with that exact id before answering."
+            "matches a listed description, call `kb_get` with that exact id before answering."
         )
     else:
         availability = (
-            "If the user question matches an article description, run `kb get <id>` "
+            "If the user question matches an article description, call the `kb_get` tool "
             "with that exact id before answering. This catalog contains summaries "
             "only; do not invent article bodies."
         )

@@ -16,7 +16,8 @@ Every sandbox gets a read-only `/agents` directory bind-mounted in, holding a
   facts/INDEX.md        # navigation entry / map of the KB
   facts/<fact>.md       # small, agentic-searchable knowledge notes
   skills/<name>/SKILL.md # curated procedures; frontmatter `status:` key
-  knowledge/<id>.md     # progressive-disclosure articles (catalog + `kb get`)
+  knowledge/<id>.md     # progressive-disclosure articles (MCP kb_catalog / kb_get)
+  data/<domain>/...      # bulky reference material
   data/<domain>/...      # bulky reference material
 ```
 
@@ -26,23 +27,24 @@ Skills carry a lifecycle status in their frontmatter:
 - `in-use` — stable, well-supported, the default an agent should prefer.
 - `deprecated` — kept for provenance, should not be followed.
 
-### Progressive-disclosure articles (`knowledge/` + `kb`)
+### Progressive-disclosure articles (`knowledge/` + MCP)
 
 Dingpan MCP (and similar) operational knowledge is stored as plain Markdown
 under `knowledge/`, following the DeepSeek Harness `dsh-knowledge` pattern:
 the model sees an **id + description catalog**, and loads one body with
-`kb get <id>`. No embeddings, no FTS.
+MCP tool `kb_get`. No embeddings, no FTS. **No orchestrator change** — recall
+is a stdio MCP server the sandbox already knows how to run.
 
 - **Seed (edit here):** `sandbox-image/files/usr/local/share/agents-kb-seed/knowledge/`
 - **Runtime mount:** `/agents/knowledge/`
-- **Recall CLI (in the sandbox image):** `/usr/local/bin/kb`
-  (`kb catalog`, `kb get <id>`). Default root `/agents/knowledge`.
+- **Recall:** MCP server `dingpan-knowledge` (`kb_catalog`, `kb_get`), wired in
+  the same sandbox `mcp.json` as dingpan. Command is `/usr/local/bin/kb mcp`.
 - **Procedure:** `skills/dingpan-knowledge`
 
 Each article needs YAML frontmatter with a `description` (required). Nested
 paths become ids (`knowledge/dingpan/tables.md` → `dingpan/tables`). Files
-without usable frontmatter are skipped. The tree is carried forward on every
-KB republish with the constitution, seeded skills, and `data/`.
+without usable frontmatter are skipped. The tree is just more files in the
+seed snapshot; the existing carry-forward already copies unknown paths.
 
 Bulky private dumps still belong in `data/<domain>/` (gitignored). Point at
 them from a `knowledge/` article; do not paste megabytes into the catalog.
@@ -229,6 +231,12 @@ publish regardless of what the config file says. Logs:
 `replay --date <yesterday>` also catches up on history: the distillation query is
 `normalized_at IS NULL OR extracted_at IS NULL OR ended_at >= since`, so any
 never-extracted session is swept in regardless of age.
+
+A second, opt-in nightly (`scripts/harness-evolve-nightly.sh`) runs the sibling
+Bun pipeline `trajectory-evolve` against its own state dir and can be triggered
+on demand through host MCP + `skills/self-evolve`. It does **not** replace this
+Go loop until you point `TE_KB_ROOT` at the live agents-kb tree — and then you
+must pick one publisher per night. Wiring: [`self-evolve-mcp.md`](./self-evolve-mcp.md).
 
 ## LLM configuration
 

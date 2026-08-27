@@ -42,13 +42,27 @@ Sandbox `mcp.json` (no real token):
       "transport": "streamable-http",
       "url": "http://harness-mcp.internal:8103/",
       "lifecycle": "eager"
+    },
+    "dingpan-knowledge": {
+      "transport": "stdio",
+      "command": "/usr/local/bin/kb",
+      "args": ["mcp"],
+      "lifecycle": "eager"
     }
   }
 }
 ```
 
+`dp-dingpan-mcp-server` is the live warehouse (this gateway). `dingpan-knowledge`
+is a local stdio server that reads `/agents/knowledge` and exposes `kb_catalog` /
+`kb_get`. It does not go through this gateway and does not need a data-proxy.
+
 The gateway ignores the client path and always forwards to `UPSTREAM_HTTP_URL`,
 so `/` or `/mcp` on the gateway both work.
+
+A second, tokenless MCP (`trajectory-evolve` for on-demand KB evolution) does
+**not** go through this gateway. It binds `:8104` itself and uses a separate
+`data_proxies` alias. See [`docs/self-evolve-mcp.md`](../../docs/self-evolve-mcp.md).
 
 ## Use `http://harness-mcp.internal:8103`
 

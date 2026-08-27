@@ -6,6 +6,7 @@ Commands:
   kb catalog              print the id/description catalog (no bodies)
   kb get <id>             load one article body
   kb path <id>            print the Markdown path for an id
+  kb mcp                  stdio MCP server (kb_catalog / kb_get tools)
 
 Default root is `/agents/knowledge` in the sandbox, else `./knowledge`.
 Override with `--root` or the `KNOWLEDGE_ROOT` environment variable.
@@ -71,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     path_p = sub.add_parser("path", help="Print the Markdown file path for one id")
     path_p.add_argument("id", help="Exact article id from `kb catalog`")
 
+    sub.add_parser("mcp", help="Run as a stdio MCP server exposing kb_catalog / kb_get")
+
     args = parser.parse_args(argv)
     if args.max_description < 3:
         print("error: --max-description must be >= 3", file=sys.stderr)
@@ -83,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_get(root, args.id, args.as_json)
     if args.command == "path":
         return _cmd_path(root, args.id)
+    if args.command == "mcp":
+        return _cmd_mcp(root, args.max_description)
     parser.error(f"unknown command {args.command}")
     return 2
 
@@ -128,6 +133,12 @@ def _cmd_path(root: Path, article_id: str) -> int:
         return 2
     print(path)
     return 0
+
+
+def _cmd_mcp(root: Path, max_description: int) -> int:
+    import agents_knowledge_mcp as mcp  # noqa: PLC0415
+
+    return mcp.run_stdio(root, max_description)
 
 
 if __name__ == "__main__":

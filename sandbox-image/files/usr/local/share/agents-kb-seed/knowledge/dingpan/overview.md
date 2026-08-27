@@ -30,7 +30,7 @@ explicitly asks for those.
 | `dingpan/query-cookbook` | You need a known-good SELECT pattern |
 | `dingpan/pitfalls` | A call hung, timed out, or returned an unexpected error |
 
-Load those with `kb get <id>`. Then call dingpan MCP tools. Do not fall back to
+Load those with MCP `kb_get <id>`. Then call dingpan MCP tools. Do not fall back to
 Doris or OBS because dingpan looked empty — say so and ask.
 
 ## TODO (human)

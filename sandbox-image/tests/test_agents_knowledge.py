@@ -191,5 +191,80 @@ class CliTest(unittest.TestCase):
         self.assertIn("dingpan/overview", ids)
 
 
+class McpStdioTest(unittest.TestCase):
+    def _rpc(self, proc, payload):
+        proc.stdin.write(json.dumps(payload) + "\n")
+        proc.stdin.flush()
+        line = proc.stdout.readline()
+        self.assertTrue(line, "MCP server closed stdout before reply")
+        return json.loads(line)
+
+    def test_initialize_catalog_and_get(self):
+        proc = subprocess.Popen(
+            [sys.executable, str(CLI), "--root", str(SEED), "mcp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            init = self._rpc(
+                proc,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test"}},
+                },
+            )
+            self.assertEqual(init["result"]["serverInfo"]["name"], "dingpan-knowledge")
+            listed = self._rpc(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            names = [tool["name"] for tool in listed["result"]["tools"]]
+            self.assertEqual(names, ["kb_catalog", "kb_get"])
+            catalog = self._rpc(
+                proc,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {"name": "kb_catalog", "arguments": {}},
+                },
+            )
+            text = catalog["result"]["content"][0]["text"]
+            self.assertIn("dingpan/tables", text)
+            self.assertNotIn("<knowledge_body>", text)
+            got = self._rpc(
+                proc,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": "kb_get", "arguments": {"id": "dingpan/tools"}},
+                },
+            )
+            body = got["result"]["content"][0]["text"]
+            self.assertIn("<knowledge_body>", body)
+            self.assertIn("listBusinessTables", body)
+            bad = self._rpc(
+                proc,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {"name": "kb_get", "arguments": {"id": "dingpan/nope"}},
+                },
+            )
+            self.assertTrue(bad["result"].get("isError"))
+        finally:
+            if proc.stdin:
+                proc.stdin.close()
+            proc.kill()
+            proc.wait(timeout=5)
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+
+
 if __name__ == "__main__":
     unittest.main()

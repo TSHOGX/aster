@@ -22,7 +22,7 @@ tool list; do not hard-code a prefix if the list already shows them.
 
 ## Call order
 
-1. Pick tables from `kb get dingpan/tables` when the article already names them.
+1. Pick tables from MCP `kb_get dingpan/tables` when the article already names them.
 2. Call `listBusinessTables` **only** if the table map does not cover the question.
 3. `getTableSchemas` with `schema.table` (example:
    `digital_operation.dwd_e2e_trace_barcode_material`). Batch with commas.

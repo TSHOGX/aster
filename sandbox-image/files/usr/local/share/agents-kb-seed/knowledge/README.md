@@ -1,8 +1,11 @@
 # `knowledge/` — progressive-disclosure articles
 
 Plain-text Markdown knowledge base, modeled on the DeepSeek Harness
-`dsh-knowledge` example: **catalog of summaries in context, full body loaded
-on demand**. No embeddings, no FTS index, no encryption.
+`dsh-knowledge` example: **catalog of summaries, full body loaded on demand**.
+No embeddings, no FTS index, no encryption.
+
+Recall is an **MCP server** (`kb_catalog` / `kb_get`), the same kind of tool
+surface as dingpan. Orchestrator is not involved.
 
 ## Where to put documents
 
@@ -21,10 +24,9 @@ At runtime this tree is mounted read-only at **`/agents/knowledge/`**.
 
 Nested directories become ids: `knowledge/dingpan/tables.md` → id `dingpan/tables`.
 
-After editing the seed, either boot a fresh KB (`snapshots/seed`) or
-`orchestrator kb reseed` so live sandboxes pick up the files. No image rebuild
-is required for the Markdown; the `kb` CLI itself **does** need a rootfs rebuild
-the first time it is added.
+After editing Markdown, reseed the host KB snapshot (existing `orchestrator kb
+reseed`) so new sessions see it. No orchestrator code change, no image rebuild
+for article text.
 
 ## Article format
 
@@ -54,17 +56,47 @@ tags: [dingpan, tables, schema]
 Ids are lowercase path-style (`a-z`, `0-9`, `/`, `-`). Files without usable
 frontmatter (including this README) are skipped.
 
-## Recall
+## Recall: MCP server (preferred)
 
-Inside a sandbox:
+Add this next to dingpan in the sandbox `mcp.json`
+(`/agent-home/.pi/agent/mcp.json`):
 
-```bash
-kb catalog                 # id + description + tags; no bodies
-kb get dingpan/tables      # one full article
-kb get dingpan/tools --json
+```json
+{
+  "mcpServers": {
+    "dp-dingpan-mcp-server": {
+      "transport": "streamable-http",
+      "url": "http://harness-mcp.internal:8103/",
+      "lifecycle": "eager"
+    },
+    "dingpan-knowledge": {
+      "transport": "stdio",
+      "command": "/usr/local/bin/kb",
+      "args": ["mcp"],
+      "lifecycle": "eager"
+    }
+  }
+}
 ```
 
-Default root is `/agents/knowledge`. Override with `--root` or `KNOWLEDGE_ROOT`.
+Copy-paste snippet:
+`/usr/local/share/harness/dingpan-knowledge-mcp.example.json`.
 
-The agent should **not** `cat` every file under `knowledge/`. Match the user
-question to a catalog description, then `kb get` that id.
+Pi then exposes:
+
+- `mcp_dingpan_knowledge_kb_catalog` — id + description catalog (no bodies)
+- `mcp_dingpan_knowledge_kb_get` — load one article by exact id
+
+The stdio server reads `/agents/knowledge` inside the sandbox. No extra host
+process, no extra data-proxy, no orchestrator change.
+
+The `kb` binary needs to be in the sandbox image (one rootfs rebuild the first
+time). After that, only `mcp.json` wiring is required.
+
+Operator debug (optional, not what the agent should use):
+
+```bash
+kb catalog
+kb get dingpan/tables
+kb mcp    # stdio MCP on stdin/stdout
+```

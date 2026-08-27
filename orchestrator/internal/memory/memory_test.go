@@ -127,9 +127,8 @@ func TestKBPublishAndRepoint(t *testing.T) {
 }
 
 // TestKBPublishCarriesForwardSeed proves a republish preserves human-owned seed
-// content (the constitution + seeded skills + knowledge/ + data) that the
-// distillation publisher does not itself regenerate, while still regenerating
-// facts/INDEX.md.
+// content (the constitution + seeded skills + data) that the distillation
+// publisher does not itself regenerate, while still regenerating facts/INDEX.md.
 func TestKBPublishCarriesForwardSeed(t *testing.T) {
 	root := t.TempDir()
 	kb := NewKB(root)
@@ -140,7 +139,6 @@ func TestKBPublishCarriesForwardSeed(t *testing.T) {
 	mustWrite(t, filepath.Join(seed, "CONSTITUTION.md"), "# Constitution\nyou are BatteryGPT\n")
 	mustWrite(t, filepath.Join(seed, "skills/doris-query/SKILL.md"), "---\nstatus: in-use\n---\n# Doris\n")
 	mustWrite(t, filepath.Join(seed, "data/schemas/vhr.md"), "col list\n")
-	mustWrite(t, filepath.Join(seed, "knowledge/dingpan/tables.md"), "---\ndescription: tables\n---\n# tables\n")
 	mustWrite(t, filepath.Join(seed, "facts/INDEX.md"), "STALE INDEX\n")
 	if err := os.Symlink(filepath.Join("snapshots", "seed"), filepath.Join(root, "current")); err != nil {
 		t.Fatalf("seed symlink: %v", err)
@@ -160,7 +158,7 @@ func TestKBPublishCarriesForwardSeed(t *testing.T) {
 		t.Fatalf("resolve current: %v", err)
 	}
 	// Seed content carried forward.
-	for _, rel := range []string{"CONSTITUTION.md", "skills/doris-query/SKILL.md", "data/schemas/vhr.md", "knowledge/dingpan/tables.md"} {
+	for _, rel := range []string{"CONSTITUTION.md", "skills/doris-query/SKILL.md", "data/schemas/vhr.md"} {
 		if _, err := os.Stat(filepath.Join(resolved, rel)); err != nil {
 			t.Fatalf("seed file %s not carried forward: %v", rel, err)
 		}

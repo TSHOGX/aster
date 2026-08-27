@@ -52,7 +52,6 @@ func ensureAgentsKB(root, seedSrc string) error {
 			filepath.Join(seedDir, "skills"),
 			filepath.Join(seedDir, "data"),
 			filepath.Join(seedDir, "facts"),
-			filepath.Join(seedDir, "knowledge"),
 		} {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return fmt.Errorf("create agents-kb seed skeleton %s: %w", dir, err)
@@ -83,11 +82,10 @@ const minimalAgentsKBIndex = `# Shared Knowledge Base
 
 Layout:
 - skills/ — reusable skills, each with a frontmatter status: (observing | in-use | deprecated)
-- knowledge/ — progressive-disclosure Markdown articles; recall with `kb catalog` / `kb get`
 - data/   — supporting data and artifacts referenced by skills
 - facts/  — long-lived facts; start here (this file)
 
-Search skills/, knowledge/, and data/ before starting a recurring task; prefer an existing
+Search skills/ and data/ before starting a recurring task; prefer an existing
 in-use skill over reinventing an approach.
 `
 
