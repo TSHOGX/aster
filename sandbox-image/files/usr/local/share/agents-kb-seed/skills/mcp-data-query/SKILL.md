@@ -28,9 +28,10 @@ here and query occurrences via **dingpan MCP tools**.
 
 - Transport: streamable-http → `http://harness-mcp.internal:8103/`. Real tokens
   stay on the host gateway; never invent credentials.
-- **Table map:** read **once** `/agents/data/dingpan/README.md` for known
-  GaussDB / `digital_operation` tables. Prefer it over a full remote table list
-  when the README already names the table.
+- **Table map:** run `kb catalog` then `kb get dingpan/tables` (see
+  `skills/dingpan-knowledge`). Prefer the article over a full remote table list
+  when it already names the table. Bulky dumps, if provisioned, are at
+  `/agents/data/dingpan/`.
 - **Supported dingpan tools only** (do not invent other names):
 
   | Tool | Purpose |
@@ -44,10 +45,11 @@ here and query occurrences via **dingpan MCP tools**.
 
 ## Procedure (short path)
 
-1. **Read once:** `/agents/data/dingpan/README.md`. No `find /`, no hunting
-   `mcp.json`.
-2. **Pick tables** from the README when possible. Only call
-   `listBusinessTables` if the README does not cover the question.
+1. **Catalog + load:** `kb catalog`, then `kb get` matching dingpan ids
+   (`dingpan/tables` for table pick, `dingpan/tools` if you need call shape).
+   See `skills/dingpan-knowledge`. No `find /`, no hunting `mcp.json`.
+2. **Pick tables** from `dingpan/tables` when possible. Only call
+   `listBusinessTables` if the article does not cover the question.
 3. **`getTableSchemas`** with `schema.table` (e.g.
    `digital_operation.dwd_e2e_trace_barcode_material`). Batch with commas if
    needed.
@@ -65,8 +67,9 @@ here and query occurrences via **dingpan MCP tools**.
 - **No filesystem scavenger hunt** for data-path setup.
 - **No credential inventing.** Gateway injects auth.
 - **Read-only.** No mutating tools unless the user asks.
-- **Be economical.** Prefer README → `getTableSchemas` → `executeQuery`. Skip
-  `listBusinessTables` when the target table is already known.
+- **Be economical.** Prefer `kb get dingpan/tables` → `getTableSchemas` →
+  `executeQuery`. Skip `listBusinessTables` when the target table is already
+  known.
 
 ## Known Pitfalls
 
@@ -75,4 +78,5 @@ here and query occurrences via **dingpan MCP tools**.
 - `listBusinessTables` / heavy `executeQuery` can be slow on upstream; wait for
   the result; raise `settings.requestTimeoutMs` in mcp.json if needed.
 - Table names for `getTableSchemas` must include schema prefix.
-- If `/agents/data/dingpan/README.md` is missing, say so; do not invent tables.
+- If `kb get dingpan/tables` is still a stub and `/agents/data/dingpan/README.md`
+  is missing, say so; do not invent tables. Use `listBusinessTables` to discover.

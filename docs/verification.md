@@ -23,6 +23,7 @@
 
 # Sandbox image bridge/driver/entrypoint behavior
 python3 -m unittest sandbox-image/tests/test_harness_bridge_client.py
+python3 -m unittest sandbox-image/tests/test_agents_knowledge.py
 ```
 
 Test fixtures live next to their tests:

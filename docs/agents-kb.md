@@ -16,6 +16,7 @@ Every sandbox gets a read-only `/agents` directory bind-mounted in, holding a
   facts/INDEX.md        # navigation entry / map of the KB
   facts/<fact>.md       # small, agentic-searchable knowledge notes
   skills/<name>/SKILL.md # curated procedures; frontmatter `status:` key
+  knowledge/<id>.md     # progressive-disclosure articles (catalog + `kb get`)
   data/<domain>/...      # bulky reference material
 ```
 
@@ -24,6 +25,27 @@ Skills carry a lifecycle status in their frontmatter:
 - `observing` — newly promoted, not yet trusted; present but flagged as provisional.
 - `in-use` — stable, well-supported, the default an agent should prefer.
 - `deprecated` — kept for provenance, should not be followed.
+
+### Progressive-disclosure articles (`knowledge/` + `kb`)
+
+Dingpan MCP (and similar) operational knowledge is stored as plain Markdown
+under `knowledge/`, following the DeepSeek Harness `dsh-knowledge` pattern:
+the model sees an **id + description catalog**, and loads one body with
+`kb get <id>`. No embeddings, no FTS.
+
+- **Seed (edit here):** `sandbox-image/files/usr/local/share/agents-kb-seed/knowledge/`
+- **Runtime mount:** `/agents/knowledge/`
+- **Recall CLI (in the sandbox image):** `/usr/local/bin/kb`
+  (`kb catalog`, `kb get <id>`). Default root `/agents/knowledge`.
+- **Procedure:** `skills/dingpan-knowledge`
+
+Each article needs YAML frontmatter with a `description` (required). Nested
+paths become ids (`knowledge/dingpan/tables.md` → `dingpan/tables`). Files
+without usable frontmatter are skipped. The tree is carried forward on every
+KB republish with the constitution, seeded skills, and `data/`.
+
+Bulky private dumps still belong in `data/<domain>/` (gitignored). Point at
+them from a `knowledge/` article; do not paste megabytes into the catalog.
 
 ### Prompt architecture: slim bootstrap + evolvable constitution
 

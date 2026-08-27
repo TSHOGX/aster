@@ -204,6 +204,11 @@ the baked overlay at `sandbox-image/files/usr/local/share/agents-kb-seed/`:
 - **matplotlib-cjk-fonts** (`skills/matplotlib-cjk-fonts/SKILL.md`, `status:
   in-use`) — select the installed WenQuanYi CJK fonts in matplotlib/Pillow so
   Chinese chart text doesn't render as tofu boxes.
+- **dingpan-knowledge** (`skills/dingpan-knowledge/SKILL.md`, `status: in-use`) —
+  progressive-disclosure recall (`kb catalog` / `kb get`) over Markdown
+  articles seeded at `agents-kb-seed/knowledge/dingpan/`. The `kb` CLI is
+  `/usr/local/bin/kb` in this image; articles themselves live on the `/agents`
+  mount and do not require a rootfs rebuild when edited (reseed the KB).
 
 `obs-parquet-duckdb` depends on a baked DuckDB extension: `build-rootfs.sh`'s
 `install_duckdb_extensions` installs `httpfs` into

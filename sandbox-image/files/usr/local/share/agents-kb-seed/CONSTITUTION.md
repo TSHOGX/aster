@@ -65,10 +65,15 @@ The knowledge base at `/agents` is your shared, accumulated memory:
 - `skills/<name>/SKILL.md` — curated procedures. Each has a frontmatter `status:`
   key: `in-use` (validated, prefer it), `observing` (candidate, use with
   judgment), `deprecated` (do not follow).
+- `knowledge/` — progressive-disclosure Markdown articles (dingpan MCP and
+  others). Catalog of id + description only; load a body with `kb get <id>`.
+  See `skills/dingpan-knowledge`.
 - `data/<domain>/...` — bulky reference material skills point at.
 
-Search protocol: read this constitution, then `facts/INDEX.md`, then agentically
-search `skills/` and `data/` for the task at hand before beginning work.
+Search protocol: read this constitution, then `facts/INDEX.md`. For dingpan /
+warehouse questions run `kb catalog`, then `kb get` matching ids (do not dump
+every `knowledge/*.md`). Then search `skills/` and `data/` before beginning
+work.
 
 The knowledge base is read-only inside a session. New skills and facts are
 distilled from past session trajectories by an out-of-band curator and appear in

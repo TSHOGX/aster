@@ -89,7 +89,7 @@ type Config struct {
 	Harness          HarnessConfig
 	TitleLLM         TitleLLMConfig
 	// AgentsKBRoot is the host directory holding the shared, self-evolving
-	// "/agents" knowledge base (skills/data/facts). Its `current` symlink is
+	// "/agents" knowledge base (skills/knowledge/data/facts). Its `current` symlink is
 	// bind-mounted read-only into every sandbox; the nightly distillation loop
 	// writes new snapshots and re-points `current`.
 	AgentsKBRoot string
