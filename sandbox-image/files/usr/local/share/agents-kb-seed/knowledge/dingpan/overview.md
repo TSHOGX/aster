@@ -14,9 +14,10 @@ explicitly asks for those.
 
 ## How the sandbox reaches it
 
-- Transport: streamable-http → `http://harness-mcp.internal:8103/`.
-- Real tokens stay on the **host MCP gateway**. Never invent credentials, never
-  `curl` the gateway, never put secrets in `mcp.json`.
+- Pi is already wired to dingpan as an MCP server in this session. Call the
+  `mcp_*` tools in your tool list.
+- Real tokens stay on the **host**. Never invent credentials, never HTTP the
+  gateway, never put secrets in `mcp.json`.
 - Server name in `mcp.json` is typically `dp-dingpan` or `dp-dingpan-mcp-server`.
 - Pi tool names are prefixed: `mcp_<server>_<tool>` (example:
   `mcp_dp_dingpan_listTables`).

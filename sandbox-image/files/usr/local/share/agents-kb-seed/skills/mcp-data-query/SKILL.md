@@ -12,13 +12,12 @@ source: human-seeded (dingpan MCP-first data path, 2026-08-27)
 
 **This is the default data source for every measured-data / fleet / warehouse
 question.** Statistics, reports, trends, aggregations, signal lookups, charging
-analysis, and similar work must go through the **dingpan MCP server** tools
-exposed in this session (via the host MCP gateway at
-`http://harness-mcp.internal:8103/`).
+analysis, and similar work must go through the **dingpan MCP tools already in
+this session's tool list**.
 
-Server name in `mcp.json` is typically `dp-dingpan` or `dp-dingpan-mcp-server`.
-Pi tool names are prefixed: `mcp_<server>_<tool>` (e.g.
-`mcp_dp_dingpan_listTables`).
+Look for names like `mcp_dp_dingpan_listTables` (prefix comes from the mcp.json
+server id, often `dp-dingpan` or `dp-dingpan-mcp-server`). **Call those tools.**
+Do not open a URL. Do not write a client.
 
 Specification / DTC / CAN decode questions still use
 `skills/battery-domain-reference`; after you decode a code or signal, come back
@@ -26,8 +25,9 @@ here and query occurrences via **dingpan MCP tools**.
 
 ## Context
 
-- Transport: streamable-http → `http://harness-mcp.internal:8103/`. Real tokens
-  stay on the host gateway; never invent credentials.
+- Pi is already connected to dingpan over streamable-http. Real tokens stay on
+  the **host** gateway. Never invent credentials. Never `curl` / `urllib` the
+  gateway. Never put secrets in files.
 - **Table map:** call MCP `kb_catalog` then `kb_get dingpan/tables` (see
   `skills/dingpan-knowledge`). Prefer the article over a full remote table list
   when it already names the table. Bulky dumps, if provisioned, are at
@@ -57,18 +57,21 @@ here and query occurrences via **dingpan MCP tools**.
    needed.
 4. **`executeQuery`** with `sql` a narrow `SELECT` (filters + explicit columns).
    Do not `SELECT *` on huge tables.
-5. If dingpan tools are missing from the tool list, stop and report wiring
-   failure — do not bash/`curl` the gateway, do not fall back to Doris/OBS
+5. If dingpan tools are missing from the tool list, **stop and report wiring
+   failure**. Do not bash/`curl`/`urllib` the gateway, do not write
+   `/workspace/mcp_client.py`, do not probe `/mcp` `/api` `/v1`, do not parse
+   SSE, do not `find` tokens under `/agent-home`. Do not fall back to Doris/OBS
    unless the user asks.
 6. Ground the answer in tool results; charts via `skills/matplotlib-cjk-fonts`.
 
 ## Hard rules
 
-- **Only the three tools above.** Never invent `listBusinessTables` /
-  `getTableSchemas`.
-- **Dingpan MCP first.** Native MCP tool calls only.
-- **No filesystem scavenger hunt** for data-path setup.
-- **No credential inventing.** Gateway injects auth.
+- **Only the three tools above, via native MCP calls.** Never invent
+  `listBusinessTables` / `getTableSchemas`.
+- **No DIY MCP client.** Seeing SSE (`event: message`) or a gateway hostname
+  is not a prompt to reimplement JSON-RPC.
+- **No filesystem scavenger hunt** for data-path setup or auth.
+- **No credential inventing.** The host injects auth.
 - **Read-only.** No mutating tools unless the user asks.
 - **Be economical.** Prefer MCP `kb_get dingpan/tables` → `tableSchemas` →
   `executeQuery`. Skip `listTables` when the target table is already known.
@@ -80,7 +83,10 @@ here and query occurrences via **dingpan MCP tools**.
 - Calling `listBusinessTables` / `getTableSchemas` returns `Unknown tool`
   immediately. Use `listTables` / `tableSchemas`.
 - Heavy `listTables` / `executeQuery` can be slow on upstream; wait for the
-  result; raise `settings.requestTimeoutMs` in mcp.json if needed.
+  result; raise `settings.requestTimeoutMs` in mcp.json if needed (host
+  operator, not you).
 - `tableSchemas.tableNames` must include schema prefix.
 - If `kb_get dingpan/tables` is still a stub and `/agents/data/dingpan/README.md`
   is missing, say so; do not invent tables. Use `listTables` to discover.
+- A long bash session that "finally figures out tools/call" is a failed
+  session: you should have called `mcp_*_listTables` on the first turn.

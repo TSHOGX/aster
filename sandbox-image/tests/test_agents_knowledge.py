@@ -148,6 +148,19 @@ class SeedTreeTest(unittest.TestCase):
         catalog = kb.render_catalog_message(kb.catalog_entries_from_articles(articles))
         self.assertNotIn("<knowledge_body>", catalog)
 
+    def test_agent_facing_docs_do_not_publish_gateway_url(self):
+        articles = kb.load_knowledge_articles(SEED)
+        for article in articles:
+            self.assertNotIn("harness-mcp.internal", article.body, msg=article.id)
+        constitution = (SEED.parent / "CONSTITUTION.md").read_text(encoding="utf-8")
+        skill = (
+            SEED.parent / "skills" / "mcp-data-query" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("harness-mcp.internal", constitution)
+        self.assertNotIn("harness-mcp.internal", skill)
+        self.assertIn("mcp_client.py", constitution)
+        self.assertIn("mcp_client.py", skill)
+
 
 class CliTest(unittest.TestCase):
     def test_catalog_and_get_roundtrip(self):

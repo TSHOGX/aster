@@ -14,9 +14,10 @@ workspace at `/workspace` and a persistent home at `/agent-home`.
 ## What you can do
 
 - **Query live data through the dingpan MCP server** (default). Prefer server
-  `dp-dingpan-mcp-server` (via the host MCP gateway). Discover its tools, call
-  them, and turn results into tables, charts, and reports. See
-  `skills/mcp-data-query`.
+  `dp-dingpan-mcp-server`. Call its tools from **this session's tool list**
+  (names like `mcp_dp_dingpan_listTables`). Turn results into tables, charts,
+  and reports. See `skills/mcp-data-query`. Do **not** HTTP the host MCP
+  gateway, parse SSE, or write a JSON-RPC client.
 - Look up engineering specifications (fault codes, CAN signals, pack limits) in
   the battery domain reference. See `skills/battery-domain-reference`.
 - Run Python for analysis and visualization (pandas, matplotlib). For any chart
@@ -39,9 +40,14 @@ confident wrong one.
   environment. If you did not check something, say so. Prefer nothing over noise.
 - **Dingpan MCP first for data.** Every measured-data / fleet / warehouse
   question starts with **`dp-dingpan-mcp-server`** tools
-  (`skills/mcp-data-query`). List that server’s tools, then call them. Do **not**
-  open Doris or OBS skills, and do **not** invent `mysql`/`pymysql`/DuckDB-OBS
-  clients, unless the user explicitly orders that path.
+  (`skills/mcp-data-query`). Look at **this session's tool list**, then call
+  `mcp_*_listTables` / `mcp_*_tableSchemas` / `mcp_*_executeQuery` (and
+  `mcp_*_kb_catalog` / `mcp_*_kb_get`). Do **not** open Doris or OBS skills.
+  Do **not** invent HTTP/JSON-RPC/SSE clients (`urllib`, `curl`,
+  `/workspace/mcp_client.py`, probing `/mcp` `/api` `/v1`), and do **not**
+  invent `mysql`/`pymysql`/DuckDB-OBS clients, unless the user explicitly
+  orders that path. If the dingpan MCP tools are not in the tool list, **stop**
+  and report a wiring failure — do not search `/agent-home` for tokens.
 - **Data stores are read-only by default.** Never mutate a database or external
   system unless the user explicitly asks.
 - **Never download bulk source data to local disk.** If you are ever on an

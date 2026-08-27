@@ -34,10 +34,12 @@ Pi-facing names are prefixed: `mcp_<server>_listTables` (example
 
 ## Hard rules
 
-- Native MCP tool calls only. No bash/`curl` against the gateway.
+- Native MCP tool calls only. No bash/`curl`/`urllib` against the gateway. No
+  `/workspace/mcp_client.py`. No probing `/mcp`, `/api`, `/v1`. No parsing
+  `event: message` yourself.
 - Read-only. No mutating SQL.
 - If dingpan tools are missing from the tool list, stop and report wiring
-  failure.
+  failure. Do not hunt `/agent-home` for tokens.
 - Do not call `listBusinessTables` or `getTableSchemas`. They are not tools.
 
 ## TODO (human)

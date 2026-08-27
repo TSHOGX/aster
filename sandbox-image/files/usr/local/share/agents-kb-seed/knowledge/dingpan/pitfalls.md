@@ -1,11 +1,20 @@
 ---
 id: dingpan/pitfalls
 title: Dingpan MCP pitfalls
-description: Known dingpan MCP failure modes — invented tool names, swapped descriptions, schema prefixes, missing table map
+description: Known dingpan MCP failure modes — DIY HTTP/SSE clients, invented tool names, swapped descriptions, schema prefixes, missing table map
 tags: [dingpan, mcp, pitfalls]
 ---
 
 # Dingpan MCP pitfalls
+
+## Do not reimplement the MCP client
+
+If you see SSE (`event: message`) or a hostname for the host gateway, that is
+**not** an invitation to `urllib`/`curl`, write `/workspace/mcp_client.py`,
+probe `/`, `/mcp`, `/api`, `/v1`, or `find` tokens under `/agent-home`. Pi
+already speaks streamable-http. Call `mcp_*_listTables` /
+`mcp_*_tableSchemas` / `mcp_*_executeQuery` from the tool list. If they are
+missing, stop — the session is miswired.
 
 ## Invented names are not tools
 
@@ -39,9 +48,10 @@ gateway SSE hang (fixed); do not treat that as a reason to skip `listTables`.
 
 ## Skip the filesystem scavenger hunt
 
-Do not `find /` for `mcp.json`, credentials, or table maps. Knowledge is the
-`dingpan-knowledge` MCP tools (`kb_catalog` / `kb_get`). Live data is dingpan
-MCP. If tools are missing from the session list, report a wiring failure.
+Do not `find /` for `mcp.json`, credentials, or table maps. Do not
+`cat ~/.pi/agent/auth.json`. Knowledge is the `dingpan-knowledge` MCP tools
+(`kb_catalog` / `kb_get`). Live data is dingpan MCP. If tools are missing from
+the session list, report a wiring failure.
 
 ## Missing table map
 

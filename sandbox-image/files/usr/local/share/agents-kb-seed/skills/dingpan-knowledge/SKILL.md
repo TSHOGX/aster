@@ -39,8 +39,8 @@ Pair with `skills/mcp-data-query` for the live dingpan MCP calls.
 - Catalog is summaries only. Never pretend you have read a body you did not
   `kb_get`.
 - If the `dingpan-knowledge` MCP server is missing from the tool list, say so
-  (mcp.json not wired). Fall back to `skills/mcp-data-query` and
-  `listTables`; do not invent tables.
+  (mcp.json not wired). Fall back to `skills/mcp-data-query` and native MCP
+  `listTables`; do not invent tables, do not HTTP the gateway, do not bash `kb`.
 - Human-authored articles live in the seed tree
   `sandbox-image/files/usr/local/share/agents-kb-seed/knowledge/dingpan/`
   (runtime: `/agents/knowledge/dingpan/`).
