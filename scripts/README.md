@@ -6,6 +6,7 @@ publish 环境的运维脚本。
 | --- | --- |
 | [`harness-ctl`](#harness-ctl) | publish 环境运维 CLI：监控流量/在途对话、安全上下维护页、防打断重启、知识库审批 |
 | [`harness-kb-nightly.sh`](#harness-kb-nightlysh) | 夜间轨迹入库（23:00）与上下文自进化（00:00），由 `/etc/cron.d/harness-kb` 触发 |
+| [`harness-evolve-nightly.sh`](#harness-evolve-nightlysh) | 可选：trajectory-evolve 流水线（ingest / cycle），与 Go 夜间任务并列，默认不写线上 `/agents` |
 | `verify-refactor.sh` | 重构验证脚本 |
 
 ---
@@ -256,3 +257,27 @@ harness-ctl safe-restart harness-publish-orchestrator --timeout=1800 --interval=
   没抽取过的会话会被一并纳入，不需要逐天回放。
 - 日志 `/var/log/harness-kb-nightly-{ingest,evolve}.log`，超 32MB 自转一份 `.1`。
 - cron 的 `PATH` 很窄，脚本内显式把 node（pi 依赖）加回 `PATH`。
+
+---
+
+## harness-evolve-nightly.sh
+
+可选的第二条夜间轨，跑 **trajectory-evolve**（Bun 流水线 + MCP），与上面的 Go
+`backfill`/`replay` **并列**，默认**不写**线上 `/agents`。
+
+| 时间（建议） | 命令 | 做什么 |
+| --- | --- | --- |
+| 23:00 之后 | `harness-evolve-nightly.sh ingest` | 只读 `memory.db` → 流水线自己的表（零 LLM） |
+| 00:30 | `harness-evolve-nightly.sh evolve` | `cli cycle`：ingest+observe+harvest+进化图 → **只暂存** |
+
+要点：
+
+- 需要本机另有一份 `trajectory-evolve` 检出（`TRAJECTORY_EVOLVE_ROOT`，默认
+  `/home/agent-runtime-platform/trajectory-evolve`）。
+- 锁是 `/var/lock/harness-evolve.lock`，和 `harness-kb.lock` 分开：两边写不同的
+  SQLite。
+- 默认 `TE_STATE_ROOT=/var/lib/harness-publish/trajectory-evolve`。把
+  `TE_KB_ROOT` 指到线上 `agents-kb` 才和 `harness-ctl kb` 共用一棵树——那时当晚
+  **不要**再跑 `harness-kb-nightly.sh evolve`。
+- 沙箱侧 MCP / skill 接线见 [`docs/self-evolve-mcp.md`](../docs/self-evolve-mcp.md)。
+- MCP 没有 approve 工具；发布仍是 `cli kb approve` 或 `harness-ctl kb approve`。

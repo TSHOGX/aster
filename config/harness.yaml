@@ -106,6 +106,23 @@ harness:
         # Real upstream MCP endpoint (informational; gateway reads its own env).
         base_url: http://mcpgateway.example.invalid/mcp/replace-me
 
+    # trajectory-evolve MCP (sibling checkout). No upstream token — the process
+    # is the server. Control plane only projects harness-evolve.internal into
+    # sandbox /etc/hosts when enabled. Leave false until the Bun MCP is running
+    # on :8104 and mcp.json has a `trajectory-evolve` streamable-http entry.
+    # See docs/self-evolve-mcp.md. Do not enable on a host that is not running
+    # that listener: sandboxes would get a dead alias.
+    #
+    # evolve:
+    #   enabled: false
+    #   bind_addr: 0.0.0.0:8104
+    #   sandbox_alias: harness-evolve.internal
+    #   sandbox_port: 8104
+    #   sandbox_user: sandbox
+    #   upstream:
+    #     kind: mcp_streamable_http
+    #     base_url: http://127.0.0.1:8104/mcp
+
   sandbox_identity:
     uid: 65534
     gid: 65534

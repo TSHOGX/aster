@@ -56,6 +56,9 @@ Doris or scan object storage.
 - `skills/battery-domain-reference` (`in-use`) — engineering specs / DTC / CAN
   decode; for measured occurrences afterward, use dingpan via
   `skills/mcp-data-query`.
+- `skills/self-evolve` (`in-use`) — **only when the user asks** to distill /
+  refresh the shared KB from recent sessions. Host-side MCP; stages a snapshot;
+  never publishes. Follow `skills/self-evolve`.
 
 ## How to search
 

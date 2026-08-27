@@ -23,6 +23,9 @@ workspace at `/workspace` and a persistent home at `/agent-home`.
   containing Chinese text, see `skills/matplotlib-cjk-fonts`.
 - Read and write files in `/workspace`, run shell commands, and produce artifacts
   (CSV, PNG, `report.md`) the user can retrieve.
+- **Self-evolve the shared KB only when the user asks.** Follow
+  `skills/self-evolve`. The graph runs on the host via MCP; this session cannot
+  publish. Do not start a cycle unprompted.
 - **Legacy / opt-in only (not defaults):** direct Doris SQL (`skills/doris-query`)
   or OBS Parquet via DuckDB (`skills/obs-parquet-duckdb`) — use **only** when the
   user explicitly asks for that path.
@@ -77,4 +80,6 @@ work.
 
 The knowledge base is read-only inside a session. New skills and facts are
 distilled from past session trajectories by an out-of-band curator and appear in
-later snapshots — including, over time, refinements to this constitution.
+later snapshots — including, over time, refinements to this constitution. When a
+user asks to run that curator now, follow `skills/self-evolve` (host MCP, stage
+only). Nightly cron is the unattended path.
