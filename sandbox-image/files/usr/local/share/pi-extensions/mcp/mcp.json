@@ -1,0 +1,26 @@
+{
+  "settings": {
+    "toolPrefix": "mcp",
+    "requestTimeoutMs": 300000,
+    "maxRetries": 3
+  },
+  "mcpServers": {
+    "demo": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["/usr/local/share/pi-extensions/mcp/servers/demo-server.mjs"],
+      "lifecycle": "eager"
+    },
+    "dp-dingpan-mcp-server": {
+      "transport": "streamable-http",
+      "url": "http://harness-mcp.internal:8103/",
+      "lifecycle": "eager"
+    },
+    "dingpan-knowledge": {
+      "transport": "stdio",
+      "command": "/usr/local/bin/kb",
+      "args": ["mcp"],
+      "lifecycle": "eager"
+    }
+  }
+}

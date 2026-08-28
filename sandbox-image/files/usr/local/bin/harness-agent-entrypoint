@@ -123,6 +123,22 @@ if [ "$AGENT_HOME" != "/agent-home" ]; then
 fi
 [ -d /agent-home ] || { echo "[entrypoint] /agent-home mount is required" >&2; exit 65; }
 
+# Seed Pi MCP extension into the writable agent-home so Pi auto-discovers it
+# from ~/.pi/agent/extensions/ (mcp.json on disk is not enough). The share dir
+# is baked into the rootfs; agent-home is a per-session bind mount.
+if [ "$HARNESS_DRIVER_ID" = "pi" ]; then
+  MCP_SHARE="/usr/local/share/pi-extensions/mcp"
+  if [ -d "$MCP_SHARE" ] && [ -f "$MCP_SHARE/index.ts" ]; then
+    PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$AGENT_HOME/.pi/agent}"
+    mkdir -p "$PI_AGENT_DIR/extensions"
+    ln -sfn "$MCP_SHARE" "$PI_AGENT_DIR/extensions/mcp"
+    if [ ! -f "$PI_AGENT_DIR/mcp.json" ] && [ -f "$MCP_SHARE/mcp.json" ]; then
+      cp "$MCP_SHARE/mcp.json" "$PI_AGENT_DIR/mcp.json"
+    fi
+    echo "[entrypoint] seeded pi MCP extension -> $PI_AGENT_DIR/extensions/mcp" >&2
+  fi
+fi
+
 cd /workspace
 
 exec_bridge_client() {

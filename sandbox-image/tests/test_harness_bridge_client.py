@@ -1433,7 +1433,17 @@ class EntrypointStaticTest(unittest.TestCase):
         self.assertLess(text.index("exec_bridge_client()"), claim_loop)
         self.assertNotIn("/sessions/$SESSION_ID", text)
         self.assertNotIn("/agent-homes/$SESSION_ID", text)
-        self.assertNotIn("ln -sfn", text)
+        self.assertIn('ln -sfn "$MCP_SHARE" "$PI_AGENT_DIR/extensions/mcp"', text)
+
+    def test_entrypoint_seeds_pi_mcp_extension(self):
+        entrypoint = SCRIPT.with_name("harness-agent-entrypoint")
+        text = entrypoint.read_text(encoding="utf-8")
+        self.assertIn('MCP_SHARE="/usr/local/share/pi-extensions/mcp"', text)
+        self.assertIn("$PI_AGENT_DIR/extensions/mcp", text)
+        self.assertIn("$PI_AGENT_DIR/mcp.json", text)
+        seed = text.index("seeded pi MCP extension")
+        cd_workspace = text.index("cd /workspace")
+        self.assertLess(seed, cd_workspace)
 
 
 def argparse_namespace(**kwargs):
