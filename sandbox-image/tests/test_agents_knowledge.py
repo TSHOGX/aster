@@ -160,11 +160,19 @@ class SeedTreeTest(unittest.TestCase):
         self.assertNotIn("harness-mcp.internal", skill)
         self.assertIn("mcp_client.py", constitution)
         self.assertIn("mcp_client.py", skill)
+        self.assertIn("mcp_dp_dingpan_mcp_server_listTables", constitution)
+        self.assertIn("mcp_dp_dingpan_mcp_server_listTables", skill)
+        self.assertIn("mcp_dingpan_knowledge_kb_catalog", skill)
 
 
 class CliTest(unittest.TestCase):
-    def test_catalog_and_get_roundtrip(self):
+    def _cli_env(self):
         env = os.environ.copy()
+        env["KB_ALLOW_CLI"] = "1"
+        return env
+
+    def test_catalog_and_get_roundtrip(self):
+        env = self._cli_env()
         proc = subprocess.run(
             [sys.executable, str(CLI), "--root", str(SEED), "catalog"],
             check=True,
@@ -183,11 +191,25 @@ class CliTest(unittest.TestCase):
         self.assertIn("<knowledge_body>", got.stdout)
         self.assertIn("listTables", got.stdout)
 
+    def test_cli_refused_without_allow_env(self):
+        env = os.environ.copy()
+        env.pop("KB_ALLOW_CLI", None)
+        proc = subprocess.run(
+            [sys.executable, str(CLI), "--root", str(SEED), "get", "dingpan/tools"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("mcp_dingpan_knowledge_kb_catalog", proc.stderr)
+        self.assertNotIn("<knowledge_body>", proc.stdout)
+
     def test_unknown_id_exits_2(self):
         proc = subprocess.run(
             [sys.executable, str(CLI), "--root", str(SEED), "get", "dingpan/nope"],
             capture_output=True,
             text=True,
+            env=self._cli_env(),
         )
         self.assertEqual(proc.returncode, 2)
         self.assertIn("unknown", proc.stderr)
@@ -198,6 +220,7 @@ class CliTest(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
+            env=self._cli_env(),
         )
         payload = json.loads(proc.stdout)
         ids = [entry["id"] for entry in payload["entries"]]

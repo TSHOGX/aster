@@ -8,6 +8,9 @@ Commands:
   kb path <id>            print the Markdown path for an id
   kb mcp                  stdio MCP server (kb_catalog / kb_get tools)
 
+catalog/get/path refuse unless KB_ALLOW_CLI=1 (operator debug only).
+Agents must call MCP tools instead.
+
 Default root is `/agents/knowledge` in the sandbox, else `./knowledge`.
 Override with `--root` or the `KNOWLEDGE_ROOT` environment variable.
 """
@@ -16,8 +19,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+# Agent sessions must call MCP tools, not this CLI. Operators set KB_ALLOW_CLI=1.
+_CLI_REFUSED = """error: do not use the kb CLI from an agent session.
+Call these MCP tools from your tool list:
+  mcp_dingpan_knowledge_kb_catalog
+  mcp_dingpan_knowledge_kb_get
+If they are missing, stop and report a wiring failure. Do not pipe JSON-RPC to `kb mcp`.
+"""
 
 
 def _load_lib():
@@ -77,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.max_description < 3:
         print("error: --max-description must be >= 3", file=sys.stderr)
+        return 2
+    if args.command != "mcp" and os.environ.get("KB_ALLOW_CLI") != "1":
+        sys.stderr.write(_CLI_REFUSED)
         return 2
     root = kb.resolve_knowledge_root(args.root)
 

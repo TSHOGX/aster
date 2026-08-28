@@ -14,13 +14,12 @@ explicitly asks for those.
 
 ## How the sandbox reaches it
 
-- Pi is already wired to dingpan as an MCP server in this session. Call the
-  `mcp_*` tools in your tool list.
+- Pi is already wired. Call the `mcp_*` tools in **this session's tool list**.
+  On this host that is `mcp_dp_dingpan_mcp_server_listTables` (and
+  `tableSchemas` / `executeQuery`), plus `mcp_dingpan_knowledge_kb_catalog` /
+  `kb_get`.
 - Real tokens stay on the **host**. Never invent credentials, never HTTP the
-  gateway, never put secrets in `mcp.json`.
-- Server name in `mcp.json` is typically `dp-dingpan` or `dp-dingpan-mcp-server`.
-- Pi tool names are prefixed: `mcp_<server>_<tool>` (example:
-  `mcp_dp_dingpan_listTables`).
+  gateway, never bash `kb`, never `find` mcp.json.
 
 ## What this knowledge base covers
 

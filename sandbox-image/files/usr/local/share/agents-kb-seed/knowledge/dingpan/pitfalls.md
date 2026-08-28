@@ -12,9 +12,11 @@ tags: [dingpan, mcp, pitfalls]
 If you see SSE (`event: message`) or a hostname for the host gateway, that is
 **not** an invitation to `urllib`/`curl`, write `/workspace/mcp_client.py`,
 probe `/`, `/mcp`, `/api`, `/v1`, or `find` tokens under `/agent-home`. Pi
-already speaks streamable-http. Call `mcp_*_listTables` /
-`mcp_*_tableSchemas` / `mcp_*_executeQuery` from the tool list. If they are
-missing, stop — the session is miswired.
+already speaks streamable-http. Call `mcp_dp_dingpan_mcp_server_listTables`
+(or whichever `mcp_*_listTables` is in the tool list), plus
+`mcp_dingpan_knowledge_kb_catalog`. Do not bash `kb get` or
+`echo '{"method":"tools/list"}' | kb mcp` — that only proves the binary
+exists. If the Pi tools are missing, stop — the session is miswired.
 
 ## Invented names are not tools
 
@@ -46,12 +48,20 @@ for the result. If the host needs it, raise `settings.requestTimeoutMs` in
 `mcp.json` — do not retry-spam. A *steady* ~60s on every call was the old
 gateway SSE hang (fixed); do not treat that as a reason to skip `listTables`.
 
+## Do not reconstruct names from mcp.json
+
+`mcp_dp_dingpan_listTables` is **not** registered on this host. The server id
+is `dp-dingpan-mcp-server`, so Pi names are
+`mcp_dp_dingpan_mcp_server_listTables` (hyphens → underscores). Read the tool
+list. Guessing both prefixes is a failed turn.
+
 ## Skip the filesystem scavenger hunt
 
 Do not `find /` for `mcp.json`, credentials, or table maps. Do not
-`cat ~/.pi/agent/auth.json`. Knowledge is the `dingpan-knowledge` MCP tools
-(`kb_catalog` / `kb_get`). Live data is dingpan MCP. If tools are missing from
-the session list, report a wiring failure.
+`cat ~/.pi/agent/auth.json`. Do not bash `kb`. Knowledge is
+`mcp_dingpan_knowledge_kb_catalog` / `mcp_dingpan_knowledge_kb_get`. Live data
+is dingpan MCP. If those tools are missing from the session list, report a
+wiring failure.
 
 ## Missing table map
 

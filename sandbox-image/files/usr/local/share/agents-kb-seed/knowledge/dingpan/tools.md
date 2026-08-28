@@ -20,8 +20,13 @@ Confirmed 2026-08-27 against `tools/list`:
 | `tableSchemas` | `tableNames` (string): `schema.table`, comma-separated for batch | DDL / CREATE TABLE for those tables |
 | `executeQuery` | `sql` (string): read-only `SELECT` | Run the query; server may auto `LIMIT 10000` |
 
-Pi-facing names are prefixed: `mcp_<server>_listTables` (example
-`mcp_dp_dingpan_listTables`). Use the names from the live tool list.
+Pi-facing names on this host (call these, do not reconstruct from mcp.json):
+
+- `mcp_dp_dingpan_mcp_server_listTables`
+- `mcp_dp_dingpan_mcp_server_tableSchemas`
+- `mcp_dp_dingpan_mcp_server_executeQuery`
+
+If the tool list shows a different `mcp_*_listTables`, use that exact name.
 
 ## Call order
 
@@ -36,7 +41,7 @@ Pi-facing names are prefixed: `mcp_<server>_listTables` (example
 
 - Native MCP tool calls only. No bash/`curl`/`urllib` against the gateway. No
   `/workspace/mcp_client.py`. No probing `/mcp`, `/api`, `/v1`. No parsing
-  `event: message` yourself.
+  `event: message` yourself. No `kb get` / `echo | kb mcp`.
 - Read-only. No mutating SQL.
 - If dingpan tools are missing from the tool list, stop and report wiring
   failure. Do not hunt `/agent-home` for tokens.

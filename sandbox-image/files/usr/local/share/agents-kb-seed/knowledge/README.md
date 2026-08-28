@@ -93,10 +93,11 @@ process, no extra data-proxy, no orchestrator change.
 The `kb` binary needs to be in the sandbox image (one rootfs rebuild the first
 time). After that, only `mcp.json` wiring is required.
 
-Operator debug (optional, not what the agent should use):
+Operator debug (optional, **not** what the agent should use). The `kb`
+catalog/get/path subcommands refuse unless `KB_ALLOW_CLI=1`:
 
 ```bash
-kb catalog
-kb get dingpan/tables
-kb mcp    # stdio MCP on stdin/stdout
+KB_ALLOW_CLI=1 kb catalog
+KB_ALLOW_CLI=1 kb get dingpan/tables
+kb mcp    # stdio MCP on stdin/stdout (Pi uses this; agents must not)
 ```
