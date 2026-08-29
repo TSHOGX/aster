@@ -1,0 +1,4 @@
+{
+  "include": ["user", "assistant", "tool_call"],
+  "max_events": 200
+}

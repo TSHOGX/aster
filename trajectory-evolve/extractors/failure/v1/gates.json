@@ -1,0 +1,4 @@
+{
+  "min_turns": 1,
+  "require_failure_signal": true
+}

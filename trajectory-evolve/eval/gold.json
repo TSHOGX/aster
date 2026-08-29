@@ -1,0 +1,69 @@
+{
+  "frozen_at": "2026-08-20",
+  "curated_by": "human review of 7 sessions; concepts only, so wording changes don't break scoring",
+  "note": "s07 is a NEGATIVE sample: the correct extraction is nothing at all. Without negatives every proposed version is rewarded for extracting more.",
+  "items": [
+    {
+      "session_id": "s01",
+      "lens": "facts",
+      "gold": [
+        { "concept": "wc_enum", "note": "工况码是有限枚举，应查小表而非对主表 DISTINCT" },
+        { "concept": "data_coverage", "note": "确认时间范围应查覆盖度小表，而非 min/max(ts)" }
+      ]
+    },
+    {
+      "session_id": "s02",
+      "lens": "facts",
+      "gold": [{ "concept": "wc_enum" }]
+    },
+    {
+      "session_id": "s03",
+      "lens": "facts",
+      "gold": [{ "concept": "data_coverage" }]
+    },
+    {
+      "session_id": "s04",
+      "lens": "facts",
+      "gold": [
+        { "concept": "permission", "note": "compute group 报错是权限问题，改 SQL 无用" },
+        { "concept": "charging_analysis", "note": "用户口径是充电段而非全时段" }
+      ]
+    },
+    {
+      "session_id": "s05",
+      "lens": "facts",
+      "gold": [{ "concept": "curve_encoding" }]
+    },
+    {
+      "session_id": "s06",
+      "lens": "facts",
+      "gold": [
+        { "concept": "wc_enum" },
+        { "concept": "data_coverage" }
+      ]
+    },
+    {
+      "session_id": "s07",
+      "lens": "facts",
+      "gold": []
+    },
+    {
+      "session_id": "s08",
+      "lens": "facts",
+      "gold": [{ "concept": "permission" }]
+    },
+    {
+      "session_id": "s09",
+      "lens": "facts",
+      "gold": [{ "concept": "curve_encoding" }]
+    },
+    {
+      "session_id": "s10",
+      "lens": "facts",
+      "gold": [
+        { "concept": "wc_enum" },
+        { "concept": "data_coverage" }
+      ]
+    }
+  ]
+}

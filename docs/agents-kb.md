@@ -230,8 +230,8 @@ publish regardless of what the config file says. Logs:
 `normalized_at IS NULL OR extracted_at IS NULL OR ended_at >= since`, so any
 never-extracted session is swept in regardless of age.
 
-A second, opt-in nightly (`scripts/harness-evolve-nightly.sh`) runs the sibling
-Bun pipeline `trajectory-evolve` against its own state dir and can be triggered
+A second, opt-in nightly (`scripts/harness-evolve-nightly.sh`) runs the in-tree
+Bun pipeline `trajectory-evolve/` against its own state dir and can be triggered
 on demand through host MCP + `skills/self-evolve`. It does **not** replace this
 Go loop until you point `TE_KB_ROOT` at the live agents-kb tree — and then you
 must pick one publisher per night. Wiring: [`self-evolve-mcp.md`](./self-evolve-mcp.md).

@@ -5,15 +5,8 @@ an agent can trigger self-evolution **on demand**, a cron job can run it
 **unattended**, and a later agent architecture change does not require rewriting
 the graph.
 
-Sibling checkout (this repo does not vendor the pipeline):
-
-```text
-shared/
-  agent-runtime-platform/     # this repo
-  trajectory-evolve/          # Bun pipeline + MCP server
-```
-
-If the pipeline lives elsewhere, set `TRAJECTORY_EVOLVE_ROOT`.
+The Bun pipeline lives in-tree at `trajectory-evolve/` (MCP server, CLI, graphs).
+Override with `TRAJECTORY_EVOLVE_ROOT` only if you run a checkout from elsewhere.
 
 ## Three doors, one implementation
 
@@ -43,8 +36,9 @@ The control plane only projects `/etc/hosts` aliases for **enabled**
 1. Run the MCP server on the host (no upstream token — unlike dingpan):
 
    ```bash
-   cd "$TRAJECTORY_EVOLVE_ROOT"
+   cd /home/agent-runtime-platform/main/trajectory-evolve   # or $TRAJECTORY_EVOLVE_ROOT
    export PATH="$PWD/node_modules/.bin:$PATH"
+   bun install
    bun run src/mcp.ts --http 8104
    ```
 

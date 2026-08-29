@@ -272,8 +272,8 @@ harness-ctl safe-restart harness-publish-orchestrator --timeout=1800 --interval=
 
 要点：
 
-- 需要本机另有一份 `trajectory-evolve` 检出（`TRAJECTORY_EVOLVE_ROOT`，默认
-  `/home/agent-runtime-platform/trajectory-evolve`）。
+- 流水线在仓库内 `trajectory-evolve/`（可用 `TRAJECTORY_EVOLVE_ROOT` 覆盖）。
+  部署机需在该目录 `bun install`。
 - 锁是 `/var/lock/harness-evolve.lock`，和 `harness-kb.lock` 分开：两边写不同的
   SQLite。
 - 默认 `TE_STATE_ROOT=/var/lib/harness-publish/trajectory-evolve`。把

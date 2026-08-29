@@ -1,0 +1,5 @@
+{"type":"session","session_id":"s07","user_id":"u4","started_at":"2026-08-19T12:00:00Z","day":"2026-08-19"}
+{"type":"user","text":"你好，这个平台能做什么？"}
+{"type":"assistant","text":"我可以帮你查询和分析电池与整车工况数据，比如按车型统计工况分布、做充电分析、生成图表和报告。"}
+{"type":"user","text":"知道了，先不用了"}
+{"type":"assistant","text":"好的，需要的时候随时找我。"}

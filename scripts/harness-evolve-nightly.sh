@@ -19,7 +19,7 @@
 set -euo pipefail
 
 REPO_ROOT="${HARNESS_REPO_ROOT:-/home/agent-runtime-platform/main}"
-TE_ROOT="${TRAJECTORY_EVOLVE_ROOT:-/home/agent-runtime-platform/trajectory-evolve}"
+TE_ROOT="${TRAJECTORY_EVOLVE_ROOT:-$REPO_ROOT/trajectory-evolve}"
 DATA_ROOT="${HARNESS_DATA_ROOT:-/var/lib/harness-publish}"
 LOCK="/var/lock/harness-evolve.lock"
 BUN="$TE_ROOT/node_modules/.bin/bun"

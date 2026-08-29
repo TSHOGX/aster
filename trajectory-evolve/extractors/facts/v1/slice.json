@@ -1,0 +1,4 @@
+{
+  "include": ["user", "assistant"],
+  "max_events": 200
+}

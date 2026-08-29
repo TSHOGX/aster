@@ -72,3 +72,6 @@ venv/
 # IDE
 .idea/
 .vscode/
+
+# trajectory-evolve run products (also in trajectory-evolve/.gitignore)
+trajectory-evolve/state/

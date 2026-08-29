@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "required": ["skills"],
+  "properties": {
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "when_to_use", "steps"],
+        "properties": {
+          "name": { "type": "string" },
+          "scope": { "type": "string" },
+          "when_to_use": { "type": "string" },
+          "steps": { "type": "array", "items": { "type": "string" } },
+          "pitfalls": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number" }
+        }
+      }
+    }
+  }
+}

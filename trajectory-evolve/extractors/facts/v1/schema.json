@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "required": ["memories"],
+  "properties": {
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "scope", "statement"],
+        "properties": {
+          "type": { "type": "string", "enum": ["fact", "heuristic", "procedure", "bug", "preference"] },
+          "scope": { "type": "string" },
+          "statement": { "type": "string" },
+          "when_to_apply": { "type": "string" },
+          "confidence": { "type": "number" }
+        }
+      }
+    }
+  }
+}

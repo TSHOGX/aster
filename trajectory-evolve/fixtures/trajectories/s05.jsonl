@@ -1,0 +1,8 @@
+{"type":"session","session_id":"s05","user_id":"u2","started_at":"2026-08-17T03:30:00Z","day":"2026-08-17"}
+{"type":"user","text":"画一下 V001 的充电曲线"}
+{"type":"tool_call","tool":"doris_query","args":{"sql":"SELECT current_curve FROM charge_session WHERE vehicle_id = 'V001' AND dt = '2026-08-17'"}}
+{"type":"tool_result","tool":"doris_query","is_error":false,"text":"\"[{\\\"t\\\":0,\\\"a\\\":12.5},{\\\"t\\\":60,\\\"a\\\":33.1}]\"","rows":1,"latency_ms":3100}
+{"type":"assistant","text":"注意 charge_session.current_curve 是双重编码的 JSON 字符串，需要二次解析（json.loads 两次）才能拿到数组，直接当 JSON 解析会得到一个字符串。"}
+{"type":"tool_call","tool":"bash","args":{"command":"python3 /tmp/plot_curve.py --vehicle V001"}}
+{"type":"tool_result","tool":"bash","is_error":false,"text":"saved /tmp/curve_V001.png","rows":0}
+{"type":"assistant","text":"已生成充电曲线图 /tmp/curve_V001.png。"}

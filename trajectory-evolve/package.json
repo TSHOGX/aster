@@ -1,0 +1,26 @@
+{
+  "name": "trajectory-evolve",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Daily trajectory -> observation -> (KB extraction self-evolution | working-condition lookup tables) pipeline, orchestrated with dynamic-workflow primitives.",
+  "type": "module",
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "cli": "bun run src/cli.ts",
+    "demo": "bun run src/cli.ts demo",
+    "mcp": "bun run src/mcp.ts",
+    "mcp:http": "bun run src/mcp.ts --http 8104",
+    "typecheck": "bun --bun tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "bun": "^1.3.14",
+    "dynamic-workflow": "github:TSHOGX/dynamic-workflow"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^7.0.2"
+  }
+}

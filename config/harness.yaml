@@ -106,7 +106,7 @@ harness:
         # Real upstream MCP endpoint (informational; gateway reads its own env).
         base_url: http://mcpgateway.example.invalid/mcp/replace-me
 
-    # trajectory-evolve MCP (sibling checkout). No upstream token — the process
+    # trajectory-evolve MCP (in-tree at trajectory-evolve/). No upstream token — the process
     # is the server. Control plane only projects harness-evolve.internal into
     # sandbox /etc/hosts when enabled. Leave false until the Bun MCP is running
     # on :8104 and mcp.json has a `trajectory-evolve` streamable-http entry.
