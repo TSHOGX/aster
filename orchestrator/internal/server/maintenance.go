@@ -283,6 +283,9 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 			}
 		}
 	}()
+	// Cron Agent scheduling is deliberately independent from maintenance and
+	// bridge polling. A stalled teardown must never delay user schedules.
+	go s.runScheduler(ctx)
 
 	// One full pass synchronously before entering the loop, so startup recovery
 	// and the first host heartbeat are done before this returns — callers depend

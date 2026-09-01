@@ -139,6 +139,18 @@ harness:
     # stuck on "thinking" after a sandbox dies). Must be >= lease_ttl.
     sandbox_heartbeat_stall_grace: 90s
 
+  # Cron Agent is independently gated from maintenance. Enable only after
+  # setting the runtime feature flag `cron_agent` in the control database.
+  scheduler:
+    enabled: false
+    poll_interval: 5s
+    worker_count: 2
+    lease_ttl: 2m
+    default_timeout: 30m
+    max_retries: 2
+    retry_backoff: 30s
+    max_concurrent_runs: 4
+
 #   runtime:
     # Per-command ceiling for everything the orchestrator shells out to
     # (runsc kill/delete/state, ip, nft). A half-dead sandbox — OOM-killed

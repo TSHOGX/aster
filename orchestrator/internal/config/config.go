@@ -212,6 +212,7 @@ type HarnessConfig struct {
 	Bridge               BridgeConfig                     `yaml:"bridge"`
 	Runtime              RuntimeConfig                    `yaml:"runtime"`
 	Maintenance          MaintenanceConfig                `yaml:"maintenance"`
+	Scheduler            SchedulerConfig                  `yaml:"scheduler"`
 	Checkpoint           CheckpointConfig                 `yaml:"checkpoint"`
 	Reaper               ReaperConfig                     `yaml:"reaper"`
 	SandboxIdentity      SandboxIdentity                  `yaml:"sandbox_identity"`
@@ -222,6 +223,18 @@ type HarnessConfig struct {
 	// before, which is what lets the binary be deployed ahead of the yaml. See
 	// dataproxy.go.
 	DataProxies map[string]DataProxyConfig `yaml:"data_proxies"`
+}
+
+// SchedulerConfig controls the independent Cron Agent worker pool.
+type SchedulerConfig struct {
+	Enabled           bool     `yaml:"enabled"`
+	PollInterval      Duration `yaml:"poll_interval"`
+	WorkerCount       int      `yaml:"worker_count"`
+	LeaseTTL          Duration `yaml:"lease_ttl"`
+	DefaultTimeout    Duration `yaml:"default_timeout"`
+	MaxRetries        int      `yaml:"max_retries"`
+	RetryBackoff      Duration `yaml:"retry_backoff"`
+	MaxConcurrentRuns int      `yaml:"max_concurrent_runs"`
 }
 
 func (c HarnessConfig) ControlRoot() string {
@@ -692,6 +705,16 @@ func defaultHarnessConfig() HarnessConfig {
 			StageTimeout:         Duration{Duration: 2 * time.Minute},
 			ColdFallbackInterval: Duration{Duration: 5 * time.Second},
 		},
+		Scheduler: SchedulerConfig{
+			Enabled:           false,
+			PollInterval:      Duration{Duration: 5 * time.Second},
+			WorkerCount:       2,
+			LeaseTTL:          Duration{Duration: 2 * time.Minute},
+			DefaultTimeout:    Duration{Duration: 30 * time.Minute},
+			MaxRetries:        2,
+			RetryBackoff:      Duration{Duration: 30 * time.Second},
+			MaxConcurrentRuns: 4,
+		},
 		Bridge: BridgeConfig{
 			LeaseTTL:                   Duration{Duration: time.Minute},
 			HeartbeatInterval:          Duration{Duration: 30 * time.Second},
@@ -864,6 +887,15 @@ func validateHarnessConfig(cfg HarnessConfig) error {
 	}
 	if cfg.Maintenance.ColdFallbackInterval.Duration <= 0 {
 		return fmt.Errorf("harness.maintenance.cold_fallback_interval must be > 0")
+	}
+	if cfg.Scheduler.PollInterval.Duration <= 0 || cfg.Scheduler.LeaseTTL.Duration <= 0 || cfg.Scheduler.DefaultTimeout.Duration <= 0 {
+		return fmt.Errorf("harness.scheduler intervals and timeout must be > 0")
+	}
+	if cfg.Scheduler.WorkerCount <= 0 || cfg.Scheduler.MaxConcurrentRuns <= 0 {
+		return fmt.Errorf("harness.scheduler worker_count and max_concurrent_runs must be > 0")
+	}
+	if cfg.Scheduler.MaxRetries < 0 || cfg.Scheduler.MaxRetries > 10 || cfg.Scheduler.RetryBackoff.Duration < 0 {
+		return fmt.Errorf("harness.scheduler retry settings are invalid")
 	}
 	if cfg.Runtime.SandboxMemoryLimitBytes <= 0 {
 		return fmt.Errorf("harness.runtime.sandbox_memory_limit_bytes must be > 0")

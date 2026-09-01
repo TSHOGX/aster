@@ -1,0 +1,221 @@
+package server
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/robfig/cron/v3"
+	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/sessionstate"
+	"harness-platform/orchestrator/internal/store"
+)
+
+func (s *Server) runScheduler(ctx context.Context) {
+	interval := s.cfg.Harness.Scheduler.PollInterval.Duration
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	workers := s.cfg.Harness.Scheduler.WorkerCount
+	if workers <= 0 {
+		workers = 1
+	}
+	jobs := make(chan store.ScheduleRun, workers*2)
+	for i := 0; i < workers; i++ {
+		go func() {
+			for {
+				select {
+				case run := <-jobs:
+					s.executeScheduleRun(ctx, run)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	dispatch := func() {
+		queued, err := s.store.ListQueuedScheduleRuns(ctx, time.Now().UTC(), workers*2)
+		if err == nil {
+			for _, r := range queued {
+				s.schedulerRunsMu.Lock()
+				_, active := s.schedulerRunsActive[r.ID]
+				if !active {
+					s.schedulerRunsActive[r.ID] = struct{}{}
+				}
+				s.schedulerRunsMu.Unlock()
+				if active {
+					continue
+				}
+				select {
+				case jobs <- r:
+				default:
+					s.schedulerRunsMu.Lock()
+					delete(s.schedulerRunsActive, r.ID)
+					s.schedulerRunsMu.Unlock()
+					return
+				}
+			}
+		}
+		if !s.cfg.Harness.Scheduler.Enabled || !s.store.FeatureEnabled(ctx, "cron_agent") {
+			return
+		}
+		due, err := s.store.ListDueSchedules(ctx, time.Now().UTC(), workers*2)
+		if err != nil {
+			return
+		}
+		for _, sc := range due {
+			if sc.NextRunAt == nil {
+				continue
+			}
+			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+			spec, err := parser.Parse(sc.CronExpr)
+			if err != nil {
+				continue
+			}
+			scheduled := sc.NextRunAt.UTC()
+			next := spec.Next(scheduled.In(mustLocation(sc.Timezone))).UTC()
+			run := store.ScheduleRun{ID: newID("srun"), ScheduleID: sc.ID, UserID: sc.UserID, ScheduledAt: scheduled, Status: "queued", Attempt: 0, CreatedAt: time.Now().UTC()}
+			if err := s.store.ClaimScheduleDue(ctx, sc.ID, sc.Version, next, scheduled, run); err == nil {
+				s.schedulerRunsMu.Lock()
+				s.schedulerRunsActive[run.ID] = struct{}{}
+				s.schedulerRunsMu.Unlock()
+				select {
+				case jobs <- run:
+				default:
+					s.schedulerRunsMu.Lock()
+					delete(s.schedulerRunsActive, run.ID)
+					s.schedulerRunsMu.Unlock()
+					return
+				}
+			}
+		}
+	}
+	dispatch()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			dispatch()
+		case <-s.schedulerWake:
+			dispatch()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRun) {
+	defer func() { s.schedulerRunsMu.Lock(); delete(s.schedulerRunsActive, run.ID); s.schedulerRunsMu.Unlock() }()
+	sched, err := s.store.GetSchedule(parent, run.ScheduleID)
+	if err != nil {
+		return
+	}
+	timeout := time.Duration(sched.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = s.cfg.Harness.Scheduler.DefaultTimeout.Duration
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	now := time.Now().UTC()
+	id := newID("sess")
+	session := store.Session{ID: id, UserID: run.UserID, Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: filepath.Join(s.cfg.SessionsRoot, id), RestoreID: "unused-" + id, AutoCheckpointEnabled: false, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.CreateSession(ctx, session); err != nil {
+		s.finishScheduleFailure(parent, run, sched, "session_create", err.Error())
+		return
+	}
+	owner := store.GenerationLeaseOwner(s.ownerUUID)
+	ensured, err := s.ensureActiveGeneration(ctx, session, owner)
+	if err == nil {
+		err = s.startEnsuredGeneration(ctx, session, ensured, startFailureInputAcceptable)
+	}
+	if err != nil {
+		s.finishScheduleFailure(parent, run, sched, "generation_start", err.Error())
+		s.cleanupScheduledSession(parent, session)
+		return
+	}
+	enq, err := s.store.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: id, Content: sched.Prompt, Now: time.Now().UTC()})
+	if err != nil {
+		s.finishScheduleFailure(parent, run, sched, "enqueue", err.Error())
+		s.cleanupScheduledSession(parent, session)
+		return
+	}
+	_ = s.store.StartScheduleRun(parent, run.ID, id, enq.TurnID, time.Now().UTC())
+	s.hub.Publish(events.Event{Type: "message.created", SessionID: id, Payload: enq.Message})
+	for {
+		select {
+		case <-ctx.Done():
+			s.finishScheduleFailureStatus(parent, run, sched, "timed_out", "timeout", ctx.Err().Error())
+			s.cleanupScheduledSession(parent, session)
+			return
+		case <-time.After(500 * time.Millisecond):
+			status, turnErr, e := s.store.TurnStatus(parent, id, enq.TurnID)
+			if e != nil {
+				continue
+			}
+			if status == "completed" {
+				summary, _ := s.store.LatestAssistantMessage(parent, id)
+				_ = s.store.FinishScheduleRun(parent, run.ID, "succeeded", "", "", truncateScheduleOutput(summary), time.Now().UTC())
+				s.cleanupScheduledSession(parent, session)
+				return
+			}
+			if status == "failed" || status == "canceled" {
+				s.finishScheduleFailure(parent, run, sched, "turn", turnErr)
+				s.cleanupScheduledSession(parent, session)
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) finishScheduleFailure(ctx context.Context, run store.ScheduleRun, sched store.AgentSchedule, class, message string) {
+	s.finishScheduleFailureStatus(ctx, run, sched, "failed", class, message)
+}
+
+func (s *Server) finishScheduleFailureStatus(ctx context.Context, run store.ScheduleRun, sched store.AgentSchedule, status, class, message string) {
+	_ = s.store.FinishScheduleRun(ctx, run.ID, status, class, message, truncateScheduleOutput(message), time.Now().UTC())
+	if run.Attempt >= sched.MaxRetries {
+		return
+	}
+	backoff := time.Duration(sched.RetryBackoffSeconds) * time.Second
+	if backoff <= 0 {
+		backoff = s.cfg.Harness.Scheduler.RetryBackoff.Duration
+	}
+	if backoff < 0 {
+		backoff = 0
+	}
+	now := time.Now().UTC()
+	retry := store.ScheduleRun{ID: newID("srun"), ScheduleID: sched.ID, UserID: sched.UserID, ScheduledAt: now.Add(backoff), Status: "queued", Attempt: run.Attempt + 1, CreatedAt: now}
+	if err := s.store.CreateScheduleRun(ctx, retry); err == nil {
+		select {
+		case s.schedulerWake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func truncateScheduleOutput(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) > 4000 {
+		return v[:4000]
+	}
+	return v
+}
+func (s *Server) cleanupScheduledSession(ctx context.Context, session store.Session) {
+	latest, err := s.store.GetSession(ctx, session.ID)
+	if err == nil && latest.ActiveGenerationID != "" && latest.Status != string(sessionstate.Checkpointed) {
+		if d, e := s.runtimeGenerationDetails(ctx, latest.ID, latest.ActiveGenerationID); e == nil {
+			_ = s.destroyGenerationRuntime(ctx, d)
+		}
+	}
+	res, err := s.store.DestroySession(ctx, session.ID, time.Now().UTC())
+	if err == nil {
+		for _, gid := range res.GenerationIDs {
+			_ = s.cleanupGenerationResources(ctx, session.ID, gid, time.Now().UTC())
+		}
+	}
+}
