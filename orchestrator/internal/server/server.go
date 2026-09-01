@@ -327,7 +327,9 @@ func (s *Server) updateFeatureFlag(w http.ResponseWriter, r *http.Request, key s
 		entry.Before = mustJSON(before)
 	}
 	if err := s.store.AppendAudit(r.Context(), entry); err != nil {
-		s.log.Error("feature flag updated but audit write failed", "key", key, "error", err)
+		if s.log != nil {
+			s.log.Error("feature flag updated but audit write failed", "key", key, "error", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, after)
 }
@@ -535,7 +537,9 @@ func (s *Server) issueAuthSession(w http.ResponseWriter, r *http.Request, userID
 		role = s.creds.role(userID)
 	}
 	if err := s.store.EnsureUserWithRole(r.Context(), userID, userID, role); err != nil {
-		s.log.Warn("failed to project authenticated user", "user_id", userID, "error", err)
+		if s.log != nil {
+			s.log.Warn("failed to project authenticated user", "user_id", userID, "error", err)
+		}
 	}
 	token, err := newAuthToken()
 	if err != nil {

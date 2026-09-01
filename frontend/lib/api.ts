@@ -77,11 +77,11 @@ export async function fetchHealth() {
 }
 
 export async function fetchMe() {
-  return request<{ auth_required: boolean; user_id: string }>("/api/me");
+  return request<{ auth_required: boolean; user_id: string; role?: "user" | "admin" }>("/api/me");
 }
 
 export async function login(username: string, password: string) {
-  return request<{ user_id: string }>("/api/login", {
+  return request<{ user_id: string; role?: "user" | "admin" }>("/api/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ username, password })
