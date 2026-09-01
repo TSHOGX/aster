@@ -1039,6 +1039,17 @@ func (s *Store) ensureUserColumns(ctx context.Context) error {
 			return err
 		}
 	}
+	// ALTER TABLE cannot add a CHECK constraint in SQLite. Triggers provide the
+	// same invariant for upgraded databases without a blocking table rebuild.
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TRIGGER IF NOT EXISTS users_role_insert_guard
+BEFORE INSERT ON users WHEN NEW.role NOT IN ('user','admin')
+BEGIN SELECT RAISE(ABORT, 'invalid users.role'); END;
+CREATE TRIGGER IF NOT EXISTS users_role_update_guard
+BEFORE UPDATE OF role ON users WHEN NEW.role NOT IN ('user','admin')
+BEGIN SELECT RAISE(ABORT, 'invalid users.role'); END;`); err != nil {
+		return err
+	}
 	return nil
 }
 
