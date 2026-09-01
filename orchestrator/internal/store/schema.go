@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/sessionstate"
@@ -29,8 +30,36 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin')),
   created_at TEXT NOT NULL
 );
+
+-- R0 platform foundation: mutable operational switches are data, not build
+-- time environment. Keys are intentionally opaque so future releases can add
+-- flags without another schema migration.
+CREATE TABLE IF NOT EXISTS feature_flags (
+  key TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+  description TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_user_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT '',
+  target_id TEXT NOT NULL DEFAULT '',
+  before_json TEXT NOT NULL DEFAULT '',
+  after_json TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  request_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_log_actor_idx ON admin_audit_log(actor_user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash TEXT PRIMARY KEY,
@@ -853,6 +882,12 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 	if err := s.ensureSessionColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureUserColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureFeatureFlagDefaults(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureMessageColumns(ctx); err != nil {
 		return err
 	}
@@ -863,6 +898,22 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 		return err
 	}
 	return s.backfillMessagesFTS(ctx)
+}
+
+func (s *Store) ensureFeatureFlagDefaults(ctx context.Context) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	defaults := []struct{ key, description string }{
+		{"admin_console", "Enable administrator console APIs and UI"},
+		{"cron_agent", "Enable Cron Agent features"},
+		{"skill_store", "Enable Skill Store features"},
+		{"evolution_admin", "Enable semantic-layer evolution administration"},
+	}
+	for _, flag := range defaults {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO feature_flags (key, enabled, description, updated_at, updated_by) VALUES (?, 0, ?, ?, '') ON CONFLICT(key) DO NOTHING`, flag.key, flag.description, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureRuntimeGenerationColumns adds sandbox_last_seen_at (introduced to
@@ -969,6 +1020,22 @@ func (s *Store) ensureSessionColumns(ctx context.Context) error {
 			continue
 		}
 		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureUserColumns upgrades databases created before R0. SQLite's constant
+// DEFAULT makes this metadata-only and idempotent, so a mixed-version rollout
+// can safely start the new binary against an existing control database.
+func (s *Store) ensureUserColumns(ctx context.Context) error {
+	exists, err := s.columnExists(ctx, "users", "role")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`); err != nil {
 			return err
 		}
 	}

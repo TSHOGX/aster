@@ -1634,6 +1634,9 @@ func boolEnv(key string) (bool, bool) {
 type AuthUser struct {
 	Username     string `yaml:"username"`
 	PasswordHash string `yaml:"password_hash"`
+	// Role controls access to administrator APIs. Empty is the historical
+	// default (regular user), which keeps existing credentials files valid.
+	Role string `yaml:"role,omitempty"`
 }
 
 var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -1710,7 +1713,14 @@ func ParseAuthUsers(data []byte, path string) ([]AuthUser, error) {
 		if !strings.HasPrefix(hash, "pbkdf2-sha256$") {
 			return nil, fmt.Errorf("auth users %s: user %q password_hash must be a pbkdf2-sha256 hash (use the authhash tool)", path, username)
 		}
-		users = append(users, AuthUser{Username: username, PasswordHash: hash})
+		role := strings.ToLower(strings.TrimSpace(user.Role))
+		if role == "" {
+			role = "user"
+		}
+		if role != "user" && role != "admin" {
+			return nil, fmt.Errorf("auth users %s: user %q role must be user or admin", path, username)
+		}
+		users = append(users, AuthUser{Username: username, PasswordHash: hash, Role: role})
 	}
 	return users, nil
 }

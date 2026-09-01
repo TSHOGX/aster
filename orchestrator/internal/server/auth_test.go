@@ -210,3 +210,36 @@ func TestMeReportsAuthState(t *testing.T) {
 		t.Fatalf("want empty user_id when not logged in, got %v", body["user_id"])
 	}
 }
+
+func TestAdminFeatureFlagRequiresRoleAndAudits(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := newAuthTestServer(t, dir, st, []config.AuthUser{{Username: "admin", PasswordHash: mustHash(t, "pw"), Role: "admin"}, {Username: "alice", PasswordHash: mustHash(t, "pw")}})
+	withCookie := func(user string) *http.Request {
+		loginRec := httptest.NewRecorder()
+		srv.issueAuthSession(loginRec, httptest.NewRequest(http.MethodPost, "/api/login", nil), user)
+		cookie := loginRec.Result().Cookies()[0]
+		req := httptest.NewRequest(http.MethodPatch, "/api/admin/feature-flags/cron_agent", strings.NewReader(`{"enabled":true,"reason":"enable MVP"}`))
+		req.AddCookie(cookie)
+		return req
+	}
+	rec := httptest.NewRecorder()
+	srv.requireAdmin(http.HandlerFunc(srv.adminAPI)).ServeHTTP(rec, withCookie("alice"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("regular user status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.requireAdmin(http.HandlerFunc(srv.adminAPI)).ServeHTTP(rec, withCookie("admin"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin update status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	entries, err := st.ListAudit(ctx, 10, 0)
+	if err != nil || len(entries) != 1 || entries[0].Action != "feature_flag.update" {
+		t.Fatalf("audit=%+v err=%v", entries, err)
+	}
+}

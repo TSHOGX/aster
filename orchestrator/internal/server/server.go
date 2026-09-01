@@ -237,8 +237,100 @@ func (s *Server) Routes() http.Handler {
 	// HTML/PDF preview iframe has a URL that is clearly not an API call.
 	mux.Handle("/shared/", http.HandlerFunc(s.sharedFile))
 	mux.Handle("/api/", s.requireAuth(http.HandlerFunc(s.api)))
+	// Administrator APIs are a separate subtree so authorization is impossible
+	// to forget when adding an ordinary user-facing route. The inner handler
+	// still validates the method/path and records mutations in the audit log.
+	mux.Handle("/api/admin/", s.requireAdmin(http.HandlerFunc(s.adminAPI)))
 	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.artifactFile)))
 	return s.rateLimit(mux)
+}
+
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return s.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID := userIDFromContext(r.Context())
+		if userID == labUserID || !s.creds.enabled() || s.creds.role(userID) != store.RoleAdmin {
+			writeError(w, http.StatusForbidden, "administrator role required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin")
+	switch {
+	case path == "/audit" && r.Method == http.MethodGet:
+		limit, offset := 50, 0
+		if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+			limit = v
+		}
+		if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v >= 0 {
+			offset = v
+		}
+		entries, err := s.store.ListAudit(r.Context(), limit, offset)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read audit log")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "limit": limit, "offset": offset})
+	case path == "/feature-flags" && r.Method == http.MethodGet:
+		flags, err := s.store.ListFeatureFlags(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read feature flags")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"flags": flags})
+	case strings.HasPrefix(path, "/feature-flags/") && r.Method == http.MethodPatch:
+		s.updateFeatureFlag(w, r, strings.TrimPrefix(path, "/feature-flags/"))
+	default:
+		writeError(w, http.StatusNotFound, "not found")
+	}
+}
+
+func (s *Server) updateFeatureFlag(w http.ResponseWriter, r *http.Request, key string) {
+	key = strings.TrimSpace(key)
+	if key == "" || strings.ContainsAny(key, "/\\") {
+		writeError(w, http.StatusBadRequest, "invalid feature flag key")
+		return
+	}
+	var req struct {
+		Enabled     *bool  `json:"enabled"`
+		Description string `json:"description"`
+		Reason      string `json:"reason"`
+	}
+	if !decodeJSONBody(w, r, maxControlBodyBytes, &req) || req.Enabled == nil {
+		if req.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "enabled is required")
+		}
+		return
+	}
+	actor := userIDFromContext(r.Context())
+	before, found, err := s.store.GetFeatureFlag(r.Context(), key)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read feature flag")
+		return
+	}
+	after, err := s.store.SetFeatureFlag(r.Context(), key, *req.Enabled, strings.TrimSpace(req.Description), actor, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update feature flag")
+		return
+	}
+	entry := store.AuditEntry{ActorUserID: actor, Action: "feature_flag.update", TargetType: "feature_flag", TargetID: key, After: mustJSON(after), Reason: strings.TrimSpace(req.Reason), RequestID: r.Header.Get("X-Request-ID")}
+	if found {
+		entry.Before = mustJSON(before)
+	}
+	if err := s.store.AppendAudit(r.Context(), entry); err != nil {
+		s.log.Error("feature flag updated but audit write failed", "key", key, "error", err)
+	}
+	writeJSON(w, http.StatusOK, after)
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // rateLimit throttles requests per client IP with a token bucket, returning 429
@@ -488,6 +580,13 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.getQuota(w, r)
 	case r.URL.Path == "/api/deployment-capabilities" && r.Method == http.MethodGet:
 		s.deploymentCapabilities(w, r)
+	case r.URL.Path == "/api/feature-flags" && r.Method == http.MethodGet:
+		flags, err := s.store.ListFeatureFlags(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read feature flags")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"flags": flags})
 	case r.URL.Path == "/api/events" && r.Method == http.MethodGet:
 		s.events(w, r)
 	case r.URL.Path == "/api/events/stream" && r.Method == http.MethodGet:

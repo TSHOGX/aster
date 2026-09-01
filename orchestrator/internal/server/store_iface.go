@@ -67,6 +67,14 @@ type authStore interface {
 	SweepExpiredAuthSessions(context.Context, time.Time) (int64, error)
 }
 
+type platformStore interface {
+	ListFeatureFlags(context.Context) ([]store.FeatureFlag, error)
+	GetFeatureFlag(context.Context, string) (store.FeatureFlag, bool, error)
+	SetFeatureFlag(context.Context, string, bool, string, string, time.Time) (store.FeatureFlag, error)
+	AppendAudit(context.Context, store.AuditEntry) error
+	ListAudit(context.Context, int, int) ([]store.AuditEntry, error)
+}
+
 // generationStore covers the runtime_generations lifecycle: allocation, start
 // leases, live/destroyed resource transitions, checkpoint restore and retirement.
 type generationStore interface {
@@ -169,6 +177,7 @@ type serverStore interface {
 	sessionStore
 	messageStore
 	authStore
+	platformStore
 	generationStore
 	runtimeResourceStore
 	eventStore

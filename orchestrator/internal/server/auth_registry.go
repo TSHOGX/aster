@@ -128,6 +128,20 @@ func (r *authRegistry) lookup(username string) (config.AuthUser, bool) {
 	return user, ok
 }
 
+func (r *authRegistry) role(username string) string {
+	if r == nil {
+		return config.AuthUser{}.Role
+	}
+	r.refresh(true)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	user, ok := r.users[username]
+	if !ok || user.Role == "" {
+		return "user"
+	}
+	return user.Role
+}
+
 // usernames returns the configured usernames, sorted. It reads the in-memory
 // snapshot under RLock behind the throttled stat, so the user picker cannot be
 // used to hammer the credentials file.

@@ -30,6 +30,7 @@ const userUsage = `orchestrator user — manage workbench login credentials with
   user list                        list usernames (hashes are never printed)
   user add <name>                  add a user
   user passwd <name>               replace a user's password
+  user role <name> <user|admin>    change a user's administrator role
   user rm <name>                   remove a user
 
 Password input (never a flag, so it stays out of shell history):
@@ -90,6 +91,11 @@ func runUser(ctx context.Context, args []string) error {
 			return err
 		}
 		return userPasswd(ctx, cfg, username, *passwordStdin, *keepSessions)
+	case "role":
+		if len(positional) != 2 {
+			return errors.New("expected username and role (user or admin)")
+		}
+		return userRole(ctx, cfg, positional[0], positional[1])
 	case "rm", "remove", "delete":
 		username, err := singleUsername(positional)
 		if err != nil {
@@ -387,6 +393,39 @@ func userPasswd(ctx context.Context, cfg config.Config, username string, passwor
 	if !keepSessions {
 		revokeSessions(ctx, cfg.DBPath, username)
 	}
+	fmt.Println("effective immediately — no restart needed.")
+	return nil
+}
+
+func userRole(ctx context.Context, cfg config.Config, username, role string) error {
+	if err := config.ValidateAuthUsername(username); err != nil {
+		return err
+	}
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role != "user" && role != "admin" {
+		return errors.New("role must be user or admin")
+	}
+	users, err := config.LoadAuthUsersFile(cfg.AuthUsersPath)
+	if err != nil {
+		return err
+	}
+	index := indexOfUser(users, username)
+	if index < 0 {
+		return fmt.Errorf("user %q not found in %s", username, cfg.AuthUsersPath)
+	}
+	previous := users[index].Role
+	if previous == "" {
+		previous = "user"
+	}
+	users[index].Role = role
+	if err := writeAuthUsers(cfg.AuthUsersPath, users); err != nil {
+		return err
+	}
+	fmt.Printf("updated role for %q: %s -> %s\n", username, previous, role)
+	// Role changes take effect on the next request because the registry reloads
+	// the file. Existing cookies remain valid; authorization is checked per
+	// request, so demotion is immediate without revoking unrelated sessions.
+	_ = ctx
 	fmt.Println("effective immediately — no restart needed.")
 	return nil
 }
