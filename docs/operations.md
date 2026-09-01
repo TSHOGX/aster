@@ -43,6 +43,17 @@ publish 是一套独立的 agent runtime 环境，和 `main/` 共用一台机器
 数据与运行时根目录全部在 `/var/lib/harness-publish/` 下（DB、sessions、
 agent-homes、checkpoints、runsc、run），与 main 的 `/var/lib/harness/` 隔离。
 
+### Cron Agent（R2/R4）
+
+调度器与维护循环、bridge polling 分离运行。发布步骤：先部署兼容版本并确认
+`go test ./...`（宿主若非 root 运行会出现证据目录属主测试失败，这是测试环境限制），
+再在控制库中打开 `cron_agent` flag，最后将 `harness.scheduler.enabled` 设为 `true`
+并重启 orchestrator。关闭顺序相反：先关配置并重启，再关闭 flag。执行历史位于
+`schedule_runs`，可通过 `/api/schedules/{id}/runs` 检查；每次运行的临时 session、
+workspace 和 sandbox 在终态后自动销毁。调度表与历史表是 additive migration，回滚
+代码时保留表即可（旧版本忽略未知表）；如需回退数据，停止服务后备份 control DB，
+再按标准 SQLite 备份恢复流程操作，不要在线 DROP 表。
+
 ---
 
 ## 2. 日常运维命令（watt 直接用，无需 root 密码）

@@ -80,6 +80,9 @@ func (s *Server) runScheduler(ctx context.Context) {
 			next := spec.Next(scheduled.In(mustLocation(sc.Timezone))).UTC()
 			run := store.ScheduleRun{ID: newID("srun"), ScheduleID: sc.ID, UserID: sc.UserID, ScheduledAt: scheduled, Status: "queued", Attempt: 0, CreatedAt: time.Now().UTC()}
 			if err := s.store.ClaimScheduleDue(ctx, sc.ID, sc.Version, next, scheduled, run); err == nil {
+				if s.log != nil {
+					s.log.Info("cron schedule claimed", "schedule_id", sc.ID, "run_id", run.ID, "scheduled_at", scheduled)
+				}
 				s.schedulerRunsMu.Lock()
 				s.schedulerRunsActive[run.ID] = struct{}{}
 				s.schedulerRunsMu.Unlock()
@@ -113,6 +116,9 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 	defer func() { s.schedulerRunsMu.Lock(); delete(s.schedulerRunsActive, run.ID); s.schedulerRunsMu.Unlock() }()
 	sched, err := s.store.GetSchedule(parent, run.ScheduleID)
 	if err != nil {
+		if s.log != nil {
+			s.log.Warn("schedule run skipped: schedule missing", "run_id", run.ID, "schedule_id", run.ScheduleID, "error", err)
+		}
 		return
 	}
 	timeout := time.Duration(sched.TimeoutSeconds) * time.Second
@@ -128,6 +134,9 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 	id := newID("sess")
 	session := store.Session{ID: id, UserID: run.UserID, Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: filepath.Join(s.cfg.SessionsRoot, id), RestoreID: "unused-" + id, AutoCheckpointEnabled: false, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.CreateSession(ctx, session); err != nil {
+		if s.log != nil {
+			s.log.Error("schedule run session creation failed", "run_id", run.ID, "error", err)
+		}
 		s.finishScheduleFailure(parent, run, sched, "session_create", err.Error())
 		return
 	}
@@ -137,12 +146,18 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		err = s.startEnsuredGeneration(ctx, session, ensured, startFailureInputAcceptable)
 	}
 	if err != nil {
+		if s.log != nil {
+			s.log.Error("schedule run generation start failed", "run_id", run.ID, "error", err)
+		}
 		s.finishScheduleFailure(parent, run, sched, "generation_start", err.Error())
 		s.cleanupScheduledSession(parent, session)
 		return
 	}
 	enq, err := s.store.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: id, Content: sched.Prompt, Now: time.Now().UTC()})
 	if err != nil {
+		if s.log != nil {
+			s.log.Error("schedule run enqueue failed", "run_id", run.ID, "error", err)
+		}
 		s.finishScheduleFailure(parent, run, sched, "enqueue", err.Error())
 		s.cleanupScheduledSession(parent, session)
 		return
@@ -152,6 +167,9 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 	for {
 		select {
 		case <-ctx.Done():
+			if s.log != nil {
+				s.log.Warn("schedule run timed out", "run_id", run.ID, "timeout", timeout)
+			}
 			s.finishScheduleFailureStatus(parent, run, sched, "timed_out", "timeout", ctx.Err().Error())
 			s.cleanupScheduledSession(parent, session)
 			return
@@ -161,12 +179,18 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 				continue
 			}
 			if status == "completed" {
+				if s.log != nil {
+					s.log.Info("schedule run completed", "run_id", run.ID, "session_id", id)
+				}
 				summary, _ := s.store.LatestAssistantMessage(parent, id)
 				_ = s.store.FinishScheduleRun(parent, run.ID, "succeeded", "", "", truncateScheduleOutput(summary), time.Now().UTC())
 				s.cleanupScheduledSession(parent, session)
 				return
 			}
 			if status == "failed" || status == "canceled" {
+				if s.log != nil {
+					s.log.Warn("schedule run failed", "run_id", run.ID, "session_id", id, "error", turnErr)
+				}
 				s.finishScheduleFailure(parent, run, sched, "turn", turnErr)
 				s.cleanupScheduledSession(parent, session)
 				return
