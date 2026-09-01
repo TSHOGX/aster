@@ -104,6 +104,12 @@ export async function createSchedule(input: Partial<ApiSchedule> & { name: strin
 }
 export async function runSchedule(scheduleId: string) { return request<ApiScheduleRun>(`/api/schedules/${encodeURIComponent(scheduleId)}/run`, { method: "POST" }); }
 export async function fetchScheduleRuns(scheduleId: string) { return request<{ runs: ApiScheduleRun[] }>(`/api/schedules/${encodeURIComponent(scheduleId)}/runs`); }
+export async function updateSchedule(scheduleId: string, input: Record<string, unknown>) {
+  return request<ApiSchedule>(`/api/schedules/${encodeURIComponent(scheduleId)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+}
+export async function deleteSchedule(scheduleId: string) {
+  return request<{ status: string }>(`/api/schedules/${encodeURIComponent(scheduleId)}`, { method: "DELETE" });
+}
 
 export async function fetchSession(sessionId: string) {
   return request<ApiSession>(`/api/sessions/${encodeURIComponent(sessionId)}`);

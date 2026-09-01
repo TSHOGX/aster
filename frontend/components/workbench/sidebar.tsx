@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
+  CalendarClock,
   Loader2,
   LogOut,
   MoreHorizontal,
@@ -423,6 +424,14 @@ function CollapsedRail({
           <Search className="h-[18px] w-[18px]" />
         </button>
       ) : null}
+      <button
+        onClick={() => { window.location.href = "/schedules"; }}
+        aria-label="定时任务"
+        title="定时任务"
+        className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+      >
+        <CalendarClock className="h-[18px] w-[18px]" />
+      </button>
       <div className="mt-auto flex flex-col items-center gap-1">
         <span
           className="flex h-6 min-w-6 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-2xs font-medium text-[var(--color-foreground-muted)]"
@@ -573,6 +582,16 @@ function SidebarPanel({
         </Button>
         {createError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{createError}</p> : null}
         {closeError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{closeError}</p> : null}
+      </div>
+
+      <div className="shrink-0 px-3 pb-2">
+        <button
+          onClick={() => { window.location.href = "/schedules"; }}
+          className="flex w-full items-center gap-2 rounded-[var(--radius)] px-3 py-2 text-left text-2xs text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+        >
+          <CalendarClock className="h-4 w-4" />
+          定时任务
+        </button>
       </div>
 
       {/* The scroll container is this element itself, not a nested child: it is a
