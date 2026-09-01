@@ -5,6 +5,8 @@ import type {
   ApiSession,
   ApiSessionShare,
   ApiShareLink,
+  ApiSchedule,
+  ApiScheduleRun,
   DeploymentCapabilities,
   SearchResponse,
   SessionMode,
@@ -95,6 +97,13 @@ export async function logout() {
 export async function fetchSessions() {
   return request<{ sessions: ApiSession[] }>("/api/sessions");
 }
+
+export async function fetchSchedules() { return request<{ schedules: ApiSchedule[] }>("/api/schedules"); }
+export async function createSchedule(input: Partial<ApiSchedule> & { name: string; prompt: string }) {
+  return request<ApiSchedule>("/api/schedules", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+}
+export async function runSchedule(scheduleId: string) { return request<ApiScheduleRun>(`/api/schedules/${encodeURIComponent(scheduleId)}/run`, { method: "POST" }); }
+export async function fetchScheduleRuns(scheduleId: string) { return request<{ runs: ApiScheduleRun[] }>(`/api/schedules/${encodeURIComponent(scheduleId)}/runs`); }
 
 export async function fetchSession(sessionId: string) {
   return request<ApiSession>(`/api/sessions/${encodeURIComponent(sessionId)}`);

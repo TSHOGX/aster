@@ -61,6 +61,53 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS admin_audit_log_actor_idx ON admin_audit_log(actor_user_id, created_at DESC);
 
+-- Cron Agent schedules are control-plane state. Each execution gets its own
+-- durable run row, session and sandbox generation; no scheduler state is kept
+-- only in memory, so restarts can safely resume due work.
+CREATE TABLE IF NOT EXISTS agent_schedules (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  cron_expr TEXT NOT NULL DEFAULT '',
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  mode TEXT NOT NULL DEFAULT 'agent' CHECK(mode IN ('agent')),
+  timeout_seconds INTEGER NOT NULL DEFAULT 1800 CHECK(timeout_seconds > 0),
+  max_retries INTEGER NOT NULL DEFAULT 0 CHECK(max_retries >= 0 AND max_retries <= 10),
+  retry_backoff_seconds INTEGER NOT NULL DEFAULT 30 CHECK(retry_backoff_seconds >= 0),
+  next_run_at TEXT,
+  last_run_at TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS agent_schedules_user_idx ON agent_schedules(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS schedule_runs (
+  id TEXT PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  session_id TEXT,
+  turn_id INTEGER,
+  scheduled_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','timed_out','canceled')),
+  attempt INTEGER NOT NULL DEFAULT 0,
+  error_class TEXT,
+  error TEXT,
+  output_summary TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(schedule_id) REFERENCES agent_schedules(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS schedule_runs_schedule_idx ON schedule_runs(schedule_id, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS schedule_runs_user_idx ON schedule_runs(user_id, scheduled_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS schedule_runs_schedule_slot_uq ON schedule_runs(schedule_id, scheduled_at, attempt);
+
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

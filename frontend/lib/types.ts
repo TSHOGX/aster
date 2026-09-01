@@ -169,6 +169,18 @@ export type ApiMessage = {
   feedback?: "up" | "down" | "";
 };
 
+export type ApiSchedule = {
+  id: string; user_id: string; name: string; prompt: string; cron_expr?: string;
+  timezone: string; enabled: boolean; mode: "agent"; timeout_seconds: number;
+  max_retries: number; retry_backoff_seconds: number; next_run_at?: string | null;
+  last_run_at?: string | null; version: number; created_at: string; updated_at: string;
+};
+export type ApiScheduleRun = {
+  id: string; schedule_id: string; user_id: string; session_id?: string; turn_id?: number;
+  scheduled_at: string; started_at?: string; finished_at?: string; status: "queued"|"running"|"succeeded"|"failed"|"timed_out"|"canceled";
+  attempt: number; error_class?: string; error?: string; output_summary?: string; created_at: string;
+};
+
 export type HarnessEvent = {
   event_id?: number;
   type: string;

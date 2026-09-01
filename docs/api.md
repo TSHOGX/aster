@@ -58,6 +58,11 @@ The orchestrator serves three trees:
 | GET | `/api/admin/audit` | admin | newest-first bounded audit history |
 | GET | `/api/search` | required | full-text search over the caller's sessions & messages |
 | GET | `/api/notifications` | required | list the caller's notifications (broadcasts + directed) with read state |
+| GET | `/api/schedules` | required | list the caller's Cron Agent schedules |
+| POST | `/api/schedules` | required | create a schedule (empty `cron_expr` is manual-only) |
+| GET/PATCH/DELETE | `/api/schedules/{id}` | required (owner) | inspect, update, or delete a schedule |
+| POST | `/api/schedules/{id}/run` | required (owner) | queue one isolated manual execution |
+| GET | `/api/schedules/{id}/runs` | required (owner) | list durable execution history |
 | POST | `/api/notifications/{id}/read` | required | mark one notification read (idempotent) |
 | GET | `/api/events` | required | WebSocket event stream (compatibility) |
 | GET | `/api/events/stream` | required | SSE event stream (used by the workbench) |
@@ -112,6 +117,20 @@ first message of an untitled session the server sets a placeholder title (the
 truncated first message) and, when the title LLM is configured
 ([configuration.md](./configuration.md)), asynchronously replaces it with a
 generated title — each emits a `session.updated` event.
+
+**Cron Agent (R2/R4).** `POST /api/schedules` accepts `name`, `prompt`, optional
+`cron_expr` (five-field standard cron), `timezone` (IANA name), `enabled`,
+`timeout_seconds`, `max_retries`, and `retry_backoff_seconds`. An empty
+`cron_expr` creates a manual-only schedule. `POST .../{id}/run` returns `202`
+with a queued run; every run creates a fresh session/generation and destroys it
+after terminal completion or timeout. `GET .../{id}/runs` exposes durable
+status (`queued`, `running`, `succeeded`, `failed`, `timed_out`), attempt,
+timestamps, error class/message, and a bounded output summary. The background
+worker is independent of maintenance and is enabled only when both
+`harness.scheduler.enabled` and the `cron_agent` runtime feature flag are true;
+manual run rows remain durable while the worker is disabled. Schedule updates
+use an optimistic `version` field and due claims are atomic, so restarts cannot
+double-dispatch a cron slot.
 
 **`GET /api/quota`** →
 `{"soft_session_ceiling", "active_sessions", "live_pool_ceiling",

@@ -111,6 +111,9 @@ type Server struct {
 	// memoryPressureWarned rate-limits the per-generation memory-pressure notice.
 	memoryPressureMu     sync.Mutex
 	memoryPressureWarned map[string]time.Time
+	schedulerWake        chan struct{}
+	schedulerRunsMu      sync.Mutex
+	schedulerRunsActive  map[string]struct{}
 }
 
 type sessionOwnerEntry struct {
@@ -196,8 +199,10 @@ func New(
 		// ~10 req/s sustained per IP with a burst of 40 absorbs normal
 		// interactive bursts and SSE reconnects while throttling scanners and
 		// request floods. Tune via constants if legitimate traffic trips it.
-		ipLimiter:         auth.NewIPRateLimiter(10, 40),
-		sessionOwnerCache: make(map[string]sessionOwnerEntry),
+		ipLimiter:           auth.NewIPRateLimiter(10, 40),
+		sessionOwnerCache:   make(map[string]sessionOwnerEntry),
+		schedulerWake:       make(chan struct{}, 1),
+		schedulerRunsActive: make(map[string]struct{}),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -623,6 +628,12 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.markNotificationRead(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/sessions/"):
 		s.sessionRoute(w, r)
+	case r.URL.Path == "/api/schedules" && r.Method == http.MethodGet:
+		s.listSchedules(w, r)
+	case r.URL.Path == "/api/schedules" && r.Method == http.MethodPost:
+		s.createSchedule(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/schedules/"):
+		s.scheduleRoute(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}

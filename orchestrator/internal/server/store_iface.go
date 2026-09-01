@@ -78,6 +78,25 @@ type platformStore interface {
 	ListAudit(context.Context, int, int) ([]store.AuditEntry, error)
 }
 
+type scheduleStore interface {
+	CreateSchedule(context.Context, store.AgentSchedule) error
+	GetSchedule(context.Context, string) (store.AgentSchedule, error)
+	ListSchedulesByUser(context.Context, string) ([]store.AgentSchedule, error)
+	ListDueSchedules(context.Context, time.Time, int) ([]store.AgentSchedule, error)
+	AdvanceSchedule(context.Context, string, int, time.Time, time.Time) error
+	ClaimScheduleDue(context.Context, string, int, time.Time, time.Time, store.ScheduleRun) error
+	ListQueuedScheduleRuns(context.Context, time.Time, int) ([]store.ScheduleRun, error)
+	UpdateSchedule(context.Context, store.AgentSchedule, int) error
+	DeleteSchedule(context.Context, string, string) error
+	CreateScheduleRun(context.Context, store.ScheduleRun) error
+	GetScheduleRun(context.Context, string, string) (store.ScheduleRun, error)
+	ListScheduleRuns(context.Context, string, string, int) ([]store.ScheduleRun, error)
+	StartScheduleRun(context.Context, string, string, int64, time.Time) error
+	FinishScheduleRun(context.Context, string, string, string, string, string, time.Time) error
+	TurnStatus(context.Context, string, int64) (string, string, error)
+	LatestAssistantMessage(context.Context, string) (string, error)
+}
+
 // generationStore covers the runtime_generations lifecycle: allocation, start
 // leases, live/destroyed resource transitions, checkpoint restore and retirement.
 type generationStore interface {
@@ -178,6 +197,7 @@ type shareStore interface {
 // (via bridgeStore) so the bridge handoff keeps compiling off the same value.
 type serverStore interface {
 	sessionStore
+	scheduleStore
 	messageStore
 	authStore
 	platformStore
