@@ -43,6 +43,7 @@ Preserved architecture decision records and forward-looking plans:
 | [decisions/session-lifetime.md](./decisions/session-lifetime.md) | Session vs runtime lifetime separation (durable invariant) |
 | [decisions/runsc-checkpoint-research.md](./decisions/runsc-checkpoint-research.md) | runsc checkpoint/restore capability; no warm sentry |
 | [decisions/trajectory-pipeline.md](./decisions/trajectory-pipeline.md) | Future trajectory → memory → skill pipeline (not implemented) |
+| [decisions/platform-foundation-r0.md](./decisions/platform-foundation-r0.md) | R0 RBAC, audit, feature flags, migrations, and rollout contracts |
 
 ---
 
