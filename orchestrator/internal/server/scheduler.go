@@ -21,6 +21,9 @@ func (s *Server) runScheduler(ctx context.Context) {
 	if workers <= 0 {
 		workers = 1
 	}
+	if cap := s.cfg.Harness.Scheduler.MaxConcurrentRuns; cap > 0 && workers > cap {
+		workers = cap
+	}
 	jobs := make(chan store.ScheduleRun, workers*2)
 	for i := 0; i < workers; i++ {
 		go func() {
