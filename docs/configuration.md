@@ -46,6 +46,7 @@ harness:
   bridge:      { lease_ttl: 60s, heartbeat_interval: 30s, poll_interval: 5ms, ack_started_grace: 90s, reconnect_grace: 30s }
   runtime:     { command_timeout: 30s, sandbox_memory_limit_bytes: 4294967296, sandbox_pids_limit: 256 }
   maintenance: { stage_timeout: 2m, cold_fallback_interval: 5s }
+  scheduler:   { enabled: false, poll_interval: 5s, worker_count: 2, lease_ttl: 2m, default_timeout: 30m, max_retries: 2, retry_backoff: 30s, max_concurrent_runs: 4 }
   checkpoint:  { auto_enabled: true, idle_threshold: 2h, monitor_interval: 5m }
   reaper:      { failed_retention: 10m, checkpoint_image_retention: 720h }
 ```
@@ -75,6 +76,10 @@ harness:
 | `runtime.sandbox_pids_limit` | per-sandbox pids cgroup limit |
 | `maintenance.stage_timeout` | ceiling per maintenance stage; must be `>= runtime.command_timeout` |
 | `maintenance.cold_fallback_interval` | how often cold fallback restarts sandboxes for sessions with queued turns |
+| `scheduler.enabled` | starts the independent Cron Agent worker; cron dispatch additionally requires the `cron_agent` runtime feature flag |
+| `scheduler.poll_interval` | due-schedule polling interval |
+| `scheduler.worker_count` | bounded concurrent schedule workers |
+| `scheduler.default_timeout` | execution timeout when a schedule omits one |
 | `checkpoint.auto_enabled` | enable automatic **idle release** (see below) |
 | `checkpoint.idle_threshold` | idle time before release (checked-in `2h`) |
 | `reaper.failed_retention` | how long failed generations linger before physical cleanup |
