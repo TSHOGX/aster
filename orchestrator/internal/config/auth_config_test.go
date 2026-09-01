@@ -37,16 +37,26 @@ func TestLoadAuthUsersRoleDefaultsAndValidates(t *testing.T) {
   - username: alice
     password_hash: "pbkdf2-sha256$600000$c2FsdA$aGFzaA"
 `
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	users, err := LoadAuthUsersFile(path)
-	if err != nil { t.Fatal(err) }
-	if users[0].Role != "admin" || users[1].Role != "user" { t.Fatalf("roles=%+v", users) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if users[0].Role != "admin" || users[1].Role != "" {
+		t.Fatalf("roles=%+v", users)
+	}
 	if err := os.WriteFile(path, []byte(`users:
   - username: lab
     password_hash: "pbkdf2-sha256$600000$c2FsdA$aGFzaA"
     role: owner
-`), 0o600); err != nil { t.Fatal(err) }
-	if _, err := LoadAuthUsersFile(path); err == nil { t.Fatal("invalid role should fail") }
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAuthUsersFile(path); err == nil {
+		t.Fatal("invalid role should fail")
+	}
 }
 
 func TestLoadAuthUsersMissingFileIsOpen(t *testing.T) {

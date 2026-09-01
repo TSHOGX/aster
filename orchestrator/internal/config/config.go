@@ -1714,10 +1714,7 @@ func ParseAuthUsers(data []byte, path string) ([]AuthUser, error) {
 			return nil, fmt.Errorf("auth users %s: user %q password_hash must be a pbkdf2-sha256 hash (use the authhash tool)", path, username)
 		}
 		role := strings.ToLower(strings.TrimSpace(user.Role))
-		if role == "" {
-			role = "user"
-		}
-		if role != "user" && role != "admin" {
+		if role != "" && role != "user" && role != "admin" {
 			return nil, fmt.Errorf("auth users %s: user %q role must be user or admin", path, username)
 		}
 		users = append(users, AuthUser{Username: username, PasswordHash: hash, Role: role})
