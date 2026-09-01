@@ -30,3 +30,5 @@ users:
     password_hash: "pbkdf2-sha256$600000$REPLACE_WITH_REAL_SALT$REPLACE_WITH_REAL_HASH"
   - username: alice
     password_hash: "pbkdf2-sha256$600000$REPLACE_WITH_REAL_SALT$REPLACE_WITH_REAL_HASH"
+    # Optional role; omit for a regular user. Admin APIs require role: admin.
+    role: admin

@@ -51,6 +51,11 @@ The orchestrator serves three trees:
 | GET | `/shared/{token}/files/{path...}` | **none** | frozen bytes of one whitelisted file |
 | GET | `/api/quota` | required | session & `/30` pool ceilings |
 | GET | `/api/deployment-capabilities` | required | creatable product modes |
+| GET | `/api/feature-flags` | required | runtime rollout flags (all disabled by default in R0) |
+| GET | `/api/admin/users` | admin | configured user ids and roles (no password material) |
+| GET | `/api/admin/feature-flags` | admin | complete flag records |
+| PATCH | `/api/admin/feature-flags/{key}` | admin | update a flag and append an audit record |
+| GET | `/api/admin/audit` | admin | newest-first bounded audit history |
 | GET | `/api/search` | required | full-text search over the caller's sessions & messages |
 | GET | `/api/notifications` | required | list the caller's notifications (broadcasts + directed) with read state |
 | POST | `/api/notifications/{id}/read` | required | mark one notification read (idempotent) |
@@ -81,10 +86,16 @@ grant return the same `404`, so nothing about another user's sessions is probeab
 → `200 {"user_id":"..."}`, sets the auth cookie. `401` on bad credentials, `429` when
 the `username|IP` key is rate-limited (5 failures / 15 min).
 
-**`GET /api/me`** → `{"auth_required":bool, "user_id":string}`. In open mode
-`{auth_required:false, user_id:"lab"}`; with auth enabled but no valid cookie,
-`user_id:""`. It never returns 401 — the client uses it to decide whether to show
-the login screen.
+**`GET /api/me`** → `{"auth_required":bool, "user_id":string, "role":"user"|"admin"}`.
+In open mode `{auth_required:false, user_id:"lab", role:"user"}`; with auth enabled
+but no valid cookie, `user_id:""`. It never returns 401 — the client uses it to
+decide whether to show the login screen.
+
+**Administrator APIs (R0).** Credentials without a `role` field are regular
+users. Only a hot-reloaded credential with `role: admin` can enter
+`/api/admin/*`; open/lab mode is deliberately denied. `PATCH` accepts
+`{"enabled":bool,"description":"...","reason":"..."}`. Audit pagination is
+bounded to 200 rows (`limit` and `offset` query parameters).
 
 **`POST /api/sessions`** — `{"mode":"agent"|"shell"}` (default `agent`; raw `agent`
 field rejected with `400`). → `200` an `apiSession`. `503 {"error_class":"pool_exhausted"}`
