@@ -72,6 +72,7 @@ type platformStore interface {
 	UserRole(context.Context, string) (string, error)
 	ListFeatureFlags(context.Context) ([]store.FeatureFlag, error)
 	GetFeatureFlag(context.Context, string) (store.FeatureFlag, bool, error)
+	FeatureEnabled(context.Context, string) bool
 	SetFeatureFlag(context.Context, string, bool, string, string, time.Time) (store.FeatureFlag, error)
 	AppendAudit(context.Context, store.AuditEntry) error
 	ListAudit(context.Context, int, int) ([]store.AuditEntry, error)

@@ -85,6 +85,14 @@ func (s *Store) GetFeatureFlag(ctx context.Context, key string) (FeatureFlag, bo
 	return flag, true, nil
 }
 
+// FeatureEnabled is the fail-closed read primitive intended for future
+// vertical slices. Unknown keys and storage errors return false; callers that
+// need to distinguish an outage should use GetFeatureFlag directly.
+func (s *Store) FeatureEnabled(ctx context.Context, key string) bool {
+	flag, found, err := s.GetFeatureFlag(ctx, key)
+	return err == nil && found && flag.Enabled
+}
+
 func (s *Store) ListFeatureFlags(ctx context.Context) ([]FeatureFlag, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT key, enabled, description, updated_at, updated_by FROM feature_flags ORDER BY key`)
 	if err != nil {
