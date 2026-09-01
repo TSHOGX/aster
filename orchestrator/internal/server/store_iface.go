@@ -68,6 +68,8 @@ type authStore interface {
 }
 
 type platformStore interface {
+	EnsureUserWithRole(context.Context, string, string, string) error
+	UserRole(context.Context, string) (string, error)
 	ListFeatureFlags(context.Context) ([]store.FeatureFlag, error)
 	GetFeatureFlag(context.Context, string) (store.FeatureFlag, bool, error)
 	SetFeatureFlag(context.Context, string, bool, string, string, time.Time) (store.FeatureFlag, error)

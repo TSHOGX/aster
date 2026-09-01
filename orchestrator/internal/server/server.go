@@ -259,6 +259,13 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin")
 	switch {
+	case path == "/users" && r.Method == http.MethodGet:
+		names := s.creds.usernames()
+		users := make([]map[string]string, 0, len(names))
+		for _, name := range names {
+			users = append(users, map[string]string{"user_id": name, "role": s.creds.role(name)})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"users": users})
 	case path == "/audit" && r.Method == http.MethodGet:
 		limit, offset := 50, 0
 		if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
@@ -523,6 +530,13 @@ func (s *Server) verifyCredentials(username, password string) (string, bool) {
 
 // issueAuthSession creates a server-side login session and sets the cookie.
 func (s *Server) issueAuthSession(w http.ResponseWriter, r *http.Request, userID string) {
+	role := store.RoleUser
+	if s.creds != nil && s.creds.enabled() {
+		role = s.creds.role(userID)
+	}
+	if err := s.store.EnsureUserWithRole(r.Context(), userID, userID, role); err != nil {
+		s.log.Warn("failed to project authenticated user", "user_id", userID, "error", err)
+	}
 	token, err := newAuthToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create session")
@@ -558,7 +572,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if !s.creds.enabled() {
-		writeJSON(w, http.StatusOK, map[string]any{"auth_required": false, "user_id": labUserID})
+		writeJSON(w, http.StatusOK, map[string]any{"auth_required": false, "user_id": labUserID, "role": store.RoleUser})
 		return
 	}
 	userID := ""
@@ -567,7 +581,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 			userID = id
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"auth_required": true, "user_id": userID})
+	role := store.RoleUser
+	if userID != "" {
+		role = s.creds.role(userID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auth_required": true, "user_id": userID, "role": role})
 }
 
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
