@@ -1,5 +1,5 @@
-import { SchedulesWorkbench } from "@/components/workbench/schedules-workbench";
+import { Workbench } from "@/components/workbench/workbench";
 
 export default function SchedulesPage() {
-  return <SchedulesWorkbench />;
+  return <Workbench initialView="schedules" />;
 }

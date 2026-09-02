@@ -11,6 +11,7 @@ import { ArtifactPane } from "@/components/workbench/artifact-pane";
 import { PaneResizer } from "@/components/workbench/pane-resizer";
 import { LoginScreen } from "@/components/workbench/login-screen";
 import { SearchPalette } from "@/components/search/search-palette";
+import { SchedulesWorkbench } from "@/components/workbench/schedules-workbench";
 import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/ui/wordmark";
 import { requestMessageJump } from "@/lib/message-jump";
@@ -27,12 +28,13 @@ const ARTIFACT_MIN = 260;
 const ARTIFACT_MAX_FRACTION = 0.62;
 const ARTIFACT_WIDTH_KEY = "workbench:artifact-width";
 
-function Shell() {
+function Shell({ initialView = "conversation" }: { initialView?: "conversation" | "schedules" }) {
   const t = useT();
   const { onLogin, selectSession } = useHarness();
   const auth = useAuth();
   const bootError = useBootError();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<"conversation" | "schedules">(initialView);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // The right panel widens into an Artifact Preview when a file is open.
   const [artifactExpanded, setArtifactExpanded] = useState(false);
@@ -129,6 +131,10 @@ function Shell() {
     },
     [selectSession]
   );
+  const handleOpenSession = useCallback((id: string) => {
+    selectSession(id);
+    setWorkspaceView("conversation");
+  }, [selectSession]);
   // Hold the screen until /api/me resolves; otherwise the main workbench
   // renders for one frame before we know auth is required (login flash).
   if (!auth.checked) {
@@ -163,7 +169,7 @@ function Shell() {
           onOpenSearch={() => setPaletteOpen(true)}
         />
         <div className="min-h-0 flex-1">
-          <Conversation />
+          {workspaceView === "schedules" ? <SchedulesWorkbench onOpenSession={handleOpenSession} /> : <Conversation />}
         </div>
         {drawer !== null ? (
           <div className="fixed inset-0 z-40 flex" role="dialog" aria-modal="true">
@@ -179,7 +185,7 @@ function Shell() {
               )}
             >
               {drawer === "sessions" ? (
-                <Sidebar onOpenSearch={() => setPaletteOpen(true)} onNavigate={() => setRequestedDrawer(null)} />
+                <Sidebar onOpenSearch={() => setPaletteOpen(true)} onOpenSchedules={() => { setWorkspaceView("schedules"); setRequestedDrawer(null); }} onNavigate={() => setRequestedDrawer(null)} />
               ) : (
                 <ArtifactPane />
               )}
@@ -219,23 +225,26 @@ function Shell() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         onOpenSearch={() => setPaletteOpen(true)}
+        onOpenSchedules={() => setWorkspaceView("schedules")}
       />
-      <Conversation />
-      {/* `relative` so the resizer can pin itself to this column's left edge. */}
-      <div ref={artifactColRef} className="relative h-full min-h-0 min-w-0">
-        <PaneResizer
-          ariaLabel={t("workspace.resize")}
-          hint={t("workspace.resizeHint")}
-          width={artifactWidth ?? measuredArtifact ?? ARTIFACT_MIN}
-          min={ARTIFACT_MIN}
-          max={artifactMax}
-          onResize={resizeFromPointer}
-          onNudge={nudgeArtifact}
-          onReset={resetArtifactWidth}
-          onDragStateChange={setResizing}
-        />
-        <ArtifactPane onExpandedChange={setArtifactExpanded} />
-      </div>
+      {workspaceView === "schedules" ? <div className="col-span-2 min-h-0 min-w-0"><SchedulesWorkbench onOpenSession={handleOpenSession} /></div> : <>
+        <Conversation />
+        {/* `relative` so the resizer can pin itself to this column's left edge. */}
+        <div ref={artifactColRef} className="relative h-full min-h-0 min-w-0">
+          <PaneResizer
+            ariaLabel={t("workspace.resize")}
+            hint={t("workspace.resizeHint")}
+            width={artifactWidth ?? measuredArtifact ?? ARTIFACT_MIN}
+            min={ARTIFACT_MIN}
+            max={artifactMax}
+            onResize={resizeFromPointer}
+            onNudge={nudgeArtifact}
+            onReset={resetArtifactWidth}
+            onDragStateChange={setResizing}
+          />
+          <ArtifactPane onExpandedChange={setArtifactExpanded} />
+        </div>
+      </>}
       {palette}
     </div>
   );
@@ -271,10 +280,10 @@ function MobileBar({
   );
 }
 
-export function Workbench() {
+export function Workbench({ initialView = "conversation" }: { initialView?: "conversation" | "schedules" }) {
   return (
     <HarnessProvider>
-      <Shell />
+      <Shell initialView={initialView} />
     </HarnessProvider>
   );
 }

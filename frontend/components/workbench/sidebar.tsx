@@ -308,12 +308,13 @@ type SidebarProps = {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onOpenSearch?: () => void;
+  onOpenSchedules?: () => void;
   // Set when the sidebar is a narrow-width drawer: selecting or creating a
   // session dismisses the overlay so the conversation is visible underneath.
   onNavigate?: () => void;
 };
 
-export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onNavigate }: SidebarProps) {
+export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onOpenSchedules, onNavigate }: SidebarProps) {
   const [peek, setPeek] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -336,6 +337,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onN
       <SidebarPanel
         variant="docked"
         onOpenSearch={onOpenSearch}
+        onOpenSchedules={onOpenSchedules}
         onToggleCollapse={onToggleCollapse}
         onNavigate={onNavigate}
       />
@@ -348,7 +350,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onN
       onMouseEnter={openPeek}
       onMouseLeave={scheduleClose}
     >
-      <CollapsedRail onExpand={onToggleCollapse} onOpenSearch={onOpenSearch} onPeek={openPeek} />
+      <CollapsedRail onExpand={onToggleCollapse} onOpenSearch={onOpenSearch} onOpenSchedules={onOpenSchedules} onPeek={openPeek} />
       {/* Floating flyout: a full sidebar that hovers above the conversation. */}
       <div
         className={cn(
@@ -360,6 +362,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onN
         <SidebarPanel
           variant="floating"
           onOpenSearch={onOpenSearch}
+          onOpenSchedules={onOpenSchedules}
           onToggleCollapse={onToggleCollapse}
           onNavigate={() => setPeek(false)}
         />
@@ -371,10 +374,12 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onN
 function CollapsedRail({
   onExpand,
   onOpenSearch,
+  onOpenSchedules,
   onPeek
 }: {
   onExpand?: () => void;
   onOpenSearch?: () => void;
+  onOpenSchedules?: () => void;
   onPeek?: () => void;
 }) {
   const t = useT();
@@ -404,9 +409,9 @@ function CollapsedRail({
         <PanelLeftOpen className="h-[18px] w-[18px]" />
       </button>
       <Button
-        variant="primary"
+        variant="ghost"
         size="icon"
-        className="mt-1 h-9 w-9"
+        className="mt-1 h-9 w-9 border border-transparent hover:border-[var(--color-border)]"
         onClick={() => void handleCreate()}
         disabled={creating}
         aria-label={t("sidebar.newSession")}
@@ -425,7 +430,7 @@ function CollapsedRail({
         </button>
       ) : null}
       <button
-        onClick={() => { window.location.href = "/schedules"; }}
+        onClick={onOpenSchedules}
         aria-label="定时任务"
         title="定时任务"
         className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
@@ -449,11 +454,13 @@ function CollapsedRail({
 function SidebarPanel({
   variant,
   onOpenSearch,
+  onOpenSchedules,
   onToggleCollapse,
   onNavigate
 }: {
   variant: "docked" | "floating";
   onOpenSearch?: () => void;
+  onOpenSchedules?: () => void;
   onToggleCollapse?: () => void;
   onNavigate?: () => void;
 }) {
@@ -570,9 +577,9 @@ function SidebarPanel({
 
       <div className="shrink-0 px-3 pb-2 pt-2">
         <Button
-          variant="primary-soft"
+          variant="ghost"
           size="lg"
-          className="w-full justify-start gap-2 rounded-[var(--radius-lg)] text-2xs"
+          className="w-full justify-start gap-2 rounded-[var(--radius-lg)] border border-transparent text-2xs hover:border-[var(--color-border)]"
           onClick={() => void handleCreate()}
           disabled={creating || agentCreateDisabled}
           title={agentCapability?.disabled_reason ?? undefined}
@@ -586,8 +593,8 @@ function SidebarPanel({
 
       <div className="shrink-0 px-3 pb-2">
         <button
-          onClick={() => { window.location.href = "/schedules"; }}
-          className="flex w-full items-center gap-2 rounded-[var(--radius)] px-3 py-2 text-left text-2xs text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+          onClick={onOpenSchedules}
+          className="flex w-full items-center gap-2 rounded-[var(--radius-lg)] border border-transparent px-4 py-2.5 text-left text-2xs text-[var(--color-foreground-muted)] transition-colors hover:border-[var(--color-border)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
         >
           <CalendarClock className="h-4 w-4" />
           定时任务

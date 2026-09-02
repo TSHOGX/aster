@@ -174,6 +174,9 @@ export type ApiSchedule = {
   timezone: string; enabled: boolean; mode: "agent"; timeout_seconds: number;
   max_retries: number; retry_backoff_seconds: number; next_run_at?: string | null;
   last_run_at?: string | null; version: number; created_at: string; updated_at: string;
+  archived?: boolean;
+  result_mode?: "new_session" | "existing_session";
+  target_session_id?: string | null;
 };
 export type ApiScheduleRun = {
   id: string; schedule_id: string; user_id: string; session_id?: string; turn_id?: number;
