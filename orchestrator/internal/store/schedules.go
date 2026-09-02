@@ -324,7 +324,7 @@ func (s *Store) ListQueuedScheduleRuns(ctx context.Context, now time.Time, limit
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,schedule_id,user_id,scheduled_at,status,attempt,created_at FROM schedule_runs WHERE status='queued' AND scheduled_at <= ? ORDER BY scheduled_at LIMIT ?`, formatTime(now), limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.schedule_id,r.user_id,r.scheduled_at,r.status,r.attempt,r.created_at FROM schedule_runs r JOIN agent_schedules a ON a.id = r.schedule_id WHERE r.status='queued' AND a.archived=0 AND r.scheduled_at <= ? ORDER BY r.scheduled_at LIMIT ?`, formatTime(now), limit)
 	if err != nil {
 		return nil, err
 	}

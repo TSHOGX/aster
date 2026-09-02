@@ -124,6 +124,10 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		}
 		return
 	}
+	if sched.Archived {
+		_ = s.store.FinishScheduleRun(parent, run.ID, "canceled", "archived", "schedule was archived before execution", "schedule was archived before execution", time.Now().UTC())
+		return
+	}
 	timeout := time.Duration(sched.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = s.cfg.Harness.Scheduler.DefaultTimeout.Duration

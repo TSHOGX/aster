@@ -55,6 +55,9 @@ func TestScheduleRoutingAndArchiveFields(t *testing.T) {
 	if got.ResultMode != "existing_session" || got.TargetSessionID != "sess_target" {
 		t.Fatalf("routing fields = mode=%q target=%q", got.ResultMode, got.TargetSessionID)
 	}
+	if err := st.CreateScheduleRun(ctx, ScheduleRun{ID: "run_archived", ScheduleID: sc.ID, UserID: sc.UserID, ScheduledAt: now, Status: "queued", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	got.Archived = true
 	got.Enabled = false
 	got.CronExpr = ""
@@ -73,5 +76,10 @@ func TestScheduleRoutingAndArchiveFields(t *testing.T) {
 		t.Fatal(err)
 	} else if len(due) != 0 {
 		t.Fatalf("archived schedule returned as due: %+v", due)
+	}
+	if queued, err := st.ListQueuedScheduleRuns(ctx, now.Add(time.Minute), 10); err != nil {
+		t.Fatal(err)
+	} else if len(queued) != 0 {
+		t.Fatalf("archived schedule run returned as queued: %+v", queued)
 	}
 }
