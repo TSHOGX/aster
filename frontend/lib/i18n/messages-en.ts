@@ -14,7 +14,9 @@
  */
 export const EN = {
   // ── Sidebar ────────────────────────────────────────────────────────────────
-  "sidebar.newSession": "New session",
+  "sidebar.newSession": "New conversation",
+  "sidebar.schedules": "Scheduled tasks",
+  "sidebar.primaryNavigation": "Primary navigation",
   "sidebar.creating": "Creating…",
   "sidebar.history": "History",
   "sidebar.sharedWithMe": "Shared with me",

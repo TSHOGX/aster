@@ -3,16 +3,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
-  CalendarClock,
+  Clock3,
   Loader2,
   LogOut,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
-  Plus,
   Search,
   Share2,
+  SquarePen,
   Trash2
 } from "lucide-react";
 
@@ -428,7 +428,7 @@ function CollapsedRail({
         aria-label={t("sidebar.newSession")}
         title={t("sidebar.newSession")}
       >
-        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <SquarePen className="h-[18px] w-[18px]" />}
       </Button>
       {onOpenSearch ? (
         <button
@@ -442,11 +442,11 @@ function CollapsedRail({
       ) : null}
       <button
         onClick={onOpenSchedules}
-        aria-label="定时任务"
-        title="定时任务"
+        aria-label={t("sidebar.schedules")}
+        title={t("sidebar.schedules")}
         className={cn("flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]", schedulesActive && "bg-[var(--color-accent-soft)] text-[var(--color-accent)]")}
       >
-        <CalendarClock className="h-[18px] w-[18px]" />
+        <Clock3 className="h-[18px] w-[18px]" />
       </button>
       <div className="mt-auto flex flex-col items-center gap-1">
         <span
@@ -594,31 +594,34 @@ function SidebarPanel({
         </div>
       </div>
 
-      <div className="shrink-0 px-3 pb-2 pt-2">
-        <Button
-          variant="ghost"
-          size="lg"
-          className="w-full justify-start gap-2 rounded-[var(--radius-lg)] border border-transparent text-2xs hover:border-[var(--color-border)]"
+      <div className="shrink-0 px-3 pb-3 pt-3">
+        <nav aria-label={t("sidebar.primaryNavigation")} className="space-y-1">
+          <button
+          type="button"
+          className="group flex h-11 w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 text-left text-sm font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-surface-muted)]"
           onClick={() => void handleCreate()}
           disabled={creating || agentCreateDisabled}
           title={agentCapability?.disabled_reason ?? undefined}
         >
-          {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center text-[var(--color-foreground-muted)] transition-colors group-hover:text-[var(--color-foreground)]">
+            {creating ? <Loader2 className="h-[19px] w-[19px] animate-spin" /> : <SquarePen className="h-[21px] w-[21px]" strokeWidth={1.7} />}
+          </span>
           {t("sidebar.newSession")}
-        </Button>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSchedules}
+            aria-current={schedulesActive ? "page" : undefined}
+            className={cn("group flex h-11 w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 text-left text-sm font-medium transition-colors", schedulesActive ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-foreground)] hover:bg-[var(--color-surface-muted)]")}
+          >
+            <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center", schedulesActive ? "text-[var(--color-accent)]" : "text-[var(--color-foreground-muted)] group-hover:text-[var(--color-foreground)]")}>
+              <Clock3 className="h-[21px] w-[21px]" strokeWidth={1.7} />
+            </span>
+            {t("sidebar.schedules")}
+          </button>
+        </nav>
         {createError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{createError}</p> : null}
         {closeError ? <p className="mt-2 text-xs text-[var(--color-danger)]">{closeError}</p> : null}
-      </div>
-
-      <div className="shrink-0 px-3 pb-2">
-        <button
-          onClick={onOpenSchedules}
-          aria-current={schedulesActive ? "page" : undefined}
-          className={cn("flex w-full items-center gap-2 rounded-[var(--radius-lg)] border border-transparent px-4 py-2.5 text-left text-2xs text-[var(--color-foreground-muted)] transition-colors hover:border-[var(--color-border)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]", schedulesActive && "border-[var(--color-accent-soft)] bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]")}
-        >
-          <CalendarClock className="h-4 w-4" />
-          定时任务
-        </button>
       </div>
 
       {/* The scroll container is this element itself, not a nested child: it is a

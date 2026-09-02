@@ -18,7 +18,9 @@ import type { MessageKey } from "./messages-en";
  */
 export const ZH: Record<MessageKey, string> = {
   // ── Sidebar ────────────────────────────────────────────────────────────────
-  "sidebar.newSession": "新建会话",
+  "sidebar.newSession": "新对话",
+  "sidebar.schedules": "定时任务",
+  "sidebar.primaryNavigation": "主要导航",
   "sidebar.creating": "创建中…",
   "sidebar.history": "历史会话",
   "sidebar.sharedWithMe": "共享给我的",
