@@ -310,12 +310,13 @@ type SidebarProps = {
   onOpenSearch?: () => void;
   onOpenSchedules?: () => void;
   onOpenConversation?: () => void;
+  schedulesActive?: boolean;
   // Set when the sidebar is a narrow-width drawer: selecting or creating a
   // session dismisses the overlay so the conversation is visible underneath.
   onNavigate?: () => void;
 };
 
-export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onOpenSchedules, onOpenConversation, onNavigate }: SidebarProps) {
+export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onOpenSchedules, onOpenConversation, schedulesActive = false, onNavigate }: SidebarProps) {
   const [peek, setPeek] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -340,6 +341,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onO
         onOpenSearch={onOpenSearch}
         onOpenSchedules={onOpenSchedules}
         onOpenConversation={onOpenConversation}
+        schedulesActive={schedulesActive}
         onToggleCollapse={onToggleCollapse}
         onNavigate={onNavigate}
       />
@@ -352,7 +354,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onO
       onMouseEnter={openPeek}
       onMouseLeave={scheduleClose}
     >
-      <CollapsedRail onExpand={onToggleCollapse} onOpenSearch={onOpenSearch} onOpenSchedules={onOpenSchedules} onPeek={openPeek} />
+      <CollapsedRail onExpand={onToggleCollapse} onOpenSearch={onOpenSearch} onOpenSchedules={onOpenSchedules} schedulesActive={schedulesActive} onPeek={openPeek} />
       {/* Floating flyout: a full sidebar that hovers above the conversation. */}
       <div
         className={cn(
@@ -366,6 +368,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onO
           onOpenSearch={onOpenSearch}
           onOpenSchedules={onOpenSchedules}
           onOpenConversation={onOpenConversation}
+          schedulesActive={schedulesActive}
           onToggleCollapse={onToggleCollapse}
           onNavigate={() => setPeek(false)}
         />
@@ -378,11 +381,13 @@ function CollapsedRail({
   onExpand,
   onOpenSearch,
   onOpenSchedules,
+  schedulesActive,
   onPeek
 }: {
   onExpand?: () => void;
   onOpenSearch?: () => void;
   onOpenSchedules?: () => void;
+  schedulesActive?: boolean;
   onPeek?: () => void;
 }) {
   const t = useT();
@@ -436,7 +441,7 @@ function CollapsedRail({
         onClick={onOpenSchedules}
         aria-label="定时任务"
         title="定时任务"
-        className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+        className={cn("flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]", schedulesActive && "bg-[var(--color-accent-soft)] text-[var(--color-accent)]")}
       >
         <CalendarClock className="h-[18px] w-[18px]" />
       </button>
@@ -459,6 +464,7 @@ function SidebarPanel({
   onOpenSearch,
   onOpenSchedules,
   onOpenConversation,
+  schedulesActive,
   onToggleCollapse,
   onNavigate
 }: {
@@ -466,6 +472,7 @@ function SidebarPanel({
   onOpenSearch?: () => void;
   onOpenSchedules?: () => void;
   onOpenConversation?: () => void;
+  schedulesActive?: boolean;
   onToggleCollapse?: () => void;
   onNavigate?: () => void;
 }) {
@@ -600,7 +607,8 @@ function SidebarPanel({
       <div className="shrink-0 px-3 pb-2">
         <button
           onClick={onOpenSchedules}
-          className="flex w-full items-center gap-2 rounded-[var(--radius-lg)] border border-transparent px-4 py-2.5 text-left text-2xs text-[var(--color-foreground-muted)] transition-colors hover:border-[var(--color-border)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]"
+          aria-current={schedulesActive ? "page" : undefined}
+          className={cn("flex w-full items-center gap-2 rounded-[var(--radius-lg)] border border-transparent px-4 py-2.5 text-left text-2xs text-[var(--color-foreground-muted)] transition-colors hover:border-[var(--color-border)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]", schedulesActive && "border-[var(--color-accent-soft)] bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]")}
         >
           <CalendarClock className="h-4 w-4" />
           定时任务
