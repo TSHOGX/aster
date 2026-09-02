@@ -16,7 +16,7 @@ const base: ScheduleFrequencyForm = {
   customRepeat: "hourly",
   customInterval: 1,
   customMinute: 0,
-  customWeekday: 1,
+  customWeekdays: [1],
   customDay: 1,
   customMonth: 1,
   customRawCron: ""
@@ -38,6 +38,7 @@ describe("schedule frequency mapping", () => {
 
   it("builds custom hourly, monthly and yearly expressions", () => {
     expect(buildCronExpression({ ...base, frequency: "custom", customRepeat: "hourly", customInterval: 3, customMinute: 10 })).toBe("10 */3 * * *");
+    expect(buildCronExpression({ ...base, frequency: "custom", customRepeat: "weekly", customWeekdays: [5, 1, 3], time: "10:15" })).toBe("15 10 * * 1,3,5");
     expect(buildCronExpression({ ...base, frequency: "custom", customRepeat: "monthly", customInterval: 2, customDay: 12, time: "06:30" })).toBe("30 6 12 */2 *");
     expect(buildCronExpression({ ...base, frequency: "custom", customRepeat: "yearly", customMonth: 12, customDay: 31, time: "23:45" })).toBe("45 23 31 12 *");
   });
@@ -46,6 +47,7 @@ describe("schedule frequency mapping", () => {
     expect(parseCron("0 8 * * 1-5")).toMatchObject({ frequency: "weekdays", time: "08:00" });
     expect(parseCron("15 */4 * * *")).toMatchObject({ frequency: "custom", customRepeat: "hourly", customInterval: 4, customMinute: 15 });
     expect(parseCron("0 9 * * 7")).toMatchObject({ frequency: "weekly", weekday: 0, time: "09:00" });
+    expect(parseCron("15 10 * * 1,3,5")).toMatchObject({ frequency: "custom", customRepeat: "weekly", customWeekdays: [1, 3, 5], time: "10:15" });
     expect(frequencyDescription("*/30 * * * *")).toBe("每隔 30 分钟");
   });
 

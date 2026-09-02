@@ -9,7 +9,7 @@ export type ScheduleFrequencyForm = {
   customRepeat: CustomRepeat;
   customInterval: number;
   customMinute: number;
-  customWeekday: number;
+  customWeekdays: number[];
   customDay: number;
   customMonth: number;
   customRawCron: string;
@@ -56,6 +56,9 @@ export function parseCron(expr?: string | null): Partial<ScheduleFrequencyForm> 
   if (numericMinute !== null && numericHour !== null && dayOfMonth === "*" && month === "*" && dayOfWeek === "1-5") {
     return { frequency: "weekdays", time };
   }
+  if (numericMinute !== null && numericHour !== null && dayOfMonth === "*" && month === "*" && /^\d+(,\d+)+$/.test(dayOfWeek)) {
+    return { frequency: "custom", customRepeat: "weekly", customWeekdays: dayOfWeek.split(",").map(Number), time };
+  }
   if (numericMinute !== null && numericHour !== null && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
     return { frequency: "daily", time };
   }
@@ -90,7 +93,7 @@ export function buildCronExpression(form: ScheduleFrequencyForm) {
   if (form.customRawCron) return form.customRawCron;
   if (form.customRepeat === "hourly") return `${Math.min(59, Math.max(0, form.customMinute))} */${Math.min(23, Math.max(1, form.customInterval))} * * *`;
   if (form.customRepeat === "daily") return `${minute} ${hour} */${Math.min(31, Math.max(1, form.customInterval))} * *`;
-  if (form.customRepeat === "weekly") return `${minute} ${hour} * * ${form.customWeekday}`;
+  if (form.customRepeat === "weekly") return `${minute} ${hour} * * ${(form.customWeekdays.length ? form.customWeekdays : [1]).slice().sort((a, b) => a - b).join(",")}`;
   if (form.customRepeat === "monthly") return `${minute} ${hour} ${Math.min(31, Math.max(1, form.customDay))} */${Math.min(12, Math.max(1, form.customInterval))} *`;
   return `${minute} ${hour} ${Math.min(31, Math.max(1, form.customDay))} ${Math.min(12, Math.max(1, form.customMonth))} *`;
 }
@@ -105,7 +108,7 @@ export function frequencyDescription(expr?: string | null) {
     case "custom": {
       if (parsed.customRepeat === "hourly") return `每隔 ${parsed.customInterval ?? 1} 小时，在第 ${String(parsed.customMinute ?? 0).padStart(2, "0")} 分钟`;
       if (parsed.customRepeat === "daily") return `每隔 ${parsed.customInterval ?? 1} 天 ${parsed.time ?? "08:00"}`;
-      if (parsed.customRepeat === "weekly") return `每周${WEEKDAYS.find((day) => day.value === parsed.customWeekday)?.label.replace("星期", "") ?? "一"} ${parsed.time ?? "08:00"}`;
+      if (parsed.customRepeat === "weekly") return `${(parsed.customWeekdays ?? [1]).map((value) => WEEKDAYS.find((day) => day.value === value)?.label.replace("星期", "") ?? "一").join("、")} ${parsed.time ?? "08:00"}`;
       if (parsed.customRepeat === "monthly") return `每隔 ${parsed.customInterval ?? 1} 个月的 ${parsed.customDay ?? 1} 日 ${parsed.time ?? "08:00"}`;
       if (parsed.customRepeat === "yearly") return `每年 ${parsed.customMonth ?? 1} 月 ${parsed.customDay ?? 1} 日 ${parsed.time ?? "08:00"}`;
       return "自定义频率";
