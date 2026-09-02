@@ -354,7 +354,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onO
       onMouseEnter={openPeek}
       onMouseLeave={scheduleClose}
     >
-      <CollapsedRail onExpand={onToggleCollapse} onOpenSearch={onOpenSearch} onOpenSchedules={onOpenSchedules} schedulesActive={schedulesActive} onPeek={openPeek} />
+      <CollapsedRail onExpand={onToggleCollapse} onOpenSearch={onOpenSearch} onOpenSchedules={onOpenSchedules} onOpenConversation={onOpenConversation} schedulesActive={schedulesActive} onPeek={openPeek} />
       {/* Floating flyout: a full sidebar that hovers above the conversation. */}
       <div
         className={cn(
@@ -381,12 +381,14 @@ function CollapsedRail({
   onExpand,
   onOpenSearch,
   onOpenSchedules,
+  onOpenConversation,
   schedulesActive,
   onPeek
 }: {
   onExpand?: () => void;
   onOpenSearch?: () => void;
   onOpenSchedules?: () => void;
+  onOpenConversation?: () => void;
   schedulesActive?: boolean;
   onPeek?: () => void;
 }) {
@@ -401,8 +403,9 @@ function CollapsedRail({
 
   const handleCreate = async () => {
     setCreating(true);
-    await createSession("agent");
+    const result = await createSession("agent");
     setCreating(false);
+    if (result.ok) onOpenConversation?.();
   };
 
   return (
@@ -523,7 +526,10 @@ function SidebarPanel({
     const res = await createSession("agent");
     setCreating(false);
     if (!res.ok) setCreateError(res.error ?? t("sidebar.createFailed"));
-    else onNavigate?.();
+    else {
+      onOpenConversation?.();
+      onNavigate?.();
+    }
   };
 
   // Stable callbacks so the memoized SessionRow only re-renders when its own
