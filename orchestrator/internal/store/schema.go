@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
   timezone TEXT NOT NULL DEFAULT 'UTC',
   enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
   mode TEXT NOT NULL DEFAULT 'agent' CHECK(mode IN ('agent')),
+  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)),
+  result_mode TEXT NOT NULL DEFAULT 'new_session' CHECK(result_mode IN ('new_session','existing_session')),
+  target_session_id TEXT,
   timeout_seconds INTEGER NOT NULL DEFAULT 1800 CHECK(timeout_seconds > 0),
   max_retries INTEGER NOT NULL DEFAULT 0 CHECK(max_retries >= 0 AND max_retries <= 10),
   retry_backoff_seconds INTEGER NOT NULL DEFAULT 30 CHECK(retry_backoff_seconds >= 0),
@@ -929,6 +932,9 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 	if err := s.ensureSessionColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureScheduleColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureUserColumns(ctx); err != nil {
 		return err
 	}
@@ -945,6 +951,33 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 		return err
 	}
 	return s.backfillMessagesFTS(ctx)
+}
+
+// ensureScheduleColumns upgrades Cron Agent rows created before result routing
+// and soft-archive support. Constant defaults keep this metadata-only and make
+// the migration safe to run during a mixed-version rollout.
+func (s *Store) ensureScheduleColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"archived", `ALTER TABLE agent_schedules ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
+		{"result_mode", `ALTER TABLE agent_schedules ADD COLUMN result_mode TEXT NOT NULL DEFAULT 'new_session'`},
+		{"target_session_id", `ALTER TABLE agent_schedules ADD COLUMN target_session_id TEXT`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "agent_schedules", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ensureFeatureFlagDefaults(ctx context.Context) error {

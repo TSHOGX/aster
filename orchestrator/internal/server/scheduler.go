@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -131,15 +133,41 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	now := time.Now().UTC()
-	id := newID("sess")
-	session := store.Session{ID: id, UserID: run.UserID, Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: filepath.Join(s.cfg.SessionsRoot, id), RestoreID: "unused-" + id, AutoCheckpointEnabled: false, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.CreateSession(ctx, session); err != nil {
-		if s.log != nil {
-			s.log.Error("schedule run session creation failed", "run_id", run.ID, "error", err)
+	var session store.Session
+	if sched.ResultMode == "existing_session" {
+		if sched.TargetSessionID == "" {
+			s.finishScheduleFailure(parent, run, sched, "target_session", "target session is not configured")
+			return
 		}
-		s.finishScheduleFailure(parent, run, sched, "session_create", err.Error())
-		return
+		var err error
+		session, err = s.store.GetSession(ctx, sched.TargetSessionID)
+		if errors.Is(err, sql.ErrNoRows) || session.UserID != run.UserID || session.Status == string(sessionstate.Destroyed) {
+			s.finishScheduleFailure(parent, run, sched, "target_session", "target session is unavailable")
+			return
+		}
+		if err != nil {
+			s.finishScheduleFailure(parent, run, sched, "target_session", err.Error())
+			return
+		}
+	} else {
+		id := newID("sess")
+		session = store.Session{ID: id, UserID: run.UserID, Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: filepath.Join(s.cfg.SessionsRoot, id), RestoreID: "unused-" + id, AutoCheckpointEnabled: true, CreatedAt: now, UpdatedAt: now}
+		if s.cfg.SessionRetention > 0 {
+			expires := now.Add(s.cfg.SessionRetention)
+			session.ExpiresAt = &expires
+		}
+		if err := s.store.CreateSession(ctx, session); err != nil {
+			if s.log != nil {
+				s.log.Error("schedule run session creation failed", "run_id", run.ID, "error", err)
+			}
+			s.finishScheduleFailure(parent, run, sched, "session_create", err.Error())
+			return
+		}
+		_ = s.store.UpdateSessionTitle(ctx, session.ID, sched.Name, true)
+		session.Title = sched.Name
+		s.hub.Publish(events.Event{Type: "session.created", SessionID: session.ID, Payload: publicSession(session)})
 	}
+	id := session.ID
 	owner := store.GenerationLeaseOwner(s.ownerUUID)
 	ensured, err := s.ensureActiveGeneration(ctx, session, owner)
 	if err == nil {
@@ -150,7 +178,6 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 			s.log.Error("schedule run generation start failed", "run_id", run.ID, "error", err)
 		}
 		s.finishScheduleFailure(parent, run, sched, "generation_start", err.Error())
-		s.cleanupScheduledSession(parent, session)
 		return
 	}
 	enq, err := s.store.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: id, Content: sched.Prompt, Now: time.Now().UTC()})
@@ -159,7 +186,6 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 			s.log.Error("schedule run enqueue failed", "run_id", run.ID, "error", err)
 		}
 		s.finishScheduleFailure(parent, run, sched, "enqueue", err.Error())
-		s.cleanupScheduledSession(parent, session)
 		return
 	}
 	_ = s.store.StartScheduleRun(parent, run.ID, id, enq.TurnID, time.Now().UTC())
@@ -171,7 +197,6 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 				s.log.Warn("schedule run timed out", "run_id", run.ID, "timeout", timeout)
 			}
 			s.finishScheduleFailureStatus(parent, run, sched, "timed_out", "timeout", ctx.Err().Error())
-			s.cleanupScheduledSession(parent, session)
 			return
 		case <-time.After(500 * time.Millisecond):
 			status, turnErr, e := s.store.TurnStatus(parent, id, enq.TurnID)
@@ -184,7 +209,13 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 				}
 				summary, _ := s.store.LatestAssistantMessage(parent, id)
 				_ = s.store.FinishScheduleRun(parent, run.ID, "succeeded", "", "", truncateScheduleOutput(summary), time.Now().UTC())
-				s.cleanupScheduledSession(parent, session)
+				if sched.ResultMode != "existing_session" {
+					if latest, loadErr := s.store.GetSession(parent, id); loadErr == nil && latest.Status == string(sessionstate.RunningIdle) && latest.ActiveGenerationID != "" {
+						if releaseErr := s.store.ReleaseIdleGeneration(parent, id, latest.ActiveGenerationID, owner, time.Now().UTC()); releaseErr == nil {
+							s.hub.Publish(events.Event{Type: "session.checkpointed", SessionID: id})
+						}
+					}
+				}
 				return
 			}
 			if status == "failed" || status == "canceled" {
@@ -192,7 +223,6 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 					s.log.Warn("schedule run failed", "run_id", run.ID, "session_id", id, "error", turnErr)
 				}
 				s.finishScheduleFailure(parent, run, sched, "turn", turnErr)
-				s.cleanupScheduledSession(parent, session)
 				return
 			}
 		}
@@ -231,18 +261,4 @@ func truncateScheduleOutput(v string) string {
 		return v[:4000]
 	}
 	return v
-}
-func (s *Server) cleanupScheduledSession(ctx context.Context, session store.Session) {
-	latest, err := s.store.GetSession(ctx, session.ID)
-	if err == nil && latest.ActiveGenerationID != "" && latest.Status != string(sessionstate.Checkpointed) {
-		if d, e := s.runtimeGenerationDetails(ctx, latest.ID, latest.ActiveGenerationID); e == nil {
-			_ = s.destroyGenerationRuntime(ctx, d)
-		}
-	}
-	res, err := s.store.DestroySession(ctx, session.ID, time.Now().UTC())
-	if err == nil {
-		for _, gid := range res.GenerationIDs {
-			_ = s.cleanupGenerationResources(ctx, session.ID, gid, time.Now().UTC())
-		}
-	}
 }

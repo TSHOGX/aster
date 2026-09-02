@@ -18,6 +18,9 @@ type AgentSchedule struct {
 	Timezone            string     `json:"timezone"`
 	Enabled             bool       `json:"enabled"`
 	Mode                string     `json:"mode"`
+	Archived            bool       `json:"archived"`
+	ResultMode          string     `json:"result_mode"`
+	TargetSessionID     string     `json:"target_session_id,omitempty"`
 	TimeoutSeconds      int        `json:"timeout_seconds"`
 	MaxRetries          int        `json:"max_retries"`
 	RetryBackoffSeconds int        `json:"retry_backoff_seconds"`
@@ -47,13 +50,18 @@ type ScheduleRun struct {
 
 func scanSchedule(row interface{ Scan(...any) error }) (AgentSchedule, error) {
 	var s AgentSchedule
-	var enabled int
-	var next, last, created, updated sql.NullString
-	err := row.Scan(&s.ID, &s.UserID, &s.Name, &s.Prompt, &s.CronExpr, &s.Timezone, &enabled, &s.Mode, &s.TimeoutSeconds, &s.MaxRetries, &s.RetryBackoffSeconds, &next, &last, &s.Version, &created, &updated)
+	var enabled, archived int
+	var next, last, created, updated, target sql.NullString
+	err := row.Scan(&s.ID, &s.UserID, &s.Name, &s.Prompt, &s.CronExpr, &s.Timezone, &enabled, &s.Mode, &archived, &s.ResultMode, &target, &s.TimeoutSeconds, &s.MaxRetries, &s.RetryBackoffSeconds, &next, &last, &s.Version, &created, &updated)
 	if err != nil {
 		return s, err
 	}
 	s.Enabled = enabled != 0
+	s.Archived = archived != 0
+	s.TargetSessionID = target.String
+	if s.ResultMode == "" {
+		s.ResultMode = "new_session"
+	}
 	if next.Valid {
 		t := parseTime(next.String)
 		s.NextRunAt = &t
@@ -77,6 +85,15 @@ func (s *Store) CreateSchedule(ctx context.Context, schedule AgentSchedule) erro
 	if schedule.Mode == "" {
 		schedule.Mode = "agent"
 	}
+	if schedule.ResultMode == "" {
+		schedule.ResultMode = "new_session"
+	}
+	if schedule.ResultMode != "new_session" && schedule.ResultMode != "existing_session" {
+		return errors.New("invalid schedule result mode")
+	}
+	if schedule.ResultMode == "existing_session" && strings.TrimSpace(schedule.TargetSessionID) == "" {
+		return errors.New("target session is required")
+	}
 	if schedule.TimeoutSeconds <= 0 {
 		schedule.TimeoutSeconds = 1800
 	}
@@ -89,16 +106,16 @@ func (s *Store) CreateSchedule(ctx context.Context, schedule AgentSchedule) erro
 	if schedule.UpdatedAt.IsZero() {
 		schedule.UpdatedAt = schedule.CreatedAt
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_schedules (id,user_id,name,prompt,cron_expr,timezone,enabled,mode,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, schedule.ID, schedule.UserID, schedule.Name, schedule.Prompt, schedule.CronExpr, schedule.Timezone, boolInt(schedule.Enabled), schedule.Mode, schedule.TimeoutSeconds, schedule.MaxRetries, schedule.RetryBackoffSeconds, formatOptionalTime(schedule.NextRunAt), formatOptionalTime(schedule.LastRunAt), schedule.Version, formatTime(schedule.CreatedAt), formatTime(schedule.UpdatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_schedules (id,user_id,name,prompt,cron_expr,timezone,enabled,mode,archived,result_mode,target_session_id,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, schedule.ID, schedule.UserID, schedule.Name, schedule.Prompt, schedule.CronExpr, schedule.Timezone, boolInt(schedule.Enabled), schedule.Mode, boolInt(schedule.Archived), schedule.ResultMode, nullableString(schedule.TargetSessionID), schedule.TimeoutSeconds, schedule.MaxRetries, schedule.RetryBackoffSeconds, formatOptionalTime(schedule.NextRunAt), formatOptionalTime(schedule.LastRunAt), schedule.Version, formatTime(schedule.CreatedAt), formatTime(schedule.UpdatedAt))
 	return err
 }
 
 func (s *Store) GetSchedule(ctx context.Context, id string) (AgentSchedule, error) {
-	return scanSchedule(s.db.QueryRowContext(ctx, `SELECT id,user_id,name,prompt,cron_expr,timezone,enabled,mode,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at FROM agent_schedules WHERE id = ?`, id))
+	return scanSchedule(s.db.QueryRowContext(ctx, `SELECT id,user_id,name,prompt,cron_expr,timezone,enabled,mode,archived,result_mode,target_session_id,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at FROM agent_schedules WHERE id = ?`, id))
 }
 
 func (s *Store) ListSchedulesByUser(ctx context.Context, userID string) ([]AgentSchedule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,user_id,name,prompt,cron_expr,timezone,enabled,mode,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at FROM agent_schedules WHERE user_id = ? ORDER BY created_at DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,user_id,name,prompt,cron_expr,timezone,enabled,mode,archived,result_mode,target_session_id,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at FROM agent_schedules WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +135,7 @@ func (s *Store) ListDueSchedules(ctx context.Context, now time.Time, limit int) 
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,user_id,name,prompt,cron_expr,timezone,enabled,mode,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at FROM agent_schedules WHERE enabled=1 AND cron_expr<>'' AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT ?`, formatTime(now), limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,user_id,name,prompt,cron_expr,timezone,enabled,mode,archived,result_mode,target_session_id,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at FROM agent_schedules WHERE enabled=1 AND archived=0 AND cron_expr<>'' AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT ?`, formatTime(now), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +151,7 @@ func (s *Store) ListDueSchedules(ctx context.Context, now time.Time, limit int) 
 	return out, rows.Err()
 }
 func (s *Store) AdvanceSchedule(ctx context.Context, id string, expectedVersion int, next, last time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE agent_schedules SET next_run_at=?,last_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=? AND enabled=1`, formatTime(next), formatTime(last), formatTime(time.Now().UTC()), id, expectedVersion)
+	res, err := s.db.ExecContext(ctx, `UPDATE agent_schedules SET next_run_at=?,last_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=? AND enabled=1 AND archived=0`, formatTime(next), formatTime(last), formatTime(time.Now().UTC()), id, expectedVersion)
 	if err != nil {
 		return err
 	}
@@ -152,7 +169,7 @@ func (s *Store) ClaimScheduleDue(ctx context.Context, scheduleID string, expecte
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.ExecContext(ctx, `UPDATE agent_schedules SET next_run_at=?,last_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=? AND enabled=1`, formatTime(next), formatTime(scheduledAt), formatTime(time.Now().UTC()), scheduleID, expectedVersion)
+	res, err := tx.ExecContext(ctx, `UPDATE agent_schedules SET next_run_at=?,last_run_at=?,version=version+1,updated_at=? WHERE id=? AND version=? AND enabled=1 AND archived=0`, formatTime(next), formatTime(scheduledAt), formatTime(time.Now().UTC()), scheduleID, expectedVersion)
 	if err != nil {
 		return err
 	}
@@ -177,11 +194,17 @@ func (s *Store) UpdateSchedule(ctx context.Context, schedule AgentSchedule, expe
 	if expectedVersion <= 0 {
 		expectedVersion = schedule.Version
 	}
+	if schedule.ResultMode == "" {
+		schedule.ResultMode = "new_session"
+	}
+	if schedule.ResultMode != "new_session" && schedule.ResultMode != "existing_session" {
+		return errors.New("invalid schedule result mode")
+	}
 	now := schedule.UpdatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE agent_schedules SET name=?,prompt=?,cron_expr=?,timezone=?,enabled=?,timeout_seconds=?,max_retries=?,retry_backoff_seconds=?,next_run_at=?,last_run_at=?,version=version+1,updated_at=? WHERE id=? AND user_id=? AND version=?`, schedule.Name, schedule.Prompt, schedule.CronExpr, schedule.Timezone, boolInt(schedule.Enabled), schedule.TimeoutSeconds, schedule.MaxRetries, schedule.RetryBackoffSeconds, formatOptionalTime(schedule.NextRunAt), formatOptionalTime(schedule.LastRunAt), formatTime(now), schedule.ID, schedule.UserID, expectedVersion)
+	res, err := s.db.ExecContext(ctx, `UPDATE agent_schedules SET name=?,prompt=?,cron_expr=?,timezone=?,enabled=?,archived=?,result_mode=?,target_session_id=?,timeout_seconds=?,max_retries=?,retry_backoff_seconds=?,next_run_at=?,last_run_at=?,version=version+1,updated_at=? WHERE id=? AND user_id=? AND version=?`, schedule.Name, schedule.Prompt, schedule.CronExpr, schedule.Timezone, boolInt(schedule.Enabled), boolInt(schedule.Archived), schedule.ResultMode, nullableString(schedule.TargetSessionID), schedule.TimeoutSeconds, schedule.MaxRetries, schedule.RetryBackoffSeconds, formatOptionalTime(schedule.NextRunAt), formatOptionalTime(schedule.LastRunAt), formatTime(now), schedule.ID, schedule.UserID, expectedVersion)
 	if err != nil {
 		return err
 	}
