@@ -59,9 +59,9 @@ The orchestrator serves three trees:
 | GET | `/api/search` | required | full-text search over the caller's sessions & messages |
 | GET | `/api/notifications` | required | list the caller's notifications (broadcasts + directed) with read state |
 | GET | `/api/schedules` | required | list the caller's Cron Agent schedules |
-| POST | `/api/schedules` | required | create a schedule (empty `cron_expr` is manual-only) |
+| POST | `/api/schedules` | required | create a schedule (empty `cron_expr` is manual-only; `result_mode` routes runs to a new or existing session) |
 | GET/PATCH/DELETE | `/api/schedules/{id}` | required (owner) | inspect, update, or delete a schedule |
-| POST | `/api/schedules/{id}/run` | required (owner) | queue one isolated manual execution |
+| POST | `/api/schedules/{id}/run` | required (owner) | queue one manual execution and retain its session for history |
 | GET | `/api/schedules/{id}/runs` | required (owner) | list durable execution history |
 | POST | `/api/notifications/{id}/read` | required | mark one notification read (idempotent) |
 | GET | `/api/events` | required | WebSocket event stream (compatibility) |
@@ -120,17 +120,21 @@ generated title — each emits a `session.updated` event.
 
 **Cron Agent (R2/R4).** `POST /api/schedules` accepts `name`, `prompt`, optional
 `cron_expr` (five-field standard cron), `timezone` (IANA name), `enabled`,
-`timeout_seconds`, `max_retries`, and `retry_backoff_seconds`. An empty
-`cron_expr` creates a manual-only schedule. `POST .../{id}/run` returns `202`
-with a queued run; every run creates a fresh session/generation and destroys it
-after terminal completion or timeout. `GET .../{id}/runs` exposes durable
+`timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `result_mode`
+(`new_session` or `existing_session`), and `target_session_id` when routing to an
+existing session. An empty `cron_expr` creates a manual-only schedule. Schedules
+also expose `archived`; archiving is a soft state that disables dispatch while
+retaining configuration and run history. `POST .../{id}/run` returns `202` with a
+queued run. New-session runs create a durable session titled after the schedule;
+existing-session runs enqueue into the configured owner session, preserving its
+conversation context and workspace files. `GET .../{id}/runs` exposes durable
 status (`queued`, `running`, `succeeded`, `failed`, `timed_out`), attempt,
-timestamps, error class/message, and a bounded output summary. The background
-worker is independent of maintenance and is enabled only when both
-`harness.scheduler.enabled` and the `cron_agent` runtime feature flag are true;
-manual run rows remain durable while the worker is disabled. Schedule updates
-use an optimistic `version` field and due claims are atomic, so restarts cannot
-double-dispatch a cron slot.
+timestamps, associated `session_id`, error class/message, and a bounded output
+summary. The background worker is independent of maintenance and is enabled only
+when both `harness.scheduler.enabled` and the `cron_agent` runtime feature flag
+are true; manual run rows remain durable while the worker is disabled. Schedule
+updates use an optimistic `version` field and due claims are atomic, so restarts
+cannot double-dispatch a cron slot.
 
 **`GET /api/quota`** →
 `{"soft_session_ceiling", "active_sessions", "live_pool_ceiling",

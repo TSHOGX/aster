@@ -148,7 +148,8 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
       }
     };
     void load();
-    return () => { cancelled = true; };
+    const interval = selectedId ? window.setInterval(() => { void load(); }, 5000) : null;
+    return () => { cancelled = true; if (interval !== null) window.clearInterval(interval); };
   }, [selectedId]);
 
   const openCreate = (initial: ScheduleForm = EMPTY_FORM) => { setEditingId(null); setForm(initial); setEditorOpen(true); setError(null); };

@@ -49,8 +49,9 @@ agent-homes、checkpoints、runsc、run），与 main 的 `/var/lib/harness/` �
 `go test ./...`（宿主若非 root 运行会出现证据目录属主测试失败，这是测试环境限制），
 再在控制库中打开 `cron_agent` flag，最后将 `harness.scheduler.enabled` 设为 `true`
 并重启 orchestrator。关闭顺序相反：先关配置并重启，再关闭 flag。执行历史位于
-`schedule_runs`，可通过 `/api/schedules/{id}/runs` 检查；每次运行的临时 session、
-workspace 和 sandbox 在终态后自动销毁。调度表与历史表是 additive migration，回滚
+`schedule_runs`，可通过 `/api/schedules/{id}/runs` 检查；运行结果可配置为写入新建
+session 或已有 session。新建 session 会保留对话与 workspace，空闲后由自动 checkpoint
+策略释放 sandbox 资源，用户仍可从运行历史跳回该 session。调度表与历史表是 additive migration，回滚
 代码时保留表即可（旧版本忽略未知表）；如需回退数据，停止服务后备份 control DB，
 再按标准 SQLite 备份恢复流程操作，不要在线 DROP 表。
 

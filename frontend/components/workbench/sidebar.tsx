@@ -309,12 +309,13 @@ type SidebarProps = {
   onToggleCollapse?: () => void;
   onOpenSearch?: () => void;
   onOpenSchedules?: () => void;
+  onOpenConversation?: () => void;
   // Set when the sidebar is a narrow-width drawer: selecting or creating a
   // session dismisses the overlay so the conversation is visible underneath.
   onNavigate?: () => void;
 };
 
-export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onOpenSchedules, onNavigate }: SidebarProps) {
+export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onOpenSchedules, onOpenConversation, onNavigate }: SidebarProps) {
   const [peek, setPeek] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -338,6 +339,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onO
         variant="docked"
         onOpenSearch={onOpenSearch}
         onOpenSchedules={onOpenSchedules}
+        onOpenConversation={onOpenConversation}
         onToggleCollapse={onToggleCollapse}
         onNavigate={onNavigate}
       />
@@ -363,6 +365,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse, onOpenSearch, onO
           variant="floating"
           onOpenSearch={onOpenSearch}
           onOpenSchedules={onOpenSchedules}
+          onOpenConversation={onOpenConversation}
           onToggleCollapse={onToggleCollapse}
           onNavigate={() => setPeek(false)}
         />
@@ -455,12 +458,14 @@ function SidebarPanel({
   variant,
   onOpenSearch,
   onOpenSchedules,
+  onOpenConversation,
   onToggleCollapse,
   onNavigate
 }: {
   variant: "docked" | "floating";
   onOpenSearch?: () => void;
   onOpenSchedules?: () => void;
+  onOpenConversation?: () => void;
   onToggleCollapse?: () => void;
   onNavigate?: () => void;
 }) {
@@ -532,9 +537,10 @@ function SidebarPanel({
   const handleSelect = useCallback(
     (id: string) => {
       selectSession(id);
+      onOpenConversation?.();
       onNavigate?.();
     },
-    [selectSession, onNavigate]
+    [selectSession, onNavigate, onOpenConversation]
   );
 
   return (

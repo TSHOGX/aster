@@ -185,7 +185,7 @@ function Shell({ initialView = "conversation" }: { initialView?: "conversation" 
               )}
             >
               {drawer === "sessions" ? (
-                <Sidebar onOpenSearch={() => setPaletteOpen(true)} onOpenSchedules={() => { setWorkspaceView("schedules"); setRequestedDrawer(null); }} onNavigate={() => setRequestedDrawer(null)} />
+                <Sidebar onOpenSearch={() => setPaletteOpen(true)} onOpenSchedules={() => { setWorkspaceView("schedules"); setRequestedDrawer(null); }} onOpenConversation={() => setWorkspaceView("conversation")} onNavigate={() => setRequestedDrawer(null)} />
               ) : (
                 <ArtifactPane />
               )}
@@ -226,6 +226,7 @@ function Shell({ initialView = "conversation" }: { initialView?: "conversation" 
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         onOpenSearch={() => setPaletteOpen(true)}
         onOpenSchedules={() => setWorkspaceView("schedules")}
+        onOpenConversation={() => setWorkspaceView("conversation")}
       />
       {workspaceView === "schedules" ? <div className="col-span-2 min-h-0 min-w-0"><SchedulesWorkbench onOpenSession={handleOpenSession} /></div> : <>
         <Conversation />
