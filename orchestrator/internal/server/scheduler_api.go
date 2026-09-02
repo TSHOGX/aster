@@ -280,9 +280,6 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request, current 
 	}
 	if req.Archived != nil {
 		current.Archived = *req.Archived
-		if current.Archived {
-			current.Enabled = false
-		}
 	}
 	if req.TimeoutSeconds != nil {
 		if *req.TimeoutSeconds <= 0 {

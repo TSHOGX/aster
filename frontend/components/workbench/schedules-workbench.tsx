@@ -180,7 +180,7 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
     if (!selected) return;
     const archiving = !selected.archived;
     if (!window.confirm(`${archiving ? "归档" : "恢复"}“${selected.name}”？`)) return;
-    const result = await updateSchedule(selected.id, { archived: archiving, enabled: archiving ? false : true, version: selected.version });
+    const result = await updateSchedule(selected.id, { archived: archiving, version: selected.version });
     if (!result.ok) { setError(result.error); return; }
     setSchedules((items) => items.map((item) => item.id === result.data.id ? result.data : item));
     if (Boolean(result.data.archived) !== showArchived) setSelectedId(null);
