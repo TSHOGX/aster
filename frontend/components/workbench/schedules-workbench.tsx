@@ -115,7 +115,7 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
 
   const selected = useMemo(() => schedules.find((item) => item.id === selectedId) ?? null, [schedules, selectedId]);
   const visibleSchedules = useMemo(() => schedules.filter((item) => Boolean(item.archived) === showArchived), [schedules, showArchived]);
-  const targetSessions = useMemo(() => sessions.filter((session) => session.access !== "reader" && session.status !== "destroyed"), [sessions]);
+  const targetSessions = useMemo(() => sessions.filter((session) => session.access !== "reader" && session.mode === "agent" && session.status !== "destroyed"), [sessions]);
 
   const refresh = useCallback(async () => {
     const result = await fetchSchedules();

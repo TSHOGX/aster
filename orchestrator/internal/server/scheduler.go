@@ -146,7 +146,7 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		}
 		var err error
 		session, err = s.store.GetSession(ctx, sched.TargetSessionID)
-		if errors.Is(err, sql.ErrNoRows) || session.UserID != run.UserID || session.Status == string(sessionstate.Destroyed) {
+		if errors.Is(err, sql.ErrNoRows) || session.UserID != run.UserID || session.Mode != "agent" || session.Status == string(sessionstate.Destroyed) {
 			s.finishScheduleFailure(parent, run, sched, "target_session", "target session is unavailable")
 			return
 		}

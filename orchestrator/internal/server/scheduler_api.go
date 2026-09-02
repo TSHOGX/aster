@@ -320,7 +320,7 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request, current 
 
 func (s *Server) scheduleTargetAllowed(ctx context.Context, userID, sessionID string) bool {
 	session, err := s.store.GetSession(ctx, sessionID)
-	return err == nil && session.UserID == userID && session.Status != string(sessionstate.Destroyed)
+	return err == nil && session.UserID == userID && session.Mode == "agent" && session.Status != string(sessionstate.Destroyed)
 }
 
 func (s *Server) manualScheduleRun(w http.ResponseWriter, r *http.Request, sched store.AgentSchedule) {
