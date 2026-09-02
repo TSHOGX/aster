@@ -45,6 +45,7 @@ type ScheduleForm = {
   customWeekday: number;
   customDay: number;
   customMonth: number;
+  customRawCron: string;
   timeout_seconds: number;
   max_retries: number;
   retry_backoff_seconds: number;
@@ -89,6 +90,7 @@ const EMPTY_FORM: ScheduleForm = {
   customWeekday: 1,
   customDay: 1,
   customMonth: 1,
+  customRawCron: "",
   timeout_seconds: 1800,
   max_retries: 0,
   retry_backoff_seconds: 30,
@@ -149,7 +151,7 @@ function parseCron(expr?: string | null): Partial<ScheduleForm> {
   if (numericMinute !== null && numericHour !== null && /^\d+$/.test(dayOfMonth) && /^\d+$/.test(month) && dayOfWeek === "*") {
     return { frequency: "custom", customRepeat: "yearly", customDay: Number(dayOfMonth), customMonth: Number(month), time };
   }
-  return { frequency: "custom" };
+  return { frequency: "custom", customRawCron: expr.trim() };
 }
 
 function buildCronExpression(form: ScheduleForm) {
@@ -159,6 +161,7 @@ function buildCronExpression(form: ScheduleForm) {
   if (form.frequency === "daily") return `${minute} ${hour} * * *`;
   if (form.frequency === "weekdays") return `${minute} ${hour} * * 1-5`;
   if (form.frequency === "weekly") return `${minute} ${hour} * * ${form.weekday}`;
+  if (form.customRawCron) return form.customRawCron;
   if (form.customRepeat === "hourly") return `${Math.min(59, Math.max(0, form.customMinute))} */${Math.min(23, Math.max(1, form.customInterval))} * * *`;
   if (form.customRepeat === "daily") return `${minute} ${hour} */${Math.min(31, Math.max(1, form.customInterval))} * *`;
   if (form.customRepeat === "weekly") return `${minute} ${hour} * * ${form.customWeekday}`;
@@ -294,7 +297,7 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
     setError(null);
   };
   const openEdit = () => { if (selected) { setEditingId(selected.id); setForm(formFromSchedule(selected)); setEditorOpen(true); setError(null); } };
-  const updateForm = <K extends keyof ScheduleForm>(key: K, value: ScheduleForm[K]) => setForm((current) => ({ ...current, [key]: value }));
+  const updateForm = <K extends keyof ScheduleForm>(key: K, value: ScheduleForm[K]) => setForm((current) => ({ ...current, [key]: value, ...(key === "frequency" || key.startsWith("custom") ? { customRawCron: "" } : {}) }));
 
   const save = async () => {
     if (!form.name.trim() || !form.prompt.trim()) { setError("请填写任务名称和提示词"); return; }
