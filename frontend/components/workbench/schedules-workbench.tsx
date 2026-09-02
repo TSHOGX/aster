@@ -205,7 +205,8 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
 
   const openRun = (run: ApiScheduleRun) => {
     if (!run.session_id) return;
-    selectSession(run.session_id); onOpenSession?.(run.session_id);
+    if (onOpenSession) onOpenSession(run.session_id);
+    else selectSession(run.session_id);
   };
 
   return (

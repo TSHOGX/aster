@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -163,8 +164,9 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 			s.finishScheduleFailure(parent, run, sched, "session_create", err.Error())
 			return
 		}
-		_ = s.store.UpdateSessionTitle(ctx, session.ID, sched.Name, true)
-		session.Title = sched.Name
+		title := fmt.Sprintf("%s · %s", sched.Name, run.ScheduledAt.In(mustLocation(sched.Timezone)).Format("2006-01-02 15:04"))
+		_ = s.store.UpdateSessionTitle(ctx, session.ID, title, true)
+		session.Title = title
 		s.hub.Publish(events.Event{Type: "session.created", SessionID: session.ID, Payload: publicSession(session)})
 	}
 	id := session.ID
