@@ -594,17 +594,17 @@ function SidebarPanel({
         </div>
       </div>
 
-      <div className="shrink-0 px-3 pb-3 pt-3">
+      <div className="shrink-0 px-2 pb-2 pt-2">
         <nav aria-label={t("sidebar.primaryNavigation")} className="space-y-1">
           <button
           type="button"
-          className="group flex h-11 w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 text-left text-sm font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-surface-muted)]"
+          className="group flex h-9 w-full items-center gap-2.5 rounded-[var(--radius)] px-2.5 text-left text-2xs font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-surface-muted)]"
           onClick={() => void handleCreate()}
           disabled={creating || agentCreateDisabled}
           title={agentCapability?.disabled_reason ?? undefined}
         >
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center text-[var(--color-foreground-muted)] transition-colors group-hover:text-[var(--color-foreground)]">
-            {creating ? <Loader2 className="h-[19px] w-[19px] animate-spin" /> : <SquarePen className="h-[21px] w-[21px]" strokeWidth={1.7} />}
+          <span className="flex h-4 w-3 shrink-0 items-center justify-center text-[var(--color-foreground-muted)] transition-colors group-hover:text-[var(--color-foreground)]">
+            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <SquarePen className="h-[18px] w-[18px]" strokeWidth={1.7} />}
           </span>
           {t("sidebar.newSession")}
           </button>
@@ -612,10 +612,10 @@ function SidebarPanel({
             type="button"
             onClick={onOpenSchedules}
             aria-current={schedulesActive ? "page" : undefined}
-            className={cn("group flex h-11 w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 text-left text-sm font-medium transition-colors", schedulesActive ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-foreground)] hover:bg-[var(--color-surface-muted)]")}
+            className={cn("group flex h-9 w-full items-center gap-2.5 rounded-[var(--radius)] px-2.5 text-left text-2xs font-medium transition-colors", schedulesActive ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "text-[var(--color-foreground)] hover:bg-[var(--color-surface-muted)]")}
           >
-            <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center", schedulesActive ? "text-[var(--color-accent)]" : "text-[var(--color-foreground-muted)] group-hover:text-[var(--color-foreground)]")}>
-              <Clock3 className="h-[21px] w-[21px]" strokeWidth={1.7} />
+            <span className={cn("flex h-4 w-3 shrink-0 items-center justify-center", schedulesActive ? "text-[var(--color-accent)]" : "text-[var(--color-foreground-muted)] group-hover:text-[var(--color-foreground)]")}>
+              <Clock3 className="h-[18px] w-[18px]" strokeWidth={1.7} />
             </span>
             {t("sidebar.schedules")}
           </button>
