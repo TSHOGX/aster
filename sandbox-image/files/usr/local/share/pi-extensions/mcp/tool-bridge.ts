@@ -10,6 +10,8 @@
  *   - Protocol error vs tool execution error distinction
  *   - Activate/deactivate pattern (register once, toggle on server state change)
  *   - Image/audio/resource content → text description passthrough
+ *   - executeQuery optional `output` (file:///workspace/...) lands CSV in the
+ *     sandbox workspace; oversized replies auto-land. `output` is never sent upstream.
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -19,6 +21,14 @@ import type { TSchema } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { McpError } from "./errors.js";
 import type { Settings } from "./config.js";
+import {
+  applyQueryOutput,
+  isExecuteQueryTool,
+  stripOutputParam,
+  withFileOutputSchema,
+  QueryOutputError,
+  DEFAULT_WORKSPACE_ROOT,
+} from "./query-output.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -413,14 +423,23 @@ export class ToolBridge {
       if (hints.length > 0) description += ` [${hints.join(", ")}]`;
     }
 
-    const schema = convertJsonSchemaToTypebox(tool.inputSchema);
+    const landQuery = isExecuteQueryTool(tool.name);
+    const inputSchema = landQuery
+      ? withFileOutputSchema(tool.inputSchema)
+      : tool.inputSchema;
+    if (landQuery) {
+      description +=
+        " Optional `output` (file:///workspace/data/<name>.csv): write CSV under /workspace and return only path/rowCount/cols/sample. Oversized replies are auto-landed the same way. `output` is stripped before the upstream call.";
+    }
+
+    const schema = convertJsonSchemaToTypebox(inputSchema);
     const timeoutMs = this.settings.requestTimeoutMs;
 
     this.pi.registerTool({
       name: piName,
       label: ann?.title ?? tool.name,
       description,
-      promptSnippet: description.slice(0, 120),
+      promptSnippet: description.slice(0, 200),
       parameters: schema,
 
       async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
@@ -428,11 +447,15 @@ export class ToolBridge {
           return { content: [{ type: "text", text: "Cancelled" }], details: {} };
         }
 
+        const stripped = landQuery ? stripOutputParam(params) : undefined;
+        const mcpArgs = stripped ? stripped.arguments : params;
+        const output = stripped?.output;
+
         try {
           const result = await client.request(
             {
               method: "tools/call",
-              params: { name: tool.name, arguments: params },
+              params: { name: tool.name, arguments: mcpArgs },
             },
             CallToolResultSchema,
             // Pass AbortSignal to SDK — it will automatically send
@@ -452,7 +475,24 @@ export class ToolBridge {
             );
           }
 
-          return { content, details: {} };
+          if (!landQuery) {
+            return { content, details: {} };
+          }
+
+          try {
+            const workspaceRoot =
+              process.env["SESSION_WORKSPACE"] || DEFAULT_WORKSPACE_ROOT;
+            const landed = applyQueryOutput(content, { workspaceRoot, output });
+            return {
+              content: landed.content,
+              details: landed.landed ? { landedPath: landed.path, auto: landed.auto } : {},
+            };
+          } catch (err) {
+            if (err instanceof QueryOutputError) {
+              throw new McpError(err.message, serverName, "tool", err);
+            }
+            throw err;
+          }
         } catch (err) {
           if (err instanceof McpError) throw err;
           // Protocol-level errors (JSON-RPC error response, timeout, etc.)

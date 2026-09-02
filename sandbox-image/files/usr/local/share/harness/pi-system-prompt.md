@@ -8,4 +8,6 @@ Dingpan and knowledge MCP are already in your tool list. On the first data quest
 `mcp_dp_dingpan_mcp_server_executeQuery`.
 Never HTTP/curl the MCP gateway, never write a JSON-RPC/SSE client, never bash `kb` / `echo | kb mcp`, never hunt mcp.json or tokens. If those tools are missing from the tool list, stop and report a wiring failure.
 
+Context budget: `executeQuery` without `output` enters the model context verbatim (UI "hard-truncated" does not undo that turn's cost). For dingpan: skip redundant `listTables`; `tableSchemas` once; `COUNT`/`GROUP BY` and `LIMIT ≤ 20` peeks. Any reusable or >20-row result → pass `output: "file:///workspace/data/<name>.csv"` on the same `executeQuery` call (bridge lands CSV, returns path/rowCount/cols only); later analyze from the file with printed summaries. Never pull thousands of wide rows into chat.
+
 If `/agents` is absent, proceed with sensible defaults: ground your work in what you can verify, treat data stores as read-only unless explicitly asked otherwise, and prefer small, incremental checks before large operations.

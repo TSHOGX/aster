@@ -3,7 +3,7 @@ name: mcp-data-query
 status: in-use
 support_count: 999
 confidence: 1.0
-source: human-seeded (dingpan MCP-first + CSV land, 2026-09-02)
+source: human-seeded (dingpan MCP-first + executeQuery output=file, 2026-09-02)
 ---
 
 # Dingpan MCP data query (default)
@@ -20,7 +20,7 @@ Exact Pi names on this host (hyphens in the server id become underscores):
 |---|---|---|
 | `mcp_dp_dingpan_mcp_server_listTables` | `listTables` | none |
 | `mcp_dp_dingpan_mcp_server_tableSchemas` | `tableSchemas` | `tableNames`: `schema.table`, comma-separated |
-| `mcp_dp_dingpan_mcp_server_executeQuery` | `executeQuery` | `sql`: read-only `SELECT` |
+| `mcp_dp_dingpan_mcp_server_executeQuery` | `executeQuery` | `sql` (required); `output` (optional): `file:///workspace/data/<name>.csv` |
 
 If your tool list shows a different `mcp_*_listTables`, use **that** name. Do
 not reconstruct names from mcp.json. Do not try both prefixes "to see which
@@ -31,44 +31,35 @@ Specification / DTC / CAN decode still uses
 
 ## Context budget (read this before every query)
 
-**Every MCP `executeQuery` payload is injected into the model context in full.**
-UI hints like `[Old tool result hard-truncated]` do **not** undo that cost for
-the turn that received the rows. Tens of thousands of JSON objects will blow a
-1M window instantly. Treat every tool result as expensive.
+**Without `output`, the `executeQuery` payload is injected into the model
+context in full.** UI hints like `[Old tool result hard-truncated]` do **not**
+undo that cost. Pass `output` on the **same** call so the bridge lands CSV
+before the model ever sees the rows.
 
-### Result landing — CSV in `/workspace` (required)
+### Result landing — `output` on executeQuery (required for non-peeks)
 
 For any result that is **more than a tiny peek** (rule of thumb: **> 20 rows**,
 or any detail/series pull you will reuse):
 
-1. **Immediately** write the rows to a **CSV** under `/workspace` (prefer
-   `/workspace/data/<short_name>.csv`). **CSV only** — not JSON object arrays,
-   not pretty-printed tool dumps.
-2. In the assistant reply, keep only: **path**, **column names**, **row count**,
-   and at most **3 sample rows**. Never echo the full tool JSON.
-3. Later analysis / LTTB / HTML must `pandas.read_csv(path)` (or equivalent) and
-   print **summaries** (`shape`, `head`, dtypes, quantiles) — never `cat` the
-   whole file back into context.
-
-Minimal land pattern (adapt to the actual `executeQuery` JSON shape):
-
-```python
-import csv, json, pathlib
-# `rows` = list[dict] parsed from the tool result (do not keep the raw string)
-path = pathlib.Path("/workspace/data/query_slice.csv")
-path.parent.mkdir(parents=True, exist_ok=True)
-cols = list(rows[0].keys()) if rows else []
-with path.open("w", newline="", encoding="utf-8") as f:
-    w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
-    w.writeheader()
-    w.writerows(rows)
-print({"path": str(path), "rows": len(rows), "cols": cols})
+```
+executeQuery({
+  sql: "SELECT …",
+  output: "file:///workspace/data/<short_name>.csv"
+})
 ```
 
-**Honesty:** writing CSV does **not** erase tokens already spent on that MCP
-reply. It preserves data on disk so later turns / truncation / compaction can
-drop the fat tool payload while you still have the file. Therefore you must
-**also** keep each MCP reply small (below).
+The tool-bridge writes the CSV under `/workspace` and returns only **path**,
+**rowCount**, **cols**, and ≤3 **sample** rows. Do not echo the upstream JSON.
+Do not re-write the file in Python after the fact — that is too late; the
+rows would already be in context.
+
+Later analysis / LTTB / HTML must `pandas.read_csv(path)` (or equivalent) and
+print **summaries** (`shape`, `head`, dtypes, quantiles) — never `cat` the
+whole file back into context.
+
+If you omit `output` and the reply is still oversized, the bridge **auto-lands**
+to `/workspace/data/query_<timestamp>.csv` and returns the same summary.
+Still pass `output` yourself so the path is predictable.
 
 ### Hard limits on what you fetch
 
@@ -81,15 +72,14 @@ drop the fat tool payload while you still have the file. Therefore you must
 3. **Peek ≤ 20 rows** for schema/shape checks (`LIMIT 20` + explicit columns).
    Never rely on the server's ~10000 default for a wide fact table.
 4. **Shape first:** `COUNT(*)` / time bounds → `GROUP BY` distributions → peeks
-   → only then a bounded detail pull, **landed as CSV**.
+   → only then a bounded detail pull **with `output`**.
 5. **Prefer SQL-side aggregates / buckets** for charts. If you still need a
    series, keep filters tight (e.g. one month × one factory × one code × one
-   process) and land CSV immediately.
+   process) and pass `output`.
 6. **Never paste giant JSON into assistant text.**
 
-Rough guide: aim for each `executeQuery` tool result well under a few thousand
-tokens. If a result looks huge, tighten SQL next — do not issue sibling wide
-queries.
+Peeks (`COUNT`, `GROUP BY`, `LIMIT ≤ 20`) may omit `output` so you can read
+the numbers inline. Everything else uses `output`.
 
 ## Context
 
@@ -101,6 +91,8 @@ queries.
   it already names the table.
 - Upstream *descriptions* still say `listBusinessTables` / `getTableSchemas`
   and are swapped; **those names are not tools** (`Unknown tool`).
+- `output` is a **Pi-side** argument. The bridge strips it before the upstream
+  `tools/call`. Paths must stay under `/workspace`.
 
 ## Procedure (short path)
 
@@ -108,9 +100,10 @@ queries.
    `kb_catalog` + **one** `kb_get` (`dingpan/tables`).
 2. Only call `listTables` if the article does not cover the table.
 3. `tableSchemas` once with `tableNames` = one `schema.table`.
-4. `executeQuery`: `COUNT` / distribution / `LIMIT 20` peek.
-5. For any reusable or >20-row result: **land CSV under `/workspace/data/`**,
-   reply with path + rowCount + cols only; analyze from the file.
+4. `executeQuery`: `COUNT` / distribution / `LIMIT 20` peek (no `output`).
+5. For any reusable or >20-row result: `executeQuery` with **`output`** set to
+   `file:///workspace/data/<name>.csv`; reply with the summary fields only;
+   analyze from the file.
 6. Charts via `skills/matplotlib-cjk-fonts` when needed. If tools are missing,
    **stop** (no DIY MCP client).
 
@@ -118,13 +111,13 @@ queries.
 
 - **Native MCP tool calls only.** Never invent `listBusinessTables` /
   `getTableSchemas`.
-- **No DIY MCP client** and **no kb CLI**.
+- **No DIY MCP client** (`/workspace/mcp_client.py`, HTTP, SSE) and **no kb CLI**.
 - **No filesystem scavenger hunt.**
 - **Read-only.** No mutating SQL unless the user asks.
 - **Be economical.** Skip `listTables` when the target table is already known.
-- **Land non-trivial results as CSV** in `/workspace` (not JSON dumps).
+- **Land non-trivial results with `output`** (CSV under `/workspace`).
 - **No 10k-row chat dumps.** Wide tables → aggregate, small peeks, or bounded
-  pulls landed to CSV.
+  pulls with `output`.
 
 ## Known Pitfalls
 
@@ -135,6 +128,6 @@ queries.
   `mcp_dp_dingpan_mcp_server_listTables` (or whatever is actually listed).
 - Upstream descriptions are swapped. Follow name + inputSchema.
 - `tableSchemas.tableNames` must include the schema prefix.
-- Leaving rows only as MCP JSON object arrays in the transcript is how a short
-  chat exceeds 1M tokens. CSV on disk + tiny chat summary is the durable path;
-  it does not make an oversized MCP reply free.
+- Calling `executeQuery` without `output` and then writing CSV in Python does
+  **not** undo the tokens already spent on that tool result. Pass `output` on
+  the query call.

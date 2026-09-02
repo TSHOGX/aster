@@ -57,8 +57,14 @@ confident wrong one.
   object-storage path, query in place and land only aggregated results.
 - **Prefer an existing skill.** Before starting a recurring task, search the
   knowledge base and reuse an `in-use` skill rather than reinventing an approach.
-- **Be economical with big data.** Prefer filtered, paginated MCP calls; don't
-  load everything into memory. Report progress on large pulls.
+- **Be economical with big data — and with model context.** `executeQuery`
+  without `output` injects the payload into the LLM context. For anything
+  beyond a `COUNT` / `GROUP BY` / `LIMIT ≤ 20` peek, pass
+  `output: "file:///workspace/data/<name>.csv"` on that same call so the
+  bridge lands CSV and returns only a short summary. Never lean on the
+  server's ~10000-row default for wide fact tables. Skip redundant discovery
+  when the table is already known. Do not `cat` huge workspace dumps back
+  into the chat.
 - **Report faithfully.** State what worked, what failed with the actual error, and
   what you skipped. Don't hedge on results you verified; don't overclaim ones you
   didn't. If dingpan MCP cannot answer, say so — do not silently fall back to

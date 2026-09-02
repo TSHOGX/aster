@@ -18,7 +18,7 @@ Confirmed 2026-08-27 against `tools/list`:
 |---|---|---|
 | `listTables` | none | List tables this token can access (name, biz desc, source) |
 | `tableSchemas` | `tableNames` (string): `schema.table`, comma-separated for batch | DDL / CREATE TABLE for those tables |
-| `executeQuery` | `sql` (string): read-only `SELECT` | Run the query; server may auto `LIMIT 10000` |
+| `executeQuery` | `sql` (string): read-only `SELECT`; optional Pi-side `output`: `file:///workspace/data/<name>.csv` | Run the query; server may auto `LIMIT 10000`. With `output`, the bridge lands CSV and the model only sees a summary. |
 
 Pi-facing names on this host (call these, do not reconstruct from mcp.json):
 
@@ -34,8 +34,12 @@ If the tool list shows a different `mcp_*_listTables`, use that exact name.
 2. Call `listTables` **only** if the table map does not cover the question.
 3. `tableSchemas` with `tableNames` = `schema.table` (example:
    `digital_operation.dwd_e2e_trace_barcode_material`). Batch with commas.
-4. `executeQuery` with `sql` a narrow `SELECT` (filters + explicit columns). Do
-   not `SELECT *` on huge tables.
+4. `executeQuery` with `sql` a narrow `SELECT` (filters + explicit columns +
+   **`LIMIT ≤ 20` for peeks**). For reusable / >20-row pulls, pass **`output`:
+   `file:///workspace/data/<name>.csv`** so the bridge lands CSV and the model
+   only sees path/rowCount/cols/sample. Do not `SELECT *` on huge tables. Do
+   not lean on the server auto-`LIMIT 10000` without `output` — that full
+   payload is injected into the **model context**.
 
 ## Hard rules
 
@@ -46,6 +50,8 @@ If the tool list shows a different `mcp_*_listTables`, use that exact name.
 - If dingpan tools are missing from the tool list, stop and report wiring
   failure. Do not hunt `/agent-home` for tokens.
 - Do not call `listBusinessTables` or `getTableSchemas`. They are not tools.
+- Call `tableSchemas` once per needed table. Prefer aggregates / small peeks
+  over raw extracts (see `dingpan/query-cookbook` and `skills/mcp-data-query`).
 
 ## TODO (human)
 

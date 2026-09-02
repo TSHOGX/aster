@@ -33,7 +33,7 @@ DDL). Ignore that prose. Use **name + inputSchema**:
 
 - `listTables` — no args
 - `tableSchemas` — `tableNames`
-- `executeQuery` — `sql`
+- `executeQuery` — `sql`; optional Pi-side `output` (`file:///workspace/data/<name>.csv`)
 
 ## Schema prefix is required
 
@@ -47,6 +47,23 @@ Batch with commas only after each name is fully qualified.
 for the result. If the host needs it, raise `settings.requestTimeoutMs` in
 `mcp.json` — do not retry-spam. A *steady* ~60s on every call was the old
 gateway SSE hang (fixed); do not treat that as a reason to skip `listTables`.
+
+## Context bomb: LIMIT 10000 / wide DDL in chat
+
+Tool results are pasted into the LLM context. Patterns that fail fast:
+
+- `executeQuery` without a tight `LIMIT` on a wide fact table (server may
+  return up to ~10000 rows) — a few such calls exceed 1M tokens.
+- Re-calling `listTables` + `tableSchemas` after the table is already known.
+- Loading every `kb_get` article, then also dumping large SQL results.
+- Leaving working data as JSON object arrays only in the transcript.
+- Writing a big file and then `cat`/reading it all back into the model.
+
+Fix: `COUNT` / `GROUP BY` first, `LIMIT ≤ 20` peeks, land reusable rows with
+**`output`: `file:///workspace/data/<name>.csv`** on `executeQuery` (chat:
+path + rowCount + cols only). SQL-side aggregates for charts. Writing CSV in
+Python *after* the tool result has already arrived does not refund those
+tokens. `[Old tool result hard-truncated]` does not refund them either.
 
 ## Do not reconstruct names from mcp.json
 

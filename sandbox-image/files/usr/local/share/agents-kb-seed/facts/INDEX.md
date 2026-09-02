@@ -25,9 +25,11 @@ first — this file is just the map.
 1. **Dingpan MCP (`dp-dingpan-mcp-server`) is the default for all data
    questions.** Statistics, reports, trends, aggregations, charging analysis,
    signal lookups — start with dingpan MCP tools every time. See
-   `skills/dingpan-knowledge` then `skills/mcp-data-query`. Call
-   `mcp_dingpan_knowledge_kb_catalog`, then `mcp_dingpan_knowledge_kb_get` for
-   `dingpan/tables` (and other matching ids) before dingpan tools. Call the
+   `skills/dingpan-knowledge` then `skills/mcp-data-query` (**context budget**).
+   If the table is already named, skip catalog/`listTables`. Otherwise
+   `kb_catalog` then **one** `kb_get` (`dingpan/tables`). Never pull
+   thousands of wide rows into chat — pass `output: file:///workspace/data/<name>.csv`
+   on `executeQuery` for anything beyond a peek. Call the
    `mcp_*` tools in your tool list; do not HTTP the gateway and do not bash
    `kb`. Bulky dumps, if any, live in `data/dingpan/`.
 2. **Doris direct SQL is opt-in only.** Open `skills/doris-query` only when the
