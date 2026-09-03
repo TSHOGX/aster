@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS schedule_runs (
 );
 CREATE INDEX IF NOT EXISTS schedule_runs_schedule_idx ON schedule_runs(schedule_id, scheduled_at DESC);
 CREATE INDEX IF NOT EXISTS schedule_runs_user_idx ON schedule_runs(user_id, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS schedule_runs_status_idx ON schedule_runs(status, started_at);
 CREATE UNIQUE INDEX IF NOT EXISTS schedule_runs_schedule_slot_uq ON schedule_runs(schedule_id, scheduled_at, attempt);
 
 CREATE TABLE IF NOT EXISTS auth_sessions (

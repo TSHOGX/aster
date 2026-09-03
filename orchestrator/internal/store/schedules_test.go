@@ -83,3 +83,36 @@ func TestScheduleRoutingAndArchiveFields(t *testing.T) {
 		t.Fatalf("archived schedule run returned as queued: %+v", queued)
 	}
 }
+
+func TestListRunningScheduleRunsSupportsRecovery(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC().Truncate(time.Second)
+	sc := AgentSchedule{ID: "sched_recovery", UserID: "alice", Name: "recovery", Prompt: "run", Enabled: true, Mode: "agent", TimeoutSeconds: 60, CreatedAt: now, UpdatedAt: now}
+	if err := st.CreateSchedule(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSession(ctx, Session{ID: "sess_recovery", UserID: "alice", Status: "created", Agent: "pi", Mode: "agent", Workspace: filepath.Join(t.TempDir(), "workspace"), RestoreID: "unused-sess_recovery", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	enqueued, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: "sess_recovery", Content: "run", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnID := enqueued.TurnID
+	started := now.Add(-time.Second)
+	if err := st.CreateScheduleRun(ctx, ScheduleRun{ID: "run_recovery", ScheduleID: sc.ID, UserID: sc.UserID, SessionID: "sess_recovery", TurnID: &turnID, ScheduledAt: now.Add(-2 * time.Second), StartedAt: &started, Status: "running", CreatedAt: now.Add(-2 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListRunningScheduleRuns(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "run_recovery" || got[0].SessionID != "sess_recovery" || got[0].TurnID == nil || *got[0].TurnID != turnID {
+		t.Fatalf("running recovery rows = %+v", got)
+	}
+}

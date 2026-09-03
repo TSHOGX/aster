@@ -40,25 +40,43 @@ func (s *Server) runScheduler(ctx context.Context) {
 			}
 		}()
 	}
+	enqueue := func(run store.ScheduleRun) bool {
+		s.schedulerRunsMu.Lock()
+		_, active := s.schedulerRunsActive[run.ID]
+		if !active {
+			s.schedulerRunsActive[run.ID] = struct{}{}
+		}
+		s.schedulerRunsMu.Unlock()
+		if active {
+			return true
+		}
+		select {
+		case jobs <- run:
+			return true
+		default:
+			s.schedulerRunsMu.Lock()
+			delete(s.schedulerRunsActive, run.ID)
+			s.schedulerRunsMu.Unlock()
+			return false
+		}
+	}
 	dispatch := func() {
+		// A process restart can happen after StartScheduleRun but before the
+		// worker records the terminal state. Re-queue those rows first so a
+		// completed turn is reconciled instead of remaining "running" forever.
+		if running, err := s.store.ListRunningScheduleRuns(ctx, workers*2); err == nil {
+			for _, r := range running {
+				if !enqueue(r) {
+					return
+				}
+			}
+		} else if s.log != nil {
+			s.log.Warn("schedule running recovery list failed", "error", err)
+		}
 		queued, err := s.store.ListQueuedScheduleRuns(ctx, time.Now().UTC(), workers*2)
 		if err == nil {
 			for _, r := range queued {
-				s.schedulerRunsMu.Lock()
-				_, active := s.schedulerRunsActive[r.ID]
-				if !active {
-					s.schedulerRunsActive[r.ID] = struct{}{}
-				}
-				s.schedulerRunsMu.Unlock()
-				if active {
-					continue
-				}
-				select {
-				case jobs <- r:
-				default:
-					s.schedulerRunsMu.Lock()
-					delete(s.schedulerRunsActive, r.ID)
-					s.schedulerRunsMu.Unlock()
+				if !enqueue(r) {
 					return
 				}
 			}
@@ -86,15 +104,7 @@ func (s *Server) runScheduler(ctx context.Context) {
 				if s.log != nil {
 					s.log.Info("cron schedule claimed", "schedule_id", sc.ID, "run_id", run.ID, "scheduled_at", scheduled)
 				}
-				s.schedulerRunsMu.Lock()
-				s.schedulerRunsActive[run.ID] = struct{}{}
-				s.schedulerRunsMu.Unlock()
-				select {
-				case jobs <- run:
-				default:
-					s.schedulerRunsMu.Lock()
-					delete(s.schedulerRunsActive, run.ID)
-					s.schedulerRunsMu.Unlock()
+				if !enqueue(run) {
 					return
 				}
 			}
@@ -128,13 +138,11 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		_ = s.store.FinishScheduleRun(parent, run.ID, "canceled", "archived", "schedule was archived before execution", "schedule was archived before execution", time.Now().UTC())
 		return
 	}
-	timeout := time.Duration(sched.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = s.cfg.Harness.Scheduler.DefaultTimeout.Duration
+	if run.Status == "running" {
+		s.resumeScheduleRun(parent, run, sched)
+		return
 	}
-	if timeout <= 0 {
-		timeout = 30 * time.Minute
-	}
+	timeout := s.scheduleTimeout(sched)
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	now := time.Now().UTC()
@@ -231,6 +239,116 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 				s.finishScheduleFailure(parent, run, sched, "turn", turnErr)
 				return
 			}
+		}
+	}
+}
+
+// resumeScheduleRun reconciles a schedule run that was already started by an
+// earlier scheduler process. The run row carries the exact session and turn
+// identifiers, so recovery can observe that turn directly without creating a
+// duplicate session or enqueueing a second prompt.
+func (s *Server) resumeScheduleRun(parent context.Context, run store.ScheduleRun, sched store.AgentSchedule) {
+	if run.SessionID == "" || run.TurnID == nil {
+		s.finishScheduleFailureStatus(parent, run, sched, "failed", "recovery", "running schedule run has no session or turn")
+		return
+	}
+	timeout := s.scheduleTimeout(sched)
+	started := run.StartedAt
+	if started == nil || started.IsZero() {
+		started = &run.CreatedAt
+	}
+	remaining := timeout
+	if started != nil && !started.IsZero() {
+		remaining = timeout - time.Since(*started)
+	}
+	// Reconcile the durable turn before applying the timeout. A scheduler that
+	// was restarted days later must still report a turn that already completed
+	// as succeeded; otherwise recovery would rewrite a successful run as a
+	// timeout merely because its worker was offline.
+	status, turnErr, err := s.store.TurnStatus(parent, run.SessionID, *run.TurnID)
+	if err == nil {
+		switch status {
+		case "completed":
+			if s.log != nil {
+				s.log.Info("schedule run recovered as completed", "run_id", run.ID, "session_id", run.SessionID)
+			}
+			s.finishScheduleSuccess(parent, run, sched)
+			return
+		case "failed", "canceled":
+			s.finishScheduleFailure(parent, run, sched, "turn", turnErr)
+			return
+		}
+	} else if errors.Is(err, sql.ErrNoRows) {
+		s.finishScheduleFailureStatus(parent, run, sched, "failed", "recovery", "schedule run turn no longer exists")
+		return
+	}
+	if remaining <= 0 {
+		s.finishScheduleFailureStatus(parent, run, sched, "timed_out", "timeout", "schedule run timed out during scheduler recovery")
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, remaining)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.finishScheduleFailureStatus(parent, run, sched, "timed_out", "timeout", ctx.Err().Error())
+			return
+		case <-time.After(500 * time.Millisecond):
+			status, turnErr, err := s.store.TurnStatus(parent, run.SessionID, *run.TurnID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.finishScheduleFailureStatus(parent, run, sched, "failed", "recovery", "schedule run turn no longer exists")
+					return
+				}
+				continue
+			}
+			switch status {
+			case "completed":
+				if s.log != nil {
+					s.log.Info("schedule run recovered as completed", "run_id", run.ID, "session_id", run.SessionID)
+				}
+				s.finishScheduleSuccess(parent, run, sched)
+				return
+			case "failed", "canceled":
+				s.finishScheduleFailure(parent, run, sched, "turn", turnErr)
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) scheduleTimeout(sched store.AgentSchedule) time.Duration {
+	timeout := time.Duration(sched.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = s.cfg.Harness.Scheduler.DefaultTimeout.Duration
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	return timeout
+}
+
+func (s *Server) finishScheduleSuccess(parent context.Context, run store.ScheduleRun, sched store.AgentSchedule) {
+	// A recovered run may have later turns in the same existing session. The
+	// messages table does not carry a turn foreign key, so selecting the latest
+	// assistant message here could attach a newer, unrelated answer to this run.
+	// Keep the durable status authoritative and leave the summary empty rather
+	// than display misleading output.
+	if err := s.store.FinishScheduleRun(parent, run.ID, "succeeded", "", "", "", time.Now().UTC()); err != nil {
+		if s.log != nil {
+			s.log.Warn("schedule run completion update failed", "run_id", run.ID, "error", err)
+		}
+		return
+	}
+	if sched.ResultMode != "existing_session" {
+		latest, loadErr := s.store.GetSession(parent, run.SessionID)
+		if loadErr != nil || latest.Status != string(sessionstate.RunningIdle) || latest.ActiveGenerationID == "" {
+			return
+		}
+		owner := store.GenerationLeaseOwner(s.ownerUUID)
+		if releaseErr := s.store.ReleaseIdleGeneration(parent, run.SessionID, latest.ActiveGenerationID, owner, time.Now().UTC()); releaseErr == nil && s.hub != nil {
+			s.hub.Publish(events.Event{Type: "session.checkpointed", SessionID: run.SessionID})
 		}
 	}
 }

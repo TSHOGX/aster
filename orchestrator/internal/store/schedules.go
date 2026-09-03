@@ -343,6 +343,51 @@ func (s *Store) ListQueuedScheduleRuns(ctx context.Context, now time.Time, limit
 	return out, rows.Err()
 }
 
+// ListRunningScheduleRuns returns runs that were marked running before the
+// current scheduler process started. These rows need reconciliation after a
+// restart; otherwise a completed turn can leave its schedule run stuck in the
+// running state forever.
+func (s *Store) ListRunningScheduleRuns(ctx context.Context, limit int) ([]ScheduleRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,schedule_id,user_id,session_id,turn_id,scheduled_at,started_at,finished_at,status,attempt,error_class,error,output_summary,created_at FROM schedule_runs WHERE status='running' ORDER BY started_at LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ScheduleRun{}
+	for rows.Next() {
+		var r ScheduleRun
+		var scheduled, created string
+		var sid, started, finished, ec, er, summary sql.NullString
+		var turn sql.NullInt64
+		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.UserID, &sid, &turn, &scheduled, &started, &finished, &r.Status, &r.Attempt, &ec, &er, &summary, &created); err != nil {
+			return nil, err
+		}
+		r.SessionID = sid.String
+		r.ErrorClass = ec.String
+		r.Error = er.String
+		r.OutputSummary = summary.String
+		if turn.Valid {
+			v := turn.Int64
+			r.TurnID = &v
+		}
+		r.ScheduledAt = parseTime(scheduled)
+		if started.Valid {
+			v := parseTime(started.String)
+			r.StartedAt = &v
+		}
+		if finished.Valid {
+			v := parseTime(finished.String)
+			r.FinishedAt = &v
+		}
+		r.CreatedAt = parseTime(created)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) StartScheduleRun(ctx context.Context, id, sessionID string, turnID int64, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status='running',session_id=?,turn_id=?,started_at=? WHERE id=? AND status='queued'`, sessionID, turnID, formatTime(now), id)
 	return err

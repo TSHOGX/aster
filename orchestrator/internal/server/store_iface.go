@@ -86,6 +86,7 @@ type scheduleStore interface {
 	AdvanceSchedule(context.Context, string, int, time.Time, time.Time) error
 	ClaimScheduleDue(context.Context, string, int, time.Time, time.Time, store.ScheduleRun) error
 	ListQueuedScheduleRuns(context.Context, time.Time, int) ([]store.ScheduleRun, error)
+	ListRunningScheduleRuns(context.Context, int) ([]store.ScheduleRun, error)
 	UpdateSchedule(context.Context, store.AgentSchedule, int) error
 	DeleteSchedule(context.Context, string, string) error
 	CreateScheduleRun(context.Context, store.ScheduleRun) error
