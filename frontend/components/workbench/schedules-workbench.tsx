@@ -1,44 +1,61 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Archive,
-  CalendarClock,
+  Bell,
   Check,
+  ChevronDown,
   ChevronRight,
-  Clock3,
+  ClipboardList,
+  FileSearch,
   Loader2,
   Pencil,
   Pause,
   Play,
   Plus,
+  Search,
   Sparkles,
+  SquarePen,
   Trash2,
-  X
+  X,
+  Zap,
 } from "lucide-react";
 
 import { useHarness, useSessions } from "@/components/harness-provider";
+import { Badge, StatusPill } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
+import { useDismissOnOutside } from "@/lib/use-popover";
+import { brandName } from "@/lib/ui-config";
 import {
   createSchedule,
   deleteSchedule,
   fetchScheduleRuns,
   fetchSchedules,
   runSchedule,
-  updateSchedule
+  updateSchedule,
 } from "@/lib/api";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import type { ApiSchedule, ApiScheduleRun } from "@/lib/types";
 import {
   buildCronExpression,
   DAYS,
-  frequencyDescription,
+  frequencyDescriptionLocalized,
   MONTHS,
   parseCron,
   TIME_OPTIONS,
   WEEKDAYS,
   type CustomRepeat,
-  type FrequencyMode
+  type FrequencyMode,
 } from "@/lib/schedule-frequency";
 
 type ScheduleForm = {
@@ -64,11 +81,19 @@ type ScheduleForm = {
   target_session_id: string;
 };
 
+type ScheduleFilter = "all" | "enabled" | "paused" | "completed";
+
+const SCHEDULE_FILTERS: { value: ScheduleFilter; label: MessageKey }[] = [
+  { value: "all", label: "schedule.filterAll" },
+  { value: "enabled", label: "schedule.filterEnabled" },
+  { value: "paused", label: "schedule.filterPaused" },
+  { value: "completed", label: "schedule.filterCompleted" },
+];
+
 const EMPTY_FORM: ScheduleForm = {
   name: "",
   prompt: "",
   cron_expr: "",
-  // Replaced with the browser's local zone when the editor opens.
   timezone: "UTC",
   frequency: "manual",
   intervalMinutes: 15,
@@ -85,8 +110,12 @@ const EMPTY_FORM: ScheduleForm = {
   max_retries: 0,
   retry_backoff_seconds: 30,
   result_mode: "new_session",
-  target_session_id: ""
+  target_session_id: "",
 };
+
+// Schedule metadata changes rarely; keep it fresh in the background without
+// competing with the 5-second run-history poll for the selected task.
+const SCHEDULE_REFRESH_INTERVAL_MS = 30_000;
 
 function localTimezone() {
   if (typeof Intl === "undefined") return "UTC";
@@ -109,48 +138,120 @@ function formFromSchedule(schedule: ApiSchedule): ScheduleForm {
     max_retries: schedule.max_retries,
     retry_backoff_seconds: schedule.retry_backoff_seconds,
     result_mode: schedule.result_mode ?? "new_session",
-    target_session_id: schedule.target_session_id ?? ""
+    target_session_id: schedule.target_session_id ?? "",
   };
 }
 
-function relative(value?: string | null) {
-  if (!value) return "未运行";
-  const diff = Date.now() - new Date(value).getTime();
-  const minutes = Math.max(0, Math.round(diff / 60000));
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+function formatDate(
+  value: string | null | undefined,
+  locale: "en" | "zh",
+  timeZone?: string,
+) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  try {
+    return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      ...(timeZone ? { timeZone } : {}),
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(date);
+  }
+}
+
+function relative(
+  value: string | null | undefined,
+  t: (key: MessageKey, params?: Record<string, string | number>) => string,
+) {
+  if (!value) return t("schedule.never");
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return t("schedule.never");
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return t("schedule.justNow");
+  if (minutes < 60)
+    return t(minutes === 1 ? "schedule.minuteAgo" : "schedule.minutesAgo", {
+      count: minutes,
+    });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  return `${Math.round(hours / 24)} 天前`;
-}
-
-function statusLabel(schedule: ApiSchedule) {
-  if (schedule.archived) return { text: "已归档", tone: "archived" };
-  if (!schedule.enabled) return { text: "已暂停", tone: "muted" };
-  return { text: "已开启", tone: "green" };
-}
-
-function runStatusLabel(status: ApiScheduleRun["status"]) {
-  return {
-    queued: "排队中",
-    running: "运行中",
-    succeeded: "已完成",
-    failed: "失败",
-    timed_out: "超时",
-    canceled: "已取消"
-  }[status];
-}
-
-function runsEqual(previous: ApiScheduleRun[], next: ApiScheduleRun[]) {
-  return previous.length === next.length && previous.every((run, index) => {
-    const candidate = next[index];
-    return candidate?.id === run.id && candidate.status === run.status && candidate.session_id === run.session_id && candidate.finished_at === run.finished_at;
+  if (hours < 24)
+    return t(hours === 1 ? "schedule.hourAgo" : "schedule.hoursAgo", {
+      count: hours,
+    });
+  const days = Math.round(hours / 24);
+  return t(days === 1 ? "schedule.dayAgo" : "schedule.daysAgo", {
+    count: days,
   });
 }
 
-export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: string) => void }) {
+function runsEqual(previous: ApiScheduleRun[], next: ApiScheduleRun[]) {
+  return (
+    previous.length === next.length &&
+    previous.every((run, index) => {
+      const candidate = next[index];
+      return (
+        candidate?.id === run.id &&
+        candidate.status === run.status &&
+        candidate.session_id === run.session_id &&
+        candidate.finished_at === run.finished_at &&
+        candidate.error === run.error
+      );
+    })
+  );
+}
+
+function runTone(
+  status: ApiScheduleRun["status"],
+): "running" | "idle" | "ready" | "failed" | "muted" {
+  if (status === "succeeded") return "idle";
+  if (status === "queued") return "ready";
+  if (status === "running") return "running";
+  if (status === "failed" || status === "timed_out") return "failed";
+  return "muted";
+}
+
+function scheduleTone(schedule: ApiSchedule): "idle" | "ready" | "muted" {
+  if (schedule.archived) return "muted";
+  return schedule.enabled ? "idle" : "ready";
+}
+
+function matchesScheduleFilter(schedule: ApiSchedule, filter: ScheduleFilter) {
+  if (filter === "completed") return Boolean(schedule.archived);
+  if (filter === "enabled") return !schedule.archived && schedule.enabled;
+  if (filter === "paused") return !schedule.archived && !schedule.enabled;
+  return true;
+}
+
+function nextRunSummary(
+  value: string | null | undefined,
+  t: (key: MessageKey, params?: Record<string, string | number>) => string,
+) {
+  if (!value) return t("schedule.nextRunUnavailable");
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return t("schedule.nextRunUnavailable");
+  const minutes = Math.max(0, Math.round((timestamp - Date.now()) / 60000));
+  if (minutes < 60)
+    return t("schedule.nextRunInMinutes", { count: Math.max(1, minutes) });
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return t("schedule.nextRunInHours", { count: hours });
+  const days = Math.round(hours / 24);
+  return days === 1
+    ? t("schedule.nextRunTomorrow")
+    : t("schedule.nextRunInDays", { count: days });
+}
+
+export function SchedulesWorkbench({
+  onOpenSession,
+}: {
+  onOpenSession?: (id: string) => void;
+}) {
   const { selectSession } = useHarness();
   const sessions = useSessions();
+  const { t, locale } = useI18n();
   const [schedules, setSchedules] = useState<ApiSchedule[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ApiScheduleRun[]>([]);
@@ -162,35 +263,83 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ScheduleForm>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<ScheduleFilter>("all");
+  const [query, setQuery] = useState("");
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const createMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const selected = useMemo(() => schedules.find((item) => item.id === selectedId && Boolean(item.archived) === showArchived) ?? null, [schedules, selectedId, showArchived]);
-  const visibleSchedules = useMemo(() => schedules.filter((item) => Boolean(item.archived) === showArchived), [schedules, showArchived]);
-  const targetSessions = useMemo(() => sessions.filter((session) => session.access !== "reader" && session.mode === "agent" && session.status !== "destroyed"), [sessions]);
+  const selected = useMemo(
+    () =>
+      schedules.find(
+        (item) =>
+          item.id === selectedId && matchesScheduleFilter(item, statusFilter),
+      ) ?? null,
+    [schedules, selectedId, statusFilter],
+  );
+  const visibleSchedules = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return schedules.filter((item) => {
+      if (!matchesScheduleFilter(item, statusFilter)) return false;
+      if (!normalized) return true;
+      return `${item.name} ${item.prompt}`
+        .toLocaleLowerCase()
+        .includes(normalized);
+    });
+  }, [query, schedules, statusFilter]);
+  const targetSessions = useMemo(
+    () =>
+      sessions.filter(
+        (session) =>
+          session.access !== "reader" &&
+          session.mode === "agent" &&
+          session.status !== "destroyed",
+      ),
+    [sessions],
+  );
+  const selectedRunId = selected?.id ?? null;
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     const result = await fetchSchedules();
     if (result.ok) {
       const next = result.data.schedules ?? [];
       setSchedules(next);
       setSelectedId((current) => {
-        if (current && next.some((item) => item.id === current && Boolean(item.archived) === showArchived)) return current;
-        return next.find((item) => Boolean(item.archived) === showArchived)?.id ?? null;
+        if (current && next.some((item) => item.id === current)) return current;
+        // Do not auto-select the first task. Opening the automation area is
+        // intentionally a list-first state; details are an explicit choice.
+        return null;
       });
     } else setError(result.error);
-    setLoading(false);
-  }, [showArchived]);
+    if (!silent) setLoading(false);
+  }, []);
 
   useEffect(() => {
-    const load = async () => { await refresh(); };
+    let cancelled = false;
+    const load = async () => {
+      await refresh();
+      // Keep the async boundary explicit so the effect only coordinates the
+      // request; refresh owns the state update after the response arrives.
+      if (cancelled) return;
+    };
     void load();
+    const interval = window.setInterval(() => {
+      void refresh(true);
+    }, SCHEDULE_REFRESH_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [refresh]);
 
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
     const load = async (initial = false) => {
-      if (!selectedId) { if (initial) setRuns([]); return; }
+      if (!selectedRunId) {
+        if (initial) setRuns([]);
+        return;
+      }
       if (inFlight) return;
       inFlight = true;
       if (initial) {
@@ -198,88 +347,207 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
         setRunsLoading(true);
       }
       try {
-        const result = await fetchScheduleRuns(selectedId);
-        if (!cancelled) {
-          if (result.ok) setRuns((current) => {
+        const result = await fetchScheduleRuns(selectedRunId);
+        if (cancelled) return;
+        if (result.ok)
+          setRuns((current) => {
             const next = result.data.runs ?? [];
             return runsEqual(current, next) ? current : next;
           });
-          else setError(result.error);
-          setRunsLoading(false);
-        }
+        else setError(result.error);
       } finally {
         inFlight = false;
+        if (!cancelled) setRunsLoading(false);
       }
     };
     void load(true);
-    const interval = selectedId ? window.setInterval(() => { void load(); }, 5000) : null;
-    return () => { cancelled = true; if (interval !== null) window.clearInterval(interval); };
-  }, [selectedId]);
+    const interval = selectedRunId
+      ? window.setInterval(() => {
+          void load();
+        }, 5000)
+      : null;
+    return () => {
+      cancelled = true;
+      if (interval !== null) window.clearInterval(interval);
+    };
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!editorOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setEditorOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [editorOpen]);
+
+  useEffect(() => {
+    if (!selectedId || editorOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedId(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [editorOpen, selectedId]);
+
+  useDismissOnOutside(
+    createMenuOpen,
+    [createMenuRef],
+    () => setCreateMenuOpen(false),
+    { escape: true },
+  );
 
   const openCreate = (initial: ScheduleForm = EMPTY_FORM) => {
     setEditingId(null);
-    setForm({ ...initial, timezone: initial.timezone === "UTC" ? localTimezone() : initial.timezone, ...parseCron(initial.cron_expr) });
+    setForm({
+      ...initial,
+      timezone: initial.timezone === "UTC" ? localTimezone() : initial.timezone,
+      ...parseCron(initial.cron_expr),
+    });
     setEditorOpen(true);
     setError(null);
   };
-  const openEdit = () => { if (selected) { setEditingId(selected.id); setForm(formFromSchedule(selected)); setEditorOpen(true); setError(null); } };
-  const updateForm = <K extends keyof ScheduleForm>(key: K, value: ScheduleForm[K]) => setForm((current) => ({ ...current, [key]: value, ...(key === "frequency" || key.startsWith("custom") ? { customRawCron: "" } : {}) }));
+  const openEdit = () => {
+    if (!selected) return;
+    setEditingId(selected.id);
+    setForm(formFromSchedule(selected));
+    setEditorOpen(true);
+    setError(null);
+  };
+  const updateForm = <K extends keyof ScheduleForm>(
+    key: K,
+    value: ScheduleForm[K],
+  ) =>
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === "frequency" ||
+      (key.startsWith("custom") && key !== "customRawCron")
+        ? { customRawCron: "" }
+        : {}),
+    }));
 
   const save = async () => {
-    if (!form.name.trim() || !form.prompt.trim()) { setError("请填写任务名称和提示词"); return; }
-    if (form.result_mode === "existing_session" && !form.target_session_id) { setError("请选择结果写入的会话"); return; }
-    setSaving(true); setError(null);
+    if (!form.name.trim() || !form.prompt.trim()) {
+      setError(t("schedule.validationRequired"));
+      return;
+    }
+    if (form.result_mode === "existing_session" && !form.target_session_id) {
+      setError(t("schedule.validationTarget"));
+      return;
+    }
+    setSaving(true);
+    setError(null);
     const payload = {
       name: form.name.trim(),
       prompt: form.prompt.trim(),
       cron_expr: buildCronExpression(form),
       timezone: form.timezone.trim() || localTimezone(),
-      timeout_seconds: form.timeout_seconds,
-      max_retries: form.max_retries,
-      retry_backoff_seconds: form.retry_backoff_seconds,
+      timeout_seconds: Math.max(60, form.timeout_seconds),
+      max_retries: Math.min(10, Math.max(0, form.max_retries)),
+      retry_backoff_seconds: Math.max(0, form.retry_backoff_seconds),
       result_mode: form.result_mode,
-      target_session_id: form.result_mode === "existing_session" ? form.target_session_id : ""
+      target_session_id:
+        form.result_mode === "existing_session" ? form.target_session_id : "",
     };
-    const editing = editingId ? schedules.find((item) => item.id === editingId) : null;
-    const result = editing ? await updateSchedule(editing.id, { ...payload, version: editing.version }) : await createSchedule(payload);
+    const editing = editingId
+      ? schedules.find((item) => item.id === editingId)
+      : null;
+    const result = editing
+      ? await updateSchedule(editing.id, {
+          ...payload,
+          version: editing.version,
+        })
+      : await createSchedule(payload);
     setSaving(false);
-    if (!result.ok) { setError(result.error); return; }
-    setSchedules((items) => items.some((item) => item.id === result.data.id) ? items.map((item) => item.id === result.data.id ? result.data : item) : [result.data, ...items]);
-    setSelectedId(result.data.id); setEditorOpen(false); setEditingId(null); setForm(EMPTY_FORM);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setSchedules((items) =>
+      items.some((item) => item.id === result.data.id)
+        ? items.map((item) => (item.id === result.data.id ? result.data : item))
+        : [result.data, ...items],
+    );
+    setSelectedId(result.data.id);
+    setEditorOpen(false);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
   };
 
   const toggle = async () => {
     if (!selected || selected.archived) return;
-    const result = await updateSchedule(selected.id, { enabled: !selected.enabled, version: selected.version });
-    if (!result.ok) { setError(result.error); return; }
-    setSchedules((items) => items.map((item) => item.id === result.data.id ? result.data : item));
+    const result = await updateSchedule(selected.id, {
+      enabled: !selected.enabled,
+      version: selected.version,
+    });
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setSchedules((items) =>
+      items.map((item) => (item.id === result.data.id ? result.data : item)),
+    );
   };
 
   const archive = async () => {
     if (!selected) return;
     const archiving = !selected.archived;
-    if (!window.confirm(`${archiving ? "归档" : "恢复"}“${selected.name}”？`)) return;
-    const result = await updateSchedule(selected.id, { archived: archiving, version: selected.version });
-    if (!result.ok) { setError(result.error); return; }
-    setSchedules((items) => items.map((item) => item.id === result.data.id ? result.data : item));
-    if (Boolean(result.data.archived) !== showArchived) setSelectedId(null);
+    if (
+      !window.confirm(
+        t(archiving ? "schedule.confirmArchive" : "schedule.confirmRestore", {
+          name: selected.name,
+        }),
+      )
+    )
+      return;
+    const result = await updateSchedule(selected.id, {
+      archived: archiving,
+      version: selected.version,
+    });
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setSchedules((items) =>
+      items.map((item) => (item.id === result.data.id ? result.data : item)),
+    );
+    if (!matchesScheduleFilter(result.data, statusFilter)) setSelectedId(null);
   };
 
   const runNow = async () => {
     if (!selected || selected.archived) return;
-    setRunning(true); setError(null);
+    setRunning(true);
+    setError(null);
     const result = await runSchedule(selected.id);
     setRunning(false);
-    if (!result.ok) { setError(result.error); return; }
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
     setRuns((items) => [result.data, ...items]);
+    void refresh(true);
   };
 
   const remove = async () => {
-    if (!selected || !window.confirm(`永久删除“${selected.name}”？`)) return;
+    if (
+      !selected ||
+      !window.confirm(t("schedule.confirmDelete", { name: selected.name }))
+    )
+      return;
     const result = await deleteSchedule(selected.id);
-    if (!result.ok) { setError(result.error); return; }
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
     const next = schedules.filter((item) => item.id !== selected.id);
-    setSchedules(next); setSelectedId(next.find((item) => Boolean(item.archived) === showArchived)?.id ?? null);
+    setSchedules(next);
+    setSelectedId(null);
   };
 
   const openRun = (run: ApiScheduleRun) => {
@@ -288,43 +556,1371 @@ export function SchedulesWorkbench({ onOpenSession }: { onOpenSession?: (id: str
     else selectSession(run.session_id);
   };
 
+  const setFilter = (filter: ScheduleFilter) => {
+    setStatusFilter(filter);
+    setQuery("");
+    setSelectedId(null);
+  };
+
+  const suggestions = [
+    {
+      icon: <Bell className="h-5 w-5" />,
+      iconClassName: "text-sky-500",
+      title: t("schedule.suggestionDaily"),
+      meta: t("schedule.suggestionDailyMeta"),
+      body: t("schedule.suggestionDailyBody"),
+      form: {
+        ...EMPTY_FORM,
+        name: t("schedule.suggestionDaily"),
+        prompt: t("schedule.suggestionDailyBody"),
+        cron_expr: "0 8 * * 1-5",
+      },
+    },
+    {
+      icon: <ClipboardList className="h-5 w-5" />,
+      iconClassName: "text-violet-500",
+      title: t("schedule.suggestionWeekly"),
+      meta: t("schedule.suggestionWeeklyMeta"),
+      body: t("schedule.suggestionWeeklyBody"),
+      form: {
+        ...EMPTY_FORM,
+        name: t("schedule.suggestionWeekly"),
+        prompt: t("schedule.suggestionWeeklyBody"),
+        cron_expr: "0 16 * * 5",
+      },
+    },
+    {
+      icon: <FileSearch className="h-5 w-5" />,
+      iconClassName: "text-emerald-500",
+      title: t("schedule.suggestionMonitor"),
+      meta: t("schedule.suggestionMonitorMeta"),
+      body: t("schedule.suggestionMonitorBody"),
+      form: {
+        ...EMPTY_FORM,
+        name: t("schedule.suggestionMonitor"),
+        prompt: t("schedule.suggestionMonitorBody"),
+        cron_expr: "0 9 * * 1-5",
+      },
+    },
+  ];
+
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,45%)_minmax(0,55%)] grid-cols-1 overflow-hidden bg-[var(--color-background)] md:grid-rows-1 md:grid-cols-[minmax(250px,320px)_minmax(0,1fr)]">
-      <section className="min-h-0 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 px-5 pb-4 pt-5 backdrop-blur"><div><p className="text-xs font-medium text-[var(--color-accent)]">任务中心</p><h1 className="mt-1 text-xl font-semibold">自动化</h1></div><div className="mt-4 flex items-center gap-1 rounded-[var(--radius)] bg-[var(--color-surface-muted)] p-1 text-xs"><button type="button" aria-pressed={!showArchived} className={cn("flex-1 rounded px-2 py-1.5", !showArchived && "bg-[var(--color-surface)] font-medium shadow-sm")} onClick={() => { setShowArchived(false); setSelectedId((current) => schedules.find((item) => !item.archived && item.id === current)?.id ?? schedules.find((item) => !item.archived)?.id ?? null); }}>进行中</button><button type="button" aria-pressed={showArchived} className={cn("flex-1 rounded px-2 py-1.5", showArchived && "bg-[var(--color-surface)] font-medium shadow-sm")} onClick={() => { setShowArchived(true); setSelectedId((current) => schedules.find((item) => item.archived && item.id === current)?.id ?? schedules.find((item) => item.archived)?.id ?? null); }}>已归档</button></div></div>
-        <div className="space-y-2 px-4 py-4"><Button variant="ghost" size="lg" className="w-full justify-start gap-2 border border-transparent text-sm hover:border-[var(--color-border)]" onClick={() => openCreate()}><Plus className="h-4 w-4" /> 创建定时任务</Button>{loading ? <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-[var(--color-accent)]" /></div> : visibleSchedules.length === 0 ? <EmptyState archived={showArchived} onCreate={() => openCreate()} /> : visibleSchedules.map((item) => { const status = statusLabel(item); return <button key={item.id} onClick={() => setSelectedId(item.id)} className={cn("w-full rounded-[var(--radius-lg)] border p-3.5 text-left transition-colors", item.id === selectedId ? "border-[var(--color-accent)] bg-[var(--color-background)] shadow-sm" : "border-transparent hover:border-[var(--color-border-strong)] hover:bg-[var(--color-background)]")}><div className="flex items-start gap-3"><span className={cn("mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full", status.tone === "green" ? "bg-emerald-500" : status.tone === "archived" ? "bg-slate-400" : "bg-amber-400")} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.name}</span><span className="mt-1 block truncate text-xs text-[var(--color-foreground-muted)]">{frequencyDescription(item.cron_expr)}{item.cron_expr ? ` · ${item.timezone}` : ""}</span><span className="mt-2 block text-xs text-[var(--color-foreground-muted)]">{relative(item.last_run_at)} · {status.text}</span></span></div></button>; })}{!showArchived ? <button onClick={() => openCreate({ ...EMPTY_FORM, name: "每日简报", prompt: "给我一份晨间简报，包含我的日程安排、重要未读邮件，以及今天需要我关注的事项。", cron_expr: "0 8 * * *" })} className="mt-5 flex w-full items-start gap-3 rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-strong)] p-3.5 text-left hover:border-[var(--color-accent)]"><Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" /><span><span className="block text-sm font-medium">每日简报</span><span className="mt-1 block text-xs text-[var(--color-foreground-muted)]">每天早上整理你最需要关注的信息</span></span></button> : null}</div>
-      </section>
+    <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-surface)]">
+      <div
+        ref={createMenuRef}
+        className="absolute right-5 top-4 z-20 sm:right-7 sm:top-5"
+      >
+        <div className="relative shrink-0">
+          <Button
+            variant="outline"
+            className="h-9 gap-2 rounded-[var(--radius)] px-3 text-sm shadow-[var(--shadow-xs)]"
+            aria-haspopup="menu"
+            aria-expanded={createMenuOpen}
+            onClick={() => setCreateMenuOpen((open) => !open)}
+          >
+            <SquarePen className="h-4 w-4 text-[var(--color-accent)]" />
+            {t("schedule.create")}
+            <ChevronDown className="h-4 w-4 opacity-70" />
+          </Button>
+          {createMenuOpen ? (
+            <div
+              role="menu"
+              className="absolute right-0 top-11 z-20 min-w-[12rem] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-lg)]"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                onClick={() => {
+                  setCreateMenuOpen(false);
+                  openCreate();
+                }}
+              >
+                {t("schedule.createBlank")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                onClick={() => {
+                  setCreateMenuOpen(false);
+                  openCreate({
+                    ...EMPTY_FORM,
+                    name: t("schedule.templateTitle"),
+                    prompt: t("schedule.templatePrompt"),
+                    cron_expr: "0 8 * * 1-5",
+                  });
+                }}
+              >
+                {t("schedule.createFromSuggestion")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div
+        className={cn(
+          "h-full overflow-y-auto bg-[var(--color-surface)]",
+          selected && "lg:pr-[min(42vw,560px)]",
+        )}
+        onMouseDown={(event) => {
+          if (selected && event.target === event.currentTarget) {
+            setSelectedId(null);
+          }
+        }}
+      >
+        <main
+          className="mx-auto w-full max-w-3xl px-6 pb-24 pt-12 sm:px-10 sm:pt-16 lg:px-12"
+          onMouseDown={(event) => {
+            if (selected && event.target === event.currentTarget) {
+              setSelectedId(null);
+            }
+          }}
+        >
+          <div className="flex items-start gap-6 pr-20 sm:pr-0">
+            <div className="min-w-0">
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                {t("schedule.pageTitle")}
+              </h1>
+              <p className="mt-3 max-w-xl text-base leading-7 text-[var(--color-foreground-muted)] sm:text-lg">
+                {t("schedule.pageSubtitle", { brand: brandName })}
+              </p>
+            </div>
+          </div>
 
-      <section className="flex min-h-0 flex-col overflow-hidden bg-[var(--color-background)]"><div className="z-10 flex shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-4"><div className="flex items-center gap-2 text-sm font-medium"><CalendarClock className="h-4 w-4 text-[var(--color-accent)]" /> {selected ? selected.name : "定时任务"}</div><div className="flex items-center gap-1">{selected ? <><Button variant="ghost" size="icon" onClick={openEdit} title="编辑" aria-label="编辑"><Pencil className="h-4 w-4" /></Button><Button variant="ghost" size="icon" onClick={() => void archive()} title={selected.archived ? "恢复" : "归档"} aria-label={selected.archived ? "恢复" : "归档"}><Archive className="h-4 w-4" /></Button><Button variant="danger" size="icon" onClick={() => void remove()} title="永久删除" aria-label="永久删除"><Trash2 className="h-4 w-4" /></Button></> : null}</div></div><div className="min-h-0 flex-1 overflow-y-auto">{selected ? <div className="mx-auto max-w-3xl px-6 py-7 sm:px-10"><div className="flex flex-wrap items-start justify-between gap-4"><div><span className="text-xs font-medium text-[var(--color-accent)]">{selected.archived ? "已归档" : selected.enabled ? "已开启" : "已暂停"}</span><h2 className="mt-1 text-2xl font-semibold">{selected.name}</h2><p className="mt-2 text-sm text-[var(--color-foreground-muted)]">{selected.cron_expr ? `${frequencyDescription(selected.cron_expr)} · ${selected.timezone}` : "手动触发任务"}</p></div><div className="flex items-center gap-2"><Button variant="ghost" className="gap-2" disabled={selected.archived} onClick={() => void toggle()}>{selected.enabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}{selected.enabled ? "暂停" : "启用"}</Button><Button variant="primary" className="gap-2" disabled={running || selected.archived} onClick={() => void runNow()}>{running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} 立即运行</Button></div></div><div className="mt-8 divide-y rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]"><DetailRow label="结果写入" value={selected.result_mode === "existing_session" ? `已有会话 · ${selected.target_session_id ?? "未选择"}` : "每次运行创建新会话"} /><DetailRow label="超时" value={`${selected.timeout_seconds} 秒`} /><DetailRow label="重试" value={`${selected.max_retries} 次 · 间隔 ${selected.retry_backoff_seconds} 秒`} /><DetailRow label="状态" value={selected.archived ? "已归档" : selected.enabled ? "已开启" : "已暂停"} /></div><div className="mt-6 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5"><p className="text-xs font-medium text-[var(--color-foreground-muted)]">任务提示词</p><p className="mt-3 whitespace-pre-wrap text-sm leading-6">{selected.prompt}</p></div><div className="mt-8"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold">运行历史</h3><span className="text-xs text-[var(--color-foreground-muted)]">{runs.length} 次</span></div>{runsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : runs.length === 0 ? <p className="text-sm text-[var(--color-foreground-muted)]">还没有运行记录。</p> : <div className="space-y-2">{runs.map((run) => <button key={run.id} onClick={() => openRun(run)} disabled={!run.session_id} className="flex w-full items-center justify-between rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 text-left text-xs transition-colors hover:border-[var(--color-accent)] disabled:cursor-default disabled:hover:border-[var(--color-border)]"><span><span className="block">{new Date(run.scheduled_at).toLocaleString("zh-CN")}</span><span className="mt-1 block text-[var(--color-foreground-muted)]">{run.session_id ? "打开对应会话" : "尚未关联会话"}</span></span><span className={cn("flex items-center gap-1 font-medium", run.status === "succeeded" ? "text-emerald-600" : run.status === "running" || run.status === "queued" ? "text-amber-600" : "text-[var(--color-danger)]")}>{runStatusLabel(run.status)}{run.session_id ? <ChevronRight className="h-3.5 w-3.5" /> : null}</span></button>)}</div>}</div></div> : <div className="flex h-full items-center justify-center px-6 text-center"><div><Clock3 className="mx-auto h-10 w-10 text-[var(--color-foreground-muted)]" /><h2 className="mt-4 text-lg font-semibold">选择一个定时任务</h2><p className="mt-2 max-w-sm text-sm text-[var(--color-foreground-muted)]">在这里创建、编辑和追踪自动化运行。每次运行都会保留为可回看的会话。</p></div></div>}</div></section>
+          <label className="relative mt-9 block">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--color-foreground-muted)]" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("schedule.searchPlaceholder")}
+              aria-label={t("schedule.search")}
+              className="h-12 w-full rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] py-2 pl-12 pr-4 text-base outline-none transition-colors placeholder:text-[var(--color-foreground-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
+            />
+          </label>
 
-      {editorOpen ? <ScheduleEditorV2 form={form} selected={Boolean(editingId)} sessions={targetSessions} saving={saving} onChange={updateForm} onClose={() => { setEditorOpen(false); setEditingId(null); }} onSave={() => void save()} /> : null}
-      {error ? <div className="fixed bottom-5 right-5 z-50 max-w-sm rounded-[var(--radius)] bg-[var(--color-danger)] px-4 py-3 text-sm text-white shadow-lg">{error}<button className="ml-3" onClick={() => setError(null)} aria-label="关闭"><X className="inline h-4 w-4" /></button></div> : null}
+          <div
+            className="mt-8 flex max-w-full items-center gap-1 overflow-x-auto pb-1 text-sm"
+            role="tablist"
+            aria-label={t("schedule.pageTitle")}
+          >
+            {SCHEDULE_FILTERS.map((filter) => (
+              <button
+                type="button"
+                key={filter.value}
+                role="tab"
+                aria-selected={statusFilter === filter.value}
+                onClick={() => setFilter(filter.value)}
+                className={cn(
+                  "shrink-0 rounded-full px-4 py-2 transition-colors",
+                  statusFilter === filter.value
+                    ? "bg-[var(--color-surface-muted)] font-semibold text-[var(--color-foreground)]"
+                    : "text-[var(--color-foreground-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-foreground)]",
+                )}
+              >
+                {t(filter.label)}
+              </button>
+            ))}
+          </div>
+
+          <section className="mt-10">
+            <div className="flex items-baseline justify-between gap-4">
+              <h2 className="text-base font-semibold">
+                {t("schedule.scheduled")}
+              </h2>
+              <span className="text-sm text-[var(--color-foreground-muted)]">
+                {visibleSchedules.length}
+              </span>
+            </div>
+            {loading ? (
+              <div className="mt-4">
+                <ScheduleListSkeleton />
+              </div>
+            ) : visibleSchedules.length === 0 ? (
+              <IndexEmptyState
+                filtered={Boolean(query.trim())}
+                t={t}
+                onCreate={() => openCreate()}
+              />
+            ) : (
+              <div className="mt-3 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+                {visibleSchedules.map((item) => (
+                  <ScheduleIndexRow
+                    key={item.id}
+                    schedule={item}
+                    selected={item.id === selectedId}
+                    locale={locale}
+                    t={t}
+                    onSelect={setSelectedId}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="mt-10">
+            <h2 className="text-base font-semibold">
+              {t("schedule.suggestions")}
+            </h2>
+            <div className="mt-3 divide-y divide-[var(--color-border)]">
+              {suggestions.map((suggestion) => (
+                <SuggestionRow
+                  key={suggestion.title}
+                  icon={suggestion.icon}
+                  iconClassName={suggestion.iconClassName}
+                  title={suggestion.title}
+                  meta={suggestion.meta}
+                  body={suggestion.body}
+                  onClick={() => openCreate(suggestion.form)}
+                />
+              ))}
+            </div>
+          </section>
+        </main>
+      </div>
+
+      {selected ? (
+        <aside className="absolute inset-y-0 right-0 z-30 flex w-full max-w-[560px] flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]">
+          <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-5 py-3.5">
+            <div className="min-w-0 truncate text-sm font-medium">
+              {selected.name}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={openEdit}
+                aria-label={t("schedule.edit")}
+                title={t("schedule.edit")}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void archive()}
+                aria-label={
+                  selected.archived
+                    ? t("schedule.restore")
+                    : t("schedule.archive")
+                }
+                title={
+                  selected.archived
+                    ? t("schedule.restore")
+                    : t("schedule.archive")
+                }
+              >
+                <Archive className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="danger"
+                size="icon"
+                onClick={() => void remove()}
+                aria-label={t("schedule.delete")}
+                title={t("schedule.delete")}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSelectedId(null)}
+                aria-label={t("schedule.closeDetails")}
+                title={t("schedule.closeDetails")}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <ScheduleDetail
+              schedule={selected}
+              runs={runs}
+              runsLoading={runsLoading}
+              running={running}
+              locale={locale}
+              t={t}
+              drawer
+              onToggle={() => void toggle()}
+              onRun={() => void runNow()}
+              onOpenRun={openRun}
+            />
+          </div>
+        </aside>
+      ) : null}
+      {editorOpen ? (
+        <ScheduleEditor
+          form={form}
+          selected={Boolean(editingId)}
+          sessions={targetSessions}
+          saving={saving}
+          locale={locale}
+          t={t}
+          onChange={updateForm}
+          onClose={() => {
+            setEditorOpen(false);
+            setEditingId(null);
+          }}
+          onSave={() => void save()}
+        />
+      ) : null}
+      {error ? (
+        <div
+          role="alert"
+          className="fixed bottom-5 right-5 z-[60] flex max-w-sm items-start gap-3 rounded-[var(--radius-lg)] border border-red-200 bg-[var(--color-danger)] px-4 py-3 text-sm text-white shadow-[var(--shadow-lg)]"
+        >
+          <span className="min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label={t("common.close")}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function ScheduleEditorV2({ form, selected, sessions, saving, onChange, onClose, onSave }: { form: ScheduleForm; selected: boolean; sessions: ReturnType<typeof useSessions>; saving: boolean; onChange: <K extends keyof ScheduleForm>(key: K, value: ScheduleForm[K]) => void; onClose: () => void; onSave: () => void }) {
-  const frequencyOptions: { value: FrequencyMode; label: string; description: string }[] = [
-    { value: "manual", label: "仅手动", description: "需要时手动运行，不自动执行" },
-    { value: "interval", label: "间隔", description: "每隔几分钟重复执行" },
-    { value: "daily", label: "每天", description: "每天在固定时间运行" },
-    { value: "weekdays", label: "工作日", description: "周一至周五在固定时间运行" },
-    { value: "weekly", label: "每周", description: "每周指定一天和时间运行" },
-    { value: "custom", label: "自定义", description: "按小时、天、月或年设置" }
+function ScheduleListSkeleton() {
+  return (
+    <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+      {Array.from({ length: 4 }, (_, index) => (
+        <div
+          key={index}
+          className="skeleton-pulse flex items-start gap-4 px-3 py-5"
+        >
+          <div className="mt-1 h-5 w-5 rounded-full border-2 border-[var(--color-border-strong)]" />
+          <div className="min-w-0 flex-1">
+            <div className="h-4 w-2/5 rounded bg-[var(--color-surface-muted)]" />
+            <div className="mt-2 h-3 w-3/5 rounded bg-[var(--color-surface-muted)]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function IndexEmptyState({
+  filtered,
+  t,
+  onCreate,
+}: {
+  filtered: boolean;
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
+  onCreate: () => void;
+}) {
+  if (filtered)
+    return (
+      <div className="px-3 py-10 text-center text-sm text-[var(--color-foreground-muted)]">
+        {t("search.noResults")}
+      </div>
+    );
+  return (
+    <div className="px-3 py-10 text-center">
+      <p className="text-sm text-[var(--color-foreground-muted)]">
+        {t("schedule.noScheduled")}
+      </p>
+      <button
+        type="button"
+        onClick={onCreate}
+        className="mt-3 text-sm font-medium text-[var(--color-accent)] hover:underline"
+      >
+        {t("schedule.createFirst")}
+      </button>
+    </div>
+  );
+}
+
+function ScheduleIndexRow({
+  schedule,
+  selected,
+  locale,
+  t,
+  onSelect,
+}: {
+  schedule: ApiSchedule;
+  selected: boolean;
+  locale: "en" | "zh";
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
+  onSelect: (id: string | null) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(selected ? null : schedule.id)}
+      aria-current={selected ? "true" : undefined}
+      className={cn(
+        "group flex w-full items-start gap-4 px-3 py-5 text-left transition-colors",
+        selected
+          ? "bg-[var(--color-surface-muted)]"
+          : "hover:bg-[var(--color-surface-muted)]/60",
+      )}
+    >
+      <span
+        className={cn(
+          "mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2",
+          selected
+            ? "border-[var(--color-accent)] bg-[var(--color-accent)]"
+            : "border-[var(--color-border-strong)] bg-transparent",
+        )}
+      >
+        {selected ? (
+          <Check className="h-3 w-3 text-white" strokeWidth={3} />
+        ) : null}
+        <span className="sr-only">
+          {schedule.archived
+            ? t("schedule.archivedStatus")
+            : schedule.enabled
+              ? t("schedule.enabled")
+              : t("schedule.paused")}
+        </span>
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className="min-w-0 truncate text-base font-semibold">
+            {schedule.name}
+          </span>
+          <span className="text-sm text-[var(--color-foreground-muted)]">
+            {frequencyDescriptionLocalized(schedule.cron_expr, locale)}
+          </span>
+        </span>
+        <span className="mt-1 block truncate text-sm text-[var(--color-foreground-muted)]">
+          {schedule.archived
+            ? t("schedule.archivedStatus")
+            : !schedule.enabled
+              ? t("schedule.paused")
+              : schedule.cron_expr
+                ? `${t("schedule.nextRun")} ${nextRunSummary(schedule.next_run_at, t)}`
+                : t("schedule.manual")}
+          {schedule.cron_expr && schedule.enabled
+            ? ` · ${schedule.timezone}`
+            : ""}
+        </span>
+      </span>
+      {selected ? (
+        <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-[var(--color-foreground-muted)]" />
+      ) : null}
+    </button>
+  );
+}
+
+function SuggestionRow({
+  icon,
+  iconClassName,
+  title,
+  meta,
+  body,
+  onClick,
+}: {
+  icon: ReactNode;
+  iconClassName: string;
+  title: string;
+  meta: string;
+  body: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-start gap-4 px-3 py-4 text-left transition-colors hover:bg-[var(--color-surface-muted)]/60"
+    >
+      <span className={cn("mt-0.5 shrink-0", iconClassName)}>{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className="text-base font-semibold">{title}</span>
+          <span className="text-sm text-[var(--color-foreground-muted)]">
+            {meta}
+          </span>
+        </span>
+        <span className="mt-1 block text-sm leading-6 text-[var(--color-foreground-muted)]">
+          {body}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function ScheduleDetail({
+  schedule,
+  runs,
+  runsLoading,
+  running,
+  locale,
+  t,
+  drawer = false,
+  onToggle,
+  onRun,
+  onOpenRun,
+}: {
+  schedule: ApiSchedule;
+  runs: ApiScheduleRun[];
+  runsLoading: boolean;
+  running: boolean;
+  locale: "en" | "zh";
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
+  drawer?: boolean;
+  onToggle: () => void;
+  onRun: () => void;
+  onOpenRun: (run: ApiScheduleRun) => void;
+}) {
+  const successCount = runs.filter((run) => run.status === "succeeded").length;
+  const successRate = runs.length
+    ? Math.round((successCount / runs.length) * 100)
+    : null;
+  return (
+    <div
+      className={cn(
+        "mx-auto w-full",
+        drawer ? "px-5 py-6" : "max-w-4xl px-5 py-7 sm:px-8 lg:px-12",
+      )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-5">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill tone={scheduleTone(schedule)}>
+              {schedule.archived
+                ? t("schedule.archivedStatus")
+                : schedule.enabled
+                  ? t("schedule.enabled")
+                  : t("schedule.paused")}
+            </StatusPill>
+            <Badge>{t("schedule.agent")}</Badge>
+          </div>
+          <h2 className="mt-3 break-words text-2xl font-semibold tracking-tight sm:text-3xl">
+            {schedule.name}
+          </h2>
+          <p className="mt-2 flex items-center gap-2 text-sm text-[var(--color-foreground-muted)]">
+            <Zap className="h-4 w-4 text-[var(--color-accent)]" />
+            {frequencyDescriptionLocalized(schedule.cron_expr, locale)}
+            {schedule.cron_expr ? <span>· {schedule.timezone}</span> : null}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled={schedule.archived}
+            onClick={onToggle}
+          >
+            {schedule.enabled ? (
+              <Pause className="h-4 w-4" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            {schedule.enabled ? t("schedule.pause") : t("schedule.enable")}
+          </Button>
+          <Button
+            variant="primary"
+            className="gap-2"
+            disabled={running || schedule.archived}
+            aria-busy={running}
+            onClick={onRun}
+          >
+            {running ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            {running ? t("schedule.running") : t("schedule.runNow")}
+          </Button>
+        </div>
+      </div>
+      <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label={t("schedule.nextRun")}
+          value={
+            schedule.archived
+              ? t("schedule.archivedStatus")
+              : schedule.cron_expr && schedule.enabled
+                ? formatDate(schedule.next_run_at, locale, schedule.timezone)
+                : !schedule.enabled
+                  ? t("schedule.paused")
+                  : t("schedule.manual")
+          }
+        />
+        <StatCard
+          label={t("schedule.lastRun")}
+          value={relative(schedule.last_run_at, t)}
+        />
+        <StatCard
+          label={t("schedule.runHistory")}
+          value={t("schedule.runCount", { count: runs.length })}
+        />
+        <StatCard
+          label={t("schedule.successRate")}
+          value={successRate === null ? "—" : `${successRate}%`}
+        />
+      </div>
+      <div
+        className={cn(
+          "mt-8 grid gap-6",
+          !drawer && "lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,.8fr)]",
+        )}
+      >
+        <div className="space-y-6">
+          <Card className="overflow-hidden">
+            <div className="border-b border-[var(--color-border)] px-5 py-4">
+              <h3 className="text-sm font-semibold">{t("schedule.prompt")}</h3>
+            </div>
+            <p className="whitespace-pre-wrap px-5 py-4 text-sm leading-6">
+              {schedule.prompt}
+            </p>
+          </Card>
+          <Card className="overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+              <h3 className="text-sm font-semibold">
+                {t("schedule.runHistory")}
+              </h3>
+              <span className="text-xs text-[var(--color-foreground-muted)]">
+                {t("schedule.runCount", { count: runs.length })}
+              </span>
+            </div>
+            {runsLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="h-5 w-5 animate-spin text-[var(--color-accent)]" />
+              </div>
+            ) : runs.length === 0 ? (
+              <p className="px-5 py-10 text-sm text-[var(--color-foreground-muted)]">
+                {t("schedule.noRuns")}
+              </p>
+            ) : (
+              <div className="divide-y divide-[var(--color-border)]">
+                {runs.map((run) => (
+                  <button
+                    type="button"
+                    key={run.id}
+                    onClick={() => onOpenRun(run)}
+                    disabled={!run.session_id}
+                    className="flex w-full items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-default disabled:hover:bg-transparent"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm">
+                        {formatDate(
+                          run.scheduled_at,
+                          locale,
+                          schedule.timezone,
+                        )}
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-[var(--color-foreground-muted)]">
+                        {run.error ||
+                          run.output_summary ||
+                          (run.session_id
+                            ? t("schedule.openSession")
+                            : t("schedule.noSession"))}
+                      </span>
+                    </span>
+                    <StatusPill tone={runTone(run.status)}>
+                      {t(`schedule.status.${run.status}` as MessageKey)}
+                    </StatusPill>
+                    {run.session_id ? (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-foreground-muted)]" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+        <Card className="h-fit divide-y divide-[var(--color-border)] overflow-hidden">
+          <DetailRow
+            label={t("schedule.result")}
+            value={
+              schedule.result_mode === "existing_session"
+                ? t("schedule.existingSession")
+                : t("schedule.newSession")
+            }
+          />
+          <DetailRow label={t("schedule.timezone")} value={schedule.timezone} />
+          <DetailRow
+            label={t("schedule.timeout")}
+            value={`${schedule.timeout_seconds}s`}
+          />
+          <DetailRow
+            label={t("schedule.retries")}
+            value={`${schedule.max_retries} · ${schedule.retry_backoff_seconds}s`}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <Card className="px-4 py-3.5">
+      <p className="text-xs text-[var(--color-foreground-muted)]">{label}</p>
+      <p className="mt-1.5 truncate text-sm font-medium" title={value}>
+        {value}
+      </p>
+    </Card>
+  );
+}
+
+function ScheduleEditor({
+  form,
+  selected,
+  sessions,
+  saving,
+  locale,
+  t,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  form: ScheduleForm;
+  selected: boolean;
+  sessions: ReturnType<typeof useSessions>;
+  saving: boolean;
+  locale: "en" | "zh";
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
+  onChange: <K extends keyof ScheduleForm>(
+    key: K,
+    value: ScheduleForm[K],
+  ) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const frequencyOptions: {
+    value: FrequencyMode;
+    label: MessageKey;
+    description: MessageKey;
+  }[] = [
+    {
+      value: "manual",
+      label: "schedule.editor.manual",
+      description: "schedule.editor.manualDescription",
+    },
+    {
+      value: "interval",
+      label: "schedule.editor.interval",
+      description: "schedule.editor.intervalDescription",
+    },
+    {
+      value: "daily",
+      label: "schedule.editor.daily",
+      description: "schedule.editor.dailyDescription",
+    },
+    {
+      value: "weekdays",
+      label: "schedule.editor.weekdays",
+      description: "schedule.editor.weekdaysDescription",
+    },
+    {
+      value: "weekly",
+      label: "schedule.editor.weekly",
+      description: "schedule.editor.weeklyDescription",
+    },
+    {
+      value: "custom",
+      label: "schedule.editor.custom",
+      description: "schedule.editor.customDescription",
+    },
   ];
-  const selectNumber = (key: keyof ScheduleForm, value: string) => onChange(key as never, Number(value) as never);
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-overlay)] p-4"><div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)]"><div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-6 py-5"><div><p className="text-xs font-medium text-[var(--color-accent)]">{selected ? "编辑任务" : "新建任务"}</p><h2 className="mt-1 text-lg font-semibold">任务配置</h2></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭"><X className="h-5 w-5" /></Button></div><div className="min-h-0 flex-1 overflow-y-auto px-6 py-5"><div className="space-y-5"><Field label="名称"><input value={form.name} onChange={(e) => onChange("name", e.target.value)} placeholder="例如：每日简报" className={inputClass} /></Field><Field label="提示词"><textarea value={form.prompt} onChange={(e) => onChange("prompt", e.target.value)} rows={5} placeholder="告诉 Agent 每次运行要完成什么" className={`${inputClass} resize-y`} /></Field><fieldset><legend className="mb-2 text-sm font-medium">运行频率</legend><div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="运行频率">{frequencyOptions.map((option) => <button key={option.value} type="button" role="radio" aria-checked={form.frequency === option.value} onClick={() => onChange("frequency", option.value)} className={cn("rounded-[var(--radius)] border p-3 text-left transition-colors", form.frequency === option.value ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]")}><span className="block text-sm font-medium">{option.label}</span><span className="mt-1 block text-xs leading-5 text-[var(--color-foreground-muted)]">{option.description}</span></button>)}</div></fieldset>{form.frequency === "manual" ? <div className="rounded-[var(--radius)] bg-[var(--color-surface-muted)] px-3 py-2.5 text-xs text-[var(--color-foreground-muted)]">此任务不会自动运行，你仍可以在详情页随时点击“立即运行”。</div> : null}{form.frequency === "interval" ? <Field label="每隔几分钟运行一次"><input type="number" min={1} max={59} step={1} value={form.intervalMinutes} onChange={(e) => selectNumber("intervalMinutes", e.target.value)} className={inputClass} /><span className="mt-1.5 block text-xs text-[var(--color-foreground-muted)]">支持 1–59 分钟，适合轮询和提醒类任务。</span></Field> : null}{form.frequency === "daily" || form.frequency === "weekdays" ? <Field label="运行时间"><TimeSelect value={form.time} onChange={(value) => onChange("time", value)} /></Field> : null}{form.frequency === "weekly" ? <div className="grid gap-4 sm:grid-cols-2"><Field label="运行日"><select value={form.weekday} onChange={(e) => selectNumber("weekday", e.target.value)} className={inputClass}>{WEEKDAYS.map((day) => <option key={day.value} value={day.value}>{day.label}</option>)}</select></Field><Field label="运行时间"><TimeSelect value={form.time} onChange={(value) => onChange("time", value)} /></Field></div> : null}{form.frequency === "custom" ? <div className="space-y-4 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] p-4"><Field label="重复类型"><select value={form.customRepeat} onChange={(e) => onChange("customRepeat", e.target.value as CustomRepeat)} className={inputClass}><option value="hourly">每小时</option><option value="daily">每天</option><option value="weekly">每周</option><option value="monthly">每月</option><option value="yearly">每年</option></select></Field>{form.customRepeat === "hourly" ? <div className="grid gap-4 sm:grid-cols-2"><Field label="每隔多少小时"><input type="number" min={1} max={23} value={form.customInterval} onChange={(e) => selectNumber("customInterval", e.target.value)} className={inputClass} /></Field><Field label="在第几分钟"><select value={form.customMinute} onChange={(e) => selectNumber("customMinute", e.target.value)} className={inputClass}>{Array.from({ length: 60 }, (_, minute) => <option key={minute} value={minute}>{minute} 分</option>)}</select></Field></div> : null}{form.customRepeat === "daily" ? <div className="grid gap-4 sm:grid-cols-2"><Field label="每隔多少天"><input type="number" min={1} max={31} value={form.customInterval} onChange={(e) => selectNumber("customInterval", e.target.value)} className={inputClass} /></Field><Field label="运行时间"><TimeSelect value={form.time} onChange={(value) => onChange("time", value)} /></Field></div> : null}{form.customRepeat === "weekly" ? <div className="space-y-3"><Field label="运行日"><div className="grid grid-cols-4 gap-2 sm:grid-cols-7" role="group" aria-label="自定义每周运行日">{WEEKDAYS.map((day) => { const checked = form.customWeekdays.includes(day.value); return <label key={day.value} className={cn("cursor-pointer rounded-[var(--radius)] border px-2 py-2 text-center text-sm transition-colors", checked ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] font-medium" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]")}><input type="checkbox" className="sr-only" checked={checked} onChange={() => { if (checked && form.customWeekdays.length === 1) return; onChange("customWeekdays", checked ? form.customWeekdays.filter((value) => value !== day.value) : [...form.customWeekdays, day.value]); }} /><span>{day.label.replace("星期", "")}</span></label>; })}</div><span className="mt-1.5 block text-xs text-[var(--color-foreground-muted)]">可多选，至少保留一天。</span></Field><Field label="运行时间"><TimeSelect value={form.time} onChange={(value) => onChange("time", value)} /></Field></div> : null}{form.customRepeat === "monthly" ? <div className="grid gap-4 sm:grid-cols-3"><Field label="每隔几个月"><input type="number" min={1} max={12} value={form.customInterval} onChange={(e) => selectNumber("customInterval", e.target.value)} className={inputClass} /></Field><Field label="每月第几日"><select value={form.customDay} onChange={(e) => selectNumber("customDay", e.target.value)} className={inputClass}>{DAYS.map((day) => <option key={day.value} value={day.value}>{day.label}</option>)}</select></Field><Field label="运行时间"><TimeSelect value={form.time} onChange={(value) => onChange("time", value)} /></Field></div> : null}{form.customRepeat === "yearly" ? <div className="grid gap-4 sm:grid-cols-3"><Field label="月份"><select value={form.customMonth} onChange={(e) => selectNumber("customMonth", e.target.value)} className={inputClass}>{MONTHS.map((month) => <option key={month.value} value={month.value}>{month.label}</option>)}</select></Field><Field label="日期"><select value={form.customDay} onChange={(e) => selectNumber("customDay", e.target.value)} className={inputClass}>{DAYS.map((day) => <option key={day.value} value={day.value}>{day.label}</option>)}</select></Field><Field label="运行时间"><TimeSelect value={form.time} onChange={(value) => onChange("time", value)} /></Field></div> : null}<p className="text-xs leading-5 text-[var(--color-foreground-muted)]">每月日期不存在时，该月会自动跳过；所有时间均按当地时区执行。</p></div> : null}<div className="grid gap-4 sm:grid-cols-2"><Field label="超时（秒）"><input type="number" min={60} value={form.timeout_seconds} onChange={(e) => selectNumber("timeout_seconds", e.target.value)} className={inputClass} /></Field><Field label="最大重试次数"><input type="number" min={0} max={10} value={form.max_retries} onChange={(e) => selectNumber("max_retries", e.target.value)} className={inputClass} /></Field><Field label="重试间隔（秒）"><input type="number" min={0} value={form.retry_backoff_seconds} onChange={(e) => selectNumber("retry_backoff_seconds", e.target.value)} className={inputClass} /></Field></div><fieldset><legend className="mb-2 text-sm font-medium">运行结果写入</legend><div className="grid gap-2 sm:grid-cols-2"><label className={cn("cursor-pointer rounded-[var(--radius)] border p-3 text-sm", form.result_mode === "new_session" ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)]")}><input type="radio" className="sr-only" checked={form.result_mode === "new_session"} onChange={() => onChange("result_mode", "new_session")} />新建会话<span className="mt-1 block text-xs text-[var(--color-foreground-muted)]">保留独立上下文，运行历史可直接打开</span></label><label className={cn("cursor-pointer rounded-[var(--radius)] border p-3 text-sm", form.result_mode === "existing_session" ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)]")}><input type="radio" className="sr-only" checked={form.result_mode === "existing_session"} onChange={() => onChange("result_mode", "existing_session")} />写入已有会话<span className="mt-1 block text-xs text-[var(--color-foreground-muted)]">沿用该会话上下文和工作区文件</span></label></div></fieldset>{form.result_mode === "existing_session" ? <Field label="目标会话"><select value={form.target_session_id} onChange={(e) => onChange("target_session_id", e.target.value)} className={inputClass}><option value="">请选择会话</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.title?.trim() || session.id}</option>)}</select></Field> : null}</div></div><div className="flex shrink-0 justify-end gap-2 border-t border-[var(--color-border)] px-6 py-4"><Button variant="ghost" onClick={onClose}>取消</Button><Button variant="primary" disabled={saving} onClick={onSave}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{selected ? "保存更改" : "创建任务"}</Button></div></div></div>;
+  const selectNumber = (key: keyof ScheduleForm, value: string) =>
+    onChange(key as never, Number(value) as never);
+  const cronPreview = buildCronExpression(form);
+  const weekdayLabels =
+    locale === "zh"
+      ? ["一", "二", "三", "四", "五", "六", "日"]
+      : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--color-overlay)] p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="schedule-editor-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)] sm:max-h-[90vh] sm:rounded-[var(--radius-xl)]">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-5 py-4 sm:px-6">
+          <div>
+            <p className="text-xs font-medium text-[var(--color-accent)]">
+              {t(selected ? "schedule.editor.edit" : "schedule.editor.new")}
+            </p>
+            <h2
+              id="schedule-editor-title"
+              className="mt-1 text-lg font-semibold"
+            >
+              {t("schedule.editor.configuration")}
+            </h2>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label={t("common.close")}
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+          <div className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label={t("schedule.editor.name")}>
+                <input
+                  autoFocus
+                  value={form.name}
+                  onChange={(event) => onChange("name", event.target.value)}
+                  placeholder={t("schedule.editor.namePlaceholder")}
+                  maxLength={200}
+                  className={inputClass}
+                />
+              </Field>
+              <Field
+                label={t("schedule.editor.timezone")}
+                hint={t("schedule.editor.timezoneHint")}
+              >
+                <input
+                  value={form.timezone}
+                  onChange={(event) => onChange("timezone", event.target.value)}
+                  placeholder="Asia/Shanghai"
+                  className={inputClass}
+                />
+              </Field>
+            </div>
+            <Field label={t("schedule.prompt")}>
+              <textarea
+                value={form.prompt}
+                onChange={(event) => onChange("prompt", event.target.value)}
+                rows={5}
+                placeholder={t("schedule.editor.promptPlaceholder")}
+                className={`${inputClass} resize-y`}
+              />
+            </Field>
+            <fieldset>
+              <legend className="mb-2 text-sm font-medium">
+                {t("schedule.editor.frequency")}
+              </legend>
+              <div className="grid gap-2 sm:grid-cols-3" role="radiogroup">
+                {frequencyOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={form.frequency === option.value}
+                    onClick={() => onChange("frequency", option.value)}
+                    className={cn(
+                      "rounded-[var(--radius-lg)] border p-3 text-left transition-colors",
+                      form.frequency === option.value
+                        ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+                        : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]",
+                    )}
+                  >
+                    <span className="block text-sm font-medium">
+                      {t(option.label)}
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-[var(--color-foreground-muted)]">
+                      {t(option.description)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            {form.frequency === "manual" ? (
+              <Hint>{t("schedule.editor.manualHint")}</Hint>
+            ) : null}
+            {form.frequency === "interval" ? (
+              <Field
+                label={t("schedule.editor.everyMinutes")}
+                hint={t("schedule.editor.intervalHint")}
+              >
+                <input
+                  type="number"
+                  min={1}
+                  max={59}
+                  step={1}
+                  value={form.intervalMinutes}
+                  onChange={(event) =>
+                    selectNumber("intervalMinutes", event.target.value)
+                  }
+                  className={inputClass}
+                />
+              </Field>
+            ) : null}
+            {form.frequency === "daily" || form.frequency === "weekdays" ? (
+              <Field label={t("schedule.editor.runTime")}>
+                <TimeSelect
+                  value={form.time}
+                  onChange={(value) => onChange("time", value)}
+                />
+              </Field>
+            ) : null}
+            {form.frequency === "weekly" ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label={t("schedule.editor.runDay")}>
+                  <select
+                    value={form.weekday}
+                    onChange={(event) =>
+                      selectNumber("weekday", event.target.value)
+                    }
+                    className={inputClass}
+                  >
+                    {WEEKDAYS.map((day, index) => (
+                      <option key={day.value} value={day.value}>
+                        {locale === "zh"
+                          ? `星期${weekdayLabels[index]}`
+                          : weekdayLabels[index]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("schedule.editor.runTime")}>
+                  <TimeSelect
+                    value={form.time}
+                    onChange={(value) => onChange("time", value)}
+                  />
+                </Field>
+              </div>
+            ) : null}
+            {form.frequency === "custom" ? (
+              <CustomFrequency
+                form={form}
+                locale={locale}
+                t={t}
+                onChange={onChange}
+                selectNumber={selectNumber}
+              />
+            ) : null}
+            <div className="grid gap-4 border-t border-[var(--color-border)] pt-5 sm:grid-cols-3">
+              <Field label={t("schedule.editor.timeout")}>
+                <input
+                  type="number"
+                  min={60}
+                  value={form.timeout_seconds}
+                  onChange={(event) =>
+                    selectNumber("timeout_seconds", event.target.value)
+                  }
+                  className={inputClass}
+                />
+              </Field>
+              <Field label={t("schedule.editor.maxRetries")}>
+                <input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={form.max_retries}
+                  onChange={(event) =>
+                    selectNumber("max_retries", event.target.value)
+                  }
+                  className={inputClass}
+                />
+              </Field>
+              <Field label={t("schedule.editor.retryBackoff")}>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.retry_backoff_seconds}
+                  onChange={(event) =>
+                    selectNumber("retry_backoff_seconds", event.target.value)
+                  }
+                  className={inputClass}
+                />
+              </Field>
+            </div>
+            <fieldset>
+              <legend className="mb-2 text-sm font-medium">
+                {t("schedule.editor.output")}
+              </legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <OutputOption
+                  checked={form.result_mode === "new_session"}
+                  onChange={() => onChange("result_mode", "new_session")}
+                  title={t("schedule.editor.outputNew")}
+                  description={t("schedule.editor.outputNewDescription")}
+                />
+                <OutputOption
+                  checked={form.result_mode === "existing_session"}
+                  onChange={() => onChange("result_mode", "existing_session")}
+                  title={t("schedule.editor.outputExisting")}
+                  description={t("schedule.editor.outputExistingDescription")}
+                />
+              </div>
+            </fieldset>
+            {form.result_mode === "existing_session" ? (
+              <Field label={t("schedule.editor.targetSession")}>
+                <select
+                  value={form.target_session_id}
+                  onChange={(event) =>
+                    onChange("target_session_id", event.target.value)
+                  }
+                  className={inputClass}
+                >
+                  <option value="">{t("schedule.editor.chooseSession")}</option>
+                  {sessions.map((session) => (
+                    <option key={session.id} value={session.id}>
+                      {session.title?.trim() || session.id}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+            <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] p-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-medium text-[var(--color-foreground-muted)]">
+                  {t("schedule.editor.cronPreview")}
+                </span>
+                <code className="rounded bg-[var(--color-surface-muted)] px-2 py-1 font-mono text-xs">
+                  {cronPreview || "—"}
+                </code>
+              </div>
+              {form.customRawCron ? (
+                <div className="mt-3 space-y-2">
+                  <Field
+                    label={t("schedule.editor.rawCron")}
+                    hint={t("schedule.editor.rawCronHint")}
+                  >
+                    <input
+                      value={form.customRawCron}
+                      onChange={(event) =>
+                        onChange("customRawCron", event.target.value)
+                      }
+                      className={`${inputClass} font-mono text-xs`}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4 sm:px-6">
+          <Button variant="ghost" onClick={onClose}>
+            {t("schedule.editor.cancel")}
+          </Button>
+          <Button variant="primary" disabled={saving} onClick={onSave}>
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            {t(selected ? "schedule.editor.save" : "schedule.editor.create")}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function TimeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  return <select value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}>{TIME_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>;
+function CustomFrequency({
+  form,
+  locale,
+  t,
+  onChange,
+  selectNumber,
+}: {
+  form: ScheduleForm;
+  locale: "en" | "zh";
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
+  onChange: <K extends keyof ScheduleForm>(
+    key: K,
+    value: ScheduleForm[K],
+  ) => void;
+  selectNumber: (key: keyof ScheduleForm, value: string) => void;
+}) {
+  const weekdayLabels =
+    locale === "zh"
+      ? ["一", "二", "三", "四", "五", "六", "日"]
+      : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  return (
+    <div className="space-y-4 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-background)] p-4">
+      <Field label={t("schedule.editor.repeatType")}>
+        <select
+          value={form.customRepeat}
+          onChange={(event) =>
+            onChange("customRepeat", event.target.value as CustomRepeat)
+          }
+          className={inputClass}
+        >
+          <option value="hourly">{t("schedule.editor.hourly")}</option>
+          <option value="daily">{t("schedule.editor.dailyRepeat")}</option>
+          <option value="weekly">{t("schedule.editor.weeklyRepeat")}</option>
+          <option value="monthly">{t("schedule.editor.monthly")}</option>
+          <option value="yearly">{t("schedule.editor.yearly")}</option>
+        </select>
+      </Field>
+      {form.customRepeat === "hourly" ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t("schedule.editor.everyHours")}>
+            <input
+              type="number"
+              min={1}
+              max={23}
+              value={form.customInterval}
+              onChange={(event) =>
+                selectNumber("customInterval", event.target.value)
+              }
+              className={inputClass}
+            />
+          </Field>
+          <Field label={t("schedule.editor.minuteOfHour")}>
+            <select
+              value={form.customMinute}
+              onChange={(event) =>
+                selectNumber("customMinute", event.target.value)
+              }
+              className={inputClass}
+            >
+              {Array.from({ length: 60 }, (_, minute) => (
+                <option key={minute} value={minute}>
+                  {minute}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      ) : null}
+      {form.customRepeat === "daily" ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t("schedule.editor.everyDays")}>
+            <input
+              type="number"
+              min={1}
+              max={31}
+              value={form.customInterval}
+              onChange={(event) =>
+                selectNumber("customInterval", event.target.value)
+              }
+              className={inputClass}
+            />
+          </Field>
+          <Field label={t("schedule.editor.runTime")}>
+            <TimeSelect
+              value={form.time}
+              onChange={(value) => onChange("time", value)}
+            />
+          </Field>
+        </div>
+      ) : null}
+      {form.customRepeat === "weekly" ? (
+        <div className="space-y-3">
+          <Field label={t("schedule.editor.runDay")}>
+            <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+              {WEEKDAYS.map((day, index) => {
+                const checked = form.customWeekdays.includes(day.value);
+                return (
+                  <label
+                    key={day.value}
+                    className={cn(
+                      "cursor-pointer rounded-[var(--radius)] border px-2 py-2 text-center text-sm transition-colors",
+                      checked
+                        ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] font-medium"
+                        : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={checked}
+                      onChange={() => {
+                        if (checked && form.customWeekdays.length === 1) return;
+                        onChange(
+                          "customWeekdays",
+                          checked
+                            ? form.customWeekdays.filter(
+                                (value) => value !== day.value,
+                              )
+                            : [...form.customWeekdays, day.value],
+                        );
+                      }}
+                    />
+                    <span>
+                      {locale === "zh"
+                        ? `周${weekdayLabels[index]}`
+                        : weekdayLabels[index]}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <span className="mt-1.5 block text-xs leading-5 text-[var(--color-foreground-muted)]">
+              {t("schedule.editor.atLeastOneDay")}
+            </span>
+          </Field>
+          <Field label={t("schedule.editor.runTime")}>
+            <TimeSelect
+              value={form.time}
+              onChange={(value) => onChange("time", value)}
+            />
+          </Field>
+        </div>
+      ) : null}
+      {form.customRepeat === "monthly" ? (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label={t("schedule.editor.everyMonths")}>
+            <input
+              type="number"
+              min={1}
+              max={12}
+              value={form.customInterval}
+              onChange={(event) =>
+                selectNumber("customInterval", event.target.value)
+              }
+              className={inputClass}
+            />
+          </Field>
+          <Field label={t("schedule.editor.dayOfMonth")}>
+            <select
+              value={form.customDay}
+              onChange={(event) =>
+                selectNumber("customDay", event.target.value)
+              }
+              className={inputClass}
+            >
+              {DAYS.map((day) => (
+                <option key={day.value} value={day.value}>
+                  {t("schedule.dayName", { value: day.value })}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t("schedule.editor.runTime")}>
+            <TimeSelect
+              value={form.time}
+              onChange={(value) => onChange("time", value)}
+            />
+          </Field>
+        </div>
+      ) : null}
+      {form.customRepeat === "yearly" ? (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label={t("schedule.editor.month")}>
+            <select
+              value={form.customMonth}
+              onChange={(event) =>
+                selectNumber("customMonth", event.target.value)
+              }
+              className={inputClass}
+            >
+              {MONTHS.map((month) => (
+                <option key={month.value} value={month.value}>
+                  {t("schedule.monthName", { value: month.value })}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t("schedule.editor.day")}>
+            <select
+              value={form.customDay}
+              onChange={(event) =>
+                selectNumber("customDay", event.target.value)
+              }
+              className={inputClass}
+            >
+              {DAYS.map((day) => (
+                <option key={day.value} value={day.value}>
+                  {t("schedule.dayName", { value: day.value })}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t("schedule.editor.runTime")}>
+            <TimeSelect
+              value={form.time}
+              onChange={(value) => onChange("time", value)}
+            />
+          </Field>
+        </div>
+      ) : null}
+      <p className="text-xs leading-5 text-[var(--color-foreground-muted)]">
+        {t("schedule.editor.customHint")}
+      </p>
+    </div>
+  );
 }
 
-function ScheduleEditor({ form, selected, sessions, saving, onChange, onClose, onSave }: { form: ScheduleForm; selected: boolean; sessions: ReturnType<typeof useSessions>; saving: boolean; onChange: <K extends keyof ScheduleForm>(key: K, value: ScheduleForm[K]) => void; onClose: () => void; onSave: () => void }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-overlay)] p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-xl)]"><div className="flex items-center justify-between"><div><p className="text-xs font-medium text-[var(--color-accent)]">{selected ? "编辑任务" : "新建任务"}</p><h2 className="mt-1 text-lg font-semibold">任务配置</h2></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭"><X className="h-5 w-5" /></Button></div><div className="mt-5 space-y-4"><Field label="名称"><input value={form.name} onChange={(e) => onChange("name", e.target.value)} placeholder="例如：每日简报" className={inputClass} /></Field><Field label="提示词"><textarea value={form.prompt} onChange={(e) => onChange("prompt", e.target.value)} rows={5} placeholder="告诉 Agent 每次运行要完成什么" className={`${inputClass} resize-y`} /></Field><div className="grid gap-4 sm:grid-cols-2"><Field label="Cron（留空表示仅手动）"><input value={form.cron_expr} onChange={(e) => onChange("cron_expr", e.target.value)} placeholder="0 8 * * *" className={inputClass} /></Field><Field label="时区"><input value={form.timezone} onChange={(e) => onChange("timezone", e.target.value)} placeholder="Asia/Shanghai" className={inputClass} /></Field><Field label="超时（秒）"><input type="number" min={60} value={form.timeout_seconds} onChange={(e) => onChange("timeout_seconds", Number(e.target.value))} className={inputClass} /></Field><Field label="最大重试次数"><input type="number" min={0} max={10} value={form.max_retries} onChange={(e) => onChange("max_retries", Number(e.target.value))} className={inputClass} /></Field><Field label="重试间隔（秒）"><input type="number" min={0} value={form.retry_backoff_seconds} onChange={(e) => onChange("retry_backoff_seconds", Number(e.target.value))} className={inputClass} /></Field></div><fieldset><legend className="mb-2 text-sm font-medium">运行结果写入</legend><div className="grid gap-2 sm:grid-cols-2"><label className={cn("cursor-pointer rounded-[var(--radius)] border p-3 text-sm", form.result_mode === "new_session" ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)]")}><input type="radio" className="sr-only" checked={form.result_mode === "new_session"} onChange={() => onChange("result_mode", "new_session")} />新建会话<span className="mt-1 block text-xs text-[var(--color-foreground-muted)]">保留独立上下文，运行历史可直接打开</span></label><label className={cn("cursor-pointer rounded-[var(--radius)] border p-3 text-sm", form.result_mode === "existing_session" ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)]")}><input type="radio" className="sr-only" checked={form.result_mode === "existing_session"} onChange={() => onChange("result_mode", "existing_session")} />写入已有会话<span className="mt-1 block text-xs text-[var(--color-foreground-muted)]">沿用该会话上下文和工作区文件</span></label></div></fieldset>{form.result_mode === "existing_session" ? <Field label="目标会话"><select value={form.target_session_id} onChange={(e) => onChange("target_session_id", e.target.value)} className={inputClass}><option value="">请选择会话</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.title?.trim() || session.id}</option>)}</select></Field> : null}</div><div className="mt-6 flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>取消</Button><Button variant="primary" disabled={saving} onClick={onSave}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{selected ? "保存更改" : "创建任务"}</Button></div></div></div>;
+function TimeSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className={inputClass}
+    >
+      {TIME_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
 }
-
-const inputClass = "w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]";
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block text-sm"><span className="mb-1.5 block font-medium">{label}</span>{children}</label>; }
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) { return <div className="flex items-center justify-between gap-4 px-5 py-4 text-sm"><span className="text-[var(--color-foreground-muted)]">{label}</span><span className="text-right">{value}</span></div>; }
-function EmptyState({ archived, onCreate }: { archived: boolean; onCreate: () => void }) { return <div className="py-10 text-center"><p className="text-sm text-[var(--color-foreground-muted)]">{archived ? "还没有归档任务" : "还没有安排任务"}</p>{!archived ? <button onClick={onCreate} className="mt-3 text-sm font-medium text-[var(--color-accent)] hover:underline">创建第一个任务</button> : null}</div>; }
+function OutputOption({
+  checked,
+  onChange,
+  title,
+  description,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  title: string;
+  description: string;
+}) {
+  return (
+    <label
+      className={cn(
+        "cursor-pointer rounded-[var(--radius-lg)] border p-3.5 transition-colors",
+        checked
+          ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+          : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]",
+      )}
+    >
+      <input
+        type="radio"
+        className="sr-only"
+        checked={checked}
+        onChange={onChange}
+      />
+      <span className="block text-sm font-medium">{title}</span>
+      <span className="mt-1 block text-xs leading-5 text-[var(--color-foreground-muted)]">
+        {description}
+      </span>
+    </label>
+  );
+}
+const inputClass =
+  "w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]";
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="mb-1.5 block font-medium">{label}</span>
+      {children}
+      {hint ? (
+        <span className="mt-1.5 block text-xs leading-5 text-[var(--color-foreground-muted)]">
+          {hint}
+        </span>
+      ) : null}
+    </label>
+  );
+}
+function Hint({ children }: { children: ReactNode }) {
+  return (
+    <div className="rounded-[var(--radius)] bg-[var(--color-surface-muted)] px-3 py-2.5 text-xs leading-5 text-[var(--color-foreground-muted)]">
+      {children}
+    </div>
+  );
+}
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-5 py-4 text-sm">
+      <span className="text-[var(--color-foreground-muted)]">{label}</span>
+      <span className="text-right font-medium">{value}</span>
+    </div>
+  );
+}
