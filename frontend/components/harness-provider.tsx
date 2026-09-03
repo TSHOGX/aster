@@ -52,6 +52,7 @@ import {
   type ConversationState
 } from "@/lib/harness-events";
 import { isFinalReply } from "@/lib/message-grouping";
+import { isTerminal } from "@/lib/format";
 import { mergeSessionList, reduceSessionEvent } from "@/lib/session-events";
 import { useEventStream } from "@/lib/use-event-stream";
 import { buildEventsStreamUrl } from "@/lib/ws";
@@ -96,6 +97,8 @@ type HarnessState = {
 type HarnessActions = {
   selectSession: (id: string | null) => void;
   createSession: (mode: SessionMode) => Promise<{ ok: boolean; error?: string; session?: ApiSession }>;
+  /** Remove a client-created session that was abandoned before its first message. */
+  discardEmptySession: (id?: string) => Promise<{ ok: boolean; error?: string }>;
   destroySession: (id: string) => Promise<{ ok: boolean; error?: string }>;
   renameSession: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   interruptSession: (id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -233,6 +236,18 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   const aliveRef = useRef(true);
   const pollingRef = useRef<Set<string>>(new Set());
   const lastEventIDRef = useRef<number | null>(null);
+  // A session is created before the composer can send its first message. Keep
+  // that short-lived state client-side so abandoning it does not leave a
+  // meaningless `sess_*` row in History. Once a message is accepted, the id is
+  // removed and the session becomes normal durable history.
+  const draftSessionIdsRef = useRef<Set<string>>(new Set());
+  // Prevent an abandon action from racing a message request that has not yet
+  // returned. The conversation is still empty locally while that request is
+  // in flight, but deleting it would lose a message the user did send.
+  const pendingMessageSessionIdsRef = useRef<Set<string>>(new Set());
+  // The create event can arrive over SSE slightly after the local cleanup. Keep
+  // a tombstone so a late `session.created` event cannot resurrect the row.
+  const discardedSessionIdsRef = useRef<Set<string>>(new Set());
 
   const ensureConvo = useCallback((convos: HarnessState["conversations"], id: string) => {
     if (convos[id]) return convos;
@@ -247,6 +262,72 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       });
     },
     [setState]
+  );
+
+  const discardEmptySession = useCallback(
+    async (requestedId?: string) => {
+      const id = requestedId ?? stateRef.current.selectedId;
+      if (!id || !draftSessionIdsRef.current.has(id)) return { ok: true as const };
+
+      // Never discard a session while its first message is being submitted, or
+      // after an event has already populated the local conversation.
+      if (pendingMessageSessionIdsRef.current.has(id)) return { ok: true as const };
+      const session = stateRef.current.sessions.find((item) => item.id === id);
+      if (!session || session.access === "reader") {
+        draftSessionIdsRef.current.delete(id);
+        return { ok: true as const };
+      }
+      // A manual title or uploaded file is also meaningful work. Keep the
+      // session in History even if the user has not sent a chat message yet.
+      if (session.title?.trim() || (stateRef.current.artifacts[id] ?? []).length > 0) {
+        draftSessionIdsRef.current.delete(id);
+        return { ok: true as const };
+      }
+      const conversation = stateRef.current.conversations[id];
+      if (conversation && conversation.messages.length > 0) {
+        draftSessionIdsRef.current.delete(id);
+        return { ok: true as const };
+      }
+
+      // Hide it immediately; the server delete below is the durable cleanup.
+      // If that request fails, restore the row and allow a later navigation to
+      // retry rather than silently losing a session from the local view.
+      draftSessionIdsRef.current.delete(id);
+      discardedSessionIdsRef.current.add(id);
+      setState((p) => {
+        const conversations = { ...p.conversations };
+        delete conversations[id];
+        const artifacts = { ...p.artifacts };
+        delete artifacts[id];
+        return {
+          ...p,
+          sessions: p.sessions.filter((item) => item.id !== id),
+          conversations,
+          artifacts,
+          selectedId: p.selectedId === id ? null : p.selectedId
+        };
+      });
+
+      const res = await apiDestroySession(id);
+      // A retention sweep may have already removed the abandoned session. In
+      // that case the desired end state is already true, so treat 404 as a
+      // successful discard instead of restoring a ghost row locally.
+      if (!res.ok && res.status !== 404) {
+        discardedSessionIdsRef.current.delete(id);
+        draftSessionIdsRef.current.add(id);
+        setState((p) => ({
+          ...p,
+          sessions: p.sessions.some((item) => item.id === id) ? p.sessions : [session, ...p.sessions],
+          conversations: p.conversations[id]
+            ? p.conversations
+            : { ...p.conversations, [id]: conversation ?? emptyConvo() },
+          artifacts: p.artifacts[id] ? p.artifacts : { ...p.artifacts, [id]: [] }
+        }));
+        return { ok: false as const, error: res.error };
+      }
+      return { ok: true as const };
+    },
+    [setState, stateRef]
   );
 
   const loadSessionDetails = useCallback(
@@ -350,7 +431,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     const res = await fetchSessions();
     // Bail silently on failure: a transient error must not empty a healthy list.
     if (!res.ok) return;
-    const list = res.data.sessions ?? [];
+    const list = (res.data.sessions ?? []).filter(
+      (session) => !discardedSessionIdsRef.current.has(session.id)
+    );
     setState((p) => {
       const next = mergeSessionList(
         { sessions: p.sessions, conversations: p.conversations },
@@ -404,6 +487,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         case "session.created": {
           const sess = readSession(event.payload);
           if (!sess) return;
+          if (discardedSessionIdsRef.current.has(sess.id)) return;
           setState((p) => ({
             ...p,
             sessions: [sess, ...p.sessions.filter((s) => s.id !== sess.id)],
@@ -433,6 +517,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           if (!sessionId) return;
           const msg = event.payload as ApiMessage | undefined;
           if (!msg || typeof msg.id !== "number") return;
+          if (msg.role === "user") draftSessionIdsRef.current.delete(sessionId);
           upsertConvo(sessionId, (c) => ({
             ...c,
             // A new user turn begins here: drop any live trace left from before.
@@ -611,6 +696,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
   const handleUnauthorized = useCallback(() => {
     aliveRef.current = false;
+    draftSessionIdsRef.current.clear();
+    pendingMessageSessionIdsRef.current.clear();
+    discardedSessionIdsRef.current.clear();
     setState((p) => ({
       ...p,
       auth: { checked: true, required: true, userId: null },
@@ -638,9 +726,15 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     const capabilities = await fetchDeploymentCapabilities();
-    const list = sessions.data.sessions ?? [];
+    const list = (sessions.data.sessions ?? []).filter(
+      (session) => !discardedSessionIdsRef.current.has(session.id)
+    );
     const currentSelected = stateRef.current.selectedId;
-    const selectedId = currentSelected && list.some((s) => s.id === currentSelected) ? currentSelected : list[0]?.id ?? null;
+    const selectable = list.filter((session) => !isTerminal(session.status));
+    const selectedId =
+      currentSelected && selectable.some((session) => session.id === currentSelected)
+        ? currentSelected
+        : selectable[0]?.id ?? null;
     setState((p) => {
       const conversations = { ...p.conversations };
       for (const s of list) {
@@ -742,6 +836,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
   const selectSession = useCallback(
     (id: string | null) => {
+      const previousId = stateRef.current.selectedId;
+      if (previousId && previousId !== id) void discardEmptySession(previousId);
       setState((p) => ({ ...p, selectedId: id }));
       if (!id) return;
       const session = stateRef.current.sessions.find((s) => s.id === id);
@@ -752,14 +848,19 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         void pollConversation(id);
       }
     },
-    [loadSessionDetails, pollConversation, setState, stateRef]
+    [discardEmptySession, loadSessionDetails, pollConversation, setState, stateRef]
   );
 
   const createSession = useCallback(
     async (mode: SessionMode) => {
+      // Starting another conversation abandons the current untouched draft.
+      // A session with a message is left alone and remains in History.
+      await discardEmptySession();
       const res = await apiCreateSession(mode);
       if (!res.ok) return { ok: false as const, error: res.error };
       const session = res.data;
+      draftSessionIdsRef.current.add(session.id);
+      discardedSessionIdsRef.current.delete(session.id);
       setState((p) => ({
         ...p,
         sessions: [session, ...p.sessions.filter((s) => s.id !== session.id)],
@@ -768,10 +869,11 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       }));
       return { ok: true as const, session };
     },
-    [setState]
+    [discardEmptySession, setState]
   );
 
   const destroySession = useCallback(async (id: string) => {
+    draftSessionIdsRef.current.delete(id);
     const res = await apiDestroySession(id);
     if (!res.ok) return { ok: false as const, error: res.error };
     const now = new Date().toISOString();
@@ -810,6 +912,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       return { ok: false as const, error: res.error };
     }
     const session = res.data;
+    draftSessionIdsRef.current.delete(id);
     setState((p) => ({
       ...p,
       sessions: p.sessions.map((s) => (s.id === session.id ? { ...s, ...session } : s))
@@ -825,24 +928,30 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
   const sendMessage = useCallback(
     async (id: string, content: string) => {
-      const res = await apiPostMessage(id, content);
-      if (!res.ok) return { ok: false as const, error: res.error };
-      // server emits message.created via WS; merge here for instant feedback
-      const msg = res.data.message;
-      if (msg) {
-        upsertConvo(id, (c) => ({
-          ...c,
-          messages: c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg]
+      pendingMessageSessionIdsRef.current.add(id);
+      try {
+        const res = await apiPostMessage(id, content);
+        if (!res.ok) return { ok: false as const, error: res.error };
+        draftSessionIdsRef.current.delete(id);
+        // server emits message.created via WS; merge here for instant feedback
+        const msg = res.data.message;
+        if (msg) {
+          upsertConvo(id, (c) => ({
+            ...c,
+            messages: c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg]
+          }));
+        }
+        setState((p) => ({
+          ...p,
+          sessions: p.sessions.map((s) =>
+            s.id === id ? { ...s, status: res.data.status, updated_at: new Date().toISOString() } : s
+          )
         }));
+        void pollConversation(id, msg?.id);
+        return { ok: true as const };
+      } finally {
+        pendingMessageSessionIdsRef.current.delete(id);
       }
-      setState((p) => ({
-        ...p,
-        sessions: p.sessions.map((s) =>
-          s.id === id ? { ...s, status: res.data.status, updated_at: new Date().toISOString() } : s
-        )
-      }));
-      void pollConversation(id, msg?.id);
-      return { ok: true as const };
     },
     [pollConversation, upsertConvo, setState]
   );
@@ -894,6 +1003,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     () => ({
       selectSession,
       createSession,
+      discardEmptySession,
       destroySession,
       renameSession,
       interruptSession,
@@ -907,6 +1017,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     [
       selectSession,
       createSession,
+      discardEmptySession,
       destroySession,
       renameSession,
       interruptSession,

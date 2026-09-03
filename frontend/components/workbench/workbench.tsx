@@ -30,7 +30,7 @@ const ARTIFACT_WIDTH_KEY = "workbench:artifact-width";
 
 function Shell({ initialView = "conversation" }: { initialView?: "conversation" | "schedules" }) {
   const t = useT();
-  const { onLogin, selectSession } = useHarness();
+  const { onLogin, selectSession, discardEmptySession } = useHarness();
   const auth = useAuth();
   const bootError = useBootError();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -135,6 +135,13 @@ function Shell({ initialView = "conversation" }: { initialView?: "conversation" 
     selectSession(id);
     setWorkspaceView("conversation");
   }, [selectSession]);
+  const handleOpenSchedules = useCallback(() => {
+    // Schedules is another top-level view. Treat an untouched new conversation
+    // as abandoned when leaving it, just like selecting another session does.
+    void discardEmptySession();
+    setWorkspaceView("schedules");
+    setRequestedDrawer(null);
+  }, [discardEmptySession]);
   // Hold the screen until /api/me resolves; otherwise the main workbench
   // renders for one frame before we know auth is required (login flash).
   if (!auth.checked) {
@@ -185,7 +192,7 @@ function Shell({ initialView = "conversation" }: { initialView?: "conversation" 
               )}
             >
               {drawer === "sessions" ? (
-                <Sidebar onOpenSearch={() => setPaletteOpen(true)} onOpenSchedules={() => { setWorkspaceView("schedules"); setRequestedDrawer(null); }} onOpenConversation={() => setWorkspaceView("conversation")} schedulesActive={workspaceView === "schedules"} onNavigate={() => setRequestedDrawer(null)} />
+                <Sidebar onOpenSearch={() => setPaletteOpen(true)} onOpenSchedules={handleOpenSchedules} onOpenConversation={() => setWorkspaceView("conversation")} schedulesActive={workspaceView === "schedules"} onNavigate={() => setRequestedDrawer(null)} />
               ) : (
                 <ArtifactPane />
               )}
@@ -225,7 +232,7 @@ function Shell({ initialView = "conversation" }: { initialView?: "conversation" 
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         onOpenSearch={() => setPaletteOpen(true)}
-        onOpenSchedules={() => setWorkspaceView("schedules")}
+        onOpenSchedules={handleOpenSchedules}
         onOpenConversation={() => setWorkspaceView("conversation")}
         schedulesActive={workspaceView === "schedules"}
       />
