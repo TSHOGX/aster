@@ -29,12 +29,20 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	ch, cancel := s.hub.Subscribe(sessionID)
 	defer cancel()
 
-	for event := range ch {
-		if !s.eventVisibleTo(r.Context(), event, userID) {
-			continue
-		}
-		if err := conn.WriteJSON(s.publicEventForDelivery(event)); err != nil {
+	for {
+		select {
+		case <-s.shutdownSignal():
 			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			if !s.eventVisibleTo(r.Context(), event, userID) {
+				continue
+			}
+			if err := conn.WriteJSON(s.publicEventForDelivery(event)); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -88,6 +96,8 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
+		case <-s.shutdownSignal():
+			return
 		case <-r.Context().Done():
 			return
 		case <-heartbeat.C:

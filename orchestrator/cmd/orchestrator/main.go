@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -312,15 +313,47 @@ func main() {
 	}()
 
 	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := proxyCorrelationServer.Shutdown(shutdownCtx); err != nil {
-		log.Warn("proxy correlation shutdown failed", "error", err)
-	}
+	// net/http.Server.Shutdown does not cancel active request contexts. Signal
+	// the application first so SSE/WebSocket handlers leave their long-lived
+	// loops; otherwise graceful shutdown waits until its deadline for clients to
+	// disconnect on their own.
+	app.BeginShutdown()
 	_ = os.Remove(proxyCorrelationSocket)
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Warn("http shutdown failed", "error", err)
+
+	// Both servers shut down concurrently under one overall budget. Using one
+	// context sequentially made the second Shutdown inherit whatever time the
+	// first had consumed and report a misleading timeout. If a handler still
+	// refuses to return by the deadline, Close is the explicit hard-stop
+	// fallback; the process is already exiting and lingering connections must not
+	// hold the old PID/port hostage.
+	shutdownDeadline := time.Now().Add(10 * time.Second)
+	shutdown := func(name string, srv *http.Server) {
+		remaining := time.Until(shutdownDeadline)
+		if remaining <= 0 {
+			remaining = time.Millisecond
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), remaining)
+		err := srv.Shutdown(shutdownCtx)
+		cancel()
+		if err == nil {
+			return
+		}
+		log.Warn(name+" graceful shutdown failed; forcing connections closed", "error", err)
+		if closeErr := srv.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+			log.Warn(name+" forced shutdown failed", "error", closeErr)
+		}
 	}
+	var shutdownWG sync.WaitGroup
+	shutdownWG.Add(2)
+	go func() {
+		defer shutdownWG.Done()
+		shutdown("proxy correlation", proxyCorrelationServer)
+	}()
+	go func() {
+		defer shutdownWG.Done()
+		shutdown("http", httpServer)
+	}()
+	shutdownWG.Wait()
 }
 
 func dataVolumeProvisionerConfig(cfg config.Config) (store.DataVolumeProvisionerConfig, error) {

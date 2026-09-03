@@ -114,6 +114,13 @@ type Server struct {
 	schedulerWake        chan struct{}
 	schedulerRunsMu      sync.Mutex
 	schedulerRunsActive  map[string]struct{}
+
+	// shutdownCh is closed before the HTTP servers begin graceful shutdown. Long
+	// lived streams (SSE/WebSocket) select on it because net/http.Server.Shutdown
+	// does not cancel active request contexts; without this signal they can keep
+	// Shutdown waiting until its deadline expires.
+	shutdownOnce sync.Once
+	shutdownCh   chan struct{}
 }
 
 type sessionOwnerEntry struct {
@@ -203,10 +210,33 @@ func New(
 		sessionOwnerCache:   make(map[string]sessionOwnerEntry),
 		schedulerWake:       make(chan struct{}, 1),
 		schedulerRunsActive: make(map[string]struct{}),
+		shutdownCh:          make(chan struct{}),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
+}
+
+// BeginShutdown asks long-lived application streams to return. It is safe to
+// call more than once and is deliberately separate from http.Server.Shutdown:
+// the latter only stops accepting new connections and waits for active handlers
+// to become idle, while stream handlers need an application-level stop signal.
+func (s *Server) BeginShutdown() {
+	if s == nil {
+		return
+	}
+	s.shutdownOnce.Do(func() {
+		if s.shutdownCh != nil {
+			close(s.shutdownCh)
+		}
+	})
+}
+
+func (s *Server) shutdownSignal() <-chan struct{} {
+	if s == nil {
+		return nil
+	}
+	return s.shutdownCh
 }
 
 // SetShareBlobStore installs the snapshot store for public link files. It is
