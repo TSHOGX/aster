@@ -81,6 +81,9 @@ export const ZH: Record<MessageKey, string> = {
   "composer.sessionEnded": "会话已结束，新建一个继续。",
   "composer.thinking": "智能体正在思考…",
   "composer.send": "发送",
+  "composer.stop": "停止",
+  "composer.stopping": "正在停止…",
+  "composer.stopFailed": "无法停止本轮任务",
   "composer.hint": "Enter 发送 · Shift+Enter 换行",
   "composer.busy": "会话正忙或已结束。",
 

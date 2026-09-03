@@ -834,6 +834,32 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     onConnectionChange: setConnection
   });
 
+  // SSE is the low-latency path, not the source of truth. A missed event or a
+  // backend worker that died after committing SQLite can otherwise leave the
+  // sidebar spinning forever. While a turn or checkpoint is active, periodically refresh
+  // only the lightweight session list; the backend reconciliation pass makes
+  // this converge even when no event is emitted.
+  useEffect(() => {
+    if (!authReady) return;
+    let inFlight = false;
+    const tick = () => {
+      if (
+        inFlight ||
+        !stateRef.current.sessions.some(
+          (session) => session.status === "running_active" || session.status === "checkpointing"
+        )
+      ) {
+        return;
+      }
+      inFlight = true;
+      void refreshSessions().finally(() => {
+        inFlight = false;
+      });
+    };
+    const timer = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(timer);
+  }, [authReady, refreshSessions, stateRef]);
+
   const selectSession = useCallback(
     (id: string | null) => {
       const previousId = stateRef.current.selectedId;

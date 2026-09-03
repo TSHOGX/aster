@@ -148,4 +148,17 @@ describe("interruptionKind", () => {
       ])
     ).toBeUndefined();
   });
+
+  it("ignores a late sandbox notice after the turn already completed", () => {
+    // Runtime retirement may append a sandbox_died notice after an idle
+    // generation is reclaimed. A completed reply in the same latest turn wins;
+    // the UI must not show a stale Start over action.
+    expect(
+      interruptionKind([
+        msg({ role: "user" }),
+        msg({ stop_reason: "stop" }),
+        msg({ stop_reason: "sandbox_died" })
+      ])
+    ).toBeUndefined();
+  });
 });

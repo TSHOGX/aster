@@ -97,6 +97,51 @@ class BridgeClientTest(unittest.TestCase):
             self.assertEqual(client.last_output_sequence_by_turn, {42: 7})
             self.assertEqual(client.leased_turn_id, 42)
 
+    def test_hello_advances_resume_boundary_over_pending_outbox(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
+            bridge.Queue(root, bridge.OUTBOX).write(
+                {
+                    "message_id": "pending_output",
+                    "type": "emit_output",
+                    "session_id": "sess",
+                    "generation_id": "gen",
+                    "turn_id": 42,
+                    "payload": {"output_sequence": 12, "stream": "stdout", "payload": {"line": "pending"}},
+                }
+            )
+            response = bridge.Queue(root, bridge.INBOX)
+            sent = client.send("hello", request_id="req_hello")
+            response.write(
+                {
+                    "message_id": "host_msg",
+                    "request_id": sent["request_id"],
+                    "type": "hello_ack",
+                    "session_id": "sess",
+                    "generation_id": "gen",
+                    "payload": {"last_output_sequence_by_turn": {"42": 7}},
+                }
+            )
+
+            with mock.patch.object(
+                client,
+                "wait_response",
+                return_value={"payload": {"last_output_sequence_by_turn": {"42": 7}}},
+            ):
+                client.hello(timeout=0.1)
+            # Sequence 12 is still durable in the local outbox even though the
+            # host has only committed through sequence 7.
+            self.assertEqual(client.last_output_sequence_by_turn, {42: 12})
+
+    def test_producer_lock_rejects_second_claim_loop(self):
+        with tempfile.TemporaryDirectory() as root:
+            first = bridge.BridgeClient(root, "sess", "gen", "pi")
+            second = bridge.BridgeClient(root, "sess", "gen", "pi")
+            first.acquire_producer_lock()
+            self.addCleanup(first.release_producer_lock)
+            with self.assertRaisesRegex(RuntimeError, "another bridge producer"):
+                second.acquire_producer_lock()
+
     def test_hello_sends_bridge_protocol_v2_identity(self):
         with tempfile.TemporaryDirectory() as root:
             client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)

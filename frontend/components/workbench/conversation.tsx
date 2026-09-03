@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bot, RefreshCw, RotateCw, Sparkles } from "lucide-react";
+import { Bot, Loader2, RefreshCw, RotateCw, Sparkles, Square } from "lucide-react";
+import { toast } from "sonner";
 
 import { useActivity, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
 import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
@@ -32,8 +33,9 @@ function ChatConversation() {
   const session = useSelectedSession();
   const convo = useConversation(session?.id ?? null);
   const activity = useActivity(session?.id ?? null);
-  const { sendMessage, refresh } = useHarness();
+  const { sendMessage, interruptSession, refresh } = useHarness();
   const [refreshing, setRefreshing] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
 
@@ -111,6 +113,18 @@ function ChatConversation() {
 
   const activityLive = activity.phase !== "idle";
 
+  const stop = async () => {
+    if (stopping || !session || session.status !== "running_active") return;
+    setStopping(true);
+    const result = await interruptSession(session.id);
+    setStopping(false);
+    if (!result.ok) {
+      // The composer owns the normal inline error surface; a failed stop must
+      // still be visible when the agent composer is disabled by a busy session.
+      toast.error(result.error ?? t("composer.stopFailed"), { duration: 6000 });
+    }
+  };
+
   // Offer to resume a turn that died without answering. Gated on the session
   // being idle and writable: mid-stream, a toolUse tail is simply the turn still
   // working, and on a read-only or ended session there is nothing to resume.
@@ -154,6 +168,19 @@ function ChatConversation() {
             >
               <RefreshCw className={refreshing ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
               Refresh
+            </button>
+          ) : null}
+          {!readOnly && session.status === "running_active" ? (
+            <button
+              type="button"
+              onClick={() => void stop()}
+              disabled={stopping}
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-2 py-1 text-2xs text-[var(--color-danger)] hover:opacity-80 disabled:opacity-60"
+              title={t(stopping ? "composer.stopping" : "composer.stop")}
+              aria-label={t(stopping ? "composer.stopping" : "composer.stop")}
+            >
+              {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : <Square className="h-3 w-3" />}
+              {t(stopping ? "composer.stopping" : "composer.stop")}
             </button>
           ) : null}
           <StatusPill tone={statusTone(session.status)}>{statusLabel(session.status)}</StatusPill>

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import collections
+import fcntl
 import json
 import os
 import subprocess
@@ -184,6 +185,37 @@ class BridgeClient:
         self.outbox = Queue(root, OUTBOX)
         self.last_output_sequence_by_turn = {}
         self.leased_turn_id = None
+        self._producer_lock_fd = None
+
+    def acquire_producer_lock(self):
+        """Ensure only one claim-loop process can produce turn output.
+
+        The bridge directory survives process restarts.  Without a producer
+        fence, a stale client and its replacement can emit the same logical
+        output sequence concurrently, which the host must (correctly) reject
+        as a protocol corruption.  flock is released automatically if the
+        process dies, so a crash never leaves a permanent lockout.
+        """
+        if self._producer_lock_fd is not None:
+            return
+        lock_path = self.root / TMP / "producer.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as err:
+            os.close(fd)
+            raise RuntimeError("another bridge producer is already running") from err
+        self._producer_lock_fd = fd
+
+    def release_producer_lock(self):
+        fd, self._producer_lock_fd = self._producer_lock_fd, None
+        if fd is None:
+            return
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     def envelope(self, message_type, request_id=None, turn_id=None, payload=None):
         envelope = {
@@ -232,6 +264,27 @@ class BridgeClient:
             int(turn_id): int(sequence)
             for turn_id, sequence in (payload.get("last_output_sequence_by_turn") or {}).items()
         }
+        # The host acknowledgement only includes events already committed to
+        # SQLite.  A crash/reconnect can leave durable emit_output files in the
+        # sandbox outbox that have not been consumed yet.  Include those files
+        # in the resume boundary so a replacement producer never reuses a
+        # sequence that is already pending on disk.
+        for _, _, pending in self.outbox.read_all():
+            if pending.get("type") != "emit_output":
+                continue
+            turn_id = pending.get("turn_id")
+            pending_payload = pending.get("payload") or {}
+            sequence = pending_payload.get("output_sequence")
+            if turn_id is None or sequence is None:
+                continue
+            try:
+                turn_id = int(turn_id)
+                sequence = int(sequence)
+            except (TypeError, ValueError):
+                continue
+            self.last_output_sequence_by_turn[turn_id] = max(
+                self.last_output_sequence_by_turn.get(turn_id, 0), sequence
+            )
         self.leased_turn_id = payload.get("leased_turn_id")
         return payload
 
@@ -847,41 +900,45 @@ def execute_grant(client, runner, grant):
 def run_claim_loop(args, runner=None):
     driver_id = args_driver_id(args)
     client = BridgeClient(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
-    client.heartbeat()
-    client.hello(timeout=args.timeout)
-    if driver_id == "pi":
-        run_network_probe(
-            args.base_url,
-            parse_statuses(args.healthz_statuses, {200}),
-            args.http_timeout,
-        )
-    client.probe_network(timeout=args.timeout)
-    client.mark_checkpoint_ready()
-    runner = runner or make_turn_runner(driver_id)
-    stop_heartbeat = start_background_heartbeat(client, args.heartbeat_interval)
-    completed = 0
-    empty_polls = 0
-    resume_turn_id = client.leased_turn_id
+    client.acquire_producer_lock()
     try:
-        while args.max_turns <= 0 or completed < args.max_turns:
-            if resume_turn_id is not None:
-                grant = client.resume_turn(int(resume_turn_id), timeout=args.timeout)
-                resume_turn_id = None
-            else:
-                grant = client.claim_next_turn(timeout=args.timeout)
-            if grant is None:
-                empty_polls += 1
-                if args.max_empty_polls > 0 and empty_polls >= args.max_empty_polls:
-                    return
-                time.sleep(max(args.idle_interval, 0.001))
-                continue
-            empty_polls = 0
-            execute_grant(client, runner, grant)
-            completed += 1
+        client.heartbeat()
+        client.hello(timeout=args.timeout)
+        if driver_id == "pi":
+            run_network_probe(
+                args.base_url,
+                parse_statuses(args.healthz_statuses, {200}),
+                args.http_timeout,
+            )
+        client.probe_network(timeout=args.timeout)
+        client.mark_checkpoint_ready()
+        runner = runner or make_turn_runner(driver_id)
+        stop_heartbeat = start_background_heartbeat(client, args.heartbeat_interval)
+        completed = 0
+        empty_polls = 0
+        resume_turn_id = client.leased_turn_id
+        try:
+            while args.max_turns <= 0 or completed < args.max_turns:
+                if resume_turn_id is not None:
+                    grant = client.resume_turn(int(resume_turn_id), timeout=args.timeout)
+                    resume_turn_id = None
+                else:
+                    grant = client.claim_next_turn(timeout=args.timeout)
+                if grant is None:
+                    empty_polls += 1
+                    if args.max_empty_polls > 0 and empty_polls >= args.max_empty_polls:
+                        return
+                    time.sleep(max(args.idle_interval, 0.001))
+                    continue
+                empty_polls = 0
+                execute_grant(client, runner, grant)
+                completed += 1
+        finally:
+            stop_heartbeat.set()
+            if hasattr(runner, "close"):
+                runner.close()
     finally:
-        stop_heartbeat.set()
-        if hasattr(runner, "close"):
-            runner.close()
+        client.release_producer_lock()
 
 
 def main(argv=None):

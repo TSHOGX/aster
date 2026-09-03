@@ -79,6 +79,9 @@ export const EN = {
   "composer.sessionEnded": "Session ended. Start a new one to continue.",
   "composer.thinking": "Agent is thinking…",
   "composer.send": "Send",
+  "composer.stop": "Stop",
+  "composer.stopping": "Stopping…",
+  "composer.stopFailed": "Unable to stop this turn",
   "composer.hint": "Enter to send · Shift+Enter for newline",
   "composer.busy": "Session is busy or ended.",
 

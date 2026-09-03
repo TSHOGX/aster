@@ -51,19 +51,39 @@ export type InterruptionKind = "model" | "sandbox";
 // Only meaningful once the turn is no longer running; callers must gate on the
 // session not being live, or a healthy in-flight turn reads as interrupted.
 export function interruptionKind(messages: ApiMessage[]): InterruptionKind | undefined {
+  // Work only on the latest user turn. A sandbox-death notice can be appended
+  // later when an already-idle runtime is retired; if that turn already has a
+  // final `stop` reply, the notice must not resurrect a stale Start over action.
+  let lastUser = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "user") {
+      lastUser = i;
+      break;
+    }
+  }
+  let interruption: InterruptionKind | undefined;
+  let completed = false;
+  for (let i = lastUser + 1; i < messages.length; i += 1) {
     const message = messages[i];
-    if (message.role === "user") return undefined;
     if (message.role !== "assistant") continue;
-    if (message.stop_reason === "sandbox_died") return "sandbox";
-    if (message.stop_reason === "error") return "model";
-    if (message.stop_reason === "toolUse") return "model";
-    if (message.stop_reason === "stop") return undefined;
+    if (message.stop_reason === "stop") {
+      interruption = undefined;
+      completed = true;
+      continue;
+    }
+    if (message.stop_reason === "sandbox_died") {
+      if (!completed) interruption = "sandbox";
+      continue;
+    }
+    if (message.stop_reason === "error" || message.stop_reason === "toolUse") {
+      if (!completed) interruption = "model";
+      continue;
+    }
     // Unknown terminator (salvaged text, pre-migration history, shell output):
     // not enough signal to claim interruption.
-    return undefined;
+    interruption = undefined;
   }
-  return undefined;
+  return interruption;
 }
 
 // Whether the last turn was interrupted, regardless of cause. Retained as the
