@@ -45,6 +45,20 @@ type DestroySessionResult struct {
 	EventID       int64
 }
 
+type InterruptSessionParams struct {
+	SessionID    string
+	GenerationID string
+	OwnerUUID    string
+	ErrorClass   string
+	Reason       string
+	Now          time.Time
+}
+
+type InterruptSessionResult struct {
+	SessionStatus string
+	EventIDs      []int64
+}
+
 type Message struct {
 	ID        int64     `json:"id"`
 	SessionID string    `json:"session_id"`
@@ -528,6 +542,131 @@ WHERE generation_id IN (`+sqlPlaceholders(len(generationIDs))+`)
 		return DestroySessionResult{}, err
 	}
 	return DestroySessionResult{GenerationIDs: generationIDs, EventID: eventID}, nil
+}
+
+// InterruptSession cancels the current session work while preserving the
+// session, workspace, and conversation history. Runtime teardown must happen
+// before this transaction is called; once committed, the failed generation is
+// eligible for cleanup and the next user message can allocate a replacement.
+func (s *Store) InterruptSession(ctx context.Context, p InterruptSessionParams) (InterruptSessionResult, error) {
+	if strings.TrimSpace(p.SessionID) == "" {
+		return InterruptSessionResult{}, fmt.Errorf("session id is required")
+	}
+	if strings.TrimSpace(p.GenerationID) == "" {
+		return InterruptSessionResult{}, fmt.Errorf("generation id is required")
+	}
+	if strings.TrimSpace(p.OwnerUUID) == "" {
+		return InterruptSessionResult{}, fmt.Errorf("owner uuid is required")
+	}
+	if p.Now.IsZero() {
+		p.Now = time.Now().UTC()
+	}
+	if strings.TrimSpace(p.ErrorClass) == "" {
+		p.ErrorClass = "user_interrupted"
+	}
+	if strings.TrimSpace(p.Reason) == "" {
+		p.Reason = "interrupted by user"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InterruptSessionResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := assertOwnerTx(ctx, tx, p.OwnerUUID); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	var sessionStatus, activeGeneration string
+	if err := tx.QueryRowContext(ctx, `
+SELECT status, COALESCE(active_generation_id, '')
+FROM sessions WHERE id = ?`, p.SessionID).Scan(&sessionStatus, &activeGeneration); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	if activeGeneration != p.GenerationID {
+		return InterruptSessionResult{}, fmt.Errorf("generation is no longer active")
+	}
+	if sessionStatus != "running_active" {
+		return InterruptSessionResult{}, fmt.Errorf("session is not running")
+	}
+	now := formatTime(p.Now)
+	if _, err := tx.ExecContext(ctx, `
+UPDATE turns
+SET status = 'canceled',
+    completed_at = ?,
+    completed_by_generation = COALESCE(completed_by_generation, generation_id),
+    error_class = ?,
+    error = ?,
+    lease_owner = NULL,
+    lease_expires_at = NULL
+WHERE session_id = ?
+  AND status IN ('queued','leased','running')`, now, p.ErrorClass, p.Reason, p.SessionID); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_generations
+SET status = 'failed',
+    error_class = ?,
+    failure_reason = ?,
+    ended_at = COALESCE(ended_at, ?),
+    lease_owner = NULL,
+    lease_expires_at = NULL
+WHERE generation_id = ?
+  AND session_id = ?
+  AND status NOT IN ('failed','destroyed')`, p.ErrorClass, p.Reason, now, p.GenerationID, p.SessionID); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE network_profiles
+SET allocation_state = 'reclaimable'
+WHERE generation_id = ?
+  AND session_id = ?
+  AND allocation_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID, p.SessionID); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_generation_resources
+SET resource_state = 'reclaimable'
+WHERE generation_id = ?
+  AND resource_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM active_model_request_contexts
+WHERE session_id = ? AND generation_id = ?`, p.SessionID, p.GenerationID); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE sessions
+SET status = 'running_idle',
+    updated_at = ?,
+    restore_ms = NULL,
+    error_class = NULL,
+    failure_reason = NULL
+WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, now, p.SessionID, p.GenerationID); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	eventID, err := appendEventTx(ctx, tx, AppendEventParams{
+		SessionID:    p.SessionID,
+		GenerationID: p.GenerationID,
+		DedupeKey:    "session_interrupted:" + p.GenerationID,
+		Type:         "generation.error",
+		Payload: map[string]any{
+			"terminal":             false,
+			"error_class":          p.ErrorClass,
+			"error":                p.Reason,
+			"generation_id":        p.GenerationID,
+			"session_status":       "running_idle",
+			"session_updated_at":   now,
+			"active_generation_id": p.GenerationID,
+		},
+		Now: p.Now,
+	})
+	if err != nil {
+		return InterruptSessionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InterruptSessionResult{}, err
+	}
+	return InterruptSessionResult{SessionStatus: "running_idle", EventIDs: []int64{eventID}}, nil
 }
 
 func (s *Store) CancelTerminalSessionPendingTurns(ctx context.Context, now time.Time) (int64, error) {

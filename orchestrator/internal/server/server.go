@@ -1815,15 +1815,59 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 		writeError(w, http.StatusConflict, "session is not running")
 		return
 	}
-	if session.Agent != string(agents.Shell) {
-		writeError(w, http.StatusConflict, "interrupt is only supported for shell sessions")
+	if session.Agent == string(agents.Shell) {
+		if err := s.runtime.Interrupt(sessionID); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "interrupting"})
 		return
 	}
-	if err := s.runtime.Interrupt(sessionID); err != nil {
+
+	// Pi/agent sessions do not expose a portable stdin interrupt primitive. The
+	// safe equivalent is to tear down the current generation, then atomically
+	// cancel its turns and return the session to running_idle. Workspace and
+	// conversation data remain intact; the next message cold-starts a fresh
+	// generation. Terminal/missing generations need no runtime call and can be
+	// reconciled directly, which also makes this an escape hatch for stale UI
+	// states after a crash.
+	generationID := strings.TrimSpace(session.ActiveGenerationID)
+	if generationID == "" {
+		writeError(w, http.StatusConflict, "session has no active generation")
+		return
+	}
+	generationStatus, err := s.store.GetRuntimeGenerationStatus(r.Context(), sessionID, generationID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if generationStatus != "failed" && generationStatus != "destroyed" {
+		details, detailsErr := s.runtimeGenerationDetails(r.Context(), sessionID, generationID)
+		if detailsErr != nil {
+			writeError(w, http.StatusInternalServerError, detailsErr.Error())
+			return
+		}
+		if err := s.destroyGenerationRuntime(r.Context(), details); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	result, err := s.store.InterruptSession(r.Context(), store.InterruptSessionParams{
+		SessionID:    sessionID,
+		GenerationID: generationID,
+		OwnerUUID:    s.ownerUUID,
+		ErrorClass:   "user_interrupted",
+		Reason:       "interrupted by user",
+		Now:          time.Now().UTC(),
+	})
+	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "interrupting"})
+	for _, eventID := range result.EventIDs {
+		s.publishDurableEvent(r.Context(), eventID)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": result.SessionStatus})
 }
 
 func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionID string) {

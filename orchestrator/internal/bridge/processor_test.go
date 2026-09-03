@@ -859,7 +859,13 @@ func TestProcessorFailsGenerationOnOutputSequenceMismatch(t *testing.T) {
 	}); err != nil || !ok {
 		t.Fatalf("claim setup: ok=%v err=%v", ok, err)
 	}
-	processor := &Processor{Store: st, Owner: allocation.Owner, LeaseTTL: time.Minute}
+	var failureEventID int64
+	processor := &Processor{
+		Store:            st,
+		Owner:            allocation.Owner,
+		LeaseTTL:         time.Minute,
+		AfterEventCommit: func(_ context.Context, eventID int64) { failureEventID = eventID },
+	}
 	writeOutbox(t, ctx, details.BridgeDirPath, Envelope{
 		MessageID:    "msg_started",
 		RequestID:    "req_started",
@@ -898,6 +904,22 @@ WHERE g.generation_id = ?
 	}
 	if generationStatus != "failed" || generationErrorClass != "bridge_output_sequence_mismatch" || turnStatus != "failed" || turnErrorClass != "bridge_output_sequence_mismatch" {
 		t.Fatalf("unexpected failure state: generation=%s/%s turn=%s/%s", generationStatus, generationErrorClass, turnStatus, turnErrorClass)
+	}
+	var sessionStatus string
+	if err := st.DBForTest().QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&sessionStatus); err != nil {
+		t.Fatalf("query session status: %v", err)
+	}
+	if sessionStatus != "running_idle" {
+		t.Fatalf("failed generation left session status=%s want running_idle", sessionStatus)
+	}
+	var generationErrorCount int
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT COUNT(*) FROM events
+WHERE session_id = ? AND generation_id = ? AND type = 'generation.error'`, sessionID, allocation.GenerationID).Scan(&generationErrorCount); err != nil {
+		t.Fatalf("query generation error event: %v", err)
+	}
+	if generationErrorCount != 1 || failureEventID == 0 {
+		t.Fatalf("failure event count=%d callback_id=%d want one durable event and callback", generationErrorCount, failureEventID)
 	}
 	var outputCount int
 	if err := st.DBForTest().QueryRowContext(ctx, `
@@ -1608,12 +1630,12 @@ func (s storeFailure) CompleteTurn(context.Context, store.CompleteTurnParams) (i
 	return 0, errors.New("unexpected CompleteTurn")
 }
 
-func (s storeFailure) FailGeneration(_ context.Context, _ store.FailGenerationParams) error {
+func (s storeFailure) FailGenerationWithEvent(_ context.Context, _ store.FailGenerationParams) (store.FailGenerationResult, error) {
 	if s.failGenCalled != nil {
 		*s.failGenCalled = true
-		return nil
+		return store.FailGenerationResult{}, nil
 	}
-	return errors.New("unexpected FailGeneration")
+	return store.FailGenerationResult{}, errors.New("unexpected FailGeneration")
 }
 
 func (s storeFailure) AppendEvent(context.Context, store.AppendEventParams) (int64, error) {

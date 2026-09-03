@@ -19,7 +19,7 @@ type Store interface {
 	ResumeTurn(context.Context, store.ResumeTurnParams) (store.TurnGrant, bool, error)
 	AckTurnStarted(context.Context, store.AckStartedParams) (int64, error)
 	CompleteTurn(context.Context, store.CompleteTurnParams) (int64, error)
-	FailGeneration(context.Context, store.FailGenerationParams) error
+	FailGenerationWithEvent(context.Context, store.FailGenerationParams) (store.FailGenerationResult, error)
 	AppendEvent(context.Context, store.AppendEventParams) (int64, error)
 }
 
@@ -33,7 +33,12 @@ type Processor struct {
 	Now                     func() time.Time
 	ProbeHandler            func(context.Context, Envelope) error
 	AfterCommit             func(context.Context, Envelope, int64)
-	connected               map[string]bridgeState
+	// AfterEventCommit is used for durable events produced by a failure path that
+	// has no committed bridge envelope of its own (for example a protocol
+	// sequence mismatch). It deliberately receives only the event id so callers
+	// cannot accidentally route the triggering envelope a second time.
+	AfterEventCommit func(context.Context, int64)
+	connected        map[string]bridgeState
 }
 
 var errProtocol = errors.New("bridge protocol error")
@@ -323,8 +328,12 @@ func (p *Processor) handle(ctx context.Context, inbox Queue, envelope Envelope) 
 			Now:            now,
 		})
 		if err != nil && store.IsDuplicateOutputSequenceMismatch(err) {
-			if failErr := p.failGeneration(ctx, envelope, "bridge_output_sequence_mismatch", err.Error(), now); failErr != nil {
+			eventID, failErr := p.failGeneration(ctx, envelope, "bridge_output_sequence_mismatch", err.Error(), now)
+			if failErr != nil {
 				return fmt.Errorf("%w; additionally failed to retire generation: %v", err, failErr)
+			}
+			if eventID != 0 && p.AfterEventCommit != nil {
+				p.AfterEventCommit(ctx, eventID)
 			}
 			return protocolError(err)
 		}
@@ -365,8 +374,12 @@ func (p *Processor) handle(ctx context.Context, inbox Queue, envelope Envelope) 
 				// of permanently failing the generation.
 				return err
 			}
-			if failErr := p.failGeneration(ctx, envelope, completionFailureClass(err), err.Error(), now); failErr != nil {
+			failureEventID, failErr := p.failGeneration(ctx, envelope, completionFailureClass(err), err.Error(), now)
+			if failErr != nil {
 				return fmt.Errorf("%w; additionally failed to retire generation: %v", err, failErr)
+			}
+			if failureEventID != 0 && p.AfterEventCommit != nil {
+				p.AfterEventCommit(ctx, failureEventID)
 			}
 			return nil
 		}
@@ -507,12 +520,12 @@ func validateEmitOutputPayload(payload emitOutputPayload) error {
 	}
 }
 
-func (p *Processor) failGeneration(ctx context.Context, envelope Envelope, errorClass, reason string, now time.Time) error {
+func (p *Processor) failGeneration(ctx context.Context, envelope Envelope, errorClass, reason string, now time.Time) (int64, error) {
 	turnID := int64(0)
 	if envelope.TurnID != nil {
 		turnID = *envelope.TurnID
 	}
-	return p.Store.FailGeneration(ctx, store.FailGenerationParams{
+	params := store.FailGenerationParams{
 		SessionID:    envelope.SessionID,
 		GenerationID: envelope.GenerationID,
 		TurnID:       turnID,
@@ -520,7 +533,9 @@ func (p *Processor) failGeneration(ctx context.Context, envelope Envelope, error
 		ErrorClass:   errorClass,
 		Reason:       reason,
 		Now:          now,
-	})
+	}
+	result, err := p.Store.FailGenerationWithEvent(ctx, params)
+	return result.EventID, err
 }
 
 func completionFailureClass(err error) string {

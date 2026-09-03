@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +33,12 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 	}
 	owner := store.GenerationLeaseOwner(s.ownerUUID)
 	processor := &bridge.Processor{
-		Store:           bridgeStore(s.store),
-		Owner:           owner,
-		LeaseTTL:        s.cfg.Harness.Bridge.LeaseTTL.Duration,
-		AckStartedGrace: s.cfg.Harness.Bridge.AckStartedGrace.Duration,
-		AfterCommit:     s.handleBridgeCommittedEnvelope,
+		Store:            bridgeStore(s.store),
+		Owner:            owner,
+		LeaseTTL:         s.cfg.Harness.Bridge.LeaseTTL.Duration,
+		AckStartedGrace:  s.cfg.Harness.Bridge.AckStartedGrace.Duration,
+		AfterCommit:      s.handleBridgeCommittedEnvelope,
+		AfterEventCommit: s.publishDurableEvent,
 	}
 	touchHostHeartbeat := func(generation store.BridgePollGeneration, now time.Time) {
 		if err := bridge.TouchHeartbeat(generation.BridgeDirPath, bridge.HostHeartbeatFile, now); err != nil && !errors.Is(err, context.Canceled) {
@@ -110,13 +113,11 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 	}
 
 	// Ticks are dispatched to workers over one-slot channels, and the select loop
-	// below only ever does a non-blocking send. This is what actually keeps the
-	// loop responsive: `stage` blocks until its work finishes or its deadline
-	// expires, so calling it inline would stall the loop for the whole deadline
-	// and starve the other tickers — exactly the failure being fixed, just with a
-	// bound. A full channel means that worker is still busy, so the tick is
-	// dropped rather than queued; there is no value in replaying a stale one.
-	spawnWorker := func(run func(time.Time)) chan<- time.Time {
+	// below only ever does a non-blocking send. A full channel means that worker is
+	// still busy, so the tick is dropped rather than queued; there is no value in
+	// replaying a stale one. Drop warnings are rate-limited so a 5ms bridge poll
+	// cannot flood the log while one bounded poll is draining.
+	spawnWorker := func(label string, run func(time.Time)) chan<- time.Time {
 		ticks := make(chan time.Time, 1)
 		go func() {
 			for {
@@ -130,15 +131,29 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		}()
 		return ticks
 	}
+	var dispatchMu sync.Mutex
+	lastDropLog := make(map[string]time.Time)
 	dispatch := func(ticks chan<- time.Time, now time.Time, label string) {
 		select {
 		case ticks <- now:
 		default:
-			s.log.Warn("maintenance worker still busy, dropping tick", "worker", label)
+			dispatchMu.Lock()
+			last := lastDropLog[label]
+			if time.Since(last) >= 5*time.Second {
+				lastDropLog[label] = time.Now()
+				s.log.Warn("maintenance worker still busy, dropping tick", "worker", label)
+			}
+			dispatchMu.Unlock()
 		}
 	}
 
 	runMaintenance := func(now time.Time) {
+		// This process-level heartbeat is independent of sandbox availability.
+		// A host heartbeat only exists when at least one sandbox is live, which
+		// made the old operator probe ambiguous during a platform-wide outage.
+		// Touching it at the start of every maintenance pass gives operators a
+		// direct liveness signal for the loop itself.
+		s.touchMaintenanceHeartbeat(now)
 		stage("session_expiry", func(stageCtx context.Context) {
 			if s.cfg.SessionRetention == 0 {
 				if _, err := s.store.ClearActiveSessionExpiry(stageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
@@ -166,6 +181,31 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		stage("pending_turn_cleanup", func(stageCtx context.Context) {
 			if _, err := s.store.CancelTerminalSessionPendingTurns(stageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
 				s.log.Warn("terminal-session turn cleanup failed", "error", err)
+			}
+		})
+		// Reconcile durable state drift before attempting any new fallback. This
+		// covers failures that already marked a generation terminal (and therefore
+		// no longer qualify for expiry recovery), including the historical
+		// running_active + failed-generation shape.
+		stage("session_state_reconciliation", func(stageCtx context.Context) {
+			repaired, err := s.store.ReconcileStaleSessionStates(stageCtx, store.SessionRuntimeReconciliationParams{
+				OwnerUUID: s.ownerUUID,
+				Now:       now,
+			})
+			if err != nil {
+				if !errors.Is(err, context.Canceled) {
+					s.log.Warn("stale session state reconciliation failed", "error", err)
+				}
+				return
+			}
+			for _, repair := range repaired {
+				if repair.EventID != 0 {
+					s.publishDurableEvent(stageCtx, repair.EventID)
+				}
+				s.log.Warn("reconciled stale session runtime state",
+					"session_id", repair.SessionID,
+					"generation_id", repair.GenerationID,
+					"session_status", repair.SessionStatus)
 			}
 		})
 		// Shells out to `runsc kill`/`delete` — the stage that wedged in the 34h
@@ -247,7 +287,13 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		})
 	}
 	pollBridge := func(now time.Time) {
-		generations, err := s.store.ListBridgePollGenerations(ctx, owner, now, s.cfg.Harness.Bridge.AckStartedGrace.Duration)
+		// Bridge polling is an availability-critical I/O loop. A single bounded
+		// poll is enough here: unlike cleanup, ProcessOnce does not shell out to
+		// runsc, so a short deadline protects the ticker without creating a
+		// goroutine/timer per 5ms tick.
+		pollCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		generations, err := s.store.ListBridgePollGenerations(pollCtx, owner, now, s.cfg.Harness.Bridge.AckStartedGrace.Duration)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				s.log.Warn("bridge generation list failed", "error", err)
@@ -256,7 +302,7 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		}
 		for _, generation := range generations {
 			processor.MarkReady(generation.SessionID, generation.GenerationID)
-			if err := processor.ProcessOnce(ctx, generation.BridgeDirPath); err != nil {
+			if err := processor.ProcessOnce(pollCtx, generation.BridgeDirPath); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return
 				}
@@ -296,8 +342,8 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 
 	// Steady state: cleanup stages and bridge polling get their own workers, so
 	// neither can delay the other. Bridge polling drives live turn I/O.
-	maintenanceTicks := spawnWorker(runMaintenance)
-	bridgeTicks := spawnWorker(pollBridge)
+	maintenanceTicks := spawnWorker("maintenance", runMaintenance)
+	bridgeTicks := spawnWorker("bridge_poll", pollBridge)
 
 	maintenanceTicker := time.NewTicker(heartbeatInterval)
 	defer maintenanceTicker.Stop()
@@ -312,6 +358,21 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+}
+
+func (s *Server) touchMaintenanceHeartbeat(now time.Time) {
+	root := strings.TrimSpace(s.cfg.Harness.RunDir)
+	if root == "" {
+		return
+	}
+	path := filepath.Join(root, "maintenance-heartbeat")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		s.log.Warn("maintenance heartbeat directory failed", "path", root, "error", err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(now.UTC().Format(time.RFC3339Nano)+"\n"), 0o644); err != nil {
+		s.log.Warn("maintenance heartbeat write failed", "path", path, "error", err)
 	}
 }
 

@@ -3,9 +3,306 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 )
+
+// ReconcileStaleSessionStates repairs the durable state drift left by an
+// interrupted bridge/runtime failure. It is intentionally conservative: only
+// running_active sessions whose active generation is terminal or whose tracked
+// resource is already absent/destroyed are touched. Healthy active generations
+// are left entirely to the heartbeat/lease watchdog.
+//
+// The entire repair for each session happens in one transaction: in-flight
+// leased turns are requeued (they never reached the agent), running turns are
+// failed (their agent context may be gone), the generation is fenced failed
+// when necessary, and the session status plus a durable generation.error event
+// are committed together. This makes the database self-consistent even if the
+// process exits immediately afterwards.
+func (s *Store) ReconcileStaleSessionStates(ctx context.Context, p SessionRuntimeReconciliationParams) ([]SessionRuntimeReconciliation, error) {
+	if p.Now.IsZero() {
+		p.Now = time.Now().UTC()
+	}
+	if strings.TrimSpace(p.OwnerUUID) == "" {
+		return nil, fmt.Errorf("owner uuid is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := assertOwnerTx(ctx, tx, p.OwnerUUID); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `
+SELECT s.id, COALESCE(s.active_generation_id, ''),
+       COALESCE(g.status, ''), COALESCE(ri.state, '')
+FROM sessions s
+LEFT JOIN runtime_generations g
+  ON g.generation_id = s.active_generation_id
+ AND g.session_id = s.id
+LEFT JOIN runtime_resource_instances ri
+  ON ri.generation_id = g.generation_id
+ AND ri.session_id = s.id
+WHERE s.status = 'running_active'
+  AND (
+    g.generation_id IS NULL
+    OR g.status IN ('failed', 'destroyed')
+    OR ri.generation_id IS NULL
+    OR ri.state IN ('destroyed', 'absent_verified')
+  )
+ORDER BY s.updated_at, s.id`)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		sessionID, generationID, generationStatus, resourceState string
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.sessionID, &c.generationID, &c.generationStatus, &c.resourceState); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	now := formatTime(p.Now)
+	result := make([]SessionRuntimeReconciliation, 0, len(candidates))
+	for _, c := range candidates {
+		// Re-check the fence inside the write transaction. A concurrent request
+		// may already have installed a replacement generation since the scan.
+		var currentGeneration, sessionStatus string
+		if err := tx.QueryRowContext(ctx, `
+SELECT COALESCE(active_generation_id, ''), status
+FROM sessions WHERE id = ?`, c.sessionID).Scan(&currentGeneration, &sessionStatus); err != nil {
+			return nil, err
+		}
+		if sessionStatus != "running_active" || currentGeneration != c.generationID {
+			continue
+		}
+
+		// A leased turn has not acknowledged execution and is safe to retry on a
+		// replacement generation. A running turn has crossed the start fence; its
+		// in-memory agent context is no longer trustworthy, so make the loss
+		// explicit instead of replaying it against a dead runtime.
+		stateChanged := false
+		if c.generationID != "" {
+			res, err := tx.ExecContext(ctx, `
+UPDATE turns
+SET status = 'queued',
+    generation_id = NULL,
+    lease_owner = NULL,
+    lease_expires_at = NULL,
+    claim_request_id = NULL,
+    claim_granted_at = NULL,
+    ack_started_at = NULL,
+    attempt = attempt + 1,
+    error_class = NULL,
+    error = NULL
+			WHERE session_id = ?
+			  AND generation_id = ?
+			  AND status = 'leased'`, c.sessionID, c.generationID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected > 0 {
+				stateChanged = true
+			}
+			res, err = tx.ExecContext(ctx, `
+UPDATE turns
+SET status = 'failed',
+    completed_at = ?,
+    completed_by_generation = generation_id,
+    lease_owner = NULL,
+    lease_expires_at = NULL,
+    error_class = 'runtime_reconciled_stall',
+    error = 'active runtime is no longer available'
+			WHERE session_id = ?
+			  AND generation_id = ?
+			  AND status = 'running'`, now, c.sessionID, c.generationID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected > 0 {
+				stateChanged = true
+			}
+		} else {
+			// A running_active session with no active generation is an impossible
+			// but recoverable state. Treat every unowned leased turn as retryable and
+			// every running turn as interrupted; there is no runtime fence left to
+			// safely resume against.
+			res, err := tx.ExecContext(ctx, `
+UPDATE turns
+SET status = 'queued',
+    generation_id = NULL,
+    lease_owner = NULL,
+    lease_expires_at = NULL,
+    claim_request_id = NULL,
+    claim_granted_at = NULL,
+    ack_started_at = NULL,
+    attempt = attempt + 1,
+    error_class = NULL,
+    error = NULL
+WHERE session_id = ? AND status = 'leased'`, c.sessionID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected > 0 {
+				stateChanged = true
+			}
+			res, err = tx.ExecContext(ctx, `
+UPDATE turns
+SET status = 'failed',
+    completed_at = ?,
+    completed_by_generation = generation_id,
+    lease_owner = NULL,
+    lease_expires_at = NULL,
+    error_class = 'runtime_reconciled_stall',
+    error = 'active runtime is no longer available'
+WHERE session_id = ? AND status = 'running'`, now, c.sessionID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected > 0 {
+				stateChanged = true
+			}
+		}
+
+		// If the generation row is still non-terminal, fence it now. Terminal
+		// rows are left untouched but still participate in the session repair.
+		if c.generationID != "" {
+			res, err := tx.ExecContext(ctx, `
+UPDATE runtime_generations
+SET status = 'failed',
+    error_class = 'runtime_reconciled_stall',
+    failure_reason = 'active runtime is no longer available',
+    ended_at = COALESCE(ended_at, ?),
+    lease_owner = NULL,
+    lease_expires_at = NULL
+			WHERE generation_id = ?
+			  AND session_id = ?
+			  AND status NOT IN ('failed', 'destroyed')`, now, c.generationID, c.sessionID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected > 0 {
+				stateChanged = true
+			}
+			res, err = tx.ExecContext(ctx, `
+UPDATE network_profiles
+SET allocation_state = 'reclaimable'
+WHERE generation_id = ?
+  AND session_id = ?
+			  AND allocation_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, c.generationID, c.sessionID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected > 0 {
+				stateChanged = true
+			}
+			res, err = tx.ExecContext(ctx, `
+UPDATE runtime_generation_resources
+SET resource_state = 'reclaimable'
+WHERE generation_id = ?
+  AND resource_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, c.generationID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected > 0 {
+				stateChanged = true
+			}
+		}
+
+		var nextStatus string
+		if err := tx.QueryRowContext(ctx, `
+SELECT CASE WHEN EXISTS (
+         SELECT 1 FROM turns
+         WHERE session_id = ? AND status IN ('queued','leased','running')
+       ) THEN 'running_active' ELSE 'running_idle' END`, c.sessionID).Scan(&nextStatus); err != nil {
+			return nil, err
+		}
+		if c.generationID == "" && nextStatus == "running_active" {
+			// No generation exists to cold-fallback from. Let the next user
+			// message allocate one and claim any queued turns instead of leaving
+			// the session input-blocked forever.
+			nextStatus = "running_idle"
+		}
+		if !stateChanged && nextStatus == sessionStatus {
+			continue
+		}
+		res, err := tx.ExecContext(ctx, `
+UPDATE sessions
+SET status = ?,
+    updated_at = ?,
+    restore_ms = NULL,
+    error_class = NULL,
+    failure_reason = NULL
+WHERE id = ?
+  AND status = 'running_active'
+  AND ((? <> '' AND active_generation_id = ?)
+       OR (? = '' AND active_generation_id IS NULL))`,
+			nextStatus, now, c.sessionID, c.generationID, c.generationID, c.generationID)
+		if err != nil {
+			return nil, err
+		}
+		changed, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if changed != 1 {
+			continue
+		}
+		eventID, err := appendEventTx(ctx, tx, AppendEventParams{
+			SessionID:    c.sessionID,
+			GenerationID: c.generationID,
+			DedupeKey:    "runtime_reconciled:" + c.generationID,
+			Type:         "generation.error",
+			Payload: map[string]any{
+				"terminal":             false,
+				"error_class":          "runtime_reconciled_stall",
+				"error":                "active runtime is no longer available",
+				"generation_id":        c.generationID,
+				"session_status":       nextStatus,
+				"session_updated_at":   now,
+				"active_generation_id": c.generationID,
+			},
+			Now: p.Now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, SessionRuntimeReconciliation{
+			SessionID:     c.sessionID,
+			GenerationID:  c.generationID,
+			SessionStatus: nextStatus,
+			EventID:       eventID,
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
 
 func (s *Store) ListExpiredRuntimeRecoveryCandidates(ctx context.Context, p StartupRecoveryParams) ([]ExpiredRuntimeRecoveryCandidate, error) {
 	if p.Now.IsZero() {
@@ -25,7 +322,8 @@ func (s *Store) ListExpiredRuntimeRecoveryCandidates(ctx context.Context, p Star
 
 	var candidates []ExpiredRuntimeRecoveryCandidate
 	rows, err := tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status
+SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status,
+       EXISTS (SELECT 1 FROM turns t WHERE t.generation_id = g.generation_id AND t.status IN ('leased','running'))
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
 JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
@@ -40,7 +338,7 @@ ORDER BY s.id, g.generation_id`, formatTime(p.Now))
 	}
 	for rows.Next() {
 		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status); err != nil {
+		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status, &c.InterruptedWork); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -53,7 +351,8 @@ ORDER BY s.id, g.generation_id`, formatTime(p.Now))
 
 	ackStartedCutoff := p.Now.Add(-p.AckStartedGrace)
 	rows, err = tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status
+SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status,
+       EXISTS (SELECT 1 FROM turns t WHERE t.generation_id = g.generation_id AND t.status IN ('leased','running'))
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
 JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
@@ -76,7 +375,7 @@ ORDER BY s.id, g.generation_id`, formatTime(ackStartedCutoff), formatTime(ackSta
 	}
 	for rows.Next() {
 		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status); err != nil {
+		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status, &c.InterruptedWork); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -89,7 +388,8 @@ ORDER BY s.id, g.generation_id`, formatTime(ackStartedCutoff), formatTime(ackSta
 
 	cutoff := p.Now.Add(-p.ReconnectGrace)
 	rows, err = tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status
+SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status,
+       EXISTS (SELECT 1 FROM turns t WHERE t.generation_id = g.generation_id AND t.status IN ('leased','running'))
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
 JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
@@ -110,7 +410,7 @@ ORDER BY s.id, g.generation_id`, formatTime(cutoff))
 	}
 	for rows.Next() {
 		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status); err != nil {
+		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status, &c.InterruptedWork); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}

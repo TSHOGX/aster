@@ -171,6 +171,14 @@ type FailGenerationParams struct {
 	Now          time.Time
 }
 
+// FailGenerationResult is the durable outcome of retiring a generation after
+// a bridge/runtime failure. EventID lets the server publish the exact committed
+// event to live subscribers while preserving replay from the events table.
+type FailGenerationResult struct {
+	EventID       int64
+	SessionStatus string
+}
+
 type FailGenerationStartParams struct {
 	SessionID      string
 	GenerationID   string
@@ -999,13 +1007,25 @@ WHERE generation_id = ?
 	return nil
 }
 
+// FailGeneration keeps the historical error-only API for callers that do not
+// need to publish the resulting durable event.
 func (s *Store) FailGeneration(ctx context.Context, p FailGenerationParams) error {
+	_, err := s.FailGenerationWithEvent(ctx, p)
+	return err
+}
+
+// FailGenerationWithEvent atomically retires a failed generation, finishes the
+// associated turn, reconciles the owning session, and records a retryable
+// generation.error event.  The old implementation stopped after updating the
+// turn/generation/resource rows, leaving sessions.running_active forever when a
+// bridge protocol failure bypassed CompleteTurn.
+func (s *Store) FailGenerationWithEvent(ctx context.Context, p FailGenerationParams) (FailGenerationResult, error) {
 	if p.Now.IsZero() {
 		p.Now = time.Now().UTC()
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return FailGenerationResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if p.TurnID != 0 {
@@ -1024,10 +1044,10 @@ WHERE id = ?
 			formatTime(p.Now), nullableString(p.ErrorClass), nullableString(p.Reason), p.TurnID,
 			p.SessionID, p.GenerationID, p.Owner, formatTime(p.Now))
 		if err != nil {
-			return err
+			return FailGenerationResult{}, err
 		}
 		if err := requireOneRow(res, "turn failure CAS failed"); err != nil {
-			return err
+			return FailGenerationResult{}, err
 		}
 	}
 	res, err := tx.ExecContext(ctx, `
@@ -1050,33 +1070,91 @@ WHERE generation_id = ?
 		nullableString(p.ErrorClass), nullableString(p.Reason), formatTime(p.Now), p.GenerationID, p.SessionID,
 		p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID)
 	if err != nil {
-		return err
+		return FailGenerationResult{}, err
 	}
 	if err := requireOneRow(res, "generation failure CAS failed"); err != nil {
-		return err
+		return FailGenerationResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE network_profiles
 SET allocation_state = 'reclaimable'
 WHERE generation_id = ?
-  AND session_id = ?
-  AND allocation_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID, p.SessionID); err != nil {
-		return err
+		AND session_id = ?
+		AND allocation_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID, p.SessionID); err != nil {
+		return FailGenerationResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE runtime_generation_resources
 SET resource_state = 'reclaimable'
 WHERE generation_id = ?
-  AND resource_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID); err != nil {
-		return err
+		AND resource_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID); err != nil {
+		return FailGenerationResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 DELETE FROM active_model_request_contexts
-WHERE session_id = ?
-  AND generation_id = ?`, p.SessionID, p.GenerationID); err != nil {
-		return err
+		WHERE session_id = ?
+		  AND generation_id = ?`, p.SessionID, p.GenerationID); err != nil {
+		return FailGenerationResult{}, err
 	}
-	return tx.Commit()
+
+	// A generation failure is retryable at the session level. Keep the session
+	// input-blocking only when another turn is still queued/leased/running; once
+	// no work remains it must become running_idle so the next user message can
+	// allocate a replacement generation. Guard on active_generation_id so a
+	// concurrent replacement cannot be overwritten.
+	res, err = tx.ExecContext(ctx, `
+UPDATE sessions
+SET status = CASE
+      WHEN EXISTS (
+        SELECT 1 FROM turns
+        WHERE turns.session_id = sessions.id
+          AND turns.status IN ('queued','leased','running')
+      ) THEN 'running_active'
+      ELSE 'running_idle'
+    END,
+    updated_at = ?,
+    restore_ms = NULL,
+    error_class = NULL,
+    failure_reason = NULL
+WHERE id = ?
+  AND active_generation_id = ?
+  AND status NOT IN ('failed', 'destroyed')`,
+		formatTime(p.Now), p.SessionID, p.GenerationID)
+	if err != nil {
+		return FailGenerationResult{}, err
+	}
+	if err := requireOneRow(res, "session generation failure CAS failed"); err != nil {
+		return FailGenerationResult{}, err
+	}
+
+	var sessionStatus string
+	if err := tx.QueryRowContext(ctx, `
+SELECT status FROM sessions WHERE id = ? AND active_generation_id = ?`, p.SessionID, p.GenerationID).Scan(&sessionStatus); err != nil {
+		return FailGenerationResult{}, err
+	}
+	eventID, err := appendEventTx(ctx, tx, AppendEventParams{
+		SessionID:    p.SessionID,
+		GenerationID: p.GenerationID,
+		DedupeKey:    "generation_error:" + p.GenerationID,
+		Type:         "generation.error",
+		Payload: map[string]any{
+			"terminal":             false,
+			"error_class":          p.ErrorClass,
+			"error":                p.Reason,
+			"generation_id":        p.GenerationID,
+			"session_status":       sessionStatus,
+			"session_updated_at":   formatTime(p.Now),
+			"active_generation_id": p.GenerationID,
+		},
+		Now: p.Now,
+	})
+	if err != nil {
+		return FailGenerationResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return FailGenerationResult{}, err
+	}
+	return FailGenerationResult{EventID: eventID, SessionStatus: sessionStatus}, nil
 }
 
 func (s *Store) FailGenerationStart(ctx context.Context, p FailGenerationStartParams) (int64, error) {

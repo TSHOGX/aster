@@ -718,7 +718,9 @@ func defaultHarnessConfig() HarnessConfig {
 		Bridge: BridgeConfig{
 			LeaseTTL:                   Duration{Duration: time.Minute},
 			HeartbeatInterval:          Duration{Duration: 30 * time.Second},
-			PollInterval:               Duration{Duration: 5 * time.Millisecond},
+			// Bridge polling is database-backed; 50ms keeps interactive pickup
+			// fast without running a full multi-join query hundreds of times/sec.
+			PollInterval:               Duration{Duration: 50 * time.Millisecond},
 			AckStartedGrace:            Duration{Duration: 90 * time.Second},
 			ReconnectGrace:             Duration{Duration: 30 * time.Second},
 			SandboxHeartbeatStallGrace: Duration{Duration: 90 * time.Second},

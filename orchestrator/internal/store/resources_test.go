@@ -901,6 +901,148 @@ func TestListColdFallbackSessionsReturnsFailedActiveWithQueuedTurns(t *testing.T
 	}
 }
 
+func TestReconcileStaleSessionStatesRepairsFailedGenerationWithoutInflightWork(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID := "sess_stale_running_active"
+	createStoreSession(t, ctx, st, sessionID)
+	createActiveGeneration(t, ctx, st, sessionID, "gen_stale_running_active", GenerationLeaseOwner(owner.UUID))
+	now := time.Now().UTC()
+	if _, err := st.db.ExecContext(ctx, `UPDATE sessions SET status = 'running_active', updated_at = ? WHERE id = ?`, formatTime(now), sessionID); err != nil {
+		t.Fatalf("seed stale running_active state: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generations SET status = 'failed', error_class = 'bridge_output_sequence_mismatch', failure_reason = 'duplicate output_sequence mismatch' WHERE generation_id = ?`, "gen_stale_running_active"); err != nil {
+		t.Fatalf("seed failed generation state: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generation_resources SET resource_state = 'destroyed' WHERE generation_id = ?`, "gen_stale_running_active"); err != nil {
+		t.Fatalf("seed destroyed resource state: %v", err)
+	}
+
+	repaired, err := st.ReconcileStaleSessionStates(ctx, SessionRuntimeReconciliationParams{
+		OwnerUUID: owner.UUID,
+		Now:       now,
+	})
+	if err != nil {
+		t.Fatalf("reconcile stale session: %v", err)
+	}
+	if len(repaired) != 1 || repaired[0].SessionID != sessionID || repaired[0].SessionStatus != "running_idle" || repaired[0].EventID == 0 {
+		t.Fatalf("unexpected reconciliation result: %+v", repaired)
+	}
+	var sessionStatus string
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&sessionStatus); err != nil {
+		t.Fatalf("query reconciled session: %v", err)
+	}
+	if sessionStatus != "running_idle" {
+		t.Fatalf("reconciled session status=%s want running_idle", sessionStatus)
+	}
+	var eventType, eventPayload string
+	if err := st.db.QueryRowContext(ctx, `SELECT type, payload FROM events WHERE event_id = ?`, repaired[0].EventID).Scan(&eventType, &eventPayload); err != nil {
+		t.Fatalf("query reconciliation event: %v", err)
+	}
+	if eventType != "generation.error" || !strings.Contains(eventPayload, "runtime_reconciled_stall") {
+		t.Fatalf("unexpected reconciliation event: type=%s payload=%s", eventType, eventPayload)
+	}
+	second, err := st.ReconcileStaleSessionStates(ctx, SessionRuntimeReconciliationParams{
+		OwnerUUID: owner.UUID,
+		Now:       now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("repeat reconciliation: %v", err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("reconciliation is not idempotent: %+v", second)
+	}
+}
+
+func TestInterruptSessionCancelsTurnAndRetiresGeneration(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID := "sess_interrupt"
+	generationID := "gen_interrupt"
+	createStoreSession(t, ctx, st, sessionID)
+	createActiveGeneration(t, ctx, st, sessionID, generationID, GenerationLeaseOwner(owner.UUID))
+	now := time.Now().UTC()
+	turnID, err := st.EnqueueTurn(ctx, sessionID, "long task", now)
+	if err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE sessions SET status = 'running_active' WHERE id = ?`, sessionID); err != nil {
+		t.Fatalf("set running session: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE turns
+SET status = 'running', generation_id = ?, lease_owner = ?, lease_expires_at = ?
+WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Add(time.Minute)), turnID); err != nil {
+		t.Fatalf("set running turn: %v", err)
+	}
+
+	result, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID:    sessionID,
+		GenerationID: generationID,
+		OwnerUUID:    owner.UUID,
+		Now:          now,
+	})
+	if err != nil {
+		t.Fatalf("interrupt session: %v", err)
+	}
+	if result.SessionStatus != "running_idle" || len(result.EventIDs) != 1 || result.EventIDs[0] == 0 {
+		t.Fatalf("unexpected interrupt result: %+v", result)
+	}
+	var turnStatus, generationStatus, sessionStatus string
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, turnID).Scan(&turnStatus); err != nil {
+		t.Fatalf("query turn: %v", err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM runtime_generations WHERE generation_id = ?`, generationID).Scan(&generationStatus); err != nil {
+		t.Fatalf("query generation: %v", err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&sessionStatus); err != nil {
+		t.Fatalf("query session: %v", err)
+	}
+	if turnStatus != "canceled" || generationStatus != "failed" || sessionStatus != "running_idle" {
+		t.Fatalf("unexpected interrupted state: turn=%s generation=%s session=%s", turnStatus, generationStatus, sessionStatus)
+	}
+}
+
+func TestReconcileStaleSessionStatesKeepsQueuedFallbackInputBlocking(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID := "sess_stale_with_queue"
+	generationID := "gen_stale_with_queue"
+	createStoreSession(t, ctx, st, sessionID)
+	createActiveGeneration(t, ctx, st, sessionID, generationID, GenerationLeaseOwner(owner.UUID))
+	turnID, err := st.EnqueueTurn(ctx, sessionID, "retry me", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE sessions SET status = 'running_active' WHERE id = ?`, sessionID); err != nil {
+		t.Fatalf("set running session: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generations SET status = 'failed' WHERE generation_id = ?`, generationID); err != nil {
+		t.Fatalf("set failed generation: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generation_resources SET resource_state = 'destroyed' WHERE generation_id = ?`, generationID); err != nil {
+		t.Fatalf("set destroyed resource: %v", err)
+	}
+
+	repaired, err := st.ReconcileStaleSessionStates(ctx, SessionRuntimeReconciliationParams{
+		OwnerUUID: owner.UUID,
+		Now:       time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("reconcile queued fallback: %v", err)
+	}
+	if len(repaired) != 1 || repaired[0].SessionStatus != "running_active" {
+		t.Fatalf("queued fallback should remain input-blocking: %+v", repaired)
+	}
+	var turnStatus string
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, turnID).Scan(&turnStatus); err != nil {
+		t.Fatalf("query queued turn: %v", err)
+	}
+	if turnStatus != "queued" {
+		t.Fatalf("queued fallback turn status=%s want queued", turnStatus)
+	}
+}
+
 func TestAllocateShellGenerationHasNoSecretReferences(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)

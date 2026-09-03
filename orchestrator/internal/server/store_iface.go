@@ -29,6 +29,7 @@ type sessionStore interface {
 	UpdateSessionStatusAndActivity(context.Context, string, string, *int64, time.Time) error
 	UpdateSessionTitle(context.Context, string, string, bool) error
 	DestroySession(context.Context, string, time.Time) (store.DestroySessionResult, error)
+	InterruptSession(context.Context, store.InterruptSessionParams) (store.InterruptSessionResult, error)
 	SessionHasActiveTurn(context.Context, string) (bool, error)
 	CountSandboxOccupyingSessions(context.Context) (int, error)
 	GetResourceQuota(context.Context) (store.ResourceQuota, error)
@@ -117,6 +118,7 @@ type generationStore interface {
 	ListDestroyableReclaimableGenerations(context.Context, time.Time, time.Duration) ([]store.ReclaimableGeneration, error)
 	ListExpiredRuntimeRecoveryCandidates(context.Context, store.StartupRecoveryParams) ([]store.ExpiredRuntimeRecoveryCandidate, error)
 	RepairExpiredRuntimeRecovery(context.Context, store.StartupRecoveryParams, []store.ExpiredRuntimeRecoveryCandidate) (store.StartupRecoveryResult, error)
+	ReconcileStaleSessionStates(context.Context, store.SessionRuntimeReconciliationParams) ([]store.SessionRuntimeReconciliation, error)
 	RecordGenerationRuntimeArtifactDigests(context.Context, string, store.GenerationRuntimeArtifactDigests) error
 	ReapResources(context.Context, store.ReaperParams) (store.ReaperResult, error)
 }

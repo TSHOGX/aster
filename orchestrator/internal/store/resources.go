@@ -257,6 +257,23 @@ type StartupRecoveryResult struct {
 	EventIDs               []int64
 }
 
+// SessionRuntimeReconciliation describes one session whose visible lifecycle
+// state was repaired after its active generation stopped being usable. The
+// repair is deliberately retryable: queued turns keep the session
+// running_active for cold fallback, while a session with no remaining work is
+// moved to running_idle.
+type SessionRuntimeReconciliation struct {
+	SessionID     string
+	GenerationID  string
+	SessionStatus string
+	EventID       int64
+}
+
+type SessionRuntimeReconciliationParams struct {
+	OwnerUUID string
+	Now       time.Time
+}
+
 type RenewLiveGenerationsParams struct {
 	Owner    string
 	LeaseTTL time.Duration
@@ -289,6 +306,10 @@ type ExpiredRuntimeRecoveryCandidate struct {
 	// unknown_after_ack_started branch, which fails the turn rather than
 	// requeueing side effects).
 	Cause string
+	// InterruptedWork is true only when this generation had a leased or running
+	// turn. Idle runtime retirement must not create a user-facing
+	// "sandbox died" transcript notice for a task that had already finished.
+	InterruptedWork bool
 }
 
 type GenerationRuntimeArtifactDigests struct {

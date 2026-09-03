@@ -53,9 +53,10 @@ UPDATE runtime_generations
 SET status = 'idle',
     lease_owner = ?,
     lease_expires_at = ?
-WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(-time.Minute).Format(time.RFC3339Nano), allocation.GenerationID); err != nil {
+WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(-3*time.Minute).Format(time.RFC3339Nano), allocation.GenerationID); err != nil {
 		t.Fatalf("expire generation: %v", err)
 	}
+	seedExpiredAckStartedTurnForNotice(t, ctx, st, session.ID, allocation.GenerationID, now)
 	srv := &Server{
 		cfg:     cfg,
 		store:   st,
@@ -65,7 +66,6 @@ WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(
 		log:     slog.Default(),
 	}
 	srv.SetOwnerUUID(owner.UUID)
-
 	if _, err := srv.RecoverExpiredRuntimeResources(ctx, now); err != nil {
 		t.Fatalf("recover expired runtime resources: %v", err)
 	}
@@ -134,9 +134,10 @@ UPDATE runtime_generations
 SET status = 'idle',
     lease_owner = ?,
     lease_expires_at = ?
-WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(-time.Minute).Format(time.RFC3339Nano), allocation.GenerationID); err != nil {
+WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(-3*time.Minute).Format(time.RFC3339Nano), allocation.GenerationID); err != nil {
 		t.Fatalf("expire generation: %v", err)
 	}
+	seedExpiredAckStartedTurnForNotice(t, ctx, st, session.ID, allocation.GenerationID, now)
 	srv := &Server{
 		cfg:     cfg,
 		store:   st,
@@ -169,6 +170,71 @@ SELECT COALESCE(error_class, '') FROM runtime_generations WHERE generation_id = 
 	}
 	if generationErrorClass == sandboxOOMCause {
 		t.Fatal("undiagnosed death must not be recorded as an OOM")
+	}
+}
+
+// seedExpiredAckStartedTurnForNotice makes the recovery candidate represent an
+// actually interrupted turn. An idle generation that has no leased/running turn
+// is a harmless resource retirement and must not create a sandbox-death notice.
+func seedExpiredAckStartedTurnForNotice(t *testing.T, ctx context.Context, st *store.Store, sessionID, generationID string, now time.Time) {
+	t.Helper()
+	turnID, err := st.EnqueueTurn(ctx, sessionID, "interrupted work", now.Add(-2*time.Minute))
+	if err != nil {
+		t.Fatalf("enqueue interrupted turn: %v", err)
+	}
+	if _, err := st.DBForTest().ExecContext(ctx, `
+UPDATE turns
+SET status = 'running',
+    generation_id = ?,
+    lease_owner = ?,
+    lease_expires_at = ?,
+    ack_started_at = ?
+WHERE id = ?`, generationID, store.GenerationLeaseOwner("previous-owner"), now.Add(-3*time.Minute).Format(time.RFC3339Nano), now.Add(-4*time.Minute).Format(time.RFC3339Nano), turnID); err != nil {
+		t.Fatalf("seed interrupted turn: %v", err)
+	}
+}
+
+func TestIdleGenerationRetirementGetsNoNotice(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	now := time.Now().UTC()
+	session := createServerTestSession(t, ctx, st, dir, "sess_idle_retirement", string(sessionstate.RunningIdle), now.Add(-2*time.Minute), nil)
+	cfg := testServerConfig(dir)
+	allocation, err := st.AllocateGeneration(ctx, store.AllocateGenerationParams{
+		SessionID: session.ID,
+		Owner:     store.GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Minute,
+		Now:       now.Add(-3 * time.Minute),
+		Config:    serverTestAllocatorConfig(cfg, session.Agent),
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, session.ID, allocation.GenerationID, allocation.Owner, now.Add(-3*time.Minute+time.Second)); err != nil {
+		t.Fatalf("mark generation live: %v", err)
+	}
+	if _, err := st.DBForTest().ExecContext(ctx, `
+UPDATE runtime_generations
+SET status = 'idle', lease_owner = ?, lease_expires_at = ?
+WHERE generation_id = ?`, store.GenerationLeaseOwner("previous-owner"), now.Add(-time.Minute).Format(time.RFC3339Nano), allocation.GenerationID); err != nil {
+		t.Fatalf("expire generation: %v", err)
+	}
+	srv := &Server{
+		cfg: cfg, store: st, runtime: &recordingRuntime{},
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, events.NewHub()),
+		hub:     events.NewHub(), log: slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+	if _, err := srv.RecoverExpiredRuntimeResources(ctx, now); err != nil {
+		t.Fatalf("recover idle generation: %v", err)
+	}
+	messages, err := st.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("idle generation retirement must not create an interruption notice: %+v", messages)
 	}
 }
 

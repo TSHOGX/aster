@@ -91,8 +91,10 @@ func sandboxDeathNotice(cause string, limitBytes int64) string {
 		"可以让我从中断处继续，但我需要先重新确认当前进度。"
 }
 
-// recordSandboxDeathNotices appends the explanation to each repaired session's
-// transcript.
+// recordSandboxDeathNotices appends the explanation only to repaired sessions
+// that actually had leased/running work. Idle generation retirement is an
+// infrastructure event, not an interrupted user task, and must stay invisible
+// in the conversation transcript.
 //
 // Best-effort and deliberately non-fatal: recovery has already committed by the
 // time this runs, and failing to write an explanation must not undo a repair that
@@ -100,6 +102,12 @@ func sandboxDeathNotice(cause string, limitBytes int64) string {
 func (s *Server) recordSandboxDeathNotices(ctx context.Context, candidates []store.ExpiredRuntimeRecoveryCandidate) {
 	limitBytes := s.cfg.Harness.Runtime.SandboxMemoryLimitBytes
 	for _, candidate := range candidates {
+		if !candidate.InterruptedWork {
+			// An idle generation can be retired after a restart/reconnect grace
+			// timeout even though its last turn completed successfully. Do not tell
+			// the user that a task was interrupted when there was no in-flight work.
+			continue
+		}
 		notice := sandboxDeathNotice(candidate.Cause, limitBytes)
 		if _, err := s.store.AddAssistantMessage(ctx, candidate.SessionID, "assistant", notice, sandboxDeathStopReason); err != nil {
 			if errors.Is(err, context.Canceled) {
