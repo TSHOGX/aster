@@ -36,7 +36,7 @@ The orchestrator serves three trees:
 | POST | `/api/sessions/{id}/messages/{mid}/feedback` | required | set/clear the caller's 👍/👎 on a message |
 | GET | `/api/sessions/{id}/artifacts` | required | list workspace artifacts |
 | POST | `/api/sessions/{id}/artifacts` | required | multipart upload into the workspace |
-| POST | `/api/sessions/{id}/interrupt` | required | interrupt a running shell turn |
+| POST | `/api/sessions/{id}/interrupt` | required | interrupt a running turn (shell signal; agent generation teardown) |
 | POST | `/api/sessions/{id}/shares` | required (owner) | share the session read-only with a user |
 | GET | `/api/sessions/{id}/shares` | required (owner) | list live grants on the session |
 | DELETE | `/api/sessions/{id}/shares/{shareID}` | required (owner) | revoke one grant |

@@ -148,11 +148,16 @@ queue under `/harness-control/bridge`:
 - **Transport** (`Queue`): messages are `NN…N.json` files (20-digit sequence),
   written to `tmp/` then `os.link`'d into the queue with an fsync — atomic and
   crash-safe. Heartbeat and `checkpoint-ready` are timestamp files.
-- **`claim-loop`**: heartbeat → hello → proxy `/healthz` probe →
+- **`claim-loop`**: acquire the per-generation producer lock → heartbeat → hello → proxy `/healthz` probe →
   `probe_network` → mark checkpoint-ready → build the driver runner → loop:
   resume a leased turn (from `hello_ack`) or `claim_next_turn`; on a grant, run the
   driver's `run_turn(content, emit)` where `emit` sends `emit_output`; finish with
   `ack_turn_completed`.
+
+The client resumes output sequence numbers from both the host's committed
+`hello_ack` boundary and any still-pending `emit_output` files in its local
+outbox. The lock prevents two claim-loop producers from sharing one generation;
+the combination makes reconnects crash-safe without reusing a sequence number.
 - **`probe`**: the pre-start reachability check.
 
 `sandbox_source_ip()` reads the first non-loopback address (ignoring any env claim),

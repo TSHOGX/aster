@@ -43,7 +43,7 @@ harness:
   events:      { retention_window: 24h, retention_rows: 1000000, emit_output_batch_max_rows: 64, emit_output_batch_max_age: 100ms }
   probe:       { accept_status: { get_healthz: [200], post_v1_messages: { unauthorized: [401], malformed_authenticated: [400] } },
                  pre_start_attempts: 3, pre_start_interval: 500ms, post_start_attempts: 5, post_start_interval: 1s }
-  bridge:      { lease_ttl: 60s, heartbeat_interval: 30s, poll_interval: 5ms, ack_started_grace: 90s, reconnect_grace: 30s }
+  bridge:      { lease_ttl: 60s, heartbeat_interval: 30s, poll_interval: 50ms, ack_started_grace: 90s, reconnect_grace: 30s }
   runtime:     { command_timeout: 30s, sandbox_memory_limit_bytes: 4294967296, sandbox_pids_limit: 256 }
   maintenance: { stage_timeout: 2m, cold_fallback_interval: 5s }
   scheduler:   { enabled: false, poll_interval: 5s, worker_count: 2, lease_ttl: 2m, default_timeout: 30m, max_retries: 2, retry_backoff: 30s, max_concurrent_runs: 4 }

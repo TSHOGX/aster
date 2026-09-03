@@ -4,7 +4,7 @@
 # 子命令：
 #   status                服务状态 + 是否处于维护模式 + 在途对话数（一屏总览）
 #   inflight              列出正在进行的 turn（queued/leased/running），含归属用户/会话标题、时长与僵尸 lease
-#   zombies               扫描僵尸 session（running_active 但沙箱 bridge 心跳失联，前端永卡 thinking）
+#   zombies               扫描僵尸/状态漂移 session + maintenance 循环卡死
 #   traffic [N]           从 nginx access.log 汇总最近 N 行流量（QPS/状态码/top IP/top 路径），默认 5000
 #   stats [天数]          每日新增提问/回复/会话/活跃用户/新用户，表格 + 纵向柱状图 + sparkline
 #   users [N] [--by=…]    用户维度：会话数/提问数/存储占用/首末活跃日，表格 + 横向条形图
@@ -26,11 +26,18 @@
 set -euo pipefail
 
 # ---- 常量（与 operations.md 第 1、5、9 节保持一致）----
-DB="/var/lib/harness-publish/state/orchestrator.db"
+# Publish remains the production default, while HARNESS_DATA_ROOT/HARNESS_DB
+# make the same diagnostics usable against the local dev harness and staging
+# copies without editing this script.
+DEFAULT_DATA_ROOT="/var/lib/harness-publish"
+if [[ ! -d "$DEFAULT_DATA_ROOT/state" && -d "/var/lib/harness/state" ]]; then
+  DEFAULT_DATA_ROOT="/var/lib/harness"
+fi
+DATA_ROOT="${HARNESS_DATA_ROOT:-$DEFAULT_DATA_ROOT}"
+DB="${HARNESS_DB:-$DATA_ROOT/state/orchestrator.db}"
 NGINX_SITE="/etc/nginx/sites-available/harness-publish"
 MAINT_HTML_DIR="/var/www/harness-maintenance"
 ACCESS_LOG="/var/log/nginx/access.log"
-DATA_ROOT="/var/lib/harness-publish"
 SESS_DIR="$DATA_ROOT/sessions"      # 每 session 的 workspace
 HOME_DIR="$DATA_ROOT/agent-homes"   # 每 session 的 agent HOME（含 pi/claude 轨迹）
 REPO_ROOT="/home/agent-runtime-platform/main"          # 部署源码根（见 operations.md 第 5 节）
@@ -102,6 +109,19 @@ cmd_status() {
     echo "  ${c_grn}无正在进行的 turn — 可安全重启${c_rst}"
   else
     echo "  ${c_yel}${n} 个 turn 在途（其中 running=${live}）— 重启会打断，详见: harness-ctl inflight${c_rst}"
+  fi
+  local drift; drift=$(dbq "SELECT COUNT(*)
+    FROM sessions s
+    LEFT JOIN runtime_generations g
+      ON g.generation_id=s.active_generation_id AND g.session_id=s.id
+    WHERE s.status='running_active'
+      AND (g.generation_id IS NULL OR g.status IN ('failed','destroyed'))
+      AND NOT EXISTS (
+        SELECT 1 FROM turns t
+        WHERE t.session_id=s.id AND t.status IN ($INFLIGHT_STATES)
+      );" 2>/dev/null || echo "?")
+  if [[ "$drift" != "0" ]]; then
+    echo "  ${c_yel}${drift} 个 session 存在状态漂移（running_active 但无活跃 generation/turn）— 后端会自动 reconciliation${c_rst}"
   fi
 }
 
@@ -184,13 +204,49 @@ ZOMBIE_STALL_SECS="${ZOMBIE_STALL_SECS:-180}"
 cmd_zombies() {
   local now_epoch; now_epoch=$(date -u +%s)
   echo "${c_bold}僵尸 session 扫描（running_active + 沙箱心跳失联 > ${ZOMBIE_STALL_SECS}s）：${c_rst}"
+  # A failed generation is no longer bridge-poll eligible, so heartbeat-based
+  # zombie detection alone cannot see the second failure mode: session status
+  # left at running_active after all of its work has already failed. Keep this
+  # check read-only and explicit; the backend reconciliation stage repairs it
+  # automatically, but operators should see the distinction immediately.
+  local drift
+  drift=$(dbq "SELECT s.id, REPLACE(substr(COALESCE(NULLIF(s.title,''),'(无标题)'),1,28),'|','/'),
+                     COALESCE(s.active_generation_id,''),
+                     COALESCE(g.status,'missing'),
+                     (SELECT COUNT(*) FROM turns t
+                        WHERE t.session_id=s.id AND t.status IN ($INFLIGHT_STATES))
+              FROM sessions s
+              LEFT JOIN runtime_generations g
+                     ON g.generation_id=s.active_generation_id
+                    AND g.session_id=s.id
+              WHERE s.status='running_active'
+                AND (g.generation_id IS NULL OR g.status IN ('failed','destroyed'))
+                AND NOT EXISTS (
+                  SELECT 1 FROM turns t
+                  WHERE t.session_id=s.id AND t.status IN ($INFLIGHT_STATES)
+                )
+              ORDER BY s.updated_at;" 2>/dev/null || true)
+  if [[ -n "$drift" ]]; then
+    echo
+    echo "${c_bold}状态漂移（session 仍 running_active，但无在途 turn / generation 已终止）：${c_rst}"
+    printf "  %-24s %-28s %-38s %-10s %s\n" "SESSION" "TITLE" "GENERATION" "GEN" "INFLIGHT"
+    while IFS='|' read -r dsid dtitle dgen dgenstatus dinflight; do
+      [[ -z "$dsid" ]] && continue
+      printf "  %-24s %-28s %-38s %-10s %s\n" "$dsid" "$dtitle" "${dgen:--}" "$dgenstatus" "$dinflight"
+    done <<< "$drift"
+    echo "  ${c_yel}这不是活跃任务，而是状态未收敛；后端 reconciliation 应将其回落为 running_idle。${c_rst}"
+  fi
   # 每个 running_active session：活跃 generation 的 bridge_dir + 该 session 的 inflight turn 数
   local rows
   rows=$(dbq "SELECT s.id, COALESCE(s.active_generation_id,''),
                      COALESCE(r.bridge_dir_path,''),
+                     COALESCE(g.sandbox_last_seen_at,''),
                      (SELECT COUNT(*) FROM turns t
                         WHERE t.session_id=s.id AND t.status IN ($INFLIGHT_STATES))
               FROM sessions s
+              LEFT JOIN runtime_generations g
+                     ON g.generation_id = s.active_generation_id
+                    AND g.session_id = s.id
               LEFT JOIN runtime_resource_instances r
                      ON r.generation_id = s.active_generation_id
               WHERE s.status='running_active'
@@ -202,12 +258,19 @@ cmd_zombies() {
     zombie_check_maintenance_stall
     return 0
   fi
-  printf "  %-24s %-11s %-14s %s\n" "SESSION" "INFLIGHT" "SANDBOX-HB" "判定"
-  local zombies=0 active=0 unknown=0
+  printf "  %-24s %-9s %-14s %-14s %s\n" "SESSION" "INFLIGHT" "SANDBOX-HB" "DB-HB" "判定"
+  local zombies=0 active=0 ingest_stalled=0 unknown=0
   local zlist=()
-  while IFS='|' read -r sid gen bridge inflight; do
+  while IFS='|' read -r sid gen bridge db_seen inflight; do
     [[ -z "$sid" ]] && continue
-    local age_disp verdict
+    local age_disp db_age_disp="无记录" db_age=-1 verdict
+    if [[ -n "$db_seen" ]]; then
+      local dts; dts=$(date -u -d "${db_seen%.*}Z" +%s 2>/dev/null || echo "")
+      if [[ -n "$dts" ]]; then
+        db_age=$(( now_epoch - dts ))
+        db_age_disp="${db_age}s前"
+      fi
+    fi
     if [[ -z "$bridge" ]]; then
       age_disp="无资源"; verdict="${c_yel}无 live 沙箱资源(排查)${c_rst}"; unknown=$((unknown+1))
     else
@@ -220,15 +283,17 @@ cmd_zombies() {
         age_disp="${age}s前"
         if (( age > ZOMBIE_STALL_SECS )); then
           verdict="${c_red}僵尸(沙箱失联)${c_rst}"; zombies=$((zombies+1)); zlist+=("$sid")
+        elif (( db_age < 0 || db_age > ZOMBIE_STALL_SECS )); then
+          verdict="${c_yel}bridge ingest 卡住(文件新鲜/DB陈旧)${c_rst}"; ingest_stalled=$((ingest_stalled+1))
         else
           verdict="${c_grn}活跃${c_rst}"; active=$((active+1))
         fi
       fi
     fi
-    printf "  %-24s %-11s %-14s %b\n" "$sid" "$inflight" "$age_disp" "$verdict"
+    printf "  %-24s %-9s %-14s %-14s %b\n" "$sid" "$inflight" "$age_disp" "$db_age_disp" "$verdict"
   done <<< "$rows"
   echo
-  echo "  ${c_bold}僵尸 ${zombies}${c_rst}，活跃 ${active}，待排查 ${unknown}"
+  echo "  ${c_bold}僵尸 ${zombies}${c_rst}，bridge ingest 卡住 ${ingest_stalled}，活跃 ${active}，待排查 ${unknown}"
   if (( zombies > 0 )); then
     echo "  ${c_yel}僵尸 session：${zlist[*]}${c_rst}"
     echo "  ${c_dim}恢复需人工介入（备份DB→标 generation failed / turn canceled → session 回落 running_idle）。${c_rst}"
@@ -253,14 +318,50 @@ MAINT_STALL_CHILD_SECS="${MAINT_STALL_CHILD_SECS:-300}"
 # 留足抖动余量,静默 > 180s(约 6 个 tick)视为循环停摆。
 MAINT_STALL_HB_SECS="${MAINT_STALL_HB_SECS:-180}"
 BRIDGE_HOST_HB_FILE="host"   # 与 bridge.HostHeartbeatFile 保持一致
+MAINTENANCE_HB_FILE="$DATA_ROOT/run/maintenance-heartbeat"
 zombie_check_maintenance_stall() {
   local now_epoch; now_epoch=$(date -u +%s)
   local pid; pid=$(systemctl show -p MainPID --value harness-publish-orchestrator 2>/dev/null || true)
+  # Local dev runs the same binary outside systemd. Fall back to the launcher
+  # pid files so the loop-health check is not silently skipped there.
+  if [[ -z "$pid" || "$pid" == "0" ]]; then
+    for pid_file in "$DATA_ROOT/run/orchestrator.pid" \
+                    "/var/lib/harness-publish/run/orchestrator.pid" \
+                    "${REPO_ROOT%/}/dev/logs/orchestrator.pid"; do
+      if [[ -r "$pid_file" ]]; then
+        pid=$(tr -d '[:space:]' < "$pid_file")
+        [[ -n "$pid" && "$pid" != "0" ]] && break
+      fi
+    done
+  fi
   [[ -n "$pid" && "$pid" != "0" ]] || return 0
+  if ! as_root kill -0 "$pid" 2>/dev/null; then
+    echo "  ${c_yel}orchestrator pid=${pid} 不存在，maintenance 循环未运行${c_rst}"
+    return 0
+  fi
 
   local findings=0 hb_frozen=0
   echo
   echo "${c_bold}maintenance 循环卡死检测（单点故障，优先于上面的 session 列表）：${c_rst}"
+
+  # Process-level heartbeat is independent of whether any sandbox is live.
+  # Unlike host-heartbeat, it still gives a definitive answer during an empty
+  # platform or a cold-start outage.
+  local maintenance_m; maintenance_m=$(file_mtime "$MAINTENANCE_HB_FILE")
+  if [[ -z "$maintenance_m" && "$MAINTENANCE_HB_FILE" != "/var/lib/harness-publish/run/maintenance-heartbeat" ]]; then
+    maintenance_m=$(file_mtime "/var/lib/harness-publish/run/maintenance-heartbeat")
+  fi
+  if [[ -z "$maintenance_m" ]]; then
+    echo "  ${c_yel}① maintenance-heartbeat 不存在（循环尚未建立或已停止）${c_rst}"
+  else
+    local maintenance_age=$(( now_epoch - maintenance_m ))
+    if (( maintenance_age > MAINT_STALL_HB_SECS )); then
+      findings=$((findings+1)); hb_frozen=1
+      echo "  ${c_red}① maintenance-heartbeat 已冻结 ${maintenance_age}s（阈值 ${MAINT_STALL_HB_SECS}s）${c_rst}"
+    else
+      echo "  ${c_grn}① maintenance-heartbeat 新鲜（${maintenance_age}s 前）— 循环在转${c_rst}"
+    fi
+  fi
 
   # ① 长寿命 runsc **teardown/introspection** 子进程：kill/delete/state/list 正常
   #    秒级返回,跑成分钟级即为挂死。注意必须排除 `runsc ... run` ——那是健康沙箱的
@@ -271,7 +372,7 @@ zombie_check_maintenance_stall() {
          | awk -v t="$MAINT_STALL_CHILD_SECS" '$2>t && /runsc/ && / (kill|delete|state|list)( |$)/' || true)
   if [[ -n "$kids" ]]; then
     findings=$((findings+1))
-    echo "  ${c_red}① orchestrator 有长寿命 runsc 清理子进程（> ${MAINT_STALL_CHILD_SECS}s）：${c_rst}"
+    echo "  ${c_red}② orchestrator 有长寿命 runsc 清理子进程（> ${MAINT_STALL_CHILD_SECS}s）：${c_rst}"
     while read -r kpid ksecs kargs; do
       [[ -z "$kpid" ]] && continue
       local kw; kw=$(as_root cat "/proc/$kpid/wchan" 2>/dev/null || true)
@@ -306,16 +407,16 @@ zombie_check_maintenance_stall() {
     # 没有 live 沙箱 → 没有 host-heartbeat 可采样。退化为"循环是否响应"的直接探测:
     # /healthz 只证明 HTTP 层活着(那次故障里它一直是 200),所以这里只做事实陈述,
     # 不下结论,并给出人工复核入口。
-    echo "  ${c_dim}② 无 live 沙箱,host-heartbeat 无从采样;循环健康度待人工确认${c_rst}"
+    echo "  ${c_dim}③ 无 live 沙箱,host-heartbeat 无从采样（以 ① maintenance-heartbeat 为准）${c_rst}"
     echo "     ${c_dim}复核:发一条消息看能否起沙箱,或 journalctl -u harness-publish-orchestrator -n 20${c_rst}"
   else
     local hb_age=$(( now_epoch - newest ))
     if (( hb_age > MAINT_STALL_HB_SECS )); then
       findings=$((findings+1)); hb_frozen=1
-      echo "  ${c_red}② host-heartbeat 已冻结 ${hb_age}s（阈值 ${MAINT_STALL_HB_SECS}s）${c_rst}"
+      echo "  ${c_red}③ host-heartbeat 已冻结 ${hb_age}s（阈值 ${MAINT_STALL_HB_SECS}s）${c_rst}"
       echo "     ${c_dim}该文件由 maintenance 每 tick 写入,冻结即循环本身已停摆。${c_rst}"
     else
-      echo "  ${c_grn}② host-heartbeat 新鲜（${hb_age}s 前）— maintenance 循环在转${c_rst}"
+      echo "  ${c_grn}③ host-heartbeat 新鲜（${hb_age}s 前）— maintenance 循环在转${c_rst}"
     fi
   fi
 
@@ -952,7 +1053,7 @@ harness-ctl — publish 环境运维 CLI
 用法：
   harness-ctl status                服务/入口/在途对话 一屏总览
   harness-ctl inflight              列出正在进行的 turn（含归属用户、会话标题、时长、僵尸 lease 标注）
-  harness-ctl zombies               扫描僵尸 session（running_active 但沙箱心跳失联）
+  harness-ctl zombies               扫描僵尸/状态漂移 session + maintenance 循环卡死
   harness-ctl traffic [N]           汇总最近 N 行 nginx 流量（默认 5000）
   harness-ctl stats [天数]          每日提问/会话/用户新增表 + 柱状图（默认 14 天）
   harness-ctl users [N] [--by=…]    用户维度用量与存储 Top N（--by=msgs|storage|sessions）
@@ -976,6 +1077,7 @@ harness-ctl — publish 环境运维 CLI
                                     （--timeout=秒 调等待上限，--force 超时也强制重启）
 
 服务名：harness-publish-orchestrator | harness-publish-frontend
+环境变量：HARNESS_DATA_ROOT / HARNESS_DB 可将诊断指向 dev/staging 数据根目录。
 详见 docs/operations.md 第 9 节。
 EOF
 }

@@ -138,10 +138,16 @@ atomic-rename timestamp files.
   authorization window → durable event.
 - `emit_output` → validates positive `output_sequence` (and native-event schema
   when present) → append event; a duplicate-sequence *mismatch* fails the generation.
+- Any generation failure (including a bridge protocol mismatch) uses the atomic
+  `FailGenerationWithEvent` path: turn/generation/resource rows, the retryable
+  session status, and a `generation.error` event commit together. The server
+  publishes the returned event id, so a process crash cannot leave
+  `sessions.status=running_active` pointing at a failed generation.
 - `ack_turn_completed` → `CompleteTurn` with `driver_state_update`; permanent errors
   fail the generation, transient ones are retried (envelope retained).
 
-`RunMaintenance` drives the processor each poll interval: it lists bridge-poll
+`RunMaintenance` first reconciles historical state drift (terminal/missing active
+generations), then drives the processor each poll interval: it lists bridge-poll
 generations, `MarkReady`s them, and runs `ProcessOnce` with an `AfterCommit` hook
 that publishes the durable event and routes `emit_output` to the per-turn
 stream parser and `ack_turn_completed` to a parser flush + artifact scan. Before a

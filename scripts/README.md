@@ -63,11 +63,17 @@ turn 对应的 session 已被删时显示 `?`。用户维度的历史用量见 `
 这是「防止重启打断对话」的依据。
 
 #### `zombies`
-两段输出，纯只读：
+三段输出，纯只读：
 
 1. **僵尸 session 扫描**：`running_active` 但沙箱 bridge 心跳静默 > 180s
-   （`ZOMBIE_STALL_SECS`）的会话。
-2. **maintenance 循环卡死检测**：上一段按 session 的判据只能看到*下游表象*，这段查
+   （`ZOMBIE_STALL_SECS`）的会话。输出同时显示 sandbox 文件心跳和
+   `runtime_generations.sandbox_last_seen_at`；文件新鲜而 DB 陈旧会标成
+   `bridge ingest 卡住`，避免把控制面故障误判成沙箱死亡。
+2. **状态漂移扫描**：`running_active` 但 active generation 已 `failed`/`destroyed`
+   且没有任何在途 turn。这类记录不是仍在运行，而是失败路径留下的状态残留；
+   orchestrator 的 `session_state_reconciliation` stage 会自动将其收敛到
+   `running_idle`，并写入可重放的 `generation.error`。
+3. **maintenance 循环卡死检测**：上一段按 session 的判据只能看到*下游表象*，这段查
    *单点根因*。两条独立判据——① orchestrator 名下有长寿命 `runsc`
    **清理**子进程（`kill`/`delete`/`state`/`list` 跑成分钟级；不含 `run`，那是健康
    沙箱的常驻监督进程）；② host-heartbeat 冻结（该文件由 maintenance 每 tick 写入，

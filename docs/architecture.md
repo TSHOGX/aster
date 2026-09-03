@@ -94,6 +94,14 @@ new one), enqueues the turn, and flips the session to `running_active`. The
 sandbox's bridge then claims the turn, acks start, streams output, and acks
 completion; the session returns to `running_idle`.
 
+The session row is a projection of durable turn and generation state, not an
+independent heartbeat. Every generation failure reconciles that projection in
+the same transaction and emits a replayable `generation.error`; a periodic
+reconciliation pass repairs rows left by older binaries or crashes. The
+frontend keeps SSE as the low-latency path but refreshes the lightweight session
+projection periodically while work is active, so a missed event cannot leave a
+permanent spinner.
+
 `DELETE /api/sessions/{id}` moves the session to `destroyed` and reclaims runtime
 resources while preserving messages, artifacts, workspace, and agent-home.
 
