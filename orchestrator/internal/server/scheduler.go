@@ -81,7 +81,11 @@ func (s *Server) runScheduler(ctx context.Context) {
 				}
 			}
 		}
-		if !s.cfg.Harness.Scheduler.Enabled || !s.store.FeatureEnabled(ctx, "cron_agent") {
+		// Scheduling is controlled by the scheduler config. The feature flag is
+		// an admin UI capability gate and must not silently disable already
+		// persisted user schedules (manual runs and cron runs share the same
+		// durable schedule state).
+		if !s.cfg.Harness.Scheduler.Enabled {
 			return
 		}
 		due, err := s.store.ListDueSchedules(ctx, time.Now().UTC(), workers*2)
@@ -191,13 +195,23 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		if s.log != nil {
 			s.log.Error("schedule run generation start failed", "run_id", run.ID, "error", err)
 		}
-		s.finishScheduleFailure(parent, run, sched, "generation_start", err.Error())
+		if isScheduleBusyError(err) {
+			s.finishScheduleFailureStatus(parent, run, sched, "skipped_busy", "session_busy", "skipped because the previous conversation is still running")
+		} else {
+			s.finishScheduleFailure(parent, run, sched, "generation_start", err.Error())
+		}
 		return
 	}
 	enq, err := s.store.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: id, Content: sched.Prompt, Now: time.Now().UTC()})
 	if err != nil {
 		if s.log != nil {
 			s.log.Error("schedule run enqueue failed", "run_id", run.ID, "error", err)
+		}
+		if isScheduleBusyError(err) {
+			// The target session is busy with an earlier turn. This is a
+			// deliberate skip, not an execution failure.
+			s.finishScheduleFailureStatus(parent, run, sched, "skipped_busy", "session_busy", "skipped because the previous conversation is still running")
+			return
 		}
 		s.finishScheduleFailure(parent, run, sched, "enqueue", err.Error())
 		return
@@ -241,6 +255,16 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 			}
 		}
 	}
+}
+
+func isScheduleBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "cannot accept input") ||
+		strings.Contains(message, "generation lifecycle is busy") ||
+		strings.Contains(message, "session is busy")
 }
 
 // resumeScheduleRun reconciles a schedule run that was already started by an
@@ -359,6 +383,9 @@ func (s *Server) finishScheduleFailure(ctx context.Context, run store.ScheduleRu
 
 func (s *Server) finishScheduleFailureStatus(ctx context.Context, run store.ScheduleRun, sched store.AgentSchedule, status, class, message string) {
 	_ = s.store.FinishScheduleRun(ctx, run.ID, status, class, message, truncateScheduleOutput(message), time.Now().UTC())
+	if status == "skipped_busy" {
+		return
+	}
 	if run.Attempt >= sched.MaxRetries {
 		return
 	}

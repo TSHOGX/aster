@@ -983,14 +983,21 @@ func (s *Store) ensureScheduleColumns(ctx context.Context) error {
 
 func (s *Store) ensureFeatureFlagDefaults(ctx context.Context) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	defaults := []struct{ key, description string }{
-		{"admin_console", "Enable administrator console APIs and UI"},
-		{"cron_agent", "Enable Cron Agent features"},
-		{"skill_store", "Enable Skill Store features"},
-		{"evolution_admin", "Enable semantic-layer evolution administration"},
+	defaults := []struct {
+		key, description string
+		enabled          bool
+	}{
+		{"admin_console", "Enable administrator console APIs and UI", false},
+		{"cron_agent", "Enable Cron Agent features", true},
+		{"skill_store", "Enable Skill Store features", false},
+		{"evolution_admin", "Enable semantic-layer evolution administration", false},
 	}
 	for _, flag := range defaults {
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO feature_flags (key, enabled, description, updated_at, updated_by) VALUES (?, 0, ?, ?, '') ON CONFLICT(key) DO NOTHING`, flag.key, flag.description, now); err != nil {
+		enabled := 0
+		if flag.enabled {
+			enabled = 1
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO feature_flags (key, enabled, description, updated_at, updated_by) VALUES (?, ?, ?, ?, '') ON CONFLICT(key) DO NOTHING`, flag.key, enabled, flag.description, now); err != nil {
 			return err
 		}
 	}

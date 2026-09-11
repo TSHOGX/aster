@@ -211,6 +211,7 @@ function runTone(
   if (status === "queued") return "ready";
   if (status === "running") return "running";
   if (status === "failed" || status === "timed_out") return "failed";
+  if (status === "skipped_busy") return "muted";
   return "muted";
 }
 
@@ -1165,7 +1166,7 @@ function ScheduleDetail({
             <div className="border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-sm font-semibold">{t("schedule.prompt")}</h3>
             </div>
-            <p className="whitespace-pre-wrap px-5 py-4 text-sm leading-6">
+            <p className="break-words whitespace-pre-wrap px-5 py-4 text-sm leading-6">
               {schedule.prompt}
             </p>
           </Card>
@@ -1204,12 +1205,8 @@ function ScheduleDetail({
                           schedule.timezone,
                         )}
                       </span>
-                      <span className="mt-1 block truncate text-xs text-[var(--color-foreground-muted)]">
-                        {run.error ||
-                          run.output_summary ||
-                          (run.session_id
-                            ? t("schedule.openSession")
-                            : t("schedule.noSession"))}
+                      <span className="mt-1 block text-xs text-[var(--color-foreground-muted)]">
+                        {truncateRunSummary(run.error || run.output_summary || (run.session_id ? t("schedule.openSession") : t("schedule.noSession")))}
                       </span>
                     </span>
                     <StatusPill tone={runTone(run.status)}>
@@ -1247,6 +1244,8 @@ function ScheduleDetail({
     </div>
   );
 }
+
+function truncateRunSummary(value: string, maxLength = 120) { const normalized = value.replace(/\s+/g, " ").trim(); return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trimEnd()}…` : normalized; }
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (

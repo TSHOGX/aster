@@ -141,10 +141,10 @@ harness:
     # stuck on "thinking" after a sandbox dies). Must be >= lease_ttl.
     sandbox_heartbeat_stall_grace: 90s
 
-  # Cron Agent is independently gated from maintenance. Enable only after
-  # setting the runtime feature flag `cron_agent` in the control database.
+  # Cron Agent runs independently from maintenance. Persisted schedules are
+  # picked up automatically when this scheduler is enabled.
   scheduler:
-    enabled: false
+    enabled: true
     poll_interval: 5s
     worker_count: 2
     lease_ttl: 2m

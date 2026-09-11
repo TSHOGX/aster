@@ -445,6 +445,7 @@ export const EN = {
   "schedule.status.failed": "Failed",
   "schedule.status.timed_out": "Timed out",
   "schedule.status.canceled": "Canceled",
+  "schedule.status.skipped_busy": "Skipped because previous run is still active",
   "schedule.weekday.mon": "Mon",
   "schedule.weekday.tue": "Tue",
   "schedule.weekday.wed": "Wed",

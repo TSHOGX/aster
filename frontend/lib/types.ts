@@ -180,7 +180,7 @@ export type ApiSchedule = {
 };
 export type ApiScheduleRun = {
   id: string; schedule_id: string; user_id: string; session_id?: string; turn_id?: number;
-  scheduled_at: string; started_at?: string; finished_at?: string; status: "queued"|"running"|"succeeded"|"failed"|"timed_out"|"canceled";
+  scheduled_at: string; started_at?: string; finished_at?: string; status: "queued"|"running"|"succeeded"|"failed"|"timed_out"|"canceled"|"skipped_busy";
   attempt: number; error_class?: string; error?: string; output_summary?: string; created_at: string;
 };
 

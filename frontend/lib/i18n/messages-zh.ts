@@ -429,6 +429,7 @@ export const ZH: Record<MessageKey, string> = {
   "schedule.status.failed": "失败",
   "schedule.status.timed_out": "超时",
   "schedule.status.canceled": "已取消",
+  "schedule.status.skipped_busy": "因上一次仍在执行而跳过",
   "schedule.weekday.mon": "一",
   "schedule.weekday.tue": "二",
   "schedule.weekday.wed": "三",

@@ -706,7 +706,7 @@ func defaultHarnessConfig() HarnessConfig {
 			ColdFallbackInterval: Duration{Duration: 5 * time.Second},
 		},
 		Scheduler: SchedulerConfig{
-			Enabled:           false,
+			Enabled:           true,
 			PollInterval:      Duration{Duration: 5 * time.Second},
 			WorkerCount:       2,
 			LeaseTTL:          Duration{Duration: 2 * time.Minute},
@@ -716,8 +716,8 @@ func defaultHarnessConfig() HarnessConfig {
 			MaxConcurrentRuns: 4,
 		},
 		Bridge: BridgeConfig{
-			LeaseTTL:                   Duration{Duration: time.Minute},
-			HeartbeatInterval:          Duration{Duration: 30 * time.Second},
+			LeaseTTL:          Duration{Duration: time.Minute},
+			HeartbeatInterval: Duration{Duration: 30 * time.Second},
 			// Bridge polling is database-backed; 50ms keeps interactive pickup
 			// fast without running a full multi-join query hundreds of times/sec.
 			PollInterval:               Duration{Duration: 50 * time.Millisecond},
