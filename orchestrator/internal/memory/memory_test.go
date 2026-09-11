@@ -81,11 +81,13 @@ func TestKBPublishAndRepoint(t *testing.T) {
 	mems := []memorystore.SemanticMemory{{
 		Type: "fact", Scope: "doris", Statement: "vhr_data schema changes over time; discover it live.",
 		SupportCount: 4, Confidence: 0.8, Status: "accepted",
+		EvidenceSessionIDs: []string{"s1", "s2"},
 	}}
 	skills := []memorystore.SkillCandidate{{
 		TargetSkillName: "charging-analysis", Title: "Charging analysis",
 		BodyMD: "# Charging analysis\n\n## Procedure\n1. step\n", KBStatus: "observing",
 		SupportCount: 3, Confidence: 0.78,
+		EvidenceSessionIDs: []string{"s1", "s2", "s3"},
 	}}
 
 	digest, err := kb.Publish(mems, skills)
@@ -102,7 +104,7 @@ func TestKBPublishAndRepoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve current: %v", err)
 	}
-	for _, rel := range []string{"facts/INDEX.md", "facts/doris.md", "skills/charging-analysis/SKILL.md"} {
+	for _, rel := range []string{"facts/INDEX.md", "facts/schema-fields.md", "skills/charging-analysis/SKILL.md"} {
 		if _, err := os.Stat(filepath.Join(resolved, rel)); err != nil {
 			t.Fatalf("expected %s in snapshot: %v", rel, err)
 		}

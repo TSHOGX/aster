@@ -215,6 +215,66 @@ func TestUpsertSemanticMemorySupportCount(t *testing.T) {
 	}
 }
 
+// TestDeprecateSemanticMemories covers what makes a per-entry rejection in the
+// KB review UI stick: the row must leave the 'accepted' set that gets published,
+// and a later re-extraction of the same statement must not silently revive it.
+func TestDeprecateSemanticMemories(t *testing.T) {
+	env := newTrajectoryTestStore(t)
+
+	keep := SemanticMemory{Type: "fact", Scope: "doris", Statement: "keep me", Status: "accepted"}
+	drop := SemanticMemory{Type: "fact", Scope: "doris", Statement: "reject me", Status: "accepted"}
+	keepID, err := env.memory.UpsertSemanticMemory(env.ctx, keep, "sess_a")
+	if err != nil {
+		t.Fatalf("upsert keep: %v", err)
+	}
+	dropID, err := env.memory.UpsertSemanticMemory(env.ctx, drop, "sess_a")
+	if err != nil {
+		t.Fatalf("upsert drop: %v", err)
+	}
+	// Both start accepted, as the curator would have left them.
+	for _, id := range []int64{keepID, dropID} {
+		if _, err := env.memory.db.ExecContext(env.ctx,
+			`UPDATE semantic_memories SET status='accepted' WHERE id = ?`, id); err != nil {
+			t.Fatalf("seed accepted status: %v", err)
+		}
+	}
+
+	n, err := env.memory.DeprecateSemanticMemories(env.ctx, []int64{dropID})
+	if err != nil {
+		t.Fatalf("DeprecateSemanticMemories: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("deprecated %d rows, want 1", n)
+	}
+
+	accepted, err := env.memory.ListSemanticMemories(env.ctx, "accepted")
+	if err != nil {
+		t.Fatalf("list accepted: %v", err)
+	}
+	if len(accepted) != 1 || accepted[0].ID != keepID {
+		t.Fatalf("accepted set = %+v, want only the kept memory %d", accepted, keepID)
+	}
+
+	// The publish path lists only 'accepted', so a rejected fact is now invisible
+	// to it. Re-extracting the identical statement bumps support but must NOT
+	// flip the status back, or tonight's cycle would re-render the rejected fact.
+	if _, err := env.memory.UpsertSemanticMemory(env.ctx, drop, "sess_b"); err != nil {
+		t.Fatalf("re-upsert rejected memory: %v", err)
+	}
+	accepted, err = env.memory.ListSemanticMemories(env.ctx, "accepted")
+	if err != nil {
+		t.Fatalf("list accepted after re-upsert: %v", err)
+	}
+	if len(accepted) != 1 {
+		t.Fatalf("re-extraction revived a rejected memory: accepted = %+v", accepted)
+	}
+
+	// An empty id list is a no-op, not a statement-wide UPDATE.
+	if n, err := env.memory.DeprecateSemanticMemories(env.ctx, nil); err != nil || n != 0 {
+		t.Fatalf("empty id list: n=%d err=%v, want 0/nil", n, err)
+	}
+}
+
 // TestNeedsExtractionWatermark checks the (session, stage) watermark gating.
 func TestNeedsExtractionWatermark(t *testing.T) {
 	env := newTrajectoryTestStore(t)

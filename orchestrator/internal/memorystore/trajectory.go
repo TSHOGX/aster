@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -628,6 +629,39 @@ func semanticConfidence(support, contradiction int) float64 {
 	return c
 }
 
+// DeprecateSemanticMemories flips the given ids to 'deprecated' and returns how
+// many rows changed.
+//
+// This is what makes a per-entry rejection in the review UI durable. Removing a
+// fact from the staged snapshot only changes the bytes of that snapshot; the row
+// stays 'accepted', so the next cycle renders the identical fact and the reviewer
+// rejects it again every night. 'deprecated' is excluded from the publish set
+// (graph.go and curator.go both list only 'accepted'), so the fact stays in the
+// DB as evidence without ever reaching a sandbox again.
+func (s *Store) DeprecateSemanticMemories(ctx context.Context, ids []int64) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, formatTime(time.Now().UTC()))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE semantic_memories SET status = 'deprecated', updated_at = ?
+WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return 0, fmt.Errorf("deprecate semantic memories: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("deprecate semantic memories: rows: %w", err)
+	}
+	return int(affected), nil
+}
+
 // ListSemanticMemories returns semantic memories; status="" returns all.
 func (s *Store) ListSemanticMemories(ctx context.Context, status string) ([]SemanticMemory, error) {
 	query := `
@@ -686,16 +720,35 @@ func (s *Store) UpsertSkillCandidate(ctx context.Context, c SkillCandidate) (int
 	if err != nil {
 		return 0, fmt.Errorf("upsert skill candidate: source ids: %w", err)
 	}
-	evidence, err := marshalStringSlice(c.EvidenceSessionIDs)
-	if err != nil {
-		return 0, fmt.Errorf("upsert skill candidate: evidence: %w", err)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("upsert skill candidate: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var previousJSON string
+	_ = tx.QueryRowContext(ctx, `SELECT evidence_session_ids_json FROM skill_candidates WHERE target_skill_name = ?`, c.TargetSkillName).Scan(&previousJSON)
+	var previous []string
+	_ = json.Unmarshal([]byte(previousJSON), &previous)
+	seen := map[string]struct{}{}
+	for _, sid := range append(previous, c.EvidenceSessionIDs...) {
+		sid = strings.TrimSpace(sid)
+		if sid != "" {
+			seen[sid] = struct{}{}
+		}
+	}
+	evidenceIDs := make([]string, 0, len(seen))
+	for sid := range seen {
+		evidenceIDs = append(evidenceIDs, sid)
+	}
+	sort.Strings(evidenceIDs)
+	evidence, err := marshalStringSlice(evidenceIDs)
+	if err != nil {
+		return 0, fmt.Errorf("upsert skill candidate: evidence: %w", err)
+	}
+	support := len(evidenceIDs)
+	if support == 0 {
+		support = 1
+	}
 
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO skill_candidates (
@@ -712,7 +765,7 @@ ON CONFLICT(target_skill_name) DO UPDATE SET
   confidence = excluded.confidence,
   updated_at = excluded.updated_at`,
 		c.TargetSkillName, c.Operation, c.Title, c.BodyMD, sourceIDs,
-		evidence, c.SupportCount, c.Confidence, c.Status, c.KBStatus,
+		evidence, support, c.Confidence, c.Status, c.KBStatus,
 		formatTime(now), formatTime(now)); err != nil {
 		return 0, fmt.Errorf("upsert skill candidate: %w", err)
 	}

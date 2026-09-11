@@ -14,6 +14,8 @@ import (
 // or skill enters the shared KB only when it is repeated, confident, and
 // uncontradicted. Memory can evolve fast; skills evolve slowly.
 const (
+	minFactSupport       = 2
+	minSkillSupport      = 3
 	promoteSupport       = 3
 	promoteConfidence    = 0.75
 	promoteMaxContradict = 0
@@ -49,7 +51,7 @@ func (p *Pipeline) curateAndPublish(ctx context.Context) (Report, error) {
 		return report, fmt.Errorf("list candidate memories: %w", err)
 	}
 	for _, m := range candidates {
-		if qualifies(m.SupportCount, m.Confidence, m.ContradictionCount) {
+		if distinctEvidenceCount(m.EvidenceSessionIDs) >= minFactSupport && qualifies(m.SupportCount, m.Confidence, m.ContradictionCount) {
 			m.Status = "accepted"
 			if _, err := p.store.UpsertSemanticMemory(ctx, m, ""); err != nil {
 				p.log.Warn("curator: accept memory failed", "id", m.ID, "error", err)
@@ -72,6 +74,10 @@ func (p *Pipeline) curateAndPublish(ctx context.Context) (Report, error) {
 	var publish []memorystore.SkillCandidate
 	for _, sk := range skills {
 		if sk.Status == "rejected" {
+			continue
+		}
+		if distinctEvidenceCount(sk.EvidenceSessionIDs) < minSkillSupport {
+			report.SkillCandidates++
 			continue
 		}
 		if !qualifies(sk.SupportCount, sk.Confidence, 0) {

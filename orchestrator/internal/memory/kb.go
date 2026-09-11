@@ -181,6 +181,12 @@ func (k *KB) carryForward(generated map[string]string) map[string]string {
 		if strings.HasPrefix(rel, "facts/") && strings.HasPrefix(string(data), generatedMarker) {
 			return nil
 		}
+		// Distilled skills historically had no marker, but all newly generated
+		// skills do. Drop marked generated skills that are no longer in the
+		// current publish set; human-seeded skills remain carried forward.
+		if strings.HasPrefix(rel, "skills/") && strings.Contains(string(data), generatedMarker) {
+			return nil
+		}
 		out[rel] = string(data)
 		return nil
 	})
@@ -202,14 +208,19 @@ func (k *KB) render(memories []memorystore.SemanticMemory, skills []memorystore.
 	// INDEX.md — the navigation entry every session reads first.
 	files["facts/INDEX.md"] = renderIndex(memories, skills)
 
-	// One facts file per scope, grouping accepted memories.
-	byScope := map[string][]memorystore.SemanticMemory{}
+	// One facts file per bounded canonical group. Fine-grained scopes become
+	// headings inside the group file, so a noisy LLM scope cannot create a new
+	// filesystem object on every night.
+	byGroup := map[string][]memorystore.SemanticMemory{}
 	for _, m := range memories {
-		scope := defaultString(m.Scope, "global")
-		byScope[scope] = append(byScope[scope], m)
+		if distinctEvidenceCount(m.EvidenceSessionIDs) < minFactSupport {
+			continue
+		}
+		group := classifyFileGroup(m.Type, m.Scope, m.Statement, m.WhenToApply)
+		byGroup[group] = append(byGroup[group], m)
 	}
-	for scope, mems := range byScope {
-		files[fmt.Sprintf("facts/%s.md", slugify(scope))] = renderFactsFile(scope, mems)
+	for group, mems := range byGroup {
+		files[fmt.Sprintf("facts/%s.md", group)] = renderFactsFile(group, mems)
 	}
 
 	// One SKILL.md per skill.
@@ -227,7 +238,7 @@ func renderIndex(memories []memorystore.SemanticMemory, skills []memorystore.Ski
 	b.WriteString("This directory is mounted read-only at `/agents` in every sandbox. ")
 	b.WriteString("It is grown automatically from past session trajectories. Consult it before starting recurring tasks; prefer an existing `in-use` skill over reinventing an approach.\n\n")
 	b.WriteString("## Layout\n")
-	b.WriteString("- `facts/` — small, searchable knowledge notes grouped by scope.\n")
+	b.WriteString("- `facts/` — searchable knowledge notes grouped by a bounded canonical file group; fine-grained scopes are headings inside each file.\n")
 	b.WriteString("- `skills/<name>/SKILL.md` — curated procedures. Each carries a frontmatter `status:` key: `in-use` (trusted, prefer it), `observing` (provisional, use with judgement), `deprecated` (do not follow).\n")
 	b.WriteString("- `data/` — bulky reference material.\n\n")
 	b.WriteString("## Skills\n")
@@ -239,37 +250,60 @@ func renderIndex(memories []memorystore.SemanticMemory, skills []memorystore.Ski
 	for _, sk := range sorted {
 		fmt.Fprintf(&b, "- **%s** (`%s`) — `skills/%s/SKILL.md`\n", sk.Title, sk.KBStatus, slugify(sk.TargetSkillName))
 	}
-	b.WriteString("\n## Fact scopes\n")
-	scopes := map[string]int{}
+	b.WriteString("\n## Fact groups\n")
+	groups := map[string]int{}
 	for _, m := range memories {
-		scopes[defaultString(m.Scope, "global")]++
+		if distinctEvidenceCount(m.EvidenceSessionIDs) < minFactSupport {
+			continue
+		}
+		groups[classifyFileGroup(m.Type, m.Scope, m.Statement, m.WhenToApply)]++
 	}
-	if len(scopes) == 0 {
+	if len(groups) == 0 {
 		b.WriteString("_(none yet)_\n")
 	}
-	names := make([]string, 0, len(scopes))
-	for s := range scopes {
-		names = append(names, s)
+	names := make([]string, 0, len(groups))
+	for group := range groups {
+		names = append(names, group)
 	}
 	sort.Strings(names)
-	for _, s := range names {
-		fmt.Fprintf(&b, "- `facts/%s.md` — %d fact(s)\n", slugify(s), scopes[s])
+	for _, group := range names {
+		fmt.Fprintf(&b, "- `facts/%s.md` — %d fact(s)\n", group, groups[group])
 	}
 	return b.String()
 }
 
-func renderFactsFile(scope string, mems []memorystore.SemanticMemory) string {
+func renderFactsFile(group string, mems []memorystore.SemanticMemory) string {
 	var b strings.Builder
 	b.WriteString(generatedMarker + "\n")
-	fmt.Fprintf(&b, "# Facts: %s\n\n", scope)
-	sorted := append([]memorystore.SemanticMemory(nil), mems...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].SupportCount > sorted[j].SupportCount })
-	for _, m := range sorted {
-		fmt.Fprintf(&b, "- **[%s]** %s", m.Type, strings.TrimSpace(m.Statement))
-		if wta := strings.TrimSpace(m.WhenToApply); wta != "" {
-			fmt.Fprintf(&b, " _(适用: %s)_", wta)
+	fmt.Fprintf(&b, "# Facts: %s\n\n", fileGroupTitle(group))
+	byScope := map[string][]memorystore.SemanticMemory{}
+	for _, m := range mems {
+		scope := defaultString(m.Scope, "global")
+		byScope[scope] = append(byScope[scope], m)
+	}
+	scopes := make([]string, 0, len(byScope))
+	for scope := range byScope {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	for _, scope := range scopes {
+		fmt.Fprintf(&b, "## %s\n\n", scope)
+		sorted := append([]memorystore.SemanticMemory(nil), byScope[scope]...)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			if sorted[i].SupportCount != sorted[j].SupportCount {
+				return sorted[i].SupportCount > sorted[j].SupportCount
+			}
+			return strings.TrimSpace(sorted[i].Statement) < strings.TrimSpace(sorted[j].Statement)
+		})
+		for _, m := range sorted {
+			fmt.Fprintf(&b, "<!-- fact-id:%d -->\n", m.ID)
+			fmt.Fprintf(&b, "- **[%s]** %s", m.Type, strings.TrimSpace(m.Statement))
+			if wta := strings.TrimSpace(m.WhenToApply); wta != "" {
+				fmt.Fprintf(&b, " _(适用: %s)_", wta)
+			}
+			fmt.Fprintf(&b, " — support=%d, confidence=%.2f\n", m.SupportCount, m.Confidence)
 		}
-		fmt.Fprintf(&b, " — support=%d, confidence=%.2f\n", m.SupportCount, m.Confidence)
+		b.WriteByte('\n')
 	}
 	return b.String()
 }
@@ -287,6 +321,9 @@ func renderSkillFile(sk memorystore.SkillCandidate) string {
 	if !strings.HasSuffix(sk.BodyMD, "\n") {
 		b.WriteString("\n")
 	}
+	b.WriteString("\n")
+	b.WriteString(generatedMarker)
+	b.WriteByte('\n')
 	return b.String()
 }
 

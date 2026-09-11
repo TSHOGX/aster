@@ -130,13 +130,62 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		}()
 		return ticks
 	}
+	// A dropped tick is the normal, designed outcome of the non-blocking send
+	// above, not a fault: bridge_poll runs at poll_interval (5ms by default), so
+	// any poll that outlasts one interval necessarily drops the next tick. Logging
+	// each one at WARN put ~200 lines/sec into the journal — 160k lines over six
+	// hours — which buried real warnings and cost disk, while telling us nothing a
+	// rate would not. So drops are counted and reported periodically instead, and
+	// only when the rate is high enough to mean the worker is genuinely saturated
+	// rather than merely contended.
+	dropStats := map[string]int{}
+	var dropMu sync.Mutex
 	dispatch := func(ticks chan<- time.Time, now time.Time, label string) {
 		select {
 		case ticks <- now:
 		default:
-			s.log.Warn("maintenance worker still busy, dropping tick", "worker", label)
+			dropMu.Lock()
+			dropStats[label]++
+			dropMu.Unlock()
 		}
 	}
+	// Report often enough to still be diagnostic, rarely enough to be quiet.
+	go func() {
+		const reportInterval = time.Minute
+		ticker := time.NewTicker(reportInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				dropMu.Lock()
+				dropped := dropStats
+				dropStats = map[string]int{}
+				dropMu.Unlock()
+				for label, count := range dropped {
+					// Express saturation as a share of the ticks that were due, so the
+					// number is comparable across differing intervals.
+					interval := heartbeatInterval
+					if label == "bridge_poll" {
+						interval = pollInterval
+					}
+					due := int(reportInterval / interval)
+					pct := 0.0
+					if due > 0 {
+						pct = float64(count) / float64(due) * 100
+					}
+					// Sustained heavy loss is worth a warning; light contention is
+					// expected and stays at debug.
+					log := s.log.Debug
+					if pct >= 50 {
+						log = s.log.Warn
+					}
+					log("maintenance worker dropped ticks (worker busy)", "worker", label, "dropped", count, "due", due, "pct", fmt.Sprintf("%.1f", pct), "window", reportInterval)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	runMaintenance := func(now time.Time) {
 		stage("session_expiry", func(stageCtx context.Context) {
