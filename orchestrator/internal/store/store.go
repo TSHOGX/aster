@@ -419,56 +419,6 @@ WHERE id = ?`
 	return err
 }
 
-// AlignAutoCheckpointEnabled reconciles the per-session auto_checkpoint flag
-// (and the flag on each session's active generation) with the process-wide
-// configured default. The flag is otherwise snapshotted only at session-create
-// time, so sessions created before a config change would keep the old value
-// forever. Calling this at startup lets an operator flip
-// harness.checkpoint.auto_enabled and have it take effect on existing
-// sessions after a restart.
-//
-// Only non-terminal sessions that are not mid-turn are touched: busy states
-// (running_active, checkpointing) are left alone so we never race an
-// in-flight checkpoint or turn. Returns the number of sessions updated.
-func (s *Store) AlignAutoCheckpointEnabled(ctx context.Context, enabled bool) (int64, error) {
-	flag := boolInt(enabled)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	res, err := tx.ExecContext(ctx, `
-UPDATE sessions
-SET auto_checkpoint_enabled = ?
-WHERE status IN ('created', 'running_idle', 'checkpointed')
-  AND auto_checkpoint_enabled <> ?`, flag, flag)
-	if err != nil {
-		return 0, err
-	}
-	updated, err := res.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET auto_checkpoint_enabled = ?
-WHERE auto_checkpoint_enabled <> ?
-  AND generation_id IN (
-    SELECT active_generation_id FROM sessions
-    WHERE status IN ('created', 'running_idle', 'checkpointed')
-      AND active_generation_id IS NOT NULL
-  )`, flag, flag); err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return updated, nil
-}
-
 func (s *Store) DestroySession(ctx context.Context, id string, now time.Time) (DestroySessionResult, error) {
 	if strings.TrimSpace(id) == "" {
 		return DestroySessionResult{}, fmt.Errorf("session id is required")

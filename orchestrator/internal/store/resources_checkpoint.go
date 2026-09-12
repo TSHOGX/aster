@@ -595,8 +595,18 @@ ORDER BY s.last_activity_at ASC`, formatTime(cutoff), owner, formatTime(now))
 // released (torn down) to free compute. Unlike ListAutoCheckpointCandidates it
 // does not require any checkpoint-image artifacts (checkpoint_path, manifest or
 // bundle digests): releasing takes no runsc checkpoint, so the only
-// requirements are an idle, auto-checkpoint-enabled generation that still owns
-// a live resource, holds a valid lease, and has no in-flight turn.
+// requirements are an idle generation that still owns a live resource, holds a
+// valid lease, and has no in-flight turn.
+//
+// Deliberately NOT gated on sessions/runtime_generations.auto_checkpoint_enabled.
+// That column is a copy of harness.checkpoint.auto_enabled taken when the row
+// was created; the policy itself lives in config and is enforced once, in
+// MonitorIdleSessions. Reading the copy here made the decision depend on what
+// the config said at session-creation time, which needed a startup pass to
+// re-align every row after a config change and still missed rows that were
+// busy during that pass. A per-session opt-out would be a feature in its own
+// right (nothing sets the column per session today); if one is wanted, it
+// belongs in a nullable override column, not in a frozen copy of the default.
 func (s *Store) ListIdleReleaseCandidates(ctx context.Context, owner string, now time.Time, idleThreshold time.Duration) ([]CheckpointCandidate, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -617,11 +627,9 @@ JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
 JOIN runtime_resource_instances ri ON ri.generation_id = g.generation_id
   AND ri.session_id = g.session_id
 WHERE s.status = 'running_idle'
-  AND s.auto_checkpoint_enabled = 1
   AND s.last_activity_at IS NOT NULL
   AND s.last_activity_at <= ?
   AND g.status = 'idle'
-  AND g.auto_checkpoint_enabled = 1
   AND g.lease_owner = ?
   AND g.lease_expires_at > ?
   AND r.resource_state = 'live'

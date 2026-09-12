@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/strutil"
@@ -19,17 +20,21 @@ type GenerationResourceCleanup struct {
 	ControlDirDeleted bool
 	BundleDirDeleted  bool
 	BridgeDirDeleted  bool
-	NetworkDirDeleted bool
-	LogDirDeleted     bool
-	NetnsDeleted      bool
-	HostVethDeleted   bool
-	NftTableDeleted   bool
-	RunscState        string
-	RunscPinEvidence  string
-	IPNetns           string
-	IPLink            string
-	NFT               string
-	FilesystemLstat   map[string]string
+	// BridgeHostDirDeleted covers the host-owned sibling of the bridge dir
+	// (<bridge dir>.host: inbox + host tmp). It was never a cleanup target, so
+	// one directory leaked per generation.
+	BridgeHostDirDeleted bool
+	NetworkDirDeleted    bool
+	LogDirDeleted        bool
+	NetnsDeleted         bool
+	HostVethDeleted      bool
+	NftTableDeleted      bool
+	RunscState           string
+	RunscPinEvidence     string
+	IPNetns              string
+	IPLink               string
+	NFT                  string
+	FilesystemLstat      map[string]string
 }
 
 func (r *Runtime) DestroyGenerationResources(ctx context.Context, details store.RuntimeGenerationDetails) (GenerationResourceCleanup, error) {
@@ -46,6 +51,26 @@ func (r *Runtime) DestroyGenerationResources(ctx context.Context, details store.
 	if err != nil {
 		return cleanup, err
 	}
+
+	// The container goes first. This used to run after the filesystem pass and
+	// be skipped entirely when any path failed to delete, so a persistent
+	// filesystem error (EBUSY, permissions) left the sandbox process alive and
+	// consuming its slot while the reaper retried the same failing delete every
+	// tick. Host processes are the resource that matters; file remnants are
+	// cheap and the absence check below still fails the call until they are gone.
+	containerID, err := runscContainerID(details)
+	if err != nil {
+		return cleanup, err
+	}
+	r.markStoppingByRunscID(containerID)
+	runscBinary, runscPinEvidence, err := r.deleteGenerationRunscContainer(ctx, details, containerID)
+	cleanup.RunscPinEvidence = runscPinEvidence
+	if err != nil {
+		errs = append(errs, fmt.Errorf("delete runsc container %s: %w", containerID, err))
+	} else {
+		cleanup.RunscDeleted = true
+	}
+
 	for _, target := range targets {
 		deleted, err := removeFilesystemCleanupTarget(target)
 		if err != nil {
@@ -61,26 +86,13 @@ func (r *Runtime) DestroyGenerationResources(ctx context.Context, details store.
 			cleanup.BundleDirDeleted = deleted
 		case cleanupTargetBridge:
 			cleanup.BridgeDirDeleted = deleted
+		case cleanupTargetBridgeHost:
+			cleanup.BridgeHostDirDeleted = deleted
 		case cleanupTargetNetwork:
 			cleanup.NetworkDirDeleted = deleted
 		case cleanupTargetLog:
 			cleanup.LogDirDeleted = deleted
 		}
-	}
-	if len(errs) > 0 {
-		return cleanup, errors.Join(errs...)
-	}
-
-	containerID, err := runscContainerID(details)
-	if err != nil {
-		return cleanup, err
-	}
-	runscBinary, runscPinEvidence, err := r.deleteGenerationRunscContainer(ctx, details, containerID)
-	cleanup.RunscPinEvidence = runscPinEvidence
-	if err != nil {
-		errs = append(errs, fmt.Errorf("delete runsc container %s: %w", containerID, err))
-	} else {
-		cleanup.RunscDeleted = true
 	}
 
 	if strings.EqualFold(strings.TrimSpace(r.runscNetwork(details)), "sandbox") {
@@ -123,6 +135,7 @@ const (
 	cleanupTargetBundle          cleanupTargetKind = "bundle"
 	cleanupTargetSpec            cleanupTargetKind = "spec"
 	cleanupTargetBridge          cleanupTargetKind = "bridge"
+	cleanupTargetBridgeHost      cleanupTargetKind = "bridge_host"
 	cleanupTargetNetwork         cleanupTargetKind = "network"
 	cleanupTargetNetworkHosts    cleanupTargetKind = "network_hosts"
 	cleanupTargetLog             cleanupTargetKind = "log"
@@ -147,17 +160,19 @@ func (r *Runtime) generationFilesystemCleanupTargets(details store.RuntimeGenera
 		{kind: cleanupTargetControl, path: details.ControlDirPath, root: runRoot},
 		{kind: cleanupTargetBundle, path: details.BundleDirPath, root: runRoot},
 		{kind: cleanupTargetBridge, path: details.BridgeDirPath, root: runRoot},
+		{kind: cleanupTargetBridgeHost, path: bridge.HostControlRoot(details.BridgeDirPath), root: runRoot},
 		{kind: cleanupTargetLog, path: details.LogDirPath, root: runRoot},
 	}
 	if strings.TrimSpace(details.NetworkHostsPath) != "" {
 		targets = append(targets, filesystemCleanupTarget{kind: cleanupTargetNetwork, path: filepath.Dir(details.NetworkHostsPath), root: runRoot})
 	}
 	expected := map[cleanupTargetKind]string{
-		cleanupTargetControl: filepath.Join(runRoot, "control", generationDir),
-		cleanupTargetBundle:  filepath.Join(runRoot, "runtime", generationDir),
-		cleanupTargetBridge:  filepath.Join(runRoot, "bridge", generationDir),
-		cleanupTargetNetwork: filepath.Join(runRoot, "network", generationDir),
-		cleanupTargetLog:     filepath.Join(runRoot, "logs", generationDir),
+		cleanupTargetControl:    filepath.Join(runRoot, "control", generationDir),
+		cleanupTargetBundle:     filepath.Join(runRoot, "runtime", generationDir),
+		cleanupTargetBridge:     filepath.Join(runRoot, "bridge", generationDir),
+		cleanupTargetBridgeHost: filepath.Join(runRoot, "bridge", generationDir+".host"),
+		cleanupTargetNetwork:    filepath.Join(runRoot, "network", generationDir),
+		cleanupTargetLog:        filepath.Join(runRoot, "logs", generationDir),
 	}
 	for _, target := range targets {
 		if err := validateFilesystemCleanupTarget(target.kind, target.path, expected[target.kind], target.root); err != nil {
