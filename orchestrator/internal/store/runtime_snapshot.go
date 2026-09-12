@@ -72,9 +72,48 @@ type TurnSnapshot struct {
 // SessionRuntimeSnapshot is the whole contract. The same value is served by
 // GET /api/sessions/{id}/runtime and pushed as the `session.runtime` event, so
 // a client has exactly one shape to apply however it arrives.
+// SandboxState is the user-facing answer to "is there a sandbox behind this
+// session right now", derived from the active generation and its resource row.
+// sessions.status cannot answer it: running_idle covers both a warm sandbox
+// waiting for the next turn and a session whose sandbox died or was released,
+// which differ by a cold start (tens of seconds) on the next message.
+type SandboxState string
+
+const (
+	// SandboxLive: a generation is active or idle with live resources; the next
+	// message is picked up immediately.
+	SandboxLive SandboxState = "live"
+	// SandboxStarting: a generation is being allocated/started/probed/restored.
+	SandboxStarting SandboxState = "starting"
+	// SandboxReleased: no usable generation (none yet, failed, destroyed, or
+	// released); the next message cold-starts one.
+	SandboxReleased SandboxState = "released"
+)
+
+// deriveSandboxState maps the active generation's status and resource state
+// onto SandboxState. Empty inputs mean "no active generation".
+func deriveSandboxState(generationStatus, resourceState string) SandboxState {
+	switch generationStatus {
+	case "active", "idle":
+		switch resourceState {
+		case "live", "ready", "allocating", "recreating":
+			return SandboxLive
+		}
+		return SandboxReleased
+	case "allocating", "starting", "probing", "restoring":
+		return SandboxStarting
+	default:
+		return SandboxReleased
+	}
+}
+
 type SessionRuntimeSnapshot struct {
 	SessionID     string `json:"session_id"`
 	SessionStatus string `json:"session_status"`
+	// Sandbox reports whether a sandbox currently backs the session. Carried in
+	// the snapshot because this is the contract every status change pushes or
+	// re-reads; the session list carries the same field for the initial render.
+	Sandbox SandboxState `json:"sandbox"`
 	// Revision is monotonic per session. A client MUST discard a snapshot whose
 	// revision is not greater than the one it already holds: an in-flight GET can
 	// otherwise land after a newer push and resurrect a drained queue entry,
@@ -107,11 +146,17 @@ type queryer interface {
 
 func getSessionRuntimeSnapshot(ctx context.Context, db queryer, sessionID string) (SessionRuntimeSnapshot, error) {
 	var out SessionRuntimeSnapshot
+	var generationStatus, resourceState string
 	if err := db.QueryRowContext(ctx, `
-SELECT status, turn_revision FROM sessions WHERE id = ?`, sessionID).Scan(&out.SessionStatus, &out.Revision); err != nil {
+SELECT s.status, s.turn_revision, COALESCE(g.status, ''), COALESCE(r.resource_state, '')
+FROM sessions s
+LEFT JOIN runtime_generations g ON g.generation_id = s.active_generation_id
+LEFT JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
+WHERE s.id = ?`, sessionID).Scan(&out.SessionStatus, &out.Revision, &generationStatus, &resourceState); err != nil {
 		return SessionRuntimeSnapshot{}, err
 	}
 	out.SessionID = sessionID
+	out.Sandbox = deriveSandboxState(generationStatus, resourceState)
 	out.QueuedTurns = []TurnSnapshot{}
 
 	rows, err := db.QueryContext(ctx, `
@@ -324,4 +369,28 @@ WHERE id = ?
 		return SessionRuntimeSnapshot{}, err
 	}
 	return snapshot, tx.Commit()
+}
+
+// SessionSandboxStates returns the SandboxState of every session in one query,
+// for the session list. Sessions without an active generation are reported as
+// released.
+func (s *Store) SessionSandboxStates(ctx context.Context) (map[string]SandboxState, error) {
+	rows, err := s.reader().QueryContext(ctx, `
+SELECT s.id, COALESCE(g.status, ''), COALESCE(r.resource_state, '')
+FROM sessions s
+LEFT JOIN runtime_generations g ON g.generation_id = s.active_generation_id
+LEFT JOIN runtime_generation_resources r ON r.generation_id = g.generation_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	states := make(map[string]SandboxState)
+	for rows.Next() {
+		var id, generationStatus, resourceState string
+		if err := rows.Scan(&id, &generationStatus, &resourceState); err != nil {
+			return nil, err
+		}
+		states[id] = deriveSandboxState(generationStatus, resourceState)
+	}
+	return states, rows.Err()
 }

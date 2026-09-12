@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDuration, stripMarkdown } from "./format";
+import { formatDuration, statusLabel, stripMarkdown } from "./format";
 
 describe("formatDuration", () => {
   it("renders sub-second values in milliseconds", () => {
@@ -48,5 +48,31 @@ describe("stripMarkdown", () => {
 
   it("unwraps fenced code blocks to their contents", () => {
     expect(stripMarkdown("```js\nconst x = 1;\n```")).toBe("const x = 1;");
+  });
+});
+
+describe("statusLabel", () => {
+  it("tells a warm idle session from one whose sandbox is gone", () => {
+    // Both are running_idle on the server; only the sandbox state differs, and
+    // that difference is a cold start on the next message.
+    expect(statusLabel("running_idle", "live")).toBe("Idle");
+    expect(statusLabel("running_idle", "released")).toBe("Sleeping");
+    expect(statusLabel("running_idle", "starting")).toBe("Waking");
+    // A released ("checkpointed") session is the same thing as far as the user
+    // is concerned: asleep, wakes on the next message.
+    expect(statusLabel("checkpointed", "released")).toBe("Sleeping");
+  });
+
+  it("does not claim a sandbox it cannot see", () => {
+    // Without the field (older payloads, event merges) the safe reading is
+    // asleep: "Idle" promised an instant reply that a cold start cannot keep.
+    expect(statusLabel("running_idle")).toBe("Sleeping");
+  });
+
+  it("leaves the non-idle states alone", () => {
+    expect(statusLabel("running_active", "live")).toBe("Running");
+    expect(statusLabel("created")).toBe("Ready");
+    expect(statusLabel("failed", "released")).toBe("Failed");
+    expect(statusLabel("destroyed")).toBe("Ended");
   });
 });

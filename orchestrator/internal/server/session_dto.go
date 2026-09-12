@@ -24,6 +24,9 @@ type apiSession struct {
 	FailureReason         string     `json:"failure_reason,omitempty"`
 	ErrorClass            string     `json:"error_class,omitempty"`
 	Title                 string     `json:"title"`
+	// Sandbox is store.SandboxState; omitted on payloads that did not look it
+	// up (rename, create), which clients must treat as "unchanged".
+	Sandbox string `json:"sandbox,omitempty"`
 }
 
 func publicSession(session store.Session) apiSession {

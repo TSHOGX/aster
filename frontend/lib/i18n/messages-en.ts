@@ -84,6 +84,13 @@ export const EN = {
   "composer.stopFailed": "Unable to stop this turn",
   "composer.queuePlaceholder": "Send a follow-up — it runs after the current turn",
   "composer.queuedCount": "{count} queued",
+  // generation.error toasts for faults the platform diagnosed itself. The raw
+  // server text is an exit status or a recovery class; users need the consequence.
+  "runtime.fault.sandboxLost":
+    "The sandbox behind this session stopped. Your files are safe; the next message will start a fresh one (this takes a little longer).",
+  "runtime.fault.sandboxOOM":
+    "The sandbox ran out of memory and was stopped. Your files are safe; the next message will start a fresh one.",
+  "composer.wakingSandbox": "Waking the sandbox — the first reply after a pause takes a little longer…",
   "composer.queueCancel": "Remove from queue",
   "composer.queueCancelFailed": "That message is already running — use Stop instead",
   "composer.unavailable": "This session cannot accept messages.",

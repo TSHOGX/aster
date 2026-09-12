@@ -33,6 +33,13 @@ export type ApiSession = {
   auto_checkpoint_enabled?: boolean;
   failure_reason?: string;
   error_class?: string;
+  /**
+   * Whether a sandbox currently backs the session. Independent of `status`:
+   * running_idle covers both a warm sandbox and one that died or was released,
+   * which differ by a cold start on the next message. Absent on payloads that
+   * did not look it up (create, rename) — keep the current value then.
+   */
+  sandbox?: SandboxState;
 };
 
 /**
@@ -62,9 +69,13 @@ export type ApiTurn = {
  * Served identically by GET /api/sessions/{id}/runtime and the `session.runtime`
  * event, so there is one shape to apply however it arrives.
  */
+export type SandboxState = "live" | "starting" | "released";
+
 export type ApiSessionRuntime = {
   session_id: string;
   session_status: SessionStatus;
+  /** See ApiSession.sandbox; carried here because every status change pushes or re-reads this. */
+  sandbox?: SandboxState;
   /**
    * Monotonic per session. Apply a snapshot only when its revision exceeds the
    * one already held: an in-flight GET can otherwise land after a newer push and

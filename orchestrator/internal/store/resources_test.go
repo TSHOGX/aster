@@ -2443,6 +2443,75 @@ WHERE g.generation_id = ?`, allocation.GenerationID).Scan(
 	}
 }
 
+// The sandbox state tells a warm idle session from one whose sandbox is gone,
+// which sessions.status alone cannot: both read running_idle/checkpointed.
+func TestSandboxStateFollowsGenerationLifecycle(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	now := time.Now().UTC()
+	createStoreSession(t, ctx, st, "sess_sandbox_none")
+	allocation := createAutoCheckpointGeneration(t, ctx, st, cfg, "sess_sandbox_live", GenerationLeaseOwner(owner.UUID), now)
+
+	states, err := st.SessionSandboxStates(ctx)
+	if err != nil {
+		t.Fatalf("sandbox states: %v", err)
+	}
+	if states["sess_sandbox_none"] != SandboxReleased {
+		t.Fatalf("session without generation: %q, want released", states["sess_sandbox_none"])
+	}
+	if states["sess_sandbox_live"] != SandboxLive {
+		t.Fatalf("live idle generation: %q, want live", states["sess_sandbox_live"])
+	}
+	snapshot, err := st.GetSessionRuntimeSnapshot(ctx, "sess_sandbox_live")
+	if err != nil {
+		t.Fatalf("runtime snapshot: %v", err)
+	}
+	if snapshot.Sandbox != SandboxLive {
+		t.Fatalf("snapshot sandbox = %q, want live", snapshot.Sandbox)
+	}
+
+	if err := st.ReleaseIdleGeneration(ctx, "sess_sandbox_live", allocation.GenerationID, allocation.Owner, now); err != nil {
+		t.Fatalf("release idle generation: %v", err)
+	}
+	states, err = st.SessionSandboxStates(ctx)
+	if err != nil {
+		t.Fatalf("sandbox states after release: %v", err)
+	}
+	if states["sess_sandbox_live"] != SandboxReleased {
+		t.Fatalf("released generation: %q, want released", states["sess_sandbox_live"])
+	}
+	snapshot, err = st.GetSessionRuntimeSnapshot(ctx, "sess_sandbox_live")
+	if err != nil {
+		t.Fatalf("runtime snapshot after release: %v", err)
+	}
+	if snapshot.Sandbox != SandboxReleased {
+		t.Fatalf("snapshot sandbox after release = %q, want released", snapshot.Sandbox)
+	}
+}
+
+func TestDeriveSandboxState(t *testing.T) {
+	cases := []struct {
+		generation, resource string
+		want                 SandboxState
+	}{
+		{"", "", SandboxReleased},
+		{"idle", "live", SandboxLive},
+		{"active", "live", SandboxLive},
+		{"idle", "reclaimable", SandboxReleased},
+		{"starting", "allocating", SandboxStarting},
+		{"probing", "ready", SandboxStarting},
+		{"restoring", "reserved_checkpointed", SandboxStarting},
+		{"failed", "reclaimable", SandboxReleased},
+		{"checkpointed", "reserved_checkpointed", SandboxReleased},
+	}
+	for _, c := range cases {
+		if got := deriveSandboxState(c.generation, c.resource); got != c.want {
+			t.Errorf("deriveSandboxState(%q, %q) = %q, want %q", c.generation, c.resource, got, c.want)
+		}
+	}
+}
+
 func TestReleaseIdleGenerationRejectsInflightTurn(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)

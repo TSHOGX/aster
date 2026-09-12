@@ -53,7 +53,27 @@ describe("reduceSessionEvent", () => {
     expect(next.sessions[0].status).toBe("running_idle");
     expect(next.sessions[0].updated_at).toBe("2026-05-26T01:01:00Z");
     expect(next.conversations.sess_1.streaming).toEqual([]);
-    expect(next.notifications).toEqual([{ level: "error", message: "runtime failed" }]);
+    expect(next.notifications).toEqual([{ level: "error", message: "runtime failed", errorClass: undefined }]);
+  });
+
+  it("carries the generation error class so the UI can word known faults", () => {
+    const next = reduce(slice(session({ status: "running_idle" })), {
+      type: "generation.error",
+      session_id: "sess_1",
+      payload: {
+        error: "sandbox process exited (exit status 1): FileNotFoundError: ...",
+        error_class: "sandbox_exited",
+        session_status: "running_idle",
+        session_updated_at: "2026-09-12T05:00:00Z"
+      }
+    });
+    expect(next.notifications).toEqual([
+      {
+        level: "error",
+        message: "sandbox process exited (exit status 1): FileNotFoundError: ...",
+        errorClass: "sandbox_exited"
+      }
+    ]);
   });
 
   it("clears restore metadata for checkpoint retirement", () => {

@@ -20,6 +20,12 @@ type ComposerProps = {
   onStop?: () => void;
   /** The pending-turn list, rendered above the input. */
   queueSlot?: ReactNode;
+  /**
+   * Replaces the helper line while a send is in flight. The send request blocks
+   * for the whole cold start when the session has no sandbox, so this is where
+   * the user is told that the wait is the sandbox waking, not the model stalling.
+   */
+  sendingHint?: string;
 };
 
 // Two lines at the composer's 24px line-height, plus a cap of ~8 lines before the
@@ -36,7 +42,8 @@ export function Composer({
   onSend,
   busy = false,
   stopping = false,
-  onStop
+  onStop,
+  sendingHint
 }: ComposerProps) {
   const t = useT();
   const { value, setValue, sending, error, submit, onKey } = useComposerState(onSend, disabled);
@@ -124,7 +131,14 @@ export function Composer({
           </div>
         </div>
         <div className="mt-1.5 flex items-center justify-between gap-3 px-3 text-2xs text-[var(--color-foreground-muted)]">
-          <span>{disabled ? t("composer.unavailable") : t("composer.hint")}</span>
+          {sending && sendingHint ? (
+            <span className="flex items-center gap-1.5" role="status" aria-live="polite">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              {sendingHint}
+            </span>
+          ) : (
+            <span>{disabled ? t("composer.unavailable") : t("composer.hint")}</span>
+          )}
           {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
         </div>
       </div>

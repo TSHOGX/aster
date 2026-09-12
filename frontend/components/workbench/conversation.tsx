@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bot, Clock, RefreshCw, RotateCw, Sparkles, X } from "lucide-react";
+import { Bot, Clock, Loader2, RefreshCw, RotateCw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { useActivity, useConversation, useHarness, useSelectedSession, useSessionRuntime } from "@/components/harness-provider";
@@ -39,6 +39,10 @@ function ChatConversation() {
   const [refreshing, setRefreshing] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
+  // Turns whose cancel request is in flight. The X used to give no feedback until
+  // the server answered, and a cancel competes for the orchestrator's single
+  // writer, so a slow one looked like a missed click and got clicked again.
+  const [cancelling, setCancelling] = useState<ReadonlySet<number>>(() => new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
 
@@ -191,8 +195,8 @@ function ChatConversation() {
               Refresh
             </button>
           ) : null}
-          <StatusPill tone={busy ? "running" : statusTone(session.status)}>
-            {busy ? t("composer.thinking") : statusLabel(session.status)}
+          <StatusPill tone={busy ? "running" : statusTone(session.status, session.sandbox)}>
+            {busy ? t("composer.thinking") : statusLabel(session.status, session.sandbox)}
           </StatusPill>
         </div>
       </header>
@@ -283,14 +287,27 @@ function ChatConversation() {
             <QueuedTurns
               turns={queuedTurns}
               error={queueError}
+              cancelling={cancelling}
               onCancel={async (turnId) => {
+                if (cancelling.has(turnId)) return;
                 setQueueError(null);
-                const result = await cancelQueuedTurn(session.id, turnId);
-                if (!result.ok) setQueueError(result.error ?? t("composer.queueCancelFailed"));
+                setCancelling((prev) => new Set(prev).add(turnId));
+                try {
+                  const result = await cancelQueuedTurn(session.id, turnId);
+                  if (!result.ok) setQueueError(result.error ?? t("composer.queueCancelFailed"));
+                } finally {
+                  setCancelling((prev) => {
+                    const next = new Set(prev);
+                    next.delete(turnId);
+                    return next;
+                  });
+                }
               }}
             />
           ) : null
         }
+        // No sandbox behind the session: the send blocks for the cold start.
+        sendingHint={session.sandbox === "live" ? undefined : t("composer.wakingSandbox")}
         onSend={async (content) => {
           setQueueError(null);
           return sendMessage(session.id, content);
@@ -311,10 +328,12 @@ function ChatConversation() {
 function QueuedTurns({
   turns,
   error,
+  cancelling,
   onCancel
 }: {
   turns: ApiTurn[];
   error: string | null;
+  cancelling: ReadonlySet<number>;
   onCancel: (turnId: number) => void | Promise<void>;
 }) {
   const t = useT();
@@ -333,11 +352,16 @@ function QueuedTurns({
           <button
             type="button"
             onClick={() => void onCancel(turn.id)}
-            className="shrink-0 rounded p-0.5 text-[var(--color-foreground-muted)] transition-colors hover:text-[var(--color-danger)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+            disabled={cancelling.has(turn.id)}
+            className="shrink-0 rounded p-0.5 text-[var(--color-foreground-muted)] transition-colors hover:text-[var(--color-danger)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-wait disabled:opacity-60"
             title={t("composer.queueCancel")}
             aria-label={t("composer.queueCancel")}
           >
-            <X className="h-3.5 w-3.5" aria-hidden />
+            {cancelling.has(turn.id) ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <X className="h-3.5 w-3.5" aria-hidden />
+            )}
           </button>
         </div>
       ))}

@@ -749,12 +749,24 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// One query for every session's sandbox state rather than one per row; the
+	// sidebar renders this alongside status so a "sleeping" session is told
+	// apart from a warm one before the user pays the cold start.
+	sandboxes, err := s.store.SessionSandboxStates(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	listings := make([]apiSharedSessionListing, 0, len(sessions)+len(shared))
 	for _, session := range sessions {
-		listings = append(listings, ownedSessionListing(session))
+		listing := ownedSessionListing(session)
+		listing.Sandbox = string(sandboxes[session.ID])
+		listings = append(listings, listing)
 	}
 	for _, entry := range shared {
-		listings = append(listings, sharedSessionListing(entry))
+		listing := sharedSessionListing(entry)
+		listing.Sandbox = string(sandboxes[entry.Session.ID])
+		listings = append(listings, listing)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": listings})
 }
@@ -978,11 +990,19 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request, sessionID st
 	if !ok {
 		return
 	}
-	if level < accessOwner {
-		writeJSON(w, http.StatusOK, sharedSession(session))
+	sandboxes, err := s.store.SessionSandboxStates(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, publicSession(session))
+	var dto apiSession
+	if level < accessOwner {
+		dto = sharedSession(session)
+	} else {
+		dto = publicSession(session)
+	}
+	dto.Sandbox = string(sandboxes[session.ID])
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // maxSessionTitleRunes bounds the persisted title length. Enforced by rune

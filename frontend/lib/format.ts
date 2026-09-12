@@ -98,18 +98,26 @@ export function stripMarkdown(md: string): string {
     .trim();
 }
 
-export function statusLabel(status: string) {
+/**
+ * Human label for a session row. With `sandbox` (ApiSession.sandbox) the idle
+ * states say whether a sandbox is actually there: "Idle" only when one is warm,
+ * "Sleeping" when the next message will cold-start one, "Waking" while it does.
+ */
+export function statusLabel(status: string, sandbox?: string) {
   switch (status as SessionStatus) {
     case "created":
       return "Ready";
     case "running_active":
       return "Running";
     case "running_idle":
-      return "Idle";
+    case "checkpointed":
+      if (sandbox === "starting") return "Waking";
+      if (sandbox === "live") return "Idle";
+      // No sandbox behind the session. The previous labels here ("Idle" and
+      // "Checkpointed") both hid that, so every old session looked warm.
+      return "Sleeping";
     case "checkpointing":
       return "Checkpointing";
-    case "checkpointed":
-      return "Checkpointed";
     case "failed":
       return "Failed";
     case "destroyed":

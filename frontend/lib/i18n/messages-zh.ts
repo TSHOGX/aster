@@ -86,6 +86,12 @@ export const ZH: Record<MessageKey, string> = {
   "composer.stopFailed": "无法停止本轮任务",
   "composer.queuePlaceholder": "输入后续消息，将在当前轮结束后执行",
   "composer.queuedCount": "{count} 条排队中",
+  // generation.error 的提示文案：服务端的 error 字段是退出码或恢复分类，用户需要的是后果。
+  "runtime.fault.sandboxLost":
+    "该会话的沙箱已停止。文件已保留，下一条消息会自动启动新沙箱（首次响应会慢一些）。",
+  "runtime.fault.sandboxOOM":
+    "沙箱因内存超限被终止。文件已保留，下一条消息会自动启动新沙箱。",
+  "composer.wakingSandbox": "正在唤醒沙箱，静置后的第一条消息会多等一会…",
   "composer.queueCancel": "从队列中移除",
   "composer.queueCancelFailed": "该消息已开始执行，请使用「停止」",
   "composer.unavailable": "此会话无法接收消息。",

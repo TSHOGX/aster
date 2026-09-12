@@ -55,7 +55,9 @@ import {
 } from "@/lib/harness-events";
 import { isFinalReply } from "@/lib/message-grouping";
 import { isTerminal } from "@/lib/format";
-import { mergeSessionList, reduceSessionEvent } from "@/lib/session-events";
+import { mergeSessionList, reduceSessionEvent, type SessionEventNotification } from "@/lib/session-events";
+import { translate } from "@/lib/i18n";
+import { detectLocale } from "@/lib/i18n/locale";
 import { reduceRuntimeActivity, shouldApplyRuntime } from "@/lib/session-runtime";
 import { useEventStream } from "@/lib/use-event-stream";
 import { buildEventsStreamUrl } from "@/lib/ws";
@@ -202,6 +204,28 @@ function isActiveStatus(status: SessionStatus) {
   return RUNNING_STATUSES.has(status);
 }
 
+/**
+ * Wording for a generation.error toast. The server's `error` field is a
+ * diagnostic string (an exit status and a stderr line, or a recovery class such
+ * as sandbox_heartbeat_lost); for the faults a user can do something about, say
+ * what happened and what it means for them instead. Unknown classes fall back
+ * to the server text, which is still better than nothing.
+ */
+function runtimeFaultMessage(notification: SessionEventNotification): string {
+  const locale = detectLocale();
+  switch (notification.errorClass) {
+    case "sandbox_exited":
+    case "sandbox_heartbeat_lost":
+    case "orchestrator_restart_reconnect_grace_expired":
+    case "runtime_reconciled_stall":
+      return translate(locale, "runtime.fault.sandboxLost");
+    case "sandbox_oom":
+      return translate(locale, "runtime.fault.sandboxOOM");
+    default:
+      return notification.message;
+  }
+}
+
 export function HarnessProvider({ children }: { children: React.ReactNode }) {
   // The external store. Domain state no longer lives in React state, so the
   // provider itself does not re-render when it changes; selector hooks (below)
@@ -302,7 +326,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           // The snapshot carries the session status from the same transaction that
           // changed the turns, so it is never staler than the session list's copy.
           sessions: prev.sessions.map((session) =>
-            session.id === id ? { ...session, status: snapshot.session_status } : session
+            session.id === id
+              ? { ...session, status: snapshot.session_status, sandbox: snapshot.sandbox ?? session.sandbox }
+              : session
           )
         };
       });
@@ -544,7 +570,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         if (!preview.handled) return false;
         for (const notification of preview.notifications) {
           if (notification.level === "error") {
-            toast.error(notification.message, { duration: 6000 });
+            toast.error(runtimeFaultMessage(notification), { duration: 6000 });
           }
         }
         setState((p) => {

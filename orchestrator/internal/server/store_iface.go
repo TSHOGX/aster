@@ -110,6 +110,7 @@ type generationStore interface {
 	ClaimCheckpointedGenerationForRestore(context.Context, store.ClaimCheckpointedGenerationParams) (store.GenerationAllocation, error)
 	GetRuntimeGenerationDetails(context.Context, string, string) (store.RuntimeGenerationDetails, error)
 	GetRuntimeGenerationStatus(context.Context, string, string) (string, error)
+	SessionSandboxStates(context.Context) (map[string]store.SandboxState, error)
 	MarkGenerationStarting(context.Context, string, string, string, time.Time) error
 	MarkGenerationResourcesLive(context.Context, string, string, string, time.Time) error
 	MarkGenerationResourcesDestroyed(context.Context, store.DestroyGenerationResourcesParams) error

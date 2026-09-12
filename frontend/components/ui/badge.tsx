@@ -14,7 +14,7 @@ export function Badge({ className, ...rest }: HTMLAttributes<HTMLSpanElement>) {
   );
 }
 
-type Tone = "running" | "idle" | "ready" | "failed" | "muted";
+type Tone = "running" | "idle" | "sleeping" | "ready" | "failed" | "muted";
 type DotProps = { tone?: Tone; className?: string };
 
 function dotColor(tone: Tone): string {
@@ -23,6 +23,11 @@ function dotColor(tone: Tone): string {
       return "bg-[var(--color-accent)] animate-pulse-dot";
     case "idle":
       return "bg-[var(--color-success)]";
+    case "sleeping":
+      // Hollow: the session is fine but its sandbox is gone, so the next message
+      // pays a cold start. Same hue as idle on purpose — nothing is wrong — just
+      // visibly not the solid "warm and ready" dot.
+      return "border border-[var(--color-success)] bg-transparent";
     case "ready":
       return "bg-[var(--color-warning)]";
     case "failed":
@@ -52,7 +57,7 @@ export function StatusPill({
   const ink =
     tone === "running"
       ? "text-[var(--color-accent)] bg-[var(--color-accent-soft)]"
-      : tone === "idle"
+      : tone === "idle" || tone === "sleeping"
       ? "text-[var(--color-success)] bg-[var(--color-surface-muted)]"
       : tone === "ready"
       ? "text-[var(--color-warning)] bg-[var(--color-surface-muted)]"
@@ -74,14 +79,20 @@ export function StatusPill({
   );
 }
 
-export function statusTone(status: string): DotProps["tone"] {
+/**
+ * Tone for a session row. `sandbox` (ApiSession.sandbox) splits the idle states:
+ * a live sandbox is a solid dot, a released one is hollow, and one that is
+ * starting pulses like a running turn because the user is waiting on it.
+ */
+export function statusTone(status: string, sandbox?: string): DotProps["tone"] {
   switch (status) {
     case "running_active":
     case "checkpointing":
       return "running";
     case "running_idle":
     case "checkpointed":
-      return "idle";
+      if (sandbox === "starting") return "running";
+      return sandbox === "live" ? "idle" : "sleeping";
     case "created":
       return "ready";
     case "failed":

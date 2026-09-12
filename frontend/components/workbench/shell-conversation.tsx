@@ -155,7 +155,7 @@ export function ShellConversation() {
               Refresh
             </button>
           ) : null}
-          <StatusPill tone={statusTone(session.status)}>{statusLabel(session.status)}</StatusPill>
+          <StatusPill tone={statusTone(session.status, session.sandbox)}>{statusLabel(session.status, session.sandbox)}</StatusPill>
         </div>
       </header>
 

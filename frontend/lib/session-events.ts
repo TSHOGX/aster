@@ -13,6 +13,8 @@ export type SessionEventSlice<TConversation extends SessionEventConversation> = 
 export type SessionEventNotification = {
   level: "error";
   message: string;
+  /** Server error class, when the payload had one; lets the UI word known faults itself. */
+  errorClass?: string;
 };
 
 export type SessionEventReduction<TConversation extends SessionEventConversation> =
@@ -146,6 +148,7 @@ export function reduceSessionEvent<TConversation extends SessionEventConversatio
     case "generation.error": {
       if (!sessionId || !isRecord(event.payload)) return emptyReduction(slice, true);
       const message = typeof event.payload.error === "string" ? event.payload.error : "Runtime start failed";
+      const errorClass = typeof event.payload.error_class === "string" ? event.payload.error_class : undefined;
       const userInitiated = isUserInitiated(event.payload);
       const sessionStatus = readSessionStatus(event.payload.session_status);
       const updatedAt =
@@ -160,7 +163,7 @@ export function reduceSessionEvent<TConversation extends SessionEventConversatio
           : slice.sessions,
         conversations: clearStreaming(slice.conversations, sessionId, options.emptyConversation),
         handled: true,
-        notifications: userInitiated ? [] : [{ level: "error", message }]
+        notifications: userInitiated ? [] : [{ level: "error", message, errorClass }]
       };
     }
     case "session.checkpoint_retired":

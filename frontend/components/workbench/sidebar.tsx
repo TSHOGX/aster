@@ -144,7 +144,7 @@ const SessionRow = memo(function SessionRow({
         ) : null}
         {/* Status dot alone — the only glyph the row needs. */}
         <span className="flex h-4 w-3 shrink-0 items-center justify-center">
-          <StatusDot tone={statusTone(session.status)} />
+          <StatusDot tone={statusTone(session.status, session.sandbox)} />
         </span>
         <button
           className="min-w-0 flex-1 truncate text-left text-2xs leading-tight"
@@ -158,7 +158,7 @@ const SessionRow = memo(function SessionRow({
                 })
               : t("sidebar.rowTitle", {
                   title: displayTitle,
-                  status: statusLabel(session.status),
+                  status: statusLabel(session.status, session.sandbox),
                   when: formatRelative(session.updated_at)
                 })
           }
