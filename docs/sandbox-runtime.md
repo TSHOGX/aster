@@ -117,7 +117,9 @@ in claim-loop mode. See [sandbox-image.md](./sandbox-image.md).
 ## Idle release and checkpoint/restore
 
 `MonitorIdleSessions` runs only when `checkpoint.auto_enabled` is true and network
-mode is `sandbox`. `releaseIdleGeneration` tears down an idle sandbox **without**
+mode is `sandbox`. That config check is the only policy gate: the per-row
+`auto_checkpoint_enabled` columns are a creation-time copy and are not consulted
+(see `ListIdleReleaseCandidates`). `releaseIdleGeneration` tears down an idle sandbox **without**
 taking a `runsc` checkpoint image: the session moves to `checkpointed` (logical
 "released"), resources are reclaimed, and the next message cold-starts a fresh
 generation from the retained workspace + agent-home.
@@ -133,7 +135,24 @@ Why not `--warm-sentry`: it isn't in the shipped `runsc` and was closed upstream
 security reasons; the low-latency direction is an orchestrator-level prewarm pool.
 See [decisions/runsc-checkpoint-research.md](./decisions/runsc-checkpoint-research.md).
 
+## Sandbox output and unexpected exits
+
+Every `runsc run` process has a permanent output sink: each stdout/stderr line
+is appended to `<run_dir>/logs/gen-<id>/sandbox.log` and the last 50 lines stay
+in memory. When the process returns without the host having asked for it
+(`ContainerExit.Intentional == false`), `server.HandleSandboxExit` retires a live
+generation at once with `error_class = sandbox_exited` (or `sandbox_oom` when the
+memcg says so) and the last stderr line as the reason, fails a running turn with a
+transcript notice, and drops the session to `running_idle`. Lease expiry stays
+the backstop; a lapse under the current owner is diagnosed as
+`sandbox_heartbeat_lost`, and only a genuine owner change keeps the
+`orchestrator_restart_*` classes.
+
 ## Cleanup and evidence
+
+`DestroyGenerationResources` kills the container first (`runsc kill`/`delete`),
+then removes the filesystem artifacts; a filesystem error never skips the kill.
+The host-owned bridge sibling (`<bridge dir>.host`) is one of the targets.
 
 `DestroyGenerationResources` deletes per-generation filesystem artifacts (control,
 bundle, bridge, log dirs, checkpoint) and, in sandbox mode, the nft table / veth /

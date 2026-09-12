@@ -1,6 +1,6 @@
 # 排查记录：bridge 目录泄漏，generation teardown 校验卡在「path still exists」
 
-- **Status**: Draft
+- **Status**: Superseded — 见 [sandbox-death-inbox-prune-race.md](./sandbox-death-inbox-prune-race.md)：`.host` 目录从未是 cleanup 目标，泄漏与心跳重建无关
 - **Date**: 2026-07-24
 - **Scope**: orchestrator runtime cleanup / reaper、bridge 目录生命周期
 
