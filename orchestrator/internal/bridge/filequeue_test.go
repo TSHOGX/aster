@@ -134,16 +134,26 @@ func TestQueueIgnoresInvalidNamesAndContinuesFromMaxSequence(t *testing.T) {
 	}
 }
 
-func TestInboxWritePrunesOldResponsesBeforeWriting(t *testing.T) {
+func TestInboxWritePrunesOnlyStaleResponsesAndKeepsSequenceMonotonic(t *testing.T) {
 	root := t.TempDir()
 	queue, err := OpenQueue(root, InboxDir)
 	if err != nil {
 		t.Fatalf("open queue: %v", err)
 	}
 	inboxDir := HostOwnedPath(root, InboxDir)
+	write := func(name, id string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(inboxDir, name), []byte(`{"message_id":"`+id+`","type":"no_work","session_id":"s","generation_id":"g"}`), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	stale := time.Now().Add(-2 * inboxResponseRetention)
+	write("00000000000000000001.json", "stale")
+	write("00000000000000000002.json", "stale-too")
+	write("00000000000000000003.json", "fresh") // just written: the sandbox may be reading it
 	for _, name := range []string{"00000000000000000001.json", "00000000000000000002.json"} {
-		if err := os.WriteFile(filepath.Join(inboxDir, name), []byte(`{"message_id":"old","type":"no_work","session_id":"s","generation_id":"g"}`), 0o644); err != nil {
-			t.Fatalf("write old response: %v", err)
+		if err := os.Chtimes(filepath.Join(inboxDir, name), stale, stale); err != nil {
+			t.Fatalf("age %s: %v", name, err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(inboxDir, "not-a-message.json"), []byte("{}"), 0o644); err != nil {
@@ -158,18 +168,52 @@ func TestInboxWritePrunesOldResponsesBeforeWriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write inbox: %v", err)
 	}
-	if seq != 1 {
-		t.Fatalf("seq=%d want 1 after prune", seq)
+	// Continues from the highest existing sequence: the sandbox skips anything
+	// at or below the last sequence it consumed, so numbers must not restart.
+	if seq != 4 {
+		t.Fatalf("seq=%d want 4", seq)
 	}
 	files, err := queue.ReadAll()
 	if err != nil {
 		t.Fatalf("read inbox: %v", err)
 	}
-	if len(files) != 1 || files[0].Envelope.MessageID != "new" {
-		t.Fatalf("unexpected inbox files after prune: %+v", files)
+	var ids []string
+	for _, file := range files {
+		ids = append(ids, file.Envelope.MessageID)
+	}
+	if len(ids) != 2 || ids[0] != "fresh" || ids[1] != "new" {
+		t.Fatalf("stale responses should be pruned and the fresh one kept: %v", ids)
 	}
 	if _, err := os.Stat(filepath.Join(inboxDir, "not-a-message.json")); err != nil {
 		t.Fatalf("invalid non-sequence file should be left alone: %v", err)
+	}
+}
+
+// The newest response survives even when it is old: it anchors nextSeq.
+func TestInboxPruneKeepsNewestResponseAsSequenceAnchor(t *testing.T) {
+	root := t.TempDir()
+	queue, err := OpenQueue(root, InboxDir)
+	if err != nil {
+		t.Fatalf("open queue: %v", err)
+	}
+	inboxDir := HostOwnedPath(root, InboxDir)
+	path := filepath.Join(inboxDir, "00000000000000000007.json")
+	if err := os.WriteFile(path, []byte(`{"message_id":"old","type":"no_work","session_id":"s","generation_id":"g"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	seq, err := queue.Write(context.Background(), Envelope{MessageID: "new", Type: "no_work", SessionID: "s", GenerationID: "g"})
+	if err != nil {
+		t.Fatalf("write inbox: %v", err)
+	}
+	if seq != 8 {
+		t.Fatalf("seq=%d want 8", seq)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("newest pre-existing response must be kept: %v", err)
 	}
 }
 

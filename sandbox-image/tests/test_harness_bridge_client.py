@@ -66,6 +66,175 @@ class BridgeClientTest(unittest.TestCase):
             self.assertEqual([seq for seq, _, _ in files], [2, 10, 11])
             self.assertEqual([envelope["message_id"] for _, _, envelope in files], ["msg3", "msg2", "msg11"])
 
+    def test_read_all_skips_entries_that_vanish_or_are_half_written(self):
+        # The host prunes stale inbox responses while the sandbox may be listing
+        # them, and the inbox is read-only here, so an entry disappearing (or
+        # being only partially visible) between iterdir and open is routine.
+        with tempfile.TemporaryDirectory() as root:
+            queue = bridge.Queue(root, bridge.INBOX)
+            queue.write({"message_id": "ok", "type": "no_work", "session_id": "s", "generation_id": "g"})
+            (queue.dir / "00000000000000000002.json").write_text("{\"truncated\": ", encoding="utf-8")
+            ghost = queue.dir / "00000000000000000003.json"
+            ghost.write_text("{}", encoding="utf-8")
+            real_iterdir = Path.iterdir
+
+            def iterdir_then_prune(self_path):
+                entries = list(real_iterdir(self_path))
+                if ghost.exists():
+                    ghost.unlink()  # pruned by the host after the listing was taken
+                return iter(entries)
+
+            with mock.patch.object(Path, "iterdir", iterdir_then_prune):
+                files = queue.read_all()
+            self.assertEqual([envelope["message_id"] for _, _, envelope in files], ["ok"])
+
+    def test_wait_response_never_reopens_consumed_or_stale_responses(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)
+            inbox = bridge.Queue(root, bridge.INBOX)
+            base = {"type": "no_work", "session_id": "sess", "generation_id": "gen", "payload": {}}
+            inbox.write({**base, "message_id": "first", "request_id": "req_1"})
+            self.assertEqual(client.wait_response("req_1", timeout=0.1)["message_id"], "first")
+            self.assertEqual(client.inbox_seen_seq, 1)
+
+            # A response to a request we timed out on, then ours. The stale one is
+            # consumed (high-water mark advances) but never matched.
+            inbox.write({**base, "message_id": "stale", "request_id": "req_timed_out"})
+            inbox.write({**base, "message_id": "second", "request_id": "req_2"})
+            self.assertEqual(client.wait_response("req_2", timeout=0.1)["message_id"], "second")
+            self.assertEqual(client.inbox_seen_seq, 3)
+
+            # Consumed files are not opened again even if the host has not pruned
+            # them yet — corrupt the first one to prove it is never read.
+            (inbox.dir / "00000000000000000001.json").write_text("not json", encoding="utf-8")
+            inbox.write({**base, "message_id": "third", "request_id": "req_3"})
+            self.assertEqual(client.wait_response("req_3", timeout=0.1)["message_id"], "third")
+
+    def test_claim_loop_survives_claim_timeout(self):
+        # A claim that times out (the host's poll worker was busy) is retried; it
+        # used to escape run_claim_loop and, as the container's init, end the
+        # sandbox. Here the first claim gets no answer and the second gets a grant.
+        with tempfile.TemporaryDirectory() as root:
+            from types import SimpleNamespace
+
+            args = SimpleNamespace(
+                bridge_dir=root,
+                session_id="sess",
+                generation_id="gen",
+                driver_id="sh",
+                poll_interval=0.001,
+                timeout=0.05,
+                base_url="",
+                healthz_statuses="200",
+                http_timeout=0.1,
+                heartbeat_interval=60,
+                idle_interval=0.001,
+                max_turns=1,
+                max_empty_polls=0,
+                max_claim_failures=5,
+            )
+            inbox = bridge.Queue(root, bridge.INBOX)
+            original_write = bridge.Queue.write
+            claims = []
+
+            def write_and_respond(queue, envelope):
+                message_type = envelope.get("type")
+                request_id = envelope.get("request_id")
+                if queue.name == bridge.OUTBOX and message_type in {"hello", "probe_network", "claim_next_turn"}:
+                    respond = True
+                    response_type = "no_work"
+                    payload = {}
+                    if message_type == "hello":
+                        response_type = "hello_ack"
+                        payload = {"last_output_sequence_by_turn": {}}
+                    elif message_type == "claim_next_turn":
+                        claims.append(request_id)
+                        if len(claims) == 1:
+                            respond = False  # host never answers the first claim
+                        else:
+                            response_type = "grant"
+                            payload = {"turn_id": 9, "sequence": 1, "turn_input_schema": "RunTurn", "input": {"content": "echo ok"}}
+                    if respond:
+                        inbox.write(
+                            {
+                                "message_id": f"host_{message_type}_{len(claims)}",
+                                "request_id": request_id,
+                                "type": response_type,
+                                "session_id": "sess",
+                                "generation_id": "gen",
+                                "payload": payload,
+                            }
+                        )
+                return original_write(queue, envelope)
+
+            class FakeRunner:
+                def run_turn(self, content, emit):
+                    self.content = content
+                    return "completed", "", ""
+
+                def close(self):
+                    pass
+
+            runner = FakeRunner()
+            with mock.patch.object(bridge.Queue, "write", write_and_respond):
+                with mock.patch.object(bridge, "sandbox_source_ip", return_value="10.240.0.2"):
+                    with mock.patch.object(bridge.time, "sleep", lambda _s: None):
+                        bridge.run_claim_loop(args, runner=runner)
+
+            self.assertEqual(len(claims), 2)
+            self.assertEqual(runner.content, "echo ok")
+
+    def test_claim_loop_gives_up_after_sustained_failures(self):
+        with tempfile.TemporaryDirectory() as root:
+            from types import SimpleNamespace
+
+            args = SimpleNamespace(
+                bridge_dir=root,
+                session_id="sess",
+                generation_id="gen",
+                driver_id="sh",
+                poll_interval=0.001,
+                timeout=0.01,
+                base_url="",
+                healthz_statuses="200",
+                http_timeout=0.1,
+                heartbeat_interval=60,
+                idle_interval=0.001,
+                max_turns=1,
+                max_empty_polls=0,
+                max_claim_failures=3,
+            )
+            inbox = bridge.Queue(root, bridge.INBOX)
+            original_write = bridge.Queue.write
+            claims = []
+
+            def write_and_respond(queue, envelope):
+                message_type = envelope.get("type")
+                if queue.name == bridge.OUTBOX and message_type in {"hello", "probe_network"}:
+                    inbox.write(
+                        {
+                            "message_id": f"host_{message_type}",
+                            "request_id": envelope.get("request_id"),
+                            "type": "hello_ack" if message_type == "hello" else "no_work",
+                            "session_id": "sess",
+                            "generation_id": "gen",
+                            "payload": {"last_output_sequence_by_turn": {}},
+                        }
+                    )
+                elif queue.name == bridge.OUTBOX and message_type == "claim_next_turn":
+                    claims.append(envelope.get("request_id"))
+                return original_write(queue, envelope)
+
+            class FakeRunner:
+                def close(self):
+                    pass
+
+            with mock.patch.object(bridge.Queue, "write", write_and_respond):
+                with mock.patch.object(bridge.time, "sleep", lambda _s: None):
+                    with self.assertRaises(TimeoutError):
+                        bridge.run_claim_loop(args, runner=FakeRunner())
+            self.assertEqual(len(claims), 3)
+
     def test_hello_records_resume_boundary(self):
         with tempfile.TemporaryDirectory() as root:
             client = bridge.BridgeClient(root, "sess", "gen", "pi", poll_interval=0.001)

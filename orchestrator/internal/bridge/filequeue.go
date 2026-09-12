@@ -129,7 +129,7 @@ func (q Queue) Write(ctx context.Context, envelope Envelope) (uint64, error) {
 	}
 	payload = append(payload, '\n')
 	if q.name == InboxDir {
-		if err := q.pruneSequenceFiles(); err != nil {
+		if err := q.pruneStaleResponses(time.Now()); err != nil {
 			return 0, err
 		}
 	}
@@ -161,17 +161,61 @@ func (q Queue) Write(ctx context.Context, envelope Envelope) (uint64, error) {
 	}
 }
 
-func (q Queue) pruneSequenceFiles() error {
+// inboxResponseRetention is how long a response stays in the inbox after the
+// host wrote it. The sandbox polls the inbox every 50ms and consumes a response
+// on the first poll that sees it, so anything this old is stale by a wide
+// margin. It is a floor, not a schedule: pruning only happens on the next
+// write, and the newest file is always kept.
+const inboxResponseRetention = 5 * time.Second
+
+// pruneStaleResponses removes old inbox responses before a new one is written.
+//
+// The inbox is host-owned and mounted read-only in the sandbox, so the sandbox
+// cannot delete a response once it has read it; this is the only cleanup. Two
+// properties matter for the reader on the other side:
+//
+//   - Only files older than inboxResponseRetention go. The previous version
+//     deleted EVERY sequence file, including the response the sandbox was in
+//     the middle of reading: its iterdir had listed the file, the delete landed,
+//     its open failed with ENOENT, and the bridge client — the container's
+//     init — died of the exception. That was the dominant cause of idle
+//     sandboxes vanishing.
+//   - The newest file is never pruned, so nextSeq keeps counting up instead of
+//     restarting at 1 whenever the inbox empties. The client tracks the highest
+//     sequence it has consumed and skips everything at or below it, which is
+//     only sound if a sequence number is never reused within a generation.
+func (q Queue) pruneStaleResponses(now time.Time) error {
 	entries, err := os.ReadDir(q.dir)
 	if err != nil {
 		return err
 	}
+	var maxSeq uint64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if seq, ok := parseSeqFileName(entry.Name()); ok && seq > maxSeq {
+			maxSeq = seq
+		}
+	}
+	cutoff := now.Add(-inboxResponseRetention)
 	pruned := false
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		if _, ok := parseSeqFileName(entry.Name()); !ok {
+		seq, ok := parseSeqFileName(entry.Name())
+		if !ok || seq == maxSeq {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if info.ModTime().After(cutoff) {
 			continue
 		}
 		if err := os.Remove(filepath.Join(q.dir, entry.Name())); err != nil && !os.IsNotExist(err) {

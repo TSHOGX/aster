@@ -29,6 +29,11 @@ PI_SETTINGS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/settings.json"
 PI_HARNESS_PROXY_PROVIDER = "harness_anthropic_proxy"
 PI_SYSTEM_PROMPT_PATH = "/usr/local/share/harness/pi-system-prompt.md"
 DRIVER_STATE_DIGEST_PREFIX = b"driver_state_digest_v1\n"
+# Consecutive claim failures before the claim loop gives up. With the 1s-per-
+# failure backoff (capped at 10s) and a 30s timeout, 20 failures is on the order
+# of ten minutes of a host that never answers — long past the host's own lease
+# recovery, so by then the generation has been retired anyway.
+DEFAULT_MAX_CLAIM_FAILURES = 20
 
 
 def seq_name(seq):
@@ -147,14 +152,25 @@ class Queue:
             except FileNotFoundError:
                 pass
 
-    def read_all(self):
+    def read_all(self, min_seq=0):
+        """List readable messages with seq > min_seq, oldest first.
+
+        A file that is listed by iterdir but gone (or not yet complete) by the
+        time it is opened is skipped, not raised. The host prunes stale inbox
+        responses on its own schedule and this directory is read-only to the
+        sandbox, so a vanishing entry is an ordinary event here — and an
+        uncaught one used to take the whole claim loop, i.e. the sandbox, down.
+        """
         files = []
         for entry in self.dir.iterdir():
             seq = parse_seq_name(entry.name)
-            if seq is None:
+            if seq is None or seq <= min_seq:
                 continue
-            with open(entry, "r", encoding="utf-8") as f:
-                files.append((seq, entry, json.load(f)))
+            try:
+                with open(entry, "r", encoding="utf-8") as f:
+                    files.append((seq, entry, json.load(f)))
+            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+                continue
         return sorted(files, key=lambda item: item[0])
 
     def unlink(self, path):
@@ -186,6 +202,12 @@ class BridgeClient:
         self.last_output_sequence_by_turn = {}
         self.leased_turn_id = None
         self._producer_lock_fd = None
+        # Highest inbox sequence already consumed. The inbox is host-owned and
+        # mounted read-only, so responses cannot be unlinked from this side;
+        # the host writes them with a monotonic sequence and prunes old ones
+        # itself. Tracking the high-water mark means a response is opened
+        # once, and stale ones are never opened at all.
+        self.inbox_seen_seq = 0
 
     def acquire_producer_lock(self):
         """Ensure only one claim-loop process can produce turn output.
@@ -239,10 +261,13 @@ class BridgeClient:
     def wait_response(self, request_id, timeout=None):
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
-            for _, path, envelope in self.inbox.read_all():
+            for seq, _, envelope in self.inbox.read_all(min_seq=self.inbox_seen_seq):
+                # Only one request is ever outstanding, so every newer response
+                # that is not ours answers a request we already gave up on
+                # (a timeout). Consume it and move on.
+                self.inbox_seen_seq = max(self.inbox_seen_seq, seq)
                 if envelope.get("request_id") != request_id:
                     continue
-                self.inbox.unlink(path)
                 if envelope.get("type") == "error":
                     payload = envelope.get("payload") or {}
                     raise RuntimeError(payload.get("error") or "bridge error")
@@ -916,14 +941,34 @@ def run_claim_loop(args, runner=None):
         stop_heartbeat = start_background_heartbeat(client, args.heartbeat_interval)
         completed = 0
         empty_polls = 0
+        claim_failures = 0
+        max_claim_failures = int(getattr(args, "max_claim_failures", DEFAULT_MAX_CLAIM_FAILURES) or 0)
         resume_turn_id = client.leased_turn_id
         try:
             while args.max_turns <= 0 or completed < args.max_turns:
-                if resume_turn_id is not None:
-                    grant = client.resume_turn(int(resume_turn_id), timeout=args.timeout)
-                    resume_turn_id = None
-                else:
-                    grant = client.claim_next_turn(timeout=args.timeout)
+                # A claim that fails is a bridge hiccup, not a reason to exit.
+                # Exiting here is what tore the sandbox down: this process is
+                # the container's init, so any exception escaping the loop ended
+                # the sandbox and the host then had to cold-start a new one. A
+                # slow host (the orchestrator's poll worker busy on the single
+                # writer) or a response file pruned mid-read is retried with a
+                # short backoff; only a sustained run of failures gives up, and
+                # that exit is logged with its reason.
+                try:
+                    if resume_turn_id is not None:
+                        grant = client.resume_turn(int(resume_turn_id), timeout=args.timeout)
+                        resume_turn_id = None
+                    else:
+                        grant = client.claim_next_turn(timeout=args.timeout)
+                except (TimeoutError, RuntimeError, OSError) as err:
+                    claim_failures += 1
+                    print(f"[bridge] claim failed ({claim_failures}/{max_claim_failures}): {err}", file=sys.stderr, flush=True)
+                    if max_claim_failures > 0 and claim_failures >= max_claim_failures:
+                        print("[bridge] giving up after sustained claim failures", file=sys.stderr, flush=True)
+                        raise
+                    time.sleep(min(1.0 * claim_failures, 10.0))
+                    continue
+                claim_failures = 0
                 if grant is None:
                     empty_polls += 1
                     if args.max_empty_polls > 0 and empty_polls >= args.max_empty_polls:
@@ -948,7 +993,12 @@ def main(argv=None):
     parser.add_argument("--generation-id", default=os.environ.get("GENERATION_ID"))
     parser.add_argument("--driver-id", default=os.environ.get("HARNESS_DRIVER_ID", ""))
     parser.add_argument("--poll-interval", type=float, default=float(os.environ.get("HARNESS_BRIDGE_POLL_INTERVAL", "0.05")))
-    parser.add_argument("--timeout", type=float, default=10.0)
+    # Response wait for hello/probe/claim. Generous on purpose: the host answers
+    # a claim from its bridge-poll worker, which shares the orchestrator's single
+    # SQLite writer and is routinely delayed by seconds under output load. A
+    # timeout here is retried by the claim loop, so this bounds latency of one
+    # attempt rather than deciding whether the sandbox lives.
+    parser.add_argument("--timeout", type=float, default=float(os.environ.get("HARNESS_BRIDGE_TIMEOUT", "30")))
     parser.add_argument("--base-url", default=os.environ.get("ANTHROPIC_BASE_URL", ""))
     parser.add_argument("--healthz-statuses", default=os.environ.get("HARNESS_PROBE_HEALTHZ_STATUSES", "200"))
     parser.add_argument("--http-timeout", type=float, default=float(os.environ.get("HARNESS_PROBE_HTTP_TIMEOUT", "3")))
@@ -961,6 +1011,7 @@ def main(argv=None):
     claim_loop.add_argument("--heartbeat-interval", type=float, default=float(os.environ.get("HARNESS_BRIDGE_HEARTBEAT_INTERVAL", "30")))
     claim_loop.add_argument("--max-turns", type=int, default=0)
     claim_loop.add_argument("--max-empty-polls", type=int, default=0)
+    claim_loop.add_argument("--max-claim-failures", type=int, default=int(os.environ.get("HARNESS_BRIDGE_MAX_CLAIM_FAILURES", str(DEFAULT_MAX_CLAIM_FAILURES))))
     args = parser.parse_args(argv)
     if not args.session_id or not args.generation_id:
         parser.error("--session-id and --generation-id are required")
