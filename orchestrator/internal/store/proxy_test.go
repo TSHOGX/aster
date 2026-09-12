@@ -782,3 +782,329 @@ WHERE generation_id = ?`, string(canonical), SandboxContractDigest(canonical), g
 		t.Fatalf("rewrite sandbox contract payload: %v", err)
 	}
 }
+
+// The turn lease admission grace. Turn leases are renewed only by the bridge
+// heartbeat, which contends for the single writer connection, so a heartbeat
+// delayed by write pressure briefly lapses the lease of a perfectly healthy
+// turn. Before the grace existed every model call in that gap was rejected, and
+// pi reported that to the user as the model service being unavailable.
+//
+// The tests below pin the three properties that make the grace safe: it admits a
+// recently-lapsed lease, it stops at the window edge, and it does not soften any
+// other condition.
+func TestProxyRequestStartAdmitsTurnLeaseWithinGrace(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	_, turnID, sandboxSourceIP := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_proxy_grace", now)
+
+	// The turn lease runs a minute from the ack at +4s; the generation lease and
+	// the model-request context are refreshed so that the TURN lease is the only
+	// expired thing under test.
+	at := now.Add(75 * time.Second)
+	refreshProxyContextForGrace(t, ctx, st, "sess_proxy_grace", sandboxSourceIP, at.Add(time.Minute))
+
+	if _, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "proxy_no_grace",
+		Now:             at,
+	}); !errors.Is(err, ErrProxyContextUnavailable) {
+		t.Fatalf("without grace err=%v want ErrProxyContextUnavailable", err)
+	}
+
+	started, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "proxy_with_grace",
+		Now:             at,
+		TurnLeaseGrace:  time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("with grace: %v", err)
+	}
+	if started.TurnID != turnID {
+		t.Fatalf("granted turn %d want %d", started.TurnID, turnID)
+	}
+	// The caller logs this so a rising rate of grace admissions is visible as the
+	// early warning of writer contention that it is.
+	if !started.LeaseWithinGrace {
+		t.Fatalf("expected LeaseWithinGrace on an admission past the lease expiry: %+v", started)
+	}
+}
+
+// A request inside a healthy lease must not be flagged, or the warning it drives
+// would fire constantly and mean nothing.
+func TestProxyRequestStartDoesNotFlagLiveLease(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	_, _, sandboxSourceIP := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_proxy_live_lease", now)
+
+	started, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "proxy_live_lease",
+		Now:             now.Add(5 * time.Second),
+		TurnLeaseGrace:  time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("start proxy request: %v", err)
+	}
+	if started.LeaseWithinGrace {
+		t.Fatalf("a live lease must not report a grace admission: %+v", started)
+	}
+}
+
+// The window has to end somewhere: past it the lease is treated as genuinely
+// gone, which is what lets a dead sandbox's turn lapse and be recovered.
+func TestProxyRequestStartRejectsTurnLeaseBeyondGrace(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	_, _, sandboxSourceIP := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_proxy_grace_edge", now)
+
+	// Lease expired at +64s. Ask at +150s with a 60s grace: 86s past expiry.
+	at := now.Add(150 * time.Second)
+	refreshProxyContextForGrace(t, ctx, st, "sess_proxy_grace_edge", sandboxSourceIP, at.Add(time.Minute))
+
+	if _, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "proxy_beyond_grace",
+		Now:             at,
+		TurnLeaseGrace:  time.Minute,
+	}); !errors.Is(err, ErrProxyContextUnavailable) {
+		t.Fatalf("beyond grace err=%v want ErrProxyContextUnavailable", err)
+	}
+}
+
+// The grace covers the turn lease and nothing else. A retired generation is the
+// case that matters most: it means the runtime this turn belonged to is gone, so
+// no amount of grace on the turn's own lease may authorize a model call.
+func TestProxyRequestStartGraceDoesNotSurviveRetiredGeneration(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	allocation, _, sandboxSourceIP := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_proxy_grace_gen", now)
+
+	at := now.Add(75 * time.Second)
+	refreshProxyContextForGrace(t, ctx, st, "sess_proxy_grace_gen", sandboxSourceIP, at.Add(time.Minute))
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE runtime_generations SET status = 'failed' WHERE generation_id = ?`, allocation.GenerationID); err != nil {
+		t.Fatalf("retire generation: %v", err)
+	}
+
+	if _, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "proxy_grace_dead_generation",
+		Now:             at,
+		TurnLeaseGrace:  time.Minute,
+	}); !errors.Is(err, ErrProxyContextUnavailable) {
+		t.Fatalf("grace must not admit a request against a retired generation, err=%v", err)
+	}
+}
+
+// A second competing in-flight turn must still refuse the request. The grace
+// widens the in-flight subquery's window along with the outer bound (it has to,
+// or the graced turn could not count itself), and widening can only reveal more
+// competitors — this asserts that the single-in-flight guard did not get looser.
+func TestProxyRequestStartGraceStillRejectsSecondInflightTurn(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	allocation, _, sandboxSourceIP := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_proxy_grace_two", now)
+
+	at := now.Add(75 * time.Second)
+	refreshProxyContextForGrace(t, ctx, st, "sess_proxy_grace_two", sandboxSourceIP, at.Add(time.Minute))
+
+	// A second leased turn on the same generation, its lease also inside the
+	// grace window.
+	if _, err := st.db.ExecContext(ctx, `
+INSERT INTO turns (session_id, sequence, role, content, status, attempt, created_at,
+                   generation_id, lease_owner, lease_expires_at)
+VALUES (?, 99, 'user', 'second', 'leased', 0, ?, ?, ?, ?)`,
+		"sess_proxy_grace_two", formatTime(now), allocation.GenerationID, allocation.Owner,
+		formatTime(now.Add(64*time.Second))); err != nil {
+		t.Fatalf("insert competing turn: %v", err)
+	}
+
+	if _, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "proxy_grace_ambiguous",
+		Now:             at,
+		TurnLeaseGrace:  time.Minute,
+	}); !errors.Is(err, ErrProxyContextUnavailable) {
+		t.Fatalf("two in-flight turns must refuse the request even under grace, err=%v", err)
+	}
+}
+
+// refreshProxyContextForGrace pushes out everything EXCEPT the turn lease, so a
+// test can isolate turn-lease expiry from generation/context expiry.
+func refreshProxyContextForGrace(t *testing.T, ctx context.Context, st *Store, sessionID, sandboxSourceIP string, until time.Time) {
+	t.Helper()
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE active_model_request_contexts SET expires_at = ? WHERE sandbox_source_ip = ?`,
+		formatTime(until), sandboxSourceIP); err != nil {
+		t.Fatalf("refresh model request context: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE runtime_generations SET lease_expires_at = ? WHERE session_id = ?`,
+		formatTime(until), sessionID); err != nil {
+		t.Fatalf("refresh generation lease: %v", err)
+	}
+}
+
+// The reported failure: send several messages, the first answers, every queued
+// one fails with a model error — and the agent afterwards "remembers" the prompts
+// it never answered.
+//
+// Cause: the proxy context used to be created only on ack_turn_started. The ack
+// travels back through the bridge file queue and is applied on the next poll,
+// while the agent's first model call for the turn goes straight to the proxy over
+// HTTP. On a warm sandbox (exactly what a queued turn lands on) the model call
+// wins that race, found no context, and was refused — so the turn died even
+// though the prompt had reached the agent. A cold first turn hid this because
+// sandbox and agent startup gave the ack time to arrive.
+func TestProxyRequestStartWorksForClaimedTurnBeforeAck(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	allocation, turnID, sandboxSourceIP := createClaimedProxyTurn(t, ctx, st, owner.UUID, "sess_claim_before_ack", now)
+
+	started, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "claim_before_ack",
+		Now:             now.Add(4 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("a claimed turn must be able to reach the model before its ack lands: %v", err)
+	}
+	if started.TurnID != turnID || started.GenerationID != allocation.GenerationID {
+		t.Fatalf("unexpected grant: %+v want turn %d", started, turnID)
+	}
+}
+
+// The ack follows the agent's opening requests, so it must not restart the
+// request counter — that would reissue sequence numbers already recorded against
+// proxy.request.started events for the same turn.
+func TestAckTurnStartedPreservesRequestSequence(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	allocation, turnID, sandboxSourceIP := createClaimedProxyTurn(t, ctx, st, owner.UUID, "sess_seq_preserved", now)
+
+	for i, id := range []string{"seq_a", "seq_b"} {
+		started, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+			SandboxSourceIP: sandboxSourceIP,
+			ProxyRequestID:  id,
+			Now:             now.Add(time.Duration(4+i) * time.Second),
+		})
+		if err != nil {
+			t.Fatalf("start %s: %v", id, err)
+		}
+		if started.RequestSequence != int64(i+1) {
+			t.Fatalf("%s sequence = %d want %d", id, started.RequestSequence, i+1)
+		}
+	}
+
+	if _, err := st.AckTurnStarted(ctx, AckStartedParams{
+		SessionID:       "sess_seq_preserved",
+		GenerationID:    allocation.GenerationID,
+		TurnID:          turnID,
+		Owner:           allocation.Owner,
+		SandboxSourceIP: sandboxSourceIP,
+		LeaseTTL:        time.Minute,
+		Now:             now.Add(6 * time.Second),
+	}); err != nil {
+		t.Fatalf("ack turn started: %v", err)
+	}
+
+	after, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "seq_c",
+		Now:             now.Add(7 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("start after ack: %v", err)
+	}
+	if after.RequestSequence != 3 {
+		t.Fatalf("sequence after ack = %d want 3; the ack restarted the counter mid-turn", after.RequestSequence)
+	}
+}
+
+// A turn belonging to a DIFFERENT turn id must reset the counter — the
+// preservation above is scoped to one turn, not to the sandbox.
+func TestClaimingNextTurnResetsRequestSequence(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	now := time.Now().UTC()
+	allocation, firstTurnID, sandboxSourceIP := createClaimedProxyTurn(t, ctx, st, owner.UUID, "sess_seq_reset", now)
+
+	if _, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "reset_first",
+		Now:             now.Add(4 * time.Second),
+	}); err != nil {
+		t.Fatalf("first turn request: %v", err)
+	}
+	if _, err := st.CompleteTurn(ctx, CompleteTurnParams{
+		SessionID: "sess_seq_reset", GenerationID: allocation.GenerationID, TurnID: firstTurnID,
+		Owner: allocation.Owner, TerminalStatus: "completed", Now: now.Add(5 * time.Second),
+	}); err != nil {
+		t.Fatalf("complete first turn: %v", err)
+	}
+
+	secondTurnID, err := st.EnqueueTurn(ctx, "sess_seq_reset", "queued behind", now.Add(5*time.Second))
+	if err != nil {
+		t.Fatalf("enqueue second: %v", err)
+	}
+	if _, ok, err := st.ClaimNextTurn(ctx, ClaimNextTurnParams{
+		SessionID: "sess_seq_reset", GenerationID: allocation.GenerationID, Owner: allocation.Owner,
+		RequestID: "claim_second", LeaseTTL: time.Minute, Now: now.Add(6 * time.Second),
+	}); err != nil || !ok {
+		t.Fatalf("claim second: ok=%v err=%v", ok, err)
+	}
+
+	started, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxSourceIP,
+		ProxyRequestID:  "reset_second",
+		Now:             now.Add(7 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("second turn request: %v", err)
+	}
+	if started.TurnID != secondTurnID {
+		t.Fatalf("granted turn %d want the newly claimed %d", started.TurnID, secondTurnID)
+	}
+	if started.RequestSequence != 1 {
+		t.Fatalf("a new turn must start at sequence 1, got %d", started.RequestSequence)
+	}
+}
+
+// createClaimedProxyTurn builds a session whose turn is CLAIMED but not yet
+// acked — the state a queued turn is in the instant the agent receives it.
+func createClaimedProxyTurn(t *testing.T, ctx context.Context, st *Store, ownerUUID, sessionID string, now time.Time) (GenerationAllocation, int64, string) {
+	t.Helper()
+	cfg := testAllocatorConfig(t)
+	createStoreSession(t, ctx, st, sessionID)
+	owner := GenerationLeaseOwner(ownerUUID)
+	allocation, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
+		SessionID: sessionID, Owner: owner, LeaseTTL: time.Minute, Now: now, Config: cfg,
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, sessionID, allocation.GenerationID, allocation.Owner, now.Add(time.Second)); err != nil {
+		t.Fatalf("mark resources live: %v", err)
+	}
+	createLiveRuntimeResourceInstanceForAllocation(t, ctx, st, sessionID, allocation, ownerUUID, "host-claimed", now.Add(2*time.Second))
+	turnID, err := st.EnqueueTurn(ctx, sessionID, "claimed turn", now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+	grant, ok, err := st.ClaimNextTurn(ctx, ClaimNextTurnParams{
+		SessionID: sessionID, GenerationID: allocation.GenerationID, Owner: allocation.Owner,
+		RequestID: "claim_" + sessionID, LeaseTTL: time.Minute, Now: now.Add(3 * time.Second),
+	})
+	if err != nil || !ok || grant.TurnID != turnID {
+		t.Fatalf("claim setup: ok=%v grant=%+v err=%v", ok, grant, err)
+	}
+	return allocation, turnID, sandboxSourceIPForGeneration(t, ctx, st, allocation.GenerationID)
+}

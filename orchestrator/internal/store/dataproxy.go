@@ -110,8 +110,18 @@ WHERE c.sandbox_source_ip = ?
   AND ri.state = 'live'
   AND ri.sandbox_ip = c.sandbox_source_ip
   AND c.expires_at > ?
-  AND t.status = 'running'
+  -- 'leased' as well as 'running', matching StartProxyRequest: the turn is
+  -- assigned to this sandbox from the claim onward, and its ack lands a bridge
+  -- poll later. Note this is the TURN-ASSIGNMENT axis; the lease-freshness axis
+  -- below stays strict here and is deliberately not aligned with the model proxy.
+  AND t.status IN ('leased', 'running')
   AND t.lease_owner = c.lease_owner
+  -- Strict, deliberately: StartProxyRequest (proxy.go) tolerates a turn lease
+  -- that lapsed within a grace window, and this bound intentionally does NOT.
+  -- The failure modes differ. Rejecting a model call aborts the whole turn,
+  -- because pi treats it as unretryable; rejecting a data-proxy connection only
+  -- fails one tool call, which the agent can see and retry. Do not "align" these
+  -- two without deciding that data access should outlive a lease as well.
   AND t.lease_expires_at > ?
   AND g.status IN ('active','idle')
   AND g.lease_owner = c.lease_owner

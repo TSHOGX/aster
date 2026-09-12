@@ -31,6 +31,9 @@ type sessionStore interface {
 	DestroySession(context.Context, string, time.Time) (store.DestroySessionResult, error)
 	InterruptSession(context.Context, store.InterruptSessionParams) (store.InterruptSessionResult, error)
 	SessionHasActiveTurn(context.Context, string) (bool, error)
+	GetSessionRuntimeSnapshot(context.Context, string) (store.SessionRuntimeSnapshot, error)
+	SetTurnPhase(context.Context, store.SetTurnPhaseParams) (store.SessionRuntimeSnapshot, error)
+	CancelQueuedTurn(context.Context, store.CancelQueuedTurnParams) (store.SessionRuntimeSnapshot, error)
 	CountSandboxOccupyingSessions(context.Context) (int, error)
 	GetResourceQuota(context.Context) (store.ResourceQuota, error)
 	SweepExpiredSessions(context.Context, time.Time) (int64, error)
@@ -48,6 +51,7 @@ type messageStore interface {
 	// because an anonymous viewer has no identity to join against.
 	ListMessages(context.Context, string) ([]store.Message, error)
 	ListMessagesForUser(context.Context, string, string) ([]store.Message, error)
+	TurnUserMessage(context.Context, string, int64) (store.Message, bool, error)
 	MessageSession(context.Context, int64) (string, bool, error)
 	SetMessageFeedback(context.Context, int64, string, string) (string, error)
 	SaveMessageTrace(context.Context, int64, string, json.RawMessage) error
@@ -164,6 +168,7 @@ type contractVolumeStore interface {
 	ProvisionSessionWorkspace(context.Context, store.ProvisionSessionWorkspaceParams) (store.SessionWorkspaceVolume, error)
 	ProvisionSessionDriverHome(context.Context, store.ProvisionSessionDriverHomeParams) (store.SessionDriverHomeVolume, error)
 	VerifySessionWorkspaceVolume(context.Context, store.VerifySessionWorkspaceVolumeParams) (store.SessionWorkspaceVolume, error)
+	AppendEventsBatch(context.Context, []store.AppendEventParams) ([]store.AppendEventsBatchResult, error)
 	StartProxyRequest(context.Context, store.StartProxyRequestParams) (store.StartProxyRequestResult, error)
 	// Data-plane authorization is a pure decision — no events, no counters, and
 	// deliberately no next_request_sequence bump. See store.AuthorizeDataProxyRequest.

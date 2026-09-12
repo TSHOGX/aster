@@ -704,6 +704,25 @@ func TestValidateHarnessConfig(t *testing.T) {
 			want: "emit_output_batch_max_age must be > 0",
 		},
 		{
+			name: "proxy lease grace negative",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Bridge.ProxyLeaseGrace.Duration = -time.Second
+			},
+			want: "proxy_lease_grace must be >= 0",
+		},
+		{
+			// The ceiling is the safety property, not a style preference: past
+			// sandbox_heartbeat_stall_grace lease renewal stops on purpose so a dead
+			// sandbox's turn lapses and gets recovered. A grace window reaching
+			// beyond that would keep authorizing its model calls.
+			name: "proxy lease grace outlives stall grace",
+			mutate: func(cfg *HarnessConfig) {
+				cfg.Bridge.SandboxHeartbeatStallGrace.Duration = 90 * time.Second
+				cfg.Bridge.ProxyLeaseGrace.Duration = 90 * time.Second
+			},
+			want: "proxy_lease_grace must be < harness.bridge.sandbox_heartbeat_stall_grace",
+		},
+		{
 			name: "checkpoint monitor",
 			mutate: func(cfg *HarnessConfig) {
 				cfg.Checkpoint.MonitorInterval.Duration = 0

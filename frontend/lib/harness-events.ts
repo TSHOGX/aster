@@ -107,6 +107,11 @@ export function withActivity(
   }
   if (next.phase === "idle") {
     next.startedAt = null;
+    // The request counters describe one turn, so they reset with the phase.
+    // Carrying them across would credit the next turn with the previous turn's
+    // model calls the moment it starts.
+    next.requestCount = 0;
+    next.inflight = 0;
     next.toolName = null;
     next.toolDetail = null;
   }

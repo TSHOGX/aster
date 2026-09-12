@@ -145,7 +145,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   failure_reason TEXT,
   error_class TEXT,
   title TEXT NOT NULL DEFAULT '',
-  title_custom INTEGER NOT NULL DEFAULT 0 CHECK(title_custom IN (0,1))
+  title_custom INTEGER NOT NULL DEFAULT 0 CHECK(title_custom IN (0,1)),
+  -- Monotonic counter bumped inside every transaction that changes this
+  -- session's turn state (enqueue, claim, ack-started, complete, interrupt,
+  -- cancel, phase write). Clients carry it on the runtime snapshot and drop any
+  -- snapshot older than the one they hold, which makes an in-flight GET racing a
+  -- live push harmless — without it a late response can resurrect a queue entry
+  -- that was already drained, and the stale row then never clears.
+  turn_revision INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS sessions_status_idx ON sessions(status);
@@ -154,6 +161,9 @@ CREATE INDEX IF NOT EXISTS sessions_active_generation_idx ON sessions(active_gen
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
+  -- turn_id links user input to its durable turn. Nullable for historical and
+  -- system messages; new enqueued user messages always set it atomically.
+  turn_id INTEGER,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -468,10 +478,29 @@ CREATE TABLE IF NOT EXISTS turns (
   completed_at TEXT,
   error_class TEXT,
   error TEXT,
+  -- Durable activity projection for the turn. The UI's "what is the agent doing
+  -- right now" strip reads these instead of replaying the event stream: the last
+  -- event for a running turn is usually an agent.delta, so reconstructing the
+  -- phase from it reported "responding" while a tool was actually executing.
+  -- Written on coarse transitions only (turn start, tool start/end, compaction,
+  -- retry) — never per delta.
+  phase TEXT NOT NULL DEFAULT '' CHECK(phase IN ('','thinking','tool','streaming','compacting','retrying')),
+  phase_at TEXT,
+  phase_tool TEXT,
+  phase_detail TEXT,
+  -- Whether dispatching this turn creates a transcript entry in messages. User
+  -- turns set it; automatic continuations (ResumeFailedTurn) do not, because the
+  -- user never typed them. The message row is written at dispatch, not at enqueue
+  -- (see materializeTurnMessageTx for why).
+  materializes_message INTEGER NOT NULL DEFAULT 0 CHECK(materializes_message IN (0,1)),
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
   FOREIGN KEY(generation_id) REFERENCES runtime_generations(generation_id),
   FOREIGN KEY(completed_by_generation) REFERENCES runtime_generations(generation_id)
 );
+
+-- The turn_revision triggers live in ensureTurnColumns, not here: their WHEN
+-- clause references the phase columns, which on a database created before them
+-- do not exist until that migration has run.
 
 CREATE UNIQUE INDEX IF NOT EXISTS turns_claim_request_id_uq
   ON turns (session_id, claim_request_id)
@@ -951,7 +980,77 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 	if err := s.ensureRuntimeGenerationColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureTurnColumns(ctx); err != nil {
+		return err
+	}
 	return s.backfillMessagesFTS(ctx)
+}
+
+// ensureTurnColumns adds the durable activity projection to databases created
+// before it. Same O(1) metadata-only ALTER and idempotency as
+// ensureSessionColumns.
+//
+// No CHECK constraint is added for upgraded databases: SQLite's ALTER TABLE
+// cannot add one, and unlike users.role this column is written only by
+// SetTurnPhase, which validates the value in Go. A trigger would buy nothing
+// against a closed writer set.
+func (s *Store) ensureTurnColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"phase", `ALTER TABLE turns ADD COLUMN phase TEXT NOT NULL DEFAULT ''`},
+		{"phase_at", `ALTER TABLE turns ADD COLUMN phase_at TEXT`},
+		{"phase_tool", `ALTER TABLE turns ADD COLUMN phase_tool TEXT`},
+		{"phase_detail", `ALTER TABLE turns ADD COLUMN phase_detail TEXT`},
+		{"materializes_message", `ALTER TABLE turns ADD COLUMN materializes_message INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, column := range columns {
+		exists, err := s.columnExists(ctx, "turns", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
+			return err
+		}
+	}
+	// sessions.turn_revision must advance on EVERY turn-state change, or a client
+	// can hold a stale runtime snapshot indefinitely (it discards any snapshot not
+	// newer than the one it has). Enforcing that in the database rather than at
+	// each call site is deliberate: turns are written from a dozen places,
+	// several of them recovery and reaper paths, and a writer that forgot to bump
+	// would leave a queue row that never clears — a bug that surfaces only as
+	// confusing UI, with nothing failing loudly.
+	//
+	// Created here rather than in the main DDL because the WHEN clause references
+	// the phase columns added just above. No recursion risk: the triggers write
+	// only to sessions, which has no trigger back onto turns.
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TRIGGER IF NOT EXISTS turns_revision_insert
+AFTER INSERT ON turns
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1 WHERE id = NEW.session_id;
+END;
+CREATE TRIGGER IF NOT EXISTS turns_revision_update
+AFTER UPDATE ON turns
+WHEN OLD.status <> NEW.status
+  OR COALESCE(OLD.phase,'') <> COALESCE(NEW.phase,'')
+  OR COALESCE(OLD.phase_tool,'') <> COALESCE(NEW.phase_tool,'')
+  OR COALESCE(OLD.phase_detail,'') <> COALESCE(NEW.phase_detail,'')
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1 WHERE id = NEW.session_id;
+END;
+CREATE TRIGGER IF NOT EXISTS turns_revision_delete
+AFTER DELETE ON turns
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1 WHERE id = OLD.session_id;
+END;`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ensureScheduleColumns upgrades Cron Agent rows created before result routing
@@ -1098,6 +1197,7 @@ func (s *Store) ensureSessionColumns(ctx context.Context) error {
 	}{
 		{"title", `ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''`},
 		{"title_custom", `ALTER TABLE sessions ADD COLUMN title_custom INTEGER NOT NULL DEFAULT 0`},
+		{"turn_revision", `ALTER TABLE sessions ADD COLUMN turn_revision INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, column := range columns {
 		exists, err := s.columnExists(ctx, "sessions", column.name)
@@ -1152,6 +1252,7 @@ func (s *Store) ensureMessageColumns(ctx context.Context) error {
 		ddl  string
 	}{
 		{"stop_reason", `ALTER TABLE messages ADD COLUMN stop_reason TEXT NOT NULL DEFAULT ''`},
+		{"turn_id", `ALTER TABLE messages ADD COLUMN turn_id INTEGER`},
 	}
 	for _, column := range columns {
 		exists, err := s.columnExists(ctx, "messages", column.name)
@@ -1164,6 +1265,9 @@ func (s *Store) ensureMessageColumns(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
 			return err
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_turn_idx ON messages(turn_id)`); err != nil {
+		return err
 	}
 	return nil
 }

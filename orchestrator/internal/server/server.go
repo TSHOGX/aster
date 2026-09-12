@@ -693,6 +693,8 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodGet:
 		s.listMessages(w, r, sessionID)
+	case len(parts) == 2 && parts[1] == "runtime" && r.Method == http.MethodGet:
+		s.getSessionRuntime(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodPost:
 		s.sendMessage(w, r, sessionID)
 	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "feedback" && r.Method == http.MethodPost:
@@ -703,6 +705,13 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 		s.uploadArtifacts(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "interrupt" && r.Method == http.MethodPost:
 		s.interruptSession(w, r, sessionID)
+	case len(parts) == 3 && parts[1] == "turns" && r.Method == http.MethodDelete:
+		turnID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil || turnID <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid turn id")
+			return
+		}
+		s.cancelQueuedTurn(w, r, sessionID, turnID)
 	case len(parts) == 2 && parts[1] == "shares" && r.Method == http.MethodPost:
 		s.createSessionShare(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "shares" && r.Method == http.MethodGet:
@@ -1028,49 +1037,52 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 	if !ok {
 		return
 	}
-	if !sessionstate.CanAcceptInput(session.Status) {
-		if sessionstate.IsBusy(session.Status) {
-			writeError(w, http.StatusConflict, "session is busy")
-			return
-		}
+	// A running session can accept additional user turns. They are persisted in
+	// sequence order and the runtime drains them after the current turn, which
+	// gives the UI a real queue instead of rejecting input during generation.
+	if !sessionstate.CanAcceptInput(session.Status) && session.Status != string(sessionstate.RunningActive) {
 		writeError(w, http.StatusConflict, "session is "+session.Status)
 		return
 	}
-	leaseOwner := store.GenerationLeaseOwner(s.ownerUUID)
-	ensured, err := s.ensureActiveGeneration(r.Context(), session, leaseOwner)
-	if errors.Is(err, store.ErrPoolExhausted) {
-		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
-		return
-	}
-	if errors.Is(err, errGenerationBusy) {
-		writeError(w, http.StatusConflict, "session is busy")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := s.startEnsuredGeneration(r.Context(), session, ensured, startFailureInputAcceptable); err != nil {
-		if !ensured.RestoreFromCheckpoint {
-			writeRuntimeStartError(w, err)
-			return
-		}
+	var ensured ensuredGeneration
+	var err error
+	if session.Status != string(sessionstate.RunningActive) {
+		leaseOwner := store.GenerationLeaseOwner(s.ownerUUID)
 		ensured, err = s.ensureActiveGeneration(r.Context(), session, leaseOwner)
 		if errors.Is(err, store.ErrPoolExhausted) {
 			writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
+			return
+		}
+		if errors.Is(err, errGenerationBusy) {
+			writeError(w, http.StatusConflict, "session is busy")
 			return
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if !ensured.IsNew {
-			writeError(w, http.StatusInternalServerError, "restore fallback did not allocate a replacement generation")
-			return
-		}
 		if err := s.startEnsuredGeneration(r.Context(), session, ensured, startFailureInputAcceptable); err != nil {
-			writeRuntimeStartError(w, err)
-			return
+			if !ensured.RestoreFromCheckpoint {
+				writeRuntimeStartError(w, err)
+				return
+			}
+			ensured, err = s.ensureActiveGeneration(r.Context(), session, leaseOwner)
+			if errors.Is(err, store.ErrPoolExhausted) {
+				writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
+				return
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if !ensured.IsNew {
+				writeError(w, http.StatusInternalServerError, "restore fallback did not allocate a replacement generation")
+				return
+			}
+			if err := s.startEnsuredGeneration(r.Context(), session, ensured, startFailureInputAcceptable); err != nil {
+				writeRuntimeStartError(w, err)
+				return
+			}
 		}
 	}
 	runningStatus := string(sessionstate.RunningActive)
@@ -1088,8 +1100,15 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 		return
 	}
 
-	s.hub.Publish(events.Event{Type: "message.created", SessionID: sessionID, Payload: enqueue.Message})
+	// No message.created here. The turn is queued, not asked: its transcript entry
+	// is written when the agent starts it (see materializeTurnMessageTx), and the
+	// bridge publishes the event then. Broadcasting at enqueue is what put a queued
+	// prompt in the transcript and the queue simultaneously.
 	s.hub.Publish(events.Event{Type: "session." + runningStatus, SessionID: sessionID})
+	// The queue changed, so every client — including the sender, whose response
+	// below carries the same snapshot — converges on it. The revision makes
+	// applying both harmless in either order.
+	s.publishSessionRuntime(sessionID, enqueue.Runtime)
 	// session.Title reflects the DB value loaded at the top of this handler, so
 	// an empty title means this is the first message: set an immediate
 	// placeholder, then (if configured) upgrade it to an LLM-generated title
@@ -1099,7 +1118,16 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 	if firstMessage {
 		s.startLLMTitleGeneration(sessionID, req.Content)
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"status": runningStatus, "session_id": sessionID, "message": enqueue.Message})
+	// The response carries the turn id and the post-send projection, not a message:
+	// the prompt has been accepted, but it becomes a transcript entry only when the
+	// agent starts it. The client renders it from the queue until then, so the
+	// transcript timestamp always reflects when the model actually received it.
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":     runningStatus,
+		"session_id": sessionID,
+		"turn_id":    enqueue.TurnID,
+		"runtime":    enqueue.Runtime,
+	})
 }
 
 // startLLMTitleGeneration kicks off asynchronous LLM title generation for a
@@ -1235,6 +1263,77 @@ func cidrPool30Capacity(prefix netip.Prefix) int {
 		return 0
 	}
 	return 1 << uint(30-prefix.Bits())
+}
+
+// The session runtime projection is served two ways — this endpoint and the
+// `session.runtime` event — carrying the identical payload, so a client has one
+// shape to apply however it arrives. Everything it needs to answer "is the agent
+// busy, what is it doing, what is queued" is here; nothing has to be inferred
+// from the coarse session status.
+func (s *Server) getSessionRuntime(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if _, _, _, ok := s.authorizeRead(w, r, sessionID); !ok {
+		return
+	}
+	snapshot, err := s.store.GetSessionRuntimeSnapshot(r.Context(), sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+// publishSessionRuntime pushes a projection that a store call already produced
+// inside its transaction. Live-only: the turns table is the replay source, and a
+// reconnecting client re-reads the endpoint, so there is nothing to persist.
+func (s *Server) publishSessionRuntime(sessionID string, snapshot store.SessionRuntimeSnapshot) {
+	s.hub.Publish(events.Event{Type: "session.runtime", SessionID: sessionID, Payload: snapshot})
+}
+
+// publishSessionRuntimeFromStore is publishSessionRuntime for callers that
+// changed turn state without obtaining a snapshot (the bridge completion path).
+// Best effort: a failed read only costs this one push, and the client's next
+// event or reconnect re-reads the endpoint.
+func (s *Server) publishSessionRuntimeFromStore(ctx context.Context, sessionID string) {
+	snapshot, err := s.store.GetSessionRuntimeSnapshot(ctx, sessionID)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, sql.ErrNoRows) {
+			s.log.Warn("failed to read session runtime projection", "session_id", sessionID, "error", err)
+		}
+		return
+	}
+	s.publishSessionRuntime(sessionID, snapshot)
+}
+
+// cancelQueuedTurn withdraws a turn the user queued but no longer wants.
+//
+// A real server operation rather than a client-side list edit: the turn is
+// durable and the worker will run it, so removing it only from the sender's view
+// meant the prompt still executed minutes later.
+func (s *Server) cancelQueuedTurn(w http.ResponseWriter, r *http.Request, sessionID string, turnID int64) {
+	if _, ok := s.authorizeSession(w, r, sessionID); !ok {
+		return
+	}
+	snapshot, err := s.store.CancelQueuedTurn(r.Context(), store.CancelQueuedTurnParams{
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Now:       time.Now().UTC(),
+	})
+	if err != nil {
+		// The worker claimed it first. An expected race, not a fault: the turn is
+		// running now and Stop is the way to end it.
+		if errors.Is(err, store.ErrTurnNotCancelable) {
+			writeErrorClass(w, http.StatusConflict, "turn_not_cancelable", "turn is no longer queued")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.publishSessionRuntime(sessionID, snapshot)
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -1716,14 +1815,35 @@ func (s *Server) internalProxyRequestStart(w http.ResponseWriter, r *http.Reques
 		UpstreamModel:   req.UpstreamModel,
 		UpstreamBaseURL: req.UpstreamBaseURL,
 		Now:             time.Now().UTC(),
+		TurnLeaseGrace:  s.cfg.Harness.Bridge.ProxyLeaseGrace.Duration,
 	})
 	if errors.Is(err, store.ErrProxyContextUnavailable) {
-		writeErrorClass(w, http.StatusNotFound, "active_context_unavailable", "proxy active context unavailable")
+		// 503, not 404. This is an internal bookkeeping race — the turn's proxy
+		// context was momentarily unresolvable — not a statement that the model or
+		// the turn is gone. The distinction decides whether a turn survives: the
+		// proxy maps a 4xx to a hard error, and pi's retry classifier only retries
+		// on transient-looking failures, so a 404 here ended the turn outright and
+		// surfaced to the user as "the model service is unavailable" when nothing
+		// was wrong with the model.
+		//
+		// A retryable status is also the honest description: the condition clears
+		// on its own, usually within one heartbeat.
+		writeErrorClass(w, http.StatusServiceUnavailable, "active_context_unavailable", "proxy active context unavailable")
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if result.LeaseWithinGrace {
+		// The request was legitimate but its turn lease had already lapsed, so only
+		// the grace window admitted it. Worth a warning rather than silence: this is
+		// the leading indicator of heartbeats losing the race for the writer
+		// connection, which is what made these requests fail outright before.
+		s.log.Warn("proxy request admitted on an expired turn lease",
+			"session_id", result.SessionID,
+			"turn_id", result.TurnID,
+			"grace", s.cfg.Harness.Bridge.ProxyLeaseGrace.Duration)
 	}
 	if !result.Replayed {
 		s.publishDurableEvent(r.Context(), result.EventID)
@@ -1897,7 +2017,15 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 	for _, eventID := range result.EventIDs {
 		s.publishDurableEvent(r.Context(), eventID)
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": result.SessionStatus})
+	s.publishSessionRuntime(sessionID, result.Runtime)
+	// canceled_queued lets the UI say what Stop dropped. Stop cancels the pending
+	// queue along with the running turn — see InterruptSession for why leaving it
+	// queued would strand it against a retired generation.
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":          result.SessionStatus,
+		"canceled_queued": result.CanceledQueued,
+		"runtime":         result.Runtime,
+	})
 }
 
 func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionID string) {

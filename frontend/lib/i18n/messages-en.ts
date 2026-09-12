@@ -82,8 +82,12 @@ export const EN = {
   "composer.stop": "Stop",
   "composer.stopping": "Stopping…",
   "composer.stopFailed": "Unable to stop this turn",
+  "composer.queuePlaceholder": "Send a follow-up — it runs after the current turn",
+  "composer.queuedCount": "{count} queued",
+  "composer.queueCancel": "Remove from queue",
+  "composer.queueCancelFailed": "That message is already running — use Stop instead",
+  "composer.unavailable": "This session cannot accept messages.",
   "composer.hint": "Enter to send · Shift+Enter for newline",
-  "composer.busy": "Session is busy or ended.",
 
   // ── Message actions ────────────────────────────────────────────────────────
   "message.goodResponse": "Good response",

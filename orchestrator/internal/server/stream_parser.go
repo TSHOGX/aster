@@ -10,6 +10,7 @@ import (
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/runtime"
+	"harness-platform/orchestrator/internal/store"
 )
 
 // streamParser owns per-turn normalizer state. Driver-specific parsing is
@@ -34,6 +35,10 @@ type streamParser struct {
 	// trace accumulates execution-trace nodes for the current turn; drained onto
 	// each assistant message as it is persisted.
 	trace *traceCollector
+	// lastPhase is the phase projection last written for this turn, so a repeated
+	// frame costs nothing. Only the parser for a given turn writes its phase (one
+	// parser per session+turn, see bridgeStreamParser), so no lock is needed.
+	lastPhase string
 }
 
 // piStopReasonError is pi's terminator for a message whose model call failed.
@@ -266,6 +271,7 @@ func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput)
 		}
 		p.publish("system.status", event)
 	case "agent_start", "turn_start", "message_start", "queue_update", "compaction_start", "compaction_end", "auto_retry", "auto_retry_start", "auto_retry_end":
+		p.recordLifecyclePhase(eventType)
 		p.publish("system.status", event)
 	case "message_update":
 		p.handlePiMessageUpdate(event)
@@ -273,6 +279,7 @@ func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput)
 		p.handlePiMessageEnd(event)
 	case "tool_execution_start", "tool_execution_update", "tool_execution_end":
 		p.captureToolEvent(eventType, event)
+		p.recordToolPhase(eventType, event)
 		p.publish("agent.output", event)
 	case "turn_end", "agent_end":
 		if piEventStopReason(event) == "toolUse" {
@@ -307,15 +314,36 @@ func (p *streamParser) handlePiMessageUpdate(event map[string]any) {
 	assistantEvent, _ := event["assistantMessageEvent"].(map[string]any)
 	assistantEventType, _ := assistantEvent["type"].(string)
 	switch assistantEventType {
-	case "text_start", "text_end":
+	case "text_start":
+		// The reply has begun. Recorded once per text block, not per token: setPhase
+		// dedupes, so the deltas that follow cost no writes.
+		p.setPhase(store.TurnPhaseStreaming, "", "")
 		p.publish("agent.output", event)
-	case "toolcall_start", "toolcall_delta", "toolcall_end":
+	case "text_end":
+		p.publish("agent.output", event)
+	case "toolcall_start", "toolcall_end":
+		// The model is assembling a tool call — working, with no tool label yet.
+		// Boundaries only: toolcall_delta is deliberately excluded below.
+		p.setPhase(store.TurnPhaseThinking, "", "")
+		p.publish("agent.output", event)
+	case "toolcall_delta":
+		// No phase write. This frame is per-token, and the phase it would set
+		// (thinking) alternates with the streaming phase set by text_delta when a
+		// reply interleaves text with tool-call assembly. Because the dedupe is
+		// last-value-wins, alternation defeats it and every frame became its own
+		// transaction on the single writer connection — a write per token, for a
+		// projection that is meant to be coarse. The enclosing toolcall_start
+		// already recorded this phase.
 		p.publish("agent.output", event)
 	case "text_delta":
 		text, _ := assistantEvent["delta"].(string)
 		if text == "" {
 			return
 		}
+		// Covers a driver that streams deltas without a text_start boundary. Safe
+		// to call per frame only because the phase carries no per-token component,
+		// so the dedupe below collapses the whole run into at most one write.
+		p.setPhase(store.TurnPhaseStreaming, "", "")
 		id := stringFromMap(event, "messageId")
 		if id == "" {
 			id = "pi_assistant_pending"
@@ -429,6 +457,13 @@ func piErrorClass(raw string) string {
 // piErrorNotice renders the user-facing explanation for a failed model call.
 // Written in the session's own voice rather than as a raw stack of provider
 // JSON, which users cannot act on.
+//
+// The wording deliberately avoids asserting that the model provider is at fault.
+// A 5xx here is frequently generated inside this deployment: the sandbox's model
+// requests are gated by a local correlation RPC, and when that RPC times out or
+// loses a race the sandbox sees a 5xx that never involved the provider. Reporting
+// that as "the model service is unavailable" sent users to check a service that
+// was healthy the whole time.
 func piErrorNotice(event map[string]any) string {
 	raw := piMessageErrorMessage(event)
 	switch piErrorClass(raw) {
@@ -439,9 +474,9 @@ func piErrorNotice(event map[string]any) string {
 	case "upstream_auth":
 		return "_模型服务鉴权失败，本次回复中断。请联系管理员。_"
 	case "upstream_timeout":
-		return "_模型服务响应超时，本次回复中断。请点击「继续」重试。_"
+		return "_模型请求超时，本次回复中断。请点击「继续」重试。_"
 	case "upstream_5xx":
-		return "_模型服务暂时不可用，本次回复中断。请稍后点击「继续」重试。_"
+		return "_模型请求未能完成，本次回复中断。请点击「继续」重试。_"
 	default:
 		return "_模型调用失败，本次回复中断。请点击「继续」重试。_"
 	}
@@ -553,6 +588,64 @@ func (p *streamParser) handleShellTurnDone(exitCode int) {
 	p.complete()
 }
 
+// recordLifecyclePhase maps a pi lifecycle event onto the durable phase.
+func (p *streamParser) recordLifecyclePhase(eventType string) {
+	switch eventType {
+	case "agent_start", "turn_start", "message_start", "queue_update":
+		p.setPhase(store.TurnPhaseThinking, "", "")
+	case "compaction_start":
+		p.setPhase(store.TurnPhaseCompacting, "", "")
+	case "auto_retry", "auto_retry_start":
+		p.setPhase(store.TurnPhaseRetrying, "", "")
+	case "compaction_end", "auto_retry_end":
+		// The interruption is over; the turn is working again.
+		p.setPhase(store.TurnPhaseThinking, "", "")
+	}
+}
+
+// recordToolPhase projects tool execution, which is the case the old
+// event-derived projection got wrong: a reload mid-tool reported "responding",
+// because the newest durable event for the turn was an agent.delta.
+func (p *streamParser) recordToolPhase(eventType string, event map[string]any) {
+	switch eventType {
+	case "tool_execution_start", "tool_execution_update":
+		p.setPhase(store.TurnPhaseTool, stringFromMap(event, "toolName"), toolPhaseDetail(event))
+	case "tool_execution_end":
+		// Back to unlabeled work until the next boundary says otherwise.
+		p.setPhase(store.TurnPhaseThinking, "", "")
+	}
+}
+
+// toolPhaseDetail derives the short "what is it acting on" label for a tool
+// frame — the path, command, or query.
+//
+// Key order and the 80-character cap intentionally mirror toolDetailFromInput in
+// frontend/lib/trace.ts: the same tool must not be labelled one way live (where
+// the client derives it from the event) and another after a reload (where it
+// comes from this projection).
+func toolPhaseDetail(event map[string]any) string {
+	args, ok := event["args"].(map[string]any)
+	if !ok {
+		// Older frames used `input` instead of `args`.
+		args, ok = event["input"].(map[string]any)
+		if !ok {
+			return ""
+		}
+	}
+	for _, key := range []string{"path", "file_path", "command", "cmd", "pattern", "query", "url", "name"} {
+		value, _ := args[key].(string)
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if len([]rune(value)) > 80 {
+			return string([]rune(value)[:79]) + "…"
+		}
+		return value
+	}
+	return ""
+}
+
 // captureToolEvent feeds a pi tool_execution_* event into the trace collector.
 // The pi event carries camelCase fields (toolCallId/toolName/args/result); a
 // nil collector (older driver paths) is a no-op.
@@ -630,6 +723,45 @@ func (p *streamParser) flush(stopReason string) {
 	if text := strings.TrimSpace(b.String()); text != "" {
 		p.persistAssistant(text, stopReason)
 	}
+}
+
+// setPhase records what this turn is doing now onto the turn row and pushes the
+// resulting projection.
+//
+// Coarse by design: called on lifecycle boundaries (turn start, tool start/end,
+// first text of a block, compaction, retry) and never per token. Deltas remain
+// live-only `agent.delta` events — persisting each one would be a write per
+// token for information the client already has.
+//
+// Best effort: a failed write costs this one frame of fidelity, and the next
+// boundary (or a reload, which reads the row) corrects it. It must not interrupt
+// output handling.
+func (p *streamParser) setPhase(phase store.TurnPhase, toolName, toolDetail string) {
+	if p.turnID == 0 {
+		// No turn correlation (shell paths, or output arriving without a turn id):
+		// there is no row to project onto.
+		return
+	}
+	key := string(phase) + "\x00" + toolName + "\x00" + toolDetail
+	if key == p.lastPhase {
+		return
+	}
+	p.lastPhase = key
+	snapshot, err := p.srv.store.SetTurnPhase(context.Background(), store.SetTurnPhaseParams{
+		SessionID:  p.sessionID,
+		TurnID:     p.turnID,
+		Phase:      phase,
+		ToolName:   toolName,
+		ToolDetail: toolDetail,
+	})
+	if err != nil {
+		// Force a retry on the next frame rather than staying silently stale.
+		p.lastPhase = ""
+		p.srv.log.Warn("failed to record turn phase",
+			"session_id", p.sessionID, "turn_id", p.turnID, "phase", phase, "error", err)
+		return
+	}
+	p.srv.publishSessionRuntime(p.sessionID, snapshot)
 }
 
 func (p *streamParser) publish(eventType string, payload any) {

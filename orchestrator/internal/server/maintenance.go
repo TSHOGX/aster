@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/bridge"
+	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/store"
 )
 
@@ -39,6 +40,10 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		AckStartedGrace:  s.cfg.Harness.Bridge.AckStartedGrace.Duration,
 		AfterCommit:      s.handleBridgeCommittedEnvelope,
 		AfterEventCommit: s.publishDurableEvent,
+		// Commit a run of output envelopes together. This config existed and was
+		// validated but had no consumer, so every output line was still its own
+		// transaction on the single writer connection.
+		EmitOutputBatchMaxRows: s.cfg.Harness.Events.EmitOutputBatchMaxRows,
 	}
 	touchHostHeartbeat := func(generation store.BridgePollGeneration, now time.Time) {
 		if err := bridge.TouchHeartbeat(generation.BridgeDirPath, bridge.HostHeartbeatFile, now); err != nil && !errors.Is(err, context.Canceled) {
@@ -539,12 +544,41 @@ func (s *Server) handleBridgeCommittedEnvelope(ctx context.Context, envelope bri
 	switch envelope.Type {
 	case bridge.TypeEmitOutput:
 		s.handleBridgeOutput(ctx, envelope)
+	case bridge.TypeAckTurnStarted:
+		// The agent has the turn: it leaves the queue and enters the transcript here.
+		// AckTurnStarted committed the message row in the same transaction that
+		// marked the turn running, so publish that message and the new projection
+		// together — this is the one moment a queued prompt becomes a conversation
+		// entry, and its timestamp is when the model actually received it.
+		s.publishTurnUserMessage(ctx, envelope)
+		s.publishSessionRuntimeFromStore(ctx, envelope.SessionID)
 	case bridge.TypeAckTurnCompleted:
 		s.handleBridgeCompletion(ctx, envelope)
 		// See turn_resume.go: continue a turn whose model call died on a
 		// transient upstream fault, rather than leaving the reply truncated.
 		s.maybeResumeFailedTurn(ctx, envelope)
 	}
+}
+
+// publishTurnUserMessage broadcasts the transcript entry a just-dispatched turn
+// produced. A turn with no message (an automatic continuation) publishes nothing.
+// Best effort: on failure the client's next reload reads the row from the store.
+func (s *Server) publishTurnUserMessage(ctx context.Context, envelope bridge.Envelope) {
+	if envelope.TurnID == nil {
+		return
+	}
+	message, ok, err := s.store.TurnUserMessage(ctx, envelope.SessionID, *envelope.TurnID)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			s.log.Warn("failed to load dispatched turn message",
+				"session_id", envelope.SessionID, "turn_id", *envelope.TurnID, "error", err)
+		}
+		return
+	}
+	if !ok {
+		return
+	}
+	s.hub.Publish(events.Event{Type: "message.created", SessionID: envelope.SessionID, Payload: message})
 }
 
 func (s *Server) publishDurableEvent(ctx context.Context, eventID int64) {
@@ -584,6 +618,10 @@ func (s *Server) handleBridgeOutput(ctx context.Context, envelope bridge.Envelop
 
 func (s *Server) handleBridgeCompletion(ctx context.Context, envelope bridge.Envelope) {
 	s.completeBridgeStreamParser(envelope)
+	// The turn left the active slot and whatever was queued behind it is now next.
+	// Clients learn the queue advanced from this push; without it they would hold
+	// a projection showing the finished turn as active until their next reload.
+	s.publishSessionRuntimeFromStore(ctx, envelope.SessionID)
 	if err := s.watcher.ScanSession(ctx, envelope.SessionID); err != nil && !errors.Is(err, context.Canceled) {
 		s.log.Warn("failed to scan bridge-completed session artifacts", "session_id", envelope.SessionID, "error", err)
 	}

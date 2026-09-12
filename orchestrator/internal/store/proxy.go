@@ -21,6 +21,19 @@ type StartProxyRequestParams struct {
 	UpstreamModel   string
 	UpstreamBaseURL string
 	Now             time.Time
+	// TurnLeaseGrace tolerates a turn lease that expired within this window.
+	//
+	// Turn leases are renewed only by the bridge heartbeat, which contends for the
+	// single writer connection; under write pressure a heartbeat lands late and the
+	// lease briefly lapses while the turn is perfectly healthy. Without a grace
+	// window every model call in that gap was rejected, which pi reported to the
+	// user as the model service being unavailable.
+	//
+	// Scoped to the TURN lease only. Generation liveness, lease_owner agreement,
+	// the live resource instance and the single-in-flight constraint are all still
+	// required exactly as before, so this tolerates a late renewal without
+	// widening who may authorize a request. Zero disables the grace.
+	TurnLeaseGrace time.Duration
 }
 
 type StartProxyRequestResult struct {
@@ -30,6 +43,11 @@ type StartProxyRequestResult struct {
 	TurnID          int64
 	RequestSequence int64
 	Replayed        bool
+	// LeaseWithinGrace reports that the turn's lease had expired and was admitted
+	// only by the grace window. The caller logs it: the request is legitimate, but
+	// a nonzero rate means heartbeats are running late and is the signal that
+	// writer contention is building.
+	LeaseWithinGrace bool
 }
 
 type FinishProxyRequestParams struct {
@@ -92,9 +110,18 @@ func (s *Store) StartProxyRequest(ctx context.Context, p StartProxyRequestParams
 	var result StartProxyRequestResult
 	var nextRequestSequence int64
 	var snapshot proxyAuthorizationSnapshot
+	// The turn lease may be admitted within a grace window; everything else in
+	// this predicate stays strict. leaseCutoff is the earliest turn lease expiry
+	// still acceptable, and turnLeaseExpiresAt is read back so a grace admission
+	// can be reported to the caller.
+	leaseCutoff := p.Now
+	if p.TurnLeaseGrace > 0 {
+		leaseCutoff = p.Now.Add(-p.TurnLeaseGrace)
+	}
+	var turnLeaseExpiresAt sql.NullString
 	if err := tx.QueryRowContext(ctx, `
 SELECT c.session_id, c.generation_id, c.turn_id, c.next_request_sequence,
-       g.agent_runtime_profile_id, np.runsc_network
+       g.agent_runtime_profile_id, np.runsc_network, t.lease_expires_at
 FROM active_model_request_contexts c
 JOIN turns t ON t.id = c.turn_id
   AND t.session_id = c.session_id
@@ -114,8 +141,17 @@ WHERE c.sandbox_source_ip = ?
   AND c.model_access_allowed = 1
   AND a.model_access_allowed = 1
   AND c.expires_at > ?
-  AND t.status = 'running'
+  -- 'leased' as well as 'running'. A leased turn has been granted to this
+  -- sandbox and is what it is executing; its ack merely travels back through the
+  -- bridge file queue and is applied a poll later. Requiring 'running' meant the
+  -- agent's opening model call for a turn — which goes straight to the proxy and
+  -- normally beats the ack — was refused, killing the turn. The turn is still
+  -- bound to this generation and lease_owner, so this does not widen WHO may ask,
+  -- only WHEN within a turn it is allowed to.
+  AND t.status IN ('leased', 'running')
   AND t.lease_owner = c.lease_owner
+  -- Grace applies to THIS bound only. A late heartbeat must not reject a healthy
+  -- turn's model call; ownership and generation liveness below are unchanged.
   AND t.lease_expires_at > ?
   AND g.status IN ('active','idle')
   AND g.lease_owner = c.lease_owner
@@ -129,14 +165,28 @@ WHERE c.sandbox_source_ip = ?
       AND inflight.generation_id = c.generation_id
       AND inflight.status IN ('leased', 'running')
       AND inflight.lease_owner = c.lease_owner
+      -- Same cutoff as the turn bound above, for two reasons. It must count the
+      -- graced turn itself, or the grace could never admit anything (the turn
+      -- would pass the outer check and then fail this = 1). And widening the
+      -- window here can only surface MORE competing turns, never fewer, so the
+      -- single-in-flight guard stays at least as strict as before: ambiguity
+      -- still refuses the request.
       AND inflight.lease_expires_at > ?
   ) = 1`,
-		p.SandboxSourceIP, formatTime(p.Now), formatTime(p.Now), formatTime(p.Now), formatTime(p.Now),
-	).Scan(&result.SessionID, &result.GenerationID, &result.TurnID, &nextRequestSequence, &snapshot.RuntimeProfileID, &snapshot.RunscNetwork); err != nil {
+		p.SandboxSourceIP, formatTime(p.Now), formatTime(leaseCutoff), formatTime(p.Now), formatTime(leaseCutoff),
+	).Scan(&result.SessionID, &result.GenerationID, &result.TurnID, &nextRequestSequence,
+		&snapshot.RuntimeProfileID, &snapshot.RunscNetwork, &turnLeaseExpiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return StartProxyRequestResult{}, ErrProxyContextUnavailable
 		}
 		return StartProxyRequestResult{}, err
+	}
+	// Admitted, but was it admitted only because of the grace? The caller logs
+	// this: a healthy deployment should see it approximately never.
+	if turnLeaseExpiresAt.Valid {
+		if expiry := parseTime(turnLeaseExpiresAt.String); !expiry.IsZero() && !expiry.After(p.Now) {
+			result.LeaseWithinGrace = true
+		}
 	}
 	snapshot.SessionID = result.SessionID
 	snapshot.GenerationID = result.GenerationID

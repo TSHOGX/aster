@@ -35,6 +35,53 @@ export type ApiSession = {
   error_class?: string;
 };
 
+/**
+ * The coarse activity of an executing turn, as recorded on the turn row by the
+ * orchestrator. Mirrors store.TurnPhase.
+ */
+export type TurnPhase = "thinking" | "tool" | "streaming" | "compacting" | "retrying";
+
+export type ApiTurn = {
+  id: number;
+  sequence: number;
+  content: string;
+  status: "queued" | "leased" | "running" | "completed" | "failed" | "canceled";
+  /** Present on the active turn only; a queued turn has not run. */
+  phase?: TurnPhase;
+  phase_at?: string;
+  tool_name?: string;
+  tool_detail?: string;
+  started_at?: string;
+  created_at: string;
+};
+
+/**
+ * The session's runtime projection: the single authority on whether the agent is
+ * busy, what it is doing, and what the user has queued behind it.
+ *
+ * Served identically by GET /api/sessions/{id}/runtime and the `session.runtime`
+ * event, so there is one shape to apply however it arrives.
+ */
+export type ApiSessionRuntime = {
+  session_id: string;
+  session_status: SessionStatus;
+  /**
+   * Monotonic per session. Apply a snapshot only when its revision exceeds the
+   * one already held: an in-flight GET can otherwise land after a newer push and
+   * resurrect a drained queue entry, which then never clears.
+   */
+  revision: number;
+  /**
+   * The turn the agent is executing, or null when idle. This — not
+   * `session_status` — defines "busy": a session stays running_active while a
+   * queued turn waits for a generation, and reports running_active before any
+   * turn is claimed.
+   */
+  active_turn: ApiTurn | null;
+  /** The user's pending turns, in execution order. */
+  queued_turns: ApiTurn[];
+};
+
 export type SessionMode = "agent" | "shell";
 
 /**
@@ -156,6 +203,12 @@ export type TraceNode = {
 export type ApiMessage = {
   id: number;
   session_id: string;
+  /**
+   * The durable turn this user message belongs to, when it has one (absent for
+   * assistant/system messages and pre-migration history). Lets the UI correlate a
+   * transcript bubble with turn state by id instead of matching on content.
+   */
+  turn_id?: number;
   role: "user" | "assistant" | string;
   content: string;
   created_at: string;

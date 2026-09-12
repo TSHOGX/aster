@@ -434,7 +434,7 @@ func TestFailSessionStoresTypedFailure(t *testing.T) {
 	}
 }
 
-func TestEnqueueTurnMessageCreatesQueuedTurnMessageAndActivatesSession(t *testing.T) {
+func TestEnqueueTurnMessageCreatesQueuedTurnAndActivatesSession(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
@@ -468,11 +468,27 @@ func TestEnqueueTurnMessageCreatesQueuedTurnMessageAndActivatesSession(t *testin
 	if err != nil {
 		t.Fatalf("enqueue turn message: %v", err)
 	}
-	if result.TurnID == 0 || result.Message.ID == 0 {
-		t.Fatalf("expected ids to be assigned: %+v", result)
+	if result.TurnID == 0 {
+		t.Fatalf("expected a turn id: %+v", result)
 	}
-	if result.Message.Role != "user" || result.Message.Content != "hello" {
-		t.Fatalf("unexpected message: %+v", result.Message)
+	// Enqueuing writes no transcript entry: the prompt has not been asked yet. It
+	// is materialized when the agent starts the turn, which is what keeps the
+	// transcript timestamp honest and the queue the sole owner of pending work.
+	var messages int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE session_id = ?`, session.ID).Scan(&messages); err != nil {
+		t.Fatalf("count messages: %v", err)
+	}
+	if messages != 0 {
+		t.Fatalf("enqueue wrote %d message row(s); a queued turn must write none", messages)
+	}
+	// The turn is flagged to become one on dispatch (unlike an automatic
+	// continuation, which the user never typed).
+	var materializes int
+	if err := st.db.QueryRowContext(ctx, `SELECT materializes_message FROM turns WHERE id = ?`, result.TurnID).Scan(&materializes); err != nil {
+		t.Fatalf("query materializes_message: %v", err)
+	}
+	if materializes != 1 {
+		t.Fatalf("user turn must materialize a message on dispatch")
 	}
 
 	var turnStatus, turnContent string
@@ -540,6 +556,159 @@ func TestEnqueueTurnMessageRejectsBusySessionWithoutWrites(t *testing.T) {
 	if turns != 0 || messages != 0 {
 		t.Fatalf("busy enqueue should roll back writes: turns=%d messages=%d", turns, messages)
 	}
+}
+
+// Enqueuing returns the post-send projection so the client needs no follow-up
+// GET (one that could race the worker's claim and arrive stale). The first turn
+// is immediately active work; the second is queued behind it.
+func TestEnqueueTurnMessageReturnsRuntimeProjection(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Now().UTC()
+	session := Session{ID: "sess_queue_flag", UserID: "lab", Status: string(sessionstate.RunningIdle), Agent: "pi", Workspace: dir, RestoreID: "restore-queue-flag", CreatedAt: now, UpdatedAt: now}
+	if err := st.CreateSession(ctx, session); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	first, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: session.ID, Content: "first", Now: now})
+	if err != nil {
+		t.Fatalf("enqueue first: %v", err)
+	}
+	// Nothing has claimed it yet, so it is the head of the queue rather than the
+	// active turn — and its message is already in the transcript either way.
+	if len(first.Runtime.QueuedTurns) != 1 || first.Runtime.QueuedTurns[0].ID != first.TurnID {
+		t.Fatalf("first enqueue projection: %+v", first.Runtime)
+	}
+
+	second, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: session.ID, Content: "second", Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("enqueue second: %v", err)
+	}
+	if len(second.Runtime.QueuedTurns) != 2 {
+		t.Fatalf("second enqueue projection: %+v", second.Runtime)
+	}
+	if second.Runtime.Revision <= first.Runtime.Revision {
+		t.Fatalf("revision did not advance: %d -> %d", first.Runtime.Revision, second.Runtime.Revision)
+	}
+	// Execution order is the queue order the user sees.
+	if second.Runtime.QueuedTurns[0].ID != first.TurnID || second.Runtime.QueuedTurns[1].ID != second.TurnID {
+		t.Fatalf("queue out of order: %+v", second.Runtime.QueuedTurns)
+	}
+}
+
+// The transcript contains exactly the turns that were actually dispatched.
+//
+// There is no filter in listMessages doing this work: a queued turn simply has no
+// message row yet. That is why queue and transcript cannot show the same prompt —
+// the state that made duplication possible no longer exists.
+func TestTranscriptContainsOnlyDispatchedTurns(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Now().UTC().Truncate(time.Second)
+	session := Session{
+		ID: "sess_queue_visibility", UserID: "lab", Status: string(sessionstate.RunningIdle),
+		Agent: "pi", Workspace: t.TempDir(), RestoreID: "restore_queue_visibility",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := st.CreateSession(ctx, session); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	first, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: session.ID, Content: "first prompt", Now: now})
+	if err != nil {
+		t.Fatalf("enqueue first: %v", err)
+	}
+	second, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: session.ID, Content: "queued prompt", Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("enqueue second: %v", err)
+	}
+
+	// Neither has been asked, so the transcript is empty and the queue owns both.
+	msgs, err := st.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list queued messages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("queued turns leaked into the transcript: %+v", msgs)
+	}
+
+	// Dispatch the first turn. Its message is stamped now — not at enqueue — so the
+	// transcript reports when the prompt actually reached the agent.
+	dispatchedAt := now.Add(90 * time.Second)
+	message := materializeForTest(t, ctx, st, session.ID, first.TurnID, dispatchedAt)
+	if !message.CreatedAt.Equal(dispatchedAt) {
+		t.Fatalf("message timestamp = %s, want dispatch time %s", message.CreatedAt, dispatchedAt)
+	}
+	msgs, err = st.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Content != "first prompt" {
+		t.Fatalf("dispatched turn missing from transcript: %+v", msgs)
+	}
+	if msgs[0].TurnID == nil || *msgs[0].TurnID != first.TurnID {
+		t.Fatalf("message not linked to its turn: %+v", msgs[0])
+	}
+
+	// A replayed ack must not append the prompt a second time.
+	if _, ok, err := materializeTurnMessage(t, ctx, st, session.ID, first.TurnID, dispatchedAt.Add(time.Second)); err != nil || ok {
+		t.Fatalf("replayed dispatch created a duplicate: ok=%v err=%v", ok, err)
+	}
+	msgs, err = st.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("replayed dispatch duplicated the message: %+v", msgs)
+	}
+
+	// The second turn stays out of history until it too is dispatched.
+	materializeForTest(t, ctx, st, session.ID, second.TurnID, dispatchedAt.Add(time.Minute))
+	msgs, err = st.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 2 || msgs[1].Content != "queued prompt" {
+		t.Fatalf("promoted turn missing from transcript: %+v", msgs)
+	}
+}
+
+// materializeTurnMessage drives the dispatch-time write directly, standing in for
+// AckTurnStarted so these tests need no bridge.
+func materializeTurnMessage(t *testing.T, ctx context.Context, st *Store, sessionID string, turnID int64, now time.Time) (Message, bool, error) {
+	t.Helper()
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	message, ok, err := materializeTurnMessageTx(ctx, tx, sessionID, turnID, now)
+	if err != nil {
+		return Message{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Message{}, false, err
+	}
+	return message, ok, nil
+}
+
+func materializeForTest(t *testing.T, ctx context.Context, st *Store, sessionID string, turnID int64, now time.Time) Message {
+	t.Helper()
+	message, ok, err := materializeTurnMessage(t, ctx, st, sessionID, turnID, now)
+	if err != nil {
+		t.Fatalf("materialize turn %d: %v", turnID, err)
+	}
+	if !ok {
+		t.Fatalf("turn %d produced no message", turnID)
+	}
+	return message
 }
 
 func TestListSessionsByStatus(t *testing.T) {

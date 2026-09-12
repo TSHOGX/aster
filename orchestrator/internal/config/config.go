@@ -292,8 +292,22 @@ func (p *DNSPolicy) UnmarshalYAML(value *yaml.Node) error {
 type EventsConfig struct {
 	RetentionWindow        Duration `yaml:"retention_window"`
 	RetentionRows          int64    `yaml:"retention_rows"`
-	EmitOutputBatchMaxRows int      `yaml:"emit_output_batch_max_rows"`
-	EmitOutputBatchMaxAge  Duration `yaml:"emit_output_batch_max_age"`
+	// EmitOutputBatchMaxRows caps how many consecutive bridge output envelopes are
+	// committed in one transaction (see bridge.Processor.handleOutputBatch).
+	EmitOutputBatchMaxRows int `yaml:"emit_output_batch_max_rows"`
+	// EmitOutputBatchMaxAge is NOT consumed, deliberately.
+	//
+	// It would bound how long a partially-filled batch may wait before being
+	// flushed, which matters for a design that accumulates events in memory. This
+	// one does not: batching happens inside a single ProcessOnce pass over
+	// envelopes that are ALREADY durable on disk in the bridge outbox, and every
+	// envelope present in that pass is committed before it returns. Nothing is ever
+	// held back, so there is no staleness for an age bound to limit.
+	//
+	// Kept (and still validated) rather than removed so an operator's existing
+	// config keeps loading. Do not add a timer to "make it work" — that would
+	// reintroduce in-memory buffering of output that is currently crash-safe.
+	EmitOutputBatchMaxAge Duration `yaml:"emit_output_batch_max_age"`
 }
 
 type ProbeConfig struct {
@@ -327,6 +341,24 @@ type BridgeConfig struct {
 	// "alive" forever by orchestrator-side lease renewal. Must be >= lease_ttl
 	// so a healthy sandbox is never gated between two heartbeats.
 	SandboxHeartbeatStallGrace Duration `yaml:"sandbox_heartbeat_stall_grace"`
+	// ProxyLeaseGrace is how long past its lease expiry a running turn may still
+	// have its model requests authorized.
+	//
+	// Turn leases are renewed only by the bridge heartbeat, which competes for the
+	// single writer connection like everything else. Under write pressure a
+	// heartbeat can land late, and without a grace window that momentary lateness
+	// rejected every model call the turn made until the next successful heartbeat
+	// — the "model service unavailable" reports that were really lock contention.
+	//
+	// This does NOT weaken identity: the generation must still be live and the
+	// lease_owner must still match (see StartProxyRequest). It only tolerates a
+	// late renewal for a turn that is otherwise fully authorized.
+	//
+	// Must stay BELOW sandbox_heartbeat_stall_grace. Past that point the
+	// orchestrator deliberately stops renewing leases so a dead sandbox's turn can
+	// lapse and be recovered; a grace window reaching beyond it would keep
+	// authorizing model calls for a sandbox already judged gone.
+	ProxyLeaseGrace Duration `yaml:"proxy_lease_grace"`
 	// TurnResume controls automatic continuation of turns whose model call died
 	// on a transient upstream fault.
 	TurnResume TurnResumeConfig `yaml:"turn_resume"`
@@ -724,6 +756,10 @@ func defaultHarnessConfig() HarnessConfig {
 			AckStartedGrace:            Duration{Duration: 90 * time.Second},
 			ReconnectGrace:             Duration{Duration: 30 * time.Second},
 			SandboxHeartbeatStallGrace: Duration{Duration: 90 * time.Second},
+			// One lease TTL of slack: enough to absorb a heartbeat delayed by
+			// writer contention, and comfortably under the 90s stall grace that
+			// lets a dead sandbox's lease lapse.
+			ProxyLeaseGrace: Duration{Duration: 60 * time.Second},
 			TurnResume: TurnResumeConfig{
 				Enabled:     false,
 				MaxAttempts: 2,
@@ -866,6 +902,18 @@ func validateHarnessConfig(cfg HarnessConfig) error {
 	}
 	if cfg.Bridge.SandboxHeartbeatStallGrace.Duration < cfg.Bridge.LeaseTTL.Duration {
 		return fmt.Errorf("harness.bridge.sandbox_heartbeat_stall_grace must be >= harness.bridge.lease_ttl (else a healthy sandbox can be gated between heartbeats)")
+	}
+	if cfg.Bridge.ProxyLeaseGrace.Duration < 0 {
+		return fmt.Errorf("harness.bridge.proxy_lease_grace must be >= 0")
+	}
+	// The ceiling is the whole safety argument for the grace window, so it is
+	// enforced rather than left as a comment. Past sandbox_heartbeat_stall_grace
+	// the orchestrator stops renewing leases on purpose, so that a dead sandbox's
+	// turn lapses and gets recovered; a grace window reaching beyond that would
+	// keep authorizing model requests for a sandbox already judged gone, silently
+	// undoing the zombie-session guard.
+	if cfg.Bridge.ProxyLeaseGrace.Duration >= cfg.Bridge.SandboxHeartbeatStallGrace.Duration {
+		return fmt.Errorf("harness.bridge.proxy_lease_grace must be < harness.bridge.sandbox_heartbeat_stall_grace (else a stalled sandbox keeps model access after lease renewal stops)")
 	}
 	// Validated even while disabled, so switching the feature on cannot surface a
 	// config error that was sitting latent in the file.

@@ -1,10 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bot, Loader2, RefreshCw, RotateCw, Sparkles, Square } from "lucide-react";
+import { Bot, Clock, RefreshCw, RotateCw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { useActivity, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
+import { useActivity, useConversation, useHarness, useSelectedSession, useSessionRuntime } from "@/components/harness-provider";
 import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
 import { ShellConversation } from "./shell-conversation";
 import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
@@ -17,6 +17,7 @@ import { MessageWithPath } from "@/components/ui/message-with-path";
 import { ConversationSkeleton } from "@/components/ui/skeleton";
 import { StatusPill, statusTone } from "@/components/ui/badge";
 import { isFinalReply, interruptionKind, type InterruptionKind } from "@/lib/message-grouping";
+import type { ApiTurn } from "@/lib/types";
 import { sessionModeLabel } from "@/lib/agents";
 import { dayKey, formatDayDivider, isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 
@@ -33,11 +34,18 @@ function ChatConversation() {
   const session = useSelectedSession();
   const convo = useConversation(session?.id ?? null);
   const activity = useActivity(session?.id ?? null);
-  const { sendMessage, interruptSession, refresh } = useHarness();
+  const runtime = useSessionRuntime(session?.id ?? null);
+  const { sendMessage, interruptSession, cancelQueuedTurn, refresh } = useHarness();
   const [refreshing, setRefreshing] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
+
+  // The queue is server state, rendered as-is. There is no local mirror to
+  // reconcile, which is what previously let the same prompt appear in the queue
+  // and the transcript at once, and left drained entries behind.
+  const queuedTurns = runtime?.queued_turns ?? [];
 
   // A pending jump target (set by the search palette) for THIS session means we
   // scroll to a specific message instead of auto-scrolling to the bottom.
@@ -103,19 +111,32 @@ function ChatConversation() {
   const readOnly = session.access === "reader";
   const accepting = !readOnly && isAcceptingInput(session.status);
   const terminal = isTerminal(session.status);
+
+  const activityLive = activity.phase !== "idle";
+  // "Busy" is a property of the turn queue, so the projection answers it. Until
+  // the first snapshot arrives, fall back to what the session list knows.
+  //
+  // Note this counts a queued turn as busy: work is pending either way, so the
+  // button must offer Stop (which drops the queue too) rather than pretending the
+  // agent is idle.
+  const busy = runtime
+    ? runtime.active_turn != null || runtime.queued_turns.length > 0
+    : activityLive || session.status === "running_active";
+
+  // A busy session accepts input now — the turn is queued behind the current one
+  // — so the placeholder invites it instead of reporting the agent as unavailable.
   const placeholder = readOnly
     ? `Read-only — shared by ${session.shared_by ?? "another user"}`
     : terminal
     ? t("composer.sessionEnded")
-    : accepting
-    ? t("composer.placeholder")
-    : t("composer.thinking");
-
-  const activityLive = activity.phase !== "idle";
+    : busy
+    ? t("composer.queuePlaceholder")
+    : t("composer.placeholder");
 
   const stop = async () => {
-    if (stopping || !session || session.status !== "running_active") return;
+    if (stopping || !session || !busy) return;
     setStopping(true);
+    setQueueError(null);
     const result = await interruptSession(session.id);
     setStopping(false);
     if (!result.ok) {
@@ -170,20 +191,9 @@ function ChatConversation() {
               Refresh
             </button>
           ) : null}
-          {!readOnly && session.status === "running_active" ? (
-            <button
-              type="button"
-              onClick={() => void stop()}
-              disabled={stopping}
-              className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-2 py-1 text-2xs text-[var(--color-danger)] hover:opacity-80 disabled:opacity-60"
-              title={t(stopping ? "composer.stopping" : "composer.stop")}
-              aria-label={t(stopping ? "composer.stopping" : "composer.stop")}
-            >
-              {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : <Square className="h-3 w-3" />}
-              {t(stopping ? "composer.stopping" : "composer.stop")}
-            </button>
-          ) : null}
-          <StatusPill tone={statusTone(session.status)}>{statusLabel(session.status)}</StatusPill>
+          <StatusPill tone={busy ? "running" : statusTone(session.status)}>
+            {busy ? t("composer.thinking") : statusLabel(session.status)}
+          </StatusPill>
         </div>
       </header>
 
@@ -262,12 +272,81 @@ function ChatConversation() {
       </div>
 
       <Composer
-        disabled={!accepting}
+        disabled={readOnly || terminal}
+        busy={!readOnly && !terminal && busy}
+        stopping={stopping}
+        onStop={() => void stop()}
         placeholder={placeholder}
         topSlot={<ActivityIndicator activity={activity} />}
-        onSend={(content) => sendMessage(session.id, content)}
+        queueSlot={
+          queuedTurns.length > 0 ? (
+            <QueuedTurns
+              turns={queuedTurns}
+              error={queueError}
+              onCancel={async (turnId) => {
+                setQueueError(null);
+                const result = await cancelQueuedTurn(session.id, turnId);
+                if (!result.ok) setQueueError(result.error ?? t("composer.queueCancelFailed"));
+              }}
+            />
+          ) : null
+        }
+        onSend={async (content) => {
+          setQueueError(null);
+          return sendMessage(session.id, content);
+        }}
       />
     </main>
+  );
+}
+
+/**
+ * The user's pending turns, straight from the runtime projection.
+ *
+ * Deliberately a pure render of server state with one action. The turns are
+ * durable and the orchestrator drains them in order, so there is no local queue
+ * to advance and nothing to reconcile — removing an entry has to be a request,
+ * because hiding it locally would leave the prompt to execute anyway.
+ */
+function QueuedTurns({
+  turns,
+  error,
+  onCancel
+}: {
+  turns: ApiTurn[];
+  error: string | null;
+  onCancel: (turnId: number) => void | Promise<void>;
+}) {
+  const t = useT();
+  return (
+    <div className="mb-1 overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-1.5 text-2xs text-[var(--color-foreground-muted)]">
+        <Clock className="h-3 w-3" aria-hidden />
+        {t("composer.queuedCount", { count: turns.length })}
+      </div>
+      {turns.map((turn) => (
+        <div
+          key={turn.id}
+          className="flex items-center gap-3 border-b border-[var(--color-border)] px-3 py-2 last:border-b-0"
+        >
+          <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-foreground)]">{turn.content}</span>
+          <button
+            type="button"
+            onClick={() => void onCancel(turn.id)}
+            className="shrink-0 rounded p-0.5 text-[var(--color-foreground-muted)] transition-colors hover:text-[var(--color-danger)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+            title={t("composer.queueCancel")}
+            aria-label={t("composer.queueCancel")}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      ))}
+      {error ? (
+        <div className="border-t border-[var(--color-border)] px-3 py-1.5 text-2xs text-[var(--color-danger)]" role="status">
+          {error}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

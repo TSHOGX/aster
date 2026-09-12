@@ -1169,11 +1169,14 @@ WHERE g.session_id = ? AND r.resource_state = 'live'`, session.ID).Scan(&resourc
 	if err := st.DBForTest().QueryRowContext(ctx, `SELECT COUNT(*) FROM turns WHERE session_id = ? AND status = 'queued' AND generation_id IS NULL`, session.ID).Scan(&queuedTurns); err != nil {
 		t.Fatalf("count turns: %v", err)
 	}
+	// Zero, deliberately: enqueuing creates the turn, and the transcript entry is
+	// written when the agent starts it. No bridge runs in this fixture, so the turn
+	// stays queued and unasked.
 	if err := st.DBForTest().QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user' AND content = 'hello'`, session.ID).Scan(&userMessages); err != nil {
 		t.Fatalf("count user messages: %v", err)
 	}
-	if generations != 1 || networkRows != 1 || resourceRows != 1 || queuedTurns != 1 || userMessages != 1 {
-		t.Fatalf("unexpected bridge enqueue rows: generations=%d network=%d resources=%d queued_turns=%d user_messages=%d", generations, networkRows, resourceRows, queuedTurns, userMessages)
+	if generations != 1 || networkRows != 1 || resourceRows != 1 || queuedTurns != 1 || userMessages != 0 {
+		t.Fatalf("unexpected bridge enqueue rows: generations=%d network=%d resources=%d queued_turns=%d user_messages=%d (want 1/1/1/1/0)", generations, networkRows, resourceRows, queuedTurns, userMessages)
 	}
 }
 
@@ -6870,5 +6873,335 @@ WHERE generation_id = ?`,
 
 	if calls != 1 {
 		t.Fatalf("Destroy called %d times while wedged, want exactly 1 (stage must not overlap itself)", calls)
+	}
+}
+
+// The runtime projection is the client's single source of truth for "is the
+// agent busy, what is it doing, what is queued". These tests pin the contract at
+// the HTTP boundary: the shape the client applies, and the two queue mutations
+// that used to be client-side list edits.
+
+func newRuntimeTestServer(t *testing.T, ctx context.Context, dir string) (*Server, *store.Store, store.Session) {
+	t.Helper()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_runtime", string(sessionstate.Created), time.Now().UTC(), nil)
+	srv := &Server{
+		cfg:     testServerConfig(dir),
+		store:   st,
+		runtime: instantRuntime{},
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, events.NewHub()),
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+	return srv, st, session
+}
+
+func runtimeRequest(t *testing.T, srv *Server, sessionID string) store.SessionRuntimeSnapshot {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/runtime", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userContextKey{}, labUserID))
+	rec := httptest.NewRecorder()
+	srv.getSessionRuntime(rec, req, sessionID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("runtime endpoint: expected 200, got %d body %s", rec.Code, rec.Body.String())
+	}
+	var snapshot store.SessionRuntimeSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode runtime snapshot: %v", err)
+	}
+	return snapshot
+}
+
+// A send returns the turn id and the post-send projection — deliberately no
+// message. The prompt is accepted but not yet asked: it becomes a transcript
+// entry only when the agent starts it, so until then the queue owns it and the
+// two can never show the same prompt at once.
+func TestSendMessageResponseCarriesRuntimeProjection(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	srv, st, session := newRuntimeTestServer(t, ctx, dir)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/messages", strings.NewReader(`{"content":"first"}`))
+	rec := httptest.NewRecorder()
+	srv.sendMessage(rec, req, session.ID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("send: expected 202, got %d body %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		TurnID  int64                        `json:"turn_id"`
+		Runtime store.SessionRuntimeSnapshot `json:"runtime"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode send response: %v", err)
+	}
+	if response.TurnID == 0 || response.Runtime.Revision == 0 {
+		t.Fatalf("send response missing turn/revision: %+v", response)
+	}
+	if len(response.Runtime.QueuedTurns) != 1 || response.Runtime.QueuedTurns[0].ID != response.TurnID {
+		t.Fatalf("projection does not show the new turn: %+v", response.Runtime)
+	}
+	waitForSessionStatus(t, ctx, st, session.ID, string(sessionstate.RunningActive))
+
+	// No transcript entry yet: the prompt has not reached the agent. This is the
+	// invariant that makes queue/transcript duplication impossible, and it is why
+	// the eventual message timestamp reflects dispatch rather than typing.
+	msgs, err := st.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("queued turn already in the transcript: %+v", msgs)
+	}
+
+	// The endpoint serves the identical shape, so a reload/second tab converges on
+	// the same state without replaying events.
+	fetched := runtimeRequest(t, srv, session.ID)
+	if len(fetched.QueuedTurns) != 1 || fetched.QueuedTurns[0].ID != response.TurnID {
+		t.Fatalf("endpoint disagrees with send response: %+v vs %+v", fetched, response.Runtime)
+	}
+	if fetched.Revision < response.Runtime.Revision {
+		t.Fatalf("revision went backwards: %d -> %d", response.Runtime.Revision, fetched.Revision)
+	}
+}
+
+// Withdrawing a queued turn is a server operation, not a client-side list edit.
+// Removing the row only from the sender's view left the turn durable, so the
+// prompt still executed once the worker got to it.
+func TestCancelQueuedTurnRemovesItFromTheQueueAndTranscript(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	srv, st, session := newRuntimeTestServer(t, ctx, dir)
+
+	send := func(content string) int64 {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/messages", strings.NewReader(`{"content":"`+content+`"}`))
+		rec := httptest.NewRecorder()
+		srv.sendMessage(rec, req, session.ID)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("send %q: expected 202, got %d body %s", content, rec.Code, rec.Body.String())
+		}
+		var response struct {
+			TurnID int64 `json:"turn_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode send response: %v", err)
+		}
+		return response.TurnID
+	}
+	firstTurn := send("keep this")
+	secondTurn := send("withdraw this")
+
+	cancel := func(turnID int64) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/sessions/%s/turns/%d", session.ID, turnID), nil)
+		req = req.WithContext(context.WithValue(req.Context(), userContextKey{}, labUserID))
+		rec := httptest.NewRecorder()
+		srv.cancelQueuedTurn(rec, req, session.ID, turnID)
+		return rec
+	}
+
+	rec := cancel(secondTurn)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel queued turn: expected 200, got %d body %s", rec.Code, rec.Body.String())
+	}
+	var snapshot store.SessionRuntimeSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode cancel response: %v", err)
+	}
+	// The response is the same projection shape, so the client applies it exactly
+	// as it applies a pushed snapshot.
+	for _, turn := range snapshot.QueuedTurns {
+		if turn.ID == secondTurn {
+			t.Fatalf("withdrawn turn still queued: %+v", snapshot.QueuedTurns)
+		}
+	}
+	var status string
+	if err := st.DBForTest().QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, secondTurn).Scan(&status); err != nil {
+		t.Fatalf("query turn: %v", err)
+	}
+	if status != "canceled" {
+		t.Fatalf("withdrawn turn status = %q, want canceled (it would still execute)", status)
+	}
+	// It was never asked, so it must not linger in history as an unanswered prompt.
+	msgs, err := st.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	for _, msg := range msgs {
+		if msg.Content == "withdraw this" {
+			t.Fatalf("withdrawn prompt left in transcript: %+v", msgs)
+		}
+	}
+
+	// Racing the worker's claim reports a conflict rather than pretending to work.
+	if _, err := st.DBForTest().ExecContext(ctx, `UPDATE turns SET status = 'running' WHERE id = ?`, firstTurn); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	if rec := cancel(firstTurn); rec.Code != http.StatusConflict {
+		t.Fatalf("cancel of a running turn: expected 409, got %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Stop drops the pending queue with the running turn, and says how much it
+// dropped. Leaving those turns queued stranded them: interrupt retires the
+// generation, and only a live generation can claim a turn.
+func TestInterruptSessionReportsCanceledQueueDepth(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	srv, st, session := newRuntimeTestServer(t, ctx, dir)
+
+	var turnIDs []int64
+	for _, content := range []string{"running work", "queued work"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/messages", strings.NewReader(`{"content":"`+content+`"}`))
+		rec := httptest.NewRecorder()
+		srv.sendMessage(rec, req, session.ID)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("send %q: expected 202, got %d body %s", content, rec.Code, rec.Body.String())
+		}
+		var response struct {
+			TurnID int64 `json:"turn_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode send response: %v", err)
+		}
+		turnIDs = append(turnIDs, response.TurnID)
+	}
+	waitForSessionStatus(t, ctx, st, session.ID, string(sessionstate.RunningActive))
+	// No bridge runs in this fixture, so promote the head turn by hand to get the
+	// realistic shape Stop faces: one turn executing, one queued behind it.
+	if _, err := st.DBForTest().ExecContext(ctx,
+		`UPDATE turns SET status = 'running', ack_started_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), turnIDs[0]); err != nil {
+		t.Fatalf("mark head turn running: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/interrupt", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userContextKey{}, labUserID))
+	rec := httptest.NewRecorder()
+	srv.interruptSession(rec, req, session.ID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("interrupt: expected 202, got %d body %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Status         string                       `json:"status"`
+		CanceledQueued int64                        `json:"canceled_queued"`
+		Runtime        store.SessionRuntimeSnapshot `json:"runtime"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode interrupt response: %v", err)
+	}
+	if response.CanceledQueued != 1 {
+		t.Fatalf("canceled_queued = %d, want 1", response.CanceledQueued)
+	}
+	// Nothing survives that a later generation could pick up and run.
+	if response.Runtime.ActiveTurn != nil || len(response.Runtime.QueuedTurns) != 0 {
+		t.Fatalf("work survived the interrupt: %+v", response.Runtime)
+	}
+	var pending int
+	if err := st.DBForTest().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM turns WHERE session_id = ? AND status IN ('queued','leased','running')`, session.ID).Scan(&pending); err != nil {
+		t.Fatalf("count pending turns: %v", err)
+	}
+	if pending != 0 {
+		t.Fatalf("%d turn(s) left claimable after interrupt", pending)
+	}
+}
+
+// TestSendMessageRuntimeFrameReachesSSEWire covers the server half of the
+// contract that frontend/lib/use-event-stream.test.ts covers on the client:
+// enqueuing a turn must put a `session.runtime` frame on the wire, framed with
+// that exact event name.
+//
+// The name is the load-bearing part. EventSource routes a named frame only to a
+// listener registered for that name, so if this type is ever renamed here
+// without updating SSE_TYPED_EVENT_TYPES, every runtime push is dropped by the
+// browser in silence — the failure that let a dispatched turn stay in the queue
+// and execute a second time. Asserting on the serialized bytes (not just the hub
+// event) is what makes this test able to catch that.
+func TestSendMessageRuntimeFrameReachesSSEWire(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, owner := openServerOwnedStore(t, ctx, dir)
+	session := createServerTestSession(t, ctx, st, dir, "sess_runtime_frame", string(sessionstate.Created), time.Now().UTC(), nil)
+
+	srv := &Server{
+		cfg:     testServerConfig(dir),
+		store:   st,
+		runtime: instantRuntime{},
+		watcher: newServerTestWatcher(t, filepath.Join(dir, "sessions"), st, events.NewHub()),
+		hub:     events.NewHub(),
+		log:     slog.Default(),
+	}
+	srv.SetOwnerUUID(owner.UUID)
+
+	ch, cancel := srv.hub.Subscribe(session.ID)
+	defer cancel()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/messages", strings.NewReader(`{"content":"hello"}`))
+	rec := httptest.NewRecorder()
+	srv.sendMessage(rec, req, session.ID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Drain until the runtime projection shows up; sendMessage also publishes a
+	// session status event, and their relative order is not part of the contract.
+	var runtime *events.Event
+	deadline := time.After(2 * time.Second)
+	for runtime == nil {
+		select {
+		case event := <-ch:
+			if event.Type == "session.runtime" {
+				captured := event
+				runtime = &captured
+			}
+		case <-deadline:
+			t.Fatalf("no session.runtime event published after send")
+		}
+	}
+
+	frame := httptest.NewRecorder()
+	if err := srv.writeSSEEvent(frame, *runtime); err != nil {
+		t.Fatalf("write sse event: %v", err)
+	}
+	wire := frame.Body.String()
+	if !strings.Contains(wire, "event: session.runtime\n") {
+		t.Fatalf("runtime frame is not named session.runtime on the wire:\n%s", wire)
+	}
+
+	// The payload must survive sanitization as a usable snapshot: the client
+	// discards anything without a numeric revision, so a stripped field here
+	// would look identical to a dropped frame.
+	dataLine := ""
+	for _, line := range strings.Split(wire, "\n") {
+		if strings.HasPrefix(line, "data: ") {
+			dataLine = strings.TrimPrefix(line, "data: ")
+			break
+		}
+	}
+	if dataLine == "" {
+		t.Fatalf("runtime frame carried no data line:\n%s", wire)
+	}
+	var delivered struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Revision    *int64 `json:"revision"`
+			QueuedTurns []struct {
+				ID      int64  `json:"id"`
+				Content string `json:"content"`
+			} `json:"queued_turns"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(dataLine), &delivered); err != nil {
+		t.Fatalf("decode runtime frame: %v (%s)", err, dataLine)
+	}
+	if delivered.Type != "session.runtime" {
+		t.Fatalf("delivered type = %q, want session.runtime", delivered.Type)
+	}
+	if delivered.Payload.Revision == nil {
+		t.Fatalf("runtime frame lost its revision, client would discard it: %s", dataLine)
+	}
+	if len(delivered.Payload.QueuedTurns) != 1 || delivered.Payload.QueuedTurns[0].Content != "hello" {
+		t.Fatalf("runtime frame did not carry the queued turn: %s", dataLine)
 	}
 }

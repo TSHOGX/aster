@@ -21,6 +21,7 @@ type Store interface {
 	CompleteTurn(context.Context, store.CompleteTurnParams) (int64, error)
 	FailGenerationWithEvent(context.Context, store.FailGenerationParams) (store.FailGenerationResult, error)
 	AppendEvent(context.Context, store.AppendEventParams) (int64, error)
+	AppendEventsBatch(context.Context, []store.AppendEventParams) ([]store.AppendEventsBatchResult, error)
 }
 
 type Processor struct {
@@ -38,7 +39,10 @@ type Processor struct {
 	// sequence mismatch). It deliberately receives only the event id so callers
 	// cannot accidentally route the triggering envelope a second time.
 	AfterEventCommit func(context.Context, int64)
-	connected        map[string]bridgeState
+	// EmitOutputBatchMaxRows caps how many consecutive output envelopes are
+	// committed in one transaction. <=1 disables batching.
+	EmitOutputBatchMaxRows int
+	connected              map[string]bridgeState
 }
 
 var errProtocol = errors.New("bridge protocol error")
@@ -161,7 +165,29 @@ func (p *Processor) ProcessOnce(ctx context.Context, root string) error {
 	if err != nil {
 		return err
 	}
-	for _, file := range files {
+	for i := 0; i < len(files); {
+		// Coalesce a run of consecutive emit_output envelopes into one
+		// transaction. Output dominates bridge traffic on a chatty turn, and one
+		// transaction per line made it the main contender for the single writer
+		// connection — starving the turn-lease heartbeat that shares it, which is
+		// how a healthy turn's model calls came to be rejected.
+		//
+		// Only a CONSECUTIVE run is merged, so ordering against every other
+		// envelope type (ack_turn_started, ack_turn_completed, …) is untouched:
+		// a batch never spans one.
+		if batch := outputBatchAt(files, i, p.emitOutputBatchMaxRows()); len(batch) > 1 {
+			if err := p.handleOutputBatch(ctx, inbox, batch); err != nil {
+				return err
+			}
+			for _, file := range batch {
+				if err := file.Unlink(); err != nil {
+					return err
+				}
+			}
+			i += len(batch)
+			continue
+		}
+		file := files[i]
 		if err := p.handle(ctx, inbox, file.Envelope); err != nil {
 			if !errors.Is(err, errProtocol) {
 				return err
@@ -173,8 +199,136 @@ func (p *Processor) ProcessOnce(ctx context.Context, root string) error {
 		if err := file.Unlink(); err != nil {
 			return err
 		}
+		i++
 	}
 	return nil
+}
+
+// outputBatchAt returns the run of consecutive emit_output envelopes starting at
+// index start that share one session+generation, capped at maxRows.
+//
+// The session+generation constraint keeps the batch inside a single
+// authorization scope: every event in it is validated against the same turn CAS,
+// and a mixed batch would make one envelope's failure harder to attribute.
+func outputBatchAt(files []MessageFile, start, maxRows int) []MessageFile {
+	if maxRows <= 1 || start >= len(files) {
+		return nil
+	}
+	first := files[start].Envelope
+	if first.Type != TypeEmitOutput || first.TurnID == nil {
+		return nil
+	}
+	end := start + 1
+	for end < len(files) && end-start < maxRows {
+		next := files[end].Envelope
+		if next.Type != TypeEmitOutput || next.TurnID == nil ||
+			next.SessionID != first.SessionID || next.GenerationID != first.GenerationID {
+			break
+		}
+		end++
+	}
+	return files[start:end]
+}
+
+// handleOutputBatch appends a run of output envelopes in one transaction, then
+// routes the per-envelope outcomes exactly as the single-envelope path would.
+//
+// Per-envelope fidelity is the requirement: each envelope still gets its own
+// validation, its own committed-callback, and — on a sequence mismatch — its own
+// generation retirement. Batching changes the number of transactions, not who is
+// accountable for what.
+func (p *Processor) handleOutputBatch(ctx context.Context, inbox Queue, batch []MessageFile) error {
+	now := p.now()
+	events := make([]store.AppendEventParams, 0, len(batch))
+	// Envelopes that fail validation before reaching the store are recorded here
+	// and reported afterwards, so index alignment with `events` is preserved.
+	protocolFailures := make(map[int]error, 0)
+	indexByEvent := make([]int, 0, len(batch))
+
+	for i, file := range batch {
+		envelope := file.Envelope
+		if err := validateEnvelope(envelope); err != nil {
+			protocolFailures[i] = protocolError(err)
+			continue
+		}
+		var payload emitOutputPayload
+		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+			protocolFailures[i] = protocolError(err)
+			continue
+		}
+		if err := validateEmitOutputPayload(payload); err != nil {
+			protocolFailures[i] = err
+			continue
+		}
+		sequence := payload.OutputSequence
+		events = append(events, store.AppendEventParams{
+			SessionID:      envelope.SessionID,
+			TurnID:         envelope.TurnID,
+			GenerationID:   envelope.GenerationID,
+			Owner:          p.Owner,
+			OutputSequence: &sequence,
+			Stream:         payload.Stream,
+			Type:           TypeEmitOutput,
+			Payload:        jsonPayload(payload.Payload),
+			Now:            now,
+		})
+		indexByEvent = append(indexByEvent, i)
+	}
+
+	var results []store.AppendEventsBatchResult
+	if len(events) > 0 {
+		var err error
+		results, err = p.Store.AppendEventsBatch(ctx, events)
+		if err != nil {
+			// A transaction-level failure (BeginTx/Commit) is transient: returning it
+			// leaves every envelope in the batch on disk to be retried, which is what
+			// the single-envelope path does too.
+			return err
+		}
+	}
+
+	for eventIdx, result := range results {
+		i := indexByEvent[eventIdx]
+		envelope := batch[i].Envelope
+		switch {
+		case result.Err == nil:
+			if result.EventID != 0 {
+				p.afterCommit(ctx, envelope, result.EventID)
+			}
+		case store.IsDuplicateOutputSequenceMismatch(result.Err):
+			// Same handling as the single path: this envelope contradicts durable
+			// output, so the generation is retired over it specifically.
+			eventID, failErr := p.failGeneration(ctx, envelope, "bridge_output_sequence_mismatch", result.Err.Error(), now)
+			if failErr != nil {
+				return fmt.Errorf("%w; additionally failed to retire generation: %v", result.Err, failErr)
+			}
+			if eventID != 0 && p.AfterEventCommit != nil {
+				p.AfterEventCommit(ctx, eventID)
+			}
+			protocolFailures[i] = protocolError(result.Err)
+		default:
+			// A per-event store rejection (e.g. the turn CAS): surface it to the
+			// bridge as a protocol error, as the single path does by returning it.
+			protocolFailures[i] = result.Err
+		}
+	}
+
+	for i, err := range protocolFailures {
+		if writeErr := p.writeResponse(ctx, inbox, batch[i].Envelope, TypeError,
+			errorPayload{ErrorClass: "bridge_protocol_error", Error: err.Error()}); writeErr != nil {
+			return writeErr
+		}
+	}
+	return nil
+}
+
+// emitOutputBatchMaxRows caps one output batch. Zero/unset disables batching, so
+// a caller that has not opted in keeps the exact previous behavior.
+func (p *Processor) emitOutputBatchMaxRows() int {
+	if p.EmitOutputBatchMaxRows <= 0 {
+		return 1
+	}
+	return p.EmitOutputBatchMaxRows
 }
 
 func (p *Processor) handle(ctx context.Context, inbox Queue, envelope Envelope) error {

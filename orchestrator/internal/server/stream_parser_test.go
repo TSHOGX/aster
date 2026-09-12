@@ -555,3 +555,104 @@ func TestPiErrorClass(t *testing.T) {
 		})
 	}
 }
+
+// The durable phase projection must stay coarse. Its writes are transactions on
+// the single writer connection, and that connection is also how a turn's lease
+// gets renewed — so a write-per-token here starves the heartbeat, lapses the
+// lease, and gets the turn's model calls rejected. That failure reaches the user
+// as a spurious "model unavailable", which is why this is pinned by a test rather
+// than left to a comment.
+//
+// The specific trap: a reply that interleaves text with tool-call assembly
+// alternates the phase (streaming / thinking) on every frame. The parser's dedupe
+// is last-value-wins, so alternation defeats it entirely and every single delta
+// becomes its own transaction. Only the coarse boundaries may write.
+func TestStreamParserDoesNotWritePhasePerToken(t *testing.T) {
+	srv, st := newParserTestServer(t)
+	ctx := context.Background()
+
+	turnID, err := st.EnqueueTurn(ctx, "sess_1", "interleaved reply", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+	// Phase writes only apply to a leased/running turn.
+	if _, err := st.DBForTest().ExecContext(ctx,
+		`UPDATE turns SET status = 'running' WHERE id = ?`, turnID); err != nil {
+		t.Fatalf("mark turn running: %v", err)
+	}
+
+	parser := newStreamParser(srv, "sess_1", "pi")
+	parser.turnID = turnID
+
+	// Establish the streaming phase, then interleave text and tool-call deltas the
+	// way a real reply does.
+	lines := []string{
+		`{"type":"message_update","messageId":"m1","assistantMessageEvent":{"type":"text_start","contentIndex":0}}`,
+	}
+	for i := 0; i < 40; i++ {
+		lines = append(lines,
+			`{"type":"message_update","messageId":"m1","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"x"}}`,
+			`{"type":"message_update","messageId":"m1","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1}}`,
+		)
+	}
+	for _, line := range lines {
+		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+	}
+
+	// phase_at advances on every accepted phase write, so counting distinct
+	// values counts the writes that actually landed.
+	var writes int
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT COUNT(*) FROM (
+  SELECT DISTINCT phase_at FROM turns WHERE id = ? AND phase_at IS NOT NULL
+)`, turnID).Scan(&writes); err != nil {
+		t.Fatalf("count phase writes: %v", err)
+	}
+	// The 80 delta frames must contribute no writes of their own; only the
+	// text_start boundary does.
+	if writes > 1 {
+		t.Fatalf("80 interleaved delta frames produced %d phase writes; deltas must not write the projection", writes)
+	}
+
+	// The phase must still be correct — suppressing the writes must not have cost
+	// the projection its accuracy.
+	var phase string
+	if err := st.DBForTest().QueryRowContext(ctx,
+		`SELECT phase FROM turns WHERE id = ?`, turnID).Scan(&phase); err != nil {
+		t.Fatalf("read phase: %v", err)
+	}
+	if phase != string(store.TurnPhaseStreaming) {
+		t.Fatalf("phase = %q want %q", phase, store.TurnPhaseStreaming)
+	}
+}
+
+// The counterpart: coarse boundaries MUST still be recorded, or a reload shows
+// the wrong activity. Guards against "fixing" the write pressure by muting the
+// projection altogether.
+func TestStreamParserRecordsToolPhaseBoundaries(t *testing.T) {
+	srv, st := newParserTestServer(t)
+	ctx := context.Background()
+
+	turnID, err := st.EnqueueTurn(ctx, "sess_1", "tool turn", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+	if _, err := st.DBForTest().ExecContext(ctx,
+		`UPDATE turns SET status = 'running' WHERE id = ?`, turnID); err != nil {
+		t.Fatalf("mark turn running: %v", err)
+	}
+
+	parser := newStreamParser(srv, "sess_1", "pi")
+	parser.turnID = turnID
+	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"tool_execution_start","toolCallId":"c1","toolName":"read","args":{"path":"/etc/hosts"}}`})
+
+	var phase, tool, detail string
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT phase, COALESCE(phase_tool,''), COALESCE(phase_detail,'') FROM turns WHERE id = ?`,
+		turnID).Scan(&phase, &tool, &detail); err != nil {
+		t.Fatalf("read phase: %v", err)
+	}
+	if phase != string(store.TurnPhaseTool) || tool != "read" || detail != "/etc/hosts" {
+		t.Fatalf("tool phase = %q/%q/%q want tool/read//etc/hosts", phase, tool, detail)
+	}
+}

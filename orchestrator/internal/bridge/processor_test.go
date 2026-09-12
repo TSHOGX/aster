@@ -1641,3 +1641,240 @@ func (s storeFailure) FailGenerationWithEvent(_ context.Context, _ store.FailGen
 func (s storeFailure) AppendEvent(context.Context, store.AppendEventParams) (int64, error) {
 	return 0, errors.New("unexpected AppendEvent")
 }
+
+func (s storeFailure) AppendEventsBatch(context.Context, []store.AppendEventParams) ([]store.AppendEventsBatchResult, error) {
+	return nil, errors.New("unexpected AppendEventsBatch")
+}
+
+// setupBridgeRunningTurn builds a session with a claimed, started turn and
+// returns the pieces a batching test needs.
+func setupBridgeRunningTurn(t *testing.T, ctx context.Context, sessionID string) (*store.Store, store.GenerationAllocation, string, int64) {
+	t.Helper()
+	st, owner := openBridgeStore(t, ctx)
+	createBridgeSession(t, ctx, st, sessionID)
+	allocation, details := allocateBridgeGeneration(t, ctx, st, owner, sessionID)
+	turnID, err := st.EnqueueTurn(ctx, sessionID, "batched output", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+	if _, ok, err := st.ClaimNextTurn(ctx, store.ClaimNextTurnParams{
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		Owner:        allocation.Owner,
+		RequestID:    "claim_" + sessionID,
+		LeaseTTL:     time.Minute,
+		Now:          time.Now().UTC(),
+	}); err != nil || !ok {
+		t.Fatalf("claim setup: ok=%v err=%v", ok, err)
+	}
+	return st, allocation, details.BridgeDirPath, turnID
+}
+
+// Batching must be invisible in the durable log: same rows, same order, same
+// per-envelope callbacks. Only the transaction count changes.
+func TestProcessorBatchesConsecutiveOutputEnvelopes(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "sess_output_batch"
+	st, allocation, bridgeDir, turnID := setupBridgeRunningTurn(t, ctx, sessionID)
+
+	var committed []int64
+	processor := &Processor{
+		Store:                  st,
+		Owner:                  allocation.Owner,
+		LeaseTTL:               time.Minute,
+		EmitOutputBatchMaxRows: 64,
+		AfterCommit: func(_ context.Context, _ Envelope, eventID int64) {
+			committed = append(committed, eventID)
+		},
+	}
+	writeOutbox(t, ctx, bridgeDir, Envelope{
+		MessageID:    "msg_started",
+		RequestID:    "req_started",
+		Type:         TypeAckTurnStarted,
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		TurnID:       &turnID,
+		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
+	})
+	for sequence := 1; sequence <= 10; sequence++ {
+		writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, sequence, "batch"))
+	}
+	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	rows, err := st.DBForTest().QueryContext(ctx, `
+SELECT output_sequence FROM events
+WHERE turn_id = ? AND type = ? ORDER BY event_id`, turnID, TypeEmitOutput)
+	if err != nil {
+		t.Fatalf("query outputs: %v", err)
+	}
+	defer rows.Close()
+	var sequences []int64
+	for rows.Next() {
+		var sequence int64
+		if err := rows.Scan(&sequence); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		sequences = append(sequences, sequence)
+	}
+	if len(sequences) != 10 {
+		t.Fatalf("persisted %d outputs want 10", len(sequences))
+	}
+	for i, sequence := range sequences {
+		if sequence != int64(i+1) {
+			t.Fatalf("output order broken at %d: sequence=%d", i, sequence)
+		}
+	}
+	// One callback per envelope, batched or not: downstream consumers (SSE
+	// broadcast, the stream parser) are driven from these.
+	if len(committed) != 11 {
+		t.Fatalf("got %d committed callbacks want 11 (1 ack + 10 outputs)", len(committed))
+	}
+	// Every envelope must be consumed, or the next tick would replay it.
+	outbox, err := OpenQueue(bridgeDir, OutboxDir)
+	if err != nil {
+		t.Fatalf("open outbox: %v", err)
+	}
+	remaining, err := outbox.ReadAll()
+	if err != nil {
+		t.Fatalf("read outbox: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("outbox left %d envelopes, they would replay", len(remaining))
+	}
+}
+
+// A mismatch inside a batch must retire the generation over exactly that
+// envelope, and must not discard the output committed before it in the same
+// transaction. This is the case the savepoint-per-event design exists for.
+func TestProcessorBatchIsolatesOutputSequenceMismatch(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "sess_batch_mismatch"
+	st, allocation, bridgeDir, turnID := setupBridgeRunningTurn(t, ctx, sessionID)
+
+	var failureEventID int64
+	processor := &Processor{
+		Store:                  st,
+		Owner:                  allocation.Owner,
+		LeaseTTL:               time.Minute,
+		EmitOutputBatchMaxRows: 64,
+		AfterEventCommit:       func(_ context.Context, eventID int64) { failureEventID = eventID },
+	}
+	writeOutbox(t, ctx, bridgeDir, Envelope{
+		MessageID:    "msg_started",
+		RequestID:    "req_started",
+		Type:         TypeAckTurnStarted,
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		TurnID:       &turnID,
+		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
+	})
+	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "first"))
+	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+		t.Fatalf("process first output: %v", err)
+	}
+
+	// A batch whose middle envelope contradicts sequence 1.
+	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 2, "good"))
+	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "changed"))
+	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 3, "good"))
+	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+		t.Fatalf("process mismatched batch: %v", err)
+	}
+
+	// The generation is retired, exactly as the single-envelope path does.
+	var generationStatus, generationErrorClass string
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT status, COALESCE(error_class, '') FROM runtime_generations WHERE generation_id = ?`,
+		allocation.GenerationID).Scan(&generationStatus, &generationErrorClass); err != nil {
+		t.Fatalf("query generation: %v", err)
+	}
+	if generationStatus != "failed" || generationErrorClass != "bridge_output_sequence_mismatch" {
+		t.Fatalf("generation=%s/%s want failed/bridge_output_sequence_mismatch", generationStatus, generationErrorClass)
+	}
+	if failureEventID == 0 {
+		t.Fatalf("expected a durable generation.error event for the mismatch")
+	}
+	// The mismatching envelope is reported to the bridge by request id, so the
+	// fault is attributed to it and not to a neighbour.
+	response := assertSingleInboxResponse(t, bridgeDir, TypeError, "req_output_changed_001")
+	var errorResponse errorPayload
+	if err := json.Unmarshal(response.Payload, &errorResponse); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if !strings.Contains(errorResponse.Error, "duplicate output_sequence mismatch") {
+		t.Fatalf("unexpected error response: %+v", errorResponse)
+	}
+	// Sequence 1 keeps its ORIGINAL payload: the conflicting write was rolled
+	// back to its savepoint without touching what was already committed.
+	var payload string
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT payload FROM events WHERE turn_id = ? AND output_sequence = 1 AND type = ?`,
+		turnID, TypeEmitOutput).Scan(&payload); err != nil {
+		t.Fatalf("read sequence 1: %v", err)
+	}
+	if !strings.Contains(payload, "first-001") {
+		t.Fatalf("sequence 1 payload = %s, want the original", payload)
+	}
+}
+
+// Batching must never merge across envelope types: an ack sitting between two
+// output runs has to be processed in its original position.
+func TestProcessorBatchDoesNotSpanOtherEnvelopeTypes(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "sess_batch_ordering"
+	st, allocation, bridgeDir, turnID := setupBridgeRunningTurn(t, ctx, sessionID)
+
+	var order []string
+	processor := &Processor{
+		Store:                  st,
+		Owner:                  allocation.Owner,
+		LeaseTTL:               time.Minute,
+		EmitOutputBatchMaxRows: 64,
+		AfterCommit: func(_ context.Context, envelope Envelope, _ int64) {
+			order = append(order, envelope.Type)
+		},
+	}
+	writeOutbox(t, ctx, bridgeDir, Envelope{
+		MessageID:    "msg_started",
+		RequestID:    "req_started",
+		Type:         TypeAckTurnStarted,
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		TurnID:       &turnID,
+		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
+	})
+	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "pre"))
+	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 2, "pre"))
+	writeOutbox(t, ctx, bridgeDir, Envelope{
+		MessageID:    "msg_completed",
+		RequestID:    "req_completed",
+		Type:         TypeAckTurnCompleted,
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		TurnID:       &turnID,
+		Payload:      json.RawMessage(`{"status":"completed"}`),
+	})
+	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+		t.Fatalf("process mixed run: %v", err)
+	}
+
+	want := []string{TypeAckTurnStarted, TypeEmitOutput, TypeEmitOutput, TypeAckTurnCompleted}
+	if len(order) != len(want) {
+		t.Fatalf("callback order %v want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("callback order %v want %v", order, want)
+		}
+	}
+	// The completion must have been applied after the output, not folded away.
+	var turnStatus string
+	if err := st.DBForTest().QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, turnID).Scan(&turnStatus); err != nil {
+		t.Fatalf("query turn: %v", err)
+	}
+	if turnStatus != "completed" {
+		t.Fatalf("turn status = %s want completed", turnStatus)
+	}
+}

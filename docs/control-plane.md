@@ -49,7 +49,7 @@ All tables are created idempotently in `ensureSchema`. Summary:
 | `runtime_generations` | generation lifecycle + checkpoint-metadata digests + runsc pin + lease; one non-terminal generation per session (partial unique index) |
 | `network_profiles` | per-generation netns/veth/CIDR/gateway/egress; uniqueness of each network resource among non-destroyed rows |
 | `runtime_generation_resources` | rendered artifact paths + digests (control dir/manifest, bundle, spec, checkpoint, bridge, log, network hosts), runsc container/pid/pin |
-| `turns` | turn queue: sequence, content, status, generation, lease, `claim_request_id`, attempt, retry policy, error |
+| `turns` | turn queue: sequence, content, status, generation, lease, `claim_request_id`, attempt, retry policy, error, plus the durable activity projection (`phase`, `phase_at`, `phase_tool`, `phase_detail`) |
 | `events` | durable event log with dedupe keys (`output_sequence`, `dedupe_key`, one started/finished per `proxy_request_id`) |
 | `active_model_request_contexts` | `sandbox_source_ip` → session/generation/turn authorization window for the proxy |
 | `sandbox_contracts` | `sandbox-isolation-v1`, schema 2, gate `driver_manifest_v1`: canonical payload + digest |
@@ -83,6 +83,17 @@ reconciling → absent_verified → destroyed`, tracked with worker leases and
 identity/absence evidence digests.
 
 **Turn** (`turns.status`): `queued → leased → running → completed | failed | canceled`.
+
+`turns` is also the single source of truth for what the UI shows as the agent's
+current activity. `phase` is written on coarse boundaries (turn start, tool
+start/end, first text of a block, compaction, retry) by `SetTurnPhase` — never per
+token — and `sessions.turn_revision` is bumped by **triggers** on `turns` for
+every insert, status change, phase change, or delete. The triggers rather than the
+call sites own that invariant because `turns` is written from a dozen places,
+several of them recovery and reaper paths; a writer that forgot to bump would leave
+clients holding a stale projection, a bug that surfaces only as confusing UI with
+nothing failing loudly. See
+[proposals/session-runtime-projection.md](./proposals/session-runtime-projection.md).
 
 ## Turn / generation flow
 

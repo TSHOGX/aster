@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Loader2, Square } from "lucide-react";
 
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/cn";
@@ -14,6 +14,12 @@ type ComposerProps = {
   placeholder?: string;
   topSlot?: ReactNode;
   onSend: (content: string) => Promise<{ ok: boolean; error?: string }>;
+  /** The agent has work in flight (a running turn, or turns queued behind it). */
+  busy?: boolean;
+  stopping?: boolean;
+  onStop?: () => void;
+  /** The pending-turn list, rendered above the input. */
+  queueSlot?: ReactNode;
 };
 
 // Two lines at the composer's 24px line-height, plus a cap of ~8 lines before the
@@ -22,7 +28,16 @@ type ComposerProps = {
 const COMPOSER_MIN_H = 52;
 const COMPOSER_MAX_H = 200;
 
-export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerProps) {
+export function Composer({
+  disabled,
+  placeholder,
+  topSlot,
+  queueSlot,
+  onSend,
+  busy = false,
+  stopping = false,
+  onStop
+}: ComposerProps) {
   const t = useT();
   const { value, setValue, sending, error, submit, onKey } = useComposerState(onSend, disabled);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -51,6 +66,11 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
   }, [value]);
 
   const canSend = !disabled && !sending && !!value.trim();
+  // The single button is Stop only while the composer is empty. With text typed,
+  // it always sends — that keystroke is a queue request, and a busy agent is the
+  // normal reason to queue, so letting "busy" win would make the button refuse the
+  // very action the user is in the middle of.
+  const showStop = busy && !value.trim();
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center px-4 pb-4">
@@ -60,6 +80,7 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
           very long line to type into, and pulling the box in centers it under
           the reading column instead of spanning the whole pane. */}
       <div className="pointer-events-auto w-full max-w-[min(var(--measure),46rem)]">
+        {queueSlot}
         {topSlot}
         <div
           className={cn(
@@ -73,7 +94,7 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
             onKeyDown={onKey}
             placeholder={placeholder ?? t("composer.placeholder")}
             rows={2}
-            disabled={disabled || sending}
+            disabled={disabled}
             className={cn(
               // The wrapping bar owns the focus ring here (see ui/textarea.tsx).
               "resize-none border-0 bg-transparent p-0 px-1 leading-6 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none",
@@ -83,22 +104,27 @@ export function Composer({ disabled, placeholder, topSlot, onSend }: ComposerPro
           />
           <div className="flex items-center justify-end">
             <button
-              onClick={() => void submit()}
-              disabled={!canSend}
-              aria-label={t("composer.send")}
+              onClick={() => (showStop ? onStop?.() : void submit())}
+              disabled={showStop ? stopping : !canSend}
+              aria-label={showStop ? t(stopping ? "composer.stopping" : "composer.stop") : t("composer.send")}
+              title={showStop ? t(stopping ? "composer.stopping" : "composer.stop") : undefined}
               className={cn(
                 "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
-                canSend
+                showStop || canSend
                   ? "bg-[var(--color-button-primary)] text-[var(--color-button-primary-foreground)] hover:bg-[var(--color-button-primary-hover)]"
                   : "bg-[var(--color-surface-muted)] text-[var(--color-foreground-muted)]"
               )}
             >
-              <ArrowUp className="h-4 w-4" />
+              {showStop ? (
+                stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />
+              ) : (
+                <ArrowUp className="h-4 w-4" />
+              )}
             </button>
           </div>
         </div>
         <div className="mt-1.5 flex items-center justify-between gap-3 px-3 text-2xs text-[var(--color-foreground-muted)]">
-          <span>{disabled ? t("composer.busy") : t("composer.hint")}</span>
+          <span>{disabled ? t("composer.unavailable") : t("composer.hint")}</span>
           {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
         </div>
       </div>

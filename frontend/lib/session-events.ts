@@ -42,6 +42,21 @@ function readSessionStatus(value: unknown): SessionStatus | null {
     : null;
 }
 
+/**
+ * Error classes that describe the user's own control action rather than a fault.
+ *
+ * Stop tears the generation down, so the server correctly emits a
+ * generation/session error for it — but showing that as a red toast reports the
+ * user's own click back to them as a failure.
+ */
+const USER_INITIATED_ERROR_CLASSES = new Set(["user_interrupted", "user_canceled"]);
+
+function isUserInitiated(payload: Record<string, unknown>): boolean {
+  return (
+    typeof payload.error_class === "string" && USER_INITIATED_ERROR_CLASSES.has(payload.error_class)
+  );
+}
+
 function updateSession(
   sessions: ApiSession[],
   sessionId: string,
@@ -116,6 +131,7 @@ export function reduceSessionEvent<TConversation extends SessionEventConversatio
     case "session.error": {
       if (!isRecord(event.payload)) return emptyReduction(slice, true);
       const message = typeof event.payload.error === "string" ? event.payload.error : "Session failed";
+      const userInitiated = isUserInitiated(event.payload);
       if (!sessionId) return { ...emptyReduction(slice, true), notifications: [{ level: "error", message }] };
       const terminal = event.payload.terminal === true;
       return {
@@ -124,12 +140,13 @@ export function reduceSessionEvent<TConversation extends SessionEventConversatio
           : slice.sessions,
         conversations: clearStreaming(slice.conversations, sessionId, options.emptyConversation),
         handled: true,
-        notifications: [{ level: "error", message }]
+        notifications: userInitiated ? [] : [{ level: "error", message }]
       };
     }
     case "generation.error": {
       if (!sessionId || !isRecord(event.payload)) return emptyReduction(slice, true);
       const message = typeof event.payload.error === "string" ? event.payload.error : "Runtime start failed";
+      const userInitiated = isUserInitiated(event.payload);
       const sessionStatus = readSessionStatus(event.payload.session_status);
       const updatedAt =
         typeof event.payload.session_updated_at === "string" ? event.payload.session_updated_at : time;
@@ -143,7 +160,7 @@ export function reduceSessionEvent<TConversation extends SessionEventConversatio
           : slice.sessions,
         conversations: clearStreaming(slice.conversations, sessionId, options.emptyConversation),
         handled: true,
-        notifications: [{ level: "error", message }]
+        notifications: userInitiated ? [] : [{ level: "error", message }]
       };
     }
     case "session.checkpoint_retired":
@@ -171,10 +188,11 @@ export function reduceSessionEvent<TConversation extends SessionEventConversatio
       if (!sessionId || !isRecord(event.payload)) return emptyReduction(slice, true);
       const turnStatus = typeof event.payload.status === "string" ? event.payload.status : "completed";
       const sessionStatus = readSessionStatus(event.payload.session_status);
+      const userInitiated = isUserInitiated(event.payload);
       const updatedAt =
         typeof event.payload.session_updated_at === "string" ? event.payload.session_updated_at : time;
       const notifications: SessionEventNotification[] = [];
-      if (turnStatus === "failed" || turnStatus === "canceled") {
+      if ((turnStatus === "failed" || turnStatus === "canceled") && !userInitiated) {
         const message =
           typeof event.payload.error === "string" && event.payload.error
             ? event.payload.error

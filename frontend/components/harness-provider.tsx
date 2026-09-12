@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 
 import {
+  cancelQueuedTurn as apiCancelQueuedTurn,
   createSession as apiCreateSession,
   destroySession as apiDestroySession,
   fetchArtifacts,
@@ -22,6 +23,7 @@ import {
   fetchMessages,
   fetchNotifications,
   fetchSession,
+  fetchSessionRuntime,
   fetchSessions,
   interruptSession as apiInterruptSession,
   logout as apiLogout,
@@ -54,6 +56,7 @@ import {
 import { isFinalReply } from "@/lib/message-grouping";
 import { isTerminal } from "@/lib/format";
 import { mergeSessionList, reduceSessionEvent } from "@/lib/session-events";
+import { reduceRuntimeActivity, shouldApplyRuntime } from "@/lib/session-runtime";
 import { useEventStream } from "@/lib/use-event-stream";
 import { buildEventsStreamUrl } from "@/lib/ws";
 import type {
@@ -62,6 +65,7 @@ import type {
   DeploymentCapabilities,
   ApiMessage,
   ApiSession,
+  ApiSessionRuntime,
   ConnectionStatus,
   HarnessEvent,
   SessionMode,
@@ -87,6 +91,7 @@ type HarnessState = {
   sessions: ApiSession[];
   selectedId: string | null;
   conversations: Record<string, ConversationState>;
+  runtimes: Record<string, ApiSessionRuntime | null>;
   artifacts: Record<string, ApiArtifact[]>;
   notifications: ApiNotification[];
   auth: AuthState;
@@ -102,6 +107,8 @@ type HarnessActions = {
   destroySession: (id: string) => Promise<{ ok: boolean; error?: string }>;
   renameSession: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   interruptSession: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Withdraw a turn the user queued but no longer wants. */
+  cancelQueuedTurn: (id: string, turnId: number) => Promise<{ ok: boolean; error?: string }>;
   sendMessage: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
   submitFeedback: (
     sessionId: string,
@@ -140,6 +147,7 @@ const initialState: HarnessState = {
   sessions: [],
   selectedId: null,
   conversations: {},
+  runtimes: {},
   artifacts: {},
   notifications: [],
   auth: { checked: false, required: false, userId: null }
@@ -264,6 +272,58 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     [setState]
   );
 
+  /**
+   * Apply a runtime snapshot, however it arrived (GET, POST response, or the
+   * `session.runtime` event). This is the ONLY writer of runtime state, and the
+   * single place activity is reconciled with the server's view.
+   *
+   * Two rules make the whole thing convergent:
+   *
+   * 1. Revision guard. A snapshot older than the one held is dropped. Requests
+   *    and pushes race constantly, and without this a slow GET can land after a
+   *    newer push and restore a queue entry that was already drained — the row
+   *    then never clears, because nothing contradicts it again.
+   *
+   * 2. Activity is subordinate to the snapshot. No active turn means idle, full
+   *    stop. Live events refine the phase of a turn the snapshot says is running;
+   *    they never invent one. This is what fixes an idle session showing
+   *    "Thinking", and it holds by construction rather than by patching each
+   *    event that could leave a stale phase behind.
+   */
+  const applyRuntime = useCallback(
+    (id: string, snapshot: ApiSessionRuntime) => {
+      setState((prev) => {
+        if (!shouldApplyRuntime(prev.runtimes[id], snapshot)) return prev;
+        const convo = prev.conversations[id] ?? emptyConvo();
+        return {
+          ...prev,
+          runtimes: { ...prev.runtimes, [id]: snapshot },
+          conversations: { ...prev.conversations, [id]: reduceRuntimeActivity(convo, snapshot) },
+          // The snapshot carries the session status from the same transaction that
+          // changed the turns, so it is never staler than the session list's copy.
+          sessions: prev.sessions.map((session) =>
+            session.id === id ? { ...session, status: snapshot.session_status } : session
+          )
+        };
+      });
+    },
+    [setState]
+  );
+
+  /**
+   * Re-read the projection from the server. Used on the edges where turn state
+   * changed but the response did not carry a snapshot; the revision guard makes a
+   * late arrival harmless.
+   */
+  const refreshRuntime = useCallback(
+    (id: string) => {
+      void fetchSessionRuntime(id).then((res) => {
+        if (res.ok) applyRuntime(id, res.data);
+      });
+    },
+    [applyRuntime]
+  );
+
   const discardEmptySession = useCallback(
     async (requestedId?: string) => {
       const id = requestedId ?? stateRef.current.selectedId;
@@ -304,6 +364,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           sessions: p.sessions.filter((item) => item.id !== id),
           conversations,
           artifacts,
+          runtimes: { ...p.runtimes, [id]: null },
           selectedId: p.selectedId === id ? null : p.selectedId
         };
       });
@@ -347,8 +408,12 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         const list = res.data.artifacts ?? [];
         setState((p) => ({ ...p, artifacts: { ...p.artifacts, [id]: list } }));
       });
+      // Activity and the queue both come from here, so a reload or a second tab
+      // shows the true state instead of guessing from the coarse session status
+      // while it waits for the first event.
+      refreshRuntime(id);
     },
-    [upsertConvo, setState, stateRef]
+    [upsertConvo, setState, stateRef, refreshRuntime]
   );
 
   const pollConversation = useCallback(
@@ -366,17 +431,20 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
       try {
         while (aliveRef.current && Date.now() < deadline && !streamLive()) {
-          const [messagesRes, sessionRes, artifactsRes] = await Promise.all([
+          const [messagesRes, sessionRes, artifactsRes, runtimeRes] = await Promise.all([
             fetchMessages(id),
             fetchSession(id),
-            fetchArtifacts(id)
+            fetchArtifacts(id),
+            fetchSessionRuntime(id)
           ]);
           let sawAssistant = false;
+          // Whether the agent is busy is a property of the turn queue, not of the
+          // session status, so the projection decides it here too — the fallback
+          // path must not disagree with the live one.
           let active = true;
 
           if (sessionRes.ok) {
             const session = sessionRes.data;
-            active = isActiveStatus(session.status);
             setState((p) => ({
               ...p,
               sessions: p.sessions.some((s) => s.id === session.id)
@@ -384,9 +452,14 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
                 : [session, ...p.sessions],
               conversations: ensureConvo(p.conversations, session.id)
             }));
-            if (!active) {
-              upsertConvo(id, (c) => withActivity({ ...c, streaming: [] }, { phase: "idle" }));
-            }
+          }
+          if (runtimeRes.ok) {
+            // applyRuntime parks activity at idle when no turn is active, so this
+            // also clears a stale Thinking left by a missed event.
+            applyRuntime(id, runtimeRes.data);
+            active = runtimeRes.data.active_turn != null;
+          } else if (sessionRes.ok) {
+            active = isActiveStatus(sessionRes.data.status);
           }
 
           if (messagesRes.ok) {
@@ -415,7 +488,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         pollingRef.current.delete(id);
       }
     },
-    [ensureConvo, upsertConvo, setState, stateRef]
+    [ensureConvo, upsertConvo, setState, stateRef, applyRuntime]
   );
 
   const refreshNotifications = useCallback(async () => {
@@ -448,7 +521,21 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     (event: HarnessEvent) => {
       const sessionId = event.session_id;
       const time = event.time ?? new Date().toISOString();
-      const applySessionEvent = () => {
+      /**
+       * Apply a session-level event, then reconcile the runtime projection.
+       *
+       * `reconcileRuntime` says whether this event needs a follow-up GET. Events
+       * that ride alongside a `session.runtime` push (the normal turn lifecycle)
+       * do not: the push carries the same snapshot, so a GET here would only add
+       * a request that the revision guard then discards.
+       *
+       * Failure and recovery paths DO need it. Reconciliation, lease expiry and
+       * generation teardown change turn state through the store without routing a
+       * snapshot out (see ReconcileStaleSessionStates), so the push that would
+       * have corrected the client never comes — and without a re-read the queue
+       * keeps rendering turns that are no longer going to run.
+       */
+      const applySessionEvent = (reconcileRuntime = false) => {
         const preview = reduceSessionEvent(
           { sessions: stateRef.current.sessions, conversations: stateRef.current.conversations },
           event,
@@ -466,21 +553,12 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
             event,
             { emptyConversation: emptyConvo, time }
           );
-          // The reducer clears streaming on turn/terminal events but is generic
-          // over activity; mirror that by parking activity back to idle for the
-          // affected session unless the turn is still active.
-          let conversations = next.conversations;
-          if (sessionId && conversations[sessionId]) {
-            const stillActive = event.type === "session.running_active";
-            if (!stillActive) {
-              conversations = {
-                ...conversations,
-                [sessionId]: withActivity(conversations[sessionId], { phase: "idle" })
-              };
-            }
-          }
-          return { ...p, sessions: next.sessions, conversations };
+          return { ...p, sessions: next.sessions, conversations: next.conversations };
         });
+        // Whether the agent is still busy is decided by the turn queue, so the
+        // projection settles activity rather than this event guessing from the
+        // session status. The revision guard makes a late arrival harmless.
+        if (sessionId && reconcileRuntime) refreshRuntime(sessionId);
         return true;
       };
       switch (event.type) {
@@ -501,7 +579,21 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         case "session.checkpointed":
         case "session.failed":
         case "session.destroyed": {
-          applySessionEvent();
+          // Some status transitions carry no projection with them: cold fallback
+          // and automatic turn resume both change turn state and publish only
+          // this status event (see turn_resume.go, coldFallback). Re-read so the
+          // queue reflects the requeued/new turn.
+          applySessionEvent(true);
+          return;
+        }
+        // The runtime projection, pushed whenever turn state changed. Same payload
+        // as the endpoint, and applyRuntime's revision guard means it can arrive in
+        // any order relative to a request the client already had in flight.
+        case "session.runtime": {
+          if (!sessionId || !isRecord(event.payload)) return;
+          const snapshot = event.payload as unknown as ApiSessionRuntime;
+          if (typeof snapshot.revision !== "number") return;
+          applyRuntime(sessionId, snapshot);
           return;
         }
         case "session.updated": {
@@ -518,6 +610,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           const msg = event.payload as ApiMessage | undefined;
           if (!msg || typeof msg.id !== "number") return;
           if (msg.role === "user") draftSessionIdsRef.current.delete(sessionId);
+          // Every message the server broadcasts belongs in the transcript: a turn
+          // still queued has no message row exposed (listMessages excludes it), so
+          // there is nothing here to filter and no way to double-render one.
           upsertConvo(sessionId, (c) => ({
             ...c,
             // A new user turn begins here: drop any live trace left from before.
@@ -634,19 +729,25 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         case "session.error": {
-          applySessionEvent();
+          // A failure retires the generation and requeues/fails turns in the
+          // store directly, without routing a snapshot out — re-read it.
+          applySessionEvent(true);
           return;
         }
         case "generation.error": {
-          applySessionEvent();
+          // A failure retires the generation and requeues/fails turns in the
+          // store directly, without routing a snapshot out — re-read it.
+          applySessionEvent(true);
           return;
         }
         case "session.checkpoint_retired":
         case "session.restore_fallback_retired": {
-          applySessionEvent();
+          // Retirement paths change turn state without publishing a projection.
+          applySessionEvent(true);
           return;
         }
         case "ack_turn_completed": {
+          // handleBridgeCompletion already pushes the post-completion projection.
           applySessionEvent();
           return;
         }
@@ -690,7 +791,16 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           return;
       }
     },
-    [ensureConvo, upsertConvo, refreshNotifications, refreshSessions, setState, stateRef]
+    [
+      ensureConvo,
+      upsertConvo,
+      refreshNotifications,
+      refreshSessions,
+      refreshRuntime,
+      applyRuntime,
+      setState,
+      stateRef
+    ]
   );
 
 
@@ -705,6 +815,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       sessions: [],
       conversations: {},
       artifacts: {},
+      runtimes: {},
       selectedId: null,
       connection: "down"
     }));
@@ -747,6 +858,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         capabilities: capabilities.ok ? capabilities.data : p.capabilities,
         sessions: list,
         selectedId,
+        runtimes: Object.fromEntries(Object.keys(conversations).map((id) => [id, p.runtimes[id] ?? null])),
         conversations
       };
     });
@@ -891,7 +1003,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         ...p,
         sessions: [session, ...p.sessions.filter((s) => s.id !== session.id)],
         selectedId: session.id,
-        conversations: { ...p.conversations, [session.id]: emptyConvo() }
+        conversations: { ...p.conversations, [session.id]: emptyConvo() },
+        runtimes: { ...p.runtimes, [session.id]: null }
       }));
       return { ok: true as const, session };
     },
@@ -949,8 +1062,30 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   const interruptSession = useCallback(async (id: string) => {
     const res = await apiInterruptSession(id);
     if (!res.ok) return { ok: false as const, error: res.error };
+    // The response carries the post-interrupt projection, so the composer leaves
+    // the busy state on this tick rather than after a round trip through events.
+    if (res.data.runtime) applyRuntime(id, res.data.runtime);
+    // Stop also drops what the user had queued (a queued turn cannot survive the
+    // generation teardown). Say so, because silently emptying the queue would
+    // look like the entries were lost.
+    const dropped = res.data.canceled_queued ?? 0;
+    if (dropped > 0) {
+      toast.info(dropped === 1 ? "Stopped, and 1 queued message was discarded" : `Stopped, and ${dropped} queued messages were discarded`);
+    }
     return { ok: true as const };
-  }, []);
+  }, [applyRuntime]);
+
+  const cancelQueuedTurn = useCallback(async (id: string, turnId: number) => {
+    const res = await apiCancelQueuedTurn(id, turnId);
+    if (!res.ok) {
+      // 409 means the worker claimed it while the click was in flight: it is
+      // running now, so re-read and let the user Stop it instead.
+      if (res.status === 409) refreshRuntime(id);
+      return { ok: false as const, error: res.error };
+    }
+    applyRuntime(id, res.data);
+    return { ok: true as const };
+  }, [applyRuntime, refreshRuntime]);
 
   const sendMessage = useCallback(
     async (id: string, content: string) => {
@@ -959,27 +1094,19 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         const res = await apiPostMessage(id, content);
         if (!res.ok) return { ok: false as const, error: res.error };
         draftSessionIdsRef.current.delete(id);
-        // server emits message.created via WS; merge here for instant feedback
-        const msg = res.data.message;
-        if (msg) {
-          upsertConvo(id, (c) => ({
-            ...c,
-            messages: c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg]
-          }));
-        }
-        setState((p) => ({
-          ...p,
-          sessions: p.sessions.map((s) =>
-            s.id === id ? { ...s, status: res.data.status, updated_at: new Date().toISOString() } : s
-          )
-        }));
-        void pollConversation(id, msg?.id);
+        // The response carries no message, by design: the prompt is queued, not
+        // asked. It enters the transcript via `message.created` when the agent
+        // actually starts the turn, so its timestamp is the dispatch time and the
+        // queue is its sole owner until then. Nothing optimistic is inserted here,
+        // which is why the transcript and the queue can never show it at once.
+        applyRuntime(id, res.data.runtime);
+        void pollConversation(id);
         return { ok: true as const };
       } finally {
         pendingMessageSessionIdsRef.current.delete(id);
       }
     },
-    [pollConversation, upsertConvo, setState]
+    [pollConversation, applyRuntime]
   );
 
   const submitFeedback = useCallback(
@@ -1033,6 +1160,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       destroySession,
       renameSession,
       interruptSession,
+      cancelQueuedTurn,
       sendMessage,
       submitFeedback,
       refresh,
@@ -1047,6 +1175,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       destroySession,
       renameSession,
       interruptSession,
+      cancelQueuedTurn,
       sendMessage,
       submitFeedback,
       refresh,
@@ -1130,6 +1259,10 @@ export function useSelectedSession() {
 
 export function useConversation(sessionId: string | null) {
   return useStoreSelector((s) => (sessionId ? s.conversations[sessionId] ?? EMPTY_CONVO : EMPTY_CONVO));
+}
+
+export function useSessionRuntime(sessionId: string | null): ApiSessionRuntime | null {
+  return useStoreSelector((s) => (sessionId ? s.runtimes[sessionId] ?? null : null));
 }
 
 /**

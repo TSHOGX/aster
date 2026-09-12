@@ -33,6 +33,8 @@ The orchestrator serves three trees:
 | DELETE | `/api/sessions/{id}` | required | close session, reclaim runtime resources |
 | GET | `/api/sessions/{id}/messages` | required | message history |
 | POST | `/api/sessions/{id}/messages` | required | enqueue a turn (start/wake generation) |
+| GET | `/api/sessions/{id}/runtime` | required | runtime projection: active turn, queued turns, revision |
+| DELETE | `/api/sessions/{id}/turns/{turnID}` | required | withdraw a queued turn (`409` once claimed) |
 | POST | `/api/sessions/{id}/messages/{mid}/feedback` | required | set/clear the caller's 👍/👎 on a message |
 | GET | `/api/sessions/{id}/artifacts` | required | list workspace artifacts |
 | POST | `/api/sessions/{id}/artifacts` | required | multipart upload into the workspace |
@@ -73,8 +75,9 @@ The orchestrator serves three trees:
 
 Every `/api/sessions/{id}/*` route is owner-gated except four, which run a
 **read gate** instead: `GET /api/sessions/{id}`, `GET .../messages`,
-`GET .../artifacts`, and `GET /artifacts/{sessionID}/{path...}`. The read gate
-admits the owner **or** a user holding a live read grant (`session_shares`).
+`GET .../runtime`, `GET .../artifacts`, and `GET /artifacts/{sessionID}/{path...}`.
+The read gate admits the owner **or** a user holding a live read grant
+(`session_shares`).
 
 Everything else — including `PATCH`/`DELETE` on the session, `POST .../messages`,
 uploads, `PUT /artifacts/...`, and the share-management routes themselves — stays
@@ -112,11 +115,58 @@ trimmed, must be non-empty, and is capped at 200 runes (`400` otherwise). →
 `200` the updated `apiSession`; broadcasts a `session.updated` event.
 
 **`POST /api/sessions/{id}/messages`** — `{"content":"..."}`.
-→ `200 {"status": <session status>, "session_id", "message": <apiMessage>}`. On the
-first message of an untitled session the server sets a placeholder title (the
-truncated first message) and, when the title LLM is configured
+→ `202 {"status": <session status>, "session_id", "turn_id", "message":
+<apiMessage>, "runtime": <runtime projection>}`. Accepted while the session is
+already running: the turn is appended to the queue and the runtime drains it after
+the current one. The response pairs the stored message with the post-send
+projection so a client applies both in one update instead of following up with a
+`GET .../runtime` that could land after the worker claimed the turn.
+
+On the first message of an untitled session the server sets a placeholder title
+(the truncated first message) and, when the title LLM is configured
 ([configuration.md](./configuration.md)), asynchronously replaces it with a
 generated title — each emits a `session.updated` event.
+
+### The session runtime projection
+
+`GET /api/sessions/{id}/runtime` and the `session.runtime` event carry the
+**identical** payload, so a client has one shape to apply however it arrives:
+
+```
+{"session_id", "session_status", "revision",
+ "active_turn": <turn|null>, "queued_turns": [<turn>...]}
+```
+
+A turn is `{id, sequence, content, status, phase?, phase_at?, tool_name?,
+tool_detail?, started_at?, created_at}`. `phase` is one of `thinking`, `tool`,
+`streaming`, `compacting`, `retrying`, recorded on the turn row as it happens and
+present on the active turn only.
+
+Two properties clients depend on:
+
+- **`active_turn` — not `session_status` — defines "the agent is busy."** A
+  session stays `running_active` while a queued turn waits for a generation, and
+  reports `running_active` briefly before any turn is claimed. Deriving activity
+  from the status is what made an idle session display "Thinking".
+- **`revision` is monotonic per session.** Apply a snapshot only when its revision
+  exceeds the one already held. An in-flight `GET` can otherwise land after a
+  newer push and resurrect a queue entry that was already drained, and the stale
+  row then never clears.
+
+**`DELETE /api/sessions/{id}/turns/{turnID}`** withdraws a turn that is still
+queued → `200` the resulting projection. Once the worker claims it the turn is
+running and this returns `409 turn_not_cancelable`; ending it is then
+`POST .../interrupt`. The withdrawn turn's message row is deleted with it: the
+turn was never asked, so leaving the text in the transcript would read as an
+unanswered prompt.
+
+**`POST /api/sessions/{id}/interrupt`** → `202 {"status", "canceled_queued",
+"runtime"}`. It cancels the turns queued behind the running one as well, and
+`canceled_queued` says how many. That is not merely tidy: interrupt retires the
+generation, and `ClaimNextTurn` only grants turns against a live generation, so a
+turn left queued could never be claimed — it would strand until a later `POST`
+happened to allocate a generation, at which point a prompt the user abandoned long
+ago would suddenly execute.
 
 **Cron Agent (R2/R4).** `POST /api/schedules` accepts `name`, `prompt`, optional
 `cron_expr` (five-field standard cron), `timezone` (IANA name), `enabled`,
@@ -294,6 +344,12 @@ otherwise vanish from a shared shell session.
 `GET /api/sessions/{id}/messages` → `{"messages":[Message...]}` (`store.Message`):
 
 - `id`, `session_id`, `role`, `content`, `created_at` — the chat log.
+- `turn_id` — the durable turn a user message belongs to, when it has one (absent
+  for assistant/system messages and pre-migration history). Lets a client correlate
+  a transcript entry with turn state by id rather than by matching content. A turn
+  that is still `queued` has no message listed here at all — it lives in the runtime
+  projection's `queued_turns` until the worker claims it, which is what makes it
+  impossible for one prompt to appear in both places.
 - `stop_reason` — pi's terminator for an assistant message: `stop` (final reply),
   `toolUse` (intermediate tool step), or empty (user/shell/pre-migration). Lets the
   client distinguish a completed answer from an interstitial.
@@ -312,6 +368,16 @@ heartbeat keeps the connection open; every event is ownership-filtered.
 Event envelope: `event_id`, `type`, `session_id`, `turn_id`, `output_sequence`,
 `proxy_request_id`, `stream`, `severity`, `time`, `payload`.
 
+**Every frame is named** (`event: <type>`), so a browser client MUST register each
+type it consumes via `addEventListener` — `onmessage` receives only unnamed
+frames and will never see these. A type missing from the client's registration
+list is not degraded, it is dropped entirely and in silence, with a handler that
+still looks correct. That failure shipped once (`session.runtime`, see
+[proposals/runtime-push-loss-and-writer-contention.md](./proposals/runtime-push-loss-and-writer-contention.md)),
+so the list in `frontend/lib/use-event-stream.ts` is covered by a test asserting
+it contains every type the provider handles. Add new types there and to the
+table below together.
+
 Event types:
 
 | Type | Meaning |
@@ -319,6 +385,7 @@ Event types:
 | `session.created` | new session |
 | `session.running_active` / `.running_idle` / `.checkpointing` / `.checkpointed` / `.destroyed` | status transitions |
 | `session.updated` | session metadata changed (currently `title`); carries the full `apiSession` |
+| `session.runtime` | the runtime projection changed (turn queued/claimed/ended, or a phase transition); payload is identical to `GET .../runtime`. Live-only — `turns` is the replay source, so a reconnecting client re-reads the endpoint |
 | `session.error` | terminal only when `payload.terminal === true` |
 | `generation.error`, `session.checkpoint_retired`, `session.restore_fallback_retired` | non-terminal runtime events |
 | `ack_turn_completed` | turn outcome (may carry a committed idle transition) |
@@ -360,3 +427,20 @@ other types are served inert. See [security.md](./security.md).
 Authenticated by SO_PEERCRED against `harness.proxy_service_identity`. This is how
 the sandbox gets model access only during its own active turn — see
 [security.md](./security.md).
+
+`start` returns **503 `active_context_unavailable`** when the turn's proxy context
+cannot be resolved. 503 rather than a 4xx is load-bearing: this is a transient
+internal bookkeeping condition, and the proxy maps a 4xx to a hard error that pi
+treats as unretryable, which ends the whole turn. It previously surfaced to users
+as "the model service is unavailable" when the provider was healthy.
+
+A running turn's lease may be honored for `harness.bridge.proxy_lease_grace` past
+its expiry (default 60s). Turn leases are renewed only by the bridge heartbeat,
+which competes for the single writer connection, so a heartbeat delayed by write
+pressure would otherwise reject every model call the turn makes. Identity is
+unaffected — the generation must still be live and the lease owner must match —
+and the grace must stay below `sandbox_heartbeat_stall_grace` (enforced at config
+validation) so a sandbox already judged stalled cannot keep model access. Requests
+admitted this way are logged as a warning; a nonzero rate means writer contention
+is building. See
+[proposals/runtime-push-loss-and-writer-contention.md](./proposals/runtime-push-loss-and-writer-contention.md).

@@ -33,12 +33,7 @@ func (s *Store) AppendEvent(ctx context.Context, p AppendEventParams) (int64, er
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if p.OutputSequence != nil {
-		if err := assertOutputEventTurnTx(ctx, tx, p); err != nil {
-			return 0, err
-		}
-	}
-	eventID, err := appendEventTx(ctx, tx, p)
+	eventID, err := appendOneEventTx(ctx, tx, p)
 	if err != nil {
 		return 0, err
 	}
@@ -132,4 +127,98 @@ WHERE t.id = ?
 		return fmt.Errorf("output event turn CAS failed")
 	}
 	return nil
+}
+
+// AppendEventsBatchResult reports the outcome of one event in a batch, in the
+// order the events were submitted.
+type AppendEventsBatchResult struct {
+	// EventID is the durable id, or 0 when the row was a duplicate that the
+	// INSERT OR IGNORE dropped (identical replay).
+	EventID int64
+	// Err is the per-event failure, when this event alone was rejected. A
+	// sequence-mismatch error here is the same value AppendEvent would have
+	// returned, so IsDuplicateOutputSequenceMismatch still classifies it.
+	Err error
+}
+
+// AppendEventsBatch appends several events in ONE transaction, returning a result
+// per event in submission order.
+//
+// Why this exists: bridge output was one transaction per event, and on a single
+// writer connection that made a chatty turn's stdout the dominant source of
+// write-lock contention. Everything else that needs the writer — turn lease
+// heartbeats above all — queues behind it, and a heartbeat that lands late lapses
+// a turn's lease, which used to fail the turn's model calls outright. Batching is
+// therefore not a throughput nicety; it removes the contention that produced
+// spurious "model unavailable" failures.
+//
+// Semantics are deliberately identical to calling AppendEvent per event:
+//   - each event is validated with the same assertOutputEventTurnTx CAS,
+//   - duplicates remain idempotent (INSERT OR IGNORE + assertDuplicateEventMatches),
+//   - order is preserved.
+//
+// One event's failure does NOT roll back its neighbours. A sequence mismatch is
+// attributed to the single event that caused it (the caller retires the
+// generation over that one envelope), so folding a batch would either lose good
+// output or misattribute the fault to whichever envelope happened to share the
+// batch. Each event therefore gets a SAVEPOINT: on failure only that event is
+// rolled back and the rest of the batch still commits.
+func (s *Store) AppendEventsBatch(ctx context.Context, events []AppendEventParams) ([]AppendEventsBatchResult, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	results := make([]AppendEventsBatchResult, len(events))
+	for i := range events {
+		p := events[i]
+		if p.Now.IsZero() {
+			p.Now = time.Now().UTC()
+		}
+		if p.Type == "" {
+			results[i].Err = fmt.Errorf("event type is required")
+			continue
+		}
+		// A named savepoint per event: a rejected event must not discard the
+		// events already appended in this transaction.
+		name := fmt.Sprintf("batch_event_%d", i)
+		if _, err := tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
+			return nil, err
+		}
+		eventID, err := appendOneEventTx(ctx, tx, p)
+		if err != nil {
+			if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO "+name); rbErr != nil {
+				return nil, rbErr
+			}
+			// Release even after a rollback-to, or the savepoint stays on the stack.
+			if _, relErr := tx.ExecContext(ctx, "RELEASE "+name); relErr != nil {
+				return nil, relErr
+			}
+			results[i].Err = err
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "RELEASE "+name); err != nil {
+			return nil, err
+		}
+		results[i].EventID = eventID
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// appendOneEventTx is AppendEvent's body without the transaction, so the single
+// and batched paths cannot drift in what they validate.
+func appendOneEventTx(ctx context.Context, tx *sql.Tx, p AppendEventParams) (int64, error) {
+	if p.OutputSequence != nil {
+		if err := assertOutputEventTurnTx(ctx, tx, p); err != nil {
+			return 0, err
+		}
+	}
+	return appendEventTx(ctx, tx, p)
 }

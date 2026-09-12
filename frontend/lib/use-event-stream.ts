@@ -15,6 +15,13 @@ export const SSE_TYPED_EVENT_TYPES = [
   "session.failed",
   "session.destroyed",
   "session.updated",
+  // The runtime projection (queue + active turn). Named frames reach the client
+  // ONLY via addEventListener, so omitting a type here drops every push of it
+  // silently — which is exactly how this one was lost: the provider's handler
+  // existed but was unreachable, leaving the queue to update only on a
+  // follow-up GET, so a dispatched turn stayed visible in the queue and ran a
+  // second time.
+  "session.runtime",
   "message.created",
   "agent.message",
   "agent.delta",

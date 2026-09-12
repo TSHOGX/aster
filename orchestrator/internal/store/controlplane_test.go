@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -454,15 +455,27 @@ WHERE generation_id = 'gen_ack_resource'`); err != nil {
 		t.Fatalf("expected ack failure without live resource, got %v", err)
 	}
 	var turnStatus string
-	var contexts int
 	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, turnID).Scan(&turnStatus); err != nil {
 		t.Fatalf("query turn: %v", err)
 	}
-	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM active_model_request_contexts`).Scan(&contexts); err != nil {
-		t.Fatalf("query active contexts: %v", err)
+	if turnStatus != "leased" {
+		t.Fatalf("ack should not commit the turn without a live resource: turn=%s", turnStatus)
 	}
-	if turnStatus != "leased" || contexts != 0 {
-		t.Fatalf("ack should not commit turn/context without live resource: turn=%s contexts=%d", turnStatus, contexts)
+	// A context row DOES exist here, registered by ClaimNextTurn while the
+	// resource was still live (see upsertActiveModelRequestContextTx for why
+	// registration happens at claim). Its presence is not the safety property —
+	// what matters is that model access is refused once the resource is no longer
+	// live, which StartProxyRequest enforces independently via ri.state = 'live'.
+	// Asserting the refusal directly is strictly stronger than counting rows, and
+	// unlike a row count it cannot pass for the wrong reason.
+	sandboxIP := sandboxSourceIPForGeneration(t, ctx, st, "gen_ack_resource")
+	if _, err := st.StartProxyRequest(ctx, StartProxyRequestParams{
+		SandboxSourceIP: sandboxIP,
+		ProxyRequestID:  "ack_resource_probe",
+		Now:             now.Add(2 * time.Second),
+		TurnLeaseGrace:  time.Minute,
+	}); !errors.Is(err, ErrProxyContextUnavailable) {
+		t.Fatalf("model access must be refused while the runtime resource is not live, got err=%v", err)
 	}
 }
 

@@ -1003,6 +1003,74 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	}
 }
 
+// Stop must also drop the turns queued behind the running one. Leaving them
+// 'queued' is not merely untidy: interrupt retires the generation and returns
+// the session to running_idle, and ClaimNextTurn only grants turns against a
+// live generation — so a surviving queued turn can never be claimed. It strands
+// until some later POST happens to allocate a generation, at which point a
+// prompt the user abandoned long ago suddenly executes.
+func TestInterruptSessionCancelsQueuedTurnsAndDropsTheirMessages(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID := "sess_interrupt_queue"
+	generationID := "gen_interrupt_queue"
+	createStoreSession(t, ctx, st, sessionID)
+	createActiveGeneration(t, ctx, st, sessionID, generationID, GenerationLeaseOwner(owner.UUID))
+	now := time.Now().UTC()
+
+	running, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "long task", Now: now})
+	if err != nil {
+		t.Fatalf("enqueue running turn: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE turns
+SET status = 'running', generation_id = ?, lease_owner = ?, lease_expires_at = ?, ack_started_at = ?
+WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Add(time.Minute)), formatTime(now), running.TurnID); err != nil {
+		t.Fatalf("set running turn: %v", err)
+	}
+	// Dispatching is what puts a prompt in the transcript, so do it for the turn the
+	// agent is executing (the queued one below is never dispatched).
+	runningMessage := materializeForTest(t, ctx, st, sessionID, running.TurnID, now)
+	queued, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "and then this", Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("enqueue queued turn: %v", err)
+	}
+
+	result, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID:    sessionID,
+		GenerationID: generationID,
+		OwnerUUID:    owner.UUID,
+		Now:          now.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("interrupt session: %v", err)
+	}
+	if result.CanceledQueued != 1 {
+		t.Fatalf("CanceledQueued = %d, want 1", result.CanceledQueued)
+	}
+	// Nothing is left that a future generation could pick up.
+	if result.Runtime.ActiveTurn != nil || len(result.Runtime.QueuedTurns) != 0 {
+		t.Fatalf("work survived the interrupt: %+v", result.Runtime)
+	}
+	var queuedStatus string
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, queued.TurnID).Scan(&queuedStatus); err != nil {
+		t.Fatalf("query queued turn: %v", err)
+	}
+	if queuedStatus != "canceled" {
+		t.Fatalf("queued turn status = %q, want canceled", queuedStatus)
+	}
+
+	// The interrupted turn was asked, so its message stays. The queued one was never
+	// dispatched, so it has no message at all — nothing to linger.
+	msgs, err := st.ListMessages(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != runningMessage.ID {
+		t.Fatalf("transcript after interrupt: %+v", msgs)
+	}
+}
+
 func TestReconcileStaleSessionStatesKeepsQueuedFallbackInputBlocking(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)

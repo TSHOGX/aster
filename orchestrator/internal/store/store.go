@@ -57,11 +57,18 @@ type InterruptSessionParams struct {
 type InterruptSessionResult struct {
 	SessionStatus string
 	EventIDs      []int64
+	// CanceledQueued counts the user's pending turns dropped alongside the
+	// running one, so the UI can say so instead of silently emptying the queue.
+	CanceledQueued int64
+	// Runtime is the post-interrupt projection, taken inside the same
+	// transaction.
+	Runtime SessionRuntimeSnapshot
 }
 
 type Message struct {
 	ID        int64     `json:"id"`
 	SessionID string    `json:"session_id"`
+	TurnID    *int64    `json:"turn_id,omitempty"`
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
@@ -87,8 +94,13 @@ type EnqueueTurnMessageParams struct {
 }
 
 type EnqueueTurnMessageResult struct {
-	TurnID  int64
-	Message Message
+	TurnID int64
+	// Runtime is the session's projection as of this enqueue: the authoritative
+	// queue state the caller hands straight back to the client.
+	//
+	// No Message field. Enqueuing does not create one — the turn becomes a
+	// transcript entry when the agent starts it (materializeTurnMessageTx).
+	Runtime SessionRuntimeSnapshot
 }
 
 type Artifact struct {
@@ -298,15 +310,21 @@ func (s *Store) reader() *sql.DB {
 	return s.db
 }
 
+// Reads on the reader pool. These three are the highest-traffic read paths in the
+// process — GetSession runs per streamed event for the SSE visibility check, and
+// the message/session lists run on every poll and reload. Leaving them on the
+// single writer connection made them queue against turn-lease heartbeats and
+// output appends, which is the contention that lapsed leases and produced
+// spurious model failures. Under WAL a reader never blocks the writer.
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.reader().QueryRowContext(ctx, `
 SELECT `+sessionSelectColumns+`
 FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.reader().QueryContext(ctx, `
 SELECT `+sessionSelectColumns+`
 FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
@@ -588,6 +606,8 @@ FROM sessions WHERE id = ?`, p.SessionID).Scan(&sessionStatus, &activeGeneration
 		return InterruptSessionResult{}, fmt.Errorf("session is not running")
 	}
 	now := formatTime(p.Now)
+	// The turn the agent was actually executing. Its message stays in the
+	// transcript: the agent did see it, and the reply (if any) is already there.
 	if _, err := tx.ExecContext(ctx, `
 UPDATE turns
 SET status = 'canceled',
@@ -598,8 +618,47 @@ SET status = 'canceled',
     lease_owner = NULL,
     lease_expires_at = NULL
 WHERE session_id = ?
-  AND status IN ('queued','leased','running')`, now, p.ErrorClass, p.Reason, p.SessionID); err != nil {
+  AND status IN ('leased','running')`, now, p.ErrorClass, p.Reason, p.SessionID); err != nil {
 		return InterruptSessionResult{}, err
+	}
+	// Turns still queued behind it. Cancelling these is load bearing, not a
+	// convenience: interrupt tears down the generation and returns the session to
+	// running_idle, and ClaimNextTurn only grants turns against a live generation
+	// — so a turn left 'queued' can never be claimed. It strands until some later
+	// POST happens to allocate a generation, at which point a prompt the user
+	// abandoned minutes ago suddenly executes. Stop means stop.
+	queuedRes, err := tx.ExecContext(ctx, `
+UPDATE turns
+SET status = 'canceled',
+    completed_at = ?,
+    error_class = ?,
+    error = ?,
+    lease_owner = NULL,
+    lease_expires_at = NULL
+WHERE session_id = ?
+  AND status = 'queued'`, now, p.ErrorClass, p.Reason, p.SessionID)
+	if err != nil {
+		return InterruptSessionResult{}, err
+	}
+	canceledQueued, err := queuedRes.RowsAffected()
+	if err != nil {
+		return InterruptSessionResult{}, err
+	}
+	// A queued turn was never asked, so its message must not remain in the
+	// transcript reading as an unanswered prompt.
+	if canceledQueued > 0 {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM messages
+WHERE session_id = ?
+  AND turn_id IN (
+    SELECT id FROM turns
+    WHERE session_id = ?
+      AND status = 'canceled'
+      AND ack_started_at IS NULL
+      AND completed_at = ?
+  )`, p.SessionID, p.SessionID, now); err != nil {
+			return InterruptSessionResult{}, err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE runtime_generations
@@ -663,10 +722,19 @@ WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, now, p
 	if err != nil {
 		return InterruptSessionResult{}, err
 	}
+	snapshot, err := getSessionRuntimeSnapshot(ctx, tx, p.SessionID)
+	if err != nil {
+		return InterruptSessionResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return InterruptSessionResult{}, err
 	}
-	return InterruptSessionResult{SessionStatus: "running_idle", EventIDs: []int64{eventID}}, nil
+	return InterruptSessionResult{
+		SessionStatus:  "running_idle",
+		EventIDs:       []int64{eventID},
+		CanceledQueued: canceledQueued,
+		Runtime:        snapshot,
+	}, nil
 }
 
 func (s *Store) CancelTerminalSessionPendingTurns(ctx context.Context, now time.Time) (int64, error) {
@@ -770,13 +838,39 @@ func (s *Store) EnqueueTurnMessage(ctx context.Context, p EnqueueTurnMessagePara
 		return EnqueueTurnMessageResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var existingStatus, activeGenerationID string
+	if err := tx.QueryRowContext(ctx, `SELECT status, COALESCE(active_generation_id, '') FROM sessions WHERE id = ?`, p.SessionID).Scan(&existingStatus, &activeGenerationID); err != nil {
+		return EnqueueTurnMessageResult{}, err
+	}
+	// Queue presentation is derived from turn ownership, never from the coarse
+	// session status. A session can remain running_active while its generation
+	// is warming up (with no turn yet), and conversely can be running_idle while
+	// a queued turn is waiting for dispatch. The first in-flight turn therefore
+	// belongs in the transcript immediately; only messages appended behind an
+	// existing queued/leased/running turn are marked queued.
+	var inflightTurns int
+	if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM turns
+WHERE session_id = ?
+  AND status IN ('queued', 'leased', 'running')`, p.SessionID).Scan(&inflightTurns); err != nil {
+		return EnqueueTurnMessageResult{}, err
+	}
+	// running_active without a generation is a stale session marker. Preserve
+	// the input guard in that case; a legitimate active session always has a
+	// generation lease (or an already in-flight turn) by the time input arrives.
+	if existingStatus == string(sessionstate.RunningActive) && activeGenerationID == "" && inflightTurns == 0 {
+		return EnqueueTurnMessageResult{}, fmt.Errorf("session cannot accept input")
+	}
 	next, err := nextTurnSequence(ctx, tx, p.SessionID)
 	if err != nil {
 		return EnqueueTurnMessageResult{}, err
 	}
+	// materializes_message marks a turn that becomes a transcript entry when it is
+	// dispatched. ResumeFailedTurn leaves it 0: the user did not type a
+	// continuation, so it must never appear as their message.
 	turnRes, err := tx.ExecContext(ctx, `
-INSERT INTO turns (session_id, sequence, role, content, status, attempt, created_at)
-VALUES (?, ?, 'user', ?, 'queued', 0, ?)`, p.SessionID, next, p.Content, formatTime(p.Now))
+INSERT INTO turns (session_id, sequence, role, content, status, attempt, created_at, materializes_message)
+VALUES (?, ?, 'user', ?, 'queued', 0, ?, 1)`, p.SessionID, next, p.Content, formatTime(p.Now))
 	if err != nil {
 		return EnqueueTurnMessageResult{}, err
 	}
@@ -784,25 +878,27 @@ VALUES (?, ?, 'user', ?, 'queued', 0, ?)`, p.SessionID, next, p.Content, formatT
 	if err != nil {
 		return EnqueueTurnMessageResult{}, err
 	}
-	msgRes, err := tx.ExecContext(ctx, `
-INSERT INTO messages (session_id, role, content, created_at)
-VALUES (?, 'user', ?, ?)`, p.SessionID, p.Content, formatTime(p.Now))
-	if err != nil {
-		return EnqueueTurnMessageResult{}, err
-	}
-	messageID, err := msgRes.LastInsertId()
-	if err != nil {
-		return EnqueueTurnMessageResult{}, err
-	}
+	// No `messages` row here, deliberately. A message row means "this was asked",
+	// and a queued turn has not been asked yet — the turn row already records the
+	// user's intent, which is what the queue renders.
+	//
+	// Writing it at enqueue caused two defects. Its created_at claimed the user
+	// asked at send time even when the turn then sat in the queue for minutes, and
+	// it entered the FTS index immediately, so a prompt that never reached the agent
+	// was already searchable. It also had to be filtered out of every read path —
+	// and the SSE broadcast was missed, so a queued turn appeared in the transcript
+	// and the queue at the same time.
+	//
+	// MaterializeTurnMessage writes it when the agent actually starts the turn.
 	res, err := tx.ExecContext(ctx, `
 UPDATE sessions
 SET status = ?,
     updated_at = ?,
     last_activity_at = ?
 WHERE id = ?
-  AND status IN (?, ?, ?)`,
+	AND status IN (?, ?, ?, ?)`,
 		string(sessionstate.RunningActive), formatTime(p.Now), formatTime(p.Now), p.SessionID,
-		string(sessionstate.Created), string(sessionstate.RunningIdle), string(sessionstate.Checkpointed))
+		string(sessionstate.Created), string(sessionstate.RunningIdle), string(sessionstate.Checkpointed), string(sessionstate.RunningActive))
 	if err != nil {
 		return EnqueueTurnMessageResult{}, err
 	}
@@ -813,19 +909,105 @@ WHERE id = ?
 	if affected != 1 {
 		return EnqueueTurnMessageResult{}, fmt.Errorf("session cannot accept input")
 	}
+	// Taken inside the transaction so the caller can hand the client its post-send
+	// truth in the POST response. The turns INSERT above already advanced
+	// turn_revision via trigger, so this snapshot carries the new value. Without
+	// it the client would have to follow every send with a GET, and that GET can
+	// race the worker claiming the turn.
+	snapshot, err := getSessionRuntimeSnapshot(ctx, tx, p.SessionID)
+	if err != nil {
+		return EnqueueTurnMessageResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return EnqueueTurnMessageResult{}, err
 	}
 	return EnqueueTurnMessageResult{
-		TurnID: turnID,
-		Message: Message{
-			ID:        messageID,
-			SessionID: p.SessionID,
-			Role:      "user",
-			Content:   p.Content,
-			CreatedAt: p.Now,
-		},
+		TurnID:  turnID,
+		Runtime: snapshot,
 	}, nil
+}
+
+// MaterializeTurnMessage writes the transcript entry for a turn the agent has
+// just started, and is the moment a user prompt becomes a message.
+//
+// Called from AckTurnStarted, immediately before the agent builds its first model
+// request for the turn, so `created_at` records when the prompt actually reached
+// the model rather than when it was typed.
+//
+// Idempotent: the bridge can replay an ack, so an existing row is returned as-is
+// (ok=false) instead of duplicating the message. Turns with
+// materializes_message = 0 (automatic continuations) never produce a row.
+func materializeTurnMessageTx(ctx context.Context, tx *sql.Tx, sessionID string, turnID int64, now time.Time) (Message, bool, error) {
+	var (
+		content      string
+		materializes int
+	)
+	err := tx.QueryRowContext(ctx, `
+SELECT content, materializes_message
+FROM turns
+WHERE id = ? AND session_id = ?`, turnID, sessionID).Scan(&content, &materializes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, false, nil
+	}
+	if err != nil {
+		return Message{}, false, err
+	}
+	if materializes != 1 {
+		return Message{}, false, nil
+	}
+	// A replayed ack must not append the prompt twice.
+	var existing int64
+	err = tx.QueryRowContext(ctx, `
+SELECT id FROM messages WHERE session_id = ? AND turn_id = ? AND role = 'user'`, sessionID, turnID).Scan(&existing)
+	if err == nil {
+		return Message{}, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Message{}, false, err
+	}
+	res, err := tx.ExecContext(ctx, `
+INSERT INTO messages (session_id, role, content, created_at, turn_id)
+VALUES (?, 'user', ?, ?, ?)`, sessionID, content, formatTime(now), turnID)
+	if err != nil {
+		return Message{}, false, err
+	}
+	messageID, err := res.LastInsertId()
+	if err != nil {
+		return Message{}, false, err
+	}
+	return Message{
+		ID:        messageID,
+		SessionID: sessionID,
+		TurnID:    &turnID,
+		Role:      "user",
+		Content:   content,
+		CreatedAt: now,
+	}, true, nil
+}
+
+// TurnUserMessage returns the transcript entry a dispatched turn produced, or
+// ok=false when it has none (an automatic continuation, or a turn that has not
+// been dispatched yet). Lets the bridge path publish the message that
+// AckTurnStarted committed without threading it back through the processor.
+func (s *Store) TurnUserMessage(ctx context.Context, sessionID string, turnID int64) (Message, bool, error) {
+	var (
+		m         Message
+		createdAt string
+	)
+	err := s.reader().QueryRowContext(ctx, `
+SELECT id, session_id, turn_id, role, content, created_at
+FROM messages
+WHERE session_id = ? AND turn_id = ? AND role = 'user'`, sessionID, turnID).Scan(
+		&m.ID, &m.SessionID, &turnID, &m.Role, &m.Content, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, false, nil
+	}
+	if err != nil {
+		return Message{}, false, err
+	}
+	m.TurnID = &turnID
+	m.CreatedAt = parseTime(createdAt)
+	return m, true, nil
 }
 
 func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]Message, error) {
@@ -842,12 +1024,20 @@ func (s *Store) listMessages(ctx context.Context, sessionID, userID string) ([]M
 	// LEFT JOIN the trace (one row per message) and, when a user is known, that
 	// user's feedback. Both are optional so history predating either table still
 	// reads back cleanly as NULL.
-	rows, err := s.db.QueryContext(ctx, `
-SELECT m.id, m.session_id, m.role, m.content, m.created_at, m.stop_reason, t.nodes, f.rating
+	rows, err := s.reader().QueryContext(ctx, `
+SELECT m.id, m.session_id, m.turn_id, m.role, m.content, m.created_at, m.stop_reason, t.nodes, f.rating
 FROM messages m
 LEFT JOIN message_traces t ON t.message_id = m.id
 LEFT JOIN message_feedback f ON f.message_id = m.id AND f.user_id = ?
-WHERE m.session_id = ? ORDER BY m.id ASC`, userID, sessionID)
+-- No turn-status filter, and none is needed: a message row exists only once its
+-- turn was dispatched (materializeTurnMessageTx), so a queued turn has nothing
+-- here to exclude. Earlier revisions filtered on turns.status — first with a
+-- correlated "except the head of the queue" subquery — because the row was written
+-- at enqueue. Every read path then had to remember the filter, and the SSE
+-- broadcast did not, which is how a queued prompt ended up in the transcript and
+-- the queue at the same time.
+WHERE m.session_id = ?
+ORDER BY m.id ASC`, userID, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -860,8 +1050,12 @@ WHERE m.session_id = ? ORDER BY m.id ASC`, userID, sessionID)
 		var stopReason sql.NullString
 		var nodes sql.NullString
 		var rating sql.NullString
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &createdAt, &stopReason, &nodes, &rating); err != nil {
+		var turnID sql.NullInt64
+		if err := rows.Scan(&m.ID, &m.SessionID, &turnID, &m.Role, &m.Content, &createdAt, &stopReason, &nodes, &rating); err != nil {
 			return nil, err
+		}
+		if turnID.Valid {
+			m.TurnID = &turnID.Int64
 		}
 		m.CreatedAt = parseTime(createdAt)
 		if stopReason.Valid {

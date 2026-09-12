@@ -140,6 +140,15 @@ harness:
     # lapse so recovery fails/requeues the stuck turn (prevents zombie sessions
     # stuck on "thinking" after a sandbox dies). Must be >= lease_ttl.
     sandbox_heartbeat_stall_grace: 90s
+    # How long past its lease expiry a running turn may still have model requests
+    # authorized. Turn leases are renewed only by the bridge heartbeat, which
+    # competes for the single writer connection; a heartbeat delayed by write
+    # pressure used to reject every model call the turn made until the next one
+    # landed, which surfaced to users as "the model service is unavailable".
+    # Identity is unaffected - the generation must still be live and the lease
+    # owner must still match. Must be < sandbox_heartbeat_stall_grace, or a
+    # sandbox already judged stalled would keep model access.
+    proxy_lease_grace: 60s
 
   # Cron Agent runs independently from maintenance. Persisted schedules are
   # picked up automatically when this scheduler is enabled.

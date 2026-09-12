@@ -217,7 +217,10 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		return
 	}
 	_ = s.store.StartScheduleRun(parent, run.ID, id, enq.TurnID, time.Now().UTC())
-	s.hub.Publish(events.Event{Type: "message.created", SessionID: id, Payload: enq.Message})
+	// The turn is queued; its transcript entry is published when the agent starts
+	// it (see publishTurnUserMessage). Broadcast the queue change so a client
+	// watching the target session sees the scheduled prompt waiting.
+	s.publishSessionRuntime(id, enq.Runtime)
 	for {
 		select {
 		case <-ctx.Done():

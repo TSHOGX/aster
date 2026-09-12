@@ -84,8 +84,12 @@ export const ZH: Record<MessageKey, string> = {
   "composer.stop": "停止",
   "composer.stopping": "正在停止…",
   "composer.stopFailed": "无法停止本轮任务",
+  "composer.queuePlaceholder": "输入后续消息，将在当前轮结束后执行",
+  "composer.queuedCount": "{count} 条排队中",
+  "composer.queueCancel": "从队列中移除",
+  "composer.queueCancelFailed": "该消息已开始执行，请使用「停止」",
+  "composer.unavailable": "此会话无法接收消息。",
   "composer.hint": "Enter 发送 · Shift+Enter 换行",
-  "composer.busy": "会话正忙或已结束。",
 
   // ── Message actions ────────────────────────────────────────────────────────
   "message.goodResponse": "回答不错",

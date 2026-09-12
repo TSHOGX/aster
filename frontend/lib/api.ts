@@ -3,6 +3,7 @@ import type {
   ApiMessage,
   ApiNotification,
   ApiSession,
+  ApiSessionRuntime,
   ApiSessionShare,
   ApiShareLink,
   ApiSchedule,
@@ -115,6 +116,10 @@ export async function fetchSession(sessionId: string) {
   return request<ApiSession>(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }
 
+export async function fetchSessionRuntime(sessionId: string) {
+  return request<ApiSessionRuntime>(`/api/sessions/${encodeURIComponent(sessionId)}/runtime`);
+}
+
 export async function fetchDeploymentCapabilities() {
   return request<DeploymentCapabilities>("/api/deployment-capabilities");
 }
@@ -139,18 +144,45 @@ export async function renameSession(sessionId: string, title: string) {
   });
 }
 
+/**
+ * Stop the current turn. Also cancels whatever the user had queued behind it —
+ * `canceled_queued` says how many — because a queued turn cannot survive the
+ * generation teardown that Stop performs.
+ */
 export async function interruptSession(sessionId: string) {
-  return request<{ status: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/interrupt`, {
-    method: "POST"
-  });
+  return request<{ status: string; canceled_queued?: number; runtime?: ApiSessionRuntime }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/interrupt`,
+    { method: "POST" }
+  );
+}
+
+/** Withdraw a turn the user queued but no longer wants. 409 once it is claimed. */
+export async function cancelQueuedTurn(sessionId: string, turnId: number) {
+  return request<ApiSessionRuntime>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(String(turnId))}`,
+    { method: "DELETE" }
+  );
 }
 
 export async function fetchMessages(sessionId: string) {
   return request<{ messages: ApiMessage[] | null }>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
 }
 
+/**
+ * Send a turn.
+ *
+ * Returns the turn id and the post-send projection — no message. The prompt has
+ * been accepted but not yet asked: it becomes a transcript entry (arriving as a
+ * `message.created` event) only when the agent starts it, so its timestamp
+ * reflects when the model actually received it. Until then the queue renders it.
+ */
 export async function postMessage(sessionId: string, content: string) {
-  return request<{ status: SessionStatus; session_id: string; message: ApiMessage }>(
+  return request<{
+    status: SessionStatus;
+    session_id: string;
+    turn_id: number;
+    runtime: ApiSessionRuntime;
+  }>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
     {
       method: "POST",

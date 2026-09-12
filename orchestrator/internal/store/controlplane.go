@@ -482,6 +482,37 @@ WHERE generation_id = ?
 		return TurnGrant{}, false, fmt.Errorf("generation CAS failed after turn claim")
 	}
 
+	// Register the sandbox's model-request context now, not on ack. The agent
+	// receives this grant and issues its first model call over HTTP, while its ack
+	// travels back through the bridge file queue — so the call routinely arrives
+	// first, and before this it found no context and was refused. See
+	// upsertActiveModelRequestContextTx.
+	sandboxSourceIP, err := sandboxSourceIPForGenerationTx(ctx, tx, p.SessionID, p.GenerationID)
+	if err != nil {
+		return TurnGrant{}, false, err
+	}
+	var modelAccessAllowed int
+	if err := tx.QueryRowContext(ctx, `
+SELECT a.model_access_allowed
+FROM runtime_generations g
+JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+WHERE g.session_id = ?
+  AND g.generation_id = ?`, p.SessionID, p.GenerationID).Scan(&modelAccessAllowed); err != nil {
+		return TurnGrant{}, false, err
+	}
+	if err := upsertActiveModelRequestContextTx(ctx, tx, activeModelRequestContextParams{
+		SandboxSourceIP:    sandboxSourceIP,
+		SessionID:          p.SessionID,
+		GenerationID:       p.GenerationID,
+		TurnID:             grant.TurnID,
+		Owner:              p.Owner,
+		ExpiresAt:          expiresAt,
+		ModelAccessAllowed: modelAccessAllowed,
+		Now:                p.Now,
+	}); err != nil {
+		return TurnGrant{}, false, err
+	}
+
 	grant, err = turnGrantByID(ctx, tx, p.SessionID, p.GenerationID, grant.TurnID, p.Owner, p.Now)
 	if err != nil {
 		return TurnGrant{}, false, err
@@ -656,6 +687,69 @@ WHERE session_id = ?
 	return grant, true, tx.Commit()
 }
 
+// activeModelRequestContextParams registers a sandbox's right to make model
+// requests for one turn.
+type activeModelRequestContextParams struct {
+	SandboxSourceIP    string
+	SessionID          string
+	GenerationID       string
+	TurnID             int64
+	Owner              string
+	ExpiresAt          time.Time
+	ModelAccessAllowed int
+	Now                time.Time
+}
+
+// upsertActiveModelRequestContextTx registers (or refreshes) the proxy context
+// for a turn. Called from BOTH ClaimNextTurn and AckTurnStarted.
+//
+// Registering at claim is the load-bearing part. The context used to be created
+// only on ack, but ack travels back through the bridge file queue and is applied
+// on the orchestrator's next poll, while the agent's first model request goes
+// straight to the proxy over HTTP. On a warm sandbox the agent wins that race
+// essentially always, so its opening model call for the turn found no context and
+// was denied — the turn then died reporting a model failure, while the prompt
+// itself stayed in the agent's history (which is why the agent "remembered"
+// messages it never answered). A cold first turn masked this because sandbox and
+// agent startup gave the ack time to land.
+//
+// The claim is the correct moment regardless: that is when the turn becomes this
+// sandbox's to execute, and the lease bounds it.
+//
+// next_request_sequence is PRESERVED when the row already refers to the same
+// turn. The ack arrives after the agent has usually issued requests, and resetting
+// the counter there would restart sequences mid-turn and collide with the
+// proxy.request.started events already recorded for it.
+func upsertActiveModelRequestContextTx(ctx context.Context, tx *sql.Tx, p activeModelRequestContextParams) error {
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO active_model_request_contexts (
+  sandbox_source_ip, session_id, generation_id, turn_id,
+  lease_owner, expires_at, model_access_allowed, next_request_sequence, registered_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT(sandbox_source_ip) DO UPDATE SET
+  session_id = excluded.session_id,
+  generation_id = excluded.generation_id,
+  turn_id = excluded.turn_id,
+  lease_owner = excluded.lease_owner,
+  expires_at = excluded.expires_at,
+  model_access_allowed = excluded.model_access_allowed,
+  next_request_sequence = CASE
+    WHEN active_model_request_contexts.turn_id = excluded.turn_id
+      AND active_model_request_contexts.generation_id = excluded.generation_id
+    THEN active_model_request_contexts.next_request_sequence
+    ELSE excluded.next_request_sequence
+  END,
+  registered_at = CASE
+    WHEN active_model_request_contexts.turn_id = excluded.turn_id
+      AND active_model_request_contexts.generation_id = excluded.generation_id
+    THEN active_model_request_contexts.registered_at
+    ELSE excluded.registered_at
+  END,
+  updated_at = excluded.updated_at`,
+		p.SandboxSourceIP, p.SessionID, p.GenerationID, p.TurnID, p.Owner,
+		formatTime(p.ExpiresAt), p.ModelAccessAllowed, formatTime(p.Now), formatTime(p.Now))
+	return err
+}
+
 func (s *Store) AckTurnStarted(ctx context.Context, p AckStartedParams) (int64, error) {
 	if p.Now.IsZero() {
 		p.Now = time.Now().UTC()
@@ -745,22 +839,27 @@ WHERE g.session_id = ?
 		return 0, err
 	}
 	if startedNow {
-		_, err = tx.ExecContext(ctx, `
-INSERT INTO active_model_request_contexts (
-  sandbox_source_ip, session_id, generation_id, turn_id,
-  lease_owner, expires_at, model_access_allowed, next_request_sequence, registered_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT(sandbox_source_ip) DO UPDATE SET
-  session_id = excluded.session_id,
-  generation_id = excluded.generation_id,
-  turn_id = excluded.turn_id,
-  lease_owner = excluded.lease_owner,
-  expires_at = excluded.expires_at,
-  model_access_allowed = excluded.model_access_allowed,
-  next_request_sequence = excluded.next_request_sequence,
-  registered_at = excluded.registered_at,
-  updated_at = excluded.updated_at`,
-			sandboxSourceIP, p.SessionID, p.GenerationID, p.TurnID, p.Owner, formatTime(expiresAt), modelAccessAllowed, formatTime(p.Now), formatTime(p.Now))
-		if err != nil {
+		if err := upsertActiveModelRequestContextTx(ctx, tx, activeModelRequestContextParams{
+			SandboxSourceIP:    sandboxSourceIP,
+			SessionID:          p.SessionID,
+			GenerationID:       p.GenerationID,
+			TurnID:             p.TurnID,
+			Owner:              p.Owner,
+			ExpiresAt:          expiresAt,
+			ModelAccessAllowed: modelAccessAllowed,
+			Now:                p.Now,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	// The agent has the turn and is about to build its first model request for it,
+	// so this is the moment the user's prompt becomes a transcript entry. Writing
+	// it here rather than at enqueue makes `created_at` the time the prompt actually
+	// reached the model, and means a queued turn has no message row to leak into
+	// the transcript. Inside this transaction, so the row and the running status
+	// commit together. Idempotent for a replayed ack.
+	if startedNow {
+		if _, _, err := materializeTurnMessageTx(ctx, tx, p.SessionID, p.TurnID, p.Now); err != nil {
 			return 0, err
 		}
 	}
@@ -968,7 +1067,10 @@ WHERE session_id = ?
     SELECT id FROM turns
     WHERE session_id = ?
       AND generation_id = ?
-      AND status = 'running'
+      -- 'leased' too: the context is registered at claim now, so a turn whose
+      -- ack has not landed yet still has one and must have it renewed. Omitting
+      -- it would let the context lapse underneath a turn that is starting.
+      AND status IN ('leased', 'running')
   )`, formatTime(expiresAt), p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID, p.SessionID, p.GenerationID); err != nil {
 		return err
 	}
