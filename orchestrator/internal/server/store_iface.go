@@ -114,6 +114,8 @@ type generationStore interface {
 	MarkGenerationResourcesLive(context.Context, string, string, string, time.Time) error
 	MarkGenerationResourcesDestroyed(context.Context, store.DestroyGenerationResourcesParams) error
 	FailGenerationStart(context.Context, store.FailGenerationStartParams) (int64, error)
+	FailGenerationWithEvent(context.Context, store.FailGenerationParams) (store.FailGenerationResult, error)
+	InflightTurnForGeneration(context.Context, string, string) (int64, string, bool, error)
 	RenewGenerationStartLease(context.Context, store.RenewGenerationStartLeaseParams) error
 	RenewLiveGenerationLeases(context.Context, store.RenewLiveGenerationsParams) (int64, error)
 	ReleaseIdleGeneration(context.Context, string, string, string, time.Time) error

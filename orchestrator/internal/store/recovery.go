@@ -349,9 +349,16 @@ ORDER BY s.id, g.generation_id`, formatTime(p.Now))
 		return nil, err
 	}
 
+	// A live generation whose lease lapsed under the SAME owner was not lost to
+	// a restart: this process was here the whole time and its sandbox simply
+	// stopped heartbeating (crashed, hung, or was killed). The routing class
+	// below keeps its historical "orchestrator_restart_*" name because the
+	// repair branches key on it; Cause carries the truthful diagnosis into the
+	// generation row and the user-facing event instead.
+	ownLease := GenerationLeaseOwner(p.OwnerUUID)
 	ackStartedCutoff := p.Now.Add(-p.AckStartedGrace)
 	rows, err = tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status,
+SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status, COALESCE(g.lease_owner, ''),
        EXISTS (SELECT 1 FROM turns t WHERE t.generation_id = g.generation_id AND t.status IN ('leased','running'))
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
@@ -375,11 +382,15 @@ ORDER BY s.id, g.generation_id`, formatTime(ackStartedCutoff), formatTime(ackSta
 	}
 	for rows.Next() {
 		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status, &c.InterruptedWork); err != nil {
+		var leaseOwner string
+		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status, &leaseOwner, &c.InterruptedWork); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
 		c.ErrorClass = "unknown_after_ack_started"
+		if leaseOwner == ownLease {
+			c.Cause = SandboxHeartbeatLostCause
+		}
 		candidates = append(candidates, c)
 	}
 	if err := rows.Close(); err != nil {
@@ -388,7 +399,7 @@ ORDER BY s.id, g.generation_id`, formatTime(ackStartedCutoff), formatTime(ackSta
 
 	cutoff := p.Now.Add(-p.ReconnectGrace)
 	rows, err = tx.QueryContext(ctx, `
-SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status,
+SELECT s.id, g.generation_id, COALESCE(r.runsc_container_id, ''), g.status, COALESCE(g.lease_owner, ''),
        EXISTS (SELECT 1 FROM turns t WHERE t.generation_id = g.generation_id AND t.status IN ('leased','running'))
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
@@ -410,11 +421,15 @@ ORDER BY s.id, g.generation_id`, formatTime(cutoff))
 	}
 	for rows.Next() {
 		var c ExpiredRuntimeRecoveryCandidate
-		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status, &c.InterruptedWork); err != nil {
+		var leaseOwner string
+		if err := rows.Scan(&c.SessionID, &c.GenerationID, &c.RuntimeID, &c.Status, &leaseOwner, &c.InterruptedWork); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
 		c.ErrorClass = "orchestrator_restart_reconnect_grace_expired"
+		if leaseOwner == ownLease {
+			c.Cause = SandboxHeartbeatLostCause
+		}
 		candidates = append(candidates, c)
 	}
 	if err := rows.Close(); err != nil {
@@ -555,15 +570,6 @@ WHERE generation_id IN (`+sqlPlaceholders(len(reconnectIDs))+`)`, args...); err 
 	}
 	repairedIDs := append(append([]string{}, lifecycleIDs...), unknownIDs...)
 	repairedIDs = append(repairedIDs, reconnectIDs...)
-	for _, generationID := range repairedIDs {
-		eventID, err := repairRecoveredSessionTx(ctx, tx, generationID, p.Now)
-		if err != nil {
-			return StartupRecoveryResult{}, err
-		}
-		if eventID != 0 {
-			result.EventIDs = append(result.EventIDs, eventID)
-		}
-	}
 	// Overwrite the routing-derived error class with the diagnosed cause where we
 	// have one. The branches above record the class that selected them
 	// ("unknown_after_ack_started" and friends), which describes how recovery
@@ -574,7 +580,11 @@ WHERE generation_id IN (`+sqlPlaceholders(len(reconnectIDs))+`)`, args...); err 
 	//
 	// Applied after the branches, and only to generations they actually repaired,
 	// so it can never route a candidate to a different branch (see the Cause field
-	// comment on ExpiredRuntimeRecoveryCandidate).
+	// comment on ExpiredRuntimeRecoveryCandidate) — but BEFORE the session repair
+	// below, whose generation.error event copies error_class/failure_reason into
+	// the payload the UI shows. Writing the cause after that event was how users
+	// came to see "orchestrator_restart_reconnect_grace_expired" as a toast for a
+	// sandbox that died while the orchestrator never restarted.
 	repairedSet := make(map[string]bool, len(repairedIDs))
 	for _, id := range repairedIDs {
 		repairedSet[id] = true
@@ -598,6 +608,15 @@ WHERE generation_id = ?
   AND status = 'failed'
   AND completed_by_generation = generation_id`, candidate.Cause, candidate.Cause, candidate.GenerationID); err != nil {
 			return StartupRecoveryResult{}, err
+		}
+	}
+	for _, generationID := range repairedIDs {
+		eventID, err := repairRecoveredSessionTx(ctx, tx, generationID, p.Now)
+		if err != nil {
+			return StartupRecoveryResult{}, err
+		}
+		if eventID != 0 {
+			result.EventIDs = append(result.EventIDs, eventID)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `

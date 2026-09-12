@@ -3808,7 +3808,10 @@ JOIN sessions s ON s.id = g.session_id
 WHERE g.generation_id = ?`, allocation.GenerationID).Scan(&errorClass, &leaseOwnerAfter, &sessionStatus); err != nil {
 		t.Fatalf("query recovered generation: %v", err)
 	}
-	if errorClass != "orchestrator_restart_reconnect_grace_expired" || leaseOwnerAfter != "" {
+	// The orchestrator never restarted here — the sandbox stopped heartbeating
+	// under the same owner — so the recorded cause must say so, not blame a
+	// restart that did not happen.
+	if errorClass != store.SandboxHeartbeatLostCause || leaseOwnerAfter != "" {
 		t.Fatalf("unexpected recovered generation: error_class=%s lease_owner=%s", errorClass, leaseOwnerAfter)
 	}
 	// Session must return to running_idle so the frontend unblocks.

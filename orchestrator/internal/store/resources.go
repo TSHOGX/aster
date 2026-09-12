@@ -288,6 +288,11 @@ type RenewLiveGenerationsParams struct {
 	StallGrace time.Duration
 }
 
+// SandboxHeartbeatLostCause is the diagnosed cause for a live generation whose
+// lease lapsed under the same orchestrator owner: no restart happened, the
+// sandbox itself stopped heartbeating. See ListExpiredRuntimeRecoveryCandidates.
+const SandboxHeartbeatLostCause = "sandbox_heartbeat_lost"
+
 type ExpiredRuntimeRecoveryCandidate struct {
 	SessionID    string
 	GenerationID string

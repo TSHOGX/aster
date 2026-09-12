@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -228,6 +229,9 @@ type Runtime struct {
 	runner     CommandRunner
 	mu         sync.RWMutex
 	containers map[string]*Container
+	// onContainerExit is fired from each container's monitor goroutine when
+	// `runsc run` returns; see container_exit.go.
+	onContainerExit ContainerExitHandler
 }
 
 type Container struct {
@@ -242,6 +246,9 @@ type Container struct {
 	Cancel           context.CancelFunc
 	InputMu          sync.Mutex
 	OutputHub        *OutputHub // Per-container pub/sub for output events
+	// stopping is set by the runtime before it kills the process, so the exit
+	// hook can tell a requested stop from the sandbox dying on its own.
+	stopping atomic.Bool
 }
 
 func New(cfg Config) *Runtime {
@@ -388,6 +395,7 @@ func (r *Runtime) Destroy(ctx context.Context, containerID string) error {
 	if containerID == "" {
 		return errors.New("runsc container id is required")
 	}
+	r.markStoppingByRunscID(containerID)
 	if err := r.deleteRunscContainer(ctx, "runsc", containerID); err != nil {
 		return fmt.Errorf("runsc delete %s: %w", containerID, err)
 	}
@@ -466,6 +474,7 @@ func (r *Runtime) cleanupExitedContainer(container *Container) {
 }
 
 func (r *Runtime) stopContainer(container *Container) {
+	container.markStopping()
 	r.removeContainer(container)
 	if container.Cancel != nil {
 		container.Cancel()
@@ -484,6 +493,7 @@ func (r *Runtime) evictContainerByRunscID(runscContainerID string) {
 	}
 	r.mu.Unlock()
 	for _, container := range evicted {
+		container.markStopping()
 		if container.Cancel != nil {
 			container.Cancel()
 		}
@@ -1201,6 +1211,11 @@ func (r *Runtime) launchContainer(ctx context.Context, req StartRequest, hub *Ou
 		return Result{Err: fmt.Errorf("stderr pipe: %w", err)}
 	}
 
+	// Subscribed before Start so nothing the process writes can be missed. This
+	// sink outlives Start: it is the only reader of the sandbox's output once
+	// the caller's own subscription (outputCh) is cancelled on return.
+	logSink := startContainerLogSink(hub, req.Generation.LogDirPath)
+
 	if err := cmd.Start(); err != nil {
 		cancelCmd()
 		return Result{Err: fmt.Errorf("%s: %w", startLabel, err)}
@@ -1233,9 +1248,21 @@ func (r *Runtime) launchContainer(ctx context.Context, req StartRequest, hub *Ou
 	// Monitor container exit in background
 	go func() {
 		wg.Wait()
-		_ = cmd.Wait()
+		waitErr := cmd.Wait()
 		hub.Close() // Close hub when container exits
+		<-logSink.done
 		r.cleanupExitedContainer(container)
+		if handler := r.containerExitHandler(); handler != nil {
+			handler(ContainerExit{
+				SessionID:        container.SessionID,
+				GenerationID:     container.GenerationID,
+				RunscContainerID: container.RunscContainerID,
+				Err:              waitErr,
+				Intentional:      container.stopping.Load(),
+				Tail:             logSink.snapshotTail(),
+				LogPath:          logSink.logPath,
+			})
+		}
 	}()
 
 	postStartProof, err := r.runtimePostStartProof(ctx, req.Generation, currentRunsc, containerID)

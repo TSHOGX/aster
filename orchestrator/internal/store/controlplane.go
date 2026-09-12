@@ -218,6 +218,27 @@ VALUES (?, ?, 'user', ?, 'queued', 0, ?)`, sessionID, next, content, formatTime(
 // leased, or running. Callers use it to reject workspace mutations (uploads,
 // online edits) while the agent may be actively reading or writing the
 // workspace, mirroring the pending-turn check in generation idle CAS.
+// InflightTurnForGeneration returns the turn currently leased to or running on
+// a generation, if any. At most one exists: the claim CAS refuses a second
+// in-flight turn per generation. ok=false means no in-flight turn.
+func (s *Store) InflightTurnForGeneration(ctx context.Context, sessionID, generationID string) (turnID int64, status string, ok bool, err error) {
+	err = s.reader().QueryRowContext(ctx, `
+SELECT id, status
+FROM turns
+WHERE session_id = ?
+  AND generation_id = ?
+  AND status IN ('leased', 'running')
+ORDER BY id DESC
+LIMIT 1`, sessionID, generationID).Scan(&turnID, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", false, nil
+	}
+	if err != nil {
+		return 0, "", false, err
+	}
+	return turnID, status, true, nil
+}
+
 func (s *Store) SessionHasActiveTurn(ctx context.Context, sessionID string) (bool, error) {
 	var count int
 	if err := s.db.QueryRowContext(ctx, `

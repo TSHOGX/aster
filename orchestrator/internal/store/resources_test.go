@@ -1793,10 +1793,13 @@ JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
 WHERE t.id = ?`, turnID).Scan(&turnStatus, &turnError, &generationStatus, &generationError, &networkState, &resourceState); err != nil {
 		t.Fatalf("query recovered state: %v", err)
 	}
+	// The lease lapsed under the SAME owner, so the orchestrator never restarted:
+	// the routing branch is still unknown_after_ack_started (see the result
+	// counts above) but the recorded cause says what actually happened.
 	if turnStatus != "failed" ||
-		turnError != "unknown_after_ack_started" ||
+		turnError != SandboxHeartbeatLostCause ||
 		generationStatus != "failed" ||
-		generationError != "unknown_after_ack_started" ||
+		generationError != SandboxHeartbeatLostCause ||
 		networkState != "reclaimable" ||
 		resourceState != "reclaimable" {
 		t.Fatalf("unexpected unknown-after-ack state: turn=%s/%s generation=%s/%s network=%s resource=%s", turnStatus, turnError, generationStatus, generationError, networkState, resourceState)
@@ -1807,6 +1810,46 @@ WHERE t.id = ?`, turnID).Scan(&turnStatus, &turnError, &generationStatus, &gener
 	}
 	if contexts != 0 {
 		t.Fatalf("active model contexts should be cleared, got %d", contexts)
+	}
+}
+
+// A lease held by a PREVIOUS owner (the orchestrator restarted) keeps the
+// restart classification: only a lapse under the current owner is diagnosed as
+// the sandbox losing its heartbeat.
+func TestExpiredRuntimeRecoveryKeepsRestartClassForForeignLease(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	cfg := testAllocatorConfig(t)
+	createStoreSession(t, ctx, st, "sess_ack_restart")
+	now := time.Now().UTC()
+	allocation, turnID := createExpiredAckStartedTurn(t, ctx, st, owner.UUID, cfg, "sess_ack_restart", now, 3*time.Minute)
+	if _, err := st.db.ExecContext(ctx, `UPDATE runtime_generations SET lease_owner = ? WHERE generation_id = ?`,
+		GenerationLeaseOwner("previous-owner"), allocation.GenerationID); err != nil {
+		t.Fatalf("reassign lease owner: %v", err)
+	}
+
+	recovered, err := recoverCleanedAllocations(t, ctx, st, StartupRecoveryParams{
+		OwnerUUID:       owner.UUID,
+		Now:             now,
+		LeaseTTL:        time.Minute,
+		ReconnectGrace:  time.Minute,
+		AckStartedGrace: 90 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("recover allocations: %v", err)
+	}
+	if recovered.UnknownAfterAckStarted != 1 {
+		t.Fatalf("unexpected recovery result: %+v", recovered)
+	}
+	var turnError, generationError string
+	if err := st.db.QueryRowContext(ctx, `
+SELECT COALESCE(t.error_class, ''), COALESCE(g.error_class, '')
+FROM turns t JOIN runtime_generations g ON g.generation_id = t.generation_id
+WHERE t.id = ?`, turnID).Scan(&turnError, &generationError); err != nil {
+		t.Fatalf("query recovered state: %v", err)
+	}
+	if turnError != "unknown_after_ack_started" || generationError != "unknown_after_ack_started" {
+		t.Fatalf("foreign lease should keep restart class: turn=%s generation=%s", turnError, generationError)
 	}
 }
 

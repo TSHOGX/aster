@@ -165,6 +165,10 @@ func main() {
 			watcher = artifacts.New(volumeConfig, db, hub, log)
 			app = server.New(cfg, db, rt, watcher, hub, log)
 			app.SetOwnerUUID(owner.UUID)
+			// The runtime reports every `runsc run` exit here; see
+			// server.HandleSandboxExit. Wired after New because the handler needs
+			// the store and the event hub the server owns.
+			rt.SetContainerExitHandler(app.HandleSandboxExit)
 			app.SetVersion(version)
 			// Snapshots for public share links. A failure here is fatal rather
 			// than degrading to text-only links: the alternative is a deployment
