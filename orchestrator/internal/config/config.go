@@ -235,6 +235,20 @@ type SchedulerConfig struct {
 	MaxRetries        int      `yaml:"max_retries"`
 	RetryBackoff      Duration `yaml:"retry_backoff"`
 	MaxConcurrentRuns int      `yaml:"max_concurrent_runs"`
+	// MisfireGrace bounds how late a missed cron window may still run. Past it
+	// the scheduler skips forward to the next future trigger instead of walking
+	// the backlog one window at a time.
+	//
+	// A cron expression says "act at these instants", not "act this many times":
+	// once the instant is gone, so is the reason to act. The grace exists only so
+	// a restart that straddles a minute boundary does not silently drop the window
+	// it landed in.
+	MisfireGrace Duration `yaml:"misfire_grace"`
+	// MaxPendingRunsPerSchedule caps how many queued/running runs one schedule may
+	// hold. Retries and manual runs can otherwise accumulate without bound, and
+	// with result_mode=existing_session a backlog defeats itself: each run finds
+	// the session busy with the one ahead of it.
+	MaxPendingRunsPerSchedule int `yaml:"max_pending_runs_per_schedule"`
 }
 
 func (c HarnessConfig) ControlRoot() string {
@@ -290,8 +304,8 @@ func (p *DNSPolicy) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type EventsConfig struct {
-	RetentionWindow        Duration `yaml:"retention_window"`
-	RetentionRows          int64    `yaml:"retention_rows"`
+	RetentionWindow Duration `yaml:"retention_window"`
+	RetentionRows   int64    `yaml:"retention_rows"`
 	// EmitOutputBatchMaxRows caps how many consecutive bridge output envelopes are
 	// committed in one transaction (see bridge.Processor.handleOutputBatch).
 	EmitOutputBatchMaxRows int `yaml:"emit_output_batch_max_rows"`
@@ -746,6 +760,10 @@ func defaultHarnessConfig() HarnessConfig {
 			MaxRetries:        2,
 			RetryBackoff:      Duration{Duration: 30 * time.Second},
 			MaxConcurrentRuns: 4,
+			// 90s absorbs an ordinary restart while staying far below any
+			// meaningful cron period, so a genuinely stale window is skipped.
+			MisfireGrace:              Duration{Duration: 90 * time.Second},
+			MaxPendingRunsPerSchedule: 3,
 		},
 		Bridge: BridgeConfig{
 			LeaseTTL:          Duration{Duration: time.Minute},
@@ -946,6 +964,12 @@ func validateHarnessConfig(cfg HarnessConfig) error {
 	}
 	if cfg.Scheduler.MaxRetries < 0 || cfg.Scheduler.MaxRetries > 10 || cfg.Scheduler.RetryBackoff.Duration < 0 {
 		return fmt.Errorf("harness.scheduler retry settings are invalid")
+	}
+	if cfg.Scheduler.MisfireGrace.Duration < 0 {
+		return fmt.Errorf("harness.scheduler.misfire_grace must be >= 0")
+	}
+	if cfg.Scheduler.MaxPendingRunsPerSchedule <= 0 {
+		return fmt.Errorf("harness.scheduler.max_pending_runs_per_schedule must be > 0")
 	}
 	if cfg.Runtime.SandboxMemoryLimitBytes <= 0 {
 		return fmt.Errorf("harness.runtime.sandbox_memory_limit_bytes must be > 0")

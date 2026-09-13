@@ -161,6 +161,15 @@ harness:
     max_retries: 2
     retry_backoff: 30s
     max_concurrent_runs: 4
+    # How late a missed cron window may still run. Past this the scheduler skips
+    # to the next future trigger rather than replaying the backlog window by
+    # window (which for a per-minute schedule never catches up: each replay is a
+    # cold sandbox and a real model call, slower than new windows appear).
+    # Raise it for schedules that should still fire when merely late.
+    misfire_grace: 90s
+    # Ceiling on queued+running runs per schedule, so retries and manual runs
+    # cannot accumulate without bound.
+    max_pending_runs_per_schedule: 3
 
 #   runtime:
     # Per-command ceiling for everything the orchestrator shells out to
