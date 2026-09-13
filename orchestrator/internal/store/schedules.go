@@ -325,11 +325,20 @@ func (s *Store) GetScheduleRun(ctx context.Context, id, userID string) (Schedule
 	r.CreatedAt = parseTime(created)
 	return r, nil
 }
+
+// ListQueuedScheduleRuns returns runs eligible for dispatch.
+//
+// enabled=1 belongs here alongside archived=0. Without it, disabling a schedule
+// stopped new claims (ListDueSchedules and ClaimScheduleDue both check enabled)
+// yet left already-queued rows dispatchable forever: every poll re-queued them,
+// so a user who switched a schedule off still saw it run. Filtering at the source
+// is what makes "off" mean off; the worker re-checks too, since a schedule can be
+// disabled after the row is handed over.
 func (s *Store) ListQueuedScheduleRuns(ctx context.Context, now time.Time, limit int) ([]ScheduleRun, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.schedule_id,r.user_id,r.scheduled_at,r.status,r.attempt,r.created_at FROM schedule_runs r JOIN agent_schedules a ON a.id = r.schedule_id WHERE r.status='queued' AND a.archived=0 AND r.scheduled_at <= ? ORDER BY r.scheduled_at LIMIT ?`, formatTime(now), limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.schedule_id,r.user_id,r.scheduled_at,r.status,r.attempt,r.created_at FROM schedule_runs r JOIN agent_schedules a ON a.id = r.schedule_id WHERE r.status='queued' AND a.archived=0 AND a.enabled=1 AND r.scheduled_at <= ? ORDER BY r.scheduled_at LIMIT ?`, formatTime(now), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -442,4 +451,32 @@ func (s *Store) LatestAssistantMessage(ctx context.Context, sessionID string) (s
 		return "", nil
 	}
 	return content, err
+}
+
+// CountPendingScheduleRuns counts a schedule's runs that have not reached a
+// terminal state. The scheduler uses it as a backlog ceiling: retries and manual
+// runs can otherwise pile up without bound, and with result_mode=existing_session
+// a backlog is self-defeating anyway — each queued run finds the session busy with
+// the one ahead of it.
+func (s *Store) CountPendingScheduleRuns(ctx context.Context, scheduleID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id=? AND status IN ('queued','running')`, scheduleID).Scan(&n)
+	return n, err
+}
+
+// CancelPendingScheduleRuns marks a schedule's queued runs canceled and reports
+// how many it withdrew. Disabling a schedule calls this so the backlog is retired
+// at the moment of the decision, rather than lingering as rows that a future
+// re-enable would suddenly release. Running rows are left alone: a turn is already
+// in flight for them and the worker converges on its own.
+func (s *Store) CancelPendingScheduleRuns(ctx context.Context, scheduleID, reason string, now time.Time) (int, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status='canceled',error_class='schedule_disabled',error=?,finished_at=? WHERE schedule_id=? AND status='queued'`, nullableString(reason), formatTime(now), scheduleID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
