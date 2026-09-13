@@ -96,8 +96,13 @@ type scheduleStore interface {
 	DeleteSchedule(context.Context, string, string) error
 	CreateScheduleRun(context.Context, store.ScheduleRun) error
 	GetScheduleRun(context.Context, string, string) (store.ScheduleRun, error)
+	GetScheduleRunByID(context.Context, string) (store.ScheduleRun, error)
 	ListScheduleRuns(context.Context, string, string, int) ([]store.ScheduleRun, error)
-	StartScheduleRun(context.Context, string, string, int64, time.Time) error
+	CountPendingScheduleRuns(context.Context, string) (int, error)
+	CancelPendingScheduleRuns(context.Context, string, string, time.Time) (int, error)
+	ListStaleSchedules(context.Context, time.Time, int) ([]store.AgentSchedule, error)
+	ClaimScheduleRunStart(context.Context, string, time.Time) error
+	AttachScheduleRunTurn(context.Context, string, string, int64, time.Time) error
 	FinishScheduleRun(context.Context, string, string, string, string, string, time.Time) error
 	TurnStatus(context.Context, string, int64) (string, string, error)
 	LatestAssistantMessage(context.Context, string) (string, error)

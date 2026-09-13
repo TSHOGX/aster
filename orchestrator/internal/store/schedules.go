@@ -293,6 +293,66 @@ func (s *Store) ListScheduleRuns(ctx context.Context, scheduleID, userID string,
 	return out, rows.Err()
 }
 
+// GetScheduleRunByID reads a run without an owner check. The scheduler's workers
+// use it to re-read authoritative state for a run id taken off the dispatch queue;
+// user-facing paths must keep using GetScheduleRun, which scopes to the owner.
+func (s *Store) GetScheduleRunByID(ctx context.Context, id string) (ScheduleRun, error) {
+	return scanScheduleRunRow(s.db.QueryRowContext(ctx, `SELECT id,schedule_id,user_id,session_id,turn_id,scheduled_at,started_at,finished_at,status,attempt,error_class,error,output_summary,created_at FROM schedule_runs WHERE id=?`, id))
+}
+
+// ListStaleSchedules returns enabled cron schedules whose next_run_at is already
+// older than the cutoff. Startup uses it to re-anchor cursors left behind by
+// downtime in one pass, instead of letting the poll loop discover them one tick at
+// a time.
+func (s *Store) ListStaleSchedules(ctx context.Context, cutoff time.Time, limit int) ([]AgentSchedule, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,user_id,name,prompt,cron_expr,timezone,enabled,mode,archived,result_mode,target_session_id,timeout_seconds,max_retries,retry_backoff_seconds,next_run_at,last_run_at,version,created_at,updated_at FROM agent_schedules WHERE enabled=1 AND archived=0 AND cron_expr<>'' AND next_run_at IS NOT NULL AND next_run_at < ? ORDER BY next_run_at LIMIT ?`, formatTime(cutoff), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentSchedule{}
+	for rows.Next() {
+		v, e := scanSchedule(rows)
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func scanScheduleRunRow(row interface{ Scan(...any) error }) (ScheduleRun, error) {
+	var r ScheduleRun
+	var scheduled, created string
+	var sidN, started, finished, ecN, errN, summary sql.NullString
+	var turn sql.NullInt64
+	if err := row.Scan(&r.ID, &r.ScheduleID, &r.UserID, &sidN, &turn, &scheduled, &started, &finished, &r.Status, &r.Attempt, &ecN, &errN, &summary, &created); err != nil {
+		return r, err
+	}
+	r.SessionID = sidN.String
+	r.ErrorClass = ecN.String
+	r.Error = errN.String
+	r.OutputSummary = summary.String
+	if turn.Valid {
+		v := turn.Int64
+		r.TurnID = &v
+	}
+	r.ScheduledAt = parseTime(scheduled)
+	if started.Valid {
+		v := parseTime(started.String)
+		r.StartedAt = &v
+	}
+	if finished.Valid {
+		v := parseTime(finished.String)
+		r.FinishedAt = &v
+	}
+	r.CreatedAt = parseTime(created)
+	return r, nil
+}
+
 func (s *Store) GetScheduleRun(ctx context.Context, id, userID string) (ScheduleRun, error) {
 	var r ScheduleRun
 	var scheduled, created string
@@ -402,12 +462,38 @@ func (s *Store) ListRunningScheduleRuns(ctx context.Context, limit int) ([]Sched
 	return out, rows.Err()
 }
 
-// StartScheduleRun claims a queued run for execution. The CAS on status='queued'
-// is what makes cancellation effective: it reports ErrScheduleRunNotOpen when the
-// run was canceled (or already claimed) in the meantime, and the caller must stop
-// rather than proceed to drive a turn for a run nobody is waiting on.
-func (s *Store) StartScheduleRun(ctx context.Context, id, sessionID string, turnID int64, now time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status='running',session_id=?,turn_id=?,started_at=? WHERE id=? AND status='queued'`, nullableString(sessionID), nullableInt64(&turnID), formatTime(now), id)
+// ClaimScheduleRunStart takes ownership of a queued run before any of its work
+// begins, reporting ErrScheduleRunNotOpen if it is no longer queued.
+//
+// This runs before the session and sandbox are created, deliberately. The old
+// order enqueued the prompt first and CAS'd afterwards, so a run canceled in the
+// meantime had already asked the agent its question — the cancellation could not
+// be honoured because the side effect preceded the check. Claiming first means a
+// lost CAS costs nothing and leaves nothing behind.
+//
+// session_id and turn_id stay NULL until AttachScheduleRunTurn; a crash in that
+// window leaves a running row with no turn, which recovery already reports rather
+// than guessing.
+func (s *Store) ClaimScheduleRunStart(ctx context.Context, id string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status='running',started_at=? WHERE id=? AND status='queued'`, formatTime(now), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrScheduleRunNotOpen
+	}
+	return nil
+}
+
+// AttachScheduleRunTurn records which session and turn a claimed run is driving,
+// so recovery after a restart can observe that turn instead of starting a second
+// one.
+func (s *Store) AttachScheduleRunTurn(ctx context.Context, id, sessionID string, turnID int64, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET session_id=?,turn_id=?,started_at=COALESCE(started_at,?) WHERE id=? AND status='running'`, nullableString(sessionID), turnID, formatTime(now), id)
 	if err != nil {
 		return err
 	}

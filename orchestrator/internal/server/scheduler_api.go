@@ -310,6 +310,23 @@ func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request, current 
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	// Turning a schedule off (or archiving it) retires its queued backlog now
+	// rather than leaving rows that a later re-enable would release as a burst.
+	// The workers re-check state on pickup as well, so a run already handed to a
+	// worker stops there; this covers the rows still waiting in the table.
+	if (req.Enabled != nil && !current.Enabled) || (req.Archived != nil && current.Archived) {
+		reason := "schedule was disabled"
+		if current.Archived {
+			reason = "schedule was archived"
+		}
+		if n, err := s.store.CancelPendingScheduleRuns(r.Context(), current.ID, reason, time.Now().UTC()); err != nil {
+			if s.log != nil {
+				s.log.Warn("schedule backlog cancel failed", "schedule_id", current.ID, "error", err)
+			}
+		} else if n > 0 && s.log != nil {
+			s.log.Info("schedule backlog canceled", "schedule_id", current.ID, "canceled_runs", n, "enabled", current.Enabled, "archived", current.Archived)
+		}
+	}
 	updated, err := s.store.GetSchedule(r.Context(), current.ID)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -324,6 +341,13 @@ func (s *Server) scheduleTargetAllowed(ctx context.Context, userID, sessionID st
 }
 
 func (s *Server) manualScheduleRun(w http.ResponseWriter, r *http.Request, sched store.AgentSchedule) {
+	// The same backlog ceiling the cron path uses. Without it a user can queue
+	// runs faster than they execute, and every one of them past the first will
+	// find the target session busy anyway.
+	if pending, err := s.store.CountPendingScheduleRuns(r.Context(), sched.ID); err == nil && pending >= s.maxPendingRuns() {
+		writeError(w, http.StatusTooManyRequests, "this schedule already has the maximum number of pending runs")
+		return
+	}
 	now := time.Now().UTC()
 	run := store.ScheduleRun{ID: newID("srun"), ScheduleID: sched.ID, UserID: sched.UserID, ScheduledAt: now, Status: "queued", Attempt: 0, CreatedAt: now}
 	if err := s.store.CreateScheduleRun(r.Context(), run); err != nil {

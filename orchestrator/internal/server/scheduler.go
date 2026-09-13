@@ -15,6 +15,83 @@ import (
 	"harness-platform/orchestrator/internal/store"
 )
 
+func parseScheduleSpec(expr string) (cron.Schedule, error) {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	return parser.Parse(expr)
+}
+
+func (s *Server) misfireGrace() time.Duration {
+	grace := s.cfg.Harness.Scheduler.MisfireGrace.Duration
+	if grace < 0 {
+		return 0
+	}
+	return grace
+}
+
+func (s *Server) maxPendingRuns() int {
+	limit := s.cfg.Harness.Scheduler.MaxPendingRunsPerSchedule
+	if limit <= 0 {
+		return 3
+	}
+	return limit
+}
+
+// schedulePlan is what one due schedule should do on this tick.
+type schedulePlan struct {
+	// Fire reports whether a run should be claimed for ScheduledFor.
+	Fire bool
+	// ScheduledFor is the window the run belongs to (only set when Fire).
+	ScheduledFor time.Time
+	// Next is the cursor to store in next_run_at. Always strictly after now, so a
+	// tick can never leave the schedule immediately due again.
+	Next time.Time
+	// SkippedWindows counts windows abandoned without running, for the log.
+	SkippedWindows int
+}
+
+// planScheduleTick decides what to do with a schedule whose next_run_at has
+// passed, and is the whole of the misfire policy.
+//
+// The previous behaviour advanced one window per tick (next := spec.Next(missed)),
+// which replayed history in order: after a day of downtime a */1 schedule owed 1447
+// windows, each a cold sandbox plus a real model call. Because a run costs minutes
+// and a window arrives every minute, the backlog grew faster than it drained — the
+// measured 36 -> 47 in ten minutes — so it could never converge.
+//
+// The policy: a window still within grace fires (a restart straddling a minute
+// boundary should not silently lose that minute); anything older is abandoned and
+// the cursor jumps to the first trigger after now. At most one run is owed per
+// tick, so downtime of a minute and downtime of a month cost the same.
+//
+// Next is always computed from now, never from the missed window, which is the
+// invariant that ends the walk.
+func planScheduleTick(spec cron.Schedule, sc store.AgentSchedule, now time.Time, grace time.Duration) schedulePlan {
+	if sc.NextRunAt == nil {
+		return schedulePlan{Next: spec.Next(now).UTC()}
+	}
+	missed := sc.NextRunAt.UTC()
+	lateness := now.Sub(missed)
+
+	// Within grace (including a window due exactly now, or a clock that stepped
+	// back): honour it and advance from the window itself, keeping the cadence
+	// aligned when nothing was actually missed.
+	if lateness <= grace {
+		next := spec.Next(missed.In(mustLocation(sc.Timezone))).UTC()
+		if !next.After(now) {
+			next = spec.Next(now.In(mustLocation(sc.Timezone))).UTC()
+		}
+		return schedulePlan{Fire: true, ScheduledFor: missed, Next: next}
+	}
+
+	// Too late. Count what is being abandoned for the operator's benefit, then
+	// resume from the first trigger after now.
+	skipped := 0
+	for cursor := missed; cursor.Before(now) && skipped < 100000; skipped++ {
+		cursor = spec.Next(cursor.In(mustLocation(sc.Timezone))).UTC()
+	}
+	return schedulePlan{Next: spec.Next(now.In(mustLocation(sc.Timezone))).UTC(), SkippedWindows: skipped}
+}
+
 func (s *Server) runScheduler(ctx context.Context) {
 	interval := s.cfg.Harness.Scheduler.PollInterval.Duration
 	if interval <= 0 {
@@ -27,35 +104,41 @@ func (s *Server) runScheduler(ctx context.Context) {
 	if cap := s.cfg.Harness.Scheduler.MaxConcurrentRuns; cap > 0 && workers > cap {
 		workers = cap
 	}
-	jobs := make(chan store.ScheduleRun, workers*2)
+	// The queue carries run ids, not run rows. A row copied into the channel is a
+	// snapshot that stops tracking the database the moment it is queued, which is
+	// how disabling a schedule failed to stop work already in flight: the worker
+	// acted on a stale copy that still looked runnable. Passing the id forces the
+	// worker to re-read authoritative state at the moment it starts, so the
+	// database stays the single source of truth for "should this still run".
+	jobs := make(chan string, workers*2)
 	for i := 0; i < workers; i++ {
 		go func() {
 			for {
 				select {
-				case run := <-jobs:
-					s.executeScheduleRun(ctx, run)
+				case runID := <-jobs:
+					s.startScheduleRunFromQueue(ctx, runID)
 				case <-ctx.Done():
 					return
 				}
 			}
 		}()
 	}
-	enqueue := func(run store.ScheduleRun) bool {
+	enqueue := func(runID string) bool {
 		s.schedulerRunsMu.Lock()
-		_, active := s.schedulerRunsActive[run.ID]
+		_, active := s.schedulerRunsActive[runID]
 		if !active {
-			s.schedulerRunsActive[run.ID] = struct{}{}
+			s.schedulerRunsActive[runID] = struct{}{}
 		}
 		s.schedulerRunsMu.Unlock()
 		if active {
 			return true
 		}
 		select {
-		case jobs <- run:
+		case jobs <- runID:
 			return true
 		default:
 			s.schedulerRunsMu.Lock()
-			delete(s.schedulerRunsActive, run.ID)
+			delete(s.schedulerRunsActive, runID)
 			s.schedulerRunsMu.Unlock()
 			return false
 		}
@@ -66,7 +149,7 @@ func (s *Server) runScheduler(ctx context.Context) {
 		// completed turn is reconciled instead of remaining "running" forever.
 		if running, err := s.store.ListRunningScheduleRuns(ctx, workers*2); err == nil {
 			for _, r := range running {
-				if !enqueue(r) {
+				if !enqueue(r.ID) {
 					return
 				}
 			}
@@ -76,7 +159,7 @@ func (s *Server) runScheduler(ctx context.Context) {
 		queued, err := s.store.ListQueuedScheduleRuns(ctx, time.Now().UTC(), workers*2)
 		if err == nil {
 			for _, r := range queued {
-				if !enqueue(r) {
+				if !enqueue(r.ID) {
 					return
 				}
 			}
@@ -96,24 +179,53 @@ func (s *Server) runScheduler(ctx context.Context) {
 			if sc.NextRunAt == nil {
 				continue
 			}
-			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-			spec, err := parser.Parse(sc.CronExpr)
+			spec, err := parseScheduleSpec(sc.CronExpr)
 			if err != nil {
 				continue
 			}
-			scheduled := sc.NextRunAt.UTC()
-			next := spec.Next(scheduled.In(mustLocation(sc.Timezone))).UTC()
-			run := store.ScheduleRun{ID: newID("srun"), ScheduleID: sc.ID, UserID: sc.UserID, ScheduledAt: scheduled, Status: "queued", Attempt: 0, CreatedAt: time.Now().UTC()}
-			if err := s.store.ClaimScheduleDue(ctx, sc.ID, sc.Version, next, scheduled, run); err == nil {
-				if s.log != nil {
-					s.log.Info("cron schedule claimed", "schedule_id", sc.ID, "run_id", run.ID, "scheduled_at", scheduled)
+			now := time.Now().UTC()
+			plan := planScheduleTick(spec, sc, now, s.misfireGrace())
+			if plan.SkippedWindows > 0 && s.log != nil {
+				s.log.Warn("cron misfire windows skipped",
+					"schedule_id", sc.ID,
+					"missed_window_at", sc.NextRunAt.UTC(),
+					"skipped_windows", plan.SkippedWindows,
+					"resumed_at", plan.Next,
+					"misfire_grace", s.misfireGrace())
+			}
+			if !plan.Fire {
+				// Nothing to run for the stale window; just move the cursor
+				// forward. No run row is written: recording a skip per missed
+				// minute would move the backlog from the queue into the table.
+				if err := s.store.AdvanceSchedule(ctx, sc.ID, sc.Version, plan.Next, now); err != nil && s.log != nil {
+					s.log.Warn("cron misfire skip advance failed", "schedule_id", sc.ID, "error", err)
 				}
-				if !enqueue(run) {
+				continue
+			}
+			if pending, err := s.store.CountPendingScheduleRuns(ctx, sc.ID); err == nil && pending >= s.maxPendingRuns() {
+				// The backlog ceiling is reached. Advance past this window rather
+				// than claiming a run that would queue behind runs already waiting.
+				if s.log != nil {
+					s.log.Warn("cron schedule window dropped: pending backlog at limit",
+						"schedule_id", sc.ID, "pending", pending, "limit", s.maxPendingRuns(), "window_at", plan.ScheduledFor)
+				}
+				if err := s.store.AdvanceSchedule(ctx, sc.ID, sc.Version, plan.Next, now); err != nil && s.log != nil {
+					s.log.Warn("cron backlog advance failed", "schedule_id", sc.ID, "error", err)
+				}
+				continue
+			}
+			run := store.ScheduleRun{ID: newID("srun"), ScheduleID: sc.ID, UserID: sc.UserID, ScheduledAt: plan.ScheduledFor, Status: "queued", Attempt: 0, CreatedAt: time.Now().UTC()}
+			if err := s.store.ClaimScheduleDue(ctx, sc.ID, sc.Version, plan.Next, plan.ScheduledFor, run); err == nil {
+				if s.log != nil {
+					s.log.Info("cron schedule claimed", "schedule_id", sc.ID, "run_id", run.ID, "scheduled_at", plan.ScheduledFor, "next_run_at", plan.Next)
+				}
+				if !enqueue(run.ID) {
 					return
 				}
 			}
 		}
 	}
+	s.recoverStaleScheduleCursors(ctx)
 	dispatch()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -127,6 +239,116 @@ func (s *Server) runScheduler(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// startScheduleRunFromQueue re-reads a run and its schedule before any work
+// begins, and is the single admission gate for the worker pool.
+//
+// Everything it checks was previously trusted from the queued snapshot, which is
+// why switching a schedule off did not stop runs already handed to a worker: the
+// only enabled check happened when the row was selected, minutes earlier. The
+// authoritative read has to happen here, in the worker, because the gap between
+// dispatch and execution is exactly where a user's decision lands.
+// recoverStaleScheduleCursors re-anchors next_run_at for schedules left behind by
+// downtime, once, before the poll loop starts.
+//
+// The dispatcher alone would eventually converge, but it would do so by walking:
+// every stale schedule looks due on the first tick, and each tick advances one
+// window. Recomputing the cursor up front makes downtime cost a single write per
+// schedule instead of a tick-by-tick crawl through history, and means the first
+// dispatch sees an accurate picture.
+//
+// Windows inside the misfire grace are left alone: those are still legitimately
+// runnable and the dispatcher should claim them normally.
+func (s *Server) recoverStaleScheduleCursors(ctx context.Context) {
+	if !s.cfg.Harness.Scheduler.Enabled {
+		return
+	}
+	now := time.Now().UTC()
+	grace := s.misfireGrace()
+	stale, err := s.store.ListStaleSchedules(ctx, now.Add(-grace), 0)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("schedule startup recovery list failed", "error", err)
+		}
+		return
+	}
+	for _, sc := range stale {
+		spec, err := parseScheduleSpec(sc.CronExpr)
+		if err != nil {
+			continue
+		}
+		plan := planScheduleTick(spec, sc, now, grace)
+		if plan.Fire || plan.SkippedWindows == 0 {
+			continue
+		}
+		if err := s.store.AdvanceSchedule(ctx, sc.ID, sc.Version, plan.Next, now); err != nil {
+			if s.log != nil {
+				s.log.Warn("schedule startup recovery advance failed", "schedule_id", sc.ID, "error", err)
+			}
+			continue
+		}
+		if s.log != nil {
+			s.log.Warn("cron cursor re-anchored after downtime",
+				"schedule_id", sc.ID,
+				"stale_next_run_at", sc.NextRunAt,
+				"skipped_windows", plan.SkippedWindows,
+				"resumed_at", plan.Next)
+		}
+	}
+}
+
+func (s *Server) startScheduleRunFromQueue(ctx context.Context, runID string) {
+	release := func() {
+		s.schedulerRunsMu.Lock()
+		delete(s.schedulerRunsActive, runID)
+		s.schedulerRunsMu.Unlock()
+	}
+	run, err := s.store.GetScheduleRunByID(ctx, runID)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("schedule run dropped: run row unreadable", "run_id", runID, "error", err)
+		}
+		release()
+		return
+	}
+	// A run canceled while it sat in the queue must not start. Its terminal state
+	// is already recorded, so there is nothing to write here.
+	if run.Status != "queued" && run.Status != "running" {
+		if s.log != nil {
+			s.log.Info("schedule run dropped: no longer pending", "run_id", runID, "status", run.Status)
+		}
+		release()
+		return
+	}
+	sched, err := s.store.GetSchedule(ctx, run.ScheduleID)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("schedule run dropped: schedule unreadable", "run_id", runID, "schedule_id", run.ScheduleID, "error", err)
+		}
+		release()
+		return
+	}
+	// Disabled and archived both mean "do not start new work". A run already
+	// 'running' is left to converge on its own turn: its prompt is in flight, and
+	// finishing the bookkeeping is more honest than abandoning the row.
+	if run.Status == "queued" && (!sched.Enabled || sched.Archived) {
+		reason := "schedule was disabled before execution"
+		class := "schedule_disabled"
+		if sched.Archived {
+			reason = "schedule was archived before execution"
+			class = "archived"
+		}
+		if err := s.store.FinishScheduleRun(ctx, run.ID, "canceled", class, reason, reason, time.Now().UTC()); err != nil && !errors.Is(err, store.ErrScheduleRunNotOpen) && s.log != nil {
+			s.log.Warn("schedule run cancel write failed", "run_id", run.ID, "error", err)
+		}
+		if s.log != nil {
+			s.log.Info("schedule run canceled before start", "run_id", run.ID, "schedule_id", sched.ID, "enabled", sched.Enabled, "archived", sched.Archived)
+		}
+		release()
+		return
+	}
+	s.executeScheduleRun(ctx, run)
 }
 
 func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRun) {
@@ -149,6 +371,21 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 	timeout := s.scheduleTimeout(sched)
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	// Take the run before spending anything on it. A cancellation that lands while
+	// this run waited in the queue wins here, before a session exists, a sandbox
+	// cold-starts, or a prompt reaches the agent.
+	if err := s.store.ClaimScheduleRunStart(parent, run.ID, time.Now().UTC()); err != nil {
+		if errors.Is(err, store.ErrScheduleRunNotOpen) {
+			if s.log != nil {
+				s.log.Info("schedule run dropped: claim lost", "run_id", run.ID, "schedule_id", sched.ID)
+			}
+			return
+		}
+		if s.log != nil {
+			s.log.Warn("schedule run claim failed", "run_id", run.ID, "error", err)
+		}
+		return
+	}
 	now := time.Now().UTC()
 	var session store.Session
 	if sched.ResultMode == "existing_session" {
@@ -216,7 +453,23 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		s.finishScheduleFailure(parent, run, sched, "enqueue", err.Error())
 		return
 	}
-	_ = s.store.StartScheduleRun(parent, run.ID, id, enq.TurnID, time.Now().UTC())
+	if err := s.store.AttachScheduleRunTurn(parent, run.ID, id, enq.TurnID, time.Now().UTC()); err != nil {
+		// The run left the running state while the turn was being enqueued (a
+		// cancel racing this claim). Withdraw the queued turn so the agent is not
+		// left holding a prompt for a run nobody is waiting on.
+		if errors.Is(err, store.ErrScheduleRunNotOpen) {
+			if _, cancelErr := s.store.CancelQueuedTurn(parent, store.CancelQueuedTurnParams{SessionID: id, TurnID: enq.TurnID, Now: time.Now().UTC()}); cancelErr != nil && s.log != nil {
+				s.log.Warn("schedule run turn withdrawal failed", "run_id", run.ID, "session_id", id, "turn_id", enq.TurnID, "error", cancelErr)
+			}
+			if s.log != nil {
+				s.log.Info("schedule run abandoned after cancel", "run_id", run.ID, "session_id", id)
+			}
+			return
+		}
+		if s.log != nil {
+			s.log.Warn("schedule run turn attach failed", "run_id", run.ID, "error", err)
+		}
+	}
 	// The turn is queued; its transcript entry is published when the agent starts
 	// it (see publishTurnUserMessage). Broadcast the queue change so a client
 	// watching the target session sees the scheduled prompt waiting.
