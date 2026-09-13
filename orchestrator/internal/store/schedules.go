@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// ErrScheduleRunNotOpen means a status transition found no run row in an open
+// state ('queued' or 'running'). It is an expected outcome, not a fault: the run
+// was canceled, or another worker already moved it on.
+var ErrScheduleRunNotOpen = errors.New("schedule run is not in an open state")
+
 type AgentSchedule struct {
 	ID                  string     `json:"id"`
 	UserID              string     `json:"user_id"`
@@ -388,13 +393,42 @@ func (s *Store) ListRunningScheduleRuns(ctx context.Context, limit int) ([]Sched
 	return out, rows.Err()
 }
 
+// StartScheduleRun claims a queued run for execution. The CAS on status='queued'
+// is what makes cancellation effective: it reports ErrScheduleRunNotOpen when the
+// run was canceled (or already claimed) in the meantime, and the caller must stop
+// rather than proceed to drive a turn for a run nobody is waiting on.
 func (s *Store) StartScheduleRun(ctx context.Context, id, sessionID string, turnID int64, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status='running',session_id=?,turn_id=?,started_at=? WHERE id=? AND status='queued'`, sessionID, turnID, formatTime(now), id)
-	return err
+	res, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status='running',session_id=?,turn_id=?,started_at=? WHERE id=? AND status='queued'`, nullableString(sessionID), nullableInt64(&turnID), formatTime(now), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrScheduleRunNotOpen
+	}
+	return nil
 }
+
+// FinishScheduleRun records a run's terminal state. It reports ErrScheduleRunNotOpen
+// when no open row matched, so a caller cannot mistake "someone else already
+// finished or canceled this run" for success: that difference decides whether the
+// worker keeps waiting on a turn it no longer owns.
 func (s *Store) FinishScheduleRun(ctx context.Context, id, status, errorClass, runErr, summary string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status=?,error_class=?,error=?,output_summary=?,finished_at=? WHERE id=? AND status IN ('queued','running')`, status, nullableString(errorClass), nullableString(runErr), summary, formatTime(now), id)
-	return err
+	res, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET status=?,error_class=?,error=?,output_summary=?,finished_at=? WHERE id=? AND status IN ('queued','running')`, status, nullableString(errorClass), nullableString(runErr), summary, formatTime(now), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrScheduleRunNotOpen
+	}
+	return nil
 }
 func (s *Store) TurnStatus(ctx context.Context, sessionID string, turnID int64) (string, string, error) {
 	var status, errMsg sql.NullString

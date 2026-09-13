@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -97,7 +98,7 @@ CREATE TABLE IF NOT EXISTS schedule_runs (
   scheduled_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
-  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','timed_out','canceled')),
+  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','timed_out','canceled','skipped_busy')),
   attempt INTEGER NOT NULL DEFAULT 0,
   error_class TEXT,
   error TEXT,
@@ -965,6 +966,9 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 	if err := s.ensureScheduleColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureScheduleRunStatusCheck(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureUserColumns(ctx); err != nil {
 		return err
 	}
@@ -1076,6 +1080,73 @@ func (s *Store) ensureScheduleColumns(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, column.ddl); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ensureScheduleRunStatusCheck widens the schedule_runs.status CHECK constraint
+// to admit 'skipped_busy'.
+//
+// Unlike every other migration here this one rebuilds the table, because the
+// change LOOSENS a constraint. The users.role precedent (a BEFORE INSERT/UPDATE
+// trigger standing in for a CHECK that ALTER TABLE cannot add) only works in the
+// tightening direction: a trigger can reject more values, never fewer. The old
+// CHECK is compiled into the stored table definition and keeps rejecting
+// 'skipped_busy' no matter what triggers exist alongside it.
+//
+// Leaving the old constraint in place is not an option: FinishScheduleRun writes
+// 'skipped_busy' when a run finds its target session busy, the write fails on the
+// CHECK, and the run stays 'queued' forever — so the dispatcher re-queues it every
+// poll interval, cold-starting a sandbox and burning real model tokens each time.
+//
+// Safe to run under FK enforcement: no table references schedule_runs, so the
+// drop/rename cannot orphan a child row or rewrite another table's FK clause.
+// migrate() runs on the writer before the reader pool is opened, so no reader can
+// observe the intermediate state.
+func (s *Store) ensureScheduleRunStatusCheck(ctx context.Context) error {
+	var ddl sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='schedule_runs'`).Scan(&ddl); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !ddl.Valid || strings.Contains(ddl.String, "'skipped_busy'") {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+BEGIN IMMEDIATE;
+CREATE TABLE schedule_runs_migrate (
+  id TEXT PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  session_id TEXT,
+  turn_id INTEGER,
+  scheduled_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','timed_out','canceled','skipped_busy')),
+  attempt INTEGER NOT NULL DEFAULT 0,
+  error_class TEXT,
+  error TEXT,
+  output_summary TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(schedule_id) REFERENCES agent_schedules(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+);
+INSERT INTO schedule_runs_migrate (id,schedule_id,user_id,session_id,turn_id,scheduled_at,started_at,finished_at,status,attempt,error_class,error,output_summary,created_at)
+  SELECT id,schedule_id,user_id,session_id,turn_id,scheduled_at,started_at,finished_at,status,attempt,error_class,error,output_summary,created_at FROM schedule_runs;
+DROP TABLE schedule_runs;
+ALTER TABLE schedule_runs_migrate RENAME TO schedule_runs;
+CREATE INDEX IF NOT EXISTS schedule_runs_schedule_idx ON schedule_runs(schedule_id, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS schedule_runs_user_idx ON schedule_runs(user_id, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS schedule_runs_status_idx ON schedule_runs(status, started_at);
+CREATE UNIQUE INDEX IF NOT EXISTS schedule_runs_schedule_slot_uq ON schedule_runs(schedule_id, scheduled_at, attempt);
+COMMIT;`)
+	if err != nil {
+		_, _ = s.db.ExecContext(ctx, `ROLLBACK`)
+		return fmt.Errorf("widen schedule_runs.status check: %w", err)
 	}
 	return nil
 }
