@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -114,5 +115,169 @@ func TestListRunningScheduleRunsSupportsRecovery(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "run_recovery" || got[0].SessionID != "sess_recovery" || got[0].TurnID == nil || *got[0].TurnID != turnID {
 		t.Fatalf("running recovery rows = %+v", got)
+	}
+}
+
+// The scheduler writes 'skipped_busy' when a run finds its target session busy.
+// The CHECK constraint once omitted the value, so the write failed, the caller
+// discarded the error, and the run stayed 'queued' — re-dispatched every poll,
+// cold-starting a sandbox and spending real tokens each time.
+func TestFinishScheduleRunAcceptsSkippedBusy(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	sc := AgentSchedule{ID: "sched_busy", UserID: "alice", Name: "n", Prompt: "p", CronExpr: "*/1 * * * *", Timezone: "UTC", Enabled: true, Mode: "agent", TimeoutSeconds: 60, CreatedAt: now, UpdatedAt: now}
+	if err := st.CreateSchedule(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	run := ScheduleRun{ID: "srun_busy", ScheduleID: sc.ID, UserID: "alice", ScheduledAt: now, Status: "queued", CreatedAt: now}
+	if err := st.CreateScheduleRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishScheduleRun(ctx, run.ID, "skipped_busy", "session_busy", "busy", "busy", now); err != nil {
+		t.Fatalf("FinishScheduleRun(skipped_busy) = %v, want nil", err)
+	}
+	got, err := st.GetScheduleRun(ctx, run.ID, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "skipped_busy" {
+		t.Fatalf("status = %q, want skipped_busy to persist", got.Status)
+	}
+	// The run must leave the dispatch set, or it loops forever.
+	queued, err := st.ListQueuedScheduleRuns(ctx, now.Add(time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) != 0 {
+		t.Fatalf("dispatchable runs = %d, want 0 (a skipped run must not be re-dispatched)", len(queued))
+	}
+}
+
+// A terminal transition on a run that is no longer open must be reported, not
+// silently treated as success: that difference is how a worker learns its run was
+// canceled underneath it.
+func TestFinishScheduleRunReportsNotOpen(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	sc := AgentSchedule{ID: "sched_notopen", UserID: "alice", Name: "n", Prompt: "p", Enabled: true, Mode: "agent", TimeoutSeconds: 60, CreatedAt: now, UpdatedAt: now}
+	if err := st.CreateSchedule(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	run := ScheduleRun{ID: "srun_notopen", ScheduleID: sc.ID, UserID: "alice", ScheduledAt: now, Status: "queued", CreatedAt: now}
+	if err := st.CreateScheduleRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishScheduleRun(ctx, run.ID, "canceled", "user_canceled", "", "", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishScheduleRun(ctx, run.ID, "succeeded", "", "", "", now); !errors.Is(err, ErrScheduleRunNotOpen) {
+		t.Fatalf("second finish = %v, want ErrScheduleRunNotOpen", err)
+	}
+}
+
+// A database created before 'skipped_busy' existed must be migrated by widening
+// the CHECK, which needs a table rebuild: a trigger can only tighten a constraint,
+// never loosen one, so the users.role precedent does not transfer. Rows, indexes
+// and foreign keys must survive.
+func TestMigrationWidensScheduleRunStatusCheck(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	st, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	sc := AgentSchedule{ID: "sched_legacy", UserID: "alice", Name: "n", Prompt: "p", Enabled: true, Mode: "agent", TimeoutSeconds: 60, CreatedAt: now, UpdatedAt: now}
+	if err := st.CreateSchedule(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{"srun_l1", "srun_l2", "srun_l3"} {
+		if err := st.CreateScheduleRun(ctx, ScheduleRun{ID: id, ScheduleID: sc.ID, UserID: "alice", ScheduledAt: now.Add(time.Duration(i) * time.Minute), Status: "succeeded", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Recreate the pre-migration table shape: the old, narrower CHECK.
+	if _, err := st.DBForTest().ExecContext(ctx, `
+CREATE TABLE schedule_runs_legacy (
+  id TEXT PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  session_id TEXT,
+  turn_id INTEGER,
+  scheduled_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','timed_out','canceled')),
+  attempt INTEGER NOT NULL DEFAULT 0,
+  error_class TEXT,
+  error TEXT,
+  output_summary TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(schedule_id) REFERENCES agent_schedules(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+);
+INSERT INTO schedule_runs_legacy SELECT id,schedule_id,user_id,session_id,turn_id,scheduled_at,started_at,finished_at,status,attempt,error_class,error,output_summary,created_at FROM schedule_runs;
+DROP TABLE schedule_runs;
+ALTER TABLE schedule_runs_legacy RENAME TO schedule_runs;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopening runs the migration.
+	st2, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen (migration) failed: %v", err)
+	}
+	defer st2.Close()
+
+	var n int
+	if err := st2.DBForTest().QueryRowContext(ctx, `SELECT count(*) FROM schedule_runs`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("rows after migration = %d, want 3", n)
+	}
+	var idx int
+	if err := st2.DBForTest().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND tbl_name='schedule_runs' AND name NOT LIKE 'sqlite_%'`).Scan(&idx); err != nil {
+		t.Fatal(err)
+	}
+	if idx != 4 {
+		t.Fatalf("named indexes after migration = %d, want 4", idx)
+	}
+	rows, err := st2.DBForTest().QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	violations := 0
+	for rows.Next() {
+		violations++
+	}
+	rows.Close()
+	if violations != 0 {
+		t.Fatalf("foreign_key_check violations = %d, want 0", violations)
+	}
+	// The point of the rebuild.
+	run := ScheduleRun{ID: "srun_l4", ScheduleID: sc.ID, UserID: "alice", ScheduledAt: now.Add(time.Hour), Status: "queued", CreatedAt: now}
+	if err := st2.CreateScheduleRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := st2.FinishScheduleRun(ctx, run.ID, "skipped_busy", "session_busy", "busy", "busy", now); err != nil {
+		t.Fatalf("skipped_busy after migration = %v, want nil", err)
 	}
 }
