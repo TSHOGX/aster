@@ -124,19 +124,33 @@ WHERE id = ?
 	if affected != 1 {
 		return SessionRuntimeSnapshot{}, ErrTurnNotReleasable
 	}
-	// Only from a non-terminal, non-transitional state: a session mid-checkpoint or
-	// mid-restore has its own status to finish, and the reconcilers derive
-	// running_active from the queue anyway once it settles.
-	if _, err := tx.ExecContext(ctx, `
+	// The same accepting states EnqueueTurnMessage uses, and for the same reason:
+	// releasing a parked turn is putting work in front of the agent. `checkpointed`
+	// belongs here because parked turns are excluded from the pending-turn
+	// predicate, so auto-checkpoint and idle-release are free to reclaim the sandbox
+	// while parked rows are still on screen — the caller wakes the session first,
+	// and this is the transition that records it. A transitional state
+	// (checkpointing/restoring) affects no row and reports not-releasable, so the
+	// turn is never left released against a session that cannot run it.
+	upd, err := tx.ExecContext(ctx, `
 UPDATE sessions
 SET status = ?,
     updated_at = ?,
     last_activity_at = ?
 WHERE id = ?
-  AND status IN (?, ?)`,
+  AND status IN (?, ?, ?, ?)`,
 		string(sessionstate.RunningActive), formatTime(p.Now), formatTime(p.Now), p.SessionID,
-		string(sessionstate.RunningIdle), string(sessionstate.RunningActive)); err != nil {
+		string(sessionstate.Created), string(sessionstate.RunningIdle),
+		string(sessionstate.Checkpointed), string(sessionstate.RunningActive))
+	if err != nil {
 		return SessionRuntimeSnapshot{}, err
+	}
+	sessionAffected, err := upd.RowsAffected()
+	if err != nil {
+		return SessionRuntimeSnapshot{}, err
+	}
+	if sessionAffected != 1 {
+		return SessionRuntimeSnapshot{}, ErrTurnNotReleasable
 	}
 	snapshot, err := getSessionRuntimeSnapshot(ctx, tx, p.SessionID)
 	if err != nil {

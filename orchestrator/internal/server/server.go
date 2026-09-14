@@ -1067,50 +1067,8 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 	// A running session can accept additional user turns. They are persisted in
 	// sequence order and the runtime drains them after the current turn, which
 	// gives the UI a real queue instead of rejecting input during generation.
-	if !sessionstate.CanAcceptInput(session.Status) && session.Status != string(sessionstate.RunningActive) {
-		writeError(w, http.StatusConflict, "session is "+session.Status)
+	if !s.ensureRunnableGenerationHTTP(w, r, session) {
 		return
-	}
-	var ensured ensuredGeneration
-	var err error
-	if session.Status != string(sessionstate.RunningActive) {
-		leaseOwner := store.GenerationLeaseOwner(s.ownerUUID)
-		ensured, err = s.ensureActiveGeneration(r.Context(), session, leaseOwner)
-		if errors.Is(err, store.ErrPoolExhausted) {
-			writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
-			return
-		}
-		if errors.Is(err, errGenerationBusy) {
-			writeError(w, http.StatusConflict, "session is busy")
-			return
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if err := s.startEnsuredGeneration(r.Context(), session, ensured, startFailureInputAcceptable); err != nil {
-			if !ensured.RestoreFromCheckpoint {
-				writeRuntimeStartError(w, err)
-				return
-			}
-			ensured, err = s.ensureActiveGeneration(r.Context(), session, leaseOwner)
-			if errors.Is(err, store.ErrPoolExhausted) {
-				writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
-				return
-			}
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			if !ensured.IsNew {
-				writeError(w, http.StatusInternalServerError, "restore fallback did not allocate a replacement generation")
-				return
-			}
-			if err := s.startEnsuredGeneration(r.Context(), session, ensured, startFailureInputAcceptable); err != nil {
-				writeRuntimeStartError(w, err)
-				return
-			}
-		}
 	}
 	runningStatus := string(sessionstate.RunningActive)
 	enqueue, err := s.store.EnqueueTurnMessage(r.Context(), store.EnqueueTurnMessageParams{

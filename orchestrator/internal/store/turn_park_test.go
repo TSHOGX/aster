@@ -300,3 +300,75 @@ func TestRecordSteeredTurnRefusesADuplicateDelivery(t *testing.T) {
 		t.Fatalf("duplicate steer wrote another message: %+v", msgs)
 	}
 }
+
+// A parked queue deliberately does not hold a sandbox open — it is excluded from
+// the pending-turn predicate so auto-checkpoint and idle-release can reclaim
+// compute while the rows wait on the user. So the session can be `checkpointed`
+// by the time the user presses ↑, and releasing has to work from there: the
+// caller wakes the session, and this transition records it. Rejecting it would
+// make the button permanently dead and force the user to retype the prompt.
+func TestReleaseParkedTurnWakesACheckpointedSession(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID, generationID := "sess_release_cold", "gen_release_cold"
+	_, queued, now := parkedSessionFixture(t, ctx, st, owner, sessionID, generationID, "still wanted")
+	if _, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID: sessionID, GenerationID: generationID, OwnerUUID: owner.UUID, Now: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("interrupt: %v", err)
+	}
+	// What idle-release leaves behind: no live sandbox, the parked row untouched.
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE sessions SET status = 'checkpointed' WHERE id = ?`, sessionID); err != nil {
+		t.Fatalf("checkpoint session: %v", err)
+	}
+
+	snapshot, err := st.ReleaseParkedTurn(ctx, ReleaseParkedTurnParams{
+		SessionID: sessionID, TurnID: queued[0], Now: now.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("release into a checkpointed session: %v", err)
+	}
+	if snapshot.SessionStatus != "running_active" {
+		t.Fatalf("session status = %q, want running_active", snapshot.SessionStatus)
+	}
+	if len(snapshot.QueuedTurns) != 1 || snapshot.QueuedTurns[0].Parked {
+		t.Fatalf("turn not released: %+v", snapshot.QueuedTurns)
+	}
+}
+
+// Mid-checkpoint is the state where the session's own transition owns the status
+// (restoring is a generation status, not a session one). Releasing there must
+// change nothing rather than half-apply: the turn stays parked and the caller
+// answers 409, so the user's prompt is still there to send once it settles.
+func TestReleaseParkedTurnRejectsACheckpointingSession(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID, generationID := "sess_release_mid_ckpt", "gen_release_mid_ckpt"
+	_, queued, now := parkedSessionFixture(t, ctx, st, owner, sessionID, generationID, "wait")
+	if _, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID: sessionID, GenerationID: generationID, OwnerUUID: owner.UUID, Now: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("interrupt: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE sessions SET status = 'checkpointing' WHERE id = ?`, sessionID); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	if _, err := st.ReleaseParkedTurn(ctx, ReleaseParkedTurnParams{
+		SessionID: sessionID, TurnID: queued[0], Now: now.Add(2 * time.Minute),
+	}); !errors.Is(err, ErrTurnNotReleasable) {
+		t.Fatalf("err = %v, want ErrTurnNotReleasable", err)
+	}
+	// The rollback is the point: a released row against a session that cannot run
+	// it would strand the prompt.
+	var autoDispatch int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT auto_dispatch FROM turns WHERE id = ?`, queued[0]).Scan(&autoDispatch); err != nil {
+		t.Fatalf("read auto_dispatch: %v", err)
+	}
+	if autoDispatch != 0 {
+		t.Fatalf("turn was released despite the rejection")
+	}
+}

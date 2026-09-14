@@ -38,8 +38,12 @@ func (s *Server) sendQueuedTurn(w http.ResponseWriter, r *http.Request, sessionI
 		writeError(w, http.StatusConflict, "session does not queue turns")
 		return
 	}
-	if session.Status != string(sessionstate.RunningActive) && session.Status != string(sessionstate.RunningIdle) {
-		writeError(w, http.StatusConflict, "session is not running")
+	// The same states that accept a new prompt. `checkpointed` is included on
+	// purpose: parked rows do not hold a sandbox open, so one can be reclaimed
+	// underneath them, and releasing then has to wake the session exactly as a new
+	// prompt would (see ensureRunnableGenerationHTTP).
+	if !sessionstate.CanAcceptInput(session.Status) && session.Status != string(sessionstate.RunningActive) {
+		writeError(w, http.StatusConflict, "session is "+session.Status)
 		return
 	}
 	snapshot, err := s.store.GetSessionRuntimeSnapshot(r.Context(), sessionID)
@@ -61,7 +65,7 @@ func (s *Server) sendQueuedTurn(w http.ResponseWriter, r *http.Request, sessionI
 		return
 	}
 	if snapshot.ActiveTurn == nil {
-		s.releaseQueuedTurn(w, r, sessionID, turnID)
+		s.releaseQueuedTurn(w, r, session, turnID)
 		return
 	}
 	s.steerQueuedTurn(w, r, session, snapshot, *target)
@@ -73,7 +77,17 @@ func (s *Server) sendQueuedTurn(w http.ResponseWriter, r *http.Request, sessionI
 // on its way to the worker, so "send it" is a no-op the user cannot distinguish
 // from success — reporting the conflict makes the client re-read and show the
 // truth.
-func (s *Server) releaseQueuedTurn(w http.ResponseWriter, r *http.Request, sessionID string, turnID int64) {
+//
+// The sandbox is ensured first, because a parked queue does not hold one open: it
+// is excluded from the pending-turn predicate precisely so auto-checkpoint and
+// idle-release can reclaim compute while the rows wait on the user. Releasing
+// into a reclaimed session would otherwise flip auto_dispatch back on and leave
+// the turn queued against nothing.
+func (s *Server) releaseQueuedTurn(w http.ResponseWriter, r *http.Request, session store.Session, turnID int64) {
+	if !s.ensureRunnableGenerationHTTP(w, r, session) {
+		return
+	}
+	sessionID := session.ID
 	runtime, err := s.store.ReleaseParkedTurn(r.Context(), store.ReleaseParkedTurnParams{
 		SessionID: sessionID,
 		TurnID:    turnID,
@@ -88,8 +102,8 @@ func (s *Server) releaseQueuedTurn(w http.ResponseWriter, r *http.Request, sessi
 		return
 	}
 	s.publishSessionRuntime(sessionID, runtime)
-	// The worker picks it up on its own next claim, so there is nothing to start
-	// here. Cold fallback covers the case where the generation has since gone.
+	// The worker picks it up on its own next claim against the generation ensured
+	// above, so there is nothing to start here.
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":  "released",
 		"runtime": runtime,

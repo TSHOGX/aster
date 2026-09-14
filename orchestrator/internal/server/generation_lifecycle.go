@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -738,4 +739,84 @@ func generationLifecycleBusy(status string) bool {
 	default:
 		return false
 	}
+}
+
+// writeEnsureGenerationError maps an ensureActiveGeneration failure onto its HTTP
+// response, returning false when it wrote one. Pool exhaustion and a busy
+// generation are the caller's normal answers, not faults.
+func (s *Server) writeEnsureGenerationError(w http.ResponseWriter, err error) bool {
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, store.ErrPoolExhausted):
+		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
+	case errors.Is(err, errGenerationBusy):
+		writeError(w, http.StatusConflict, "session is busy")
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
+	return false
+}
+
+// ensureRunnableGenerationHTTP gives a request a live sandbox to dispatch into,
+// waking a session whose sandbox was reclaimed, and writes the HTTP error itself
+// when it cannot (returning false).
+//
+// Shared by every handler that puts a turn in front of the agent: a new prompt
+// (sendMessage) and releasing one the user parked with Stop
+// (releaseQueuedTurn). Releasing needs it for a reason that is easy to miss —
+// parked turns are excluded from the pending-turn predicate, precisely so a
+// parked queue cannot hold a sandbox open, so auto-checkpoint and idle-release
+// are free to reclaim it while those rows are still on screen. Without this the
+// ↑ button on a parked row would answer "session is not running" forever, and
+// the only way out would be to type the prompt again.
+//
+// A no-op for a session that is already running_active: it has a generation, and
+// re-ensuring one would only risk disturbing the turn in flight.
+func (s *Server) ensureRunnableGenerationHTTP(w http.ResponseWriter, r *http.Request, session store.Session) bool {
+	if !sessionstate.CanAcceptInput(session.Status) && session.Status != string(sessionstate.RunningActive) {
+		writeError(w, http.StatusConflict, "session is "+session.Status)
+		return false
+	}
+	if session.Status == string(sessionstate.RunningActive) {
+		return true
+	}
+	leaseOwner := store.GenerationLeaseOwner(s.ownerUUID)
+	ensured, err := s.ensureActiveGeneration(r.Context(), session, leaseOwner)
+	if !s.writeEnsureGenerationError(w, err) {
+		return false
+	}
+	startErr := s.startEnsuredGeneration(r.Context(), session, ensured, startFailureInputAcceptable)
+	if startErr == nil {
+		return true
+	}
+	if !ensured.RestoreFromCheckpoint {
+		writeRuntimeStartError(w, startErr)
+		return false
+	}
+	// A checkpoint that will not restore is not fatal: fall back to a cold start
+	// against the retained workspace, exactly as a new prompt does.
+	//
+	// Deliberately not writeEnsureGenerationError: the restore attempt above just
+	// retired that generation, so "busy" here is not the normal answer it is on the
+	// first try — it means the state is inconsistent, and reporting 409 would tell
+	// the client to retry a session that will never become free on its own.
+	ensured, err = s.ensureActiveGeneration(r.Context(), session, leaseOwner)
+	if errors.Is(err, store.ErrPoolExhausted) {
+		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
+		return false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !ensured.IsNew {
+		writeError(w, http.StatusInternalServerError, "restore fallback did not allocate a replacement generation")
+		return false
+	}
+	if err := s.startEnsuredGeneration(r.Context(), session, ensured, startFailureInputAcceptable); err != nil {
+		writeRuntimeStartError(w, err)
+		return false
+	}
+	return true
 }
