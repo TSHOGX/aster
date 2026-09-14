@@ -56,7 +56,7 @@ import {
 } from "@/lib/harness-events";
 import { isFinalReply } from "@/lib/message-grouping";
 import { isTerminal } from "@/lib/format";
-import { mergeSessionList, reduceSessionEvent, type SessionEventNotification } from "@/lib/session-events";
+import { reconcileSessionList, mergeSessionList, reduceSessionEvent, type SessionEventNotification } from "@/lib/session-events";
 import { translate } from "@/lib/i18n";
 import { detectLocale } from "@/lib/i18n/locale";
 import { reduceRuntimeActivity, shouldApplyRuntime } from "@/lib/session-runtime";
@@ -425,6 +425,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
   const loadSessionDetails = useCallback(
     (id: string, skipLoaded = false) => {
+      refreshRuntime(id);
       const convo = stateRef.current.conversations[id];
       if (skipLoaded && convo && convo.messages.length > 0) return;
       upsertConvo(id, (c) => ({ ...c, loading: true }));
@@ -440,10 +441,6 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         const list = res.data.artifacts ?? [];
         setState((p) => ({ ...p, artifacts: { ...p.artifacts, [id]: list } }));
       });
-      // Activity and the queue both come from here, so a reload or a second tab
-      // shows the true state instead of guessing from the coarse session status
-      // while it waits for the first event.
-      refreshRuntime(id);
     },
     [upsertConvo, setState, stateRef, refreshRuntime]
   );
@@ -533,6 +530,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   // alone. Deliberately narrower than refresh(): callers below run this in the
   // background while the user is reading something.
   const refreshSessions = useCallback(async () => {
+    const before = stateRef.current.sessions;
     const res = await fetchSessions();
     // Bail silently on failure: a transient error must not empty a healthy list.
     if (!res.ok) return;
@@ -542,12 +540,12 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     setState((p) => {
       const next = mergeSessionList(
         { sessions: p.sessions, conversations: p.conversations },
-        list,
+        reconcileSessionList(before, p.sessions, list),
         { emptyConversation: emptyConvo }
       );
       return { ...p, sessions: next.sessions, conversations: next.conversations };
     });
-  }, [setState]);
+  }, [setState, stateRef]);
 
   const handleEvent = useCallback(
     (event: HarnessEvent) => {
@@ -856,16 +854,17 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     const health = await fetchHealth();
     if (!health.ok) {
-      setState((p) => ({ ...p, ready: true, bootError: health.error, sessions: [] }));
+      setState((p) => ({ ...p, ready: true, bootError: health.error }));
       return;
     }
+    const before = stateRef.current.sessions;
     const sessions = await fetchSessions();
     if (!sessions.ok) {
       if (sessions.status === 401) {
         handleUnauthorized();
         return;
       }
-      setState((p) => ({ ...p, ready: true, bootError: sessions.error, sessions: [] }));
+      setState((p) => ({ ...p, ready: true, bootError: sessions.error }));
       return;
     }
     const capabilities = await fetchDeploymentCapabilities();
@@ -888,7 +887,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         ready: true,
         bootError: capabilities.ok ? null : capabilities.error,
         capabilities: capabilities.ok ? capabilities.data : p.capabilities,
-        sessions: list,
+        sessions: reconcileSessionList(before, p.sessions, list),
         selectedId,
         runtimes: Object.fromEntries(Object.keys(conversations).map((id) => [id, p.runtimes[id] ?? null])),
         conversations
@@ -896,14 +895,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     });
     if (selectedId) {
       const selected = list.find((s) => s.id === selectedId);
-      // A reader gets no session events at all (eventVisibleTo gates them to the
-      // owner), so an explicit refresh is their ONLY way to see new work. Skipping
-      // the fetch because messages are already present would make their Refresh
-      // button a no-op and freeze both the conversation and the file list at
-      // whatever existed on first load. An owner keeps the skip: SSE already
-      // delivers their updates, so refetching on every reconnect is pure waste.
-      const isReader = selected?.access === "reader";
-      loadSessionDetails(selectedId, !isReader);
+      // Reconnect/replay-gap recovery must fetch cached details too: messages and
+      // artifacts may have changed while this tab was disconnected.
+      loadSessionDetails(selectedId);
       if (selected && isActiveStatus(selected.status)) {
         void pollConversation(selectedId);
       }
@@ -978,31 +972,33 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     onConnectionChange: setConnection
   });
 
-  // SSE is the low-latency path, not the source of truth. A missed event or a
-  // backend worker that died after committing SQLite can otherwise leave the
-  // sidebar spinning forever. While a turn or checkpoint is active, periodically refresh
-  // only the lightweight session list; the backend reconciliation pass makes
-  // this converge even when no event is emitted.
+  // Reconcile even idle sessions: their sandbox can be released without a turn
+  // event, and a quiet/broken stream must not freeze the UI indefinitely.
   useEffect(() => {
     if (!authReady) return;
     let inFlight = false;
     const tick = () => {
-      if (
-        inFlight ||
-        !stateRef.current.sessions.some(
-          (session) => session.status === "running_active" || session.status === "checkpointing"
-        )
-      ) {
-        return;
-      }
+      if (inFlight || document.visibilityState === "hidden") return;
       inFlight = true;
-      void refreshSessions().finally(() => {
-        inFlight = false;
-      });
+      const selectedId = stateRef.current.selectedId;
+      void Promise.all([
+        refreshSessions(),
+        selectedId
+          ? fetchSessionRuntime(selectedId).then((res) => {
+              if (res.ok) applyRuntime(selectedId, res.data);
+            })
+          : Promise.resolve()
+      ]).finally(() => { inFlight = false; });
     };
     const timer = window.setInterval(tick, 15_000);
-    return () => window.clearInterval(timer);
-  }, [authReady, refreshSessions, stateRef]);
+    document.addEventListener("visibilitychange", tick);
+    window.addEventListener("online", tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("online", tick);
+    };
+  }, [authReady, refreshSessions, stateRef, applyRuntime]);
 
   const selectSession = useCallback(
     (id: string | null) => {

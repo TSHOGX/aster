@@ -1060,6 +1060,51 @@ func (s *Store) ensureTurnColumns(ctx context.Context) error {
 	// discard the snapshot that says the queue is parked. Recreating is cheap DDL
 	// on the writer before the reader pool opens.
 	if _, err := s.db.ExecContext(ctx, `
+-- The revision covers the entire runtime projection, including sandbox lifetime.
+CREATE TRIGGER IF NOT EXISTS sessions_runtime_revision
+AFTER UPDATE OF status, active_generation_id ON sessions
+WHEN OLD.status IS NOT NEW.status OR OLD.active_generation_id IS NOT NEW.active_generation_id
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1 WHERE id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS runtime_generations_runtime_revision_insert
+AFTER INSERT ON runtime_generations
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1
+  WHERE active_generation_id = NEW.generation_id;
+END;
+CREATE TRIGGER IF NOT EXISTS runtime_generations_runtime_revision_update
+AFTER UPDATE ON runtime_generations
+WHEN OLD.status IS NOT NEW.status
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1
+  WHERE active_generation_id = NEW.generation_id;
+END;
+CREATE TRIGGER IF NOT EXISTS runtime_generations_runtime_revision_delete
+AFTER DELETE ON runtime_generations
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1
+  WHERE active_generation_id = OLD.generation_id;
+END;
+CREATE TRIGGER IF NOT EXISTS runtime_generation_resources_runtime_revision_insert
+AFTER INSERT ON runtime_generation_resources
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1
+  WHERE active_generation_id = NEW.generation_id;
+END;
+CREATE TRIGGER IF NOT EXISTS runtime_generation_resources_runtime_revision_update
+AFTER UPDATE ON runtime_generation_resources
+WHEN OLD.resource_state IS NOT NEW.resource_state
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1
+  WHERE active_generation_id = NEW.generation_id;
+END;
+CREATE TRIGGER IF NOT EXISTS runtime_generation_resources_runtime_revision_delete
+AFTER DELETE ON runtime_generation_resources
+BEGIN
+  UPDATE sessions SET turn_revision = turn_revision + 1
+  WHERE active_generation_id = OLD.generation_id;
+END;
 DROP TRIGGER IF EXISTS turns_revision_insert;
 DROP TRIGGER IF EXISTS turns_revision_update;
 DROP TRIGGER IF EXISTS turns_revision_delete;

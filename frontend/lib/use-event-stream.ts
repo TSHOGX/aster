@@ -103,12 +103,11 @@ export function useEventStream({
 
     source.onopen = () => {
       if (cleanedUp) return;
-      const wasConnected = connectedOnce;
       connectedOnce = true;
       onConnectionChange("live");
-      if (wasConnected) {
-        onRefresh();
-      }
+      // Also reconcile the first connection: boot HTTP requests can finish
+      // before the server attaches this subscription, leaving a delivery gap.
+      onRefresh();
     };
 
     const handleSourceEvent = (ev: MessageEvent) => {

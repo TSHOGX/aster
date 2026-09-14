@@ -138,7 +138,18 @@ const turnSnapshotColumns = `id, sequence, content, status, phase, phase_at, pha
 
 // GetSessionRuntimeSnapshot reads the durable projection for one session.
 func (s *Store) GetSessionRuntimeSnapshot(ctx context.Context, sessionID string) (SessionRuntimeSnapshot, error) {
-	return getSessionRuntimeSnapshot(ctx, s.reader(), sessionID)
+	// Both queries must observe the same database snapshot. Otherwise a concurrent
+	// commit can pair an old revision with new turns (or the reverse).
+	tx, err := s.reader().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return SessionRuntimeSnapshot{}, err
+	}
+	defer tx.Rollback()
+	snapshot, err := getSessionRuntimeSnapshot(ctx, tx, sessionID)
+	if err != nil {
+		return SessionRuntimeSnapshot{}, err
+	}
+	return snapshot, tx.Commit()
 }
 
 // queryer is the read surface shared by *sql.DB and *sql.Tx, so the snapshot can

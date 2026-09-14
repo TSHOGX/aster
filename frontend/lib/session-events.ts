@@ -86,6 +86,26 @@ function emptyReduction<TConversation extends SessionEventConversation>(
   return { ...slice, handled, notifications: [] };
 }
 
+/** Preserve changes delivered while an unversioned list request was in flight. */
+export function reconcileSessionList(
+  before: ApiSession[],
+  current: ApiSession[],
+  incoming: ApiSession[]
+): ApiSession[] {
+  const baseline = new Map(before.map((session) => [session.id, session]));
+  const held = new Map(current.map((session) => [session.id, session]));
+  const received = new Set(incoming.map((session) => session.id));
+  const result = incoming.flatMap((session) => {
+    const existing = held.get(session.id);
+    if (baseline.has(session.id) && !existing) return []; // removed locally
+    return [existing && existing !== baseline.get(session.id) ? existing : session];
+  });
+  return [
+    ...current.filter((session) => !received.has(session.id) && session !== baseline.get(session.id)),
+    ...result
+  ];
+}
+
 /**
  * Swap in a freshly fetched session list while preserving the invariant that
  * every listed session has a conversations entry (callers index that map by

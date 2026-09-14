@@ -2771,6 +2771,7 @@ func TestSandboxStateFollowsGenerationLifecycle(t *testing.T) {
 		t.Fatalf("snapshot sandbox = %q, want live", snapshot.Sandbox)
 	}
 
+	liveRevision := snapshot.Revision
 	if err := st.ReleaseIdleGeneration(ctx, "sess_sandbox_live", allocation.GenerationID, allocation.Owner, now); err != nil {
 		t.Fatalf("release idle generation: %v", err)
 	}
@@ -2784,6 +2785,9 @@ func TestSandboxStateFollowsGenerationLifecycle(t *testing.T) {
 	snapshot, err = st.GetSessionRuntimeSnapshot(ctx, "sess_sandbox_live")
 	if err != nil {
 		t.Fatalf("runtime snapshot after release: %v", err)
+	}
+	if snapshot.Revision <= liveRevision {
+		t.Fatalf("sandbox release revision = %d, must exceed live revision %d", snapshot.Revision, liveRevision)
 	}
 	if snapshot.Sandbox != SandboxReleased {
 		t.Fatalf("snapshot sandbox after release = %q, want released", snapshot.Sandbox)
@@ -3934,5 +3938,43 @@ func assertJSONStrings(t *testing.T, raw string, want []string) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("JSON string list = %#v, want %#v", got, want)
+	}
+}
+
+// No turn changes are involved: each dependency of the runtime projection must
+// still invalidate a client's cached revision, including resource-only changes.
+func TestRuntimeRevisionTracksSandboxDependencies(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	allocation := createAutoCheckpointGeneration(t, ctx, st, testAllocatorConfig(t), "sess_revision", GenerationLeaseOwner(owner.UUID), time.Now().UTC())
+	read := func() SessionRuntimeSnapshot {
+		t.Helper()
+		snapshot, err := st.GetSessionRuntimeSnapshot(ctx, "sess_revision")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	previous := read()
+	for _, query := range []string{
+		`UPDATE runtime_generations SET status = 'active' WHERE generation_id = ?`,
+		`UPDATE runtime_generation_resources SET resource_state = 'reclaimable' WHERE generation_id = ?`,
+		`UPDATE sessions SET status = 'running_active' WHERE active_generation_id = ?`,
+		`UPDATE sessions SET active_generation_id = NULL WHERE active_generation_id = ?`,
+	} {
+		if _, err := st.db.ExecContext(ctx, query, allocation.GenerationID); err != nil {
+			t.Fatal(err)
+		}
+		next := read()
+		if next.Revision <= previous.Revision {
+			t.Fatalf("revision did not advance after %s: %d -> %d", query, previous.Revision, next.Revision)
+		}
+		previous = next
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE sessions SET status = status WHERE id = 'sess_revision'`); err != nil {
+		t.Fatal(err)
+	}
+	if next := read(); next.Revision != previous.Revision {
+		t.Fatalf("no-op advanced revision: %d -> %d", previous.Revision, next.Revision)
 	}
 }

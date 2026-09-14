@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mergeSessionList, reduceSessionEvent, type SessionEventSlice } from "./session-events";
+import { reconcileSessionList, mergeSessionList, reduceSessionEvent, type SessionEventSlice } from "./session-events";
 import type { ApiSession, HarnessEvent } from "./types";
 
 type TestConversation = {
@@ -183,5 +183,22 @@ describe("mergeSessionList", () => {
 
     expect(next.sessions).toEqual([]);
     expect(next.conversations.sess_1).toBe(base.conversations.sess_1);
+  });
+});
+
+describe("reconcileSessionList", () => {
+  it("does not roll a runtime push back when an older GET completes", () => {
+    const before = session({ sandbox: "live" });
+    const pushed = { ...before, sandbox: "released" as const };
+    expect(reconcileSessionList([before], [pushed], [before])).toEqual([pushed]);
+  });
+
+  it("refreshes unchanged rows and preserves concurrent creations/deletions", () => {
+    const before = session();
+    const created = session({ id: "new" });
+    expect(reconcileSessionList([before], [created], [before])).toEqual([created]);
+    const fetched = { ...before, sandbox: "released" as const };
+    expect(reconcileSessionList([before], [before], [fetched])).toEqual([fetched]);
+    expect(reconcileSessionList([before], [before], [])).toEqual([]);
   });
 });
