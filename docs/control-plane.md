@@ -184,6 +184,22 @@ file is inert to the queue machinery — no new mount, no protocol bump.
   authorization window → durable event.
 - `emit_output` → validates positive `output_sequence` (and native-event schema
   when present) → append event; a duplicate-sequence *mismatch* fails the generation.
+  The turn CAS (`assertOutputEventTurnTx`) distinguishes two failures, because they
+  need opposite handling and used to be one indistinguishable error:
+  - the turn row is **already terminal** → permanent. The generation is emitting
+    for a turn the host has retired, so the event is discarded and the envelope
+    unlinked (`IsOutputEventTurnNotRunning`). It is *not* a generation fault: a
+    late event must not cost the user their sandbox.
+  - the **lease/generation** predicates did not match → transient. The error is
+    propagated so the envelope is retained and retried.
+
+  Conflating them meant `ProcessOnce` returned before unlinking and re-read the
+  same record every poll — one generation logged 2277 `output event turn CAS
+  failed` in two minutes, and because the pass never completed, no later envelope
+  (including the runtime projection the client waits on) was processed. That is
+  what left the UI on "Agent is thinking…". The batch path
+  (`handleOutputBatch`) already recorded per-envelope failures and continued; the
+  single-envelope path now matches it.
 - Any generation failure (including a bridge protocol mismatch) uses the atomic
   `FailGenerationWithEvent` path: turn/generation/resource rows, the retryable
   session status, and a `generation.error` event commit together. The server

@@ -51,6 +51,30 @@ Both use bridge protocol `harness_bridge_v2` (version 2) and turn input schema
 - **Restore**: driver state is a `pi_session` sidecar digest; when it changes, the
   runner issues `switch_session` (verified via `get_session_stats`) before the
   prompt. Restore state advances only after a successful completed turn.
+- **Turn boundary** (`agent_end`, not `turn_end`): pi frames one prompt as
+
+      agent_start … [turn_start … turn_end]* … agent_end
+
+  `turn_end` is an **inner, per-model-turn** boundary that repeats during tool
+  use; `agent_end` ends the prompt. `run_turn` decides the turn's status on the
+  first non-`toolUse` `turn_end`, so at least one `agent_end` is always still
+  unread when it stops — after an `abort`, `response{command:"abort"}` as well.
+
+  The runner therefore holds an invariant: **when `run_turn` returns, pi's stdout
+  contains no events belonging to the turn that just finished.** It is
+  established in a `finally`, by `_barrier_request` — a `get_session_stats` whose
+  own response id acts as the barrier: everything read before it is prior-turn
+  residue by definition, and the response proves pi has caught up. On a completed
+  turn that same response supplies the driver-state update, so a healthy turn
+  costs no extra round trip. The drain is bounded and only logs on timeout: the
+  abort path must not be what makes a Stop hang.
+
+  Without that invariant the residue was left in the pipe and the **next** turn
+  read it as its own terminal event, acking `completed` in milliseconds while pi
+  answered a prompt nobody was listening to. Only turns after an early return
+  (abort/failure) were affected, because the completed path's `get_session_stats`
+  had been swallowing the stray `agent_end` by accident. See
+  [stream-desync-after-abort.md](./proposals/stream-desync-after-abort.md).
 - **Interrupt and steer** (`abort` / `steer` RPC): both act on the turn that is
   executing and leave the pi process, its session history and the sandbox intact.
   `abort` ends the turn with `stopReason: "aborted"` — whatever already streamed
