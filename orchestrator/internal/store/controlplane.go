@@ -245,7 +245,7 @@ func (s *Store) SessionHasActiveTurn(ctx context.Context, sessionID string) (boo
 SELECT COUNT(*)
 FROM turns
 WHERE session_id = ?
-  AND status IN ('queued', 'leased', 'running')`, sessionID).Scan(&count); err != nil {
+  AND `+pendingTurnPredicate+``, sessionID).Scan(&count); err != nil {
 		return false, err
 	}
 	return count != 0, nil
@@ -414,12 +414,18 @@ func (s *Store) ClaimNextTurn(ctx context.Context, p ClaimNextTurnParams) (TurnG
 		return replay, true, tx.Commit()
 	}
 
+	// auto_dispatch = 1 is what makes parking real: a turn the user parked with Stop
+	// stays queued and visible but is never a claim candidate, so the worker cannot
+	// start it on its own. Releasing one flips this back (ReleaseParkedTurn), and
+	// because only the released turn is eligible, `sequence ASC` then selects it
+	// without needing any notion of priority.
 	var grant TurnGrant
 	err = tx.QueryRowContext(ctx, `
 SELECT id, sequence, content, attempt
 FROM turns
 WHERE session_id = ?
   AND status = 'queued'
+  AND auto_dispatch = 1
   AND lease_owner IS NULL
 ORDER BY sequence ASC
 LIMIT 1`, p.SessionID).Scan(&grant.TurnID, &grant.Sequence, &grant.Content, &grant.Attempt)
@@ -442,6 +448,7 @@ SET status = 'leased',
 WHERE id = ?
   AND session_id = ?
   AND status = 'queued'
+  AND auto_dispatch = 1
   AND lease_owner IS NULL
   AND NOT EXISTS (
     SELECT 1 FROM turns
@@ -1231,7 +1238,7 @@ SET status = CASE
       WHEN EXISTS (
         SELECT 1 FROM turns
         WHERE turns.session_id = sessions.id
-          AND turns.status IN ('queued','leased','running')
+          AND `+pendingTurnPredicateFor("turns")+`
       ) THEN 'running_active'
       ELSE 'running_idle'
     END,
@@ -1511,7 +1518,7 @@ SELECT COUNT(*)
 FROM turns
 WHERE session_id = ?
   AND id <> ?
-  AND status IN ('queued', 'leased', 'running')`, sessionID, currentTurnID).Scan(&pendingTurns); err != nil {
+  AND `+pendingTurnPredicate+``, sessionID, currentTurnID).Scan(&pendingTurns); err != nil {
 		return false, err
 	}
 	if pendingTurns != 0 {
@@ -1535,7 +1542,7 @@ WHERE generation_id = ?
     SELECT 1 FROM turns
     WHERE session_id = ?
       AND id <> ?
-      AND status IN ('queued', 'leased', 'running')
+      AND `+pendingTurnPredicate+`
   )`, generationID, sessionID, owner, formatTime(now), sessionID, generationID, sessionID, currentTurnID)
 	if err != nil {
 		return false, err
@@ -1559,7 +1566,7 @@ WHERE id = ?
     SELECT 1 FROM turns
     WHERE session_id = ?
       AND id <> ?
-      AND status IN ('queued', 'leased', 'running')
+      AND `+pendingTurnPredicate+`
   )`, formatTime(now), formatTime(now), sessionID, generationID, sessionID, currentTurnID)
 	if err != nil {
 		return false, err

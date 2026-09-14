@@ -1096,6 +1096,11 @@ WHERE g.status = 'failed'
   AND s.status NOT IN ('failed', 'destroyed')
   AND t.status = 'queued'
   AND t.lease_owner IS NULL
+  -- A parked turn must never pull a sandbox back up. Cold fallback exists to
+  -- carry a queue across a generation that died under it; a parked turn is
+  -- waiting on the user, and starting a sandbox for it would burn a cold start
+  -- for a prompt that may never be released.
+  AND t.auto_dispatch = 1
 GROUP BY s.id, g.generation_id
 ORDER BY MIN(t.sequence), s.updated_at`)
 	if err != nil {
@@ -1208,7 +1213,7 @@ WHERE generation_id = ?
   AND NOT EXISTS (
     SELECT 1 FROM turns
     WHERE session_id = ?
-      AND status IN ('queued', 'leased', 'running')
+      AND `+pendingTurnPredicate+`
   )`, ReleaseIdleGenerationErrorClass, formatTime(now), formatTime(now),
 		generationID, sessionID, owner, formatTime(now), sessionID, generationID, sessionID)
 	if err != nil {

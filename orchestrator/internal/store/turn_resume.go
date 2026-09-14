@@ -122,7 +122,7 @@ WHERE id = ?
 SELECT COUNT(*)
 FROM turns
 WHERE session_id = ?
-  AND status IN ('queued', 'leased', 'running')`, p.SessionID).Scan(&inflight); err != nil {
+  AND `+pendingTurnPredicate+``, p.SessionID).Scan(&inflight); err != nil {
 		return ResumeFailedTurnResult{}, err
 	}
 	if inflight != 0 {

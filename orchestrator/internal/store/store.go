@@ -57,11 +57,15 @@ type InterruptSessionParams struct {
 type InterruptSessionResult struct {
 	SessionStatus string
 	EventIDs      []int64
-	// PendingQueued counts the turns still queued after the interrupt. Stop scopes
-	// to the running turn, so these survive it; cold fallback allocates a fresh
-	// generation and the head of the queue then runs. Reported so the UI can say
-	// the queue is resuming rather than leaving the user to guess.
+	// PendingQueued counts the turns Stop parked. They survive the interrupt and
+	// stay visible, but nothing will dispatch them until the user releases each
+	// one. Reported so the UI can say so rather than leaving the user to guess
+	// whether their queue is about to run.
 	PendingQueued int64
+	// InterruptedTurnID is the turn that was executing, or 0 when none was. The
+	// caller needs it to address the abort at the sandbox: a control command names
+	// its target turn so a late delivery cannot stop the turn that came after.
+	InterruptedTurnID int64
 	// Runtime is the post-interrupt projection, taken inside the same
 	// transaction.
 	Runtime SessionRuntimeSnapshot
@@ -456,6 +460,10 @@ WHERE id = ?`, nowString, nowString, id); err != nil {
 		return DestroySessionResult{}, err
 	}
 
+	// Deliberately NOT pendingTurnPredicate. Parking says "do not dispatch this
+	// yet", not "this turn no longer exists" — and the session is being destroyed,
+	// so a parked turn has to be cancelled along with every other one. Skipping it
+	// here would leave a queued row behind a session that can never run it.
 	if _, err := tx.ExecContext(ctx, `
 UPDATE turns
 SET status = 'canceled',
@@ -514,10 +522,21 @@ WHERE generation_id IN (`+sqlPlaceholders(len(generationIDs))+`)
 	return DestroySessionResult{GenerationIDs: generationIDs, EventID: eventID}, nil
 }
 
-// InterruptSession cancels the current session work while preserving the
-// session, workspace, and conversation history. Runtime teardown must happen
-// before this transaction is called; once committed, the failed generation is
-// eligible for cleanup and the next user message can allocate a replacement.
+// InterruptSession stops the turn the agent is executing and parks the rest of
+// the queue, leaving the generation alone.
+//
+// The sandbox survives a Stop. Interrupt used to retire the generation because
+// the code asserted the agent had no interrupt primitive — it does (see the
+// bridge's turn-control writer), so the only thing Stop now changes is turn
+// state: the running turn goes 'canceled', the queue behind it is parked, and the
+// generation stays live for the next prompt. That removes a cold start from every
+// Stop, and keeps the workspace the agent had built up.
+//
+// The caller is responsible for delivering the abort to the sandbox. Order
+// matters and is the caller's to get right: deliver first, then commit this. A
+// commit-then-deliver ordering would leave the turn marked canceled while the
+// agent kept running, and the completion ack for a turn this transaction already
+// retired is discarded by CompleteTurn's CAS.
 func (s *Store) InterruptSession(ctx context.Context, p InterruptSessionParams) (InterruptSessionResult, error) {
 	if strings.TrimSpace(p.SessionID) == "" {
 		return InterruptSessionResult{}, fmt.Errorf("session id is required")
@@ -554,12 +573,28 @@ FROM sessions WHERE id = ?`, p.SessionID).Scan(&sessionStatus, &activeGeneration
 	if activeGeneration != p.GenerationID {
 		return InterruptSessionResult{}, fmt.Errorf("generation is no longer active")
 	}
-	if sessionStatus != "running_active" {
+	// running_idle is accepted, not just running_active. After a Stop the session
+	// is idle with its queue parked, and a second press must be a no-op rather than
+	// an error: Stop is offered from the coarse session status until the first
+	// projection arrives, so a double-press is reachable and routine. Only a
+	// terminal or transitional session is refused — those have their own lifecycle
+	// to finish and no turn for Stop to act on.
+	if sessionStatus != string(sessionstate.RunningActive) && sessionStatus != string(sessionstate.RunningIdle) {
 		return InterruptSessionResult{}, fmt.Errorf("session is not running")
 	}
 	now := formatTime(p.Now)
 	// The turn the agent was actually executing. Its message stays in the
-	// transcript: the agent did see it, and the reply (if any) is already there.
+	// transcript: the agent did see it, and whatever it streamed before the abort
+	// is real work the user should keep.
+	var interruptedTurnID int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT id FROM turns
+WHERE session_id = ?
+  AND status IN ('leased','running')
+ORDER BY sequence
+LIMIT 1`, p.SessionID).Scan(&interruptedTurnID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return InterruptSessionResult{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE turns
 SET status = 'canceled',
@@ -573,73 +608,47 @@ WHERE session_id = ?
   AND status IN ('leased','running')`, now, p.ErrorClass, p.Reason, p.SessionID); err != nil {
 		return InterruptSessionResult{}, err
 	}
-	// Turns still queued behind it are deliberately left alone. Stop scopes to the
-	// turn in flight; the queue is standing user intent that outlived it, and
-	// discarding a prompt the user is still waiting on because a *different* turn
-	// was cancelled does not match what "Stop" says.
+	// Turns still queued behind it are parked, not cancelled and not left running.
 	//
-	// This used to cancel them, for a reason that no longer holds. Interrupt
-	// retires the generation and ClaimNextTurn only grants against a live one, so a
-	// surviving 'queued' turn was unclaimable — it stranded until some later POST
-	// happened to allocate a generation, then ran a prompt abandoned minutes
-	// earlier. Cold fallback closed that hole: ListColdFallbackSessions selects on
-	// exactly the state this transaction leaves behind (generation 'failed',
-	// session non-terminal, turns 'queued' and unleased) and allocates a fresh
-	// generation for it. Continuity is that reconciler's job, so this no longer has
-	// to buy safety by throwing the queue away.
-	var pendingQueued int64
-	if err := tx.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM turns
-WHERE session_id = ? AND status = 'queued'`, p.SessionID).Scan(&pendingQueued); err != nil {
+	// Cancelling them threw away prompts the user was still waiting on, which is
+	// not what "Stop" says. Leaving them to run is not it either: the user asked
+	// for the work to stop, and having the next prompt start on its own a moment
+	// later is the same surprise in slower motion. Parked is the honest third
+	// state — the prompts survive, stay visible, and each waits for the user to
+	// release it.
+	pendingQueued, err := parkQueuedTurnsTx(ctx, tx, p.SessionID)
+	if err != nil {
 		return InterruptSessionResult{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'failed',
-    error_class = ?,
-    failure_reason = ?,
-    ended_at = COALESCE(ended_at, ?),
-    lease_owner = NULL,
-    lease_expires_at = NULL
-WHERE generation_id = ?
-  AND session_id = ?
-  AND status NOT IN ('failed','destroyed')`, p.ErrorClass, p.Reason, now, p.GenerationID, p.SessionID); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE network_profiles
-SET allocation_state = 'reclaimable'
-WHERE generation_id = ?
-  AND session_id = ?
-  AND allocation_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID, p.SessionID); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generation_resources
-SET resource_state = 'reclaimable'
-WHERE generation_id = ?
-  AND resource_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID); err != nil {
-		return InterruptSessionResult{}, err
-	}
+	// The generation is deliberately untouched. Stop is now a turn-level
+	// operation: the agent's abort ends the turn while its process, its session and
+	// the workspace all survive, so retiring the generation here would throw away a
+	// warm sandbox — and charge the user a cold start — for no reason. The
+	// generation's own lifecycle (idle release, checkpointing, failure) is
+	// unchanged and still handled by the paths that own it.
 	if _, err := tx.ExecContext(ctx, `
 DELETE FROM active_model_request_contexts
-WHERE session_id = ? AND generation_id = ?`, p.SessionID, p.GenerationID); err != nil {
+WHERE session_id = ? AND generation_id = ? AND turn_id = ?`, p.SessionID, p.GenerationID, interruptedTurnID); err != nil {
 		return InterruptSessionResult{}, err
 	}
-	// The session's own status follows the same rule the startup reconciler uses:
-	// pending turns mean running_active, nothing pending means running_idle. Going
-	// unconditionally idle here would contradict a queue this transaction just
-	// preserved, and would let the idle-release sweeper checkpoint a session that
-	// still owes the user a reply.
-	//
-	// running_active is not input-blocking in this shape: EnqueueTurnMessage only
-	// refuses it when there is neither a generation nor an in-flight turn, and a
-	// queued turn is in-flight. Stop also stays available, which is how a user
-	// clears the rest of the queue — one press per turn, each one theirs to make.
-	nextStatus := string(sessionstate.RunningIdle)
-	if pendingQueued > 0 {
-		nextStatus = string(sessionstate.RunningActive)
+	// The generation goes back to idle: the turn that made it active is over, and
+	// a parked queue is not pending work. Leaving it 'active' would make the idle
+	// sweeper skip it forever, so a session stopped once would hold its sandbox
+	// until the session ended.
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runtime_generations
+SET status = 'idle'
+WHERE generation_id = ?
+  AND session_id = ?
+  AND status = 'active'`, p.GenerationID, p.SessionID); err != nil {
+		return InterruptSessionResult{}, err
 	}
+	// Idle, always: after a Stop nothing will run without the user acting again.
+	// This is the one place the parked/queued distinction changes the answer — with
+	// an auto-running queue this had to report running_active, because going idle
+	// with live work would have let the idle sweeper checkpoint a session that
+	// still owed a reply. Parked turns owe nothing until released.
+	nextStatus := string(sessionstate.RunningIdle)
 	if _, err := tx.ExecContext(ctx, `
 UPDATE sessions
 SET status = ?,
@@ -650,16 +659,44 @@ SET status = ?,
 WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, nextStatus, now, p.SessionID, p.GenerationID); err != nil {
 		return InterruptSessionResult{}, err
 	}
+	// A press that found nothing to do says nothing. This is the double-press case
+	// accepted above: no turn was executing and the queue was already parked, so
+	// there is no state change to announce and an event would only make every
+	// client redraw an unchanged session.
+	if interruptedTurnID == 0 && pendingQueued == 0 {
+		snapshot, err := getSessionRuntimeSnapshot(ctx, tx, p.SessionID)
+		if err != nil {
+			return InterruptSessionResult{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return InterruptSessionResult{}, err
+		}
+		// Read from the snapshot rather than the status loaded at the top: the
+		// sessions UPDATE above still applies here, and it is worth applying — a
+		// running_active session with no turn at all is a stale marker, and settling
+		// it to idle is a repair, not a no-op.
+		return InterruptSessionResult{
+			SessionStatus: snapshot.SessionStatus,
+			PendingQueued: 0,
+			Runtime:       snapshot,
+		}, nil
+	}
+	// turn.interrupted, not generation.error: the generation is fine. Emitting a
+	// generation error here would tell every client the sandbox had failed, and the
+	// dedupe key was per-generation, so a second Stop in the same generation
+	// silently produced no event at all.
 	eventID, err := appendEventTx(ctx, tx, AppendEventParams{
 		SessionID:    p.SessionID,
 		GenerationID: p.GenerationID,
-		DedupeKey:    "session_interrupted:" + p.GenerationID,
-		Type:         "generation.error",
+		DedupeKey:    fmt.Sprintf("turn_interrupted:%s:%d", p.GenerationID, interruptedTurnID),
+		Type:         "turn.interrupted",
 		Payload: map[string]any{
 			"terminal":             false,
 			"error_class":          p.ErrorClass,
 			"error":                p.Reason,
 			"generation_id":        p.GenerationID,
+			"turn_id":              interruptedTurnID,
+			"parked_queued":        pendingQueued,
 			"session_status":       nextStatus,
 			"session_updated_at":   now,
 			"active_generation_id": p.GenerationID,
@@ -677,10 +714,11 @@ WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, nextSt
 		return InterruptSessionResult{}, err
 	}
 	return InterruptSessionResult{
-		SessionStatus: nextStatus,
-		EventIDs:      []int64{eventID},
-		PendingQueued: pendingQueued,
-		Runtime:       snapshot,
+		SessionStatus:     nextStatus,
+		EventIDs:          []int64{eventID},
+		PendingQueued:     pendingQueued,
+		InterruptedTurnID: interruptedTurnID,
+		Runtime:           snapshot,
 	}, nil
 }
 
@@ -709,6 +747,9 @@ SET status = 'canceled',
     ),
     lease_owner = NULL,
     lease_expires_at = NULL
+-- Deliberately NOT pendingTurnPredicate: same reason as DestroySession above.
+-- The owning session is already failed or destroyed, so a parked turn is as dead
+-- as a queued one and must be retired too.
 WHERE status IN ('queued', 'leased', 'running')
   AND EXISTS (
     SELECT 1
@@ -799,7 +840,7 @@ func (s *Store) EnqueueTurnMessage(ctx context.Context, p EnqueueTurnMessagePara
 	if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM turns
 WHERE session_id = ?
-  AND status IN ('queued', 'leased', 'running')`, p.SessionID).Scan(&inflightTurns); err != nil {
+  AND `+pendingTurnPredicate+``, p.SessionID).Scan(&inflightTurns); err != nil {
 		return EnqueueTurnMessageResult{}, err
 	}
 	// running_active without a generation is a stale session marker. Preserve

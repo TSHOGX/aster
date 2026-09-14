@@ -542,7 +542,7 @@ WHERE s.status = 'running_idle'
   AND NOT EXISTS (
     SELECT 1 FROM turns t
     WHERE t.session_id = s.id
-      AND t.status IN ('queued', 'leased', 'running')
+      AND `+pendingTurnPredicateFor("t")+`
   )
 ORDER BY s.last_activity_at ASC`, formatTime(cutoff), owner, formatTime(now))
 	if err != nil {
@@ -637,7 +637,7 @@ WHERE s.status = 'running_idle'
   AND NOT EXISTS (
     SELECT 1 FROM turns t
     WHERE t.session_id = s.id
-      AND t.status IN ('queued', 'leased', 'running')
+      AND `+pendingTurnPredicateFor("t")+`
   )
 ORDER BY s.last_activity_at ASC`, formatTime(cutoff), owner, formatTime(now))
 	if err != nil {
@@ -708,7 +708,7 @@ WHERE generation_id = ?
   AND NOT EXISTS (
     SELECT 1 FROM turns
     WHERE session_id = ?
-      AND status IN ('queued', 'leased', 'running')
+      AND `+pendingTurnPredicate+`
   )`, formatTime(now), checkpointDriverStatesDigest, generationID, sessionID, owner, formatTime(now), sessionID, generationID, sessionID)
 	if err != nil {
 		return err

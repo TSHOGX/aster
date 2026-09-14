@@ -954,7 +954,15 @@ func TestReconcileStaleSessionStatesRepairsFailedGenerationWithoutInflightWork(t
 	}
 }
 
-func TestInterruptSessionCancelsTurnAndRetiresGeneration(t *testing.T) {
+// Stop ends the turn and keeps the sandbox. The generation drops back to idle
+// rather than being retired: the agent has a real abort primitive, so its process,
+// its session and the workspace all survive, and the next prompt runs warm.
+//
+// This inverts what the test used to assert (generation 'failed'). That was a
+// consequence of interrupt's old implementation, not a requirement — retiring the
+// generation charged the user a cold start and discarded the workspace for every
+// Stop.
+func TestInterruptSessionCancelsTurnAndKeepsGeneration(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	sessionID := "sess_interrupt"
@@ -988,6 +996,11 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	if result.SessionStatus != "running_idle" || len(result.EventIDs) != 1 || result.EventIDs[0] == 0 {
 		t.Fatalf("unexpected interrupt result: %+v", result)
 	}
+	// The caller needs the turn id to address the abort at the sandbox: a control
+	// command names its target so a late delivery cannot stop the turn after it.
+	if result.InterruptedTurnID != turnID {
+		t.Fatalf("InterruptedTurnID = %d, want %d", result.InterruptedTurnID, turnID)
+	}
 	var turnStatus, generationStatus, sessionStatus string
 	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, turnID).Scan(&turnStatus); err != nil {
 		t.Fatalf("query turn: %v", err)
@@ -998,22 +1011,34 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	if err := st.db.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&sessionStatus); err != nil {
 		t.Fatalf("query session: %v", err)
 	}
-	if turnStatus != "canceled" || generationStatus != "failed" || sessionStatus != "running_idle" {
+	// idle, not failed: the sandbox is still there and still warm. This is the
+	// assertion that changed — the old contract retired the generation, which cost
+	// the user a cold start and their built-up workspace on every Stop.
+	if turnStatus != "canceled" || generationStatus != "idle" || sessionStatus != "running_idle" {
 		t.Fatalf("unexpected interrupted state: turn=%s generation=%s session=%s", turnStatus, generationStatus, sessionStatus)
+	}
+	// Nothing is marked reclaimable, so no reaper will tear the sandbox down.
+	var liveResources int
+	if err := st.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM runtime_generation_resources
+WHERE generation_id = ? AND resource_state = 'live'`, generationID).Scan(&liveResources); err != nil {
+		t.Fatalf("query generation resources: %v", err)
+	}
+	if liveResources == 0 {
+		t.Fatalf("interrupt released the sandbox resources; the generation should survive a Stop")
 	}
 }
 
-// Stop scopes to the turn in flight: the turns queued behind it survive, and the
-// session stays running_active so nothing treats it as having no work left.
+// Stop scopes to the turn in flight, and parks the turns queued behind it: they
+// survive, stay visible, and wait for the user to release each one.
 //
-// This is the inverse of what this test used to assert. Cancelling the queue was
-// once necessary — interrupt retires the generation, ClaimNextTurn only grants
-// against a live one, so a surviving queued turn stranded until some later POST
-// happened to allocate a generation and then ran a prompt abandoned long ago.
-// Cold fallback removed that hazard by reconciling exactly this state, so Stop no
-// longer has to discard the user's pending work to stay safe. The companion test
-// below pins the handoff itself.
-func TestInterruptSessionPreservesQueuedTurns(t *testing.T) {
+// Both halves matter and used to be got wrong in opposite directions. Cancelling
+// the queue threw away prompts the user was still waiting on. Simply preserving it
+// as live work was no better: "Stop" would end one turn and start the next a
+// moment later, which is the same surprise in slower motion, and it kept the
+// session reporting pending work so the sandbox could never be reclaimed. Parked
+// is the third state — no dispatch without the user, and nothing owed until then.
+func TestInterruptSessionParksQueuedTurns(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	sessionID := "sess_interrupt_queue"
@@ -1066,18 +1091,49 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	if queuedStatus != "queued" {
 		t.Fatalf("queued turn status = %q, want queued", queuedStatus)
 	}
-	// Work is still pending, so the session must not report itself as idle: an idle
-	// session with a queue is what lets the idle-release sweeper checkpoint a
-	// session that still owes the user a reply.
-	if result.SessionStatus != "running_active" {
-		t.Fatalf("SessionStatus = %q, want running_active", result.SessionStatus)
+	// Parked is the part that makes this a Stop rather than a pause. The row keeps
+	// its 'queued' status — it is still a pending prompt as far as the user is
+	// concerned — but auto_dispatch is off, so ClaimNextTurn will not grant it.
+	var autoDispatch int
+	if err := st.db.QueryRowContext(ctx, `SELECT auto_dispatch FROM turns WHERE id = ?`, queued.TurnID).Scan(&autoDispatch); err != nil {
+		t.Fatalf("query queued turn auto_dispatch: %v", err)
+	}
+	if autoDispatch != 0 {
+		t.Fatalf("queued turn is still auto-dispatchable after Stop: the agent would carry straight on to the next prompt")
+	}
+	// Idle, not active. A parked turn owes nothing until the user releases it, so
+	// holding the session active would pin a warm sandbox and block checkpointing
+	// indefinitely for a prompt that may never run.
+	if result.SessionStatus != "running_idle" {
+		t.Fatalf("SessionStatus = %q, want running_idle", result.SessionStatus)
 	}
 	var sessionStatus string
 	if err := st.db.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&sessionStatus); err != nil {
 		t.Fatalf("query session: %v", err)
 	}
+	if sessionStatus != "running_idle" {
+		t.Fatalf("persisted session status = %q, want running_idle", sessionStatus)
+	}
+	// The whole point of parking: releasing the turn hands it back to the worker,
+	// and only that turn.
+	if _, err := st.ReleaseParkedTurn(ctx, ReleaseParkedTurnParams{
+		SessionID: sessionID,
+		TurnID:    queued.TurnID,
+		Now:       now.Add(3 * time.Second),
+	}); err != nil {
+		t.Fatalf("release parked turn: %v", err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT auto_dispatch FROM turns WHERE id = ?`, queued.TurnID).Scan(&autoDispatch); err != nil {
+		t.Fatalf("query released turn: %v", err)
+	}
+	if autoDispatch != 1 {
+		t.Fatalf("released turn is still parked")
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&sessionStatus); err != nil {
+		t.Fatalf("query session after release: %v", err)
+	}
 	if sessionStatus != "running_active" {
-		t.Fatalf("persisted session status = %q, want running_active", sessionStatus)
+		t.Fatalf("session status after release = %q, want running_active", sessionStatus)
 	}
 
 	// The interrupted turn was asked, so its message stays. The queued one has not
@@ -1092,18 +1148,40 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	}
 }
 
-// The load-bearing half of the change above: the state Stop leaves behind must be
-// the state cold fallback picks up. If this ever stops matching, a preserved queue
-// silently becomes a stranded one — the exact failure the old cancel-everything
-// behavior was defending against.
-func TestInterruptSessionLeavesQueueVisibleToColdFallback(t *testing.T) {
+// The load-bearing half of parking: a parked turn must be unclaimable, and
+// releasing it must make it claimable again.
+//
+// This replaces a test that asserted the opposite handoff. Stop used to retire the
+// generation, which stranded any surviving queued turn until cold fallback
+// reconciled it — so the invariant worth pinning then was "an interrupted queue is
+// visible to cold fallback". Stop no longer touches the generation, so there is
+// nothing for cold fallback to reconcile; what has to hold instead is that the
+// worker leaves a parked turn alone. If it ever claims one, Stop silently stops
+// nothing: the next prompt starts on its own moments later, which is the surprise
+// parking exists to prevent.
+func TestInterruptSessionParksQueueBeyondTheWorkersReach(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	sessionID := "sess_interrupt_handoff"
-	generationID := "gen_interrupt_handoff"
-	createStoreSession(t, ctx, st, sessionID)
-	createActiveGeneration(t, ctx, st, sessionID, generationID, GenerationLeaseOwner(owner.UUID))
 	now := time.Now().UTC()
+	createStoreSession(t, ctx, st, sessionID)
+	// A real allocation with live resources: ClaimNextTurn requires a live sandbox
+	// instance, so a hand-written generation row would make it return "no turn" for
+	// the wrong reason and the test would pass without testing anything.
+	allocation, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
+		SessionID: sessionID,
+		Owner:     GenerationLeaseOwner(owner.UUID),
+		LeaseTTL:  time.Hour,
+		Now:       now,
+		Config:    testAllocatorConfig(t),
+	})
+	if err != nil {
+		t.Fatalf("allocate generation: %v", err)
+	}
+	if err := st.MarkGenerationResourcesLive(ctx, sessionID, allocation.GenerationID, allocation.Owner, now); err != nil {
+		t.Fatalf("mark resources live: %v", err)
+	}
+	createLiveRuntimeResourceInstanceForAllocation(t, ctx, st, sessionID, allocation, owner.UUID, "host-park", now)
 
 	running, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "long task", Now: now})
 	if err != nil {
@@ -1112,48 +1190,65 @@ func TestInterruptSessionLeavesQueueVisibleToColdFallback(t *testing.T) {
 	if _, err := st.db.ExecContext(ctx, `
 UPDATE turns
 SET status = 'running', generation_id = ?, lease_owner = ?, lease_expires_at = ?, ack_started_at = ?
-WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Add(time.Minute)), formatTime(now), running.TurnID); err != nil {
+WHERE id = ?`, allocation.GenerationID, allocation.Owner, formatTime(now.Add(time.Hour)), formatTime(now), running.TurnID); err != nil {
 		t.Fatalf("set running turn: %v", err)
 	}
-	if _, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "and then this", Now: now.Add(time.Second)}); err != nil {
+	queued, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "and then this", Now: now.Add(time.Second)})
+	if err != nil {
 		t.Fatalf("enqueue queued turn: %v", err)
 	}
 	if _, err := st.InterruptSession(ctx, InterruptSessionParams{
 		SessionID:    sessionID,
-		GenerationID: generationID,
+		GenerationID: allocation.GenerationID,
 		OwnerUUID:    owner.UUID,
 		Now:          now.Add(2 * time.Second),
 	}); err != nil {
 		t.Fatalf("interrupt session: %v", err)
 	}
 
-	fallbacks, err := st.ListColdFallbackSessions(ctx)
+	// The worker asks for work the way the bridge does. The parked turn is still
+	// 'queued' and unleased, so only auto_dispatch keeps it from being granted.
+	if grant, ok, err := st.ClaimNextTurn(ctx, ClaimNextTurnParams{
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		Owner:        allocation.Owner,
+		RequestID:    "req_parked",
+		LeaseTTL:     30 * time.Second,
+		Now:          now.Add(3 * time.Second),
+	}); err != nil {
+		t.Fatalf("claim after interrupt: %v", err)
+	} else if ok {
+		t.Fatalf("the worker claimed a parked turn (%+v): Stop did not stop the queue", grant)
+	}
+
+	// Releasing it hands exactly that turn back to the worker.
+	if _, err := st.ReleaseParkedTurn(ctx, ReleaseParkedTurnParams{
+		SessionID: sessionID,
+		TurnID:    queued.TurnID,
+		Now:       now.Add(4 * time.Second),
+	}); err != nil {
+		t.Fatalf("release parked turn: %v", err)
+	}
+	grant, ok, err := st.ClaimNextTurn(ctx, ClaimNextTurnParams{
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		Owner:        allocation.Owner,
+		RequestID:    "req_released",
+		LeaseTTL:     30 * time.Second,
+		Now:          now.Add(5 * time.Second),
+	})
 	if err != nil {
-		t.Fatalf("list cold fallback sessions: %v", err)
+		t.Fatalf("claim after release: %v", err)
 	}
-	var found *ColdFallbackSession
-	for i := range fallbacks {
-		if fallbacks[i].Session.ID == sessionID {
-			found = &fallbacks[i]
-			break
-		}
-	}
-	if found == nil {
-		t.Fatalf("interrupted session with a queue is invisible to cold fallback: its turns would never be claimed (got %+v)", fallbacks)
-	}
-	if found.QueuedTurns != 1 {
-		t.Fatalf("QueuedTurns = %d, want 1", found.QueuedTurns)
-	}
-	if found.OldGeneration != generationID {
-		t.Fatalf("OldGeneration = %q, want %q", found.OldGeneration, generationID)
+	if !ok || grant.TurnID != queued.TurnID {
+		t.Fatalf("released turn was not claimable: ok=%v grant=%+v want turn %d", ok, grant, queued.TurnID)
 	}
 }
 
-// A Stop pressed when only queued turns remain must not eat the queue. This press
-// is reachable: the composer offers Stop from the coarse session status until its
-// first projection arrives, and that status is now running_active while a queue is
-// pending. Idempotent is the requirement — one stray press must not undo the very
-// preservation this change exists for.
+// A second Stop must be a harmless no-op. The press is reachable — the composer
+// offers Stop from the coarse session status until its first projection arrives,
+// and a double-click lands both — so it must neither error nor eat the queue the
+// first press just parked.
 func TestInterruptSessionQueueOnlyPressIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
@@ -1195,15 +1290,35 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	if err != nil {
 		t.Fatalf("second interrupt: %v", err)
 	}
-	if second.PendingQueued != 1 || second.SessionStatus != "running_active" {
-		t.Fatalf("second interrupt changed the session: %+v", second)
+	// Nothing left to park (the first press did it) and nothing executing, so the
+	// second press reports no work and emits no event: an event here would make
+	// every client redraw a session that did not change.
+	if second.PendingQueued != 0 {
+		t.Fatalf("second interrupt parked turns again: %+v", second)
 	}
+	if second.InterruptedTurnID != 0 {
+		t.Fatalf("second interrupt claimed to stop a turn: %+v", second)
+	}
+	if len(second.EventIDs) != 0 {
+		t.Fatalf("a no-op Stop published an event: %+v", second.EventIDs)
+	}
+	if second.SessionStatus != "running_idle" {
+		t.Fatalf("second interrupt session status = %q, want running_idle", second.SessionStatus)
+	}
+	// The queued turn is untouched and still parked: still the user's to release.
 	var status string
-	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, queued.TurnID).Scan(&status); err != nil {
+	var autoDispatch int
+	if err := st.db.QueryRowContext(ctx, `SELECT status, auto_dispatch FROM turns WHERE id = ?`, queued.TurnID).Scan(&status, &autoDispatch); err != nil {
 		t.Fatalf("query queued turn: %v", err)
 	}
 	if status != "queued" {
 		t.Fatalf("a second Stop destroyed the queued turn: status = %q, want queued", status)
+	}
+	if autoDispatch != 0 {
+		t.Fatalf("a second Stop un-parked the queued turn")
+	}
+	if len(second.Runtime.QueuedTurns) != 1 || second.Runtime.QueuedTurns[0].ID != queued.TurnID {
+		t.Fatalf("queue after second interrupt = %+v, want just turn %d", second.Runtime.QueuedTurns, queued.TurnID)
 	}
 }
 

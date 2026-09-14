@@ -7104,38 +7104,39 @@ func TestInterruptSessionPreservesQueuedTurnsAndReportsDepth(t *testing.T) {
 	if response.Runtime.ActiveTurn != nil {
 		t.Fatalf("the interrupted turn survived: %+v", response.Runtime.ActiveTurn)
 	}
-	if len(response.Runtime.QueuedTurns) != 1 || response.Runtime.QueuedTurns[0].ID != turnIDs[1] {
-		t.Fatalf("queue after interrupt = %+v, want just turn %d", response.Runtime.QueuedTurns, turnIDs[1])
+	// Still the user's prompt, and reported as parked: waiting on them, not on the
+	// agent, so the UI can offer it back rather than implying it is about to run.
+	if len(response.Runtime.QueuedTurns) != 1 || response.Runtime.QueuedTurns[0].ID != turnIDs[1] ||
+		!response.Runtime.QueuedTurns[0].Parked {
+		t.Fatalf("queue after interrupt = %+v, want just turn %d, parked", response.Runtime.QueuedTurns, turnIDs[1])
 	}
-	// Still busy, because work is still pending. Reporting idle here would let the
-	// idle-release sweeper checkpoint a session that still owes the user a reply.
-	if response.Status != string(sessionstate.RunningActive) {
-		t.Fatalf("status = %q, want %q", response.Status, sessionstate.RunningActive)
+	// Idle, because a parked queue is not pending work: nothing will run until the
+	// user releases a row. Reporting running_active instead would pin the sandbox
+	// for a queue that may never be released, and block checkpointing forever.
+	if response.Status != string(sessionstate.RunningIdle) {
+		t.Fatalf("status = %q, want %q", response.Status, sessionstate.RunningIdle)
 	}
 	var queuedStatus string
+	var autoDispatch int
 	if err := st.DBForTest().QueryRowContext(ctx,
-		`SELECT status FROM turns WHERE id = ?`, turnIDs[1]).Scan(&queuedStatus); err != nil {
+		`SELECT status, auto_dispatch FROM turns WHERE id = ?`, turnIDs[1]).Scan(&queuedStatus, &autoDispatch); err != nil {
 		t.Fatalf("query queued turn: %v", err)
 	}
-	if queuedStatus != "queued" {
-		t.Fatalf("queued turn status = %q, want queued", queuedStatus)
+	if queuedStatus != "queued" || autoDispatch != 0 {
+		t.Fatalf("queued turn = status %q auto_dispatch %d, want queued and parked", queuedStatus, autoDispatch)
 	}
-	// A queue that cannot be claimed is worse than one that was dropped, because
-	// nothing says so. Cold fallback is what claims it, so the state left behind
-	// must be the state it selects on.
+	// Cold fallback must NOT pick this up. It exists to allocate a replacement
+	// generation for a queue that would otherwise strand — but Stop now leaves the
+	// generation alive, and the queue parked on purpose. Starting a sandbox here
+	// would resume the very work the user just stopped.
 	fallbacks, err := st.ListColdFallbackSessions(ctx)
 	if err != nil {
 		t.Fatalf("list cold fallback sessions: %v", err)
 	}
-	queuedForFallback := false
 	for _, fallback := range fallbacks {
 		if fallback.Session.ID == session.ID {
-			queuedForFallback = true
-			break
+			t.Fatalf("cold fallback would resume a parked queue: %+v", fallback)
 		}
-	}
-	if !queuedForFallback {
-		t.Fatalf("preserved queue is invisible to cold fallback, so it would never run: %+v", fallbacks)
 	}
 }
 

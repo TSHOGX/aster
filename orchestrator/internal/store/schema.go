@@ -494,9 +494,27 @@ CREATE TABLE IF NOT EXISTS turns (
   -- user never typed them. The message row is written at dispatch, not at enqueue
   -- (see materializeTurnMessageTx for why).
   materializes_message INTEGER NOT NULL DEFAULT 0 CHECK(materializes_message IN (0,1)),
+  -- Whether the worker may claim this turn on its own. Cleared for the turns
+  -- still queued when the user presses Stop: Stop means "stop and do not
+  -- continue", so the rest of the queue is parked rather than discarded, and the
+  -- user releases each prompt themselves.
+  --
+  -- A parked turn is dormant, not pending. It does not keep the generation
+  -- active, block a checkpoint, or hold a sandbox: releasing it costs a cold
+  -- start, exactly as typing it fresh would. Every "is there pending work"
+  -- predicate therefore also requires auto_dispatch = 1 (see
+  -- pendingTurnPredicate), which is sound because only a queued turn is ever
+  -- parked — see parkQueuedTurnsTx.
+  auto_dispatch INTEGER NOT NULL DEFAULT 1 CHECK(auto_dispatch IN (0,1)),
+  -- Set when this turn's content was delivered by steering it into another turn
+  -- that was already running, instead of being dispatched as a turn of its own.
+  -- pi's steer injects into the live turn and produces no turn of its own, so the
+  -- row is retired as completed and this records where its content went.
+  steered_into_turn_id INTEGER,
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
   FOREIGN KEY(generation_id) REFERENCES runtime_generations(generation_id),
-  FOREIGN KEY(completed_by_generation) REFERENCES runtime_generations(generation_id)
+  FOREIGN KEY(completed_by_generation) REFERENCES runtime_generations(generation_id),
+  FOREIGN KEY(steered_into_turn_id) REFERENCES turns(id)
 );
 
 -- The turn_revision triggers live in ensureTurnColumns, not here: their WHEN
@@ -1008,6 +1026,8 @@ func (s *Store) ensureTurnColumns(ctx context.Context) error {
 		{"phase_tool", `ALTER TABLE turns ADD COLUMN phase_tool TEXT`},
 		{"phase_detail", `ALTER TABLE turns ADD COLUMN phase_detail TEXT`},
 		{"materializes_message", `ALTER TABLE turns ADD COLUMN materializes_message INTEGER NOT NULL DEFAULT 0`},
+		{"auto_dispatch", `ALTER TABLE turns ADD COLUMN auto_dispatch INTEGER NOT NULL DEFAULT 1`},
+		{"steered_into_turn_id", `ALTER TABLE turns ADD COLUMN steered_into_turn_id INTEGER`},
 	}
 	for _, column := range columns {
 		exists, err := s.columnExists(ctx, "turns", column.name)
@@ -1032,22 +1052,33 @@ func (s *Store) ensureTurnColumns(ctx context.Context) error {
 	// Created here rather than in the main DDL because the WHEN clause references
 	// the phase columns added just above. No recursion risk: the triggers write
 	// only to sessions, which has no trigger back onto turns.
+	//
+	// Dropped and recreated rather than CREATE IF NOT EXISTS: the WHEN clause has
+	// grown a column since, and a database that already carries the old trigger
+	// would keep it forever behind an IF NOT EXISTS — parking a turn would then
+	// change no watched column, leave turn_revision alone, and every client would
+	// discard the snapshot that says the queue is parked. Recreating is cheap DDL
+	// on the writer before the reader pool opens.
 	if _, err := s.db.ExecContext(ctx, `
-CREATE TRIGGER IF NOT EXISTS turns_revision_insert
+DROP TRIGGER IF EXISTS turns_revision_insert;
+DROP TRIGGER IF EXISTS turns_revision_update;
+DROP TRIGGER IF EXISTS turns_revision_delete;
+CREATE TRIGGER turns_revision_insert
 AFTER INSERT ON turns
 BEGIN
   UPDATE sessions SET turn_revision = turn_revision + 1 WHERE id = NEW.session_id;
 END;
-CREATE TRIGGER IF NOT EXISTS turns_revision_update
+CREATE TRIGGER turns_revision_update
 AFTER UPDATE ON turns
 WHEN OLD.status <> NEW.status
   OR COALESCE(OLD.phase,'') <> COALESCE(NEW.phase,'')
   OR COALESCE(OLD.phase_tool,'') <> COALESCE(NEW.phase_tool,'')
   OR COALESCE(OLD.phase_detail,'') <> COALESCE(NEW.phase_detail,'')
+  OR OLD.auto_dispatch <> NEW.auto_dispatch
 BEGIN
   UPDATE sessions SET turn_revision = turn_revision + 1 WHERE id = NEW.session_id;
 END;
-CREATE TRIGGER IF NOT EXISTS turns_revision_delete
+CREATE TRIGGER turns_revision_delete
 AFTER DELETE ON turns
 BEGIN
   UPDATE sessions SET turn_revision = turn_revision + 1 WHERE id = OLD.session_id;

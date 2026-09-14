@@ -67,6 +67,11 @@ type TurnSnapshot struct {
 	ToolDetail string     `json:"tool_detail,omitempty"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
+	// Parked means the worker will not claim this turn until the user releases it
+	// — the state Stop leaves the rest of the queue in. The queue row renders
+	// differently for it: a parked turn is waiting on the user, not on the agent,
+	// so presenting it as "up next" would be a lie the user cannot act on.
+	Parked bool `json:"parked,omitempty"`
 }
 
 // SessionRuntimeSnapshot is the whole contract. The same value is served by
@@ -129,7 +134,7 @@ type SessionRuntimeSnapshot struct {
 	QueuedTurns []TurnSnapshot `json:"queued_turns"`
 }
 
-const turnSnapshotColumns = `id, sequence, content, status, phase, phase_at, phase_tool, phase_detail, started_at, created_at`
+const turnSnapshotColumns = `id, sequence, content, status, phase, phase_at, phase_tool, phase_detail, started_at, created_at, auto_dispatch`
 
 // GetSessionRuntimeSnapshot reads the durable projection for one session.
 func (s *Store) GetSessionRuntimeSnapshot(ctx context.Context, sessionID string) (SessionRuntimeSnapshot, error) {
@@ -159,6 +164,10 @@ WHERE s.id = ?`, sessionID).Scan(&out.SessionStatus, &out.Revision, &generationS
 	out.Sandbox = deriveSandboxState(generationStatus, resourceState)
 	out.QueuedTurns = []TurnSnapshot{}
 
+	// Deliberately NOT pendingTurnPredicate: a parked turn is still the user's
+	// pending prompt and has to stay visible, or Stop would look like it discarded
+	// the queue after all. Parked-ness is carried per row instead, so the client can
+	// render it as waiting-on-you rather than waiting-on-the-agent.
 	rows, err := db.QueryContext(ctx, `
 SELECT `+turnSnapshotColumns+`
 FROM turns
@@ -211,11 +220,13 @@ func scanTurnSnapshot(row rowScanner) (TurnSnapshot, error) {
 		detail    sql.NullString
 		startedAt sql.NullString
 		createdAt sql.NullString
+		dispatch  int
 	)
 	if err := row.Scan(&turn.ID, &turn.Sequence, &turn.Content, &turn.Status,
-		&phase, &phaseAt, &tool, &detail, &startedAt, &createdAt); err != nil {
+		&phase, &phaseAt, &tool, &detail, &startedAt, &createdAt, &dispatch); err != nil {
 		return TurnSnapshot{}, err
 	}
+	turn.Parked = dispatch == 0
 	if phase.Valid {
 		turn.Phase = TurnPhase(phase.String)
 	}
@@ -358,7 +369,7 @@ WHERE id = ?
   AND NOT EXISTS (
     SELECT 1 FROM turns
     WHERE session_id = ?
-      AND status IN ('queued','leased','running')
+      AND `+pendingTurnPredicate+`
   )`,
 		string(sessionstate.RunningIdle), formatTime(p.Now), p.SessionID,
 		string(sessionstate.RunningActive), p.SessionID); err != nil {

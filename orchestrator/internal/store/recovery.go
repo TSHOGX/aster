@@ -237,7 +237,7 @@ WHERE generation_id = ?
 		if err := tx.QueryRowContext(ctx, `
 SELECT CASE WHEN EXISTS (
          SELECT 1 FROM turns
-         WHERE session_id = ? AND status IN ('queued','leased','running')
+         WHERE session_id = ? AND `+pendingTurnPredicate+`
        ) THEN 'running_active' ELSE 'running_idle' END`, c.sessionID).Scan(&nextStatus); err != nil {
 			return nil, err
 		}
@@ -728,7 +728,7 @@ SET status = CASE
       WHEN EXISTS (
         SELECT 1 FROM turns
         WHERE turns.session_id = sessions.id
-          AND turns.status IN ('queued','leased','running')
+          AND `+pendingTurnPredicateFor("turns")+`
       ) THEN 'running_active'
       ELSE 'running_idle'
     END,
