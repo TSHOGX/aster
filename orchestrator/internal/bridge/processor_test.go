@@ -935,6 +935,131 @@ WHERE generation_id = ?
 	}
 }
 
+// TestProcessorDiscardsOutputForTerminalTurn pins the host half of the
+// stream-desync fix: output that arrives for a turn the host has already retired
+// must be dropped, not retried forever.
+//
+// Before the fix this envelope's CAS failure was returned raw from handle(), so
+// ProcessOnce aborted before unlinking the file and the poll loop re-read the
+// same record on every pass — one generation logged 2277 "output event turn CAS
+// failed" lines in two minutes, and because ProcessOnce never got past it, no
+// later envelope (including the runtime projection the UI waits on) was ever
+// processed. That is what froze the client on "Agent is thinking…".
+func TestProcessorDiscardsOutputForTerminalTurn(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openBridgeStore(t, ctx)
+	sessionID := "sess_output_terminal_turn"
+	createBridgeSession(t, ctx, st, sessionID)
+	allocation, details := allocateBridgeGeneration(t, ctx, st, owner, sessionID)
+	turnID, err := st.EnqueueTurn(ctx, sessionID, "stream desync", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("enqueue turn: %v", err)
+	}
+	if _, ok, err := st.ClaimNextTurn(ctx, store.ClaimNextTurnParams{
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		Owner:        allocation.Owner,
+		RequestID:    "direct_claim",
+		LeaseTTL:     time.Minute,
+		Now:          time.Now().UTC(),
+	}); err != nil || !ok {
+		t.Fatalf("claim setup: ok=%v err=%v", ok, err)
+	}
+	processor := &Processor{
+		Store:    st,
+		Owner:    allocation.Owner,
+		LeaseTTL: time.Minute,
+	}
+	writeOutbox(t, ctx, details.BridgeDirPath, Envelope{
+		MessageID:    "msg_started",
+		RequestID:    "req_started",
+		Type:         TypeAckTurnStarted,
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		TurnID:       &turnID,
+		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
+	})
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+		t.Fatalf("process ack started: %v", err)
+	}
+
+	// Retire the turn, exactly as a stopped or completed turn is retired.
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnParams{
+		SessionID:      sessionID,
+		GenerationID:   allocation.GenerationID,
+		TurnID:         turnID,
+		Owner:          allocation.Owner,
+		TerminalStatus: "canceled",
+		ErrorClass:     "user_interrupted",
+		Error:          "interrupted by user",
+		EventType:      TypeAckTurnCompleted,
+		EventDedupeKey: fmt.Sprintf("ack_completed:%s:%d", allocation.GenerationID, turnID),
+		EventPayload:   map[string]any{"status": "canceled"},
+		Now:            time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("complete turn: %v", err)
+	}
+
+	// Late output for the retired turn, plus a second envelope behind it. The
+	// second one is the real assertion: it only lands if ProcessOnce got past
+	// the first instead of aborting the whole pass.
+	writeOutbox(t, ctx, details.BridgeDirPath, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "late"))
+	writeOutbox(t, ctx, details.BridgeDirPath, Envelope{
+		MessageID:    "msg_heartbeat",
+		RequestID:    "req_heartbeat",
+		Type:         TypeHeartbeat,
+		SessionID:    sessionID,
+		GenerationID: allocation.GenerationID,
+		Payload:      json.RawMessage(`{}`),
+	})
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+		t.Fatalf("process late output: %v", err)
+	}
+
+	// The outbox must be drained: a retained file is the retry storm.
+	remaining, err := OpenQueue(details.BridgeDirPath, OutboxDir)
+	if err != nil {
+		t.Fatalf("open outbox: %v", err)
+	}
+	files, err := remaining.ReadAll()
+	if err != nil {
+		t.Fatalf("read outbox: %v", err)
+	}
+	if len(files) != 0 {
+		types := make([]string, 0, len(files))
+		for _, file := range files {
+			types = append(types, file.Envelope.Type)
+		}
+		t.Fatalf("outbox not drained, %d envelope(s) retained: %v", len(files), types)
+	}
+
+	// The late output must not be durable.
+	var outputCount int
+	if err := st.DBForTest().QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM events
+WHERE generation_id = ?
+  AND turn_id = ?
+  AND type = ?`, allocation.GenerationID, turnID, TypeEmitOutput).Scan(&outputCount); err != nil {
+		t.Fatalf("query output count: %v", err)
+	}
+	if outputCount != 0 {
+		t.Fatalf("output for a terminal turn should be discarded, got %d event(s)", outputCount)
+	}
+
+	// A terminal-turn discard is not a generation fault: the generation must
+	// stay usable, or a single stopped turn would cost the user their sandbox.
+	var generationStatus string
+	if err := st.DBForTest().QueryRowContext(ctx,
+		`SELECT status FROM runtime_generations WHERE generation_id = ?`,
+		allocation.GenerationID).Scan(&generationStatus); err != nil {
+		t.Fatalf("query generation status: %v", err)
+	}
+	if generationStatus == "failed" {
+		t.Fatalf("terminal-turn output must not retire the generation, status=%s", generationStatus)
+	}
+}
+
 func TestProcessorFailsGenerationWhenCompletionCommitFailsAfterOutput(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openBridgeStore(t, ctx)
