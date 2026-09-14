@@ -204,9 +204,14 @@ var driverSpecs = map[ID]DriverSpec{
 			"snapshot_disk",
 			"stdin",
 		},
-		ModelAccess:        true,
-		OutputFormat:       PiEventSchemaVersion,
-		SupportsInterrupt:  false,
+		ModelAccess:  true,
+		OutputFormat: PiEventSchemaVersion,
+		// pi's RPC protocol carries `abort`, so a turn is stopped in place: the turn
+		// ends with stopReason "aborted" and the pi process, its session history and
+		// the sandbox all survive. This said false while Stop was implemented as
+		// generation teardown, which read as a property of pi rather than of our
+		// bridge client — the real gap was ours, and it is closed.
+		SupportsInterrupt:  true,
 		SupportsCompaction: false,
 		Phase10Support: []string{
 			"single_driver_turns",
@@ -214,7 +219,7 @@ var driverSpecs = map[ID]DriverSpec{
 			"compaction:unsupported",
 			"skills:unsupported",
 			"hooks_mcp:unsupported",
-			"interrupt:unsupported",
+			"interrupt:supported",
 		},
 		BinaryPath: PiBinaryPath,
 		PackageFacts: DriverPackageFacts{
