@@ -98,6 +98,14 @@ export const ZH: Record<MessageKey, string> = {
   "composer.wakingSandbox": "正在唤醒沙箱，静置后的第一条消息会多等一会…",
   "composer.queueCancel": "从队列中移除",
   "composer.queueCancelFailed": "该消息已开始执行，请使用「停止」",
+  // 队列行上的 ↑ 按钮。同一次点击有两种行为，点之前就要让用户知道区别：
+  // 有轮次在跑时，文本会插入该轮（已完成的工作保留）；没有在跑时，则单独作为一轮开始。
+  "composer.queueSteer": "插入当前轮次",
+  "composer.queueSend": "立即发送",
+  "composer.queueSendFailed": "该消息已不在队列中，正在重新加载",
+  // 标注被「停止」暂存的队列行：它们在等用户，不是在等智能体。
+  // 不标注的话，看起来像马上就会执行，用户会一直干等。
+  "composer.queueParked": "等待你手动发送",
   "composer.unavailable": "此会话无法接收消息。",
   "composer.hint": "Enter 发送 · Shift+Enter 换行",
 

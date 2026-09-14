@@ -98,6 +98,16 @@ export const EN = {
   "composer.wakingSandbox": "Waking the sandbox — the first reply after a pause takes a little longer…",
   "composer.queueCancel": "Remove from queue",
   "composer.queueCancelFailed": "That message is already running — use Stop instead",
+  // The ↑ button on a queue row. Two labels because the same press does two
+  // different things, and the difference is worth telling the user before they
+  // click: with a turn running the text joins that turn (the work so far survives);
+  // with nothing running it starts as a turn of its own.
+  "composer.queueSteer": "Send into the current turn",
+  "composer.queueSend": "Send now",
+  "composer.queueSendFailed": "That message is no longer waiting — reloading the queue",
+  // Shown on rows Stop parked, which are waiting on the user and not on the agent.
+  // Without this they look like they are about to run, and the user waits forever.
+  "composer.queueParked": "Waiting for you to send",
   "composer.unavailable": "This session cannot accept messages.",
   "composer.hint": "Enter to send · Shift+Enter for newline",
 

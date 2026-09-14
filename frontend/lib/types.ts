@@ -60,6 +60,13 @@ export type ApiTurn = {
   tool_detail?: string;
   started_at?: string;
   created_at: string;
+  /**
+   * The worker will not claim this turn until the user releases it — the state
+   * Stop leaves the rest of the queue in. A parked row is waiting on the user, not
+   * on the agent, so it renders differently: presenting it as "up next" would be a
+   * promise nothing is going to keep.
+   */
+  parked?: boolean;
 };
 
 /**

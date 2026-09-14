@@ -145,9 +145,13 @@ export async function renameSession(sessionId: string, title: string) {
 }
 
 /**
- * Stop the current turn, and only that turn. Anything the user had queued behind
- * it survives and the next one starts on a fresh generation — `pending_queued`
- * says how many are still waiting, so the UI can say the queue is resuming.
+ * Stop the current turn, and only that turn. The abort reaches the agent inside
+ * the sandbox, so the sandbox, the workspace and the agent process all survive.
+ *
+ * Anything queued behind it survives too, but parked: `pending_queued` counts the
+ * rows now waiting on the user, each released with sendQueuedTurn. Nothing runs on
+ * its own behind a Stop — a prompt written for the turn that was just stopped is
+ * usually stale, and starting it a moment later is what Stop was pressed to avoid.
  */
 export async function interruptSession(sessionId: string) {
   return request<{ status: string; pending_queued?: number; runtime?: ApiSessionRuntime }>(
@@ -161,6 +165,25 @@ export async function cancelQueuedTurn(sessionId: string, turnId: number) {
   return request<ApiSessionRuntime>(
     `/api/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(String(turnId))}`,
     { method: "DELETE" }
+  );
+}
+
+/**
+ * Send one queued turn now.
+ *
+ * The server picks the mechanism from state the client cannot see reliably: with a
+ * turn executing the text is steered into it (`status: "steered"`, and the prompt
+ * becomes a transcript message immediately, because the agent has been told); with
+ * nothing executing the parked turn is released to run on its own
+ * (`status: "released"`).
+ *
+ * 409 means the row moved on between render and click — claimed, cancelled, or
+ * already sent. Re-read the projection rather than retrying.
+ */
+export async function sendQueuedTurn(sessionId: string, turnId: number) {
+  return request<{ status: string; message?: ApiMessage; runtime?: ApiSessionRuntime }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(String(turnId))}/send`,
+    { method: "POST" }
   );
 }
 

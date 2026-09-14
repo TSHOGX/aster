@@ -30,7 +30,8 @@ import {
   markNotificationRead as apiMarkNotificationRead,
   postMessage as apiPostMessage,
   postMessageFeedback,
-  renameSession as apiRenameSession
+  renameSession as apiRenameSession,
+  sendQueuedTurn as apiSendQueuedTurn
 } from "@/lib/api";
 import { isRecord } from "@/lib/guards";
 import {
@@ -111,6 +112,11 @@ type HarnessActions = {
   interruptSession: (id: string) => Promise<{ ok: boolean; error?: string }>;
   /** Withdraw a turn the user queued but no longer wants. */
   cancelQueuedTurn: (id: string, turnId: number) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Send one queued turn now: steered into the running turn if there is one,
+   * otherwise released to run on its own. The server decides which.
+   */
+  sendQueuedTurn: (id: string, turnId: number) => Promise<{ ok: boolean; error?: string }>;
   sendMessage: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
   submitFeedback: (
     sessionId: string,
@@ -1118,6 +1124,23 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     return { ok: true as const };
   }, [applyRuntime, refreshRuntime]);
 
+  const sendQueuedTurn = useCallback(async (id: string, turnId: number) => {
+    const res = await apiSendQueuedTurn(id, turnId);
+    if (!res.ok) {
+      // 409 means the row moved on between render and click — claimed, cancelled,
+      // or already sent. Re-read rather than retry: the queue the button was drawn
+      // from is stale, and a retry would act on the same stale row.
+      if (res.status === 409) refreshRuntime(id);
+      return { ok: false as const, error: res.error };
+    }
+    if (res.data.runtime) applyRuntime(id, res.data.runtime);
+    // A steer puts the prompt in the transcript straight away — the agent has been
+    // told, so the user has to see what was said. The `message.created` event
+    // carries it, and this poll covers the case where the stream is not attached.
+    if (res.data.status === "steered") void pollConversation(id);
+    return { ok: true as const };
+  }, [applyRuntime, pollConversation, refreshRuntime]);
+
   const sendMessage = useCallback(
     async (id: string, content: string) => {
       pendingMessageSessionIdsRef.current.add(id);
@@ -1192,6 +1215,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       renameSession,
       interruptSession,
       cancelQueuedTurn,
+      sendQueuedTurn,
       sendMessage,
       submitFeedback,
       refresh,
@@ -1207,6 +1231,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       renameSession,
       interruptSession,
       cancelQueuedTurn,
+      sendQueuedTurn,
       sendMessage,
       submitFeedback,
       refresh,

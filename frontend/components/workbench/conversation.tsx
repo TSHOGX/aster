@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bot, Clock, Loader2, RefreshCw, RotateCw, Sparkles, X } from "lucide-react";
+import { ArrowUp, Bot, Clock, Loader2, RefreshCw, RotateCw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { useActivity, useConversation, useHarness, useSelectedSession, useSessionRuntime } from "@/components/harness-provider";
@@ -35,7 +35,7 @@ function ChatConversation() {
   const convo = useConversation(session?.id ?? null);
   const activity = useActivity(session?.id ?? null);
   const runtime = useSessionRuntime(session?.id ?? null);
-  const { sendMessage, interruptSession, cancelQueuedTurn, refresh } = useHarness();
+  const { sendMessage, interruptSession, cancelQueuedTurn, sendQueuedTurn, refresh } = useHarness();
   const [refreshing, setRefreshing] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
@@ -43,6 +43,9 @@ function ChatConversation() {
   // the server answered, and a cancel competes for the orchestrator's single
   // writer, so a slow one looked like a missed click and got clicked again.
   const [cancelling, setCancelling] = useState<ReadonlySet<number>>(() => new Set());
+  // Same for ↑: a steer waits on a file write the sandbox has to pick up, so the
+  // button has to show it is working or it reads as a dead click.
+  const [sending, setSending] = useState<ReadonlySet<number>>(() => new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number | null>(null);
 
@@ -303,6 +306,26 @@ function ChatConversation() {
               turns={queuedTurns}
               error={queueError}
               cancelling={cancelling}
+              sending={sending}
+              // Whether ↑ steers into the running turn or releases the row to run on
+              // its own. The server decides for real; this only picks the label, so a
+              // stale projection mislabels a button rather than misrouting a prompt.
+              steers={runtime?.active_turn != null}
+              onSend={async (turnId) => {
+                if (sending.has(turnId)) return;
+                setQueueError(null);
+                setSending((prev) => new Set(prev).add(turnId));
+                try {
+                  const result = await sendQueuedTurn(session.id, turnId);
+                  if (!result.ok) setQueueError(result.error ?? t("composer.queueSendFailed"));
+                } finally {
+                  setSending((prev) => {
+                    const next = new Set(prev);
+                    next.delete(turnId);
+                    return next;
+                  });
+                }
+              }}
               onCancel={async (turnId) => {
                 if (cancelling.has(turnId)) return;
                 setQueueError(null);
@@ -335,20 +358,31 @@ function ChatConversation() {
 /**
  * The user's pending turns, straight from the runtime projection.
  *
- * Deliberately a pure render of server state with one action. The turns are
- * durable and the orchestrator drains them in order, so there is no local queue
- * to advance and nothing to reconcile — removing an entry has to be a request,
- * because hiding it locally would leave the prompt to execute anyway.
+ * Deliberately a pure render of server state. The turns are durable and the
+ * orchestrator drains them in order, so there is no local queue to advance and
+ * nothing to reconcile — acting on an entry has to be a request, because hiding it
+ * locally would leave the prompt to execute anyway.
+ *
+ * Each row has two actions, and neither is a queue-wide operation: ↑ sends this
+ * one, X withdraws it. One prompt at a time is the point — after a Stop the queue
+ * is usually stale, so the user picks what still matters rather than being handed
+ * an all-or-nothing choice.
  */
 function QueuedTurns({
   turns,
   error,
   cancelling,
+  sending,
+  steers,
+  onSend,
   onCancel
 }: {
   turns: ApiTurn[];
   error: string | null;
   cancelling: ReadonlySet<number>;
+  sending: ReadonlySet<number>;
+  steers: boolean;
+  onSend: (turnId: number) => void | Promise<void>;
   onCancel: (turnId: number) => void | Promise<void>;
 }) {
   const t = useT();
@@ -363,11 +397,38 @@ function QueuedTurns({
           key={turn.id}
           className="flex items-center gap-3 border-b border-[var(--color-border)] px-3 py-2 last:border-b-0"
         >
-          <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-foreground)]">{turn.content}</span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm text-[var(--color-foreground)]">{turn.content}</div>
+            {/* Only a parked row gets the hint. An unparked one is already on its
+                way to the worker, so saying it waits for the user would be wrong. */}
+            {turn.parked ? (
+              <div className="text-2xs text-[var(--color-foreground-muted)]">{t("composer.queueParked")}</div>
+            ) : null}
+          </div>
+          {/* The label follows what the press will actually do, which the server
+              decides from the same active/idle split: with a turn executing the
+              text is steered into it, otherwise the row is released to run on its
+              own. Promising "send now" mid-turn would misdescribe a steer. */}
+          <button
+            type="button"
+            onClick={() => void onSend(turn.id)}
+            disabled={sending.has(turn.id) || cancelling.has(turn.id)}
+            className="shrink-0 rounded p-0.5 text-[var(--color-foreground-muted)] transition-colors hover:text-[var(--color-accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-wait disabled:opacity-60"
+            title={steers ? t("composer.queueSteer") : t("composer.queueSend")}
+            aria-label={steers ? t("composer.queueSteer") : t("composer.queueSend")}
+          >
+            {sending.has(turn.id) ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+            )}
+          </button>
           <button
             type="button"
             onClick={() => void onCancel(turn.id)}
-            disabled={cancelling.has(turn.id)}
+            // Also inert mid-send: the row is being delivered, and withdrawing it
+            // now would race a steer that has already reached the agent.
+            disabled={cancelling.has(turn.id) || sending.has(turn.id)}
             className="shrink-0 rounded p-0.5 text-[var(--color-foreground-muted)] transition-colors hover:text-[var(--color-danger)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-wait disabled:opacity-60"
             title={t("composer.queueCancel")}
             aria-label={t("composer.queueCancel")}
