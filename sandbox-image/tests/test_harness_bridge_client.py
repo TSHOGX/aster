@@ -1803,11 +1803,14 @@ class EntrypointStaticTest(unittest.TestCase):
         produce no effect at all.
         """
         with tempfile.TemporaryDirectory() as root:
-            before = threading.active_count()
+            # Set difference over the live thread objects, not active_count(): a
+            # daemon watcher another test just stopped may still be winding down,
+            # which would inflate a count-based baseline and fail this at random.
+            before = set(threading.enumerate())
             self._write_control(root, self._control_payload())
             stop = bridge.start_turn_control_watcher(root, object(), 7, interval=0.01)
             time.sleep(0.1)
-            self.assertEqual(threading.active_count(), before, "no watcher thread should have started")
+            self.assertEqual(set(threading.enumerate()) - before, set(), "no watcher thread should have started")
             # Still returns a usable Event so execute_grant's finally can call set()
             # unconditionally.
             stop.set()
