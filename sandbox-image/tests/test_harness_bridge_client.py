@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1633,6 +1635,182 @@ class EntrypointStaticTest(unittest.TestCase):
         self.assertIn('emit("PI_SKIP_VERSION_CHECK", driver_runtime_value("pi_skip_version_check"))', text)
         self.assertIn('pi_telemetry_disabled = driver_runtime_value("pi_telemetry_disabled")', text)
         self.assertIn('emit("PI_TELEMETRY", "0" if pi_telemetry_disabled else "1")', text)
+
+    # ---- host → sandbox turn control (abort / steer) ----
+    #
+    # These pin the delivery path that lets a Stop reach a turn that is already
+    # executing. Before it existed, the only way to stop a turn was to destroy the
+    # generation, which cost the user their sandbox and every queued follow-up.
+
+    def _control_payload(self, **overrides):
+        payload = {"command": "abort", "token": "tok-1", "turn_id": 7}
+        payload.update(overrides)
+        return payload
+
+    def _write_control(self, root, payload):
+        inbox = Path(root) / bridge.INBOX
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / bridge.TURN_CONTROL_FILE).write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_turn_control_file_is_invisible_to_the_message_queue(self):
+        """The control file shares the inbox with seq-named responses.
+
+        It must be inert there: the queue reader has to skip it (it is not a
+        response) and the host's prune must not treat it as one. Both hinge on the
+        name not parsing as a sequence, so pin that rather than trusting it.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(bridge.parse_seq_name(bridge.TURN_CONTROL_FILE))
+            queue = bridge.Queue(root, bridge.INBOX)
+            queue.write({"type": "no_work", "message_id": "m1", "session_id": "s", "generation_id": "g", "payload": {}})
+            self._write_control(root, self._control_payload())
+            # The queue sees only the real response, not the control file.
+            self.assertEqual([e["message_id"] for _, _, e in queue.read_all()], ["m1"])
+
+    def test_read_turn_control_rejects_unusable_payloads(self):
+        """Polled every 200ms while a turn runs, so it must never raise.
+
+        The host replaces this file with an atomic rename; a reader can catch it
+        missing or half-visible. Each rejection below returns None so the watcher
+        simply looks again on its next tick.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            # Absent file: the normal case for the whole life of most turns.
+            self.assertIsNone(bridge.read_turn_control(root))
+            for label, payload in [
+                ("unknown command", {"command": "explode", "token": "t", "turn_id": 1}),
+                ("missing token", {"command": "abort", "turn_id": 1}),
+                ("missing turn_id", {"command": "abort", "token": "t"}),
+                ("non-numeric turn_id", {"command": "abort", "token": "t", "turn_id": "abc"}),
+                ("not an object", ["abort"]),
+            ]:
+                self._write_control(root, payload)
+                self.assertIsNone(bridge.read_turn_control(root), label)
+            (Path(root) / bridge.INBOX / bridge.TURN_CONTROL_FILE).write_text("{not json", encoding="utf-8")
+            self.assertIsNone(bridge.read_turn_control(root), "malformed json")
+
+            self._write_control(root, self._control_payload(command="steer", message="do this instead"))
+            control = bridge.read_turn_control(root)
+            self.assertEqual(
+                (control["command"], control["token"], control["turn_id"], control["message"]),
+                ("steer", "tok-1", 7, "do this instead"),
+            )
+
+    def test_deliver_control_abort_marks_the_turn_and_writes_pi_abort(self):
+        runner = bridge.PiRPCTurnRunner()
+        runner.proc = mock.Mock()
+        runner.proc.poll.return_value = None
+        written = []
+        runner._write_rpc = lambda payload: written.append(payload)
+
+        self.assertTrue(runner.deliver_control("abort", 7))
+        self.assertEqual([p["type"] for p in written], ["abort"])
+        # Recorded so run_turn can call the terminal event a user stop rather than
+        # an agent failure, even if pi's event omits the stopReason.
+        self.assertEqual(runner.aborted_turn_id, 7)
+
+    def test_deliver_control_steer_sends_the_message_without_aborting(self):
+        """steer is pi's native injection: the running turn continues.
+
+        This is the difference that makes steer worth having — the agent picks up
+        the new instruction while keeping the work it has already done, instead of
+        that work being thrown away and redone in a fresh turn.
+        """
+        runner = bridge.PiRPCTurnRunner()
+        runner.proc = mock.Mock()
+        runner.proc.poll.return_value = None
+        written = []
+        runner._write_rpc = lambda payload: written.append(payload)
+
+        self.assertTrue(runner.deliver_control("steer", 7, "actually, do this"))
+        self.assertEqual(written, [{"id": "harness-steer-7", "type": "steer", "message": "actually, do this"}])
+        self.assertIsNone(runner.aborted_turn_id, "steer must not mark the turn aborted")
+
+        # An empty steer would inject nothing; refuse it rather than confuse pi.
+        written.clear()
+        self.assertFalse(runner.deliver_control("steer", 7, ""))
+        self.assertEqual(written, [])
+
+    def test_deliver_control_is_a_noop_without_a_live_pi(self):
+        runner = bridge.PiRPCTurnRunner()
+        self.assertFalse(runner.deliver_control("abort", 7))
+        runner.proc = mock.Mock()
+        runner.proc.poll.return_value = 1  # exited
+        self.assertFalse(runner.deliver_control("abort", 7))
+
+    def test_set_turn_context_clears_a_previous_abort_marker(self):
+        """Otherwise the turn after a stopped one is cancelled on arrival."""
+        runner = bridge.PiRPCTurnRunner()
+        runner.aborted_turn_id = 7
+        runner.set_turn_context({"turn_id": 8})
+        self.assertIsNone(runner.aborted_turn_id)
+
+    def test_control_watcher_applies_each_token_once_and_ignores_stale_turns(self):
+        class FakeRunner:
+            def __init__(self):
+                self.calls = []
+
+            def deliver_control(self, command, turn_id, message=""):
+                self.calls.append((command, turn_id, message))
+                return True
+
+        with tempfile.TemporaryDirectory() as root:
+            runner = FakeRunner()
+            # A control file naming turn 99 while turn 7 runs is a leftover from a
+            # turn that already ended. Applying it would abort the wrong turn.
+            self._write_control(root, self._control_payload(turn_id=99))
+            stop = bridge.start_turn_control_watcher(root, runner, 7, interval=0.01)
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline and not runner.calls:
+                time.sleep(0.01)
+            stop.set()
+            self.assertEqual(runner.calls, [], "stale control file was applied to the wrong turn")
+
+            runner = FakeRunner()
+            self._write_control(root, self._control_payload(command="steer", token="tok-2", message="hi"))
+            stop = bridge.start_turn_control_watcher(root, runner, 7, interval=0.01)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline and not runner.calls:
+                time.sleep(0.01)
+            # The file stays on disk (the sandbox cannot delete it — the inbox is
+            # read-only), so the token, not the file, is what prevents re-delivery.
+            time.sleep(0.15)
+            stop.set()
+            self.assertEqual(runner.calls, [("steer", 7, "hi")])
+
+    def test_control_watcher_survives_a_runner_that_raises(self):
+        """This thread runs inside the sandbox's init process.
+
+        An exception escaping it would kill the sandbox — the very outcome this
+        change exists to stop — so the loop must absorb anything the runner throws.
+        """
+        class ExplodingRunner:
+            def deliver_control(self, command, turn_id, message=""):
+                raise RuntimeError("pi stdin is gone")
+
+        with tempfile.TemporaryDirectory() as root:
+            self._write_control(root, self._control_payload())
+            stop = bridge.start_turn_control_watcher(root, ExplodingRunner(), 7, interval=0.01)
+            time.sleep(0.2)
+            self.assertFalse(stop.is_set(), "watcher should still be running")
+            stop.set()
+
+    def test_control_watcher_declines_a_runner_without_control_support(self):
+        """The shell driver has no pi to abort, so it gets no watcher thread.
+
+        Asserted by observation rather than by inspecting internals: with a runner
+        that cannot take control commands, dropping a valid control file must
+        produce no effect at all.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            before = threading.active_count()
+            self._write_control(root, self._control_payload())
+            stop = bridge.start_turn_control_watcher(root, object(), 7, interval=0.01)
+            time.sleep(0.1)
+            self.assertEqual(threading.active_count(), before, "no watcher thread should have started")
+            # Still returns a usable Event so execute_grant's finally can call set()
+            # unconditionally.
+            stop.set()
 
     def test_claim_loop_starts_after_workspace_and_agent_home_setup(self):
         entrypoint = SCRIPT.with_name("harness-agent-entrypoint")

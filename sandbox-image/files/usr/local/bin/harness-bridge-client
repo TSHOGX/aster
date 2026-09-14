@@ -22,6 +22,20 @@ TMP = "tmp"
 BRIDGE_HEARTBEAT = "bridge"
 HOST_HEARTBEAT = "host"
 CHECKPOINT_READY = "checkpoint-ready"
+# Host → sandbox control for the turn that is executing right now (abort/steer).
+#
+# It cannot travel as a normal bridge message: the bridge is request/response,
+# the sandbox is the only requester, and during a turn nothing is polling the
+# inbox — the turn thread is blocked reading pi. So the host drops a single
+# JSON file here and a watcher thread reads it.
+#
+# It lives in the inbox directory, which is already mounted read-only into the
+# sandbox, and its name is deliberately NOT a seq name: both queue readers accept
+# only the fixed-width `00000000000000000001.json` form, and the host's response
+# prune only ever deletes seq-named files. So this file is invisible to the queue
+# machinery and safe from its cleanup, with no new mount and no contract change.
+TURN_CONTROL_FILE = "turn-control.json"
+TURN_CONTROL_COMMANDS = frozenset({"abort", "steer"})
 PI_CODING_AGENT_DIR = "/agent-home/.pi/agent"
 PI_SESSION_DIR = f"{PI_CODING_AGENT_DIR}/sessions"
 PI_MODELS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/models.json"
@@ -99,6 +113,47 @@ def write_control_file(root, dirname, name, suffix):
             tmp_path.unlink()
         except FileNotFoundError:
             pass
+
+
+def read_turn_control(root):
+    """Read the host's pending turn-control command, or None.
+
+    Tolerant by construction: this is polled every few hundred ms while a turn
+    runs, and the host replaces the file with an atomic rename, so a missing,
+    half-visible or malformed file is an ordinary observation rather than a
+    fault. Anything unparseable returns None and is simply retried — this must
+    never raise into the watcher thread, because the watcher runs inside the
+    sandbox's init process.
+
+    A command is only honoured when it carries a token and a turn_id: the token
+    lets the watcher ignore one it has already applied, and the turn_id keeps a
+    stale file from aborting a later turn that happens to be running when it is
+    finally noticed.
+    """
+    path = Path(root) / INBOX / TURN_CONTROL_FILE
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (FileNotFoundError, NotADirectoryError, PermissionError, json.JSONDecodeError, UnicodeDecodeError, OSError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    command = str(payload.get("command") or "")
+    if command not in TURN_CONTROL_COMMANDS:
+        return None
+    token = str(payload.get("token") or "")
+    if not token:
+        return None
+    try:
+        turn_id = int(payload.get("turn_id"))
+    except (TypeError, ValueError):
+        return None
+    return {
+        "command": command,
+        "token": token,
+        "turn_id": turn_id,
+        "message": str(payload.get("message") or ""),
+    }
 
 
 def canonical_json_bytes(payload):
@@ -527,9 +582,19 @@ class PiRPCTurnRunner:
         self.restored_state_digest = ""
         self.stderr_tail = collections.deque(maxlen=20)
         self.stderr_lock = threading.Lock()
+        # Guards writes to pi's stdin. The turn thread blocks in _read_rpc while
+        # the control watcher writes abort/steer from another thread, so the two
+        # would otherwise interleave partial JSON lines into the same pipe.
+        self.stdin_lock = threading.Lock()
+        # Set by the watcher when it delivers an abort, so run_turn can recognize
+        # a user stop even if pi's terminal event omits the stopReason.
+        self.aborted_turn_id = None
 
     def set_turn_context(self, grant):
         self.current_grant = dict(grant or {})
+        # Cleared per turn: a marker left from the turn the user just stopped must
+        # never cancel the next one.
+        self.aborted_turn_id = None
 
     def _start(self):
         pi_runtime_env = validate_pi_runtime_environment()
@@ -613,8 +678,45 @@ class PiRPCTurnRunner:
         return detail
 
     def _write_rpc(self, payload):
-        self.proc.stdin.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
-        self.proc.stdin.flush()
+        # Serialized: the control watcher writes abort/steer on its own thread
+        # while the turn thread is blocked reading pi's stdout.
+        with self.stdin_lock:
+            self.proc.stdin.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+            self.proc.stdin.flush()
+
+    def deliver_control(self, command, turn_id, message=""):
+        """Apply a host control command to the turn currently executing.
+
+        Called from the control-watcher thread, never from the turn thread. Both
+        commands are pi RPC primitives that leave the pi process and its session
+        intact, which is the whole point: stopping a turn must not cost the user
+        their sandbox.
+
+          abort — ends the turn with stopReason 'aborted'. Whatever already
+                  streamed stays in pi's session history, and the host keeps it in
+                  the transcript, so partial work survives being stopped.
+          steer — injects the message into the turn that is still running, so the
+                  agent picks up the new instruction without discarding the work
+                  it has already done. It does NOT abort; that is the difference
+                  from sending a new turn.
+
+        Returns True when the command was written to pi.
+        """
+        if self.proc is None or self.proc.poll() is not None:
+            return False
+        if command == "abort":
+            # Recorded before the write: the terminal event races back on the turn
+            # thread, and it must be able to tell a user stop from a real failure.
+            self.aborted_turn_id = turn_id
+            self._write_rpc({"id": f"harness-abort-{turn_id}", "type": "abort"})
+            return True
+        if command == "steer":
+            text = str(message or "")
+            if not text:
+                return False
+            self._write_rpc({"id": f"harness-steer-{turn_id}", "type": "steer", "message": text})
+            return True
+        return False
 
     def _read_rpc(self):
         line = self.proc.stdout.readline()
@@ -675,6 +777,16 @@ class PiRPCTurnRunner:
                 error = event.get("message") or event.get("error") or "pi rpc error"
                 break
             if event_type in {"turn_end", "agent_end"}:
+                # A user abort terminates the turn here with stopReason
+                # 'aborted'. It is not a failure: the user asked for it, and
+                # whatever streamed before it is real work that the host keeps in
+                # the transcript. Report it as canceled so the turn row says the
+                # user stopped it rather than blaming the agent.
+                if pi_event_stop_reason(event) == "aborted" or self.aborted_turn_id == turn_id:
+                    status = "canceled"
+                    error_class = "user_interrupted"
+                    error = "interrupted by user"
+                    break
                 terminal_status = str(event.get("status") or "completed")
                 if terminal_status not in {"completed", "success", "ok"}:
                     status = "failed"
@@ -875,6 +987,51 @@ def start_background_heartbeat(client, interval):
     return stop
 
 
+def start_turn_control_watcher(root, runner, turn_id, interval=0.2):
+    """Watch for host abort/steer while a turn executes, and apply it to pi.
+
+    Exists because the turn thread is blocked in _read_rpc for the whole turn: no
+    amount of inbox polling elsewhere can reach it, so the delivery has to happen
+    on a second thread. Modeled on start_background_heartbeat above — daemon
+    thread, stop via Event, every exception contained.
+
+    Containment matters more than usual here: this process is the sandbox's init,
+    so an exception escaping this thread would take the sandbox down, which is the
+    exact cost this whole change exists to avoid.
+
+    Each token is applied at most once. Abort ends the watch (the turn is over);
+    steer does not, because the turn keeps running and the user may steer again.
+    """
+    stop = threading.Event()
+    if not hasattr(runner, "deliver_control"):
+        return stop
+    applied = set()
+
+    def loop():
+        while not stop.wait(max(interval, 0.01)):
+            try:
+                control = read_turn_control(root)
+                if control is None or control["token"] in applied:
+                    continue
+                # A file naming a different turn is stale: the host wrote it for a
+                # turn that has since ended. Ignoring it is what keeps a late abort
+                # from killing the turn that came after it.
+                if control["turn_id"] != turn_id:
+                    continue
+                applied.add(control["token"])
+                delivered = runner.deliver_control(control["command"], turn_id, control.get("message", ""))
+                if delivered:
+                    print(f"[bridge] applied {control['command']} to turn {turn_id}", file=sys.stderr, flush=True)
+                if delivered and control["command"] == "abort":
+                    return
+            except Exception as err:
+                print(f"[bridge] turn control watch failed: {err}", file=sys.stderr, flush=True)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return stop
+
+
 def execute_grant(client, runner, grant):
     turn_id = int(grant["turn_id"])
     run_turn = grant.get("input") or {}
@@ -891,6 +1048,9 @@ def execute_grant(client, runner, grant):
         client.emit_output(turn_id, output_sequence, payload, stream=stream or "stdout")
         output_sequence += 1
 
+    # Started before the turn and stopped in the finally below, so the window in
+    # which a Stop can land is exactly the window in which the turn is running.
+    stop_control_watch = start_turn_control_watcher(client.root, runner, turn_id)
     try:
         if hasattr(runner, "set_turn_context"):
             runner.set_turn_context(grant)
@@ -909,6 +1069,8 @@ def execute_grant(client, runner, grant):
         status, error_class, error = "failed", "agent_execution_failed", str(err)
         driver_state_update = None
         emit("stderr", str(err))
+    finally:
+        stop_control_watch.set()
     if status != "completed":
         driver_state_update = None
     client.last_output_sequence_by_turn[turn_id] = output_sequence - 1
