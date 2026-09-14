@@ -145,12 +145,12 @@ export async function renameSession(sessionId: string, title: string) {
 }
 
 /**
- * Stop the current turn. Also cancels whatever the user had queued behind it —
- * `canceled_queued` says how many — because a queued turn cannot survive the
- * generation teardown that Stop performs.
+ * Stop the current turn, and only that turn. Anything the user had queued behind
+ * it survives and the next one starts on a fresh generation — `pending_queued`
+ * says how many are still waiting, so the UI can say the queue is resuming.
  */
 export async function interruptSession(sessionId: string) {
-  return request<{ status: string; canceled_queued?: number; runtime?: ApiSessionRuntime }>(
+  return request<{ status: string; pending_queued?: number; runtime?: ApiSessionRuntime }>(
     `/api/sessions/${encodeURIComponent(sessionId)}/interrupt`,
     { method: "POST" }
   );

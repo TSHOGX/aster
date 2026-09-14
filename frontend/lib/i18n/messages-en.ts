@@ -90,6 +90,11 @@ export const EN = {
     "The sandbox behind this session stopped. Your files are safe; the next message will start a fresh one (this takes a little longer).",
   "runtime.fault.sandboxOOM":
     "The sandbox ran out of memory and was stopped. Your files are safe; the next message will start a fresh one.",
+  // Stop ends the current turn only. These say what happened to the follow-ups the
+  // user had queued behind it: nothing. They stay queued and wait to be sent, so
+  // the message has to rule out both "dropped" and "about to run on its own".
+  "runtime.stopped.queueKeptOne": "Stopped. Your queued message is still waiting — send it when you are ready.",
+  "runtime.stopped.queueKeptMany": "Stopped. Your {count} queued messages are still waiting — send them when you are ready.",
   "composer.wakingSandbox": "Waking the sandbox — the first reply after a pause takes a little longer…",
   "composer.queueCancel": "Remove from queue",
   "composer.queueCancelFailed": "That message is already running — use Stop instead",

@@ -1091,12 +1091,17 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     // The response carries the post-interrupt projection, so the composer leaves
     // the busy state on this tick rather than after a round trip through events.
     if (res.data.runtime) applyRuntime(id, res.data.runtime);
-    // Stop also drops what the user had queued (a queued turn cannot survive the
-    // generation teardown). Say so, because silently emptying the queue would
-    // look like the entries were lost.
-    const dropped = res.data.canceled_queued ?? 0;
-    if (dropped > 0) {
-      toast.info(dropped === 1 ? "Stopped, and 1 queued message was discarded" : `Stopped, and ${dropped} queued messages were discarded`);
+    // Stop ends the current turn only; follow-ups the user queued behind it stay
+    // put and wait for the user to send them. Say so, because an untouched queue
+    // sitting there could otherwise read either as dropped or as about to run.
+    const pending = res.data.pending_queued ?? 0;
+    if (pending > 0) {
+      const locale = detectLocale();
+      toast.info(
+        translate(locale, pending === 1 ? "runtime.stopped.queueKeptOne" : "runtime.stopped.queueKeptMany", {
+          count: pending
+        })
+      );
     }
     return { ok: true as const };
   }, [applyRuntime]);

@@ -91,6 +91,10 @@ export const ZH: Record<MessageKey, string> = {
     "该会话的沙箱已停止。文件已保留，下一条消息会自动启动新沙箱（首次响应会慢一些）。",
   "runtime.fault.sandboxOOM":
     "沙箱因内存超限被终止。文件已保留，下一条消息会自动启动新沙箱。",
+  // 「停止」只结束当前这一轮。排在后面的消息原样保留，且不会自动执行，
+  // 需要用户自己发送 —— 文案要同时排除「被清空」和「即将自动跑」两种误解。
+  "runtime.stopped.queueKeptOne": "已停止。排队的消息仍保留，可自行发送。",
+  "runtime.stopped.queueKeptMany": "已停止。队列中的 {count} 条消息仍保留，可自行发送。",
   "composer.wakingSandbox": "正在唤醒沙箱，静置后的第一条消息会多等一会…",
   "composer.queueCancel": "从队列中移除",
   "composer.queueCancelFailed": "该消息已开始执行，请使用「停止」",

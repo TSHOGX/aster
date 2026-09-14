@@ -2038,13 +2038,13 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 		s.publishDurableEvent(r.Context(), eventID)
 	}
 	s.publishSessionRuntime(sessionID, result.Runtime)
-	// canceled_queued lets the UI say what Stop dropped. Stop cancels the pending
-	// queue along with the running turn — see InterruptSession for why leaving it
-	// queued would strand it against a retired generation.
+	// pending_queued reports what Stop left untouched. Deliberately no automatic
+	// dispatch of it: a queued prompt is the user's to release, so the queue waits
+	// for them to send it rather than starting on its own behind a Stop.
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status":          result.SessionStatus,
-		"canceled_queued": result.CanceledQueued,
-		"runtime":         result.Runtime,
+		"status":         result.SessionStatus,
+		"pending_queued": result.PendingQueued,
+		"runtime":        result.Runtime,
 	})
 }
 

@@ -57,9 +57,11 @@ type InterruptSessionParams struct {
 type InterruptSessionResult struct {
 	SessionStatus string
 	EventIDs      []int64
-	// CanceledQueued counts the user's pending turns dropped alongside the
-	// running one, so the UI can say so instead of silently emptying the queue.
-	CanceledQueued int64
+	// PendingQueued counts the turns still queued after the interrupt. Stop scopes
+	// to the running turn, so these survive it; cold fallback allocates a fresh
+	// generation and the head of the queue then runs. Reported so the UI can say
+	// the queue is resuming rather than leaving the user to guess.
+	PendingQueued int64
 	// Runtime is the post-interrupt projection, taken inside the same
 	// transaction.
 	Runtime SessionRuntimeSnapshot
@@ -571,44 +573,25 @@ WHERE session_id = ?
   AND status IN ('leased','running')`, now, p.ErrorClass, p.Reason, p.SessionID); err != nil {
 		return InterruptSessionResult{}, err
 	}
-	// Turns still queued behind it. Cancelling these is load bearing, not a
-	// convenience: interrupt tears down the generation and returns the session to
-	// running_idle, and ClaimNextTurn only grants turns against a live generation
-	// — so a turn left 'queued' can never be claimed. It strands until some later
-	// POST happens to allocate a generation, at which point a prompt the user
-	// abandoned minutes ago suddenly executes. Stop means stop.
-	queuedRes, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET status = 'canceled',
-    completed_at = ?,
-    error_class = ?,
-    error = ?,
-    lease_owner = NULL,
-    lease_expires_at = NULL
-WHERE session_id = ?
-  AND status = 'queued'`, now, p.ErrorClass, p.Reason, p.SessionID)
-	if err != nil {
+	// Turns still queued behind it are deliberately left alone. Stop scopes to the
+	// turn in flight; the queue is standing user intent that outlived it, and
+	// discarding a prompt the user is still waiting on because a *different* turn
+	// was cancelled does not match what "Stop" says.
+	//
+	// This used to cancel them, for a reason that no longer holds. Interrupt
+	// retires the generation and ClaimNextTurn only grants against a live one, so a
+	// surviving 'queued' turn was unclaimable — it stranded until some later POST
+	// happened to allocate a generation, then ran a prompt abandoned minutes
+	// earlier. Cold fallback closed that hole: ListColdFallbackSessions selects on
+	// exactly the state this transaction leaves behind (generation 'failed',
+	// session non-terminal, turns 'queued' and unleased) and allocates a fresh
+	// generation for it. Continuity is that reconciler's job, so this no longer has
+	// to buy safety by throwing the queue away.
+	var pendingQueued int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM turns
+WHERE session_id = ? AND status = 'queued'`, p.SessionID).Scan(&pendingQueued); err != nil {
 		return InterruptSessionResult{}, err
-	}
-	canceledQueued, err := queuedRes.RowsAffected()
-	if err != nil {
-		return InterruptSessionResult{}, err
-	}
-	// A queued turn was never asked, so its message must not remain in the
-	// transcript reading as an unanswered prompt.
-	if canceledQueued > 0 {
-		if _, err := tx.ExecContext(ctx, `
-DELETE FROM messages
-WHERE session_id = ?
-  AND turn_id IN (
-    SELECT id FROM turns
-    WHERE session_id = ?
-      AND status = 'canceled'
-      AND ack_started_at IS NULL
-      AND completed_at = ?
-  )`, p.SessionID, p.SessionID, now); err != nil {
-			return InterruptSessionResult{}, err
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE runtime_generations
@@ -643,14 +626,28 @@ DELETE FROM active_model_request_contexts
 WHERE session_id = ? AND generation_id = ?`, p.SessionID, p.GenerationID); err != nil {
 		return InterruptSessionResult{}, err
 	}
+	// The session's own status follows the same rule the startup reconciler uses:
+	// pending turns mean running_active, nothing pending means running_idle. Going
+	// unconditionally idle here would contradict a queue this transaction just
+	// preserved, and would let the idle-release sweeper checkpoint a session that
+	// still owes the user a reply.
+	//
+	// running_active is not input-blocking in this shape: EnqueueTurnMessage only
+	// refuses it when there is neither a generation nor an in-flight turn, and a
+	// queued turn is in-flight. Stop also stays available, which is how a user
+	// clears the rest of the queue — one press per turn, each one theirs to make.
+	nextStatus := string(sessionstate.RunningIdle)
+	if pendingQueued > 0 {
+		nextStatus = string(sessionstate.RunningActive)
+	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE sessions
-SET status = 'running_idle',
+SET status = ?,
     updated_at = ?,
     restore_ms = NULL,
     error_class = NULL,
     failure_reason = NULL
-WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, now, p.SessionID, p.GenerationID); err != nil {
+WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, nextStatus, now, p.SessionID, p.GenerationID); err != nil {
 		return InterruptSessionResult{}, err
 	}
 	eventID, err := appendEventTx(ctx, tx, AppendEventParams{
@@ -663,7 +660,7 @@ WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, now, p
 			"error_class":          p.ErrorClass,
 			"error":                p.Reason,
 			"generation_id":        p.GenerationID,
-			"session_status":       "running_idle",
+			"session_status":       nextStatus,
 			"session_updated_at":   now,
 			"active_generation_id": p.GenerationID,
 		},
@@ -680,10 +677,10 @@ WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, now, p
 		return InterruptSessionResult{}, err
 	}
 	return InterruptSessionResult{
-		SessionStatus:  "running_idle",
-		EventIDs:       []int64{eventID},
-		CanceledQueued: canceledQueued,
-		Runtime:        snapshot,
+		SessionStatus: nextStatus,
+		EventIDs:      []int64{eventID},
+		PendingQueued: pendingQueued,
+		Runtime:       snapshot,
 	}, nil
 }
 

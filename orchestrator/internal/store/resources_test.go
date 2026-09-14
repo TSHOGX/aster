@@ -1003,13 +1003,17 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	}
 }
 
-// Stop must also drop the turns queued behind the running one. Leaving them
-// 'queued' is not merely untidy: interrupt retires the generation and returns
-// the session to running_idle, and ClaimNextTurn only grants turns against a
-// live generation — so a surviving queued turn can never be claimed. It strands
-// until some later POST happens to allocate a generation, at which point a
-// prompt the user abandoned long ago suddenly executes.
-func TestInterruptSessionCancelsQueuedTurnsAndDropsTheirMessages(t *testing.T) {
+// Stop scopes to the turn in flight: the turns queued behind it survive, and the
+// session stays running_active so nothing treats it as having no work left.
+//
+// This is the inverse of what this test used to assert. Cancelling the queue was
+// once necessary — interrupt retires the generation, ClaimNextTurn only grants
+// against a live one, so a surviving queued turn stranded until some later POST
+// happened to allocate a generation and then ran a prompt abandoned long ago.
+// Cold fallback removed that hazard by reconciling exactly this state, so Stop no
+// longer has to discard the user's pending work to stay safe. The companion test
+// below pins the handoff itself.
+func TestInterruptSessionPreservesQueuedTurns(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	sessionID := "sess_interrupt_queue"
@@ -1045,29 +1049,210 @@ WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Ad
 	if err != nil {
 		t.Fatalf("interrupt session: %v", err)
 	}
-	if result.CanceledQueued != 1 {
-		t.Fatalf("CanceledQueued = %d, want 1", result.CanceledQueued)
+	if result.PendingQueued != 1 {
+		t.Fatalf("PendingQueued = %d, want 1", result.PendingQueued)
 	}
-	// Nothing is left that a future generation could pick up.
-	if result.Runtime.ActiveTurn != nil || len(result.Runtime.QueuedTurns) != 0 {
-		t.Fatalf("work survived the interrupt: %+v", result.Runtime)
+	// The running turn is gone; the queued one is still there and still the user's.
+	if result.Runtime.ActiveTurn != nil {
+		t.Fatalf("the interrupted turn survived: %+v", result.Runtime.ActiveTurn)
+	}
+	if len(result.Runtime.QueuedTurns) != 1 || result.Runtime.QueuedTurns[0].ID != queued.TurnID {
+		t.Fatalf("queue after interrupt = %+v, want just turn %d", result.Runtime.QueuedTurns, queued.TurnID)
 	}
 	var queuedStatus string
 	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, queued.TurnID).Scan(&queuedStatus); err != nil {
 		t.Fatalf("query queued turn: %v", err)
 	}
-	if queuedStatus != "canceled" {
-		t.Fatalf("queued turn status = %q, want canceled", queuedStatus)
+	if queuedStatus != "queued" {
+		t.Fatalf("queued turn status = %q, want queued", queuedStatus)
+	}
+	// Work is still pending, so the session must not report itself as idle: an idle
+	// session with a queue is what lets the idle-release sweeper checkpoint a
+	// session that still owes the user a reply.
+	if result.SessionStatus != "running_active" {
+		t.Fatalf("SessionStatus = %q, want running_active", result.SessionStatus)
+	}
+	var sessionStatus string
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&sessionStatus); err != nil {
+		t.Fatalf("query session: %v", err)
+	}
+	if sessionStatus != "running_active" {
+		t.Fatalf("persisted session status = %q, want running_active", sessionStatus)
 	}
 
-	// The interrupted turn was asked, so its message stays. The queued one was never
-	// dispatched, so it has no message at all — nothing to linger.
+	// The interrupted turn was asked, so its message stays. The queued one has not
+	// been dispatched yet, so it still has no message — it is rendered from the
+	// queue, and gets its transcript entry when the agent actually starts it.
 	msgs, err := st.ListMessages(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("list messages: %v", err)
 	}
 	if len(msgs) != 1 || msgs[0].ID != runningMessage.ID {
 		t.Fatalf("transcript after interrupt: %+v", msgs)
+	}
+}
+
+// The load-bearing half of the change above: the state Stop leaves behind must be
+// the state cold fallback picks up. If this ever stops matching, a preserved queue
+// silently becomes a stranded one — the exact failure the old cancel-everything
+// behavior was defending against.
+func TestInterruptSessionLeavesQueueVisibleToColdFallback(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID := "sess_interrupt_handoff"
+	generationID := "gen_interrupt_handoff"
+	createStoreSession(t, ctx, st, sessionID)
+	createActiveGeneration(t, ctx, st, sessionID, generationID, GenerationLeaseOwner(owner.UUID))
+	now := time.Now().UTC()
+
+	running, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "long task", Now: now})
+	if err != nil {
+		t.Fatalf("enqueue running turn: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE turns
+SET status = 'running', generation_id = ?, lease_owner = ?, lease_expires_at = ?, ack_started_at = ?
+WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Add(time.Minute)), formatTime(now), running.TurnID); err != nil {
+		t.Fatalf("set running turn: %v", err)
+	}
+	if _, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "and then this", Now: now.Add(time.Second)}); err != nil {
+		t.Fatalf("enqueue queued turn: %v", err)
+	}
+	if _, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID:    sessionID,
+		GenerationID: generationID,
+		OwnerUUID:    owner.UUID,
+		Now:          now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("interrupt session: %v", err)
+	}
+
+	fallbacks, err := st.ListColdFallbackSessions(ctx)
+	if err != nil {
+		t.Fatalf("list cold fallback sessions: %v", err)
+	}
+	var found *ColdFallbackSession
+	for i := range fallbacks {
+		if fallbacks[i].Session.ID == sessionID {
+			found = &fallbacks[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("interrupted session with a queue is invisible to cold fallback: its turns would never be claimed (got %+v)", fallbacks)
+	}
+	if found.QueuedTurns != 1 {
+		t.Fatalf("QueuedTurns = %d, want 1", found.QueuedTurns)
+	}
+	if found.OldGeneration != generationID {
+		t.Fatalf("OldGeneration = %q, want %q", found.OldGeneration, generationID)
+	}
+}
+
+// A Stop pressed when only queued turns remain must not eat the queue. This press
+// is reachable: the composer offers Stop from the coarse session status until its
+// first projection arrives, and that status is now running_active while a queue is
+// pending. Idempotent is the requirement — one stray press must not undo the very
+// preservation this change exists for.
+func TestInterruptSessionQueueOnlyPressIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID := "sess_interrupt_queueonly"
+	generationID := "gen_interrupt_queueonly"
+	createStoreSession(t, ctx, st, sessionID)
+	createActiveGeneration(t, ctx, st, sessionID, generationID, GenerationLeaseOwner(owner.UUID))
+	now := time.Now().UTC()
+
+	running, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "task", Now: now})
+	if err != nil {
+		t.Fatalf("enqueue running turn: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE turns
+SET status = 'running', generation_id = ?, lease_owner = ?, lease_expires_at = ?, ack_started_at = ?
+WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Add(time.Minute)), formatTime(now), running.TurnID); err != nil {
+		t.Fatalf("set running turn: %v", err)
+	}
+	queued, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "next", Now: now.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("enqueue queued turn: %v", err)
+	}
+	if _, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID:    sessionID,
+		GenerationID: generationID,
+		OwnerUUID:    owner.UUID,
+		Now:          now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("first interrupt: %v", err)
+	}
+
+	second, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID:    sessionID,
+		GenerationID: generationID,
+		OwnerUUID:    owner.UUID,
+		Now:          now.Add(3 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("second interrupt: %v", err)
+	}
+	if second.PendingQueued != 1 || second.SessionStatus != "running_active" {
+		t.Fatalf("second interrupt changed the session: %+v", second)
+	}
+	var status string
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM turns WHERE id = ?`, queued.TurnID).Scan(&status); err != nil {
+		t.Fatalf("query queued turn: %v", err)
+	}
+	if status != "queued" {
+		t.Fatalf("a second Stop destroyed the queued turn: status = %q, want queued", status)
+	}
+}
+
+// Stop on a session with nothing queued behind it still ends at running_idle, so
+// an interrupted-and-empty session releases its sandbox as before.
+func TestInterruptSessionWithEmptyQueueGoesIdle(t *testing.T) {
+	ctx := context.Background()
+	st, owner := openOwnedStore(t, ctx)
+	sessionID := "sess_interrupt_empty"
+	generationID := "gen_interrupt_empty"
+	createStoreSession(t, ctx, st, sessionID)
+	createActiveGeneration(t, ctx, st, sessionID, generationID, GenerationLeaseOwner(owner.UUID))
+	now := time.Now().UTC()
+
+	running, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: sessionID, Content: "only task", Now: now})
+	if err != nil {
+		t.Fatalf("enqueue running turn: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+UPDATE turns
+SET status = 'running', generation_id = ?, lease_owner = ?, lease_expires_at = ?, ack_started_at = ?
+WHERE id = ?`, generationID, GenerationLeaseOwner(owner.UUID), formatTime(now.Add(time.Minute)), formatTime(now), running.TurnID); err != nil {
+		t.Fatalf("set running turn: %v", err)
+	}
+
+	result, err := st.InterruptSession(ctx, InterruptSessionParams{
+		SessionID:    sessionID,
+		GenerationID: generationID,
+		OwnerUUID:    owner.UUID,
+		Now:          now.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("interrupt session: %v", err)
+	}
+	if result.PendingQueued != 0 {
+		t.Fatalf("PendingQueued = %d, want 0", result.PendingQueued)
+	}
+	if result.SessionStatus != "running_idle" {
+		t.Fatalf("SessionStatus = %q, want running_idle", result.SessionStatus)
+	}
+	// Nothing pending means nothing for cold fallback to do.
+	fallbacks, err := st.ListColdFallbackSessions(ctx)
+	if err != nil {
+		t.Fatalf("list cold fallback sessions: %v", err)
+	}
+	for _, fallback := range fallbacks {
+		if fallback.Session.ID == sessionID {
+			t.Fatalf("empty interrupted session queued for cold fallback: %+v", fallback)
+		}
 	}
 }
 

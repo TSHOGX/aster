@@ -120,12 +120,27 @@ function ChatConversation() {
   // "Busy" is a property of the turn queue, so the projection answers it. Until
   // the first snapshot arrives, fall back to what the session list knows.
   //
-  // Note this counts a queued turn as busy: work is pending either way, so the
-  // button must offer Stop (which drops the queue too) rather than pretending the
-  // agent is idle.
+  // A queued turn counts as busy: work is pending either way, and the placeholder
+  // should invite a follow-up rather than pretend the agent is free.
   const busy = runtime
     ? runtime.active_turn != null || runtime.queued_turns.length > 0
     : activityLive || session.status === "running_active";
+
+  // Whether Stop has anything to act on, which is narrower than busy. Stop ends the
+  // turn in flight; it is not a queue-clearing button, and offering it when only
+  // queued turns remain would promise an action with no effect. A queued turn is
+  // withdrawn with its own X instead — one prompt at a time, each the user's call.
+  //
+  // Any turn the agent is actually executing is leased or running, and the
+  // projection reports both as active_turn, so this never hides Stop during real
+  // work.
+  //
+  // Before the first snapshot there is no queue/active split to read, so the
+  // fallback keeps the old coarse answer: running_active offers Stop. It can be
+  // briefly wrong in the new queue-only case, and that is the right way round — a
+  // Stop with nothing running is idempotent and leaves the queue intact, whereas
+  // hiding Stop from a live turn would leave the user unable to interrupt at all.
+  const stoppable = runtime ? runtime.active_turn != null : activityLive || session.status === "running_active";
 
   // A busy session accepts input now — the turn is queued behind the current one
   // — so the placeholder invites it instead of reporting the agent as unavailable.
@@ -138,7 +153,7 @@ function ChatConversation() {
     : t("composer.placeholder");
 
   const stop = async () => {
-    if (stopping || !session || !busy) return;
+    if (stopping || !session || !stoppable) return;
     setStopping(true);
     setQueueError(null);
     const result = await interruptSession(session.id);
@@ -277,7 +292,7 @@ function ChatConversation() {
 
       <Composer
         disabled={readOnly || terminal}
-        busy={!readOnly && !terminal && busy}
+        busy={!readOnly && !terminal && stoppable}
         stopping={stopping}
         onStop={() => void stop()}
         placeholder={placeholder}

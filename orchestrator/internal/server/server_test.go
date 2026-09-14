@@ -7045,10 +7045,14 @@ func TestCancelQueuedTurnRemovesItFromTheQueueAndTranscript(t *testing.T) {
 	}
 }
 
-// Stop drops the pending queue with the running turn, and says how much it
-// dropped. Leaving those turns queued stranded them: interrupt retires the
-// generation, and only a live generation can claim a turn.
-func TestInterruptSessionReportsCanceledQueueDepth(t *testing.T) {
+// Stop ends the turn in flight and keeps what the user queued behind it, reporting
+// how much is still pending so the UI can say the queue is resuming.
+//
+// The old behavior cancelled the queue, which did not match what "Stop" says: one
+// press discarded prompts the user was still waiting on. It was safe rather than
+// desired — a queued turn needs a live generation to be claimed, and Stop retires
+// the one it had. Cold fallback now reconciles that, so the queue survives.
+func TestInterruptSessionPreservesQueuedTurnsAndReportsDepth(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	srv, st, session := newRuntimeTestServer(t, ctx, dir)
@@ -7086,27 +7090,52 @@ func TestInterruptSessionReportsCanceledQueueDepth(t *testing.T) {
 		t.Fatalf("interrupt: expected 202, got %d body %s", rec.Code, rec.Body.String())
 	}
 	var response struct {
-		Status         string                       `json:"status"`
-		CanceledQueued int64                        `json:"canceled_queued"`
-		Runtime        store.SessionRuntimeSnapshot `json:"runtime"`
+		Status        string                       `json:"status"`
+		PendingQueued int64                        `json:"pending_queued"`
+		Runtime       store.SessionRuntimeSnapshot `json:"runtime"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode interrupt response: %v", err)
 	}
-	if response.CanceledQueued != 1 {
-		t.Fatalf("canceled_queued = %d, want 1", response.CanceledQueued)
+	if response.PendingQueued != 1 {
+		t.Fatalf("pending_queued = %d, want 1", response.PendingQueued)
 	}
-	// Nothing survives that a later generation could pick up and run.
-	if response.Runtime.ActiveTurn != nil || len(response.Runtime.QueuedTurns) != 0 {
-		t.Fatalf("work survived the interrupt: %+v", response.Runtime)
+	// The interrupted turn is gone; the follow-up the user queued is not.
+	if response.Runtime.ActiveTurn != nil {
+		t.Fatalf("the interrupted turn survived: %+v", response.Runtime.ActiveTurn)
 	}
-	var pending int
+	if len(response.Runtime.QueuedTurns) != 1 || response.Runtime.QueuedTurns[0].ID != turnIDs[1] {
+		t.Fatalf("queue after interrupt = %+v, want just turn %d", response.Runtime.QueuedTurns, turnIDs[1])
+	}
+	// Still busy, because work is still pending. Reporting idle here would let the
+	// idle-release sweeper checkpoint a session that still owes the user a reply.
+	if response.Status != string(sessionstate.RunningActive) {
+		t.Fatalf("status = %q, want %q", response.Status, sessionstate.RunningActive)
+	}
+	var queuedStatus string
 	if err := st.DBForTest().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM turns WHERE session_id = ? AND status IN ('queued','leased','running')`, session.ID).Scan(&pending); err != nil {
-		t.Fatalf("count pending turns: %v", err)
+		`SELECT status FROM turns WHERE id = ?`, turnIDs[1]).Scan(&queuedStatus); err != nil {
+		t.Fatalf("query queued turn: %v", err)
 	}
-	if pending != 0 {
-		t.Fatalf("%d turn(s) left claimable after interrupt", pending)
+	if queuedStatus != "queued" {
+		t.Fatalf("queued turn status = %q, want queued", queuedStatus)
+	}
+	// A queue that cannot be claimed is worse than one that was dropped, because
+	// nothing says so. Cold fallback is what claims it, so the state left behind
+	// must be the state it selects on.
+	fallbacks, err := st.ListColdFallbackSessions(ctx)
+	if err != nil {
+		t.Fatalf("list cold fallback sessions: %v", err)
+	}
+	queuedForFallback := false
+	for _, fallback := range fallbacks {
+		if fallback.Session.ID == session.ID {
+			queuedForFallback = true
+			break
+		}
+	}
+	if !queuedForFallback {
+		t.Fatalf("preserved queue is invisible to cold fallback, so it would never run: %+v", fallbacks)
 	}
 }
 

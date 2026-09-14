@@ -14,7 +14,12 @@ type ComposerProps = {
   placeholder?: string;
   topSlot?: ReactNode;
   onSend: (content: string) => Promise<{ ok: boolean; error?: string }>;
-  /** The agent has work in flight (a running turn, or turns queued behind it). */
+  /**
+   * There is a turn in flight that Stop would act on. Narrower than "the session
+   * has pending work": turns merely queued are withdrawn individually from the
+   * queue list, so they must not turn the send button into a Stop that would have
+   * nothing to cancel.
+   */
   busy?: boolean;
   stopping?: boolean;
   onStop?: () => void;
@@ -77,6 +82,9 @@ export function Composer({
   // it always sends — that keystroke is a queue request, and a busy agent is the
   // normal reason to queue, so letting "busy" win would make the button refuse the
   // very action the user is in the middle of.
+  //
+  // `busy` here means "a turn is executing", not "the session has pending work":
+  // see the prop's doc for why the distinction decides what Stop can promise.
   const showStop = busy && !value.trim();
 
   return (
