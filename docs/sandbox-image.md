@@ -65,8 +65,19 @@ image — sanitize resets `/etc/hosts`.
 
 Full-build steps: `debootstrap` → apt → pip → bake the DuckDB `httpfs` extension →
 install a modern Node for Pi if selected → install the selected driver CLIs (`pi`
-via npm pinned to 0.77.0, `sh` uses the bundled shim) → `rsync` the overlay →
-generate `/etc/harness-image/agents.json` → sanitize.
+via npm pinned to 0.77.0, `sh` uses the bundled shim) → assert Pi's turn-control
+RPC contract → `rsync` the overlay → generate `/etc/harness-image/agents.json` →
+sanitize.
+
+`verify_pi_rpc_turn_control` runs right after the npm install, and only when `pi`
+is selected. Stop and per-row steer are not our primitives: the bridge client
+writes exactly `{"type":"abort"}` and `{"type":"steer","message":…}` to Pi's
+stdin, so the build greps Pi's own `dist/modes/rpc/rpc-types.d.ts` for both
+shapes and fails the rebuild if either is gone. Without it a Pi upgrade that
+renamed or reshaped them would break Stop *silently* — the client keeps writing,
+Pi ignores the line, no error and no event reach the user. Verify rather than
+freeze, as with `httpfs`: the version pin would not catch a reshape within one
+version.
 
 The apt and pip sets live in `APT_PACKAGES` / `PIP_PACKAGES` at the top of
 `build-rootfs.sh`; read them there rather than from a copy here. Two notes on
