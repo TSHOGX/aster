@@ -34,6 +34,11 @@ type sessionStore interface {
 	GetSessionRuntimeSnapshot(context.Context, string) (store.SessionRuntimeSnapshot, error)
 	SetTurnPhase(context.Context, store.SetTurnPhaseParams) (store.SessionRuntimeSnapshot, error)
 	CancelQueuedTurn(context.Context, store.CancelQueuedTurnParams) (store.SessionRuntimeSnapshot, error)
+	// ReleaseParkedTurn hands one turn parked by Stop back to the worker.
+	ReleaseParkedTurn(context.Context, store.ReleaseParkedTurnParams) (store.SessionRuntimeSnapshot, error)
+	// RecordSteeredTurn retires a queued turn whose content was injected into the
+	// turn already running, and writes the transcript entry for it.
+	RecordSteeredTurn(context.Context, store.RecordSteeredTurnParams) (store.RecordSteeredTurnResult, error)
 	CountSandboxOccupyingSessions(context.Context) (int, error)
 	GetResourceQuota(context.Context) (store.ResourceQuota, error)
 	SweepExpiredSessions(context.Context, time.Time) (int64, error)

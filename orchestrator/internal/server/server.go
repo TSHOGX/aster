@@ -712,6 +712,13 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cancelQueuedTurn(w, r, sessionID, turnID)
+	case len(parts) == 4 && parts[1] == "turns" && parts[3] == "send" && r.Method == http.MethodPost:
+		turnID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil || turnID <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid turn id")
+			return
+		}
+		s.sendQueuedTurn(w, r, sessionID, turnID)
 	case len(parts) == 2 && parts[1] == "shares" && r.Method == http.MethodPost:
 		s.createSessionShare(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "shares" && r.Method == http.MethodGet:
@@ -1981,7 +1988,11 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 	if !ok {
 		return
 	}
-	if session.Status != string(sessionstate.RunningActive) {
+	// running_idle is accepted alongside running_active. Stop is offered from the
+	// coarse session status until the first runtime projection arrives, so a press
+	// against an already-idle session is reachable and routine; the store makes it
+	// a no-op rather than an error.
+	if session.Status != string(sessionstate.RunningActive) && session.Status != string(sessionstate.RunningIdle) {
 		writeError(w, http.StatusConflict, "session is not running")
 		return
 	}
@@ -1994,13 +2005,12 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 		return
 	}
 
-	// Pi/agent sessions do not expose a portable stdin interrupt primitive. The
-	// safe equivalent is to tear down the current generation, then atomically
-	// cancel its turns and return the session to running_idle. Workspace and
-	// conversation data remain intact; the next message cold-starts a fresh
-	// generation. Terminal/missing generations need no runtime call and can be
-	// reconciled directly, which also makes this an escape hatch for stale UI
-	// states after a crash.
+	// Stop is a turn-level operation for pi sessions: the abort travels to the
+	// sandbox as a turn-control command, the agent ends the turn, and its process,
+	// its session and the workspace all survive. This used to destroy the
+	// generation instead — the code asserted there was no portable interrupt
+	// primitive — which charged every Stop a full cold start and discarded the
+	// workspace state the agent had built up.
 	generationID := strings.TrimSpace(session.ActiveGenerationID)
 	if generationID == "" {
 		writeError(w, http.StatusConflict, "session has no active generation")
@@ -2011,14 +2021,33 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if generationStatus != "failed" && generationStatus != "destroyed" {
+	// Which turn to abort has to be read before the interrupt: the transaction
+	// retires it, so afterwards there is nothing left to name. The command carries
+	// the turn id so a slow delivery cannot abort whatever turn came next.
+	snapshot, err := s.store.GetSessionRuntimeSnapshot(r.Context(), sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// A failed or destroyed generation has no sandbox to deliver to, and no turn is
+	// really executing inside one. Skipping delivery keeps Stop working as the
+	// escape hatch for a stale running_active left by a crash.
+	sandboxLive := generationStatus != "failed" && generationStatus != "destroyed"
+	if sandboxLive && snapshot.ActiveTurn != nil {
 		details, detailsErr := s.runtimeGenerationDetails(r.Context(), sessionID, generationID)
 		if detailsErr != nil {
 			writeError(w, http.StatusInternalServerError, detailsErr.Error())
 			return
 		}
-		if err := s.destroyGenerationRuntime(r.Context(), details); err != nil {
-			writeError(w, http.StatusConflict, err.Error())
+		// Deliver before committing, as InterruptSession documents. The reverse
+		// order would mark the turn canceled while the agent kept working, and the
+		// completion ack for an already-retired turn is discarded — so the user
+		// would watch a "stopped" turn keep streaming.
+		if _, err := bridge.AppendTurnControl(details.BridgeDirPath, bridge.TurnControlCommand{
+			TurnID:  snapshot.ActiveTurn.ID,
+			Command: bridge.TurnControlAbort,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("deliver interrupt to sandbox: %v", err))
 			return
 		}
 	}
@@ -2038,9 +2067,10 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 		s.publishDurableEvent(r.Context(), eventID)
 	}
 	s.publishSessionRuntime(sessionID, result.Runtime)
-	// pending_queued reports what Stop left untouched. Deliberately no automatic
-	// dispatch of it: a queued prompt is the user's to release, so the queue waits
-	// for them to send it rather than starting on its own behind a Stop.
+	// pending_queued counts the turns Stop parked. They survive and stay visible,
+	// but nothing dispatches them until the user releases each one — a queued
+	// prompt behind a Stop is usually stale, and running it a moment later is the
+	// same surprise the user pressed Stop to prevent.
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":         result.SessionStatus,
 		"pending_queued": result.PendingQueued,
