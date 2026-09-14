@@ -1647,7 +1647,15 @@ class EntrypointStaticTest(unittest.TestCase):
         payload.update(overrides)
         return payload
 
-    def _write_control(self, root, payload):
+    def _write_control(self, root, *commands, version=bridge.TURN_CONTROL_VERSION):
+        """Write the control log exactly as the host's AppendTurnControl does."""
+        inbox = Path(root) / bridge.INBOX
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / bridge.TURN_CONTROL_FILE).write_text(
+            json.dumps({"version": version, "commands": list(commands)}), encoding="utf-8"
+        )
+
+    def _write_control_raw(self, root, payload):
         inbox = Path(root) / bridge.INBOX
         inbox.mkdir(parents=True, exist_ok=True)
         (inbox / bridge.TURN_CONTROL_FILE).write_text(json.dumps(payload), encoding="utf-8")
@@ -1671,30 +1679,51 @@ class EntrypointStaticTest(unittest.TestCase):
         """Polled every 200ms while a turn runs, so it must never raise.
 
         The host replaces this file with an atomic rename; a reader can catch it
-        missing or half-visible. Each rejection below returns None so the watcher
-        simply looks again on its next tick.
+        missing or half-visible. Each rejection below yields an empty log so the
+        watcher simply looks again on its next tick.
         """
         with tempfile.TemporaryDirectory() as root:
             # Absent file: the normal case for the whole life of most turns.
-            self.assertIsNone(bridge.read_turn_control(root))
+            self.assertEqual(bridge.read_turn_control(root), [])
             for label, payload in [
-                ("unknown command", {"command": "explode", "token": "t", "turn_id": 1}),
-                ("missing token", {"command": "abort", "turn_id": 1}),
-                ("missing turn_id", {"command": "abort", "token": "t"}),
-                ("non-numeric turn_id", {"command": "abort", "token": "t", "turn_id": "abc"}),
                 ("not an object", ["abort"]),
+                ("no version", {"commands": []}),
+                # A version this rootfs does not know means the host is writing a
+                # shape it cannot read. Refusing beats guessing at the fields.
+                ("future version", {"version": bridge.TURN_CONTROL_VERSION + 1, "commands": [self._control_payload()]}),
+                ("commands not a list", {"version": bridge.TURN_CONTROL_VERSION, "commands": {"command": "abort"}}),
             ]:
-                self._write_control(root, payload)
-                self.assertIsNone(bridge.read_turn_control(root), label)
+                self._write_control_raw(root, payload)
+                self.assertEqual(bridge.read_turn_control(root), [], label)
             (Path(root) / bridge.INBOX / bridge.TURN_CONTROL_FILE).write_text("{not json", encoding="utf-8")
-            self.assertIsNone(bridge.read_turn_control(root), "malformed json")
+            self.assertEqual(bridge.read_turn_control(root), [], "malformed json")
 
-            self._write_control(root, self._control_payload(command="steer", message="do this instead"))
-            control = bridge.read_turn_control(root)
-            self.assertEqual(
-                (control["command"], control["token"], control["turn_id"], control["message"]),
-                ("steer", "tok-1", 7, "do this instead"),
+            # One unusable entry is skipped rather than discarding the log: the
+            # good commands around it are still the user's, and still deliverable.
+            self._write_control(
+                root,
+                {"command": "explode", "token": "t", "turn_id": 1},
+                {"command": "abort", "turn_id": 1},
+                {"command": "abort", "token": "t"},
+                {"command": "abort", "token": "t", "turn_id": "abc"},
+                "not-an-object",
+                self._control_payload(command="steer", message="do this instead"),
             )
+            commands = bridge.read_turn_control(root)
+            self.assertEqual(
+                [(c["command"], c["token"], c["turn_id"], c["message"]) for c in commands],
+                [("steer", "tok-1", 7, "do this instead")],
+            )
+
+    def test_read_turn_control_preserves_command_order(self):
+        """The log is ordered, and steering twice must arrive in the order typed."""
+        with tempfile.TemporaryDirectory() as root:
+            self._write_control(
+                root,
+                self._control_payload(command="steer", token="tok-1", message="first"),
+                self._control_payload(command="steer", token="tok-2", message="second"),
+            )
+            self.assertEqual([c["message"] for c in bridge.read_turn_control(root)], ["first", "second"])
 
     def test_deliver_control_abort_marks_the_turn_and_writes_pi_abort(self):
         runner = bridge.PiRPCTurnRunner()
@@ -1756,8 +1785,8 @@ class EntrypointStaticTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as root:
             runner = FakeRunner()
-            # A control file naming turn 99 while turn 7 runs is a leftover from a
-            # turn that already ended. Applying it would abort the wrong turn.
+            # An entry naming turn 99 while turn 7 runs is a leftover from a turn
+            # that already ended. Applying it would abort the wrong turn.
             self._write_control(root, self._control_payload(turn_id=99))
             stop = bridge.start_turn_control_watcher(root, runner, 7, interval=0.01)
             deadline = time.monotonic() + 0.5
@@ -1777,6 +1806,61 @@ class EntrypointStaticTest(unittest.TestCase):
             time.sleep(0.15)
             stop.set()
             self.assertEqual(runner.calls, [("steer", 7, "hi")])
+
+    def test_control_watcher_delivers_every_queued_command_in_order(self):
+        """Two commands can land inside one poll interval; neither may be lost.
+
+        This is why the file is a log rather than a single slot: with one slot the
+        watcher would see only the last write, and a steer holds text the user
+        typed.
+        """
+        class FakeRunner:
+            def __init__(self):
+                self.calls = []
+
+            def deliver_control(self, command, turn_id, message=""):
+                self.calls.append((command, turn_id, message))
+                return True
+
+        with tempfile.TemporaryDirectory() as root:
+            runner = FakeRunner()
+            self._write_control(
+                root,
+                self._control_payload(command="steer", token="tok-1", message="first"),
+                self._control_payload(command="steer", token="tok-2", message="second"),
+            )
+            stop = bridge.start_turn_control_watcher(root, runner, 7, interval=0.01)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline and len(runner.calls) < 2:
+                time.sleep(0.01)
+            stop.set()
+            self.assertEqual(runner.calls, [("steer", 7, "first"), ("steer", 7, "second")])
+
+    def test_control_watcher_stops_at_the_first_abort_in_the_log(self):
+        """Anything after an abort belongs to a turn this watcher will never see."""
+        class FakeRunner:
+            def __init__(self):
+                self.calls = []
+
+            def deliver_control(self, command, turn_id, message=""):
+                self.calls.append((command, turn_id, message))
+                return True
+
+        with tempfile.TemporaryDirectory() as root:
+            runner = FakeRunner()
+            self._write_control(
+                root,
+                self._control_payload(command="steer", token="tok-1", message="keep going"),
+                self._control_payload(command="abort", token="tok-2"),
+                self._control_payload(command="steer", token="tok-3", message="never delivered"),
+            )
+            stop = bridge.start_turn_control_watcher(root, runner, 7, interval=0.01)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline and not any(c[0] == "abort" for c in runner.calls):
+                time.sleep(0.01)
+            time.sleep(0.15)
+            stop.set()
+            self.assertEqual(runner.calls, [("steer", 7, "keep going"), ("abort", 7, "")])
 
     def test_control_watcher_survives_a_runner_that_raises(self):
         """This thread runs inside the sandbox's init process.

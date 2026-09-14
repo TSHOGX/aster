@@ -36,6 +36,11 @@ CHECKPOINT_READY = "checkpoint-ready"
 # machinery and safe from its cleanup, with no new mount and no contract change.
 TURN_CONTROL_FILE = "turn-control.json"
 TURN_CONTROL_COMMANDS = frozenset({"abort", "steer"})
+# Schema version of that file, shared with the host writer
+# (orchestrator/internal/bridge/turncontrol.go). Anything else is refused rather
+# than guessed at, so a host and a rootfs that disagree fail visibly instead of
+# dropping the user's Stop.
+TURN_CONTROL_VERSION = 1
 PI_CODING_AGENT_DIR = "/agent-home/.pi/agent"
 PI_SESSION_DIR = f"{PI_CODING_AGENT_DIR}/sessions"
 PI_MODELS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/models.json"
@@ -116,44 +121,60 @@ def write_control_file(root, dirname, name, suffix):
 
 
 def read_turn_control(root):
-    """Read the host's pending turn-control command, or None.
+    """Read the host's turn-control log: an ordered list of commands.
 
-    Tolerant by construction: this is polled every few hundred ms while a turn
-    runs, and the host replaces the file with an atomic rename, so a missing,
-    half-visible or malformed file is an ordinary observation rather than a
-    fault. Anything unparseable returns None and is simply retried — this must
-    never raise into the watcher thread, because the watcher runs inside the
-    sandbox's init process.
+    A log rather than a single slot because this is polled every few hundred ms.
+    Two commands written inside one interval would leave only the second in a
+    single-slot file, and for steer that is a message the user typed — silently
+    dropped while the host has already reported it delivered. Every entry the
+    watcher has not applied yet is still here when it next looks.
 
-    A command is only honoured when it carries a token and a turn_id: the token
-    lets the watcher ignore one it has already applied, and the turn_id keeps a
-    stale file from aborting a later turn that happens to be running when it is
-    finally noticed.
+    Tolerant by construction: the host replaces the file with an atomic rename,
+    so a missing, half-visible or malformed file is an ordinary observation rather
+    than a fault. Anything unparseable yields an empty list and is simply retried
+    — this must never raise into the watcher thread, because that thread runs
+    inside the sandbox's init process.
+
+    Entries missing a token or turn_id are skipped, not fatal: the token lets the
+    watcher ignore one it has already applied, and the turn_id keeps a stale
+    command from reaching a later turn that happens to be running when it is
+    finally noticed. Skipping one bad entry still delivers the good ones around
+    it.
     """
     path = Path(root) / INBOX / TURN_CONTROL_FILE
     try:
         with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f)
     except (FileNotFoundError, NotADirectoryError, PermissionError, json.JSONDecodeError, UnicodeDecodeError, OSError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    command = str(payload.get("command") or "")
-    if command not in TURN_CONTROL_COMMANDS:
-        return None
-    token = str(payload.get("token") or "")
-    if not token:
-        return None
-    try:
-        turn_id = int(payload.get("turn_id"))
-    except (TypeError, ValueError):
-        return None
-    return {
-        "command": command,
-        "token": token,
-        "turn_id": turn_id,
-        "message": str(payload.get("message") or ""),
-    }
+        return []
+    if not isinstance(payload, dict) or payload.get("version") != TURN_CONTROL_VERSION:
+        return []
+    raw_commands = payload.get("commands")
+    if not isinstance(raw_commands, list):
+        return []
+    commands = []
+    for entry in raw_commands:
+        if not isinstance(entry, dict):
+            continue
+        command = str(entry.get("command") or "")
+        if command not in TURN_CONTROL_COMMANDS:
+            continue
+        token = str(entry.get("token") or "")
+        if not token:
+            continue
+        try:
+            turn_id = int(entry.get("turn_id"))
+        except (TypeError, ValueError):
+            continue
+        commands.append(
+            {
+                "command": command,
+                "token": token,
+                "turn_id": turn_id,
+                "message": str(entry.get("message") or ""),
+            }
+        )
+    return commands
 
 
 def canonical_json_bytes(payload):
@@ -1010,20 +1031,22 @@ def start_turn_control_watcher(root, runner, turn_id, interval=0.2):
     def loop():
         while not stop.wait(max(interval, 0.01)):
             try:
-                control = read_turn_control(root)
-                if control is None or control["token"] in applied:
-                    continue
-                # A file naming a different turn is stale: the host wrote it for a
-                # turn that has since ended. Ignoring it is what keeps a late abort
-                # from killing the turn that came after it.
-                if control["turn_id"] != turn_id:
-                    continue
-                applied.add(control["token"])
-                delivered = runner.deliver_control(control["command"], turn_id, control.get("message", ""))
-                if delivered:
-                    print(f"[bridge] applied {control['command']} to turn {turn_id}", file=sys.stderr, flush=True)
-                if delivered and control["command"] == "abort":
-                    return
+                for control in read_turn_control(root):
+                    if control["token"] in applied:
+                        continue
+                    # An entry naming a different turn is stale: the host wrote it
+                    # for a turn that has since ended. Ignoring it is what keeps a
+                    # late abort from killing the turn that came after it.
+                    if control["turn_id"] != turn_id:
+                        continue
+                    applied.add(control["token"])
+                    delivered = runner.deliver_control(control["command"], turn_id, control.get("message", ""))
+                    if delivered:
+                        print(f"[bridge] applied {control['command']} to turn {turn_id}", file=sys.stderr, flush=True)
+                    # Abort ends the watch: the turn is over, so anything after it
+                    # in the log belongs to a turn this watcher will never see.
+                    if delivered and control["command"] == "abort":
+                        return
             except Exception as err:
                 print(f"[bridge] turn control watch failed: {err}", file=sys.stderr, flush=True)
 
