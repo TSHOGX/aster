@@ -315,6 +315,42 @@ npm --version >/dev/null
 '
 }
 
+# Stop and steer are not ours: they are pi RPC commands, and the bridge client
+# writes exactly two shapes to pi's stdin — {"type":"abort"} and
+# {"type":"steer","message":...} (harness-bridge-client: deliver_control).
+#
+# Nothing else in the image would notice if a pi upgrade renamed or reshaped
+# them. The client would keep writing, pi would ignore the line, and Stop would
+# do nothing at all: no error, no event, a button that silently stopped working.
+# So assert the contract at build time, where a rebuild fails loudly, rather than
+# discovering it from a user whose Stop did nothing.
+#
+# Checked against the shipped rpc-types.d.ts because that is pi's own declaration
+# of the protocol. Verify rather than freeze, as with httpfs above: a version pin
+# would not have caught a reshape within the same version.
+verify_pi_rpc_turn_control() {
+  log "verifying pi RPC turn-control contract (abort/steer)"
+  chroot "${ROOTFS_DIR}" /usr/bin/python3 - "${PI_PACKAGE}" <<'PY'
+import pathlib
+import re
+import sys
+
+package = sys.argv[1]
+types = pathlib.Path("/usr/local/lib/node_modules") / package / "dist/modes/rpc/rpc-types.d.ts"
+if not types.is_file():
+    sys.exit(f"pi RPC type declarations missing at {types}")
+source = types.read_text(encoding="utf-8")
+
+# The union member, not just the literal: `type: "abort"` has to be a command pi
+# accepts, and steer has to still carry the message we inject.
+if not re.search(r'type:\s*"abort"', source):
+    sys.exit("pi RPC no longer declares an 'abort' command; Stop cannot reach the agent")
+steer = re.search(r'type:\s*"steer";\s*message:\s*string', source)
+if steer is None:
+    sys.exit("pi RPC 'steer' no longer takes a message; queue-row send cannot inject text")
+PY
+}
+
 install_agent_drivers() {
   local driver
   for driver in "${SELECTED_AGENT_DRIVERS[@]}"; do
@@ -327,6 +363,7 @@ install_agent_drivers() {
           log "using npm registry ${NPM_REGISTRY}"
         fi
         chroot "${ROOTFS_DIR}" /bin/sh -lc "npm install -g --prefix /usr/local ${npm_registry_arg} '${PI_PACKAGE}@${PI_CODING_AGENT_VERSION}'"
+        verify_pi_rpc_turn_control
         ;;
       sh)
         log "using bundled shell agent"
