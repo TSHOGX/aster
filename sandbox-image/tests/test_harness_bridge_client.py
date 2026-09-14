@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 from importlib.machinery import SourceFileLoader
 import json
@@ -21,6 +22,101 @@ MANIFEST_LIB = SCRIPT.parents[1] / "lib" / "harness_manifest.py"
 manifest_spec = importlib.util.spec_from_loader("harness_manifest", SourceFileLoader("harness_manifest", str(MANIFEST_LIB)))
 manifest = importlib.util.module_from_spec(manifest_spec)
 manifest_spec.loader.exec_module(manifest)
+
+
+def jline(obj):
+    return json.dumps(obj, separators=(",", ":")) + "\n"
+
+
+class ScriptedPi:
+    """A fake pi that REACTS to stdin, modelling the real RPC event nesting.
+
+    The pre-existing fakes in this file are fixed line lists that ignore what the
+    client writes. That is precisely why the suite stayed green while the stream
+    desync shipped: a list cannot express "agent_end arrives after the turn_end
+    the client stops on", so the residue that corrupts the next turn never
+    existed in the tests.
+
+    Real pi (verified by spiking pi 0.77.0 directly) frames one prompt as
+
+        agent_start … [turn_start … turn_end]* … agent_end
+
+    so `agent_end` is ALWAYS still unread when the client breaks on the last
+    turn_end. An abort additionally leaves response{command:"abort"}.
+    """
+
+    def __init__(self, session_file, session_id="pi-session-1", abort_on_prompt=None):
+        self.session_file = str(session_file)
+        self.session_id = session_id
+        # Prompt ids that should end aborted instead of completing normally.
+        self.abort_on_prompt = set(abort_on_prompt or ())
+        self.pending = []
+        self.prompts = []
+        self.stdin = self
+        self.stdout = self
+        self.stderr = iter([])
+        self.writes = []
+
+    # -- stdin side -------------------------------------------------------
+    def write(self, value):
+        self.writes.append(value)
+        for chunk in value.splitlines():
+            chunk = chunk.strip()
+            if chunk:
+                self._dispatch(json.loads(chunk))
+
+    def flush(self):
+        pass
+
+    def _dispatch(self, req):
+        rid = req.get("id")
+        kind = req.get("type")
+        if kind == "prompt":
+            self.prompts.append(req.get("message"))
+            self.pending.append(jline({"id": rid, "type": "response", "command": "prompt", "success": True}))
+            self.pending.append(jline({"type": "agent_start"}))
+            self.pending.append(jline({"type": "turn_start"}))
+            self.pending.append(jline({
+                "type": "message_update",
+                "messageId": f"msg-{len(self.prompts)}",
+                "assistantMessageEvent": {"type": "text_delta", "delta": f"reply-{len(self.prompts)}"},
+            }))
+            if rid in self.abort_on_prompt:
+                self.pending.append(jline({"type": "turn_end", "message": {"stopReason": "aborted"}}))
+                self.pending.append(jline({"type": "agent_end", "message": {"stopReason": "aborted"}}))
+                self.pending.append(jline({"id": f"harness-abort-{rid}", "type": "response", "command": "abort", "success": True}))
+                return
+            # The boundary that matters: the client breaks on turn_end, and
+            # agent_end is left in the pipe for whoever reads next.
+            self.pending.append(jline({"type": "turn_end", "status": "completed"}))
+            self.pending.append(jline({"type": "agent_end", "status": "completed"}))
+            return
+        if kind == "get_session_stats":
+            self.pending.append(jline({
+                "id": rid, "type": "response", "command": "get_session_stats", "success": True,
+                "data": {"sessionFile": self.session_file, "sessionId": self.session_id},
+            }))
+            return
+        if kind == "switch_session":
+            self.pending.append(jline({"id": rid, "type": "response", "command": "switch_session", "success": True}))
+            return
+        if kind == "abort":
+            self.pending.append(jline({"id": rid, "type": "response", "command": "abort", "success": True}))
+            return
+        self.pending.append(jline({"id": rid, "type": "response", "command": kind, "success": True}))
+
+    # -- stdout side ------------------------------------------------------
+    def readline(self):
+        if not self.pending:
+            return ""
+        return self.pending.pop(0)
+
+    # -- process side -----------------------------------------------------
+    def poll(self):
+        return None
+
+    def terminate(self):
+        pass
 
 
 class BridgeClientTest(unittest.TestCase):
@@ -1561,6 +1657,160 @@ class BridgeClientTest(unittest.TestCase):
             self.assertEqual([message["type"] for message in sent if message["type"] in {"hello", "probe_network"}], ["hello", "probe_network"])
             self.assertTrue((Path(root) / bridge.HEARTBEAT / bridge.BRIDGE_HEARTBEAT).exists())
             self.assertTrue((Path(root) / bridge.HEARTBEAT / bridge.CHECKPOINT_READY).exists())
+
+
+class PiTurnBoundaryTest(unittest.TestCase):
+    """Two consecutive turns through one pi process must not share a stream.
+
+    The invariant under test: when run_turn returns, pi's stdout holds no events
+    belonging to the turn that just finished, so the next turn's first read is
+    its own first event.
+
+    Which of these failed before the boundary-barrier fix is worth recording,
+    because it explains the shape of the production bug exactly:
+
+      - the COMPLETED path was accidentally safe. After breaking on turn_end the
+        old code called _request_response for session stats, and that helper
+        skips events until the matching id arrives — incidentally swallowing the
+        leftover agent_end. So test_second_turn_does_not_consume_first_turns_
+        agent_end passes either way. It is kept as a guard: it pins the invariant
+        for the path that no longer has an accidental drain to rely on.
+
+      - the ABORTED and FAILED paths returned early, BEFORE that stats call, so
+        nothing consumed the residue. The next turn then broke on the previous
+        turn's agent_end (and, after an abort, response{command:"abort"}) and
+        reported a terminal status having never run its own prompt. The two abort
+        tests below fail without the fix, which is the regression that matters.
+    """
+
+    def _pi_env(self, root):
+        agent_dir = Path(root) / "agent"
+        session_dir = agent_dir / "sessions"
+        session_dir.mkdir(parents=True)
+        session_file = session_dir / "session-1.jsonl"
+        session_file.write_text("{}\n", encoding="utf-8")
+        models = agent_dir / "models.json"
+        settings = agent_dir / "settings.json"
+        for path in (models, settings):
+            path.write_text("{}\n", encoding="utf-8")
+            path.chmod(0o444)
+        return agent_dir, session_dir, session_file, models, settings
+
+    def _patches(self, agent_dir, session_dir, models, settings, fake):
+        return [
+            mock.patch.object(bridge, "PI_CODING_AGENT_DIR", str(agent_dir)),
+            mock.patch.object(bridge, "PI_SESSION_DIR", str(session_dir)),
+            mock.patch.object(bridge, "PI_MODELS_SANDBOX_PATH", str(models)),
+            mock.patch.object(bridge, "PI_SETTINGS_SANDBOX_PATH", str(settings)),
+            mock.patch.object(bridge, "PI_SYSTEM_PROMPT_PATH", str(agent_dir / "missing-prompt")),
+            mock.patch.object(bridge.subprocess, "Popen", side_effect=lambda command, **kw: fake),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "PI_CODING_AGENT_DIR": str(agent_dir),
+                    "PI_CODING_AGENT_SESSION_DIR": str(session_dir),
+                    "PI_OFFLINE": "1",
+                    "PI_SKIP_VERSION_CHECK": "1",
+                    "PI_TELEMETRY": "0",
+                },
+                clear=False,
+            ),
+        ]
+
+    def _grant(self, turn_id, session_file, version):
+        payload = {
+            "schema_version": 1,
+            "driver_id": "pi",
+            "state_kind": "pi_session",
+            "session_dir": str(session_file.parent),
+            "selected_session_relpath": session_file.name,
+            "selected_session_file": str(session_file),
+            "selected_session_id": "pi-session-1",
+            "last_completed_turn_id": "0",
+        }
+        return {
+            "turn_id": turn_id,
+            "driver_state": {
+                "driver_id": "pi",
+                "state_digest": bridge.driver_state_digest(payload),
+                "state_version": version,
+                "state_payload": payload,
+            },
+        }
+
+    def _run(self, runner, grant, content):
+        emitted = []
+        runner.set_turn_context(grant)
+        result = runner.run_turn(content, lambda stream, line: emitted.append(json.loads(line)))
+        return result, emitted
+
+    def test_second_turn_does_not_consume_first_turns_agent_end(self):
+        with tempfile.TemporaryDirectory() as root:
+            agent_dir, session_dir, session_file, models, settings = self._pi_env(root)
+            fake = ScriptedPi(session_file)
+            runner = bridge.PiRPCTurnRunner()
+            with contextlib.ExitStack() as stack:
+                for patch in self._patches(agent_dir, session_dir, models, settings, fake):
+                    stack.enter_context(patch)
+                first, first_events = self._run(runner, self._grant(1, session_file, 1), "hello")
+                second, second_events = self._run(runner, self._grant(2, session_file, 2), "again")
+
+            self.assertEqual(first[0], "completed")
+            self.assertEqual(second[0], "completed")
+            # The regression: turn 2 must see its OWN reply, not turn 1's residue.
+            deltas = [
+                event["assistantMessageEvent"]["delta"]
+                for event in second_events
+                if event.get("type") == "message_update"
+            ]
+            self.assertEqual(deltas, ["reply-2"])
+            self.assertEqual(fake.prompts, ["hello", "again"])
+            # Both turns must produce a real terminal event of their own.
+            for events in (first_events, second_events):
+                terminals = [e for e in events if e.get("type") in {"turn_end", "agent_end"}]
+                self.assertTrue(terminals, f"turn produced no terminal event: {events}")
+
+    def test_turn_after_abort_runs_its_own_prompt(self):
+        """The production failure: turn N is stopped, turn N+1 completes instantly.
+
+        An aborted turn leaves agent_end AND response{abort} unread, so the next
+        turn used to break on the first of them — reporting 'completed' in
+        milliseconds while its prompt was never answered.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            agent_dir, session_dir, session_file, models, settings = self._pi_env(root)
+            fake = ScriptedPi(session_file, abort_on_prompt={"harness-turn-1"})
+            runner = bridge.PiRPCTurnRunner()
+            with contextlib.ExitStack() as stack:
+                for patch in self._patches(agent_dir, session_dir, models, settings, fake):
+                    stack.enter_context(patch)
+                aborted, _ = self._run(runner, self._grant(1, session_file, 1), "count to 400")
+                after, after_events = self._run(runner, self._grant(2, session_file, 2), "say hi")
+
+            self.assertEqual(aborted[:3], ("canceled", "user_interrupted", "interrupted by user"))
+            self.assertEqual(after[0], "completed")
+            deltas = [
+                event["assistantMessageEvent"]["delta"]
+                for event in after_events
+                if event.get("type") == "message_update"
+            ]
+            self.assertEqual(deltas, ["reply-2"])
+            self.assertEqual(fake.prompts, ["count to 400", "say hi"])
+
+    def test_aborted_turn_does_not_carry_marker_into_next_turn(self):
+        """set_turn_context clears aborted_turn_id; assert it end-to-end."""
+        with tempfile.TemporaryDirectory() as root:
+            agent_dir, session_dir, session_file, models, settings = self._pi_env(root)
+            fake = ScriptedPi(session_file, abort_on_prompt={"harness-turn-1"})
+            runner = bridge.PiRPCTurnRunner()
+            with contextlib.ExitStack() as stack:
+                for patch in self._patches(agent_dir, session_dir, models, settings, fake):
+                    stack.enter_context(patch)
+                self._run(runner, self._grant(1, session_file, 1), "count to 400")
+                self.assertEqual(runner.aborted_turn_id, None)
+                after, _ = self._run(runner, self._grant(2, session_file, 2), "say hi")
+            self.assertEqual(after[0], "completed")
+            self.assertIsNone(runner.aborted_turn_id)
 
 
 class EntrypointStaticTest(unittest.TestCase):
