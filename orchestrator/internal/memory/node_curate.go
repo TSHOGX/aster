@@ -314,18 +314,32 @@ func (n *CurateNode) critiqueSkill(ctx context.Context, sk memorystore.SkillCand
 // memoryEligibleForCuration excludes items Node C flagged (ContradictionCount>0):
 // those are stale/fixed and must never promote.
 func memoryEligibleForCuration(m memorystore.SemanticMemory) bool {
-	return m.ContradictionCount == 0
+	return m.ContradictionCount == 0 && distinctEvidenceCount(m.EvidenceSessionIDs) >= minFactSupport
 }
 
 // skillEligibleForCuration selects skill candidates Node D should judge: anything
 // not already rejected and not already published.
 func skillEligibleForCuration(sk memorystore.SkillCandidate) bool {
+	if distinctEvidenceCount(sk.EvidenceSessionIDs) < minSkillSupport {
+		return false
+	}
 	switch strings.ToLower(strings.TrimSpace(sk.Status)) {
 	case "rejected", "published":
 		return false
 	default:
 		return true
 	}
+}
+
+func distinctEvidenceCount(ids []string) int {
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+	}
+	return len(seen)
 }
 
 // normalizeDisposition maps free-text agent output onto the closed set; anything

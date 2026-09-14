@@ -177,6 +177,9 @@ func (p *Pipeline) publishAgentic(ctx context.Context, runID int64, counts map[s
 	// or private connection string reaches the shared KB even if an agent slips.
 	safeMems := accepted[:0]
 	for _, m := range accepted {
+		if distinctEvidenceCount(m.EvidenceSessionIDs) < minFactSupport {
+			continue
+		}
 		if containsSecret(m.Statement) || containsSecret(m.WhenToApply) {
 			p.log.Warn("agentic: PII backstop dropped memory", "id", m.ID)
 			continue
@@ -185,6 +188,9 @@ func (p *Pipeline) publishAgentic(ctx context.Context, runID int64, counts map[s
 	}
 	var safeSkills []memorystore.SkillCandidate
 	for _, sk := range skills {
+		if distinctEvidenceCount(sk.EvidenceSessionIDs) < minSkillSupport {
+			continue
+		}
 		if vetoedSkills[sk.ID] {
 			continue // critic veto
 		}

@@ -32,6 +32,7 @@ import (
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
@@ -81,6 +82,11 @@ type Server struct {
 	// sharing: links still work for conversation text, and the whitelist endpoints
 	// report an empty set rather than falling back to the live workspace.
 	shareBlobs *shareblob.Store
+
+	// kb/kbMemories back the per-entry KB review endpoints. Nil kb means the
+	// deployment has no knowledge base configured and those routes report 503.
+	kb         *memory.KB
+	kbMemories kbReviewStore
 
 	sessionOwnerMu    sync.Mutex
 	sessionOwnerCache map[string]sessionOwnerEntry
@@ -656,6 +662,8 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.listNotifications(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/notifications/") && strings.HasSuffix(r.URL.Path, "/read") && r.Method == http.MethodPost:
 		s.markNotificationRead(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/kb-review"):
+		s.kbReviewRoute(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/sessions/"):
 		s.sessionRoute(w, r)
 	case r.URL.Path == "/api/schedules" && r.Method == http.MethodGet:

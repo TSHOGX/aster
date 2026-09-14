@@ -178,6 +178,11 @@ func main() {
 				return fmt.Errorf("open share blob store: %w", err)
 			}
 			app.SetShareBlobStore(shareBlobs)
+			// Per-entry KB review. Injected here (not in server.New) because the
+			// KB writer and the memory DB are both optional: with no KB root
+			// configured the review endpoints report 503 rather than the process
+			// refusing to start.
+			app.SetKBReview(memory.NewKB(cfg.AgentsKBRoot), memoryDB)
 			return nil
 		},
 		RecoverExpiredRuntimeResources: func(ctx context.Context, now time.Time) (store.StartupRecoveryResult, error) {

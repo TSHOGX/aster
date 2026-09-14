@@ -13,11 +13,13 @@ func sampleKBContent(statement string) ([]memorystore.SemanticMemory, []memoryst
 	mems := []memorystore.SemanticMemory{{
 		Type: "fact", Scope: "doris", Statement: statement,
 		SupportCount: 4, Confidence: 0.8, Status: "accepted",
+		EvidenceSessionIDs: []string{"s1", "s2"},
 	}}
 	skills := []memorystore.SkillCandidate{{
 		TargetSkillName: "charging-analysis", Title: "Charging analysis",
 		BodyMD: "# Charging analysis\n\n## Procedure\n1. step\n", KBStatus: "observing",
 		SupportCount: 3, Confidence: 0.78,
+		EvidenceSessionIDs: []string{"s1", "s2", "s3"},
 	}}
 	return mems, skills
 }
@@ -241,4 +243,3 @@ func TestKBApproveWrongDigestRejected(t *testing.T) {
 		t.Fatal("current must stay unset after a failed approve")
 	}
 }
-

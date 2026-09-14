@@ -150,7 +150,7 @@ func TestReseedPreservesDistilledContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reseed: %v", err)
 	}
-	for _, rel := range []string{"facts/INDEX.md", "facts/doris.md", "skills/charging-analysis/SKILL.md"} {
+	for _, rel := range []string{"facts/INDEX.md", "facts/schema-fields.md", "skills/charging-analysis/SKILL.md"} {
 		want, err := os.ReadFile(filepath.Join(kb.SnapshotDir(base), rel))
 		if err != nil {
 			t.Fatalf("read base %s: %v", rel, err)
