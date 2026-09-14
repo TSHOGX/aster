@@ -64,7 +64,8 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
 
 - `api.ts` — typed client for every orchestrator call: auth (`fetchMe`, `login`,
   `logout`), sessions (`fetchSessions`, `createSession`, `destroySession`,
-  `renameSession`, `interruptSession`), messages (`fetchMessages`, `postMessage`,
+  `renameSession`, `interruptSession`), turns (`cancelQueuedTurn`,
+  `sendQueuedTurn`), messages (`fetchMessages`, `postMessage`,
   `postMessageFeedback`), artifacts (`fetchArtifacts`, `uploadArtifacts`,
   `writeArtifact`, `fetchArtifactText`/`Blob`, `buildArtifactHref`), plus
   `searchSessions`, `fetchNotifications`/`markNotificationRead`, and
@@ -137,7 +138,8 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   (messages + streaming + runtime lines + per-turn activity), per-session `artifacts`,
   `notifications`, and `auth`. Exposes `selectSession`, `createSession`,
   `destroySession`, `renameSession` (optimistic, rolls back on failure),
-  `interruptSession`, `sendMessage`, `setMessageFeedback`, `markNotificationRead`,
+  `interruptSession`, `cancelQueuedTurn`, `sendQueuedTurn`, `sendMessage`,
+  `setMessageFeedback`, `markNotificationRead`,
   `refresh`, `onLogin`, `logout`. `useLastReply(sessionId)` selects just the last
   committed turn-final assistant message (by the same `isFinalReply` rule the action
   bar uses) so the workspace panel can derive its mentioned-files list without
@@ -218,6 +220,18 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   `setMessageFeedback`). `message-bubble.tsx`, `markdown-view.tsx`, `inline-diff.tsx`,
   `viewers/` — rendering primitives.
 - `workbench/composer.tsx` — floating auto-expanding chat bar.
+- The queue rows (`QueuedTurns` in `conversation.tsx`) render `queued_turns` from the
+  projection as-is, with two per-row actions and **no queue-wide operation**: ↑ sends
+  that one turn, X withdraws it. One prompt at a time is deliberate — after a Stop the
+  queue is usually stale, so the user picks what still matters instead of facing an
+  all-or-nothing choice. A row parked by Stop says so; an unparked one is already on
+  its way to the worker. The ↑ label follows what the press will do, from the same
+  active/idle split the server uses: with a turn executing the text is steered into
+  it, otherwise the parked row is released to run. A stale projection therefore
+  mislabels a button rather than misrouting a prompt.
+- `busy` and `stoppable` are distinct in `conversation.tsx`: a queued-only session is
+  busy (the placeholder invites a follow-up) but not stoppable, since Stop ends the
+  turn in flight and would have nothing to act on.
 - `workbench/mentioned-files.tsx` — a collapsible **In this reply** section at the
   top of the workspace panel listing the files the latest reply refers to, one per
   row, styled as a section of the tree below it rather than a separate widget.

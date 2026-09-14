@@ -35,10 +35,11 @@ The orchestrator serves three trees:
 | POST | `/api/sessions/{id}/messages` | required | enqueue a turn (start/wake generation) |
 | GET | `/api/sessions/{id}/runtime` | required | runtime projection: active turn, queued turns, revision |
 | DELETE | `/api/sessions/{id}/turns/{turnID}` | required | withdraw a queued turn (`409` once claimed) |
+| POST | `/api/sessions/{id}/turns/{turnID}/send` | required | send one queued turn now (steers into the running turn, or releases a parked one) |
 | POST | `/api/sessions/{id}/messages/{mid}/feedback` | required | set/clear the caller's 👍/👎 on a message |
 | GET | `/api/sessions/{id}/artifacts` | required | list workspace artifacts |
 | POST | `/api/sessions/{id}/artifacts` | required | multipart upload into the workspace |
-| POST | `/api/sessions/{id}/interrupt` | required | interrupt a running turn (shell signal; agent generation teardown) |
+| POST | `/api/sessions/{id}/interrupt` | required | stop the running turn (shell signal; agent abort delivered into the live sandbox) |
 | POST | `/api/sessions/{id}/shares` | required (owner) | share the session read-only with a user |
 | GET | `/api/sessions/{id}/shares` | required (owner) | list live grants on the session |
 | DELETE | `/api/sessions/{id}/shares/{shareID}` | required (owner) | revoke one grant |
@@ -160,13 +161,43 @@ running and this returns `409 turn_not_cancelable`; ending it is then
 turn was never asked, so leaving the text in the transcript would read as an
 unanswered prompt.
 
-**`POST /api/sessions/{id}/interrupt`** → `202 {"status", "canceled_queued",
-"runtime"}`. It cancels the turns queued behind the running one as well, and
-`canceled_queued` says how many. That is not merely tidy: interrupt retires the
-generation, and `ClaimNextTurn` only grants turns against a live generation, so a
-turn left queued could never be claimed — it would strand until a later `POST`
-happened to allocate a generation, at which point a prompt the user abandoned long
-ago would suddenly execute.
+**`POST /api/sessions/{id}/interrupt`** → `202 {"status", "pending_queued",
+"runtime"}`. It stops the running turn and nothing else.
+
+For an agent session the abort travels into the live sandbox as a turn-control
+command, so the sandbox, the workspace and the agent process all survive and the
+next prompt costs no cold start. The turn ends `canceled` / `user_interrupted`,
+and whatever already streamed stays in the transcript — it is real work.
+
+Turns queued behind it survive too, but **parked**: `pending_queued` counts them.
+A parked turn is skipped by `ClaimNextTurn`, so nothing dispatches on its own
+behind a Stop — a prompt written for the turn that was just stopped is usually
+stale, and running it a moment later is what Stop was pressed to avoid. Each one
+waits for the user, who sends it with the endpoint below or withdraws it with
+`DELETE`.
+
+**`POST /api/sessions/{id}/turns/{turnID}/send`** sends one queued turn now →
+`202 {"status", "message"?, "runtime"}`. The server picks the mechanism from the
+projection, because the client cannot read it reliably at click time:
+
+- a turn is executing → **steer**: the text is injected into that turn, so the
+  work already done survives (`status: "steered"`). The prompt becomes a
+  transcript message immediately — the agent has been told, so the user has to
+  see what was said — and the queue row retires, carrying
+  `steered_into_turn_id`.
+- nothing is executing → **release**: the parked turn is handed to the worker to
+  run as a turn of its own (`status: "released"`).
+
+`409 turn_not_sendable` means the row moved on between render and click — claimed,
+cancelled, or already sent. Re-read the projection rather than retrying. A steer
+whose target turn ended mid-delivery answers `409 turn_not_steerable` and leaves
+the row queued, so it can still be sent as a turn of its own. `409
+turn_not_releasable` is the release-side counterpart: the row is queued but not
+parked, so it is already on its way to the worker and "send it" would be a no-op
+the user could not tell from success.
+
+A shell session answers `409` outright: its input goes straight to a pty, so there
+is no queue to park, release, or steer into.
 
 **Cron Agent (R2/R4).** `POST /api/schedules` accepts `name`, `prompt`, optional
 `cron_expr` (five-field standard cron), `timezone` (IANA name), `enabled`,

@@ -116,6 +116,13 @@ Cold-fallback sessions (checkpointed with queued turns) are restarted by
 the failed generation and keep the session retryable — never terminal — per
 [decisions/session-lifetime.md](./decisions/session-lifetime.md).
 
+**Parked turns are invisible to all of this.** A turn carries `auto_dispatch`; Stop
+clears it on everything the user had queued (`turn_park.go`). `ClaimNextTurn` and
+`ListColdFallbackSessions` both require `auto_dispatch = 1`, so a parked turn is
+never granted to a sandbox and never pulls one back up — it waits for the user to
+release it with `POST .../turns/{turnID}/send`. Without that predicate, a queue
+parked by Stop would burn a cold start for a prompt the user may never release.
+
 ## Bridge (`internal/bridge/`)
 
 The in-sandbox client and the host processor communicate over a file queue on the
@@ -136,6 +143,25 @@ atomic-rename timestamp files.
 **Message types** (`harness_bridge_v2`, version 2, turn schema `RunTurn`):
 `hello`/`hello_ack`, `heartbeat`, `probe_network`, `claim_next_turn`, `resume_turn`,
 `grant`, `no_work`, `ack_turn_started`, `emit_output`, `ack_turn_completed`, `error`.
+
+**Turn control** (`turncontrol.go`) is the one host→sandbox path that is *not* a
+bridge message, because it has to reach a turn that is already executing. The
+sandbox is the only requester in `harness_bridge_v2`, and during a turn its bridge
+client is blocked reading the driver — so nothing is polling the inbox and no
+response can be granted. Instead the host rewrites a single `turn-control.json` in
+the host-owned inbox (atomic rename, versioned, append-only log of commands), and a
+watcher thread inside the sandbox applies each one to the running turn:
+
+- `abort` — what Stop delivers. The turn ends with `stopReason: "aborted"`; the
+  driver process, its session history and the sandbox all survive.
+- `steer` — what ↑ delivers while a turn runs. The text is injected into the
+  running turn, so work already done is not discarded.
+
+Each entry carries a **token** (applied at most once — the sandbox cannot delete a
+file in a read-only mount) and a **turn_id** (a leftover entry must never reach a
+later turn). The filename is deliberately not a 20-digit sequence name: both queue
+readers accept only that form and the response prune only deletes it, so the control
+file is inert to the queue machinery — no new mount, no protocol bump.
 
 **Processor** (`processor.go: ProcessOnce → handle`):
 

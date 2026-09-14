@@ -169,6 +169,35 @@ in [drivers.md](./drivers.md). All model-access runners get only
 `ANTHROPIC_BASE_URL` (the proxy alias) and a dummy API key — never a real
 credential.
 
+### Turn control (host → sandbox, mid-turn)
+
+Stop and per-row send have to reach a turn that is *already executing*, and the
+bridge cannot carry them: it is request/response with the sandbox as the only
+requester, and during a turn the turn thread is blocked reading the driver, so
+nothing is polling the inbox. So the host writes `inbox/turn-control.json` — a
+versioned, ordered **log** of commands, each with a `token` and the `turn_id` it
+targets — and `start_turn_control_watcher` reads it on a second daemon thread for
+exactly as long as the turn runs.
+
+- The name is deliberately **not** a sequence name. Both queue readers accept only
+  the fixed-width `00000000000000000001.json` form and the host's prune only
+  deletes sequence-named files, so this file is invisible to the queue machinery
+  and safe from its cleanup: no new mount, no contract change.
+- A **log**, not a slot: the watcher polls every 200 ms, and two commands written
+  inside one interval would leave only the second — for `steer` that is a message
+  the user typed, silently dropped after the host reported it delivered.
+- `token` gives at-most-once (the sandbox cannot delete a read-only file);
+  `turn_id` keeps a command noticed late from reaching the turn that came after
+  its target. `abort` ends the watch, `steer` does not — the turn keeps running
+  and the user may steer again.
+- Writes to the driver's stdin are serialized under a lock, because the watcher
+  thread writes while the turn thread is blocked reading the same process.
+
+Schema version 1, shared with the host writer
+(`orchestrator/internal/bridge/turncontrol.go`); anything else is refused rather
+than guessed at, so a host and a rootfs that disagree fail visibly instead of
+dropping the user's Stop.
+
 ## Shell agent (`harness-shell-agent`)
 
 A PTY-backed shell driver. Prefers `/bin/bash` (falls back to `sh`), disables echo /
@@ -238,3 +267,11 @@ and resume sequence numbering; Pi runner command line, config-materialization
 read-only/symlink rejection, stderr handling, and sidecar restore; the manifest
 digest fixture; and entrypoint invariants (required uid/gid, secret-mount
 rejection, workspace/agent-home ordering).
+
+Turn control has its own group, and two of those tests pin properties that are
+easy to regress silently: that the control file is **invisible to the message
+queue** (both queue readers reject its non-seq name), and that `set_turn_context`
+clears a previous abort marker — without it the turn after a stopped one is
+cancelled the moment it starts. The rest cover reading a malformed log without
+raising, command ordering, applying abort vs steer to pi, the watcher surviving a
+runner that raises, and the watcher stopping at the first abort.

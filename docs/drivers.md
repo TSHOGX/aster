@@ -25,7 +25,7 @@ Pi is the only agent-kind driver that ships today.
 
 | Driver id | Label | Kind | Output schema | Model access | Interrupt | Compaction | Binary |
 |---|---|---|---|---|---|---|---|
-| `pi` | Pi | agent | `pi_rpc_events_v1.0` | yes | no | no | `/usr/local/bin/pi` |
+| `pi` | Pi | agent | `pi_rpc_events_v1.0` | yes | yes | no | `/usr/local/bin/pi` |
 | `sh` | Shell | shell | `shell_pty_v1` | **no** | yes | no | `/usr/local/bin/harness-shell-agent` |
 
 Both use bridge protocol `harness_bridge_v2` (version 2) and turn input schema
@@ -51,6 +51,20 @@ Both use bridge protocol `harness_bridge_v2` (version 2) and turn input schema
 - **Restore**: driver state is a `pi_session` sidecar digest; when it changes, the
   runner issues `switch_session` (verified via `get_session_stats`) before the
   prompt. Restore state advances only after a successful completed turn.
+- **Interrupt and steer** (`abort` / `steer` RPC): both act on the turn that is
+  executing and leave the pi process, its session history and the sandbox intact.
+  `abort` ends the turn with `stopReason: "aborted"` — whatever already streamed
+  stays in the transcript, and the turn row is recorded `canceled` /
+  `user_interrupted`. `steer` does **not** abort: it injects a message into the
+  running turn, so work already done is not redone. That distinction is the whole
+  API surface below — Stop sends `abort`, and ↑ on a queue row sends `steer` when a
+  turn is running.
+
+  The turn thread blocks in `_read_rpc` for the whole turn, so neither can be
+  delivered on it. The host writes a JSON control log to the bridge inbox and a
+  watcher thread in the bridge client applies it, serialized against the turn
+  thread by a stdin lock. See [api.md](./api.md) for the endpoints and
+  [sandbox-image.md](./sandbox-image.md) for the file's placement.
 
 ### Shell (`sh`)
 
