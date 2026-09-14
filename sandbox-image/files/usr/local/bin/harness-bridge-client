@@ -771,54 +771,119 @@ class PiRPCTurnRunner:
             if event.get("type") == "error":
                 raise RuntimeError("pi rpc error during internal command")
 
+    def _drain_to_barrier(self, barrier_id, label, timeout):
+        """Read past prior-turn residue until our own barrier response arrives.
+
+        THE INVARIANT this establishes: when run_turn returns, pi's stdout holds
+        no events belonging to the turn just finished. The next turn's first read
+        is therefore its own first event.
+
+        Why a barrier and not read-until-quiet: pi's stream is nested,
+
+            agent_start … [turn_start … turn_end]* … agent_end
+
+        and run_turn stops on the first non-toolUse turn_end, which is an INNER
+        boundary — so at minimum one agent_end is always still unread. Waiting for
+        silence cannot distinguish "residue drained" from "model still thinking",
+        and would cost the full timeout on every clean turn. A request/response
+        barrier is self-clocking instead: everything read before our own response
+        id is residue by definition, and the response itself proves pi has caught
+        up with us.
+
+        Bounded on purpose. The abort path returns the moment pi acknowledges the
+        stop, so this must not be what makes a Stop hang; on timeout we log and
+        carry on rather than fail the turn. A turn that could not be drained is
+        reported honestly (see run_turn: a completed turn whose barrier never
+        answered becomes a failure rather than a silent success), so the host
+        retires the generation instead of running the next turn against a pipe
+        nobody can vouch for.
+
+        Returns the barrier response event, or None if it never arrived.
+        """
+        deadline = time.monotonic() + timeout
+        discarded = []
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print(f"[bridge] {label}: drain timed out with {len(discarded)} events read "
+                      f"{sorted(set(discarded))}; pi may be wedged", file=sys.stderr, flush=True)
+                return None
+            try:
+                _, event = self._read_rpc()
+            except RuntimeError as err:
+                # pi exited or emitted garbage. Nothing left to drain, and the
+                # turn's own status has already been decided by the caller.
+                print(f"[bridge] {label}: drain stopped: {err}", file=sys.stderr, flush=True)
+                return None
+            if event.get("type") == "response" and event.get("id") == barrier_id:
+                if discarded:
+                    print(f"[bridge] {label}: drained {len(discarded)} residue events "
+                          f"{sorted(set(discarded))}", file=sys.stderr, flush=True)
+                return event
+            discarded.append(event.get("type"))
+
+    def _barrier_request(self, barrier_id, label, timeout):
+        """Write a cheap internal command and drain everything before its response."""
+        try:
+            self._write_rpc({"id": barrier_id, "type": "get_session_stats"})
+        except (OSError, ValueError) as err:
+            print(f"[bridge] {label}: barrier write failed: {err}", file=sys.stderr, flush=True)
+            return None
+        return self._drain_to_barrier(barrier_id, label, timeout)
+
     def run_turn(self, content, emit):
         validate_pi_config_materialization()
         self._start()
         turn_id = int(self.current_grant.get("turn_id") or 0)
         self._restore_session_if_needed(turn_id)
         prompt_id = f"harness-turn-{turn_id or int(time.time_ns())}"
-        self._write_rpc({"id": prompt_id, "type": "prompt", "message": content or ""})
+        barrier_id = f"{prompt_id}-stats"
         status = "completed"
         error_class = ""
         error = ""
-        while True:
-            stripped, event = self._read_rpc()
-            event_type = event.get("type")
-            if event_type in {"turn_end", "agent_end"} and pi_event_stop_reason(event) in {"toolUse", "tool_use"}:
-                continue
-            emit("stdout", stripped)
-            if event_type == "response" and event.get("id") == prompt_id and not event.get("success", False):
-                status = "failed"
-                error_class = "agent_prompt_rejected"
-                error = f"pi prompt rejected: {event.get('error') or event.get('message') or 'unknown error'}"
-                break
-            if event_type == "error":
-                status = "failed"
-                error_class = "agent_execution_failed"
-                error = event.get("message") or event.get("error") or "pi rpc error"
-                break
-            if event_type in {"turn_end", "agent_end"}:
-                # A user abort terminates the turn here with stopReason
-                # 'aborted'. It is not a failure: the user asked for it, and
-                # whatever streamed before it is real work that the host keeps in
-                # the transcript. Report it as canceled so the turn row says the
-                # user stopped it rather than blaming the agent.
-                if pi_event_stop_reason(event) == "aborted" or self.aborted_turn_id == turn_id:
-                    status = "canceled"
-                    error_class = "user_interrupted"
-                    error = "interrupted by user"
+        stats_event = None
+        try:
+            self._write_rpc({"id": prompt_id, "type": "prompt", "message": content or ""})
+            while True:
+                stripped, event = self._read_rpc()
+                event_type = event.get("type")
+                if event_type in {"turn_end", "agent_end"} and pi_event_stop_reason(event) in {"toolUse", "tool_use"}:
+                    continue
+                emit("stdout", stripped)
+                if event_type == "response" and event.get("id") == prompt_id and not event.get("success", False):
+                    status = "failed"
+                    error_class = "agent_prompt_rejected"
+                    error = f"pi prompt rejected: {event.get('error') or event.get('message') or 'unknown error'}"
                     break
-                terminal_status = str(event.get("status") or "completed")
-                if terminal_status not in {"completed", "success", "ok"}:
+                if event_type == "error":
                     status = "failed"
                     error_class = "agent_execution_failed"
-                    error = f"pi turn ended with status {terminal_status}"
-                break
+                    error = event.get("message") or event.get("error") or "pi rpc error"
+                    break
+                if event_type in {"turn_end", "agent_end"}:
+                    if pi_event_stop_reason(event) == "aborted" or self.aborted_turn_id == turn_id:
+                        status = "canceled"
+                        error_class = "user_interrupted"
+                        error = "interrupted by user"
+                        break
+                    terminal_status = str(event.get("status") or "completed")
+                    if terminal_status not in {"completed", "success", "ok"}:
+                        status = "failed"
+                        error_class = "agent_execution_failed"
+                        error = f"pi turn ended with status {terminal_status}"
+                    break
+        finally:
+            # INVARIANT: every turn exit leaves pi's stdout at an agent boundary,
+            # so the next turn's first read is its own first event. The stats call
+            # is the boundary barrier for completed turns (reuses that response),
+            # and for failed/abort turns (which need no stats) it drains residue.
+            stats_event = self._barrier_request(barrier_id, f"turn {turn_id} boundary", timeout=12.0)
         if status != "completed":
             return status, error_class, error
-        stats = self._request_response({"id": f"{prompt_id}-stats", "type": "get_session_stats"})
-        update = self._driver_state_update(stats.get("data") or {}, turn_id)
-        return status, error_class, error, update
+        if not stats_event or not stats_event.get("success", False):
+            return "failed", "agent_execution_failed", "pi stats barrier failed"
+        driver_state_update = self._driver_state_update(stats_event.get("data") or {}, turn_id)
+        return status, error_class, error, driver_state_update
 
     def _restore_session_if_needed(self, turn_id):
         token = self.current_grant.get("driver_state") or {}
