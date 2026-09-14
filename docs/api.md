@@ -186,7 +186,12 @@ projection, because the client cannot read it reliably at click time:
   see what was said — and the queue row retires, carrying
   `steered_into_turn_id`.
 - nothing is executing → **release**: the parked turn is handed to the worker to
-  run as a turn of its own (`status: "released"`).
+  run as a turn of its own (`status: "released"`). A parked queue does not hold a
+  sandbox open — that is the point of excluding it from the pending-turn
+  predicate — so the session may have been checkpointed or idle-released
+  underneath those rows. Release therefore wakes it exactly as a new prompt
+  would, cold start and all, rather than answering "session is not running" and
+  leaving the row unsendable.
 
 `409 turn_not_sendable` means the row moved on between render and click — claimed,
 cancelled, or already sent. Re-read the projection rather than retrying. A steer

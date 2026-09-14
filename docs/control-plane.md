@@ -119,9 +119,18 @@ the failed generation and keep the session retryable — never terminal — per
 **Parked turns are invisible to all of this.** A turn carries `auto_dispatch`; Stop
 clears it on everything the user had queued (`turn_park.go`). `ClaimNextTurn` and
 `ListColdFallbackSessions` both require `auto_dispatch = 1`, so a parked turn is
-never granted to a sandbox and never pulls one back up — it waits for the user to
-release it with `POST .../turns/{turnID}/send`. Without that predicate, a queue
-parked by Stop would burn a cold start for a prompt the user may never release.
+never granted to a sandbox and never pulls one back up *on its own* — it waits for
+the user to release it with `POST .../turns/{turnID}/send`. Without that predicate,
+a queue parked by Stop would burn a cold start for a prompt the user may never
+release.
+
+The corollary is that a parked queue does not hold a sandbox open either: it is
+excluded from the pending-turn predicate that `ListAutoCheckpointCandidates` and
+`ListIdleReleaseCandidates` use, so compute can be reclaimed under rows that are
+still on screen. Releasing therefore goes through the same
+`ensureRunnableGenerationHTTP` a new prompt does, cold-starting a `checkpointed`
+session before flipping `auto_dispatch` back on — the wake is paid when the user
+asks for it, not to keep the queue warm.
 
 ## Bridge (`internal/bridge/`)
 
