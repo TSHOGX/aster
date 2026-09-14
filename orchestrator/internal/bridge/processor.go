@@ -491,6 +491,15 @@ func (p *Processor) handle(ctx context.Context, inbox Queue, envelope Envelope) 
 			}
 			return protocolError(err)
 		}
+		if err != nil && store.IsOutputEventTurnNotRunning(err) {
+			// Permanent: turn is already terminal. The generation sent output for a
+			// turn the host has already completed/failed/canceled. This is the
+			// stream-desync bug: a prior turn left residue, and this turn consumed it
+			// instantly, so the generation kept emitting for a turn the host already
+			// retired. Discard the event, log it, and unlink the file so ProcessOnce
+			// keeps advancing. Returning protocolError ensures the unlink.
+			return protocolError(err)
+		}
 		if err == nil && eventID != 0 {
 			p.afterCommit(ctx, envelope, eventID)
 		}

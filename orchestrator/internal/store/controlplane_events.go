@@ -17,8 +17,14 @@ import (
 	"time"
 )
 
+var errOutputEventTurnNotRunning = errors.New("output event turn already terminal")
+
 func IsDuplicateOutputSequenceMismatch(err error) bool {
 	return errors.Is(err, errDuplicateOutputSequenceMismatch)
+}
+
+func IsOutputEventTurnNotRunning(err error) bool {
+	return errors.Is(err, errOutputEventTurnNotRunning)
 }
 
 func (s *Store) AppendEvent(ctx context.Context, p AppendEventParams) (int64, error) {
@@ -102,16 +108,15 @@ func assertOutputEventTurnTx(ctx context.Context, tx *sql.Tx, p AppendEventParam
 	if p.TurnID == nil {
 		return fmt.Errorf("output event requires turn id")
 	}
-	var exists int
-	if err := tx.QueryRowContext(ctx, `
-SELECT COUNT(*)
+	var turnStatus string
+	err := tx.QueryRowContext(ctx, `
+SELECT t.status
 FROM turns t
 JOIN runtime_generations g ON g.generation_id = t.generation_id
 JOIN sessions s ON s.id = t.session_id
 WHERE t.id = ?
   AND t.session_id = ?
   AND t.generation_id = ?
-  AND t.status = 'running'
   AND t.lease_owner = ?
   AND t.lease_expires_at > ?
   AND g.generation_id = ?
@@ -120,11 +125,19 @@ WHERE t.id = ?
   AND g.lease_expires_at > ?
   AND s.active_generation_id = ?`,
 		*p.TurnID, p.SessionID, p.GenerationID, p.Owner, formatTime(p.Now),
-		p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.GenerationID).Scan(&exists); err != nil {
+		p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.GenerationID).Scan(&turnStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Lease/generation checks failed but we cannot see the turn: transient
+		// (lease expired, wrong generation, etc). Retry might succeed.
+		return fmt.Errorf("output event turn CAS failed")
+	}
+	if err != nil {
 		return err
 	}
-	if exists != 1 {
-		return fmt.Errorf("output event turn CAS failed")
+	if turnStatus != "running" {
+		// Turn exists but is terminal: permanent. The generation sent output for
+		// a turn the host already completed/failed. Discard the event.
+		return fmt.Errorf("%w: turn %d status %s", errOutputEventTurnNotRunning, *p.TurnID, turnStatus)
 	}
 	return nil
 }
