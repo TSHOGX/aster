@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Draft -> verify remote bytes -> publish. Never replace published assets."""
-import argparse, hashlib, json, os, pathlib, urllib.request, urllib.error
+import argparse, hashlib, http.client, json, os, pathlib, urllib.request, urllib.error, urllib.parse
 from artifact_report import public_report
 
 def main():
@@ -21,7 +21,6 @@ def main():
     if not r['draft']:raise RuntimeError('release already public; immutable publication refused')
     names=[v['name'] for v in m['artifacts'].values()]+['release-manifest.json','SHA256SUMS','UPGRADE.md','artifact-smoke-22.04.json','artifact-smoke-24.04.json',m['sandbox']['archive']['name'],'rootfs-apt-packages.txt','rootfs-python-packages.txt','rootfs-requirements.lock']
     # Stream uploads with http.client: binary packages can exceed process memory.
-    import http.client,urllib.parse
     existing={x['name']:x for x in api('/releases/'+str(r['id'])+'/assets?per_page=100')}
     for name in names:
         path=a.directory/name

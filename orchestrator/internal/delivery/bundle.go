@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -110,7 +111,16 @@ func Fetch(ctx context.Context, d *Downloader, version, cache string) (Bundle, e
 			return b, e
 		}
 	}
-	if e = d.Sandbox(ctx, b.Manifest.Sandbox, filepath.Join(tmp, b.Manifest.Sandbox.Archive.Name)); e != nil {
+	// Complete releases carry the sandbox attachment too. Prefer the same
+	// Release credentials; GHCR remains a fallback for older manifests.
+	sandbox := b.Manifest.Sandbox
+	body, e = d.GitHubAsset(ctx, version, sandbox.Archive.Name)
+	if errors.Is(e, ErrReleaseAssetMissing) {
+		e = d.Sandbox(ctx, sandbox, filepath.Join(tmp, sandbox.Archive.Name))
+	} else if e == nil {
+		e = saveVerified(filepath.Join(tmp, sandbox.Archive.Name), body, sandbox.Archive)
+	}
+	if e != nil {
 		return b, e
 	}
 	if e = os.Rename(tmp, dest); e != nil {

@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrReleaseAssetMissing = errors.New("release asset missing")
 
 // Downloader never sends a registry credential to a redirect or foreign realm.
 type Downloader struct {
@@ -114,7 +117,7 @@ func (d *Downloader) GitHubAsset(ctx context.Context, version, name string) (io.
 			return r.Body, nil
 		}
 	}
-	return nil, fmt.Errorf("release asset missing: %s", name)
+	return nil, fmt.Errorf("%w: %s", ErrReleaseAssetMissing, name)
 }
 func saveVerified(path string, body io.ReadCloser, a Artifact) error {
 	defer body.Close()

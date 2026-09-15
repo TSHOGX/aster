@@ -25,7 +25,7 @@ sudo harness-deploy stage --release vX.Y.Z --cache /var/cache/harness/releases -
 
 每个仓库使用独立缓存目录。版本必须精确指定，不能使用 latest。export 可在缓存缺失时通过 `--repository` 获取制品；verify 和 stage 仅使用已有缓存，import 完全离线。stage 需要 root 以保留 rootfs 所有权，但不会读部署配置、停止服务或切换 current。
 
-私有制品读取凭据通过 HARNESS_GITHUB_TOKEN 和 HARNESS_GHCR_USER/HARNESS_GHCR_TOKEN 注入工具进程，不能写进命令行、公开配置或日志。离线 manifest SHA256 从受信渠道取得，不能把不可信归档内部的散列当作信任根。
+完整 Release 的应用与 sandbox 附件统一通过 HARNESS_GITHUB_TOKEN 读取；仅兼容缺少 sandbox 附件的旧 Release 时，才回退到 HARNESS_GHCR_USER/HARNESS_GHCR_TOKEN。凭据注入工具进程，不能写进命令行、公开配置或日志。离线 manifest SHA256 从受信渠道取得，不能把不可信归档内部的散列当作信任根。
 
 ## 3. 准备本地配置
 

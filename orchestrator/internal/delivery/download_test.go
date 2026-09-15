@@ -2,10 +2,12 @@ package delivery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -74,5 +76,48 @@ func TestSourceIdentityUsesRunningExecutable(t *testing.T) {
 	i.LegacyBinarySHA256 = strings.Repeat("0", 64)
 	if e = CheckSource(context.Background(), i, pidRunner{}); e == nil {
 		t.Fatal("source commit accepted instead of actual executable")
+	}
+}
+
+func TestFetchCompleteReleaseNeedsNoRegistryCredential(t *testing.T) {
+	b := fixtureBundle(t)
+	names := []string{"release-manifest.json", b.Manifest.Sandbox.Archive.Name}
+	for _, a := range b.Manifest.Artifacts {
+		names = append(names, a.Name)
+	}
+	contents := map[string]string{}
+	assets := []map[string]string{}
+	for n, name := range names {
+		body, err := os.ReadFile(filepath.Join(b.Dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := fmt.Sprintf("/repos/test/repo/releases/assets/%d", n+1)
+		contents[path] = string(body)
+		assets = append(assets, map[string]string{"name": name, "url": "https://api.github.com" + path})
+	}
+	release, _ := json.Marshal(map[string]any{"draft": false, "assets": assets})
+	d := NewDownloader("test/repo")
+	d.GitHubToken = "synthetic-token"
+	d.RegistryToken = ""
+	d.Client.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "api.github.com" {
+			t.Fatalf("unexpected registry access: %s", r.URL.Host)
+		}
+		if strings.Contains(r.URL.Path, "/releases/tags/") {
+			return response(r, 200, http.Header{}, string(release)), nil
+		}
+		body, ok := contents[r.URL.Path]
+		if !ok {
+			return nil, fmt.Errorf("unexpected request")
+		}
+		return response(r, 200, http.Header{}, body), nil
+	})
+	fetched, err := Fetch(context.Background(), d, b.Manifest.Version, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = fetched.Verify(); err != nil {
+		t.Fatal(err)
 	}
 }
