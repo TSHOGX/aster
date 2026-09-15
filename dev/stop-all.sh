@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tear down everything dev/start-all.sh launched.
+# Tear down orchestrator :8090 and frontend :8000 launched by start-all.sh.
+# Does NOT kill model proxy :8083 or MCP gateway :8103 unless KILL_PROXY=1 / KILL_MCP=1.
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -7,8 +8,16 @@ LOG_DIR="${REPO_ROOT}/dev/logs"
 
 log() { printf '[stop-all] %s\n' "$*"; }
 
+PORTS=(8000 8090)
+if [ "${KILL_PROXY:-0}" = "1" ]; then
+  PORTS+=(8083)
+fi
+if [ "${KILL_MCP:-0}" = "1" ]; then
+  PORTS+=(8103)
+fi
+
 # Kill by port so `go run`'s child binary and Next.js workers go down too.
-for port in 8000 8083 8090; do
+for port in "${PORTS[@]}"; do
   pids="$(ss -ltnp 2>/dev/null | awk -v p=":${port}" '$4 ~ p" *$" || $4 ~ p"$" {print}' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)"
   if [ -n "${pids}" ]; then
     log "killing :${port} -> ${pids}"
@@ -18,7 +27,7 @@ for port in 8000 8083 8090; do
 done
 
 sleep 2
-for port in 8000 8083 8090; do
+for port in "${PORTS[@]}"; do
   pids="$(ss -ltnp 2>/dev/null | awk -v p=":${port}" '$4 ~ p" *$" || $4 ~ p"$" {print}' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)"
   if [ -n "${pids}" ]; then
     log "force killing :${port} -> ${pids}"

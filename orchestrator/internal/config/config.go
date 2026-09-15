@@ -527,7 +527,13 @@ func Load() (Config, error) {
 	if filepath.Base(repoRoot) == "orchestrator" {
 		repoRoot = filepath.Dir(repoRoot)
 	}
-	projectConfig, err := loadProjectConfig(filepath.Join(repoRoot, "config", "harness.yaml"))
+	// HARNESS_PROJECT_CONFIG selects an alternate harness.yaml (second
+	// co-located deployment). Default remains config/harness.yaml.
+	projectConfigPath := getenv("HARNESS_PROJECT_CONFIG", filepath.Join(repoRoot, "config", "harness.yaml"))
+	if !filepath.IsAbs(projectConfigPath) {
+		projectConfigPath = filepath.Join(repoRoot, projectConfigPath)
+	}
+	projectConfig, err := loadProjectConfig(projectConfigPath)
 	if err != nil {
 		return Config{}, err
 	}

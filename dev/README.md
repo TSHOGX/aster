@@ -84,8 +84,11 @@ rather than to keep it uncommitted. Secrets and build outputs stay out of git â€
 ## Start / stop
 
 ```bash
-sudo ./dev/start-all.sh     # orchestrator :8090, proxy :8083, frontend :8000
-sudo ./dev/stop-all.sh
+# Start model proxy (:8083) and MCP gateway (:8103) yourself first.
+sudo ./dev/start-all.sh     # orchestrator :8090 + frontend :8000
+sudo ./dev/stop-all.sh      # does not kill :8083 / :8103
+# sudo START_PROXY=1 ./dev/start-all.sh   # also launch the stand-in proxy
+# sudo KILL_PROXY=1 KILL_MCP=1 ./dev/stop-all.sh
 tail -f dev/logs/*.log
 ```
 
@@ -93,6 +96,13 @@ tail -f dev/logs/*.log
 netns, nft, runsc, and `/var/lib/harness*`). Both scripts use `setsid`: a plain
 backgrounded `nohup` dies with the launching shell when invoked through
 `orb bash -lc` or a non-interactive ssh.
+
+This checkout's long-lived branch is **`upstream-work`** (latest `main` plus the
+dingpan MCP overlay and `executeQuery` file landing). Do not open a new feature
+branch for each follow-up; keep working here and merge `origin/main` into it.
+
+Ports stay: orchestrator **:8090**, frontend **:8000**, model proxy **:8083**,
+MCP gateway **:8103**. The last two are external processes on this branch.
 
 Reach it from the host browser at the VM's printed IP (for example
 `http://<vm-ip>:8000`). OrbStack `.orb.local` names are not reliable for this.
