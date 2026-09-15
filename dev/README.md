@@ -85,9 +85,8 @@ rather than to keep it uncommitted. Secrets and build outputs stay out of git â€
 
 ```bash
 # Start model proxy (:8083) and MCP gateway (:8103) yourself first.
-sudo ./dev/start-all.sh     # orchestrator :8090 + frontend :8000
+sudo ./dev/start-all.sh     # orchestrator :8090 + frontend :8000 (waits for :8083)
 sudo ./dev/stop-all.sh      # does not kill :8083 / :8103
-# sudo START_PROXY=1 ./dev/start-all.sh   # also launch the stand-in proxy
 # sudo KILL_PROXY=1 KILL_MCP=1 ./dev/stop-all.sh
 tail -f dev/logs/*.log
 ```
