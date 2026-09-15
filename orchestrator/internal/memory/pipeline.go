@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"harness-platform/orchestrator/internal/deploymentgate"
 	"log/slog"
 	"strings"
 	"time"
@@ -104,12 +105,12 @@ func NewPipeline(opts PipelineOptions) *Pipeline {
 		interval = time.Hour
 	}
 	return &Pipeline{
-		store:     opts.Store,
-		ingest:    opts.Ingest,
-		extractor: opts.Extractor,
-		kb:        opts.KB,
-		log:       opts.Log,
-		capturer:  opts.Capturer,
+		store:       opts.Store,
+		ingest:      opts.Ingest,
+		extractor:   opts.Extractor,
+		kb:          opts.KB,
+		log:         opts.Log,
+		capturer:    opts.Capturer,
 		agent:       opts.Agent,
 		agentic:     opts.Agentic && opts.Agent.Enabled(),
 		autoPublish: opts.AutoPublish,
@@ -140,7 +141,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 // runSweep runs a full sweep over the daily window (48h back, wide enough to
 // catch sessions that ended recently or were never extracted).
 func (p *Pipeline) runSweep(ctx context.Context) {
-	p.sweep(ctx, time.Now().UTC().Add(-48*time.Hour))
+	deploymentgate.Run(func() { p.sweep(ctx, time.Now().UTC().Add(-48*time.Hour)) })
 }
 
 // RunOnce runs a single bounded sweep scoped to `since` and returns any error

@@ -120,6 +120,18 @@ class ScriptedPi:
 
 
 class BridgeClientTest(unittest.TestCase):
+    def test_build_rootfs_reuse_rejects_missing_turn_control_contract(self):
+        with tempfile.TemporaryDirectory() as root:
+            rootfs = Path(root)
+            pi = rootfs / "usr/local/bin/pi"
+            pi.parent.mkdir(parents=True)
+            pi.write_text("#!/bin/sh\n", encoding="utf-8")
+            pi.chmod(0o755)
+            env = {**os.environ, "ROOTFS_DIR": root, "SANDBOX_AGENT_DRIVERS": "pi", "FORCE": "0"}
+            result = subprocess.run(["bash", str(BUILD_ROOTFS)], env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("pi RPC type declarations missing", result.stderr)
+
     def test_build_rootfs_reuse_generates_pi_agent_manifest(self):
         with tempfile.TemporaryDirectory() as root:
             rootfs = Path(root)
@@ -128,6 +140,9 @@ class BridgeClientTest(unittest.TestCase):
             pi = bin_dir / "pi"
             pi.write_text("#!/bin/sh\n", encoding="utf-8")
             pi.chmod(0o755)
+            rpc_types = rootfs / "usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-types.d.ts"
+            rpc_types.parent.mkdir(parents=True)
+            rpc_types.write_text('type Command = { type: "abort" } | { type: "steer"; message: string };\n', encoding="utf-8")
 
             env = os.environ.copy()
             env.update(

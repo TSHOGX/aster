@@ -32,6 +32,7 @@ type Config struct {
 	CheckpointsRoot string
 	BundleRoot      string
 	RootFSPath      string
+	ResolverPath    string
 	// AgentsKBRoot is the host directory holding the shared "/agents" knowledge
 	// base. Its `current` symlink is resolved at spec-build time and the
 	// concrete snapshot dir is bind-mounted read-only into every sandbox at

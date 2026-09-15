@@ -384,6 +384,12 @@ func (r *Runtime) renderSandboxIsolatedRuntimeSpec(req StartRequest) (runtimeSpe
 		return runtimeSpec{}, "", err
 	}
 	spec.Mounts = append(pseudoMounts, plan.SpecMounts()...)
+	if r.cfg.ResolverPath != "" {
+		if !filepath.IsAbs(r.cfg.ResolverPath) {
+			return runtimeSpec{}, "", fmt.Errorf("resolver path must be absolute")
+		}
+		spec.Mounts = append(spec.Mounts, specMount{Destination: "/etc/resolv.conf", Type: "bind", Source: r.cfg.ResolverPath, Options: []string{"bind", "ro", "nosuid", "nodev", "noexec"}})
+	}
 	linux := map[string]any{
 		"resources": map[string]any{
 			"memory": map[string]any{"limit": r.sandboxMemoryLimitBytes()},

@@ -1,0 +1,10 @@
+{
+  "go": "1.27.1",
+  "node": "22.23.2",
+  "node_linux_x64_sha256": "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307",
+  "uv": "0.9.7",
+  "pi": "0.77.0",
+  "ubuntu_suite": "noble",
+  "ubuntu_snapshot": "20260901T000000Z",
+  "pi_node": "24.15.0"
+}

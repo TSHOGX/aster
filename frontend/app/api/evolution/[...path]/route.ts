@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +16,11 @@ const VIEWERS = new Set((process.env.EVOLUTION_VIEWERS ?? "*").split(",").map((x
 
 type Context = { params: Promise<{ path?: string[] }> };
 
+function deploymentBlocked(path: string | undefined): boolean {
+  if (!path) return false;
+  try { statSync(path); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== "ENOENT"; }
+}
 function json(data: unknown, status = 200) { return Response.json(data, { status, headers: { "cache-control": "no-store" } }); }
 function readJson(path: string, fallback: unknown = null) { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return fallback; } }
 function requireState() { return null; }
@@ -141,6 +146,9 @@ async function handle(request: NextRequest, { params }: Context) {
   }
   if (request.method === "GET" && parts[0] === "runs") return json({ run:parts[1]?readJson(runPath(parts[1])):allRuns()[0]??null, latest_pending:readJson(`${STATE_ROOT}/agents-kb/pending.json`,DEMO), read_only:true });
   if (request.method === "POST" && parts[0] === "runs") {
+    const drain = process.env.HARNESS_DRAIN_FILE;
+    const hold = process.env.HARNESS_BACKGROUND_HOLD_FILE;
+    if (deploymentBlocked(drain) || deploymentBlocked(hold)) return json({ error: "deployment in progress" }, 503);
     if (!existsSync(BUN)) return json({ error: `bun not found: ${BUN}` }, 503);
     const active=allRuns().find(x=>x.status==="queued"||x.status==="running"); if(active)return json({run:active,message:"已有一轮自进化正在运行，请稍后查看进度。"},202);
     const freshAt=latestSuccessfulAt(); if(freshAt&&Date.now()-freshAt.getTime()<FRESH_MS){const id=crypto.randomUUID();const run:RunRecord={id,status:"skipped",created_at:new Date().toISOString(),finished_at:new Date().toISOString(),message:`当前已经使用最新数据（最近一次结果生成于 ${freshAt.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})}），4 小时内无需重复执行。`};writeRun(run);return json({run,message:run.message});}

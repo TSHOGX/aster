@@ -330,13 +330,13 @@ npm --version >/dev/null
 # would not have caught a reshape within the same version.
 verify_pi_rpc_turn_control() {
   log "verifying pi RPC turn-control contract (abort/steer)"
-  chroot "${ROOTFS_DIR}" /usr/bin/python3 - "${PI_PACKAGE}" <<'PY'
+  python3 - "${ROOTFS_DIR}" "${PI_PACKAGE}" <<'PY'
 import pathlib
 import re
 import sys
 
-package = sys.argv[1]
-types = pathlib.Path("/usr/local/lib/node_modules") / package / "dist/modes/rpc/rpc-types.d.ts"
+rootfs, package = sys.argv[1:]
+types = pathlib.Path(rootfs) / "usr/local/lib/node_modules" / package / "dist/modes/rpc/rpc-types.d.ts"
 if not types.is_file():
     sys.exit(f"pi RPC type declarations missing at {types}")
 source = types.read_text(encoding="utf-8")
@@ -524,6 +524,11 @@ write_localhost_only_hosts() {
 # (renderNetworkHostsProjection), but that projection is conditional — see
 # requiresNetworkHostsProjection — so what is baked here has to stand on its own.
 render_sandbox_resolv_conf() {
+  if [[ "${HARNESS_GENERIC_ROOTFS:-0}" == 1 ]]; then
+    printf "# instance resolver is mounted at runtime\n" > "${ROOTFS_DIR}/etc/resolv.conf"
+    chmod 0644 "${ROOTFS_DIR}/etc/resolv.conf"
+    return
+  fi
   log "rendering /etc/resolv.conf for: ${SANDBOX_DNS_SERVERS}"
   {
     printf 'nameserver %s\n' ${SANDBOX_DNS_SERVERS}
@@ -561,6 +566,7 @@ finalize_rootfs() {
   render_sandbox_resolv_conf
   generate_agent_manifest
   sanitize_isolated_rootfs
+  if driver_selected pi; then verify_pi_rpc_turn_control; fi
 }
 
 parse_agent_drivers
@@ -590,6 +596,10 @@ debootstrap --variant=minbase --components="${UBUNTU_COMPONENTS}" "${UBUNTU_SUIT
 
 prepare_build_time_dns
 
+if [[ "${HARNESS_GENERIC_ROOTFS:-0}" == 1 ]]; then
+  printf 'Acquire::Check-Valid-Until "false";\n' > "${ROOTFS_DIR}/etc/apt/apt.conf.d/99harness-snapshot"
+fi
+
 log "installing apt packages"
 chroot "${ROOTFS_DIR}" /bin/sh -lc "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${APT_PACKAGES[*]} && apt-get clean && rm -rf /var/lib/apt/lists/*"
 
@@ -602,7 +612,13 @@ fi
 if [ -n "${PIP_TRUSTED_HOST}" ]; then
   pip_args="${pip_args} --trusted-host ${PIP_TRUSTED_HOST}"
 fi
-chroot "${ROOTFS_DIR}" /bin/sh -lc "python3 -m pip install --break-system-packages --no-cache-dir ${pip_args} ${PIP_PACKAGES[*]}"
+if [[ "${HARNESS_GENERIC_ROOTFS:-0}" == 1 ]]; then
+  cp "${SCRIPT_DIR}/requirements.lock" "${ROOTFS_DIR}/tmp/harness-requirements.lock"
+  chroot "${ROOTFS_DIR}" python3 -m pip install --break-system-packages --no-cache-dir --require-hashes -r /tmp/harness-requirements.lock
+  rm "${ROOTFS_DIR}/tmp/harness-requirements.lock"
+else
+  chroot "${ROOTFS_DIR}" /bin/sh -lc "python3 -m pip install --break-system-packages --no-cache-dir ${pip_args} ${PIP_PACKAGES[*]}"
+fi
 
 install_duckdb_extensions
 patch_matplotlibrc_for_cjk

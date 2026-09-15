@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/deploymentgate"
 	"path/filepath"
 	"strings"
 	"time"
@@ -144,6 +145,9 @@ func (s *Server) runScheduler(ctx context.Context) {
 		}
 	}
 	dispatch := func() {
+		if deploymentgate.BackgroundHeld() {
+			return
+		}
 		// A process restart can happen after StartScheduleRun but before the
 		// worker records the terminal state. Re-queue those rows first so a
 		// completed turn is reconciled instead of remaining "running" forever.
@@ -168,7 +172,7 @@ func (s *Server) runScheduler(ctx context.Context) {
 		// an admin UI capability gate and must not silently disable already
 		// persisted user schedules (manual runs and cron runs share the same
 		// durable schedule state).
-		if !s.cfg.Harness.Scheduler.Enabled {
+		if deploymentgate.Draining() || !s.cfg.Harness.Scheduler.Enabled {
 			return
 		}
 		due, err := s.store.ListDueSchedules(ctx, time.Now().UTC(), workers*2)
@@ -346,6 +350,9 @@ func (s *Server) startScheduleRunFromQueue(ctx context.Context, runID string) {
 			s.log.Info("schedule run canceled before start", "run_id", run.ID, "schedule_id", sched.ID, "enabled", sched.Enabled, "archived", sched.Archived)
 		}
 		release()
+		return
+	}
+	if deploymentgate.BackgroundHeld() {
 		return
 	}
 	s.executeScheduleRun(ctx, run)
@@ -642,7 +649,7 @@ func (s *Server) finishScheduleFailureStatus(ctx context.Context, run store.Sche
 	if status == "skipped_busy" {
 		return
 	}
-	if run.Attempt >= sched.MaxRetries {
+	if deploymentgate.Paused() || run.Attempt >= sched.MaxRetries {
 		return
 	}
 	backoff := time.Duration(sched.RetryBackoffSeconds) * time.Second

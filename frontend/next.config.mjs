@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /** @type {import('next').NextConfig} */
 
 // Security headers applied to every response. CSP is intentionally pragmatic:
@@ -64,6 +67,8 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  output: "standalone",
+  outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
   reactStrictMode: true,
   // Dev-only: hosts the browser may load the dev server from. Every deployment
   // is reached at a different address (a cloud VM's public IP, a local VM's LAN
