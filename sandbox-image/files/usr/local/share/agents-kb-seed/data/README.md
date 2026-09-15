@@ -41,7 +41,7 @@ they mean. Provide three things:
 Note that `facts/` is fully regenerated on every KB republish (see
 `internal/memory/kb.go` `carryForward`), so treat a hand-written `facts/` entry as
 disposable and keep the durable copy inside `data/<domain>/` or the skill.
-`CONSTITUTION.md`, `skills/` and `data/` are carried forward.
+`CONSTITUTION.md`, `skills/`, `knowledge/` and `data/` are carried forward.
 
 ## Making it searchable
 

@@ -1,5 +1,5 @@
 ---
-status: in-use
+status: deprecated
 support_count: 999
 confidence: 1.0
 ---
@@ -7,20 +7,15 @@ confidence: 1.0
 
 ## When To Use
 
-**默认不用本 skill。** 只有当用户在提问里**明确点名** OBS、对象存储、Parquet、
-或明确要求"读原始文件/原始信号文件"时才用。除此之外一律走
-`skills/doris-query`——**日常数据查询、统计、报表、趋势分析都在 Doris 里做，不要
-去 Parquet 查。**
+**默认不用本 skill。** 日常数据问题一律走 dingpan MCP
+（`skills/mcp-data-query` / `dp-dingpan-mcp-server`），不要用本 skill，也不要
+改走 Doris。
 
-判断方法：用户没提到 parquet / OBS / 对象存储 → 关掉本文件，去用 Doris。用户提到了
-→ 继续往下读。
+只有当用户在提问里**明确点名** OBS、对象存储、Parquet、或明确要求「读原始文件/
+原始信号文件」时才打开。用户没提到这些 → 关掉本文件，去用 dingpan MCP。
 
-即使用户提到了，也要先确认 Doris 真的答不了：Doris 已建模、已聚合、有索引，一次
-查询秒级返回；OBS 是 113 万+ 个原始文件的裸对象存储，光列目录就要几十秒，扫描成本
-高出几个数量级。只有需要 Doris 里不存在的原始信号列、或需要秒级原始明细时，走 OBS
-才是对的。
-
-拿不准就先在 Doris 里查一遍，或直接问用户，而不是默认扫 Parquet。
+即使用户提到了 OBS，也优先确认 dingpan MCP 工具能否覆盖；答不了再走本 skill。
+OBS 是海量裸对象，列目录与扫描成本极高——不要当成默认数仓。
 
 ## 硬性红线（先读这条）
 
@@ -299,7 +294,7 @@ print(len(peak), "vehicles")     # 结果已聚合到"每车一行"，可安全�
 
 ## Checklist（每次分析前自查）
 
-- [ ] 这个问题 Doris 能答吗？能就走 `skills/doris-query`。
+- [ ] 这个问题 dingpan MCP（`dp-dingpan-mcp-server`）能答吗？能就走 `skills/mcp-data-query`。
 - [ ] 我有没有写下载/落地原始文件的代码？（有 → 删掉，改用 `read_parquet('s3://...')`）
 - [ ] 路径里写死了已知的批次/日期/小时分区吗？
 - [ ] 列名是这次搜 schema 搜出来的，不是记忆里的？

@@ -18,9 +18,10 @@ are, or why a charge session stopped.
 
 This is the counterpart to the data-query skills: they give you what the fleet
 **did**; this gives you what the design **says**. Most real questions need both —
-decode a signal or fault code here, then query the warehouse for its occurrences.
-For that second half use `skills/doris-query` (the default data source);
-`skills/obs-parquet-duckdb` only if the user explicitly asked for OBS/Parquet.
+decode a signal or fault code here, then query measured occurrences via MCP.
+For that second half use dingpan MCP via `skills/mcp-data-query`
+(`dp-dingpan-mcp-server`, the default data source). Do not open Doris/OBS
+skills unless the user explicitly asks for those paths.
 
 ## Where it lives
 
@@ -96,4 +97,5 @@ head -12 "$KB/tables/故障列表/23_故障列表_V2.0.5_20240330/故障诊断�
 grep -rn "FaultNum\|CellVolLow" "$KB/can/CAN信号矩阵/X2/"*.signals.csv
 ```
 
-Then take that signal / DTC to `skills/doris-query` for occurrence counts.
+Then take that signal / DTC to dingpan MCP (`skills/mcp-data-query`) for
+occurrence counts.

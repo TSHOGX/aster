@@ -34,6 +34,15 @@ const (
 	DataProxyKindDorisMySQL DataProxyKind = "doris_mysql"
 	// DataProxyKindOBS is Huawei OBS fronted by an HTTP proxy (sibling plan).
 	DataProxyKindOBS DataProxyKind = "obs_http"
+	// DataProxyKindMcpSSE is an MCP server fronted by the host-side SSE gateway
+	// in dev/mcp-gateway. The control plane only projects the sandbox alias into
+	// /etc/hosts; the gateway process and upstream token stay outside this
+	// binary (same split as Doris/OBS).
+	DataProxyKindMcpSSE DataProxyKind = "mcp_sse"
+	// DataProxyKindMcpStreamableHTTP is the same gateway in streamable-http mode
+	// (single MCP endpoint, POST/GET/DELETE). Sandbox pi-mcp uses
+	// transport: streamable-http against harness-mcp.internal.
+	DataProxyKindMcpStreamableHTTP DataProxyKind = "mcp_streamable_http"
 )
 
 // Defaults for a Doris data proxy. These mirror the gateway's own flag defaults
@@ -42,6 +51,8 @@ const (
 	defaultDataProxySandboxUser       = "sandbox"
 	defaultDorisSandboxAlias          = "harness-doris.internal"
 	defaultDorisSandboxPort           = 9030
+	defaultMcpSandboxAlias            = "harness-mcp.internal"
+	defaultMcpSandboxPort             = 8103
 	defaultDataProxyMaxRowsPerQuery   = 1_000_000
 	defaultDataProxyMaxBytesPerQuery  = 512 << 20
 	defaultDataProxyMaxQueriesPerTurn = 2_000
@@ -160,6 +171,12 @@ func normalizeDataProxies(in map[string]DataProxyConfig) map[string]DataProxyCon
 				cfg.SandboxPort = defaultDorisSandboxPort
 			}
 		}
+		if cfg.Upstream.Kind == DataProxyKindMcpSSE || cfg.Upstream.Kind == DataProxyKindMcpStreamableHTTP {
+			cfg.SandboxAlias = strutil.Default(cfg.SandboxAlias, defaultMcpSandboxAlias)
+			if cfg.SandboxPort == 0 {
+				cfg.SandboxPort = defaultMcpSandboxPort
+			}
+		}
 		cfg.SandboxAlias = strings.ToLower(strings.TrimSpace(cfg.SandboxAlias))
 		cfg.BindAddr = strings.TrimSpace(cfg.BindAddr)
 		cfg.Upstream.Addr = strings.TrimSpace(cfg.Upstream.Addr)
@@ -247,10 +264,10 @@ func validateDataProxies(in map[string]DataProxyConfig) error {
 		}
 
 		switch cfg.Upstream.Kind {
-		case DataProxyKindDorisMySQL, DataProxyKindOBS:
+		case DataProxyKindDorisMySQL, DataProxyKindOBS, DataProxyKindMcpSSE, DataProxyKindMcpStreamableHTTP:
 		case "":
-			return fmt.Errorf("%s is required (one of %q, %q)", field("upstream.kind"),
-				DataProxyKindDorisMySQL, DataProxyKindOBS)
+			return fmt.Errorf("%s is required (one of %q, %q, %q, %q)", field("upstream.kind"),
+				DataProxyKindDorisMySQL, DataProxyKindOBS, DataProxyKindMcpSSE, DataProxyKindMcpStreamableHTTP)
 		default:
 			return fmt.Errorf("%s %q is not a known data proxy kind", field("upstream.kind"), cfg.Upstream.Kind)
 		}
@@ -297,6 +314,16 @@ func validateDataProxies(in map[string]DataProxyConfig) error {
 			}
 			if cfg.Upstream.Addr != "" {
 				return fmt.Errorf("%s does not apply to kind %q; use upstream.base_url", field("upstream.addr"), cfg.Upstream.Kind)
+			}
+		case DataProxyKindMcpSSE, DataProxyKindMcpStreamableHTTP:
+			if cfg.Upstream.BaseURL == "" {
+				return fmt.Errorf("%s is required for kind %q (the real upstream MCP URL)", field("upstream.base_url"), cfg.Upstream.Kind)
+			}
+			if cfg.Upstream.Addr != "" {
+				return fmt.Errorf("%s does not apply to kind %q; use upstream.base_url", field("upstream.addr"), cfg.Upstream.Kind)
+			}
+			if len(cfg.Upstream.Databases) != 0 {
+				return fmt.Errorf("%s does not apply to kind %q", field("upstream.databases"), cfg.Upstream.Kind)
 			}
 		}
 

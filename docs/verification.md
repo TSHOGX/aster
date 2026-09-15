@@ -23,6 +23,9 @@
 
 # Sandbox image bridge/driver/entrypoint behavior
 python3 -m unittest sandbox-image/tests/test_harness_bridge_client.py
+python3 -m unittest sandbox-image/tests/test_agents_knowledge.py
+python3 -m unittest sandbox-image/tests/test_mcp_query_output.py
+python3 -m unittest dev/mcp-gateway/test_gateway.py
 ```
 
 Test fixtures live next to their tests:
@@ -44,6 +47,8 @@ Test fixtures live next to their tests:
   hello/claim/ack/emit, the Pi runner command line and env hygiene, Pi
   config-materialization rejection, and entrypoint invariants (required uid/gid,
   secret-mount rejection).
+- **mcp query-output** — `executeQuery` `output=file:///workspace/…` landing:
+  path jail, CSV encode, summary-only tool result, auto-land over 20 rows.
 
 ## Live smoke
 

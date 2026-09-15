@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "dingpan-knowledge": {
+      "transport": "stdio",
+      "command": "/usr/local/bin/kb",
+      "args": ["mcp"],
+      "lifecycle": "eager"
+    }
+  }
+}

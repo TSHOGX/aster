@@ -38,6 +38,8 @@ orchestrator/authhash
 dev/logs/
 dev/orchestrator
 dev/local.env
+dev/mcp-gateway/.env
+
 .scratch/
 
 # 备份文件

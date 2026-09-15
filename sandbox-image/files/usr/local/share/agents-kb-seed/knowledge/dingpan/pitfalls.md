@@ -1,0 +1,98 @@
+---
+id: dingpan/pitfalls
+title: Dingpan MCP pitfalls
+description: Known dingpan MCP failure modes — DIY HTTP/SSE clients, invented tool names, swapped descriptions, schema prefixes, missing table map
+tags: [dingpan, mcp, pitfalls]
+---
+
+# Dingpan MCP pitfalls
+
+## Do not reimplement the MCP client
+
+If you see SSE (`event: message`) or a hostname for the host gateway, that is
+**not** an invitation to `urllib`/`curl`, write `/workspace/mcp_client.py`,
+probe `/`, `/mcp`, `/api`, `/v1`, or `find` tokens under `/agent-home`. Pi
+already speaks streamable-http. Call `mcp_dp_dingpan_mcp_server_listTables`
+(or whichever `mcp_*_listTables` is in the tool list), plus
+`mcp_dingpan_knowledge_kb_catalog`. Do not bash `kb get` or
+`echo '{"method":"tools/list"}' | kb mcp` — that only proves the binary
+exists. If the Pi tools are missing, stop — the session is miswired.
+
+## Invented names are not tools
+
+The live tools are `listTables`, `tableSchemas`, `executeQuery`. The strings
+`listBusinessTables` and `getTableSchemas` appear only in **upstream
+descriptions**. Calling them returns `Unknown tool` (fast). Do not invent other
+names either.
+
+## Descriptions are swapped
+
+`tools/list` prose for the three tools is copy-pasted onto the wrong names
+(`tableSchemas` text talks about listing tables; `executeQuery` text talks about
+DDL). Ignore that prose. Use **name + inputSchema**:
+
+- `listTables` — no args
+- `tableSchemas` — `tableNames`
+- `executeQuery` — `sql`; optional Pi-side `output` (`file:///workspace/data/<name>.csv`)
+
+## Schema prefix is required
+
+`tableSchemas` needs `schema.table` (example:
+`digital_operation.dwd_e2e_trace_barcode_material`). Bare table names fail.
+Batch with commas only after each name is fully qualified.
+
+## Heavy calls are slow, not broken
+
+`listTables` and large `executeQuery` can sit on upstream for a long time. Wait
+for the result. If the host needs it, raise `settings.requestTimeoutMs` in
+`mcp.json` — do not retry-spam. A *steady* ~60s on every call was the old
+gateway SSE hang (fixed); do not treat that as a reason to skip `listTables`.
+
+## Context bomb: LIMIT 10000 / wide DDL in chat
+
+Tool results are pasted into the LLM context. Patterns that fail fast:
+
+- `executeQuery` without a tight `LIMIT` on a wide fact table (server may
+  return up to ~10000 rows) — a few such calls exceed 1M tokens.
+- Re-calling `listTables` + `tableSchemas` after the table is already known.
+- Loading every `kb_get` article, then also dumping large SQL results.
+- Leaving working data as JSON object arrays only in the transcript.
+- Writing a big file and then `cat`/reading it all back into the model.
+
+Fix: `COUNT` / `GROUP BY` first, `LIMIT ≤ 20` peeks, land reusable rows with
+**`output`: `file:///workspace/data/<name>.csv`** on `executeQuery` (chat:
+path + rowCount + cols only). SQL-side aggregates for charts. Writing CSV in
+Python *after* the tool result has already arrived does not refund those
+tokens. `[Old tool result hard-truncated]` does not refund them either.
+
+## Do not reconstruct names from mcp.json
+
+`mcp_dp_dingpan_listTables` is **not** registered on this host. The server id
+is `dp-dingpan-mcp-server`, so Pi names are
+`mcp_dp_dingpan_mcp_server_listTables` (hyphens → underscores). Read the tool
+list. Guessing both prefixes is a failed turn.
+
+## Skip the filesystem scavenger hunt
+
+Do not `find /` for `mcp.json`, credentials, or table maps. Do not
+`cat ~/.pi/agent/auth.json`. Do not bash `kb`. Knowledge is
+`mcp_dingpan_knowledge_kb_catalog` / `mcp_dingpan_knowledge_kb_get`. Live data
+is dingpan MCP. If those tools are missing from the session list, report a
+wiring failure.
+
+## Missing table map
+
+If `kb_get dingpan/tables` is a stub and `/agents/data/dingpan/README.md` is
+absent, say so. Do not invent table names. `listTables` is the fallback for
+discovery, then `tableSchemas` before any `executeQuery`.
+
+## No silent fallback
+
+If dingpan cannot answer, say so and ask. Do not silently open Doris SQL or
+OBS Parquet unless the user explicitly orders that path.
+
+## TODO (human)
+
+- Record the exact error payloads you have seen (`Unknown tool`, authz denials,
+  empty `data`, truncated `LIMIT`).
+- Note tables that look queryable but are too large / wrong grain / PII.

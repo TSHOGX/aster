@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Sandbox CLI for the progressive-disclosure knowledge base.
+
+Commands:
+
+  kb catalog              print the id/description catalog (no bodies)
+  kb get <id>             load one article body
+  kb path <id>            print the Markdown path for an id
+  kb mcp                  stdio MCP server (kb_catalog / kb_get tools)
+
+catalog/get/path refuse unless KB_ALLOW_CLI=1 (operator debug only).
+Agents must call MCP tools instead.
+
+Default root is `/agents/knowledge` in the sandbox, else `./knowledge`.
+Override with `--root` or the `KNOWLEDGE_ROOT` environment variable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# Agent sessions must call MCP tools, not this CLI. Operators set KB_ALLOW_CLI=1.
+_CLI_REFUSED = """error: do not use the kb CLI from an agent session.
+Call these MCP tools from your tool list:
+  mcp_dingpan_knowledge_kb_catalog
+  mcp_dingpan_knowledge_kb_get
+If they are missing, stop and report a wiring failure. Do not pipe JSON-RPC to `kb mcp`.
+"""
+
+
+def _load_lib():
+    here = Path(__file__).resolve()
+    candidates = [
+        Path("/usr/local/lib"),
+        here.parents[1] / "lib",
+    ]
+    for candidate in candidates:
+        if (candidate / "agents_knowledge.py").is_file():
+            sys.path.insert(0, str(candidate))
+            break
+    import agents_knowledge as kb  # noqa: PLC0415
+
+    return kb
+
+
+kb = _load_lib()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="kb",
+        description=(
+            "Progressive-disclosure knowledge base: catalog summaries, then load "
+            "one article by id. Articles are plain Markdown under knowledge/."
+        ),
+    )
+    parser.add_argument(
+        "--root",
+        help="Knowledge root directory (default: /agents/knowledge or ./knowledge)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Emit JSON instead of model-facing markup",
+    )
+    parser.add_argument(
+        "--max-description",
+        type=int,
+        default=kb.DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH,
+        help="Maximum catalog description length (default 500)",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("catalog", help="List available articles (id, description, tags)")
+
+    get_p = sub.add_parser("get", help="Load the full Markdown body of one article")
+    get_p.add_argument("id", help="Exact article id from `kb catalog`")
+
+    path_p = sub.add_parser("path", help="Print the Markdown file path for one id")
+    path_p.add_argument("id", help="Exact article id from `kb catalog`")
+
+    sub.add_parser("mcp", help="Run as a stdio MCP server exposing kb_catalog / kb_get")
+
+    args = parser.parse_args(argv)
+    if args.max_description < 3:
+        print("error: --max-description must be >= 3", file=sys.stderr)
+        return 2
+    if args.command != "mcp" and os.environ.get("KB_ALLOW_CLI") != "1":
+        sys.stderr.write(_CLI_REFUSED)
+        return 2
+    root = kb.resolve_knowledge_root(args.root)
+
+    if args.command == "catalog":
+        return _cmd_catalog(root, args.as_json, args.max_description)
+    if args.command == "get":
+        return _cmd_get(root, args.id, args.as_json)
+    if args.command == "path":
+        return _cmd_path(root, args.id)
+    if args.command == "mcp":
+        return _cmd_mcp(root, args.max_description)
+    parser.error(f"unknown command {args.command}")
+    return 2
+
+
+def _cmd_catalog(root: Path, as_json: bool, max_description: int) -> int:
+    articles = kb.load_knowledge_articles(root)
+    entries = kb.catalog_entries_from_articles(articles, max_description)
+    if as_json:
+        print(json.dumps(kb.catalog_to_json(root, entries), ensure_ascii=False, indent=2))
+        return 0
+    print(kb.render_catalog_message(entries))
+    return 0
+
+
+def _cmd_get(root: Path, article_id: str, as_json: bool) -> int:
+    if not kb.is_knowledge_id(article_id):
+        print(f'error: invalid knowledge id "{article_id}"', file=sys.stderr)
+        return 2
+    article = kb.load_knowledge_article(root, article_id)
+    if article is None:
+        print(
+            f'error: knowledge article "{article_id}" is unknown or no longer available',
+            file=sys.stderr,
+        )
+        return 2
+    if as_json:
+        print(json.dumps(kb.article_to_json(article), ensure_ascii=False, indent=2))
+        return 0
+    print(kb.render_knowledge_content(article))
+    return 0
+
+
+def _cmd_path(root: Path, article_id: str) -> int:
+    if not kb.is_knowledge_id(article_id):
+        print(f'error: invalid knowledge id "{article_id}"', file=sys.stderr)
+        return 2
+    path = kb.article_path_for_id(root, article_id)
+    if path is None or not path.is_file():
+        print(
+            f'error: knowledge article "{article_id}" is unknown or no longer available',
+            file=sys.stderr,
+        )
+        return 2
+    print(path)
+    return 0
+
+
+def _cmd_mcp(root: Path, max_description: int) -> int:
+    import agents_knowledge_mcp as mcp  # noqa: PLC0415
+
+    return mcp.run_stdio(root, max_description)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
