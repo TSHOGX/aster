@@ -72,3 +72,16 @@ venv/
 # IDE
 .idea/
 .vscode/
+
+# Environment-private deployment inputs, inventories and operation reports.
+# Keep real operational records outside this repository whenever possible.
+/.harness-local/
+/deploy/local/
+/deploy/private/
+**/*.local.json
+**/*.local.yaml
+**/*.local.yml
+**/*.local.md
+/deploy/*.json
+!/deploy/*.example.json
+/docs/delivery/instances.md

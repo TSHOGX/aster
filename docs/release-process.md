@@ -68,7 +68,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push and PR to
 `main`:
 
 - **backend**: `go build ./...`, `go vet ./...`, `go test ./...`, inside the
-  `golang:1.22` container image. It runs in a container (not the bare
+  `golang:1.27.1` container image. It runs in a container (not the bare
   `ubuntu-latest` runner) because several `internal/store` /
   `internal/artifacts` tests assert that directories are root-owned or
   `chown` them to arbitrary uids — matching the fact that the orchestrator
@@ -89,58 +89,39 @@ live-smoke steps CI cannot exercise (real gVisor host required).
 
 ## Cutting a release
 
-1. Make sure `main` is green (CI passed on the latest push).
-2. Tag it:
-   ```bash
-   git tag -a vX.Y.Z -m "vX.Y.Z"
-   git push origin vX.Y.Z
-   ```
-3. Pushing a `v*` tag triggers `.github/workflows/release.yml`, which runs
-   [git-cliff](https://github.com/orhun/git-cliff) over Conventional Commits
-   since the previous tag and publishes the result as a GitHub Release —
-   there is no committed `CHANGELOG.md` file to keep in sync; the tag/Release
-   pair is the changelog. Every commit message must follow
-   [Conventional Commits](https://www.conventionalcommits.org/) (`feat(x):
-   ...`, `fix(x): ...`, `docs: ...`, etc.) for this to produce a useful
-   changelog — this was already the repo's practice before CI existed.
-4. Deploy manually (no CD yet — see below). Build first, then cut over systemd services:
-   ```bash
-   cd /home/agent-runtime-platform/main
-   git fetch --tags && git checkout vX.Y.Z
-   VERSION=$(git describe --tags --always --dirty)
+The release workflow now builds a complete version, not just source archives.
+It first runs the reusable CI against the exact tag, builds static amd64 backend
+and deployment binaries plus a Next standalone package with its own Node runtime,
+and publishes a generic sandbox artifact to GHCR by digest. A manifest connects
+all components, their hashes, schema requirements and qualified runsc version.
 
-   # Build backend to a staging binary so a failed build never corrupts the live binary.
-   cd orchestrator
-   go build -ldflags "-X main.version=${VERSION}" -o bin/orchestrator.new ./cmd/orchestrator
+A release remains unpublished until both Ubuntu 22.04 and 24.04 hosted artifact-smoke
+jobs succeed. The publisher verifies uploaded assets before
+changing the GitHub Release draft to public. Existing public assets and sandbox
+tags are never overwritten. Use a new `-rc.N` for a rebuilt candidate.
 
-   # Build frontend production assets. If this is not run as watt, chown .next before restart.
-   cd ../frontend
-   npm run build
-   # sudo chown -R watt:watt .next   # only if built as root
+All build and smoke jobs use disposable GitHub-hosted Ubuntu runners. They
+install their own build dependencies and pinned runsc; no self-hosted runner,
+production connection or site-specific qualification adapter is required.
+Smoke tests use synthetic databases and a network-disabled sandbox. Reports
+explicitly do not certify any production deployment.
 
-   # Atomic-ish backend binary swap + service restarts.
-   cd ../orchestrator/bin
-   sudo cp -a orchestrator orchestrator.bak.$(date +%s)
-   sudo mv orchestrator.new orchestrator
-   sudo systemctl restart harness-publish-orchestrator
-   sudo systemctl restart harness-publish-frontend
+Production selects an exact release and pulls it with `harness-deploy`, or imports
+an offline bundle. No production Git, Go, npm or Docker is required. Configuration
+and persistent data remain local to the instance. The prior manual source-build
+instructions in operations.md describe legacy deployments and are not the new
+managed upgrade path.
 
-   curl -s http://127.0.0.1:9090/healthz   # confirm the version field matches ${VERSION}
-   curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1:9000/api/healthz
-   ```
-   See [operations.md](./operations.md) for the full runbook (ports, systemd
-   units, nginx/HSTS, security-header smoke checks, troubleshooting).
-
-Rolling back is the same flow with an older tag: `git checkout v<previous>`,
-rebuild, restart.
+See [the delivery runbook](delivery/operations.md) for provisioning, adoption,
+preflight, backup, migration, staged activation and rollback. See
+[progress](delivery/progress.md) for what is implemented versus externally verified.
+Restoring a binary alone is not a supported generic database rollback.
 
 ## What's deliberately not here yet
 
-- **CD (automated deploy)**: deployment stays manual (step 4 above).
-  Automating it means giving CI credentials to the production host, which is
-  a real security tradeoff — worth reconsidering once deploys are frequent
-  enough that the manual step is the bottleneck, e.g. via a self-hosted
-  runner on the deploy host rather than handing out SSH keys.
+- **Central push deployment**: production remains host-initiated through the delivery tool.
+  CI publishes artifacts; it does not receive production SSH access. Privileged
+  release runners must be isolated from production.
 - **`develop` branch / GitFlow**: not worth the merge overhead at the current
   scale (effectively single-contributor, short-lived feature branches).
   Reconsider if the number of concurrent contributors grows.

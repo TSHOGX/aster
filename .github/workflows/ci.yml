@@ -2,8 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
+  workflow_dispatch:
+  workflow_call:
 
 jobs:
   backend:
@@ -12,7 +14,7 @@ jobs:
     # its store/artifacts tests assert root ownership / chown directories
     # accordingly, so the job runs as root (container default user) rather
     # than the runner's non-root default user.
-    container: golang:1.22
+    container: golang:1.27.1
     defaults:
       run:
         working-directory: orchestrator
@@ -36,7 +38,7 @@ jobs:
       - run: ../scripts/check-lockfile-registry.sh
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.2"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -44,3 +46,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: python3 ../scripts/release/smoke-standalone.py
+
+  bridge:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest sandbox-image/tests/test_harness_bridge_client.py
+      - run: python3 -m py_compile scripts/release/*.py
+      - run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
+      - run: bash -n scripts/release/build-rootfs.sh sandbox-image/build-rootfs.sh

@@ -520,6 +520,12 @@ func (p *CIDRPrefix) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func Load() (Config, error) {
+	return LoadFile(os.Getenv("HARNESS_CONFIG_PATH"))
+}
+
+// LoadFile resolves explicit configuration independently of the working directory.
+// An explicit missing file never falls back to development defaults.
+func LoadFile(configPath string) (Config, error) {
 	repoRoot, err := os.Getwd()
 	if err != nil {
 		return Config{}, err
@@ -527,13 +533,21 @@ func Load() (Config, error) {
 	if filepath.Base(repoRoot) == "orchestrator" {
 		repoRoot = filepath.Dir(repoRoot)
 	}
-	// HARNESS_PROJECT_CONFIG selects an alternate harness.yaml (second
-	// co-located deployment). Default remains config/harness.yaml.
-	projectConfigPath := getenv("HARNESS_PROJECT_CONFIG", filepath.Join(repoRoot, "config", "harness.yaml"))
-	if !filepath.IsAbs(projectConfigPath) {
-		projectConfigPath = filepath.Join(repoRoot, projectConfigPath)
+	configDir := filepath.Join(repoRoot, "config")
+	if configPath != "" {
+		configPath, err = filepath.Abs(configPath)
+		if err != nil {
+			return Config{}, err
+		}
+		if _, err := os.Stat(configPath); err != nil {
+			return Config{}, fmt.Errorf("explicit config: %w", err)
+		}
+		configDir = filepath.Dir(configPath)
+		repoRoot = filepath.Dir(configDir)
+	} else {
+		configPath = filepath.Join(configDir, "harness.yaml")
 	}
-	projectConfig, err := loadProjectConfig(projectConfigPath)
+	projectConfig, err := loadProjectConfig(configPath)
 	if err != nil {
 		return Config{}, err
 	}
@@ -554,10 +568,13 @@ func Load() (Config, error) {
 	maxUploadBytes := int64Env("HARNESS_MAX_UPLOAD_BYTES", defaultMaxUploadBytes)
 	maxEditBytes := int64Env("HARNESS_MAX_EDIT_BYTES", defaultMaxEditBytes)
 	maxUploadFiles := intEnv("HARNESS_MAX_UPLOAD_FILES", defaultMaxUploadFiles)
-	authUsersPath := ResolveAuthUsersPath(repoRoot)
+	authUsersPath := getenv("HARNESS_AUTH_USERS_PATH", filepath.Join(configDir, "auth-users.yaml"))
 	authUsers, err := LoadAuthUsersFile(authUsersPath)
 	if err != nil {
 		return Config{}, err
+	}
+	if os.Getenv("HARNESS_MANAGED") == "1" && len(authUsers) == 0 {
+		return Config{}, fmt.Errorf("managed deployment requires a non-empty auth users file: %s", authUsersPath)
 	}
 	authSessionTTL, err := authSessionTTLEnv(24 * time.Hour)
 	if err != nil {
@@ -567,11 +584,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	titleLLM, err := loadTitleLLM(getenv("HARNESS_TITLE_LLM_PATH", filepath.Join(repoRoot, "config", "title-llm.yaml")))
+	titleLLM, err := loadTitleLLM(getenv("HARNESS_TITLE_LLM_PATH", filepath.Join(configDir, "title-llm.yaml")))
 	if err != nil {
 		return Config{}, err
 	}
-	memoryLLM, err := loadMemoryLLM(getenv("HARNESS_MEMORY_LLM_PATH", filepath.Join(repoRoot, "config", "memory-llm.yaml")))
+	memoryLLM, err := loadMemoryLLM(getenv("HARNESS_MEMORY_LLM_PATH", filepath.Join(configDir, "memory-llm.yaml")))
 	if err != nil {
 		return Config{}, err
 	}
@@ -626,6 +643,7 @@ func Load() (Config, error) {
 	cfg.Harness.SessionRetention = Duration{Duration: sessionRetention}
 	cfg.Harness.MaxSessions = maxSessions
 	cfg.Harness.DefaultAgent = string(defaultDriver)
+	cfg.Harness.RunDir = getenv("HARNESS_RUN_DIR", cfg.Harness.RunDir)
 	cfg.Harness = normalizeHarnessConfig(cfg.Harness)
 	cfg.Agents = cloneAgentConfigs(cfg.Harness.Agents)
 	cfg.ModelProfiles = cloneModelProfileConfigs(cfg.Harness.ModelProfiles)
