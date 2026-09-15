@@ -27,8 +27,75 @@ type Status struct {
 	Path        string `json:"path"`
 	Fingerprint string `json:"fingerprint"`
 	Baseline    string `json:"baseline"`
-	Version     int    `json:"version"`
-	Pending     bool   `json:"pending"`
+	// BaselineSource records which catalog reviewed this fingerprint:
+	// "embedded" for the one compiled into the binary, "local" for the
+	// host-local file. Deployments carrying local entries are visible in
+	// `db status` output without having to read the host's filesystem.
+	BaselineSource string `json:"baseline_source,omitempty"`
+	Version        int    `json:"version"`
+	Pending        bool   `json:"pending"`
+}
+
+// BaselinesPathEnv names the optional host-local baseline file. It widens the
+// embedded catalog for one deployment without editing a tracked file, so a
+// machine whose schema carries local history can still run an unmodified
+// release binary.
+const BaselinesPathEnv = "HARNESS_SCHEMA_BASELINES_PATH"
+
+type baselineEntry struct {
+	label  string
+	source string
+}
+
+// loadCatalog returns the embedded catalog widened by the optional file at
+// BaselinesPathEnv.
+//
+// Embedded entries always win. A host-local file may only ADD fingerprints
+// upstream does not know; it can never relabel one upstream has already
+// reviewed. That asymmetry is what keeps this gate meaningful: if a local file
+// could rename an upstream verdict, an operator could label a pre-migration
+// fingerprint "target-…" and satisfy the HasPrefix check in Check, turning "this
+// database has not been migrated" into a silent pass. Widening is safe because a
+// fingerprint upstream has never seen carries no verdict to contradict.
+func loadCatalog() (map[string]map[string]baselineEntry, error) {
+	var embedded map[string]map[string]string
+	if err := json.Unmarshal(baselineJSON, &embedded); err != nil {
+		return nil, err
+	}
+	catalog := map[string]map[string]baselineEntry{}
+	for kind, entries := range embedded {
+		catalog[kind] = map[string]baselineEntry{}
+		for fingerprint, label := range entries {
+			catalog[kind][fingerprint] = baselineEntry{label: label, source: "embedded"}
+		}
+	}
+	path := strings.TrimSpace(os.Getenv(BaselinesPathEnv))
+	if path == "" {
+		return catalog, nil
+	}
+	// A configured path that cannot be read or parsed is an error, not an empty
+	// overlay: otherwise a typo in the unit file surfaces later as a refused
+	// migration whose message points at the schema instead of at the typo.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s %s: %w", BaselinesPathEnv, path, err)
+	}
+	var local map[string]map[string]string
+	if err := json.Unmarshal(data, &local); err != nil {
+		return nil, fmt.Errorf("parse %s %s: %w", BaselinesPathEnv, path, err)
+	}
+	for kind, entries := range local {
+		if catalog[kind] == nil {
+			catalog[kind] = map[string]baselineEntry{}
+		}
+		for fingerprint, label := range entries {
+			if _, ok := catalog[kind][fingerprint]; ok {
+				continue
+			}
+			catalog[kind][fingerprint] = baselineEntry{label: label, source: "local"}
+		}
+	}
+	return catalog, nil
 }
 
 func ReadOnly(path string) (*sql.DB, error) {
@@ -86,14 +153,16 @@ func Check(ctx context.Context, path, kind string) (Status, error) {
 	if err != nil {
 		return s, err
 	}
-	var catalog map[string]map[string]string
-	if err = json.Unmarshal(baselineJSON, &catalog); err != nil {
+	catalog, err := loadCatalog()
+	if err != nil {
 		return s, err
 	}
-	s.Baseline = catalog[kind][s.Fingerprint]
-	if s.Baseline == "" {
+	entry, ok := catalog[kind][s.Fingerprint]
+	if !ok {
 		return s, fmt.Errorf("unrecognized %s schema %s: require a reviewed baseline, no writes performed", kind, s.Fingerprint)
 	}
+	s.Baseline = entry.label
+	s.BaselineSource = entry.source
 	var exists int
 	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name='harness_schema_migrations' AND type='table'`).Scan(&exists); err != nil {
 		return s, err
