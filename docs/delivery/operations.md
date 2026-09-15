@@ -100,3 +100,13 @@ sudo harness-deploy rollback --config /etc/harness/deploy.json --operation <id>
 构建/资格 runner 必须与生产隔离；配置 Actions/GHCR 只需构建发布权限，不给予生产访问。缺 runner、钩子或有效报告即阻塞发布，不生成固定 PASS 代替验收。
 
 正式生产推广前，在私有运维系统完成真实备份预演和分批升级记录。源代码测试、公共软件版本矩阵与特定机器的资格证据必须区分。
+
+## 7. 从分支 CI 到候选发布
+
+CI 在任意分支 push、PR 事件和手动 workflow_dispatch 时运行，Release 则由精确 `v*` tag 触发。先让候选分支的 GitHub CI 通过，再合入 main；合入代码不会部署生产。
+
+首次发布推荐 `v0.3.0-rc.1`。tag 必须指向 main 历史中的提交；它会重新验证该提交。apps 使用 GitHub 托管的 Ubuntu amd64 runner，其 Actions artifact 包含三个应用归档；即使 sandbox/qualification 等待独立 runner，这份应用构建产物也可单独下载进行版本输出和只读数据库预检。Actions artifact 不等于已通过完整验收的 Release，不能据此直接执行生产升级。
+
+完整 Release 还需要隔离的 rootfs builder、两种 Ubuntu 资格环境、相应 GitHub Environments、GHCR 权限、HARNESS_RUNSC_VERSION 和经过实现/验证的资格适配器。全部通过后才会公开可下载的 Release 附件。首次现网接管还须准备私有 target 配置、旧制品回退布局、服务适配、钩子及真实备份预演。
+
+候选通过后再创建新的正式 `v0.3.0` tag。不要移动已经推送的 tag 或绕过资格报告发布正式版本；候选代码有变化时使用新的 rc 编号。
