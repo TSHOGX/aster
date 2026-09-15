@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Draft -> verify remote bytes -> publish. Never replace published assets."""
 import argparse, hashlib, json, os, pathlib, urllib.request, urllib.error
-from qualification import public_report
+from artifact_report import public_report
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--directory',type=pathlib.Path,required=True);p.add_argument('--repository',required=True);a=p.parse_args()
     manifest_bytes=(a.directory/'release-manifest.json').read_bytes()
     m=json.loads(manifest_bytes)
     for ubuntu in ('22.04','24.04'):
-        raw=json.loads((a.directory/f'qualification-{ubuntu}.json').read_text())
-        if raw != public_report(manifest_bytes,raw,ubuntu):raise RuntimeError('refusing publication of non-public qualification fields')
+        raw=json.loads((a.directory/f'artifact-smoke-{ubuntu}.json').read_text())
+        if raw != public_report(manifest_bytes,raw,ubuntu):raise RuntimeError('refusing publication of non-public artifact report fields')
     token=os.environ['GH_TOKEN'];base=f'https://api.github.com/repos/{a.repository}'
     def api(path,data=None,method=None):
         req=urllib.request.Request(base+path,data=json.dumps(data).encode() if data is not None else None,method=method,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','Content-Type':'application/json'})
@@ -19,7 +19,7 @@ def main():
         if e.code!=404:raise
         r=api('/releases',{'tag_name':m['version'],'target_commitish':m['commit'],'name':m['version'],'draft':True,'prerelease':'-rc.' in m['version'],'body':(a.directory/'UPGRADE.md').read_text()})
     if not r['draft']:raise RuntimeError('release already public; immutable publication refused')
-    names=[v['name'] for v in m['artifacts'].values()]+['release-manifest.json','SHA256SUMS','UPGRADE.md','qualification-22.04.json','qualification-24.04.json','rootfs-apt-packages.txt','rootfs-python-packages.txt','rootfs-requirements.lock']
+    names=[v['name'] for v in m['artifacts'].values()]+['release-manifest.json','SHA256SUMS','UPGRADE.md','artifact-smoke-22.04.json','artifact-smoke-24.04.json',m['sandbox']['archive']['name'],'rootfs-apt-packages.txt','rootfs-python-packages.txt','rootfs-requirements.lock']
     # Stream uploads with http.client: binary packages can exceed process memory.
     import http.client,urllib.parse
     existing={x['name']:x for x in api('/releases/'+str(r['id'])+'/assets?per_page=100')}

@@ -18,8 +18,9 @@ not protect already tracked files: inspect the staged diff before committing.
 
 Only reviewed synthetic `.example.json` templates are shipped. The release
 builder copies an explicit file allowlist, never an entire deployment/docs folder.
-Qualification adapters keep raw reports and logs private; only schema-validated,
-allowlisted technical results tied to the release manifest can be published.
+Hosted smoke tests use synthetic data; only schema-validated, allowlisted
+technical results tied to the release manifest can be published. Real deployment
+reports and business acceptance remain private to the target environment.
 
 Deleting a file in a new commit does not remove previous Git objects, remote
 refs, pull-request caches, artifacts or other clones. Before changing repository

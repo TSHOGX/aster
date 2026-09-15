@@ -95,16 +95,16 @@ and deployment binaries plus a Next standalone package with its own Node runtime
 and publishes a generic sandbox artifact to GHCR by digest. A manifest connects
 all components, their hashes, schema requirements and qualified runsc version.
 
-A release remains unpublished until both Ubuntu 22.04 and 24.04 isolated native
-qualification jobs succeed. The publisher verifies uploaded assets before
+A release remains unpublished until both Ubuntu 22.04 and 24.04 hosted artifact-smoke
+jobs succeed. The publisher verifies uploaded assets before
 changing the GitHub Release draft to public. Existing public assets and sandbox
 tags are never overwritten. Use a new `-rc.N` for a rebuilt candidate.
 
-Configure the isolated builders, qualification hosts, environment permissions and
-`HARNESS_RUNSC_VERSION` repository variable before pushing a candidate tag. These
-resources have not been provisioned by the repository change; the workflow will
-remain blocked without them. Never use a machine with production data as the
-privileged builder/qualification runner.
+All build and smoke jobs use disposable GitHub-hosted Ubuntu runners. They
+install their own build dependencies and pinned runsc; no self-hosted runner,
+production connection or site-specific qualification adapter is required.
+Smoke tests use synthetic databases and a network-disabled sandbox. Reports
+explicitly do not certify any production deployment.
 
 Production selects an exact release and pulls it with `harness-deploy`, or imports
 an offline bundle. No production Git, Go, npm or Docker is required. Configuration

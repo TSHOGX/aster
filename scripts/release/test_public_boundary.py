@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from qualification import public_report, TESTS
+from artifact_report import public_report, TESTS
 
 ROOT = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('build_apps', ROOT / 'build-apps.py')
@@ -26,13 +26,16 @@ class PublicBoundaryTest(unittest.TestCase):
     def test_public_report_drops_all_host_metadata(self):
         manifest=json.dumps({'version':'v1.2.3','commit':'a'*40,'runsc_versions':['test-runsc']}).encode()
         import hashlib
-        raw={'version':'v1.2.3','commit':'a'*40,'manifest_sha256':hashlib.sha256(manifest).hexdigest(),'ubuntu':'24.04','arch':'amd64','runsc_version':'test-runsc','tests':dict.fromkeys(TESTS,'passed'),'hostname':'private-host.invalid','machine_id':'private-test-id','logs':['private test log'],'paths':['/private/test/path']}
+        raw={'version':'v1.2.3','commit':'a'*40,'manifest_sha256':hashlib.sha256(manifest).hexdigest(),'ubuntu':'24.04','arch':'amd64','runsc_version':'test-runsc','production_verified':False,'tests':dict.fromkeys(TESTS,'passed'),'hostname':'private-host.invalid','machine_id':'private-test-id','logs':['private test log'],'paths':['/private/test/path']}
         raw['tests']['private-runtime-detail']='private value'
         approved=public_report(manifest,raw,'24.04')
-        self.assertEqual(set(approved),{'version','commit','manifest_sha256','ubuntu','arch','runsc_version','tests'})
+        self.assertEqual(set(approved),{'version','commit','manifest_sha256','ubuntu','arch','runsc_version','production_verified','tests'})
         self.assertEqual(set(approved['tests']),set(TESTS))
         self.assertNotIn('private',json.dumps(approved))
-        raw['tests']['backup_restore']='failed'
+        raw['production_verified']=True
+        with self.assertRaises(ValueError):public_report(manifest,raw,'24.04')
+        raw['production_verified']=False
+        raw['tests']['baseline_669542d']='failed'
         with self.assertRaises(ValueError):public_report(manifest,raw,'24.04')
 
     def test_public_input_symlink_is_rejected(self):

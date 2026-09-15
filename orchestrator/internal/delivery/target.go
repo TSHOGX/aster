@@ -234,10 +234,11 @@ func (ExecRunner) Run(ctx context.Context, args []string, env map[string]string)
 }
 
 type CheckResult struct {
-	Target  string   `json:"target"`
-	Release string   `json:"release"`
-	OK      bool     `json:"ok"`
-	Errors  []string `json:"errors"`
+	Target   string   `json:"target"`
+	Release  string   `json:"release"`
+	OK       bool     `json:"ok"`
+	Errors   []string `json:"errors"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func Check(ctx context.Context, i Target, b Bundle, newInstall bool, r Runner) CheckResult {
@@ -251,13 +252,13 @@ func Check(ctx context.Context, i Target, b Bundle, newInstall bool, r Runner) C
 	fail(i.Validate())
 	fail(b.Verify())
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		fail(fmt.Errorf("only Linux amd64 is certified"))
+		fail(fmt.Errorf("only Linux amd64 is supported"))
 	}
 	osRelease, e := os.ReadFile("/etc/os-release")
 	fail(e)
 	osText := string(osRelease)
 	if !strings.Contains(osText, "ID=ubuntu\n") || (!strings.Contains(osText, "VERSION_ID=\"22.04\"") && !strings.Contains(osText, "VERSION_ID=\"24.04\"")) {
-		fail(fmt.Errorf("host distribution is not certified Ubuntu 22.04/24.04"))
+		fail(fmt.Errorf("host distribution is not supported Ubuntu 22.04/24.04"))
 	}
 	for _, tool := range []string{"systemctl", "nginx", "runsc", "ip", "nft", "tar", "runuser"} {
 		_, e := exec.LookPath(tool)
@@ -272,7 +273,7 @@ func Check(ctx context.Context, i Target, b Bundle, newInstall bool, r Runner) C
 		}
 	}
 	if !matched {
-		fail(fmt.Errorf("runsc version not in release qualification matrix"))
+		result.Warnings = append(result.Warnings, "runsc differs from the CI-tested version; validate sandbox startup in this deployment before opening traffic")
 	}
 	_, e = r.Run(ctx, []string{"nginx", "-t"}, nil)
 	fail(e)

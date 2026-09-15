@@ -592,7 +592,7 @@ fi
 
 log "bootstrapping Ubuntu ${UBUNTU_SUITE} rootfs"
 mkdir -p "${ROOTFS_DIR}"
-debootstrap --variant=minbase --components="${UBUNTU_COMPONENTS}" "${UBUNTU_SUITE}" "${ROOTFS_DIR}" "${UBUNTU_MIRROR}"
+debootstrap --variant=minbase --include=ca-certificates --components="${UBUNTU_COMPONENTS}" "${UBUNTU_SUITE}" "${ROOTFS_DIR}" "${UBUNTU_MIRROR}"
 
 prepare_build_time_dns
 
