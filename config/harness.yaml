@@ -49,7 +49,7 @@ harness:
   # gateway with that script, not by hand.
   data_proxies:
     doris:
-      enabled: true
+      enabled: false
       bind_addr: 0.0.0.0:9030
       sandbox_alias: harness-doris-gateway.internal
       sandbox_port: 9030
@@ -75,7 +75,7 @@ harness:
     # If it is ever missing, generation start still succeeds — the projection is
     # skipped with a loud log and only OBS reads fail. See data-proxies/obs/.
     obs:
-      enabled: true
+      enabled: false
       bind_addr: 0.0.0.0:8084
       sandbox_alias: harness-obs.internal
       sandbox_port: 8084
@@ -96,7 +96,7 @@ harness:
     #   mcp_sse              — legacy SSE upstream (UPSTREAM_SSE_URL)
     #   mcp_streamable_http  — streamable-http upstream (UPSTREAM_HTTP_URL)
     mcp:
-      enabled: false
+      enabled: true
       bind_addr: 0.0.0.0:8103
       sandbox_alias: harness-mcp.internal
       sandbox_port: 8103
