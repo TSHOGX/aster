@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"time"
 
@@ -24,11 +25,11 @@ const dateLayout = "2006-01-02"
 // as far as they are concerned), the memory store they write to, and the adapter
 // that connects the two.
 func openStores(ctx context.Context, cfg config.Config) (*store.Store, *memorystore.Store, *memorystore.Ingestor, error) {
-	db, err := store.OpenWithOptions(ctx, cfg.DBPath, store.Options{AgentHomesRoot: cfg.AgentHomesRoot})
+	db, err := store.OpenWithOptions(ctx, cfg.DBPath, store.Options{AgentHomesRoot: cfg.AgentHomesRoot, Managed: os.Getenv("HARNESS_MANAGED") == "1"})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open store: %w", err)
 	}
-	memoryDB, err := memorystore.Open(ctx, cfg.MemoryDBPath)
+	memoryDB, err := memorystore.OpenWithOptions(ctx, cfg.MemoryDBPath, memorystore.Options{Managed: os.Getenv("HARNESS_MANAGED") == "1"})
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, nil, fmt.Errorf("open memory store: %w", err)

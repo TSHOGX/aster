@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
+	"harness-platform/orchestrator/internal/schemastate"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/sqlitex"
 )
@@ -141,6 +142,9 @@ type Store struct {
 }
 
 type Options struct {
+	// Managed requires a verified explicit migration and never runs schema DDL.
+	Managed bool
+
 	AgentHomesRoot string
 	// ReaderPoolSize caps the reader pool. Zero means defaultReaderPoolSize.
 	// Each modernc.org/sqlite connection carries its own libc.TLS, so
@@ -198,6 +202,11 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 		options.ReaderPoolSize = sqlitex.DefaultReaderPoolSize
 	}
 
+	if options.Managed {
+		if err := schemastate.Verify(ctx, path, "store"); err != nil {
+			return nil, err
+		}
+	}
 	writer, err := sqlitex.OpenWriter(path)
 	if err != nil {
 		return nil, err
@@ -206,7 +215,12 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 	store := &Store{db: writer, options: options}
 	// The writer creates the file and owns schema changes. Migrating before
 	// the reader pool exists means no reader can observe a half-built schema.
-	if err := store.migrate(ctx); err != nil {
+	if err := func() error {
+		if options.Managed {
+			return nil
+		}
+		return store.migrate(ctx)
+	}(); err != nil {
 		_ = writer.Close()
 		return nil, err
 	}

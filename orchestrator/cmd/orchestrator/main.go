@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/deploymentgate"
+	"harness-platform/orchestrator/internal/schemastate"
 	"log/slog"
 	"net/http"
 	"os"
@@ -30,8 +32,21 @@ import (
 //
 //	go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" ./cmd/orchestrator
 var version = "dev"
+var commit = "unknown"
 
 func main() {
+	if err := globalOptions(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "help") {
+		fmt.Println("orchestrator [--config PATH] [serve|version|db status|db plan|db migrate|user|kb|backfill|replay]")
+		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
+		fmt.Printf("{\"version\":%q,\"commit\":%q}\n", version, commit)
+		return
+	}
 	logLevel := new(slog.LevelVar)
 	if os.Getenv("HARNESS_LOG_LEVEL") == "debug" {
 		logLevel.Set(slog.LevelDebug)
@@ -47,7 +62,17 @@ func main() {
 	// exit; `user` also keeps stdout clean for CLI consumption, so the startup
 	// banner below is only logged on the full server boot path.
 	if len(os.Args) > 1 {
+		if (os.Args[1] == "backfill" || os.Args[1] == "replay") && deploymentgate.Paused() {
+			fmt.Fprintln(os.Stderr, "deployment is in progress; standalone writers are paused")
+			os.Exit(1)
+		}
 		switch os.Args[1] {
+		case "db":
+			if err := runDB(ctx, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "db-split":
 			if err := runDBSplit(ctx, log, os.Args[2:]); err != nil {
 				log.Error("db-split failed", "error", err)
@@ -78,10 +103,22 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "serve":
+			if len(os.Args) != 2 {
+				fmt.Fprintln(os.Stderr, "unexpected serve arguments")
+				os.Exit(1)
+			}
+		default:
+			fmt.Fprintln(os.Stderr, "unknown command:", os.Args[1])
+			os.Exit(1)
 		}
 	}
 
-	log.Info("starting orchestrator", "version", version)
+	if os.Getenv("HARNESS_MANAGED") == "1" && (version == "dev" || len(commit) != 40) {
+		log.Error("managed service requires a versioned release binary with commit metadata")
+		os.Exit(1)
+	}
+	log.Info("starting orchestrator", "version", version, "commit", commit)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -103,7 +140,14 @@ func main() {
 	}
 	defer owner.Close()
 
-	db, err := store.OpenWithOptions(ctx, cfg.DBPath, store.Options{AgentHomesRoot: cfg.AgentHomesRoot})
+	unlockDatabases, lockErr := schemastate.LockPaths(cfg.DBPath, cfg.MemoryDBPath)
+	if lockErr != nil {
+		log.Error("database lock failed", "error", lockErr)
+		os.Exit(1)
+	}
+	defer unlockDatabases()
+
+	db, err := store.OpenWithOptions(ctx, cfg.DBPath, store.Options{AgentHomesRoot: cfg.AgentHomesRoot, Managed: os.Getenv("HARNESS_MANAGED") == "1"})
 	if err != nil {
 		log.Error("failed to open store", "error", err)
 		os.Exit(1)
@@ -118,7 +162,7 @@ func main() {
 	// longer take the lock that serves HTTP traffic and session state. It is
 	// opened unconditionally (not only when the pipeline is enabled) so its
 	// schema is present and the CLI paths find a migrated database.
-	memoryDB, err := memorystore.Open(ctx, cfg.MemoryDBPath)
+	memoryDB, err := memorystore.OpenWithOptions(ctx, cfg.MemoryDBPath, memorystore.Options{Managed: os.Getenv("HARNESS_MANAGED") == "1"})
 	if err != nil {
 		log.Error("failed to open memory store", "error", err, "path", cfg.MemoryDBPath)
 		os.Exit(1)
@@ -140,6 +184,7 @@ func main() {
 				CheckpointsRoot:         cfg.CheckpointsRoot,
 				BundleRoot:              cfg.BundleRoot,
 				RootFSPath:              cfg.RootFSPath,
+				ResolverPath:            os.Getenv("HARNESS_RESOLV_CONF"),
 				AgentsKBRoot:            cfg.AgentsKBRoot,
 				SandboxDataProxyAliases: sandboxDataProxyAliases(cfg.Harness),
 				ObsGateway:              obsGatewayConfig(cfg.Harness),
@@ -170,6 +215,7 @@ func main() {
 			// the store and the event hub the server owns.
 			rt.SetContainerExitHandler(app.HandleSandboxExit)
 			app.SetVersion(version)
+			app.SetBuildCommit(commit)
 			// Snapshots for public share links. A failure here is fatal rather
 			// than degrading to text-only links: the alternative is a deployment
 			// that silently rejects every file share with a 503.

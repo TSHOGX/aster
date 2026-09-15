@@ -1,0 +1,10 @@
+{
+  "store": {
+    "d2b1485c0e772386c82924501210b12ab49d78fb119263ab75528de480505aed": "669542d",
+    "73b9ba3348b55bbd800a4ab1bd2fbb3dc4e10fcb8051d2984cb995ebac5d4c7a": "target-fresh",
+    "9df6354444ca0b00f1dbbabf881968fa7406fd74b3712204a3497af289f3cdfd": "target-upgraded"
+  },
+  "memorystore": {
+    "522cb29bb1efba3bab12ab61d523840ea5719461ae4b645335c01e7cb8a4aac2": "target-upgraded"
+  }
+}

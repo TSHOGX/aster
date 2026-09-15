@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 
+	"harness-platform/orchestrator/internal/schemastate"
 	"harness-platform/orchestrator/internal/sqlitex"
 )
 
@@ -46,6 +47,9 @@ type Store struct {
 
 // Options configures Open.
 type Options struct {
+	// Managed requires a verified explicit migration and never runs schema DDL.
+	Managed bool
+
 	// ReaderPoolSize caps the reader pool. Zero means the sqlitex default.
 	ReaderPoolSize int
 }
@@ -64,12 +68,22 @@ func OpenWithOptions(ctx context.Context, path string, options Options) (*Store,
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("memory db path is required")
 	}
+	if options.Managed {
+		if err := schemastate.Verify(ctx, path, "memorystore"); err != nil {
+			return nil, err
+		}
+	}
 	writer, err := sqlitex.OpenWriter(path)
 	if err != nil {
 		return nil, err
 	}
 	store := &Store{db: writer}
-	if err := store.ensureSchema(ctx); err != nil {
+	if err := func() error {
+		if options.Managed {
+			return nil
+		}
+		return store.ensureSchema(ctx)
+	}(); err != nil {
 		_ = writer.Close()
 		return nil, fmt.Errorf("memory schema: %w", err)
 	}

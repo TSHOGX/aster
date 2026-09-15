@@ -49,3 +49,9 @@ Preserved architecture decision records and forward-looking plans:
 
 The `docs/` tree holds current-truth documentation plus the decision records and
 proposals above. Verification guidance lives in [verification.md](./verification.md).
+
+## 多环境发布与升级
+
+- [实施进度与验收边界](delivery/progress.md)
+- [Release 安装、升级和恢复操作手册](delivery/operations.md)
+- [公开仓库与私有运维数据边界](delivery/privacy.md)

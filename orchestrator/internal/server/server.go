@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/deploymentgate"
 	"io"
 	"log/slog"
 	"net"
@@ -63,16 +64,17 @@ const (
 )
 
 type Server struct {
-	cfg       config.Config
-	store     serverStore
-	runtime   runtimeDriver
-	watcher   *artifacts.Watcher
-	hub       *events.Hub
-	log       *slog.Logger
-	titler    *titler.Client
-	upgrader  websocket.Upgrader
-	ownerUUID string
-	version   string
+	cfg         config.Config
+	store       serverStore
+	runtime     runtimeDriver
+	watcher     *artifacts.Watcher
+	hub         *events.Hub
+	log         *slog.Logger
+	titler      *titler.Client
+	upgrader    websocket.Upgrader
+	ownerUUID   string
+	version     string
+	buildCommit string
 
 	creds        *authRegistry
 	loginLimiter *auth.RateLimiter
@@ -256,6 +258,8 @@ func (s *Server) SetOwnerUUID(ownerUUID string) {
 	s.ownerUUID = strings.TrimSpace(ownerUUID)
 }
 
+func (s *Server) SetBuildCommit(commit string) { s.buildCommit = strings.TrimSpace(commit) }
+
 func (s *Server) SetVersion(version string) {
 	s.version = strings.TrimSpace(version)
 }
@@ -283,7 +287,13 @@ func (s *Server) Routes() http.Handler {
 	// still validates the method/path and records mutations in the audit log.
 	mux.Handle("/api/admin/", s.requireAdmin(http.HandlerFunc(s.adminAPI)))
 	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.artifactFile)))
-	return s.rateLimit(mux)
+	return s.rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if deploymentgate.Draining() && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusServiceUnavailable, "deployment draining; retry after maintenance")
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 }
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
@@ -506,7 +516,7 @@ func chownProxyCorrelationPath(path string, proxyServiceGID int) error {
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": s.version})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.version, "commit": s.buildCommit, "draining": deploymentgate.Draining(), "background_held": deploymentgate.BackgroundHeld(), "background_active": deploymentgate.Active()})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
