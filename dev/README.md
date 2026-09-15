@@ -1,11 +1,53 @@
 # Local dev (microVM) alongside the ECS deployment
 
 Runs the whole platform — orchestrator, model proxy, frontend, and real gVisor
-sandboxes — on a local machine that has `runsc`, reachable from a browser on the
-host. Verified in the `sbx` OrbStack VM on Apple silicon (arm64).
+sandboxes — on a local Linux machine that has `runsc`, reachable from a browser
+on the host. Verified in an OrbStack Ubuntu VM on Apple silicon (arm64); the
+same scripts work on other Linux hosts.
 
 The repo's root `AGENTS.md` says there is no local runtime. That is about the
 macOS host, not this VM.
+
+## Portable vs per-machine
+
+| Kind | What | Where |
+|---|---|---|
+| **Portable (commit / share)** | start/stop scripts, rootfs build, DNS-pin hook, model-proxy code, setup installer | `dev/start-all.sh`, `dev/stop-all.sh`, `dev/setup-linux.sh`, `dev/configure-local.sh`, `dev/build-dns-pin.sh`, `sandbox-image/build-rootfs.sh`, `dev/model-proxy/proxy.py`, `*.example` |
+| **Per-machine (never commit)** | API keys, optional mirrors, optional origin overrides, build outputs | `dev/model-proxy/.env`, `dev/local.env`, `sandbox-image/build.env`, `dev/logs/`, `dev/orchestrator`, `sandbox-image/rootfs/` |
+| **Auto-detected** | VM IP, checkout owner, Ubuntu mirror by arch, fake-ip DNS when present | `start-all.sh`, `build-rootfs.sh`, `configure-local.sh` / `build-dns-pin.sh` |
+
+Rule of thumb (same as below): committed files must behave correctly on every
+machine without editing. Anything true of only one host goes in a gitignored
+file or is auto-detected.
+
+## Quick start on a new Linux host
+
+```bash
+# Inside the Linux VM / host, from a checkout on local disk
+# (prefer a native path; OrbStack shared Mac mounts can hang under NFS)
+./dev/setup-linux.sh
+
+# Fill the only required secret:
+$EDITOR dev/model-proxy/.env   # set UPSTREAM_API_KEY=...
+
+sudo SANDBOX_AGENT_DRIVERS=pi,sh ./sandbox-image/build-rootfs.sh
+sudo ./dev/start-all.sh
+```
+
+`setup-linux.sh` installs packages / Go / Node / `runsc` / frontend deps, then
+runs `configure-local.sh` to seed gitignored config from examples. Re-seed
+config only with:
+
+```bash
+./dev/setup-linux.sh --configure-only
+# or
+./dev/configure-local.sh          # keep existing files
+./dev/configure-local.sh --force  # overwrite from examples
+```
+
+If the host sits behind a fake-ip proxy (clash and similar), `configure-local.sh`
+detects it and sets `SANDBOX_BUILD_DNS_HOOK` in `sandbox-image/build.env`
+automatically. On a normal resolver it leaves the hook commented.
 
 ## How local and ECS stay in sync
 
@@ -52,26 +94,23 @@ netns, nft, runsc, and `/var/lib/harness*`). Both scripts use `setsid`: a plain
 backgrounded `nohup` dies with the launching shell when invoked through
 `orb bash -lc` or a non-interactive ssh.
 
-Reach it from the host browser at the VM's IP — currently
-**http://192.168.139.93:8000**. `sbx.orb.local` does not work for this. Login is
-open mode: with no `config/auth-users.yaml` the workbench skips the login screen
-entirely and everything belongs to the `lab` user. `HARNESS_COOKIE_INSECURE=1` is
-set because this is plain http. Add `config/auth-users.yaml` to get the real login
-gate (see the root README) — `orchestrator user add <name> --password-stdin` writes
-it for you, and the running backend picks it up without a restart.
+Reach it from the host browser at the VM's printed IP (for example
+`http://<vm-ip>:8000`). OrbStack `.orb.local` names are not reliable for this.
+Login is open mode: with no `config/auth-users.yaml` the workbench skips the
+login screen entirely and everything belongs to the `lab` user.
+`HARNESS_COOKIE_INSECURE=1` is set because this is plain http. Add
+`config/auth-users.yaml` to get the real login gate (see the root README) —
+`orchestrator user add <name> --password-stdin` writes it for you, and the
+running backend picks it up without a restart.
 
-## One-time setup already done here
+## Per-machine secrets (fill once)
 
-- `config/title-llm.yaml` — GLM-5.2 for session titles (gitignored secret).
-- `dev/model-proxy/.env` — upstream key for the proxy stand-in.
-- rootfs built with `SANDBOX_AGENT_DRIVERS=pi,sh` so Agent and Shell both work.
-
-- `sandbox-image/build.env` — this VM needs only the DNS hook; the arm64 mirror is
-  picked automatically and upstream indexes are reachable once hosts are pinned:
-
-  ```bash
-  SANDBOX_BUILD_DNS_HOOK=/home/hsw/batterygpt/dev/build-dns-pin.sh
-  ```
+| File | Required fields | Notes |
+|---|---|---|
+| `dev/model-proxy/.env` | `UPSTREAM_API_KEY` | Copied from `.env.example` by configure |
+| `sandbox-image/build.env` | usually none | Mirrors / VPC DNS / DNS hook when needed |
+| `dev/local.env` | usually none | Override origins / frontend user if auto-detect is wrong |
+| `config/title-llm.yaml` | optional | Session-title LLM; gitignored if you add secrets |
 
 Rebuild the rootfs after changing the sandbox image:
 
@@ -104,17 +143,17 @@ If the host runs a fake-ip proxy (clash and similar), **every** hostname resolve
 inside the VM to an unroutable `198.18.0.0/15` address — including when querying
 1.1.1.1 directly, because the interception is upstream of the VM. Changing
 nameservers does nothing. The VM works around it with pinned IPs in its own
-`/etc/hosts` (`# sbx-doh-pin`), and `dev/build-dns-pin.sh` does the same for the
-build chroot — wired in via `SANDBOX_BUILD_DNS_HOOK` in `sandbox-image/build.env`,
-so `build-rootfs.sh` itself carries none of this. Extend `PIN_HOSTS` in that script
+`/etc/hosts`, and `dev/build-dns-pin.sh` does the same for the build chroot —
+wired in via `SANDBOX_BUILD_DNS_HOOK` in `sandbox-image/build.env` (or
+auto-wired by `configure-local.sh`). Extend `PIN_HOSTS` / `BUILD_DNS_PIN_HOSTS`
 when a build stage starts downloading from a new host.
 
 Symptoms, each of which looks like an unrelated network flake:
 
 | Symptom | Cause / fix |
 |---|---|
-| `build-rootfs.sh`: hundreds of `Failed to fetch ... [IP: 198.18.0.39]` | the chroot's DNS is unusable — set `SANDBOX_BUILD_DNS_HOOK=dev/build-dns-pin.sh` in `sandbox-image/build.env` |
-| model proxy: `SSLEOFError` on every upstream call | `api.modelarts-maas.com` needs a pin in the VM's `/etc/hosts` |
+| `build-rootfs.sh`: hundreds of `Failed to fetch ... [IP: 198.18.0.39]` | chroot DNS unusable — run `./dev/configure-local.sh` or set `SANDBOX_BUILD_DNS_HOOK` |
+| model proxy: `SSLEOFError` on every upstream call | pin the upstream API host in the VM's `/etc/hosts` |
 | `npm install`: `ECONNRESET` from a mirror host | lockfile `resolved` URLs were committed from a host with an npm mirror configured. `scripts/check-lockfile-registry.sh` now fails CI on this; keep mirrors in `~/.npmrc`, not the lockfile |
 | `npm install`: `ENOTEMPTY` / "Exit handler never called" | a previous failed install left `node_modules` corrupt — `rm -rf node_modules` and retry |
 | blank page, `Uncaught EvalError` in console | CSP was missing `'unsafe-eval'` for `next dev`; fixed in `next.config.mjs` |
