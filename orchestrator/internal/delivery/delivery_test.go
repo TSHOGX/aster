@@ -222,3 +222,15 @@ func TestTargetIdentityDoesNotDependOnLabel(t *testing.T) {
 		t.Fatal("distinct installations share identity")
 	}
 }
+
+func TestHostedValidationScopeIsExplicit(t *testing.T) {
+	b := fixtureBundle(t)
+	b.Manifest.ValidationScope = "hosted-artifact-smoke"
+	if err := b.Manifest.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	b.Manifest.ValidationScope = "production-certified"
+	if err := b.Manifest.Validate(); err == nil {
+		t.Fatal("unsupported production claim accepted")
+	}
+}

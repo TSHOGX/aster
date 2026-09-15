@@ -1,6 +1,0 @@
-self-hosted-runner:
-  labels:
-    - harness-release
-    - harness-qualification
-    - '22.04'
-    - '24.04'

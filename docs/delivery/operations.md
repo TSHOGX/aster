@@ -89,24 +89,26 @@ sudo harness-deploy rollback --config /etc/harness/deploy.json --operation <id>
 
 回滚只在尚未开放写入且具有完整恢复点时执行，保存失败现场、在空目录恢复旧快照，避免旧 DB 混用新 WAL。恢复和 smoke 后保留维护/hold，操作者再确认放行。已开放或可能开放写入后，不自动恢复 T0 覆盖新增数据，先保存 T1 并安排向前修复或数据对账。
 
-## 6. 构建和资格验收
+## 6. GitHub 构建，目标机器部署
 
-可信 tag 经精确源码检查、可复用 CI、应用/rootfs 构建、隔离 Ubuntu 22.04/24.04 资格验收后才能公开 Release。固定 Go/Node/Pi、Ubuntu snapshot 和 Python hashes；不得覆盖已公开资产、重建覆盖同名 tag 或自动清理被引用的 rootfs digest。
+完整构建和基础检查全部使用 GitHub 托管的临时 Ubuntu runner，不需要自托管 runner、生产 SSH 权限、资格主机或自定义 GitHub Environments。现网不承担构建工作。
 
-发布构建只复制显式列举的公开文件，不复制整个 deploy/docs 目录。操作日志、机器盘点、配置和备份不属于制品。
+可信 tag 触发：代码 CI → 应用包与 sandbox 构建 → 完整清单 → Ubuntu 22.04/24.04 制品冒烟 → GitHub Release。应用版本/commit、归档散列、携带的 Node、standalone 运行时配置、合成旧库迁移和真实 runsc 基础启动均自动检查。
 
-资格主机由运维提供 root 管理的 `/etc/harness-release/qualify` 适配器，接收候选目录、平台和私有报告路径，执行真实验证。原始报告与 stdout/stderr 留在私有位置；sanitizer 只输出与 manifest 匹配的版本、平台、runsc 和固定测试项的通过状态。额外机器字段不会上传，publisher 会拒绝未经净化的报告。
+CI 的数据库是仓库内的合成 schema/测试数据，sandbox 无网络、无生产凭据，不调用真实模型。公开报告仅记录这些制品检查，并明确 `production_verified=false`；不能把它当作某个现网环境已通过业务验收。
 
-构建/资格 runner 必须与生产隔离；配置 Actions/GHCR 只需构建发布权限，不给予生产访问。缺 runner、钩子或有效报告即阻塞发布，不生成固定 PASS 代替验收。
+固定 Go/Node/Pi、Ubuntu snapshot、Python hashes 和用于 CI 的 runsc；不得覆盖公开资产或移动已推送 tag。rootfs 同时以 digest 放在 GHCR，并作为 Release 的 sandbox 压缩包附件提供，完整包可由任意目标机器下载。
 
-正式生产推广前，在私有运维系统完成真实备份预演和分批升级记录。源代码测试、公共软件版本矩阵与特定机器的资格证据必须区分。
+部署预检仍检查系统、工具、空间、身份、数据库结构、备份覆盖和服务配置。若目标 runsc 与 CI 测试版本不同，显示警告，要求在该部署验证启动；不再把精确版本相同当作跨机器部署的前提。
 
-## 7. 从分支 CI 到候选发布
+每个现网第一次配置私有 target 文件、服务和本地检查方法，之后升级复用即可：下载 → stage → check → 排空和停写 → 成套备份 → 数据迁移 → 切换 → 业务 smoke → 恢复流量。不需要把机器注册到 GitHub，也不回传生产日志、数据库或机器信息。
 
-CI 在任意分支 push、PR 事件和手动 workflow_dispatch 时运行，Release 则由精确 `v*` tag 触发。先让候选分支的 GitHub CI 通过，再合入 main；合入代码不会部署生产。
+真实业务验收包括模型调用、已有会话/文件/KB、Stop/队列、外部代理及定时任务。由该环境在维护窗口中完成，失败维持维护并按本手册恢复；CI 不能替代这一环。
 
-首次发布推荐 `v0.3.0-rc.1`。tag 必须指向 main 历史中的提交；它会重新验证该提交。apps 使用 GitHub 托管的 Ubuntu amd64 runner，其 Actions artifact 包含三个应用归档；即使 sandbox/qualification 等待独立 runner，这份应用构建产物也可单独下载进行版本输出和只读数据库预检。Actions artifact 不等于已通过完整验收的 Release，不能据此直接执行生产升级。
+## 7. 发版和试部署
 
-完整 Release 还需要隔离的 rootfs builder、两种 Ubuntu 资格环境、相应 GitHub Environments、GHCR 权限、HARNESS_RUNSC_VERSION 和经过实现/验证的资格适配器。全部通过后才会公开可下载的 Release 附件。首次现网接管还须准备私有 target 配置、旧制品回退布局、服务适配、钩子及真实备份预演。
+CI 在分支 push、PR 和手动触发时运行。合入 main 本身不会部署生产；推送 `v*` tag 才构建和发布制品。
 
-候选通过后再创建新的正式 `v0.3.0` tag。不要移动已经推送的 tag 或绕过资格报告发布正式版本；候选代码有变化时使用新的 rc 编号。
+首次完整版本先发新的 `v0.3.0-rc.N`，完整流水线通过后在 GitHub Releases 下载四个组件、release-manifest.json、SHA256SUMS 和操作说明。每个目标环境先备份、升级并实际验证；通过后再发正式 `v0.3.0`。候选失败或代码变化时增加 rc 编号，保留旧 tag。
+
+Actions artifact 可用于诊断中间构建，但完整 Release 才是常规部署输入。生产切换前的备份、排空和迁移检查仍然必要；它们是本地操作步骤，不是一套额外平台。

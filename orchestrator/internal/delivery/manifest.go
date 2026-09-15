@@ -24,6 +24,7 @@ type Sandbox struct {
 	Bridge    string   `json:"bridge"`
 }
 type Manifest struct {
+	ValidationScope      string              `json:"validation_scope,omitempty"`
 	Format               int                 `json:"format"`
 	Version              string              `json:"version"`
 	Commit               string              `json:"commit"`
@@ -61,6 +62,9 @@ func (a Artifact) Validate() error {
 	return nil
 }
 func (m Manifest) Validate() error {
+	if m.ValidationScope != "" && m.ValidationScope != "hosted-artifact-smoke" {
+		return fmt.Errorf("unsupported artifact validation scope")
+	}
 	if err := ValidVersion(m.Version); err != nil {
 		return err
 	}
@@ -101,7 +105,7 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("unsupported target schema")
 	}
 	if len(m.Ubuntu) != 2 || m.Ubuntu[0] != "22.04" || m.Ubuntu[1] != "24.04" {
-		return fmt.Errorf("unsupported Ubuntu qualification matrix")
+		return fmt.Errorf("unsupported Ubuntu validation matrix")
 	}
 	if !m.Downtime || m.Rollback != "snapshot-before-traffic" || len(m.RunscVersions) == 0 || m.Sandbox.Pi == "" || m.Sandbox.Bridge == "" {
 		return fmt.Errorf("missing runtime/upgrade compatibility contract")

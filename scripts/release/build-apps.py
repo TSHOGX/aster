@@ -47,6 +47,8 @@ def main():
         for kind,cmd in [('backend','orchestrator'),('deploy','harness-deploy')]:
             dest=tmp/kind; (dest/'bin').mkdir(parents=True)
             run('go','build','-trimpath','-ldflags',f'-s -w -X main.version={a.version} -X main.commit={commit}','-o',str(dest/'bin'/cmd),'./cmd/'+cmd,cwd=ROOT/'orchestrator',env={**os.environ,'CGO_ENABLED':'0','GOOS':'linux','GOARCH':'amd64'})
+            identity=json.loads(subprocess.check_output([str(dest/'bin'/cmd),'version'],text=True))
+            if identity != {'version':a.version,'commit':commit}:raise RuntimeError('packaged CLI version/commit mismatch')
             if kind=='backend':(dest/'config-reference').mkdir();shutil.copy2(ROOT/'deploy/harness.example.yaml',dest/'config-reference/harness.yaml')
             else:
                 copy_public_delivery_files(ROOT,dest)
@@ -57,4 +59,5 @@ def main():
                 for child in sorted((tmp/kind).iterdir()):tar.add(child,arcname=child.name)
             artifacts[kind]={'name':archive.name,'size':archive.stat().st_size,'sha256':sha(archive)}
         (a.output/'app-build.json').write_text(json.dumps({'version':a.version,'commit':commit,'toolchains':pin,'artifacts':artifacts},indent=2)+'\n')
+        (a.output/'APP_SHA256SUMS').write_text(''.join(v['sha256']+'  '+v['name']+'\n' for v in artifacts.values()))
 if __name__=='__main__':main()
