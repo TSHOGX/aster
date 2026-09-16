@@ -1,130 +1,86 @@
-# Versioning, Requirements & Release Process
+# Versioning and release process
 
-How this repo tracks proposed work, verifies changes, and cuts releases.
-Established 2026-07-09 (first tag `v0.1.0`). If something here and the actual
-CI/workflow files disagree, the workflow files
-(`.github/workflows/ci.yml`, `.github/workflows/release.yml`) are authoritative
-— update this doc to match, not the other way around.
+Git tags `vMAJOR.MINOR.PATCH` identify product releases across backend, frontend,
+deployment CLI and rootfs. Candidate tags use `-rc.N`. Never move an existing tag
+or replace already published assets; create a new candidate or release.
 
-## Branching
+## Development and planning
 
-Single development branch: `main`. There is no `develop` branch and no
-release branches — the project is small enough that the overhead isn't
-worth it yet; revisit if/when there are multiple concurrent contributors
-needing longer-lived integration branches.
+Use short-lived branches and PRs against main. PR descriptions state the problem,
+resulting behavior and validation. Keep implemented contracts in reference docs;
+track proposed work and unimplemented features in
+[Issues](https://github.com/TSHOGX/agent-runtime-platform/issues). The existing
+[core roadmap](https://github.com/TSHOGX/agent-runtime-platform/issues/3) remains
+unchanged by documentation maintenance.
 
-Parallel feature work uses `git worktree` off `main`, one worktree per
-feature, merged back via PR. See [parallel-development.md](./parallel-development.md)
-for the exact commands.
+Do not create local proposal archives, deployment journals or per-version upgrade
+directories. Schema fixtures that actively test old-format compatibility remain
+under tests and are regenerated only through reviewed tooling.
 
-## Requirements: lightweight RFCs
+## CI and build inputs
 
-New features, non-trivial design questions, and investigation writeups go in
-`docs/proposals/` as plain Markdown files — no external issue tracker. Each
-file leads with `Status` / `Date` / `Scope` fields; `Status` is one of:
+[CI](../.github/workflows/ci.yml) runs on branch pushes, PRs, manual dispatch and
+reusable workflow calls. It builds/vets/tests Go, checks frontend lockfile/lint/
+types/tests/build/standalone, tests the bridge and release privacy boundary, and
+checks script/documentation syntax and references.
 
-`Draft` → `Reviewing` → `Accepted` → `Implemented`, or `Rejected` / `Superseded`
+[scripts/release/toolchains.json](../scripts/release/toolchains.json) records the
+release toolchain and runtime pins. The Go module's language version is not the
+same thing as the pinned release compiler. Rootfs builds use the pinned Ubuntu
+snapshot, Pi and Python requirements lock. Update these with artifact validation.
 
-`docs/proposals/README.md` is the index: one row per proposal with current
-status, updated as proposals move between states (rows are never deleted, so
-the table stays a full history). See that file for the current list.
+## Publishing
 
-Completed architecture decisions and durable invariants that later work must
-preserve live in `docs/decisions/` instead — those are settled, not proposed.
-
-This is deliberately lighter than GitHub Issues/Projects. Revisit if the
-number of contributors or concurrent proposals grows enough that a plain
-Markdown index stops being enough to track state.
-
-## Versioning
-
-Single version number for the whole system (backend + frontend are deployed
-together; there is no reason to version them separately).
-
-**Git tags (`vMAJOR.MINOR.PATCH`, e.g. `v0.1.0`) are the only source of
-version truth.** There is no `VERSION` file and no `version` field in
-`frontend/package.json` — do not add either back. SemVer meaning:
-
-- `MAJOR` — incompatible changes (API/protocol/schema break)
-- `MINOR` — new functionality, backward compatible
-- `PATCH` — bug fixes only
-
-The running orchestrator's version is derived at build time from git, not
-from a committed file:
+After main CI passes, create and push a tag on the intended commit:
 
 ```bash
-cd orchestrator
-go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o bin/orchestrator ./cmd/orchestrator
+git fetch origin --tags
+git tag -a vX.Y.Z-rc.N origin/main -m "vX.Y.Z-rc.N"
+git push origin vX.Y.Z-rc.N
 ```
 
-This is embedded as `main.version` (defaults to `"dev"` when built without
-the `-ldflags`, e.g. plain `go build`/`go run`), logged once at orchestrator
-startup, and returned by `GET /healthz` as `{"status":"ok","version":"..."}`
-— use that endpoint to confirm what a running deployment is actually on.
+[Release](../.github/workflows/release.yml) then runs entirely on disposable
+GitHub-hosted Ubuntu runners:
 
-## CI
+1. Verify the tag matches the checkout and belongs to main history.
+2. Run code CI on that exact commit.
+3. Build static amd64 Go binaries, frontend standalone with Node, and generic
+   sandbox rootfs. Upload the sandbox to GHCR by digest.
+4. Assemble the release manifest/checksums and run packaged artifact smoke on
+   Ubuntu 22.04/24.04, including synthetic migrations and real runsc startup.
+5. Verify remote content, upload a complete draft, verify asset bytes and publish.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push and PR to
-`main`:
+The repository Actions token needs the declared contents/packages permissions.
+No self-hosted runner, production access or site-specific qualification adapter
+is part of the release pipeline. An unavailable build input or failed check stops
+publication. Actions artifacts are intermediate/expiring build evidence; the
+complete Release is the normal installation source.
 
-- **backend**: `go build ./...`, `go vet ./...`, `go test ./...`, inside the
-  `golang:1.27.1` container image. It runs in a container (not the bare
-  `ubuntu-latest` runner) because several `internal/store` /
-  `internal/artifacts` tests assert that directories are root-owned or
-  `chown` them to arbitrary uids — matching the fact that the orchestrator
-  runs as root in production (see [operations.md](./operations.md)). The
-  runner's default non-root user fails those tests for privilege reasons
-  unrelated to correctness. The container also needs
-  `git config --global --add safe.directory "$GITHUB_WORKSPACE"` before any
-  `go` command, or `go build`'s VCS-stamping step fails with "dubious
-  ownership" — `actions/checkout` leaves the tree owned by a uid that
-  doesn't match what git expects when the job runs as the container's root
-  user.
-- **frontend**: `npm ci`, `lint`, `typecheck`, `test`, `build`, on the
-  default `ubuntu-latest` runner (no root-ownership assumptions here).
+## Release notes and announcements
 
-CI is verification only — it does not deploy anywhere. See
-[verification.md](./verification.md) for what each suite covers and for the
-live-smoke steps CI cannot exercise (real gVisor host required).
+GitHub Release notes are the canonical version announcement and one-off upgrade
+record. Write them in English and include user-visible behavior, compatibility,
+required migrations, rollback limits and test scope. Do not include host
+identities, real schema fingerprints, customer SQL or operational evidence.
 
-## Cutting a release
+The publisher requests GitHub-generated commit/PR notes and appends the generic
+release/upgrade contract. Maintainers can edit the release body to add a reviewed
+user-facing summary; edits must describe that tag, not future main changes.
+`UPGRADE.md` remains a generic artifact for offline consumers, not the entire
+release announcement.
 
-The release workflow now builds a complete version, not just source archives.
-It first runs the reusable CI against the exact tag, builds static amd64 backend
-and deployment binaries plus a Next standalone package with its own Node runtime,
-and publishes a generic sandbox artifact to GHCR by digest. A manifest connects
-all components, their hashes, schema requirements and qualified runsc version.
+Unreleased announcement drafts belong in the private handoff or issue/PR context
+until a real tag exists. A historical file named after an uncreated version must
+not be published as if that version had shipped. Release-note edits do not change
+immutable binaries or tags.
 
-A release remains unpublished until both Ubuntu 22.04 and 24.04 hosted artifact-smoke
-jobs succeed. The publisher verifies uploaded assets before
-changing the GitHub Release draft to public. Existing public assets and sandbox
-tags are never overwritten. Use a new `-rc.N` for a rebuilt candidate.
+## Deploying
 
-All build and smoke jobs use disposable GitHub-hosted Ubuntu runners. They
-install their own build dependencies and pinned runsc; no self-hosted runner,
-production connection or site-specific qualification adapter is required.
-Smoke tests use synthetic databases and a network-disabled sandbox. Reports
-explicitly do not certify any production deployment.
+Use [release deployment](delivery/operations.md) and private target configuration.
+Build once, then download the same artifacts in each environment. A clean source
+checkout alone does not establish the running version; CLI/health output and the
+actual executable hash identify it.
 
-Production selects an exact release and pulls it with `harness-deploy`, or imports
-an offline bundle. No production Git, Go, npm or Docker is required. Configuration
-and persistent data remain local to the instance. The prior manual source-build
-instructions in operations.md describe legacy deployments and are not the new
-managed upgrade path.
-
-See [the delivery runbook](delivery/operations.md) for provisioning, adoption,
-preflight, backup, migration, staged activation and rollback. See
-[progress](delivery/progress.md) for what is implemented versus externally verified.
-Restoring a binary alone is not a supported generic database rollback.
-
-## What's deliberately not here yet
-
-- **Central push deployment**: production remains host-initiated through the delivery tool.
-  CI publishes artifacts; it does not receive production SSH access. Privileged
-  release runners must be isolated from production.
-- **`develop` branch / GitFlow**: not worth the merge overhead at the current
-  scale (effectively single-contributor, short-lived feature branches).
-  Reconsider if the number of concurrent contributors grows.
-- **Issue tracker**: `docs/proposals/` covers this need lightly today;
-  migrate to GitHub Issues/Projects if proposal volume or the number of
-  people tracking them grows past what a Markdown index can hold.
+Hosted reports describe artifact checks, not production acceptance. Complete
+backup and local business acceptance before opening traffic. Rollback is not a
+generic old-binary swap; see [database operations](database.md).

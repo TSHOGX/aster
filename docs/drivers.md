@@ -46,7 +46,7 @@ Both use bridge protocol `harness_bridge_v2` (version 2) and turn input schema
   `PI_CODING_AGENT_SESSION_DIR=.../sessions`, `PI_OFFLINE=1`,
   `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`; home dirs `.pi/agent/sessions`.
 - **System prompt**: injected via `--append-system-prompt` from
-  `/usr/local/share/harness/pi-system-prompt.md` (identity "BatteryGPT", Doris
+  `/usr/local/share/harness/pi-system-prompt.md` (generic identity and knowledge
   read-only rules). See [sandbox-image.md](./sandbox-image.md).
 - **Restore**: driver state is a `pi_session` sidecar digest; when it changes, the
   runner issues `switch_session` (verified via `get_session_stats`) before the
@@ -74,7 +74,7 @@ Both use bridge protocol `harness_bridge_v2` (version 2) and turn input schema
   answered a prompt nobody was listening to. Only turns after an early return
   (abort/failure) were affected, because the completed path's `get_session_stats`
   had been swallowing the stray `agent_end` by accident. See
-  [stream-desync-after-abort.md](./proposals/stream-desync-after-abort.md).
+  [runtime synchronization](./runtime-state-synchronization.md).
 - **Interrupt and steer** (`abort` / `steer` RPC): both act on the turn that is
   executing and leave the pi process, its session history and the sandbox intact.
   `abort` ends the turn with `stopReason: "aborted"` — whatever already streamed

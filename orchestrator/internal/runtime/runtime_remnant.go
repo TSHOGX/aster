@@ -27,7 +27,7 @@ import (
 //
 // This is the codified form of the manual remediation from the 2026-08-19
 // incident (and the 2026-08-16 one before it, which cost 34h). See
-// docs/proposals/runsc-cleanup-hang-blocks-maintenance.md.
+// docs/session-lifecycle.md.
 
 // sandboxRemnant is one surviving host process of a wedged sandbox.
 type sandboxRemnant struct {

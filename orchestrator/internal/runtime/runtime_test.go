@@ -643,7 +643,7 @@ func TestEnsureSandboxNetworkUsesGenerationAllocationAndProbes(t *testing.T) {
 	details.SandboxIPCIDR = "10.250.0.2/30"
 	details.HostGatewayIP = "10.250.0.1"
 	details.ProbeURL = "http://10.250.0.1:8082"
-	details.AllowedEgressRules = `["tcp:10.250.0.1:8082","tcp:172.16.0.138:9030","udp:53"]`
+	details.AllowedEgressRules = `["tcp:10.250.0.1:8082","tcp:192.0.2.10:9030","udp:53"]`
 
 	if err := rt.ensureSandboxNetwork(context.Background(), details); err != nil {
 		t.Fatalf("ensure sandbox network: %v", err)
@@ -667,7 +667,7 @@ func TestEnsureSandboxNetworkUsesGenerationAllocationAndProbes(t *testing.T) {
 		"ip netns exec harness-gen-a nft add chain inet harness_egress output { type filter hook output priority 0 ; policy drop ; }",
 		"ip netns exec harness-gen-a nft add rule inet harness_egress output oifname lo accept",
 		"ip netns exec harness-gen-a nft add rule inet harness_egress output ip daddr 10.250.0.1 tcp dport 8082 accept",
-		"ip netns exec harness-gen-a nft add rule inet harness_egress output ip daddr 172.16.0.138 tcp dport 9030 accept",
+		"ip netns exec harness-gen-a nft add rule inet harness_egress output ip daddr 192.0.2.10 tcp dport 9030 accept",
 		"ip netns exec harness-gen-a nft add rule inet harness_egress output udp dport 53 accept",
 		"sysctl -w net.ipv4.ip_forward=1",
 		"nft list table inet harness_gen_gen_a",
@@ -675,7 +675,7 @@ func TestEnsureSandboxNetworkUsesGenerationAllocationAndProbes(t *testing.T) {
 		"nft add table inet harness_gen_gen_a",
 		"nft add chain inet harness_gen_gen_a forward { type filter hook forward priority 0 ; policy accept ; }",
 		"nft add chain inet harness_gen_gen_a postrouting { type nat hook postrouting priority 100 ; policy accept ; }",
-		"nft add rule inet harness_gen_gen_a forward iifname hgenah ip daddr 172.16.0.138 tcp dport 9030 accept",
+		"nft add rule inet harness_gen_gen_a forward iifname hgenah ip daddr 192.0.2.10 tcp dport 9030 accept",
 		"nft add rule inet harness_gen_gen_a forward iifname hgenah udp dport 53 accept",
 		"nft add rule inet harness_gen_gen_a forward oifname hgenah ct state established,related accept",
 		"nft add rule inet harness_gen_gen_a forward iifname hgenah drop",

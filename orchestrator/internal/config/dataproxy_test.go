@@ -12,8 +12,8 @@ func dorisProxy() map[string]DataProxyConfig {
 			BindAddr: "10.79.0.1:9030",
 			Upstream: DataProxyUpstreamConfig{
 				Kind:      DataProxyKindDorisMySQL,
-				Addr:      "172.16.0.138:9030",
-				Databases: []string{"vhr_data", "vehicle_signal", "watt"},
+				Addr:      "192.0.2.10:9030",
+				Databases: []string{"analytics_example", "signals_example", "warehouse_example"},
 			},
 		},
 	}
@@ -129,10 +129,10 @@ func TestDataProxyAcceptsWildcardBind(t *testing.T) {
 func TestDataProxyDatabasesNormalized(t *testing.T) {
 	in := dorisProxy()
 	cfg := in["doris"]
-	cfg.Upstream.Databases = []string{" VHR_Data ", "watt", "watt", "", "vehicle_signal"}
+	cfg.Upstream.Databases = []string{" ANALYTICS_EXAMPLE ", "warehouse_example", "warehouse_example", "", "signals_example"}
 	in["doris"] = cfg
 	got := normalizeDataProxies(in)["doris"].Upstream.Databases
-	want := []string{"vhr_data", "watt", "vehicle_signal"}
+	want := []string{"analytics_example", "warehouse_example", "signals_example"}
 	if len(got) != len(want) {
 		t.Fatalf("Databases = %v, want %v", got, want)
 	}
@@ -169,7 +169,7 @@ func TestDataProxyValidationRejects(t *testing.T) {
 			// The whole point of the alias: if it can resolve to the real FE, the
 			// gateway is one route among two rather than a chokepoint.
 			name:    "alias is the Doris FE IP",
-			mutate:  func(c *DataProxyConfig) { c.SandboxAlias = "172.16.0.138" },
+			mutate:  func(c *DataProxyConfig) { c.SandboxAlias = "192.0.2.10" },
 			wantSub: "not an IP literal",
 		},
 		{
@@ -252,13 +252,13 @@ func TestDataProxyRejectsDuplicateAliasAndBind(t *testing.T) {
 			BindAddr:     "10.79.0.1:9030",
 			SandboxAlias: "harness-doris.internal",
 			SandboxPort:  9030,
-			Upstream:     DataProxyUpstreamConfig{Kind: DataProxyKindDorisMySQL, Addr: "172.16.0.138:9030", Databases: []string{"vhr_data"}},
+			Upstream:     DataProxyUpstreamConfig{Kind: DataProxyKindDorisMySQL, Addr: "192.0.2.10:9030", Databases: []string{"analytics_example"}},
 		},
 		"doris2": {
 			BindAddr:     "10.79.0.1:9031",
 			SandboxAlias: "harness-doris.internal",
 			SandboxPort:  9031,
-			Upstream:     DataProxyUpstreamConfig{Kind: DataProxyKindDorisMySQL, Addr: "172.16.0.138:9030", Databases: []string{"vhr_data"}},
+			Upstream:     DataProxyUpstreamConfig{Kind: DataProxyKindDorisMySQL, Addr: "192.0.2.10:9030", Databases: []string{"analytics_example"}},
 		},
 	})
 	err := validateDataProxies(in)
@@ -271,7 +271,7 @@ func TestDataProxyRejectsDuplicateAliasAndBind(t *testing.T) {
 			BindAddr:     "10.79.0.1:9030",
 			SandboxAlias: "harness-doris.internal",
 			SandboxPort:  9030,
-			Upstream:     DataProxyUpstreamConfig{Kind: DataProxyKindDorisMySQL, Addr: "172.16.0.138:9030", Databases: []string{"vhr_data"}},
+			Upstream:     DataProxyUpstreamConfig{Kind: DataProxyKindDorisMySQL, Addr: "192.0.2.10:9030", Databases: []string{"analytics_example"}},
 		},
 		"obs": {
 			BindAddr:     "10.79.0.1:9030",
@@ -350,7 +350,7 @@ func TestOBSDataProxyValidates(t *testing.T) {
 
 func TestDataProxyHostIsUpstream(t *testing.T) {
 	for _, host := range []string{
-		"172.16.0.138",
+		"192.0.2.10",
 		"obs.cn-north-4.myhuaweicloud.com",
 		"myhuaweicloud.com",
 		"s3.amazonaws.com",

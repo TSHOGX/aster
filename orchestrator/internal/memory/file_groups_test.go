@@ -6,7 +6,7 @@ func TestClassifyFileGroup(t *testing.T) {
 	tests := []struct {
 		name, typ, scope, statement, want string
 	}{
-		{"schema", "fact", "doris", "vhr_data schema 的字段需要在线发现", FileGroupSchemaFields},
+		{"schema", "fact", "doris", "analytics_example schema 的字段需要在线发现", FileGroupSchemaFields},
 		{"method", "heuristic", "charging", "SOH 的计算公式按窗口聚合", FileGroupMetricsMethods},
 		{"source", "fact", "data", "Doris 是默认数据源", FileGroupDataSources},
 		{"bug", "bug", "tool", "mysql client 缺失导致命令失败", FileGroupTroubleshooting},

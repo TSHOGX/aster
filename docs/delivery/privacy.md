@@ -12,7 +12,10 @@ about a particular machine.
 
 Keep target configuration and operational records outside the checkout in the
 operator's private configuration/state directories or private operations system.
-If temporary workspace-local files are unavoidable, use `.harness-local/` or
+For temporary operational handoff, use the ignored root `private/` directory
+with restricted permissions. It may hold archived local scripts/configuration and
+audit evidence, but must never be force-added, globbed into release inputs or
+served by the application. Alternatively use `.harness-local/` or
 `*.local.json` / `*.local.yaml` / `*.local.md`, which are ignored. Ignore rules do
 not protect already tracked files: inspect the staged diff before committing.
 
@@ -28,5 +31,6 @@ visibility, audit all branches/tags/history and hosting-provider artifacts. Any
 history replacement must be coordinated and use an exact lease; it does not
 promise deletion of the hosting provider's cached or unreachable objects.
 
-The current hardening addresses the new delivery work. It is not a certification
+Current-tree hardening covers public references, defaults, code comments and
+embedded examples. It is not a certification
 that all pre-existing repository history is safe to publish.

@@ -1,4 +1,4 @@
-# 密钥 / 凭据
+# Credentials and private configuration
 docs/doris-connection.md
 **/*.env
 **/secrets/
@@ -6,10 +6,9 @@ docs/doris-connection.md
 config/auth-users.yaml
 config/title-llm.yaml
 config/memory-llm.yaml
-# The seeded doris-query SKILL.md embeds a live read-only credential; the .example
-# (redacted) is committed instead. Provision the real file on the host.
+# Deployment-specific skills are private. Only generic templates are tracked.
 sandbox-image/files/usr/local/share/agents-kb-seed/skills/doris-query/SKILL.md
-# Same for obs-parquet-duckdb: embeds the live OBS access/secret key.
+# Object-store skill configuration is deployment-private too.
 sandbox-image/files/usr/local/share/agents-kb-seed/skills/obs-parquet-duckdb/SKILL.md
 # KB data/ holds each deployment's own reference corpora — private domain
 # knowledge, not part of the generic runtime. Nothing under it is committed (not
@@ -18,10 +17,10 @@ sandbox-image/files/usr/local/share/agents-kb-seed/skills/obs-parquet-duckdb/SKI
 # facts/*.md entry points. See data/README.md for the conventions.
 sandbox-image/files/usr/local/share/agents-kb-seed/data/*/
 
-# 每台构建机自己的镜像源 / DNS 配置（已被 **/*.env 覆盖，此处仅作说明）
-# sandbox-image/build.env — 见 sandbox-image/build.env.example
+# Per-builder mirrors and DNS settings (also covered by **/*.env)
+# sandbox-image/build.env — see sandbox-image/build.env.example
 
-# gVisor / sandbox 产物
+# gVisor / sandbox artifacts
 sandbox-image/rootfs/
 sandbox-image/out/
 bundle/out/
@@ -30,33 +29,33 @@ bundle/checkpoints/
 *.oci.tar
 *.rootfs.tar
 
-# 构建产物
+# Build artifacts
 orchestrator/orchestrator
 orchestrator/bin/
 orchestrator/authhash
-# dev/ 的脚本入库,但本地运行产物不入库(dev/model-proxy/.env 已被 **/*.env 覆盖)
+# Development source is tracked; local outputs and environments are not.
 dev/logs/
 dev/orchestrator
 dev/local.env
 .scratch/
 
-# 备份文件
+# Backups
 *.bak
 *.bak.*
-# 带时间戳的运维备份（DB / 配置 / 前端构建产物）
+# Timestamped operational backups
 *.backup.*
 config/auth-users.yaml.bak.*
 frontend/.next.backup.*/
-# 手工运维备份常写成 .next.bak-<原因>-<日期>/，连字符不匹配上面的 *.bak.*
+# Hyphenated frontend backup directory names
 frontend/.next.bak-*/
 orchestrator.db.bak.*
 
-# 本地 agent 运维笔记,不入库
+# Local agent operational notes
 AGENTS.md
-# Claude Code 的本地状态(worktrees / 会话配置),不入库
+# Local assistant state
 .claude/
 
-# 通用
+# Common generated files
 .DS_Store
 node_modules/
 dist/
@@ -83,3 +82,7 @@ venv/
 /deploy/*.json
 !/deploy/*.example.json
 /docs/delivery/instances.md
+
+# Private machine-specific configuration, operational handoff and audit evidence.
+# Never force-add this directory; it must not enter releases or CI artifacts.
+/private/

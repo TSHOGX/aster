@@ -54,5 +54,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 -m unittest sandbox-image/tests/test_harness_bridge_client.py
       - run: python3 -m py_compile scripts/release/*.py
+      - run: python3 scripts/check-public-docs.py
       - run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
       - run: bash -n scripts/release/build-rootfs.sh sandbox-image/build-rootfs.sh

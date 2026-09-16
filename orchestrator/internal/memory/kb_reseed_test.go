@@ -29,7 +29,7 @@ func seededKB(t *testing.T, seededSkill string) (*KB, string) {
 	t.Helper()
 	root := t.TempDir()
 	kb := NewKB(root)
-	mems, skills := sampleKBContent("vhr_data schema changes over time.")
+	mems, skills := sampleKBContent("analytics_example schema changes over time.")
 	digest, err := kb.Publish(mems, skills)
 	if err != nil {
 		t.Fatalf("Publish: %v", err)

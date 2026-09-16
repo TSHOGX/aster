@@ -16,7 +16,7 @@ which targets /openai/v1).
 
 Env:
   PORT                              listen port (default 8083)
-  UPSTREAM_BASE_URL                 e.g. https://api.modelarts-maas.com/anthropic
+  UPSTREAM_BASE_URL                 e.g. https://model-api.example.com
   UPSTREAM_API_KEY                  real provider key (never leaves the host)
   UPSTREAM_MODEL                    optional model override
   HARNESS_PROXY_CORRELATION_SOCKET  orchestrator correlation socket
@@ -37,7 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8083"))
 UPSTREAM_BASE_URL = os.environ.get(
-    "UPSTREAM_BASE_URL", "https://api.modelarts-maas.com/anthropic"
+    "UPSTREAM_BASE_URL", "https://model-api.example.com"
 ).rstrip("/")
 UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "")
 UPSTREAM_MODEL = os.environ.get("UPSTREAM_MODEL", "").strip()

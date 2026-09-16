@@ -61,6 +61,7 @@ sha256) that is re-verified before every launch, checkpoint, and cleanup.
 | bridge_inbox | `/harness-control/bridge/inbox` | ro | host-owned |
 | bridge_host_tmp | `/harness-control/bridge/host-tmp` | ro | host-owned |
 | network_hosts | `/etc/hosts` | ro | per-generation projection |
+| resolver | `/etc/resolv.conf` | ro | configured `HARNESS_RESOLV_CONF` in managed deployments |
 | driver config | e.g. `/agent-home/.pi/agent/models.json` | ro | from `DriverConfigMaterializationSpecs` |
 
 **Scratch mounts:** tmpfs `/tmp` and `/var/tmp` (rw).
@@ -133,7 +134,7 @@ True `runsc` checkpoint/restore also exists:
 
 Why not `--warm-sentry`: it isn't in the shipped `runsc` and was closed upstream for
 security reasons; the low-latency direction is an orchestrator-level prewarm pool.
-See [decisions/runsc-checkpoint-research.md](./decisions/runsc-checkpoint-research.md).
+See [session lifecycle](./session-lifecycle.md).
 
 ## Sandbox output and unexpected exits
 

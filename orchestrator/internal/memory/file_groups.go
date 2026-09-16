@@ -46,7 +46,7 @@ func classifyFileGroup(mType, scope, statement, when string) string {
 	if has("字段", "列名", "column", "schema", "signal", "信号", "表结构", "数据类型", "datatype", "vid") {
 		return FileGroupSchemaFields
 	}
-	if has("doris", "vhr_data", "vehicle_signal", "obs", "parquet", "数据源", "数据表", "查询来源", "data source") {
+	if has("doris", "analytics_example", "signals_example", "obs", "parquet", "数据源", "数据表", "查询来源", "data source") {
 		return FileGroupDataSources
 	}
 	if has("术语", "专有名词", "概念", "定义", "meaning", "definition", "工况", "bms", "电池包", "车型") {

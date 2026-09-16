@@ -21,3 +21,15 @@ class PublishTest(unittest.TestCase):
                 req=request.call_args.args[0]
                 self.assertEqual(req.full_url,'https://api.github.com/repos/example/repo/releases/tags/v1.2.3')
                 self.assertEqual(req.get_header('Authorization'),'Bearer synthetic-token')
+
+    def test_release_notes_use_github_changes_and_generic_contract(self):
+        calls=[]
+        def api(path,body):
+            calls.append((path,body))
+            return {'body':'## Changes\n- Add a generic feature (#1)'}
+        manifest={'version':'v1.2.3','commit':'a'*40}
+        body=publish.release_body(api,manifest)
+        self.assertEqual(calls,[('/releases/generate-notes',{'tag_name':'v1.2.3','target_commitish':'a'*40})])
+        self.assertIn('generic feature',body)
+        self.assertIn('UPGRADE.md',body)
+        self.assertIn('do not certify',body)

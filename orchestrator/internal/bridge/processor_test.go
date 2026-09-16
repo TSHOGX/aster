@@ -1405,7 +1405,7 @@ func allocateBridgeGeneration(t *testing.T, ctx context.Context, st *store.Store
 		Config: store.ResourceAllocatorConfig{
 			RunDir:                     filepath.Join(t.TempDir(), "run"),
 			CIDRPool:                   netip.MustParsePrefix("10.240.0.0/29"),
-			EgressDorisFEHosts:         []string{"172.16.0.138"},
+			EgressDorisFEHosts:         []string{"192.0.2.10"},
 			EgressDorisBEHosts:         []string{"172.16.0.139"},
 			EgressDorisPorts:           []int{9030},
 			EgressDNSPolicy:            "hostnames_only",

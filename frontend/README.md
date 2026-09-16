@@ -1,81 +1,26 @@
-# Frontend
+# Workbench frontend
 
-Next.js workbench for the sandboxed agent runtime platform.
-
-## Run
+Next.js/TypeScript UI with server-side same-origin proxy routes to the orchestrator.
 
 ```bash
-cd frontend
-npm install
-PORT=8000 npm run dev
-```
-
-Open <http://127.0.0.1:8000>.
-
-## Rebuild / Restart
-
-Development rebuilds are handled by Next.js hot reload, but you still need to restart the process when environment variables, dependencies, or route-handler wiring changes.
-
-```bash
-# stop the current dev server with Ctrl+C, then rerun
-PORT=8000 npm run dev
-```
-
-For a production-style rebuild:
-
-```bash
-cd frontend
-npm run build
-PORT=8000 npm run start
-```
-
-If you need a clean rebuild after dependency changes, rerun `npm install` first, then `npm run build`.
-
-## Checks
-
-```bash
+npm ci
+HARNESS_API_BASE_URL=http://127.0.0.1:8090 PORT=8000 npm run dev
 npm run lint
 npm run typecheck
+npm test
 npm run build
 ```
 
-## Backend Bridge
+The production build uses standalone output. Release packaging includes static
+assets and a pinned Node runtime; deployment does not run npm. The server-side
+backend URL is selected at runtime through `HARNESS_API_BASE_URL` or
+`ORCHESTRATOR_URL`.
 
-The frontend talks to the orchestrator through same-origin route handlers. This keeps browser requests on the frontend origin and avoids direct CORS/cookie coupling.
+Core UI areas are conversations, queue/runtime state, files, sharing, schedules
+and notifications. Optional evolution routes integrate a separate external runner;
+they require explicit private configuration and contain no business-schema demo
+fallback. See [frontend architecture](../docs/frontend.md),
+[memory boundaries](../docs/agents-kb.md), and [development](../docs/development.md).
 
-Implemented proxy routes:
-
-- `GET /api/healthz`
-- `/api/*` forwarded to orchestrator `/api/*`
-- `/artifacts/:session_id/:path` forwarded to orchestrator artifact downloads
-
-The proxy target defaults to `http://127.0.0.1:8090`.
-
-Environment overrides:
-
-- `HARNESS_API_BASE_URL` or `ORCHESTRATOR_URL` for the server-side proxy.
-- `PORT=8000` for local frontend development.
-
-## Current UI Flow
-
-- The UI checks `/api/healthz` first.
-- If the real backend is unavailable or a proxied HTTP request fails, the app shows the backend-unreachable state instead of a mock workspace.
-- Live events come from the global `GET /api/events/stream` SSE endpoint through the frontend proxy, with `last_event_id` replay fallback when the stream reconnects.
-- The stream renders `agent.delta`, `agent.message`, `agent.output`, `system.status`, session lifecycle events, `session.updated` (title changes), and `notification.created` (bell refetch).
-- After a successful message post, the provider also polls session/messages/artifacts for a short period so the view can recover from missed events.
-- The artifact pane renders a live metadata-backed file tree with search, folder expand/collapse, tabs, upload (multi-file/folder/drag-drop), inline text editing, download actions, and previews for Markdown, code, text, images, JSON, CSV/TSV, PDF, HTML, and Office files.
-- `artifact.updated` adds or refreshes files in the tree; `artifact.deleted` removes files or deleted directory prefixes and closes stale tabs.
-- ⌘P / Ctrl+P opens a command palette for full-text search across the user's sessions and messages; a notification bell surfaces broadcast announcements.
-- Assistant messages carry a progressive-disclosure execution trace and a per-message action bar (copy, 👍/👎 feedback).
-
-## Current Agent Flow
-
-- The UI fetches `GET /api/deployment-capabilities` and offers only product
-  modes, not raw driver IDs.
-- Create a session through `POST /api/sessions`.
-- `Agent` maps to the deployment-selected agent driver. In the checked-in lab
-  profile it resolves to Pi. `Shell` maps to the PTY-backed shell session only
-  when enabled and present in the selected image manifest.
-- Send a task prompt through `POST /api/sessions/:id/messages`.
-- Interrupt a running shell session through `POST /api/sessions/:id/interrupt`.
-- The orchestrator keeps per-generation resources alive across turns once the sandbox is running.
+Product localization dictionaries are application content; English is the
+repository documentation language, not a requirement to remove supported UI locales.

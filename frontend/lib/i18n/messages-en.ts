@@ -283,26 +283,26 @@ export const EN = {
   "trace.toolError": "Tool reported an error",
   "message.copiedSessionId": "Copied session id",
   "message.copiedMarkdown": "Copied as Markdown",
-  "prompt.acdc.title": "AC vs. DC session length",
+  "prompt.acdc.title": "Compare datasets",
   "prompt.acdc.body":
-    "Compare how long an AC session runs against a DC session, bucketed by duration, to see where each mode actually lands.",
+    "Compare two uploaded datasets using their actual columns.",
   "prompt.acdc.prompt":
-    "For July, compare the distribution of charging session duration between AC (slow) and DC (fast) charging. Bucket sessions as <10 min, 10–30 min, 30–60 min, 1–2 h, >2 h and report the share of each bucket per mode.",
-  "prompt.startsoc.title": "Starting SOC distribution",
+    "Compare the two datasets in my workspace. Identify common columns, summarize meaningful differences, and state any assumptions before calculating.",
+  "prompt.startsoc.title": "Explore a distribution",
   "prompt.startsoc.body":
-    "Bucket the SOC users plug in at, from below 10% up to 50% and above, to tell topping-up apart from running the pack down.",
+    "Summarize a numeric column and explain missing values.",
   "prompt.startsoc.prompt":
-    "Show the distribution of starting SOC across charging sessions, bucketed as <10%, 10–20%, 20–30%, 30–40%, 40–50%, ≥50%, with the session count per bucket. Do users mostly top up shallow or charge from deep discharge?",
-  "prompt.depth.title": "Charge depth by platform",
+    "Help me explore a numeric column in my dataset. Ask which file and column to use, then summarize its distribution, outliers, and missing values.",
+  "prompt.depth.title": "Create a comparison report",
   "prompt.depth.body":
-    "Put the platforms side by side on energy per charge, depth of discharge and peak temperature, and name the one charging deepest.",
+    "Summarize selected metrics across groups.",
   "prompt.depth.prompt":
-    "For July, compare the platforms on average energy added per charging session (kWh), average depth of discharge (DOD), and peak temperature. Summarize them in one table and tell me which platform charges the deepest.",
-  "prompt.faults.title": "F2 BMS fault mix",
+    "Create a comparison report from the data I provide. Confirm the grouping and metrics, produce a table and chart, and save the outputs in the workspace.",
+  "prompt.faults.title": "Investigate errors",
   "prompt.faults.body":
-    "Rank the BMS faults the F2 fleet reported in the last day and name the one that dominates.",
+    "Find recurring errors in the logs I provide.",
   "prompt.faults.prompt":
-    "Look at BMS faults reported on the F2 platform over the last day. Break them down by fault, give the count and share of each, and tell me which fault dominates.",
+    "Review the logs in my workspace, group recurring errors, and explain the evidence for the most frequent causes. Do not assume access to external systems.",
   "login.subtitle": "Enter your workbench credentials.",
   "workspace.uploadsPausedNote": "Uploads paused while the agent is working.",
   "viewer.binaryTitle": "Binary file preview is not supported.",

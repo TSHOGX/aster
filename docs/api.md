@@ -2,7 +2,7 @@
 
 > Orchestrator surface in `orchestrator/internal/server/`. All browser traffic
 > reaches these routes same-origin through the Next.js proxy (see
-> [frontend.md](./frontend.md)). Default bind `:8090` (publish deployment: `:9090`).
+> [frontend.md](./frontend.md)). Default development bind `:8090`; deployed listeners are explicitly configured.
 
 ## Route trees
 
@@ -409,7 +409,7 @@ type it consumes via `addEventListener` — `onmessage` receives only unnamed
 frames and will never see these. A type missing from the client's registration
 list is not degraded, it is dropped entirely and in silence, with a handler that
 still looks correct. That failure shipped once (`session.runtime`, see
-[proposals/runtime-push-loss-and-writer-contention.md](./proposals/runtime-push-loss-and-writer-contention.md)),
+[runtime synchronization](./runtime-state-synchronization.md)),
 so the list in `frontend/lib/use-event-stream.ts` is covered by a test asserting
 it contains every type the provider handles. Add new types there and to the
 table below together.
@@ -479,4 +479,22 @@ and the grace must stay below `sandbox_heartbeat_stall_grace` (enforced at confi
 validation) so a sandbox already judged stalled cannot keep model access. Requests
 admitted this way are logged as a warning; a nonzero rate means writer contention
 is building. See
-[proposals/runtime-push-loss-and-writer-contention.md](./proposals/runtime-push-loss-and-writer-contention.md).
+[runtime synchronization](./runtime-state-synchronization.md).
+
+## Optional knowledge and external evolution
+
+`GET /api/kb-review` and `POST /api/kb-review/decisions` are orchestrator routes for
+staged KB review. They use the normal authenticated API boundary and the configured
+KB/memory stores. They are distinct from `/api/admin/*`; do not assume an admin
+feature flag controls them.
+
+`/api/evolution/*` is a Next.js integration route, not an orchestrator endpoint.
+It requires explicit external project/state/database configuration and the local
+`EVOLUTION_VIEWERS` allowlist. Absent configuration returns 503; unauthorized
+callers are refused. It reads external reports and can start that runner; it does
+not fabricate a default report or ship organization-specific SQL. See
+[memory boundaries](agents-kb.md) for lifecycle and ownership.
+
+`GET /healthz` reports version/commit and deployment drain/background-hold status.
+These identify the running build but do not prove business acceptance of a
+particular database, model or external integration.

@@ -26,7 +26,7 @@ Produces an Ubuntu (`noble`) OCI rootfs directory. Key env knobs:
 
 - `ROOTFS_DIR` — output dir (default `sandbox-image/rootfs`).
 - `SANDBOX_AGENT_DRIVERS` — CSV of drivers to install (default `pi`; accepts `pi`,
-  `sh`). The checked-in lab default needs `SANDBOX_AGENT_DRIVERS=pi,sh`.
+  `sh`). Select the same driver set as your application configuration; release builds include `pi,sh`.
 - `FORCE` — `0` (default) reuses an existing rootfs and only re-syncs the overlay +
   regenerates the manifest (no root, no debootstrap); `1` does a full rebuild
   (requires root + `debootstrap`).
@@ -50,11 +50,10 @@ resolvers. Copy `build.env.example` and fill in per host:
 | `SANDBOX_DNS_SEARCH` | unset | `search` line in the same file |
 | `SANDBOX_BUILD_DNS_HOOK` | unset | executable run after debootstrap with the rootfs dir as `$1` |
 
-`/etc/resolv.conf` is **rendered at build time**, not committed — the sandbox falls
-back to it whenever the orchestrator is not projecting a per-generation
-`/etc/hosts` (that projection is conditional; see `requiresNetworkHostsProjection`),
-so the resolvers must be reachable wherever the image runs. A cloud deployment
-points them at its VPC resolvers via `build.env`.
+Local image builds can render a resolver from their private build environment.
+Generic release images contain no deployment DNS; managed runtime specs mount the
+operator's `HARNESS_RESOLV_CONF` read-only. The `/etc/hosts` alias projection is a
+separate mechanism and does not supply DNS resolvers.
 
 `SANDBOX_BUILD_DNS_HOOK` exists for build hosts whose own DNS the chroot cannot
 use — e.g. a fake-ip proxy that answers every query with an unroutable
@@ -69,8 +68,8 @@ via npm pinned to 0.77.0, `sh` uses the bundled shim) → assert Pi's turn-contr
 RPC contract → `rsync` the overlay → generate `/etc/harness-image/agents.json` →
 sanitize.
 
-`verify_pi_rpc_turn_control` runs right after the npm install, and only when `pi`
-is selected. Stop and per-row steer are not our primitives: the bridge client
+`verify_pi_rpc_turn_control` runs after installation and during finalization,
+including reuse of an existing image, when `pi` is selected. Stop and per-row steer are not our primitives: the bridge client
 writes exactly `{"type":"abort"}` and `{"type":"steer","message":…}` to Pi's
 stdin, so the build greps Pi's own `dist/modes/rpc/rpc-types.d.ts` for both
 shapes and fails the rebuild if either is gone. Without it a Pi upgrade that
@@ -90,13 +89,11 @@ what's in them:
   natively, whereas mariadb-client diverges on auth-plugin preference and
   `--ssl-mode` defaults. Worth keeping to one implementation — a credential
   gateway that terminates the handshake has to match a known client.
-- **Nothing is version-pinned**; every rebuild takes current releases. That is a
-  deliberate call — the two packages that talk to something outside the image
-  (DuckDB to OBS, pymysql to Doris FE) are both self-aligning rather than
-  pin-dependent: the `httpfs` directory name is derived from the engine version at
-  build time (see below), and pymysql negotiates the FE handshake by protocol, not
-  by version. So a rebuild can move minor versions; treat that as expected and
-  re-run the compatibility checks after one, rather than freezing versions.
+- Release builds pin Python dependencies with hashes in
+  `sandbox-image/requirements.lock`, and record toolchain/Ubuntu snapshot inputs
+  in `scripts/release/toolchains.json`. Local exploratory builds use the explicit
+  package list. Any dependency update requires rebuilding and artifact smoke;
+  matching DuckDB engine/extension versions is checked independently.
 
 Reading either version back has a trap in both directions, so verify per package:
 `pymysql.__version__` reports `2.2.8`, a deliberate `mysqlclient` impersonation
@@ -218,57 +215,24 @@ sentinel `__HARNESS_PROMPT_<uuid>__[<exit>]__` after each command. It reads
 `harness.shell_output` and `harness.turn_done` (with exit code). Output schema
 `shell_pty_v1`, no model access.
 
-## System prompt & skills
+## Bootstrap prompt and private knowledge
 
-The Pi system prompt (`pi-system-prompt.md`, injected via `--append-system-prompt`)
-is now a **minimal bootstrap**: it states the "BatteryGPT" identity and directs the
-agent to read `/agents/CONSTITUTION.md` and consult the `/agents` knowledge base
-before recurring work. It carries no domain rules and no `harness-skills/`
-references — those moved into the mounted, evolving KB. See
-[agents-kb.md](./agents-kb.md) for the full design.
+The baked Pi prompt describes a generic engineering assistant and directs it to
+`/agents/CONSTITUTION.md` and `facts/INDEX.md`. It contains no organization identity,
+private schema or data-store preference. The generic seed includes the constitution,
+index and portable font skill. Integration `.example` files are templates only.
 
-Skills now live in the **`/agents` knowledge base** (a read-only bind mount whose
-source is a content-addressed snapshot the nightly loop republishes), seeded from
-the baked overlay at `sandbox-image/files/usr/local/share/agents-kb-seed/`:
+Provision actual skills, corpora and domain rules in the deployment's private KB
+snapshot. Never put upstream credentials into a shared image or public skill.
+The runtime mounts a resolved immutable snapshot; existing generations stay
+pinned and later generations use newly approved snapshots. See
+[memory and knowledge](agents-kb.md).
 
-- **doris-query** (`skills/doris-query/SKILL.md`, `status: in-use`) — read-only
-  Doris/`vhr_data` access: live `information_schema` discovery, safe SQL
-  (`SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN` only), streaming large exports. Embeds a
-  live credential, so the real `SKILL.md` is **git-ignored**; a redacted
-  `SKILL.md.example` is committed. Copy it to `SKILL.md` with real values (or
-  provision on the host) before `build-rootfs.sh`, and keep egress locked to the
-  Doris host (see [security.md](./security.md)).
-- **obs-parquet-duckdb** (`skills/obs-parquet-duckdb/SKILL.md`, `status: in-use`) —
-  read raw vehicle-signal Parquet on Huawei Cloud OBS **in place** with DuckDB
-  `httpfs` (`s3_url_style='vhost'`, the one non-obvious requirement; `path`/
-  `virtual` 404). Covers the 5,844-column sparse wide-table layout, the
-  metadata→schema-search→`COLUMNS()`→filter workflow, glob/sampling costs, and the
-  hard rule that source objects are **never downloaded to local disk** (~17 MB ×
-  1.1M files). Embeds a live read-only OBS key, so same handling as doris-query:
-  real `SKILL.md` **git-ignored**, redacted `SKILL.md.example` committed.
-- **matplotlib-cjk-fonts** (`skills/matplotlib-cjk-fonts/SKILL.md`, `status:
-  in-use`) — select the installed WenQuanYi CJK fonts in matplotlib/Pillow so
-  Chinese chart text doesn't render as tofu boxes.
-
-`obs-parquet-duckdb` depends on a baked DuckDB extension: `build-rootfs.sh`'s
-`install_duckdb_extensions` installs `httpfs` into
-`/usr/local/share/duckdb-extensions/v<engine-version>/<platform>/`, so a session
-does `LOAD httpfs` against that `extension_directory` with **no network fetch**.
-
-That path segment is the **bundled engine** version (`duckdb.__duckdb_version__`),
-and DuckDB resolves extensions from its own version at load time. So the directory
-name and the engine must agree or `LOAD httpfs` fails with `Extension not found` —
-loudly, never by silently falling back to a network fetch. They stay matched
-without a pin because `install_duckdb_extensions` reads
-`duckdb.__duckdb_version__` from the just-installed wheel to name the directory —
-so whatever version a rebuild lands on, the extension is fetched and stored for
-that engine. A working `LOAD httpfs` inside a sandbox is itself evidence the two
-agree, which is the check worth running after a rebuild.
-
-> **Deprecated:** `sandbox-image/files/usr/local/share/harness-skills/` (still
-> git-ignored) is superseded by the `/agents` KB seed above and is no longer
-> referenced by the prompt. Existing deployed copies are harmless; the directory
-> will be removed in a later image cleanup.
+The image includes DuckDB's matching `httpfs` extension under
+`/usr/local/share/duckdb-extensions/v<engine-version>/<platform>/`. The installer
+uses the bundled engine version and the hosted artifact smoke verifies `LOAD
+httpfs` without network access. Release Python dependencies are hash-locked;
+local exploratory builds may use the explicit package list instead.
 
 ## Tests (`tests/test_harness_bridge_client.py`)
 

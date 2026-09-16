@@ -19,17 +19,17 @@ func TestClassifySandboxRemnantMatchesAllThreeProcessKinds(t *testing.T) {
 	}{
 		{
 			name: "run carries the container id",
-			args: []string{"/usr/local/bin/runsc", "-root", "/var/lib/harness-publish/runsc", "run", "-bundle", "/var/lib/harness-publish/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4", containerID},
+			args: []string{"/usr/local/bin/runsc", "-root", "/var/lib/harness-test/runsc", "run", "-bundle", "/var/lib/harness-test/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4", containerID},
 			want: "run",
 		},
 		{
 			name: "boot carries the container id",
-			args: []string{"runsc-sandbox", "--root=/var/lib/harness-publish/runsc", "boot", "--bundle=/var/lib/harness-publish/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4", containerID},
+			args: []string{"runsc-sandbox", "--root=/var/lib/harness-test/runsc", "boot", "--bundle=/var/lib/harness-test/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4", containerID},
 			want: "boot",
 		},
 		{
 			name: "gofer is identified by bundle path alone",
-			args: []string{"runsc-gofer", "--root=/var/lib/harness-publish/runsc", "gofer", "--bundle=/var/lib/harness-publish/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4", "--io-fds=6"},
+			args: []string{"runsc-gofer", "--root=/var/lib/harness-test/runsc", "gofer", "--bundle=/var/lib/harness-test/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4", "--io-fds=6"},
 			want: "gofer",
 		},
 	}
@@ -63,15 +63,15 @@ func TestClassifySandboxRemnantRejectsUnrelatedProcesses(t *testing.T) {
 		},
 		{
 			name: "shell holding the bundle path",
-			args: []string{"/bin/bash", "-c", "ls /var/lib/harness-publish/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4"},
+			args: []string{"/bin/bash", "-c", "ls /var/lib/harness-test/run/runtime/gen-gen_f152a2e0-7a27-4761-82e3-b005f1da02c4"},
 		},
 		{
 			name: "another generation's boot process",
-			args: []string{"runsc-sandbox", "boot", "--bundle=/var/lib/harness-publish/run/runtime/gen-gen_dc527345-6bbc-40ac-b721-fdd89b1a92c2", "harness-gen-gen_dc527345-6bbc-40ac-b721-fdd89b1a92c2"},
+			args: []string{"runsc-sandbox", "boot", "--bundle=/var/lib/harness-test/run/runtime/gen-gen_dc527345-6bbc-40ac-b721-fdd89b1a92c2", "harness-gen-gen_dc527345-6bbc-40ac-b721-fdd89b1a92c2"},
 		},
 		{
 			name: "another generation's gofer",
-			args: []string{"runsc-gofer", "gofer", "--bundle=/var/lib/harness-publish/run/runtime/gen-gen_dc527345-6bbc-40ac-b721-fdd89b1a92c2"},
+			args: []string{"runsc-gofer", "gofer", "--bundle=/var/lib/harness-test/run/runtime/gen-gen_dc527345-6bbc-40ac-b721-fdd89b1a92c2"},
 		},
 		{
 			name: "empty command line",

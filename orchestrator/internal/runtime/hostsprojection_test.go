@@ -73,12 +73,12 @@ func TestHostsProjectionRejectsBadDataProxyAliases(t *testing.T) {
 		{
 			// The whole reason the alias exists: if it can be an IP, the sandbox
 			// image pins an address.
-			name: "ip literal", alias: "172.16.0.138", wantSub: "not an IP literal",
+			name: "ip literal", alias: "192.0.2.10", wantSub: "not an IP literal",
 		},
 		{
 			// An alias resolving to the real FE would make the gateway one route
 			// among two rather than a chokepoint.
-			name: "doris fe host", alias: "172.16.0.138", wantSub: "IP literal",
+			name: "doris fe host", alias: "192.0.2.10", wantSub: "IP literal",
 		},
 		{
 			name: "obs upstream", alias: "obs.cn-north-4.myhuaweicloud.com", wantSub: "provider upstream",

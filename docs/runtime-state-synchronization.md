@@ -7,7 +7,8 @@ The database column retains its historical name `turn_revision`; it is now the
 revision of the entire runtime projection. SQLite triggers enforce this for
 normal writers, recovery, checkpointing and idle release alike. No-op lifecycle
 updates do not advance it, and unrelated generations do not invalidate a session.
-Existing databases receive the triggers during startup migration.
+Existing databases receive the triggers through the explicit migration path in
+managed deployments; development store opens can apply schema updates.
 
 Previously only turn changes advanced the revision. Idle release could change
 `live` to `released` without changing any turn, so the frontend correctly rejected

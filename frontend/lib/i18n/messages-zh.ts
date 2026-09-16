@@ -275,26 +275,26 @@ export const ZH: Record<MessageKey, string> = {
   "trace.toolError": "工具调用报错",
   "message.copiedSessionId": "已复制 session id",
   "message.copiedMarkdown": "已复制为 Markdown",
-  "prompt.acdc.title": "交流慢充 vs 直流快充",
+  "prompt.acdc.title": "比较数据集",
   "prompt.acdc.body":
-    "把单次充电时长按档位分桶，看交流慢充和直流快充分别落在哪一档。",
+    "根据实际字段比较两个上传的数据集。",
   "prompt.acdc.prompt":
-    "对比 7 月交流慢充（AC）和直流快充（DC）的单次充电时长分布：按 <10 分钟、10–30 分钟、30–60 分钟、1–2 小时、>2 小时分档，给出两种充电方式各档的次数和占比。",
-  "prompt.startsoc.title": "充电起始 SOC 分布",
+    "比较工作区中的两个数据集，识别共同字段并总结有意义的差异。计算前说明需要确认的假设。",
+  "prompt.startsoc.title": "探索数值分布",
   "prompt.startsoc.body":
-    "统计用户插枪时的 SOC 落在哪一档，区分随手补电和深放后再充。",
+    "统计数值列，并说明缺失值和异常值。",
   "prompt.startsoc.prompt":
-    "统计用户充电起始 SOC 的分布：按 <10%、10–20%、20–30%、30–40%、40–50%、≥50% 分档，给出各档的充电次数和占比。用户更习惯浅充补电还是深放后再充？",
-  "prompt.depth.title": "各平台充电深度对比",
+    "帮我探索数据集中的一个数值列。先确认文件和字段，再统计其分布、异常值和缺失值。",
+  "prompt.depth.title": "生成对比报告",
   "prompt.depth.body":
-    "把各平台的单次充入电量、充电深度（DOD）和最高温度放在一起，看哪个平台充得最深。",
+    "按指定分组对比指标并保存结果。",
   "prompt.depth.prompt":
-    "对比 7 月各平台的平均单次充入电量（kWh）、平均充电深度（DOD）和最高温度：用一张表汇总，并告诉我哪个平台充得最深。",
-  "prompt.faults.title": "F2 BMS 故障分布",
+    "根据我提供的数据生成对比报告。先确认分组和指标，再输出表格与图表，并将结果保存到工作区。",
+  "prompt.faults.title": "分析错误日志",
   "prompt.faults.body":
-    "统计最近一天 F2 平台上报的 BMS 故障，排出占比最高的那一类。",
+    "从提供的日志中识别重复错误。",
   "prompt.faults.prompt":
-    "查一下最近 1 天 F2 平台的 BMS 故障分布：按故障分类统计次数和占比，并告诉我哪个故障占比最高。",
+    "检查工作区里的日志，对重复错误分组，并根据证据解释最常见的原因。不要假定可以访问外部系统。",
   "login.subtitle": "请输入你的工作台账号密码。",
   "workspace.uploadsPausedNote": "智能体工作期间暂停上传。",
   "viewer.binaryTitle": "二进制文件无法预览。",

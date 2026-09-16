@@ -13,12 +13,12 @@ func TestDistinctScopes(t *testing.T) {
 	cands := []memorystore.SemanticMemory{
 		{Scope: "doris"},
 		{Scope: "doris"},
-		{Scope: " vhr_data "},
+		{Scope: " analytics_example "},
 		{Scope: ""}, // → global
 		{Scope: "数据源选择"},
 	}
 	got := distinctScopes(cands)
-	want := []string{"global", "vhr_data", "doris", "数据源选择"}
+	want := []string{"global", "analytics_example", "doris", "数据源选择"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("distinctScopes = %v, want %v", got, want)
@@ -34,11 +34,11 @@ func TestIdentityMap(t *testing.T) {
 }
 
 func TestCanonicalScope(t *testing.T) {
-	mapping := map[string]string{"vhr_data": "doris", "f2": "doris"}
+	mapping := map[string]string{"analytics_example": "doris", "f2": "doris"}
 	cases := []struct {
 		raw, want string
 	}{
-		{"vhr_data", "doris"},
+		{"analytics_example", "doris"},
 		{"f2", "doris"},
 		{"unmapped", "unmapped"}, // default to raw
 		{"", "global"},           // empty → global, unmapped → itself
@@ -52,13 +52,13 @@ func TestCanonicalScope(t *testing.T) {
 }
 
 func TestGroupCandidates(t *testing.T) {
-	// vhr_data and doris collapse to the same canonical scope; fact vs bug split.
-	mapping := map[string]string{"doris": "doris", "vhr_data": "doris", "gvisor": "gvisor"}
+	// analytics_example and doris collapse to the same canonical scope; fact vs bug split.
+	mapping := map[string]string{"doris": "doris", "analytics_example": "doris", "gvisor": "gvisor"}
 	cands := []memorystore.SemanticMemory{
 		{ID: 1, Scope: "doris", Type: "fact"},
-		{ID: 2, Scope: "vhr_data", Type: "fact"}, // same bucket as #1
-		{ID: 3, Scope: "doris", Type: "bug"},     // different type → own bucket
-		{ID: 4, Scope: "gvisor", Type: "fact"},   // different scope → own bucket
+		{ID: 2, Scope: "analytics_example", Type: "fact"}, // same bucket as #1
+		{ID: 3, Scope: "doris", Type: "bug"},              // different type → own bucket
+		{ID: 4, Scope: "gvisor", Type: "fact"},            // different scope → own bucket
 	}
 	buckets := groupCandidates(cands, mapping)
 	if len(buckets) != 3 {

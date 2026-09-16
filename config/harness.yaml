@@ -1,12 +1,9 @@
+# Generic development configuration. Copy to private/ and customize before use.
+# No production endpoints or host-specific settings belong in this file.
 harness:
   default_agent: pi
   agents:
-    # Shell mode is not served in production: one sh session was ever created
-    # (destroyed 2026-06-24) against 236 pi sessions. Disabling it here makes
-    # resolveModeDeployment("shell") fail, which the session-modes endpoint
-    # turns into Visible:false, so the UI stops offering it. The driver spec
-    # stays in the code; this is the only switch needed to take it out of
-    # service. Matches SANDBOX_AGENT_DRIVERS=pi in sandbox-image/build.env.
+    # Enable only drivers installed in the selected sandbox image.
     sh:
       enabled: false
       driver_id: sh
@@ -29,63 +26,14 @@ harness:
       provider_id: local_runsc
       profile_id: local_runsc_default
 
-  run_dir: /var/lib/harness-publish/run
+  run_dir: /var/lib/harness/run
   session_retention: 0s
   max_sessions: 30
   model_proxy:
     bind_url: http://0.0.0.0:8083
     sandbox_base_url: http://harness-model-proxy.internal:8083
-  # Host-side data-store gateways. One shared gateway process serves every
-  # sandbox: it terminates auth with the fake sandbox credential below and
-  # relays to Doris with the real one, which never enters a sandbox.
-  #
-  # bind_addr is a wildcard on purpose. Each generation gets its own /30 veth
-  # pair and therefore its own host-gateway address (10.201.0.1, 10.201.0.5,
-  # ...), which is what the sandbox_alias resolves to, so there is no single
-  # stable address to bind. model_proxy.bind_url above is a wildcard for the
-  # same reason. The wildcard also answers on this host's LAN address while
-  # holding the real credential, so the packet filter installed by
-  # data-proxies/doris/deploy/gateway-up.sh is a hard prerequisite — start the
-  # gateway with that script, not by hand.
-  data_proxies:
-    doris:
-      enabled: true
-      bind_addr: 0.0.0.0:9030
-      sandbox_alias: harness-doris-gateway.internal
-      sandbox_port: 9030
-      sandbox_user: sandbox
-      upstream:
-        kind: doris_mysql
-        addr: 172.16.0.138:9030
-        databases:
-          - vhr_data
-          - vehicle_signal
-          - watt
-
-    # OBS object store behind a host-side HTTP gateway. The real AK/SK live only
-    # in the gateway's EnvironmentFile (/etc/harness/obs-gateway.env); each
-    # sandbox gets a per-generation fake pair via /harness-control/obs.json.
-    # Start the gateway with data-proxies/obs/obs-gateway.sh, which also applies
-    # the iptables rules the 0.0.0.0 bind requires.
-    #
-    # Requires OBS_GATEWAY_MASTER_KEY in the orchestrator's own environment,
-    # matching the gateway's: the orchestrator ISSUES the per-generation fake
-    # credentials that the gateway VERIFIES. Delivered by the systemd drop-in at
-    # /etc/systemd/system/harness-publish-orchestrator.service.d/10-obs-gateway.conf.
-    # If it is ever missing, generation start still succeeds — the projection is
-    # skipped with a loud log and only OBS reads fail. See data-proxies/obs/.
-    obs:
-      enabled: true
-      bind_addr: 0.0.0.0:8084
-      sandbox_alias: harness-obs.internal
-      sandbox_port: 8084
-      # Vestigial for OBS: the sandbox authenticates with a fake AK/SK, not a
-      # username. Present because this schema is shared with the MySQL-shaped
-      # Doris gateway. Authorization is by source IP against the live turn.
-      sandbox_user: sandbox
-      upstream:
-        kind: obs_http
-        base_url: https://obs.cn-north-4.myhuaweicloud.com
+  # Gateways are external dependencies. Supply real endpoints in private config.
+  data_proxies: {}
 
   sandbox_identity:
     uid: 65534
@@ -95,16 +43,16 @@ harness:
   network:
     cidr_pool: 10.201.0.0/16
     egress:
-      doris_fe_hosts:
-        - 172.16.0.138
-      doris_be_hosts:
-        - 172.16.0.138
-      doris_ports:
-        - 9030
+      # Documentation-only TEST-NET address; replace in private configuration.
+      doris_fe_hosts: [192.0.2.10]
+      doris_be_hosts: [192.0.2.10]
+      doris_ports: [9030]
       dns_policy: hostnames_only
       # Open sandbox egress to the entire public internet (all hosts/ports).
       # Removes the default-deny exfiltration boundary so agents can pip
       # install, hit GitHub/pypi, search, etc. See orchestrator EgressConfig.
+      # Generic development networking permits outbound access. This is not
+      # a containment policy; configure restricted destinations privately.
       allow_all: true
 
   events:
@@ -171,34 +119,8 @@ harness:
     # cannot accumulate without bound.
     max_pending_runs_per_schedule: 3
 
-#   runtime:
-    # Per-command ceiling for everything the orchestrator shells out to
-    # (runsc kill/delete/state, ip, nft). A half-dead sandbox — OOM-killed
-    # workload, control socket open but unresponsive — makes `runsc kill` hang
-    # indefinitely; unbounded, that call stalled the whole maintenance loop for
-    # 34h and no session could start a sandbox. See
-    # docs/proposals/runsc-cleanup-hang-blocks-maintenance.md.
-#     command_timeout: 30s
-    # Per-sandbox memcg ceiling. Was hardcoded at 1 GiB, which OOM-killed a
-    # data-analysis session on ~873 MB of pandas shared memory. A ceiling, not a
-    # reservation: max_sessions x limit may exceed host RAM because sandboxes are
-    # overwhelmingly idle. Lower it if a host runs many concurrent heavy jobs.
-#     sandbox_memory_limit_bytes: 4294967296  # 4 GiB
-#     sandbox_pids_limit: 256
-#
-#   maintenance:
-    # Ceiling for a single maintenance stage. On expiry the loop moves on and the
-    # overrunning stage is skipped on later ticks until it finishes, so it can
-    # never overlap itself. Must be >= runtime.command_timeout, so a stage doing
-    # one teardown fails on its own command timeout with a clear error instead of
-    # being cut off mid-flight.
-#     stage_timeout: 2m
-    # Cold fallback starts a sandbox for sessions whose generation died with turns
-    # still queued. It runs on its own ticker and worker, independent of the
-    # cleanup stages: this is the availability-critical path, and a stalled reaper
-    # must never keep new turns from starting.
-#     cold_fallback_interval: 5s
-#
+  # Runtime and maintenance defaults are validated together in config.go.
+  # Override limits/deadlines in private deployment configuration when needed.
   checkpoint:
     # auto_enabled now gates automatic idle *release*: when a session is idle
     # past idle_threshold, the monitor tears down its sandbox to free the
