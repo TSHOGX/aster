@@ -15,10 +15,10 @@ import (
 // Data proxies are host-side gateways that hold a real data-store credential so
 // the sandbox never does, mirroring what the model proxy already does for model
 // credentials. The first is Doris (a MySQL wire-protocol gateway); OBS is a
-// sibling plan sharing this config surface.
+// supported protocol sharing this config surface.
 //
 // The gateway implementations live outside this repo, in
-// /home/agent-runtime-platform/data-proxies/<name>/. This package only carries
+// separately deployed gateway projects. This package only carries
 // the control-plane's view: where the gateway listens, what alias and port the
 // sandbox is told to use, and which upstream it fronts.
 //
@@ -50,11 +50,6 @@ const (
 	defaultDataProxyQueryLogMaxSize   = 128 << 20
 	defaultDataProxyQueryLogKeep      = 5
 )
-
-// dorisFEHostLiteral is the production Doris FE address. A sandbox-facing alias
-// must never resolve to it, or the gateway would be one route among two rather
-// than a chokepoint.
-const dorisFEHostLiteral = "172.16.0.138"
 
 // defaultDataProxyAuthzCacheTTL matches the gateway's own default. Positive
 // decisions only; denials are never cached, so a turn that just started is
@@ -412,7 +407,7 @@ func validateDataProxyUpstreamAddr(raw, field string) error {
 // entirely: the sandbox would reach the store directly.
 func dataProxyHostIsUpstream(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == dorisFEHostLiteral {
+	if _, err := netip.ParseAddr(host); err == nil {
 		return true
 	}
 	switch host {

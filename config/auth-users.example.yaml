@@ -3,8 +3,7 @@
 # Prefer managing this file with the CLI, which validates the entry, hashes the
 # password, and revokes the user's stale cookies:
 #
-#   harness-ctl user add alice          # or, without the ops wrapper:
-#   orchestrator user add alice --password-stdin
+#   orchestrator user add alice --password-stdin --config /private/harness.yaml
 #
 # To manage it by hand, copy this file to config/auth-users.yaml (which is
 # gitignored) and replace the hashes. Generate a hash with:

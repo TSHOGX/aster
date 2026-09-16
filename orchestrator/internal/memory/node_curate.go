@@ -1,7 +1,7 @@
 package memory
 
 // Node D — Curate / Promote. The promotion GATE of the agentic context-evolution
-// graph (docs/decisions/agentic-context-evolution.md §D), replacing the scalar
+// graph (docs/agents-kb.md §D), replacing the scalar
 // `qualifies(support>=3 && conf>=0.75 && contradict==0)` rule in curator.go with
 // agent judgment. support_count survives only as an INPUT the agent weighs, never
 // as the gate.

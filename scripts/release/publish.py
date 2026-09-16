@@ -3,6 +3,17 @@
 import argparse, hashlib, http.client, json, os, pathlib, urllib.request, urllib.error, urllib.parse
 from artifact_report import public_report
 
+def release_body(api,manifest):
+    generated=api('/releases/generate-notes',{'tag_name':manifest['version'],'target_commitish':manifest['commit']})
+    notes=generated.get('body','').strip()
+    contract=("## Deployment\n\n"
+              "Download the complete artifacts, release-manifest.json and SHA256SUMS. "
+              "UPGRADE.md contains the generic offline deployment guide.\n\n"
+              "Back up the database pair, private configuration and persistent data before upgrading. "
+              "Use explicit migrations and target-local acceptance; CI artifact checks do not certify "
+              "a production deployment. See the release manifest for schema and rollback requirements.")
+    return (notes+"\n\n"+contract).strip()
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--directory',type=pathlib.Path,required=True);p.add_argument('--repository',required=True);a=p.parse_args()
     manifest_bytes=(a.directory/'release-manifest.json').read_bytes()
@@ -17,7 +28,7 @@ def main():
     try:r=api('/releases/tags/'+m['version'])
     except urllib.error.HTTPError as e:
         if e.code!=404:raise
-        r=api('/releases',{'tag_name':m['version'],'target_commitish':m['commit'],'name':m['version'],'draft':True,'prerelease':'-rc.' in m['version'],'body':(a.directory/'UPGRADE.md').read_text()})
+        r=api('/releases',{'tag_name':m['version'],'target_commitish':m['commit'],'name':m['version'],'draft':True,'prerelease':'-rc.' in m['version'],'body':release_body(api,m)})
     if not r['draft']:raise RuntimeError('release already public; immutable publication refused')
     names=[v['name'] for v in m['artifacts'].values()]+['release-manifest.json','SHA256SUMS','UPGRADE.md','artifact-smoke-22.04.json','artifact-smoke-24.04.json',m['sandbox']['archive']['name'],'rootfs-apt-packages.txt','rootfs-python-packages.txt','rootfs-requirements.lock']
     # Stream uploads with http.client: binary packages can exceed process memory.

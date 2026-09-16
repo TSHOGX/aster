@@ -108,7 +108,7 @@ type CommandRunner interface {
 // the maintenance loop's service-lifetime ctx, so "no timeout" meant "forever",
 // and the single-goroutine maintenance loop stalled behind it for 34h — which
 // also starved cold-fallback, so no session could start a sandbox at all. See
-// docs/proposals/runsc-cleanup-hang-blocks-maintenance.md.
+// docs/session-lifecycle.md.
 const defaultCommandTimeout = 30 * time.Second
 
 // commandKillGrace is how long a timed-out command may take to die after its

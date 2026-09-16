@@ -1,206 +1,110 @@
-# Configuration Reference
+# Configuration
 
-> Primary config is `config/harness.yaml` under a strict `harness:` schema; env vars
-> override selected values. Loader: `orchestrator/internal/config/config.go`
-> (`KnownFields(true)` — unknown keys fail startup; only the `harness:` document is
-> decoded). Login users are in `config/auth-users.yaml`, and the optional session-title
-> LLM in `config/title-llm.yaml` — both are gitignored secret files loaded the same
-> way (missing file = feature simply off). See [security.md](./security.md).
-> Everything else is read once at startup, but `auth-users.yaml` is the exception:
-> it is reloaded whenever it changes, so `harness-ctl user add|passwd|rm` needs no
-> restart. See [operations.md](./operations.md) §3.
+Application configuration is a strict YAML document under `harness:`. Unknown
+keys fail parsing. The full schema/defaults/validation live in
+`orchestrator/internal/config`; public examples intentionally contain no machine
+addresses, service mappings or private knowledge.
 
-## `config/harness.yaml` (checked-in lab profile)
+## Resolution
 
-```yaml
-harness:
-  default_agent: pi
-  agents:
-    sh:          { enabled: true, driver_id: sh, runtime_provider: local_runsc }
-    pi:          { enabled: true, driver_id: pi, model_profile: anthropic_default, runtime_provider: local_runsc, disable_nonessential_traffic: true }
-  model_profiles:
-    anthropic_default: { enabled: true, provider: anthropic_messages, model: sonnet, proxy_ref: model_proxy }
-  runtime_providers:
-    local_runsc: { enabled: true, provider_id: local_runsc, profile_id: local_runsc_default }
+- `orchestrator --config PATH` takes precedence over `HARNESS_CONFIG_PATH`.
+- An explicit missing/invalid YAML file fails; it does not silently use defaults.
+- Without an explicit path, development uses `config/harness.yaml` relative to
+  the working tree. Use an explicit path outside source for managed services.
+- Supported `HARNESS_*` overrides apply after YAML loading.
+- Auth/title/memory auxiliary YAML defaults beside the selected application
+  configuration; their explicit path overrides remain available.
 
-  run_dir: /var/lib/harness-publish/run
-  session_retention: 0s
-  max_sessions: 30
-  model_proxy:
-    bind_url: http://0.0.0.0:8083
-    sandbox_base_url: http://harness-model-proxy.internal:8083
-  sandbox_identity: { uid: 65534, gid: 65534, supplemental_gids: [] }
+Do not put production secrets into a committed YAML file. Copy templates to
+private configuration and manage permissions there. `HARNESS_MANAGED=1` requires
+a versioned binary, a nonempty auth file and an already migrated database pair.
 
-  network:
-    cidr_pool: 10.201.0.0/16
-    egress:
-      doris_fe_hosts: [172.16.0.138]
-      doris_be_hosts: [172.16.0.138]
-      doris_ports: [9030]
-      dns_policy: hostnames_only
-      allow_all: true          # open sandbox egress to the whole internet
+## Important environment settings
 
-  events:      { retention_window: 24h, retention_rows: 1000000, emit_output_batch_max_rows: 64, emit_output_batch_max_age: 100ms }
-  probe:       { accept_status: { get_healthz: [200], post_v1_messages: { unauthorized: [401], malformed_authenticated: [400] } },
-                 pre_start_attempts: 3, pre_start_interval: 500ms, post_start_attempts: 5, post_start_interval: 1s }
-  bridge:      { lease_ttl: 60s, heartbeat_interval: 30s, poll_interval: 50ms, ack_started_grace: 90s, reconnect_grace: 30s }
-  runtime:     { command_timeout: 30s, sandbox_memory_limit_bytes: 4294967296, sandbox_pids_limit: 256 }
-  maintenance: { stage_timeout: 2m, cold_fallback_interval: 5s }
-  scheduler:   { enabled: false, poll_interval: 5s, worker_count: 2, lease_ttl: 2m, default_timeout: 30m, max_retries: 2, retry_backoff: 30s, max_concurrent_runs: 4 }
-  checkpoint:  { auto_enabled: true, idle_threshold: 2h, monitor_interval: 5m }
-  reaper:      { failed_retention: 10m, checkpoint_image_retention: 720h }
-```
-
-## Key knobs
-
-| Key | Meaning |
+| Setting | Purpose |
 |---|---|
-| `default_agent` | driver the product `agent` mode resolves to (checked-in: `pi`) |
-| `agents.<id>` | per-driver deployment entry: `enabled`, `driver_id`, `model_profile`, `runtime_provider`, `disable_nonessential_traffic` |
-| `model_profiles.<id>` | `enabled`, `provider`, `model`, `proxy_ref` (must be `model_proxy` for model-access drivers) |
-| `runtime_providers.<id>` | `enabled`, `provider_id`, `profile_id` (only `local_runsc` ships) |
-| `run_dir` | root for control/bridge/logs/proxy socket |
-| `session_retention` | `0s` = sessions/history/workspace never auto-expire |
-| `max_sessions` | soft ceiling on non-terminal sessions (independent of `/30` pool) |
-| `model_proxy.bind_url` | host listener for the proxy (host must be unspecified, port explicit) |
-| `model_proxy.sandbox_base_url` | sandbox-visible alias; its port must match `bind_url` |
-| `sandbox_identity` | non-root uid/gid the sandbox runs as (must be `>0`; default `65534`) |
-| `network.cidr_pool` | IPv4 `/≤30` pool carved into per-generation `/30`s |
-| `network.egress` | Doris FE/BE hosts + ports; `dns_policy` = `off`\|`hostnames_only`\|`always`; `allow_all` (see below) |
-| `agents.<id>.disable_nonessential_traffic` | when set, disables the driver's non-essential outbound (e.g. Pi telemetry/version checks) regardless of egress mode |
-| `events` | durable-event retention + `emit_output` batching |
-| `probe` | accepted proxy statuses + pre/post-start attempt counts and intervals |
-| `bridge` | lease TTL, heartbeat/poll intervals, ack-started grace, reconnect grace |
-| `runtime.command_timeout` | ceiling per shelled-out command (`runsc`/`ip`/`nft`); bounds a half-dead sandbox wedging teardown (see below) |
-| `runtime.sandbox_memory_limit_bytes` | per-sandbox memcg ceiling (default 4 GiB; was a hardcoded 1 GiB) |
-| `runtime.sandbox_pids_limit` | per-sandbox pids cgroup limit |
-| `maintenance.stage_timeout` | ceiling per maintenance stage; must be `>= runtime.command_timeout` |
-| `maintenance.cold_fallback_interval` | how often cold fallback restarts sandboxes for sessions with queued turns |
-| `scheduler.enabled` | starts the independent Cron Agent worker; cron dispatch additionally requires the `cron_agent` runtime feature flag |
-| `scheduler.poll_interval` | due-schedule polling interval |
-| `scheduler.worker_count` | bounded concurrent schedule workers |
-| `scheduler.default_timeout` | execution timeout when a schedule omits one |
-| `checkpoint.auto_enabled` | enable automatic **idle release** (see below) |
-| `checkpoint.idle_threshold` | idle time before release (checked-in `2h`) |
-| `reaper.failed_retention` | how long failed generations linger before physical cleanup |
-| `reaper.checkpoint_image_retention` | how long a `checkpointed` session keeps its slot |
+| `HARNESS_CONFIG_PATH` | Application YAML |
+| `HARNESS_MANAGED` | Managed startup checks (`1`) |
+| `HARNESS_ORCHESTRATOR_ADDR` | HTTP bind address |
+| `HARNESS_RUN_DIR` | Owner lock, control/bridge state and proxy socket root |
+| `HARNESS_DB_PATH` | Control database |
+| `HARNESS_MEMORY_DB_PATH` | Separate memory database (defaults beside control) |
+| `HARNESS_SCHEMA_BASELINES_PATH` | Optional trusted private schema catalog |
+| `HARNESS_SESSIONS_ROOT` | Session workspaces |
+| `HARNESS_AGENT_HOMES_ROOT` | Persistent driver homes |
+| `HARNESS_CHECKPOINTS_ROOT` | Checkpoint storage |
+| `HARNESS_BUNDLE_ROOT` | Runtime bundles |
+| `RUNSC_ROOT` | runsc state root |
+| `HARNESS_ROOTFS_PATH` | Immutable sandbox rootfs |
+| `HARNESS_AGENT_IMAGE_MANIFEST_PATH` | Explicit image manifest override |
+| `HARNESS_RESOLV_CONF` | Resolver file mounted read-only into managed sandboxes |
+| `HARNESS_AGENTS_KB_PATH` | Snapshot knowledge base root |
+| `HARNESS_TRAJECTORY_ROOT` | Archived native traces |
+| `HARNESS_SHARE_BLOB_ROOT` | Public-share file snapshot storage |
+| `HARNESS_AUTH_USERS_PATH` | Credential YAML |
+| `HARNESS_TITLE_LLM_PATH` | Optional title model configuration |
+| `HARNESS_MEMORY_LLM_PATH` | Optional extraction model configuration |
+| `HARNESS_DRAIN_FILE` | Local deployment drain marker |
+| `HARNESS_BACKGROUND_HOLD_FILE` | Hold automatic jobs during internal smoke |
+| `HARNESS_API_BASE_URL` / `ORCHESTRATOR_URL` | Frontend server-side backend target |
+| `PORT` / `HOSTNAME` | Frontend listener |
+| `HARNESS_DEV_ORIGINS` | Development browser origins |
 
-### Egress semantics
+The deployment CLI reads a separate target JSON through its own `--config` flag.
+Its environment mapping is forwarded to application processes; deployment paths
+and services are explicit target input, not an instance-name convention.
 
-`network.egress.allow_all: true` (the checked-in default) opens sandbox egress to the
-entire public internet — agents can pip install, reach GitHub/PyPI, and search the
-web. It emits an "all" sentinel rule that flips the sandbox output chain to
-policy-accept. This **removes the default-deny exfiltration boundary**; see the
-tradeoff in [security.md](./security.md). Set `allow_all: false` to restore
-default-drop egress where only Doris (`doris_*` hosts/ports) and the model-proxy alias
-are reachable, with `dns_policy` gating name resolution. The policy is baked per
-generation at sandbox creation, so only newly created sandboxes pick up a change.
+## Core YAML areas
 
-### Idle release semantics
+| Area | Controls |
+|---|---|
+| `agents`, `model_profiles`, `runtime_providers` | Enabled drivers and product-mode resolution |
+| `session_retention`, `max_sessions` | Session expiry policy and live sandbox admission |
+| `model_proxy` | Host bind address and stable sandbox-facing alias |
+| `sandbox_identity`, `proxy_service_identity` | Sandbox uid/gid and correlation peer identity |
+| `network` | CIDR allocation, egress destinations and DNS policy |
+| `data_proxies` | Optional host gateway aliases and upstream metadata |
+| `events` | Event retention and output batching |
+| `probe` | Runtime start/probe retries and accepted responses |
+| `bridge` | Lease, heartbeat, poll, reconnect and proxy grace intervals |
+| `scheduler` | Core scheduled tasks, worker limits, retries, timeout and misfires |
+| `runtime` | Command timeout and sandbox memory/PID limits |
+| `maintenance` | Stage deadline and cold-fallback interval |
+| `checkpoint` | Automatic idle release and monitor timing |
+| `reaper` | Failed-generation and checkpoint-image retention |
 
-`checkpoint.auto_enabled: true` enables automatic **idle release**, not `runsc`
-checkpoint images: after `idle_threshold` the monitor tears down the idle sandbox to
-free the compute slot, the session becomes `checkpointed` (logical "released"), and
-the next message cold-starts a fresh generation from the retained workspace +
-agent-home. See [sandbox-runtime.md](./sandbox-runtime.md).
+Runtime command deadlines must fit within maintenance stage deadlines. Proxy lease
+grace must stay below sandbox heartbeat stall grace. A CIDR pool must have usable
+per-generation subnets. Isolated roots must not overlap or resolve through unsafe
+paths. Validation errors should be corrected in configuration, not bypassed.
 
-### Maintenance stage isolation
+## Credentials and egress
 
-The maintenance loop dispatches ticks to three independent workers — cleanup
-stages, cold fallback, and bridge polling — and each stage runs under
-`maintenance.stage_timeout`. A stage that overruns is left draining in the
-background and skipped on later ticks until it returns, so it can never overlap
-itself; the other workers keep running regardless.
+The model/data gateways hold real upstream credentials. Sandboxes use stable
+aliases and scoped/dummy credentials. Configure actual gateway processes and
+network policy separately; enabling a `data_proxies` entry does not install a
+working gateway.
 
-This exists because the loop used to be a single serial goroutine. When an
-OOM-killed sandbox left `runsc kill` hanging with no timeout, the stage blocked
-forever and starved everything behind it — including cold fallback, the step that
-starts a sandbox for a session whose generation died with turns still queued. The
-platform served HTTP 200 and looked healthy while no user could start a turn for
-34h. `runtime.command_timeout` bounds the individual command; this bounds the
-blast radius when something still hangs. See
-[proposals/runsc-cleanup-hang-blocks-maintenance.md](./proposals/runsc-cleanup-hang-blocks-maintenance.md)
-and `harness-ctl zombies`, which reports a stalled loop as a single fault rather
-than N affected sessions.
+`network.egress.allow_all` explicitly permits broad outbound access; it is not an
+exfiltration boundary. Restricted egress allows only configured destinations.
+The checked-in development example permits outbound access while keeping data
+gateways disabled. It contains no real upstream host or
+database names. Enabling access is an operator decision.
 
-## `config/title-llm.yaml` (optional, gitignored)
+Authentication uses a private `users:` file with username, password_hash and
+optional role (`user` or `admin`). The legacy `lab` identifier is an application
+compatibility identity, not a host name. Open mode is only for isolated unmanaged
+development. Use TLS, Secure cookies and trusted proxy-header configuration for
+user-facing deployments.
 
-Configures the LLM that generates session titles from the first message. It is a
-**separate secret file** (like `auth-users.yaml`) so the API key never enters git;
-`config/title-llm.example.yaml` is the checked-in template. When the file is absent
-or `api_key` is empty the feature is off and sessions keep their placeholder title
-(the truncated first message). This is a plain OpenAI-compatible endpoint, wholly
-independent of the model proxy and the sandbox credential boundary — the
-orchestrator calls it directly from the host.
+## Optional memory/evolution configuration
 
-```yaml
-enabled: true
-base_url: https://api.modelarts-maas.com/openai/v1
-api_key: "..."          # host-only secret; never committed
-model: glm-5.2
-```
+The extraction model and agentic pipeline settings are separate from the core
+scheduler. Missing LLM credentials leave extraction disabled. Use
+`HARNESS_MEMORY_AGENTIC`, `HARNESS_MEMORY_AUTO_PUBLISH` and supported concurrency
+settings only after selecting a single writer/scheduling authority.
 
-Loaded via `HARNESS_TITLE_LLM_PATH` (default `<repo>/config/title-llm.yaml`).
-
-## Environment variables (`config.go`)
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `HARNESS_ORCHESTRATOR_ADDR` | `:8090` | HTTP bind |
-| `HARNESS_LOG_LEVEL` | info | `debug` raises log level |
-| `HARNESS_LAB_PASSWORD` | (empty) | shared-secret login fallback |
-| `HARNESS_COOKIE_NAME` | `harness_auth` | auth cookie name (`__Host-` prefixed over HTTPS) |
-| `HARNESS_COOKIE_INSECURE` | false | set `1` to allow non-Secure cookie (local http only) |
-| `HARNESS_TRUST_FORWARDED_PROTO` | true | trust `X-Forwarded-Proto` to detect HTTPS |
-| `HARNESS_TRUST_PROXY_HEADERS` | true | trust reverse-proxy client-IP headers for rate limiting: prefer nginx-overwritten `X-Real-IP`, fall back to the rightmost `X-Forwarded-For`; set `0` when exposing orchestrator directly |
-| `HARNESS_AUTH_USERS_PATH` | `<repo>/config/auth-users.yaml` | login users file; re-read on change (no restart) |
-
-Each credential may optionally set `role: admin`; omitted roles are regular
-users. Administrator APIs are denied in open/lab mode and to regular users.
-| `HARNESS_TITLE_LLM_PATH` | `<repo>/config/title-llm.yaml` | session-title LLM secret file (optional) |
-| `HARNESS_AUTH_SESSION_TTL` | 24h | login session TTL |
-| `HARNESS_MAX_SHARE_LINK_TTL` | 720h (30d) | ceiling on a public share link's lifetime; must be positive, so a link can never be permanent |
-| `HARNESS_SHARE_BLOB_ROOT` | `share-blobs` beside `HARNESS_DB_PATH` | content-addressed snapshots served by public links |
-| `HARNESS_MAX_SHARE_LINK_BYTES` | `8 MiB` | total bytes one public link may snapshot (all files combined) |
-| `HARNESS_MAX_SHARE_LINK_FILES` | 25 | how many files one public link may snapshot |
-| `HARNESS_SESSION_RETENTION` | config `0s` | session expiry (0 = never); invalid values fail startup |
-| `HARNESS_SESSION_TTL` | — | **obsolete; fatal if set** |
-| `HARNESS_DEFAULT_AGENT` | config `pi` | product Agent driver |
-| `HARNESS_MAX_SESSIONS` | 30 | soft session ceiling |
-| `HARNESS_MAX_UPLOAD_BYTES` | `100 MiB` | cap on a single workspace upload request |
-| `HARNESS_MAX_UPLOAD_FILES` | 2000 | cap on files per upload request |
-| `HARNESS_MAX_EDIT_BYTES` | `1 MiB` | cap on a single online-edit body |
-| `HARNESS_AUTO_CHECKPOINT_ENABLED` | config | override idle-release policy for new sessions |
-| `HARNESS_SESSIONS_ROOT` | `/var/lib/harness/sessions` | session workspaces root |
-| `HARNESS_AGENT_HOMES_ROOT` | `/var/lib/harness/agent-homes` | agent-home root |
-| `HARNESS_CHECKPOINTS_ROOT` | `/var/lib/harness/checkpoints` | checkpoint images root |
-| `HARNESS_BUNDLE_ROOT` | `<repo>/bundle/out` | OCI bundle root |
-| `HARNESS_ROOTFS_PATH` | `<repo>/sandbox-image/rootfs` | rootfs template |
-| `HARNESS_AGENT_IMAGE_MANIFEST_PATH` | `<rootfs>/etc/harness-image/agents.json` | driver manifest |
-| `HARNESS_DB_PATH` | `/var/lib/harness/state/orchestrator.db` | SQLite path |
-| `HARNESS_REPO_ROOT` | detected | repo root |
-| `RUNSC_ROOT` | `/var/lib/harness/runsc` | runsc state root |
-
-Hardcoded in the loaded config: `RunscNetwork=sandbox`, `RunscOverlay2=none`,
-`RequireAgentManifest=true`. `IsolationRoots`/`ValidateIsolationRoots` require every
-data root to be absolute, non-`/`, symlink-resolved, and mutually disjoint.
-
-## Rejected keys (fail startup)
-
-Strict decoding rejects these; set them and the orchestrator refuses to start.
-
-- `HARNESS_SESSION_TTL` / `harness.session_ttl` — use `session_retention`.
-- Top-level `runtime:` / `claude:` documents and `harness.secrets.*` — model-proxy
-  settings live only under `harness.model_proxy`, and credentials stay host-side.
-
-## Ports
-
-| Component | Checked-in default | Publish deployment |
-|---|---|---|
-| Orchestrator HTTP | `:8090` | `:9090` |
-| Frontend | `PORT=8000` | `127.0.0.1:9001` (behind nginx TLS) |
-| Model proxy | `:8083` | `:8083` |
-
-The publish deployment overrides are set in the systemd units and documented in
-[operations.md](./operations.md). Two orchestrators cannot share the default
-`:8090` on one host — hence the publish `:9090`.
+External evaluation/evolution integration requires explicit `EVOLUTION_*`
+variables. It has no checked-in host path and is disabled when configuration is
+absent. Its implementation boundary and allowlist behavior are documented in
+[memory and knowledge](agents-kb.md).

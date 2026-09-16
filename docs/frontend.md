@@ -207,11 +207,9 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
   shell transcript keeps its per-entry rules (it really is a log) but shares the
   centered column. `MessageBubble`/`ShellEntry` own only vertical rhythm, so every
   caller — including the shared-link page — supplies the centering wrapper.
-- `workbench/prompt-suggestions.tsx` — four battery-domain starting points on an
-  empty session (AC vs. DC session length, starting-SOC distribution, charge depth
-  by platform, F2 BMS fault mix). Picking one fills the composer via
-  `composer-draft.ts` rather than sending, since the period or platform in each
-  prompt still wants adjusting.
+- `workbench/prompt-suggestions.tsx` — generic dataset, report and log-analysis
+  starting points. Picking one fills the composer rather than sending a request.
+  The examples assume no private data store or organization-specific schema.
 - `workbench/activity-indicator.tsx` — per-turn status (thinking / tool / streaming /
   compacting / retrying) with request count + elapsed time.
 - `workbench/trace-list.tsx` + `trace-node.tsx` — progressive-disclosure execution
@@ -313,3 +311,12 @@ cursor and reconnects. `logout()` posts `/api/logout` then wipes local state bac
 the login screen. A `401` from any authed call routes through the same
 unauthorized handler. Auth is entirely cookie/session-based and enforced by the
 orchestrator; the browser never talks to it directly.
+
+## Optional external evolution UI
+
+The `/evolution` routes are an integration surface for a separately maintained
+runner. Explicit `EVOLUTION_*` configuration and a viewer allowlist are required.
+The UI renders actual configured report data; it does not embed domain SQL,
+production table names or fabricated successful-run fallbacks. Core user schedules,
+internal memory extraction and this external process have distinct lifecycles.
+See [memory and knowledge](agents-kb.md).

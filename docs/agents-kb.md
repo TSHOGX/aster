@@ -1,227 +1,132 @@
-# Shared knowledge base (`/agents`) + nightly trajectory distillation
+# Optional memory and knowledge subsystem
 
-> The self-evolving knowledge base every sandbox mounts read-only, and the
-> nightly loop that grows it from real session trajectories. Implements (and
-> supersedes the "system-skills mount" placeholder in)
-> [`decisions/trajectory-pipeline.md`](./decisions/trajectory-pipeline.md).
+This subsystem has its own data and job lifecycle. It is integrated with the core
+runtime through trajectory ingestion and read-only KB mounts; it is not required
+for ordinary session/turn execution. A missing extraction LLM disables extraction,
+not the workbench or core scheduler.
 
-## What it is
+## Ownership boundaries
 
-Every sandbox gets a read-only `/agents` directory bind-mounted in, holding a
-`~/.agents`-style tree:
+| Part | Location | Ownership |
+|---|---|---|
+| Control history adapter | `internal/controlsource` | Reads control-plane state for ingestion |
+| Native trajectory capture | `internal/trajectory` | Archives/parses driver history |
+| Memory storage | `internal/memorystore` | Owns the separate memory database |
+| Extraction and curation | `internal/memory` | Optional LLM/agentic pipeline and snapshot generation |
+| Knowledge mount | `internal/runtime` | Pins a read-only snapshot for each generation |
+| KB review HTTP/CLI | `internal/server`, `cmd/orchestrator` | Review/approval of staged knowledge |
+| External evolution/evaluation | Separately deployed project | Its runner, evaluation policy, jobs and state are outside the core release |
+| External integration UI | `/evolution`, `/api/evolution/*` | Reads configured reports and starts the external runner |
 
-```
-/agents/
-  CONSTITUTION.md       # who the agent is, what it can do, how it works — read first
-  facts/INDEX.md        # navigation entry / map of the KB
-  facts/<fact>.md       # small, agentic-searchable knowledge notes
-  skills/<name>/SKILL.md # curated procedures; frontmatter `status:` key
-  data/<domain>/...      # bulky reference material
-```
+Do not treat the external project as source included in this repository, or
+interpret its report format and job schedule as the core runtime's roadmap.
 
-Skills carry a lifecycle status in their frontmatter:
+## Data flow and persistence
 
-- `observing` — newly promoted, not yet trusted; present but flagged as provisional.
-- `in-use` — stable, well-supported, the default an agent should prefer.
-- `deprecated` — kept for provenance, should not be followed.
+Native Pi JSONL is captured from driver homes into the trajectory archive. Capture
+records snapshots, events and source pointers in `memory.db`. When native traces
+are unavailable, control history can supply a lower-fidelity projection. Capture
+is fingerprinted to avoid rebuilding unchanged sessions.
 
-### Prompt architecture: slim bootstrap + evolvable constitution
+The memory database also stores episode summaries, semantic memories, skill
+candidates, extraction state, evolution runs and agent-call records. Extracted
+knowledge and human review are not disposable caches. Retain them with the KB and
+native archives in a consistent backup. Cross-file references to control sessions
+are application relationships, not enforced SQLite foreign keys.
 
-The identity/capabilities/where-to-look content that used to be frozen in the
-baked system prompt is split by change-rate and owner into two layers:
+Facts and skills require distinct evidence sessions before promotion. The scalar
+curator combines evidence counts with support, confidence and contradiction
+checks; the agentic graph adds consolidation, verification, curation and critique.
+Exact thresholds live in `internal/memory/curator.go` and associated tests.
 
-- **Bootstrap prompt** (`sandbox-image/.../pi-system-prompt.md`, baked, injected
-  via `--append-system-prompt`): a minimal, rarely-changing string — the identity
-  one-liner plus "read `/agents/CONSTITUTION.md` first, consult the KB before
-  recurring work", and safe defaults for when `/agents` is absent. No domain rules.
-- **Constitution** (`/agents/CONSTITUTION.md`): the governing document — who the
-  agent is, what it can do, who it helps, operating principles, and the KB search
-  protocol. It lives in the KB, so it evolves without an image rebuild and can
-  later become a curator candidate (behind human review). Modeled on the local
-  `~/.agents` spec style.
+## Snapshot contract
 
-Domain skills (Doris, OBS-Parquet/DuckDB, matplotlib-CJK) are no longer inlined in
-the prompt or the legacy `harness-skills/` dir — they are seeded skills in the KB
-(`agents-kb-seed/skills/`, `status: in-use`) and follow the same
-snapshot/promotion lifecycle as distilled ones.
-
-The constitution and human-seeded skills are **carried forward** on every
-republish (`kb.go` `carryForward`): the distillation publisher only regenerates
-`facts/INDEX.md`, per-scope facts, and distilled skills, and overlays them on top
-of the preserved seed — so a nightly snapshot never drops the constitution or a
-seeded skill.
-
-## Delivery (no image rebuild, no restart)
-
-The KB lives on the host at `AgentsKBRoot` (default `/var/lib/harness/agents-kb`,
-env `HARNESS_AGENTS_KB_PATH`):
-
-```
+```text
 agents-kb/
-  current -> snapshots/<digest>/   # atomically re-pointed symlink
-  snapshots/<digest>/...           # content-addressed immutable snapshots
-  reports/YYYY-MM-DD.md            # nightly run reports
+  current -> snapshots/<digest>/
+  pending -> snapshots/<digest>/
+  pending.json
+  snapshots/<digest>/
+  reports/
+  approvals.log
 ```
 
-At sandbox spec-build time the runtime resolves `current` → the concrete
-`snapshots/<digest>/` dir and bind-mounts THAT (stable, digest-pinned) at
-`/agents`, read-only (`runtime/mount_plan.go`, `runtime_spec.go`). Because the
-mount source is the resolved snapshot, a running generation stays pinned to the
-snapshot it started with; a **new** session picks up whatever `current` points at
-then. Publishing a new KB = write a fresh `snapshots/<digest>/` tree, then
-atomically re-point `current` — which, by default, only an expert approval does
-(see the approval gate below). No rootfs rebuild, no orchestrator/front-end
-restart. Old sessions refresh on their next generation (restart).
+The runtime resolves `current` to a concrete snapshot directory when building the
+sandbox spec. Running generations remain pinned; new generations see a newly
+approved snapshot without rebuilding the rootfs. Never edit a published snapshot
+in place.
 
-The mount is disabled (absent) when `AgentsKBRoot` is empty or no `current`
-snapshot exists yet. A baked seed KB
-(`sandbox-image/files/usr/local/share/agents-kb-seed/`) is copied into
-`snapshots/seed/` and pointed to on first boot so the mount source always exists.
+The generic image contains only a bootstrap constitution and portable examples.
+Domain corpora, business schemas, credentials and private skills are supplied by
+each deployment outside the public repository. Keep the snapshot's INDEX aligned
+with the skills actually provisioned there.
 
-## Nightly distillation loop
-
-A background goroutine (`internal/memory`) runs once a day. Its trajectory source
-is pi's **native session JSONL** — the same complete record the local sess-cli
-ingests — captured full-fidelity, NOT the lossy `messages`/`message_traces`
-projection and NOT the `events` table (which is pruned to a 24h window every ~30s,
-is infrastructure-centric, and even drops pi's `toolUse` turn boundaries). It:
-
-1. **Capture** each session's native pi trace (`internal/trajectory`): locate
-   `<session_driver_homes.host_path>/.pi/agent/sessions/<selected_session_relpath>`
-   (from `session_driver_states`; glob fallback), archive a durable copy under
-   `<TrajectoryRoot>/raw/<session>/`, record a `raw_sources` pointer, parse it via
-   the sess-cli `pi.ts` field mapping into `trajectory_events` (7-primitive schema:
-   user / assistant / thinking / tool_call / tool_result / system; pi emits no
-   token usage). Text is stored **full and untruncated** — the 2000-char
-   `message_traces` cap and synthesized "thinking" of the product path are gone.
-   Indexed by `trajectory_snapshots` with a fingerprint (`records:lastEpoch`) so
-   only changed sessions are reprocessed. Enumerated across **all users**. When no
-   native file is available the loop falls back to the lossy DB projection at
-   `fidelity=partial`.
-2. **Extract** via three LLM lenses (adapted from Mem0 / WDM / Hermes /
-   ReasoningBank / AWM), each gated by a cheap hard signal before spending an LLM
-   call:
-   - **facts** → `semantic_memories` candidates.
-   - **failure/feedback** → episode + bug/correction memories. Gated on a
-     material failure signal (a `tool_result` error, or a `down` feedback rating).
-   - **skill** → `skill_candidates`. Gated on `turn_count >= 6`.
-3. **Consolidate** candidate memories into `semantic_memories` with
-   support/contradiction counts driving confidence.
-4. **Curate & stage**: promote a memory/skill into a new KB snapshot when it is
-   stable and well-supported (`support_count >= 3 && confidence >= 0.75 &&
-   contradiction_count == 0`). Promoted skills first land as `status: observing`;
-   sustained support flips them to `in-use`. The snapshot is **staged, not
-   published** — see [Expert-approval gate](#expert-approval-gate-publication-is-never-automatic)
-   — unless `auto_publish: true`. A daily report is written to
-   `agents-kb/reports/`.
-
-### Storage lifecycle split (from sess-cli)
-
-Two table groups share the DB but have opposite lifecycles:
-
-- **Rebuildable view** — `raw_sources` (pointer to the archived native trace),
-  `trajectory_snapshots`, `trajectory_events`. Derived mechanically from the
-  native pi files; a re-capture replaces a session's rows wholesale.
-- **Non-rebuildable output** — `episode_memories`, `semantic_memories`,
-  `skill_candidates`. Expensive LLM output; a re-capture must never cascade into
-  these. They join the view only by soft keys (session id, evidence refs).
-
-This full research store is deliberately **separate from the `events` table**,
-which remains the untouched user-facing product log (two businesses: product vs
-research). Native traces persist on the host (agent homes are never reclaimed by
-cleanup), so capture can run long after a session ends.
-
-### Cold-start: backfill + replay
-
-The orchestrator binary has two one-shot subcommands for bootstrapping the store
-(e.g. on first ECS deploy):
-
-- `orchestrator backfill [--since YYYY-MM-DD]` — capture every historical pi
-  session's native trajectory (omit `--since` for all history). Idempotent.
-- `orchestrator replay --date YYYY-MM-DD` — re-capture that day and run the
-  distillation sweep scoped to it, as if it were that night — so historical days
-  can be processed one at a time to grow the KB from cold.
-
-Both need `HARNESS_TRAJECTORY_ROOT` (default `/var/lib/harness/trajectories`);
-`replay` also needs `config/memory-llm.yaml`.
-
-## Expert-approval gate (publication is never automatic)
-
-Distilled knowledge lands in the context of **every new sandbox**, so a cycle does
-not publish by default. With `auto_publish: false` (the default in
-`memory-llm.yaml`, env `HARNESS_MEMORY_AUTO_PUBLISH`) both the agentic and scalar
-paths **stage** instead of publishing:
-
-```
-agents-kb/
-  current      -> snapshots/<digest>/   # live: what sandboxes mount
-  pending      -> snapshots/<digest>/   # staged, awaiting approval
-  pending.json                          # digest, prev_digest, staged_at, run_id, counts
-  approvals.log                         # append-only approve/reject audit trail
-```
-
-`KB.Stage` writes the snapshot tree and the `pending` marker but never touches
-`current`, so nothing is visible to any sandbox until a human promotes it. Staging
-content byte-identical to what is already live is a no-op (`changed=false`, no
-marker) — there is nothing to review.
-
-Review and decide with `harness-ctl kb …` (forwards to `orchestrator kb …` with
-the publish env wired up):
+Publication is staged by default (`auto_publish: false`). Explicit approval changes
+`current`; rejection preserves the staged snapshot as evidence. Per-entry review
+can retain approved facts/files and demote rejected facts. `auto_publish: true`
+is an explicit opt-in to unreviewed publication, not the default guarantee.
 
 ```bash
-harness-ctl kb status                 # current vs pending + file +/-/~ counts
-harness-ctl kb diff                   # diff -ruN between the two snapshot trees
-harness-ctl kb approve <digest>       # atomic repoint of current + audit line
-harness-ctl kb reject  <digest> --reason "overfit to one session"
+orchestrator kb status --config /private/harness.yaml
+orchestrator kb diff --config /private/harness.yaml
+orchestrator kb approve <digest> --config /private/harness.yaml
+orchestrator kb reject <digest> --reason "review decision" --config /private/harness.yaml
 ```
 
-The digest is mandatory on approve/reject and must match the current `pending`, so
-a stale terminal cannot promote a snapshot the reviewer never looked at. A reject
-clears the marker, leaves `current` alone, and **keeps the snapshot on disk** as
-the evidence behind the decision. Approval only affects **new** sessions: a running
-sandbox stays pinned to the snapshot it resolved at spec-build time.
+Approve/reject require the pending digest to prevent stale decisions. The ordinary
+KB review routes and the external evolution allowlist are separate authorization
+surfaces; do not assume the `evolution_admin` flag governs every endpoint.
 
-Setting `auto_publish: true` restores unreviewed self-publishing. The PII/secret
-regex backstop and the consistency-critic veto run before staging either way —
-they are a floor, not a substitute for review.
+## Job ownership: choose one scheduling authority
 
-## Nightly schedule (cron, not the server timer)
+The internal pipeline runs an initial sweep when enabled, then periodically
+(default interval one hour). The term "nightly" is an operational convention,
+not a guaranteed once-per-day service timer.
 
-`memory-llm.yaml` stays `enabled: false` on this box, so the orchestrator serves
-the `/agents` mount but runs no sweep of its own. `memory.db` is a single-writer
-SQLite (WAL) database: the server's own loop and an out-of-band CLI writing at the
-same time is `SQLITE_BUSY`. So the CLI is the sole distiller, driven by
-`/etc/cron.d/harness-kb` → `scripts/harness-kb-nightly.sh` (CST local time):
+Alternatively, invoke explicit CLI jobs from a target-owned timer or scheduler:
 
-| 时间 | 模式 | 做什么 | 成本 |
-|---|---|---|---|
-| 23:00 | `ingest` | `orchestrator backfill` — 归档+解析 pi 原生轨迹入 `trajectory_*` | 零 LLM |
-| 00:00 | `evolve` | `orchestrator replay --date <昨天>` — 抽取+agentic 图 → **暂存**待审批 | LLM + pi |
+```bash
+orchestrator backfill --config /private/harness.yaml
+orchestrator replay --date YYYY-MM-DD --config /private/harness.yaml
+```
 
-Both modes share `flock -n /var/lock/harness-kb.lock`, so a still-running 23:00
-ingest makes the 00:00 evolve skip rather than contend. The wrapper exports
-`HARNESS_MEMORY_AUTO_PUBLISH=false` unconditionally, so a scheduled run can never
-publish regardless of what the config file says. Logs:
-`/var/log/harness-kb-nightly-{ingest,evolve}.log` (self-rotating at 32 MB).
+`backfill` captures history; `replay` runs the configured extraction pipeline for
+a date window. These commands may write memory/KB state and call external models.
+Do not run them as part of a routine schema migration or restore check.
 
-`replay --date <yesterday>` also catches up on history: the distillation query is
-`normalized_at IS NULL OR extracted_at IS NULL OR ended_at >= since`, so any
-never-extracted session is swept in regardless of age.
+Use either the internal timer or a coordinated external job schedule, not
+independent overlapping writers. Deployment drain/hold blocks new internal jobs;
+external workers and timers must also be inventoried and stopped for backups.
+`scripts/harness-kb-nightly.sh` is an optional generic wrapper requiring explicit
+binary, config, environment and lock paths. It installs no cron entry.
 
-## LLM configuration
+## External evolution integration
 
-The extraction model is configured in a gitignored secret file
-`config/memory-llm.yaml` (see `config/memory-llm.example.yaml`), same shape as
-`title-llm.yaml`: `base_url` / `api_key` / `model` (glm-5.2). Empty api key or
-absent file disables the nightly pipeline. The extractor calls the upstream API
-directly (like `internal/titler`); the in-repo model proxy serves sandbox
-traffic only and is not a server-side client.
+The external interface uses these server-side frontend settings:
 
-## Multi-tenancy note
+- `EVOLUTION_PROJECT_ROOT`: separate runner project, including its runner script.
+- `EVOLUTION_STATE_ROOT`: private report/run/KB state for that project.
+- `EVOLUTION_MEMORY_DB`: explicit shared or dedicated memory database path.
+- `EVOLUTION_BUN`: runner executable.
+- `EVOLUTION_VIEWERS`: comma-separated authenticated user allowlist (`*` is an
+  explicit broad-access choice).
 
-There is no tenant isolation yet: all users' trajectories feed one shared KB, and
-promoted knowledge is visible to every sandbox. The promotion path must strip
-user-specific secrets/PII before anything enters the shared KB (the lens prompts
-are instructed to omit them, and the curator is the enforcement point). Revisit
-when tenancy lands — per-tenant overlays over shared trajectory storage are the
-natural extension (sess-cli's overlay-keyed-by-id model).
+If the integration is not configured, its API reports unavailable. The public UI
+contains no site-specific SQL recipes or fabricated production reports. Configure
+all dependencies and validate data ownership before enabling job execution.
+
+The route currently launches a detached external process and tracks file-backed
+run records. Operations must account for this process when stopping writers; it
+is not automatically equivalent to a core `schedule_run` or a managed sandbox.
+This boundary and its limitations are documented here without claiming the
+external project has been bundled or standardized.
+
+## Sharing and privacy
+
+Extraction currently aggregates the configured users' trajectories into a shared
+KB. Review for sensitive content before approval. Prompts and filters are not a
+substitute for explicit review, scoped input selection and private data storage.
+Memory evaluation artifacts and deployment reports must never enter public CI
+logs, release attachments or checked-in examples.
+
+Integration follow-up is tracked separately in [issue #10](https://github.com/TSHOGX/agent-runtime-platform/issues/10); this document describes only existing behavior.

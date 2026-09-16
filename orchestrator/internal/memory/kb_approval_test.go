@@ -29,7 +29,7 @@ func sampleKBContent(statement string) ([]memorystore.SemanticMemory, []memoryst
 func TestKBStageDoesNotPublish(t *testing.T) {
 	root := t.TempDir()
 	kb := NewKB(root)
-	mems, skills := sampleKBContent("vhr_data schema changes over time.")
+	mems, skills := sampleKBContent("analytics_example schema changes over time.")
 
 	digest, changed, err := kb.Stage(mems, skills, 42, map[string]int{"mem_promoted": 1})
 	if err != nil {

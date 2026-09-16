@@ -403,7 +403,7 @@ type RuntimeConfig struct {
 	// CommandTimeout bounds each external command the runtime shells out to
 	// (runsc introspection/teardown, ip, nft). Guards against a half-dead
 	// sandbox wedging a teardown call forever and stalling the maintenance
-	// loop. See docs/proposals/runsc-cleanup-hang-blocks-maintenance.md.
+	// loop. See docs/session-lifecycle.md.
 	CommandTimeout Duration `yaml:"command_timeout"`
 	// SandboxMemoryLimitBytes is the per-sandbox memcg limit written into the OCI
 	// spec. Exceeding it gets the workload OOM-killed inside the sandbox, so
@@ -733,8 +733,9 @@ func defaultHarnessConfig() HarnessConfig {
 		Network: NetworkConfig{
 			CIDRPool: CIDRPrefix{Prefix: netip.MustParsePrefix("10.200.0.0/16")},
 			Egress: EgressConfig{
-				DorisFEHosts: []string{"172.16.0.138"},
-				DorisBEHosts: []string{"172.16.0.138"},
+				// Documentation-only defaults; configure actual destinations privately.
+				DorisFEHosts: []string{"192.0.2.10"},
+				DorisBEHosts: []string{"192.0.2.10"},
 				DorisPorts:   []int{9030},
 				DNSPolicy:    DNSPolicyHostnamesOnly,
 			},

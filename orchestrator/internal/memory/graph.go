@@ -255,7 +255,7 @@ func (p *Pipeline) agenticReport(counts map[string]int, digest string, staged bo
 		notes = append(notes, "⚠ consistency critic FAILED — no veto pass ran; vetoed counts below are absence of a check, not a clean result")
 	}
 	if staged {
-		notes = append(notes, "STAGED awaiting expert approval — not live. Review: harness-ctl kb diff / approve "+digest)
+		notes = append(notes, "STAGED awaiting expert approval — not live. Review: orchestrator kb diff / approve "+digest)
 	} else if digest != "" {
 		notes = append(notes, "published live (auto_publish)")
 	}

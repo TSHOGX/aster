@@ -1,6 +1,6 @@
 package memory
 
-// Node F — Consistency Critic (docs/decisions/agentic-context-evolution.md §F).
+// Node F — Consistency Critic (docs/agents-kb.md §F).
 //
 // Critic is the single, final global gate of the evolve cycle. It runs ONCE,
 // AFTER Node D has set memories to "accepted" and skills to "published", and it

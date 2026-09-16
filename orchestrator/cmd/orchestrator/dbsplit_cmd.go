@@ -19,7 +19,7 @@ import (
 //
 // It runs no server and launches no goroutines, and the orchestrator MUST be
 // stopped first: it drops tables from the live control database. See
-// docs/db-split-runbook.md.
+// docs/database.md.
 //
 // Usage:
 //

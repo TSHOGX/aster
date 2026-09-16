@@ -5993,7 +5993,7 @@ func testServerConfig(dir string) config.Config {
 			Network: config.NetworkConfig{
 				CIDRPool: config.CIDRPrefix{Prefix: netip.MustParsePrefix("10.241.0.0/29")},
 				Egress: config.EgressConfig{
-					DorisFEHosts: []string{"172.16.0.138"},
+					DorisFEHosts: []string{"192.0.2.10"},
 					DorisBEHosts: []string{"172.16.0.139"},
 					DorisPorts:   []int{9030},
 					DNSPolicy:    config.DNSPolicyHostnamesOnly,

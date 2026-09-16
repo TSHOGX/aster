@@ -2,7 +2,7 @@ package memory
 
 // Node B — CONSOLIDATE (agentic canopy-clustering, NO vectors).
 //
-// See docs/decisions/agentic-context-evolution.md §"No vectors" and node
+// See docs/agents-kb.md §"No vectors" and node
 // B0/B1/B2/B3. This node replaces the exact-string dedup of
 // memorystore.UpsertSemanticMemory (which pins every LLM statement at support=1) with
 // blocking + in-context clustering, the classic scalable record-linkage shape:
@@ -115,7 +115,7 @@ type dedupResult struct {
 
 const blockKeySystemPrompt = grounding + `
 
-你在为记忆去重做"分块键(blocking key)"。下面数据块里是一组自由文本的 scope 标签(可能中英混杂、同义、粒度不一,例如 doris / vhr_data / doris/bms / f2 / 数据源选择)。请把语义等价或从属同一领域的标签归并到同一个规范(canonical)标签下。规范标签用简短的小写英文或原标签中最典型的一个。
+你在为记忆去重做"分块键(blocking key)"。下面数据块里是一组自由文本的 scope 标签(可能中英混杂、同义、粒度不一,例如 doris / analytics_example / doris/bms / f2 / 数据源选择)。请把语义等价或从属同一领域的标签归并到同一个规范(canonical)标签下。规范标签用简短的小写英文或原标签中最典型的一个。
 
 只输出如下纯 JSON,不要任何解释或代码围栏:
 {"canonical":{"原始标签A":"规范标签","原始标签B":"规范标签",...}}

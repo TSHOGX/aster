@@ -204,19 +204,17 @@ func modelProxyHostIsHostLocal(host string) bool {
 		strings.HasSuffix(host, ".local")
 }
 
-// dorisFEHostLiteral is the production Doris FE address. A sandbox-facing alias
-// resolving to it would let the sandbox reach Doris directly, making the gateway
-// one route among two rather than a chokepoint.
-const dorisFEHostLiteral = "172.16.0.138"
-
 // modelProxyHostIsProviderUpstream reports whether host names a real upstream —
 // a model provider, or a data store now that data-proxy aliases run through the
 // same validation. The name is kept for continuity with the store-side twin.
 func modelProxyHostIsProviderUpstream(host string) bool {
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
+	}
 	switch host {
 	case "api.anthropic.com", "anthropic.com", "api.openai.com", "openai.com":
 		return true
-	case dorisFEHostLiteral, "myhuaweicloud.com", "amazonaws.com":
+	case "myhuaweicloud.com", "amazonaws.com":
 		return true
 	default:
 		return strings.HasSuffix(host, ".anthropic.com") ||

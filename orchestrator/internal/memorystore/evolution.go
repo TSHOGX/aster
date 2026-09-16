@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// Memory-store layer for the agentic context-evolution graph (docs/decisions/
-// agentic-context-evolution.md). These methods are ADDITIVE to the scalar
+// Memory-store layer for the agentic context-evolution graph (docs/agents-kb.md). These methods are ADDITIVE to the scalar
 // distillation layer in trajectory.go: the agentic nodes (consolidate/verify/
 // curate/critic) call them; the original scalar path is untouched so the
 // `memory.agentic` flag can flip between the two.

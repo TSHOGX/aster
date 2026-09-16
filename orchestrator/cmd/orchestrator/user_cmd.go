@@ -124,7 +124,7 @@ func writeAuthUsers(path string, users []config.AuthUser) error {
 		return fmt.Errorf("encode auth users: %w", err)
 	}
 	header := "# Workbench login credentials. Managed by `orchestrator user` /\n" +
-		"# `harness-ctl user`; edits are picked up without a restart.\n" +
+		"# `orchestrator user`; edits are picked up without a restart.\n" +
 		"# Passwords are stored ONLY as PBKDF2-SHA256 hashes.\n"
 	content := append([]byte(header), body...)
 
@@ -195,7 +195,7 @@ func indexOfUser(users []config.AuthUser, username string) int {
 
 // readPassword takes the password from stdin or HARNESS_PASSWORD. There is
 // deliberately no plaintext flag: flags land in shell history and `ps` output.
-// Callers that need a hidden prompt (harness-ctl) read it with `read -s` and
+// Callers that need a hidden prompt (a local operator wrapper) read it with `read -s` and
 // pipe it in.
 func readPassword(fromStdin bool) (string, error) {
 	if fromStdin {

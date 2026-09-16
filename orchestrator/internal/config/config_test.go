@@ -31,7 +31,7 @@ func TestLoadProjectConfigUsesHarnessSchema(t *testing.T) {
   network:
     cidr_pool: 10.210.0.0/24
     egress:
-      doris_fe_hosts: [172.16.0.138]
+      doris_fe_hosts: [192.0.2.10]
       doris_be_hosts: [172.16.0.139]
       doris_ports: [9030, 8040]
       dns_policy: hostnames_only
@@ -95,7 +95,7 @@ func TestLoadProjectConfigUsesHarnessSchema(t *testing.T) {
 	if got := harness.Network.CIDRPool.String(); got != "10.210.0.0/24" {
 		t.Fatalf("cidr_pool: %q", got)
 	}
-	if !sameStrings(harness.Network.Egress.DorisFEHosts, []string{"172.16.0.138"}) ||
+	if !sameStrings(harness.Network.Egress.DorisFEHosts, []string{"192.0.2.10"}) ||
 		!sameStrings(harness.Network.Egress.DorisBEHosts, []string{"172.16.0.139"}) ||
 		!sameInts(harness.Network.Egress.DorisPorts, []int{9030, 8040}) {
 		t.Fatalf("unexpected egress: %+v", harness.Network.Egress)

@@ -1,6 +1,6 @@
 package memory
 
-// Node C — Verify (docs/decisions/agentic-context-evolution.md §C).
+// Node C — Verify (docs/agents-kb.md §C).
 //
 // Verify checks each consolidated candidate memory against the CURRENT tree so
 // the loop stops teaching stale paths (#2) and solved faults (#3). It is the

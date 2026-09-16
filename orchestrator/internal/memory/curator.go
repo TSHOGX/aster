@@ -10,7 +10,7 @@ import (
 	"harness-platform/orchestrator/internal/memorystore"
 )
 
-// Promotion thresholds (from decisions/trajectory-pipeline.md §Step-4): a memory
+// Promotion thresholds (from docs/agents-kb.md §Step-4): a memory
 // or skill enters the shared KB only when it is repeated, confident, and
 // uncontradicted. Memory can evolve fast; skills evolve slowly.
 const (
@@ -127,7 +127,7 @@ func (p *Pipeline) curateAndPublish(ctx context.Context) (Report, error) {
 		digest = d
 		if changed {
 			report.Notes = append(report.Notes,
-				"STAGED awaiting expert approval — not live. Review: harness-ctl kb diff / approve "+digest)
+				"STAGED awaiting expert approval — not live. Review: orchestrator kb diff / approve "+digest)
 			p.log.Info("curator: snapshot STAGED, awaiting expert approval", "digest", digest)
 		}
 	}

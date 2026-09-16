@@ -79,7 +79,7 @@ func TestKBPublishAndRepoint(t *testing.T) {
 	}
 
 	mems := []memorystore.SemanticMemory{{
-		Type: "fact", Scope: "doris", Statement: "vhr_data schema changes over time; discover it live.",
+		Type: "fact", Scope: "doris", Statement: "analytics_example schema changes over time; discover it live.",
 		SupportCount: 4, Confidence: 0.8, Status: "accepted",
 		EvidenceSessionIDs: []string{"s1", "s2"},
 	}}

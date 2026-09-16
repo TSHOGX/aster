@@ -49,7 +49,7 @@ func TestVerifyEligible(t *testing.T) {
 		// --- negative: pure data-schema facts ---
 		{
 			name:      "table name only",
-			statement: "充电工况表名为 dwd_gongkuang_charge_res_di",
+			statement: "充电工况表名为 example_measurements",
 			want:      false,
 		},
 		{

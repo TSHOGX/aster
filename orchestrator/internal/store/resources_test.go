@@ -246,8 +246,8 @@ func TestAllocateGenerationUsesConfiguredModelProxyPort(t *testing.T) {
 	}
 	assertJSONStrings(t, details.AllowedEgressRules, []string{
 		"tcp:10.240.0.1:8083",
-		"tcp:172.16.0.138:9030",
-		"tcp:172.16.0.138:8040",
+		"tcp:192.0.2.10:9030",
+		"tcp:192.0.2.10:8040",
 		"tcp:172.16.0.139:9030",
 		"tcp:172.16.0.139:8040",
 	})
@@ -304,8 +304,8 @@ func TestAllocateGenerationEgressPolicyIdentityIncludesProxyPort(t *testing.T) {
 	}
 	wantSecondRules := []string{
 		"tcp:10.240.0.5:8083",
-		"tcp:172.16.0.138:9030",
-		"tcp:172.16.0.138:8040",
+		"tcp:192.0.2.10:9030",
+		"tcp:192.0.2.10:8040",
 		"tcp:172.16.0.139:9030",
 		"tcp:172.16.0.139:8040",
 	}
@@ -335,11 +335,11 @@ func TestAllowedEgressRulesHonorsDNSPolicy(t *testing.T) {
 		{
 			name:   "hostnames_only skips DNS for ip only Doris hosts",
 			policy: "hostnames_only",
-			fe:     []string{"172.16.0.138"},
+			fe:     []string{"192.0.2.10"},
 			be:     []string{"172.16.0.139"},
 			want: []string{
 				"tcp:10.240.0.1:8082",
-				"tcp:172.16.0.138:9030",
+				"tcp:192.0.2.10:9030",
 				"tcp:172.16.0.139:9030",
 			},
 		},
@@ -359,11 +359,11 @@ func TestAllowedEgressRulesHonorsDNSPolicy(t *testing.T) {
 		{
 			name:   "always allows DNS for ip only Doris hosts",
 			policy: "always",
-			fe:     []string{"172.16.0.138"},
+			fe:     []string{"192.0.2.10"},
 			be:     []string{"172.16.0.139"},
 			want: []string{
 				"tcp:10.240.0.1:8082",
-				"tcp:172.16.0.138:9030",
+				"tcp:192.0.2.10:9030",
 				"tcp:172.16.0.139:9030",
 				"udp:53",
 				"tcp:53",
@@ -400,7 +400,7 @@ func TestAllowedEgressRulesHonorsDNSPolicy(t *testing.T) {
 func TestAllowedEgressRulesAllowAllEmitsSentinel(t *testing.T) {
 	cfg := testAllocatorConfig(t)
 	cfg.EgressDorisPorts = []int{9030}
-	cfg.EgressDorisFEHosts = []string{"172.16.0.138"}
+	cfg.EgressDorisFEHosts = []string{"192.0.2.10"}
 	cfg.EgressDorisBEHosts = []string{"172.16.0.139"}
 	cfg.EgressDNSPolicy = "hostnames_only"
 	cfg.EgressAllowAll = true
@@ -438,7 +438,7 @@ func TestAllocateGenerationPersistsHostnameOnlyDNSPolicy(t *testing.T) {
 
 	want := []string{
 		"tcp:10.240.0.1:8082",
-		"tcp:172.16.0.138:9030",
+		"tcp:192.0.2.10:9030",
 		"tcp:172.16.0.139:9030",
 	}
 	details, err := st.GetRuntimeGenerationDetails(ctx, "sess_dns_policy", allocation.GenerationID)
@@ -3914,7 +3914,7 @@ func testAllocatorConfig(t *testing.T) ResourceAllocatorConfig {
 	return ResourceAllocatorConfig{
 		RunDir:                     filepath.Join(t.TempDir(), "run"),
 		CIDRPool:                   netip.MustParsePrefix("10.240.0.0/29"),
-		EgressDorisFEHosts:         []string{"172.16.0.138"},
+		EgressDorisFEHosts:         []string{"192.0.2.10"},
 		EgressDorisBEHosts:         []string{"172.16.0.139"},
 		EgressDorisPorts:           []int{9030, 8040},
 		EgressDNSPolicy:            "hostnames_only",
