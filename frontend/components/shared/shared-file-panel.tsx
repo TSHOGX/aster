@@ -1,5 +1,6 @@
 "use client";
 
+import { Virtuoso } from "react-virtuoso";
 import { useState } from "react";
 import { Download, FileText } from "lucide-react";
 
@@ -26,6 +27,7 @@ import { formatBytes } from "@/lib/format";
 export function SharedFilePanel({
   token,
   files,
+  mentionedFiles,
   lastReplyContent = ""
 }: {
   token: string;
@@ -35,6 +37,7 @@ export function SharedFilePanel({
    * defaulting to "" so the panel still renders for a link with no conversation.
    */
   lastReplyContent?: string;
+  mentionedFiles?: SharedLinkFile[];
 }) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const mentionedCount = useMentionedPaths(lastReplyContent, files).length;
@@ -46,10 +49,10 @@ export function SharedFilePanel({
       .map((segment) => encodeURIComponent(segment))
       .join("/")}`;
 
-  const open = files.find((file) => file.path === openPath) ?? null;
+  const open = [...files, ...(mentionedFiles ?? [])].find((file) => file.path === openPath) ?? null;
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-t border-[var(--color-border)] md:w-80 md:border-l md:border-t-0">
+    <aside className="flex min-h-0 w-full flex-1 flex-col border-t border-[var(--color-border)] md:w-80 md:border-l md:border-t-0">
       <header className="border-b border-[var(--color-border)] px-4 py-2.5">
         <h2 className="text-2xs font-medium uppercase tracking-wider text-[var(--color-foreground-muted)]">
           Files
@@ -62,20 +65,20 @@ export function SharedFilePanel({
           the live workspace: a mentioned file the owner did not publish simply
           does not resolve. Selection is shared with the list below, so a row here
           drives the same preview. */}
-      <MentionedFiles
+      {mentionedFiles ? <div className="max-h-36 overflow-auto border-b p-3 text-xs">{mentionedFiles.map((file) => <button className="block truncate" key={file.path} onClick={() => setOpenPath(file.path)}>{file.path}</button>)}</div> : <MentionedFiles
         content={lastReplyContent}
         files={files}
         activePath={openPath}
         onOpen={(path) => setOpenPath((prev) => (prev === path ? null : path))}
-      />
+      />}
       {mentionedCount > 0 ? (
         <SectionHeader labelKey="mentioned.allFiles" count={files.length} />
       ) : null}
-      <ul className="max-h-56 overflow-y-auto md:max-h-none md:flex-1">
-        {files.map((file) => {
+      <div className="h-56 min-h-0 md:flex-1">
+        <Virtuoso data={files} computeItemKey={(_, f) => f.path} itemContent={(_, file) => {
           const selected = file.path === openPath;
           return (
-            <li key={file.path}>
+            <div key={file.path}>
               <div
                 className={
                   selected
@@ -105,10 +108,10 @@ export function SharedFilePanel({
                   <Download className="h-3.5 w-3.5" />
                 </a>
               </div>
-            </li>
+            </div>
           );
-        })}
-      </ul>
+        }} />
+      </div>
       {open ? <SharedFilePreview url={fileUrl(open.path)} path={open.path} /> : null}
     </aside>
   );

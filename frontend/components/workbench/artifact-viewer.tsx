@@ -18,14 +18,14 @@ import { toast } from "sonner";
 
 import dynamic from "next/dynamic";
 
-import { buildArtifactHref, fetchArtifactText, writeArtifact } from "@/lib/api";
+import { buildArtifactHref, fetchArtifactText, cachedArtifactText, writeArtifact } from "@/lib/api";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { classifyArtifact, type ArtifactClassification } from "@/lib/mime";
 import { cn } from "@/lib/cn";
 import { MarkdownView } from "./markdown-view";
 import { useT } from "@/lib/i18n";
-import { CodeView } from "./viewers/code-view";
-import { CodeEditor } from "./viewers/code-editor";
+const CodeView = dynamic(() => import("./viewers/code-view").then((m) => m.CodeView), { ssr: false });
+const CodeEditor = dynamic(() => import("./viewers/code-editor").then((m) => m.CodeEditor), { ssr: false });
 import type { OfficeKind } from "./viewers/office-view";
 import type { ApiArtifact } from "@/lib/types";
 
@@ -102,13 +102,16 @@ export function ArtifactViewer({
   const [load, setLoad] = useState<LoadState>(skip ? { phase: "skip" } : { phase: "loading" });
   const [edit, setEdit] = useState<EditState>({ phase: "off" });
 
-  // Fetch text on mount / when the file identity changes. The parent remounts
-  // this viewer on path + updated_at change (its key), so this effect fetches
-  // once per mount; state is only written from the async callback.
+  // A version change schedules a debounced read. Editing text is independent
+  // of this preview state, so a background write cannot overwrite a draft.
   useEffect(() => {
     if (skip) return;
     let cancelled = false;
-    void fetchArtifactText(sessionId, path).then((res) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+    const cached = cachedArtifactText(sessionId, path, artifact?.updated_at ?? "");
+    if (cached?.ok) setLoad({ phase: "ok", text: cached.text, lastModified: cached.lastModified });
+    void fetchArtifactText(sessionId, path, 2 * 1024 * 1024, controller.signal, artifact?.updated_at ?? "").then((res) => {
       if (cancelled) return;
       setLoad(
         res.ok
@@ -116,8 +119,9 @@ export function ArtifactViewer({
           : { phase: "error", error: res.error }
       );
     });
+    }, 300);
     return () => {
-      cancelled = true;
+      cancelled = true; controller.abort(); clearTimeout(timer);
     };
   }, [sessionId, path, artifact?.updated_at, skip]);
 
@@ -162,8 +166,7 @@ export function ArtifactViewer({
     const result = await writeArtifact(sessionId, path, text, lastModified);
     if (result.ok) {
       toast.success(t("viewer.savedFile", { name: path.split("/").pop() ?? "" }));
-      // The file re-renders via the artifact.updated SSE (key includes
-      // updated_at); leave edit mode so the fresh read shows.
+      // The artifact invalidation schedules a fresh preview read.
       setEdit({ phase: "off" });
       return;
     }

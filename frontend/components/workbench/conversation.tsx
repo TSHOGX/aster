@@ -4,8 +4,9 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "rea
 import { ArrowUp, Bot, Clock, Loader2, RefreshCw, RotateCw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { useActivity, useConversation, useHarness, useSelectedSession, useSessionRuntime } from "@/components/harness-provider";
+import { useActivity, useCapabilities, useConversation, useHarness, useSelectedSession, useSessionRuntime } from "@/components/harness-provider";
 import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
+import { PagedTranscript } from "./paged-transcript";
 import { ShellConversation } from "./shell-conversation";
 import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
@@ -31,6 +32,8 @@ export function Conversation() {
 
 function ChatConversation() {
   const t = useT();
+  const capabilities = useCapabilities();
+  const paged = capabilities?.message_pages && process.env.NEXT_PUBLIC_HARNESS_MESSAGE_PAGES !== "0";
   const session = useSelectedSession();
   const convo = useConversation(session?.id ?? null);
   const activity = useActivity(session?.id ?? null);
@@ -179,7 +182,7 @@ function ChatConversation() {
     !activityLive &&
     convo.streaming.length === 0 &&
     !convo.loading
-      ? interruptionKind(convo.messages)
+      ? paged ? convo.interruption || undefined : interruptionKind(convo.messages)
       : undefined;
 
   return (
@@ -221,7 +224,7 @@ function ChatConversation() {
 
       {/* Bottom padding clears the floating composer, which starts at two lines
           tall (composer.tsx) — the last message has to scroll clear of it. */}
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-40">
+      {paged && (convo.messages.length > 0 || convo.loading) ? <PagedTranscript key={session.id} sessionId={session.id} /> : <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-40">
         {convo.loading && convo.messages.length === 0 ? (
           <ConversationSkeleton />
         ) : convo.messages.length === 0 && convo.streaming.length === 0 && !activityLive ? (
@@ -291,7 +294,8 @@ function ChatConversation() {
             ) : null}
           </div>
         )}
-      </div>
+      </div>}
+      {paged && interrupted && <InterruptedNotice kind={interrupted} onContinue={() => sendMessage(session.id, t(interrupted === "sandbox" ? "conversation.continuePromptAfterSandboxDeath" : "conversation.continuePrompt"))} />}
 
       <Composer
         disabled={readOnly || terminal}

@@ -1,6 +1,10 @@
+import { clientRequestSignal, registerCache } from "./cache-lifecycle";
+import { BoundedCache } from "./bounded-cache";
+import { markWorkbench } from "./performance";
 import type {
   ApiArtifact,
   ApiMessage,
+  MessagePage,
   ApiNotification,
   ApiSession,
   ApiSessionRuntime,
@@ -51,13 +55,18 @@ export function parseApiError(
 
 export async function request<T>(input: RequestInfo | URL, init?: RequestInit): Promise<RequestResult<T>> {
   try {
-    const response = await fetch(input, { cache: "no-store", ...init });
+    const signal = clientRequestSignal(init?.signal);
+    const response = await fetch(input, { cache: "no-store", ...init, signal });
+    markWorkbench("response-headers");
     const contentType = response.headers.get("content-type") ?? "";
     const text = await response.text();
+    signal.throwIfAborted();
+    markWorkbench("response-body");
     let payload: unknown = text;
     if (contentType.includes("application/json") && text) {
       try {
         payload = JSON.parse(text);
+        markWorkbench("response-parse");
       } catch {
         payload = text;
       }
@@ -187,8 +196,38 @@ export async function sendQueuedTurn(sessionId: string, turnId: number) {
   );
 }
 
-export async function fetchMessages(sessionId: string) {
-  return request<{ messages: ApiMessage[] | null }>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+export async function fetchMessages(sessionId: string, signal?: AbortSignal) {
+  return request<{ messages: ApiMessage[] | null }>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, { signal });
+}
+
+export async function fetchMessagePage(
+  sessionId: string,
+  options: { beforeId?: number; afterId?: number; aroundId?: number; limit?: number; signal?: AbortSignal } = {}
+) {
+  const params = new URLSearchParams();
+  if (options.aroundId) params.set("around_id", String(options.aroundId));
+  if (options.beforeId) params.set("before_id", String(options.beforeId));
+  if (options.afterId) params.set("after_id", String(options.afterId));
+  if (options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return request<MessagePage>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages/page${query ? `?${query}` : ""}`,
+    { signal: options.signal }
+  );
+}
+
+export async function fetchMessageContent(sessionId: string, messageId: number, signal?: AbortSignal, offset = 0) {
+  return request<{ content: string; next_offset: number; total: number; has_more: boolean }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(String(messageId))}/content?offset=${offset}`,
+    { signal }
+  );
+}
+
+export async function fetchMessageTrace(sessionId: string, messageId: number, signal?: AbortSignal, offset = 0) {
+  return request<{ trace: ApiMessage["trace"]; next_offset: number; has_more: boolean }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(String(messageId))}/trace?offset=${offset}`,
+    { signal }
+  );
 }
 
 /**
@@ -487,28 +526,29 @@ type FetchArtifactTextResult =
   | { ok: true; text: string; lastModified: string | null }
   | { ok: false; status: number; error: string };
 
-// We deliberately keep `cache: "no-store"` on artifact reads: the workspace
-// files change under an actively-writing agent, so any HTTP/response cache would
-// risk serving stale bytes. Rather than layer a caching library (SWR/react-query)
-// on top — which would reintroduce that staleness question — we only collapse
-// *concurrent* duplicate reads of the same file via an in-flight promise map.
-// Entries are cleared the moment the request settles, so there is no lingering
-// cache and each fresh call still hits the network with no-store semantics.
+// Workspace reads always revalidate. Concurrent requests share one promise;
+// the bounded memory cache can paint a versioned preview while revalidation
+// runs. Authentication changes clear both maps and abort their requests.
 const inFlightArtifactText = new Map<string, Promise<FetchArtifactTextResult>>();
+const artifactTextCache = new BoundedCache<FetchArtifactTextResult>(4 * 1024 * 1024);
+registerCache(() => { inFlightArtifactText.clear(); artifactTextCache.clear(); });
 
 export async function fetchArtifactText(
   sessionId: string,
   path: string,
-  maxBytes = 2 * 1024 * 1024
+  maxBytes = 2 * 1024 * 1024,
+  signal?: AbortSignal,
+  version = ""
 ): Promise<FetchArtifactTextResult> {
   // maxBytes participates in the key so callers with different caps don't share
   // a result that was accepted/rejected under a different limit.
-  const key = `${sessionId}:${maxBytes}:${path}`;
+  const key = `${sessionId}:${maxBytes}:${path}:${version}`;
   const existing = inFlightArtifactText.get(key);
   if (existing) return existing;
 
+  const requestSignal = clientRequestSignal(signal);
   const promise = (async (): Promise<FetchArtifactTextResult> => {
-    const response = await fetch(buildArtifactHref(sessionId, path), { cache: "no-store" });
+    const response = await fetch(buildArtifactHref(sessionId, path), { cache: "no-store", signal: requestSignal });
     if (!response.ok) {
       return { ok: false, status: response.status, error: response.statusText || "fetch failed" };
     }
@@ -523,8 +563,11 @@ export async function fetchArtifactText(
     if (text.length > maxBytes) {
       return { ok: false, status: 413, error: "artifact too large" };
     }
-    return { ok: true, text, lastModified };
-  })().finally(() => {
+    requestSignal.throwIfAborted();
+    const result: FetchArtifactTextResult = { ok: true, text, lastModified };
+    artifactTextCache.set(key, result, text.length * 2);
+    return result;
+  })().catch((error): FetchArtifactTextResult => ({ ok: false, status: 0, error: error instanceof Error ? error.message : "read failed" })).finally(() => {
     inFlightArtifactText.delete(key);
   });
 
@@ -547,3 +590,5 @@ export async function fetchArtifactBlob(sessionId: string, path: string, maxByte
   }
   return { ok: true as const, buffer };
 }
+
+export function cachedArtifactText(sessionId: string, path: string, version: string) { return artifactTextCache.get(`${sessionId}:${2 * 1024 * 1024}:${path}:${version}`); }

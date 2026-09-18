@@ -20,6 +20,7 @@ import {
   fetchDeploymentCapabilities,
   fetchHealth,
   fetchMe,
+  fetchMessagePage,
   fetchMessages,
   fetchNotifications,
   fetchSession,
@@ -33,6 +34,10 @@ import {
   renameSession as apiRenameSession,
   sendQueuedTurn as apiSendQueuedTurn
 } from "@/lib/api";
+import { clearClientResources, registerCache } from "@/lib/cache-lifecycle";
+import { invalidateArtifacts, clearArtifactInvalidations } from "@/lib/artifact-invalidation";
+import { boundedMessage, clearReadingAnchors, mergeMessageWindow, readingAnchor } from "@/lib/message-window";
+import { markWorkbench } from "@/lib/performance";
 import { isRecord } from "@/lib/guards";
 import {
   emptyConvo,
@@ -67,6 +72,7 @@ import type {
   ApiNotification,
   DeploymentCapabilities,
   ApiMessage,
+  MessagePage,
   ApiSession,
   ApiSessionRuntime,
   ConnectionStatus,
@@ -124,6 +130,9 @@ type HarnessActions = {
     rating: "up" | "down" | null
   ) => Promise<{ ok: boolean; error?: string }>;
   refresh: () => Promise<void>;
+  loadOlderMessages: (id: string) => Promise<void>;
+  loadMessageWindow: (id: string, aroundId?: number) => Promise<void>;
+  loadNewerMessages: (id: string) => Promise<void>;
   onLogin: (userId: string) => void;
   logout: () => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
@@ -273,6 +282,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
   const aliveRef = useRef(true);
   const pollingRef = useRef<Set<string>>(new Set());
+  const messageRequestsRef = useRef<Map<string, AbortController>>(new Map());
+  const authEpochRef = useRef(0);
+  const hotSessionsRef = useRef<string[]>([]);
   const lastEventIDRef = useRef<number | null>(null);
   // A session is created before the composer can send its first message. Keep
   // that short-lived state client-side so abandoning it does not leave a
@@ -288,15 +300,24 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   const discardedSessionIdsRef = useRef<Set<string>>(new Set());
 
   const ensureConvo = useCallback((convos: HarnessState["conversations"], id: string) => {
-    if (convos[id]) return convos;
+    if (convos[id] || (stateRef.current.selectedId !== id && !hotSessionsRef.current.includes(id))) return convos;
     return { ...convos, [id]: emptyConvo() };
-  }, []);
+  }, [stateRef]);
 
   const upsertConvo = useCallback(
     (id: string, patch: (prev: ConversationState) => ConversationState) => {
       setState((prev) => {
+        if (prev.selectedId !== id && !hotSessionsRef.current.includes(id)) return prev;
         const current = prev.conversations[id] ?? emptyConvo();
-        return { ...prev, conversations: { ...prev.conversations, [id]: patch(current) } };
+        const conversations = { ...prev.conversations, [id]: patch(current) };
+        let bytes = Object.values(conversations).reduce((total,c) => total + c.messages.reduce((n,m) => n + m.content.length * 2 + 1024, 0), 0);
+        for (const key of [...hotSessionsRef.current].reverse()) {
+          if (bytes <= 32 * 1024 * 1024) break;
+          if (key === prev.selectedId || !conversations[key]) continue;
+          bytes -= conversations[key].messages.reduce((n,m) => n + m.content.length * 2 + 1024, 0);
+          delete conversations[key];
+        }
+        return { ...prev, conversations };
       });
     },
     [setState]
@@ -327,8 +348,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         const convo = prev.conversations[id] ?? emptyConvo();
         return {
           ...prev,
-          runtimes: { ...prev.runtimes, [id]: snapshot },
-          conversations: { ...prev.conversations, [id]: reduceRuntimeActivity(convo, snapshot) },
+          runtimes: prev.selectedId === id || hotSessionsRef.current.includes(id) ? { ...prev.runtimes, [id]: snapshot } : prev.runtimes,
+          conversations: prev.selectedId === id || hotSessionsRef.current.includes(id) ? { ...prev.conversations, [id]: reduceRuntimeActivity(convo, snapshot) } : prev.conversations,
           // The snapshot carries the session status from the same transaction that
           // changed the turns, so it is never staler than the session list's copy.
           sessions: prev.sessions.map((session) =>
@@ -349,8 +370,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
    */
   const refreshRuntime = useCallback(
     (id: string) => {
+      const epoch = authEpochRef.current;
       void fetchSessionRuntime(id).then((res) => {
-        if (res.ok) applyRuntime(id, res.data);
+        if (epoch === authEpochRef.current && res.ok) applyRuntime(id, res.data);
       });
     },
     [applyRuntime]
@@ -423,105 +445,82 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     [setState, stateRef]
   );
 
-  const loadSessionDetails = useCallback(
-    (id: string, skipLoaded = false) => {
-      refreshRuntime(id);
-      const convo = stateRef.current.conversations[id];
-      if (skipLoaded && convo && convo.messages.length > 0) return;
-      upsertConvo(id, (c) => ({ ...c, loading: true }));
-      void fetchMessages(id).then((res) => {
-        upsertConvo(id, (c) => ({
-          ...c,
-          loading: false,
-          messages: res.ok ? res.data.messages ?? [] : c.messages
-        }));
-      });
-      void fetchArtifacts(id).then((res) => {
-        if (!res.ok) return;
-        const list = res.data.artifacts ?? [];
-        setState((p) => ({ ...p, artifacts: { ...p.artifacts, [id]: list } }));
-      });
-    },
-    [upsertConvo, setState, stateRef, refreshRuntime]
-  );
+  const readMessageWindow = useCallback(async (id: string, options: { beforeId?: number; afterId?: number; aroundId?: number; replace?: boolean } = {}) => {
+    const key = `${id}:messages`;
+    if (messageRequestsRef.current.has(key)) return;
+    const controller = new AbortController();
+    const epoch = authEpochRef.current;
+    messageRequestsRef.current.set(key, controller);
+    const baseline = stateRef.current.conversations[id]?.messages ?? [];
+    const paged = stateRef.current.capabilities?.message_pages && process.env.NEXT_PUBLIC_HARNESS_MESSAGE_PAGES !== "0";
+    upsertConvo(id, (c) => ({ ...c, loading: !c.historyLoaded, loadingOlder: !!options.beforeId, error: null }));
+    const res = paged ? await fetchMessagePage(id, { ...options, signal: controller.signal })
+      : await fetchMessages(id, controller.signal);
+    if (controller.signal.aborted || authEpochRef.current !== epoch) return;
+    messageRequestsRef.current.delete(key);
+    upsertConvo(id, (c) => {
+      if (!res.ok) return { ...c, ...(res.status === 403 || res.status === 404 ? { messages: [], streaming: [], liveTrace: [], historyLoaded: false } : {}), loading: false, loadingOlder: false, error: res.error };
+      const page = "has_older" in res.data ? res.data as MessagePage : null;
+      const incoming = res.data.messages ?? [];
+      const center = options.beforeId ? incoming[0]?.id : options.afterId ? incoming.at(-1)?.id : options.aroundId;
+      const messages = paged ? mergeMessageWindow(options.replace ? c.messages.filter((m) => !baseline.includes(m) || m.id > (page?.latest_id ?? 0)) : c.messages, incoming, baseline, center) : incoming;
+      const latest = page?.latest_id ?? messages.at(-1)?.id ?? 0;
+      const tailWatermark = page ? (options.aroundId || options.beforeId ? c.tailWatermark : page.has_newer ? page.after_id : page.latest_id) : latest;
+      return { ...c, messages, loading: false, loadingOlder: false, historyLoaded: true,
+        hasOlder: page ? !incoming.length || (messages[0]?.id ?? 0) < page.before_id ? c.hasOlder : page.has_older || (messages[0]?.id ?? 0) > page.before_id : false,
+        hasNewer: page ? page.has_newer || (messages.at(-1)?.id ?? 0) < latest : false,
+        tailWatermark, latestID: Math.max(c.latestID, latest), latestFinalID: page?.latest_final_id ?? 0,
+        interruption: page?.interruption ?? "" };
+    });
+    markWorkbench("message-merge");
+  }, [stateRef, upsertConvo]);
 
-  const pollConversation = useCallback(
-    async (id: string, afterMessageId?: number) => {
-      if (pollingRef.current.has(id)) return;
-      // Polling is now a FALLBACK for when SSE is down. When the stream is
-      // "live" it already delivers messages, artifacts, and session status, so
-      // the 1s triple-fetch loop is redundant and just adds load + churn.
-      // Read through a function so TS doesn't narrow the live getter's value
-      // (stateRef.current.connection can change between iterations).
-      const streamLive = () => stateRef.current.connection === "live";
-      if (streamLive()) return;
-      pollingRef.current.add(id);
+  const loadMessageWindow = useCallback(async (id: string, aroundId?: number) => {
+    messageRequestsRef.current.get(`${id}:messages`)?.abort();
+    messageRequestsRef.current.delete(`${id}:messages`);
+    await readMessageWindow(id, { aroundId, replace: true });
+  }, [readMessageWindow]);
+  const loadOlderMessages = useCallback(async (id: string) => {
+    const c = stateRef.current.conversations[id];
+    if (c?.hasOlder && !c.loadingOlder) await readMessageWindow(id, { beforeId: c.messages[0]?.id });
+  }, [readMessageWindow, stateRef]);
+  const loadNewerMessages = useCallback(async (id: string) => {
+    const c = stateRef.current.conversations[id];
+    if (c?.hasNewer) await readMessageWindow(id, { afterId: c.messages.at(-1)?.id });
+  }, [readMessageWindow, stateRef]);
+  const loadSessionDetails = useCallback((id: string, skipLoaded = false) => {
+    refreshRuntime(id);
+    const c = stateRef.current.conversations[id];
+    if (skipLoaded && c?.historyLoaded) return;
+    const anchor = readingAnchor(id);
+    void readMessageWindow(id, { aroundId: anchor && !anchor.following ? anchor.messageId : undefined, replace: true });
+    const epoch = authEpochRef.current;
+    if (stateRef.current.capabilities?.artifact_pages && process.env.NEXT_PUBLIC_HARNESS_ARTIFACT_PAGES !== "0") return;
+    void fetchArtifacts(id).then((res) => {
+      if (res.ok && epoch === authEpochRef.current) setState((p) => ({ ...p, artifacts: { ...p.artifacts, [id]: res.data.artifacts ?? [] } }));
+    });
+  }, [refreshRuntime, stateRef, readMessageWindow, setState]);
+
+  const pollConversation = useCallback(async (id: string) => {
+    const streamLive = () => stateRef.current.connection === "live";
+    if (pollingRef.current.has(id) || streamLive()) return;
+    pollingRef.current.add(id);
+    const epoch = authEpochRef.current;
+    try {
       const deadline = Date.now() + MESSAGE_POLL_TIMEOUT_MS;
-
-      try {
-        while (aliveRef.current && Date.now() < deadline && !streamLive()) {
-          const [messagesRes, sessionRes, artifactsRes, runtimeRes] = await Promise.all([
-            fetchMessages(id),
-            fetchSession(id),
-            fetchArtifacts(id),
-            fetchSessionRuntime(id)
-          ]);
-          let sawAssistant = false;
-          // Whether the agent is busy is a property of the turn queue, not of the
-          // session status, so the projection decides it here too — the fallback
-          // path must not disagree with the live one.
-          let active = true;
-
-          if (sessionRes.ok) {
-            const session = sessionRes.data;
-            setState((p) => ({
-              ...p,
-              sessions: p.sessions.some((s) => s.id === session.id)
-                ? p.sessions.map((s) => (s.id === session.id ? session : s))
-                : [session, ...p.sessions],
-              conversations: ensureConvo(p.conversations, session.id)
-            }));
-          }
-          if (runtimeRes.ok) {
-            // applyRuntime parks activity at idle when no turn is active, so this
-            // also clears a stale Thinking left by a missed event.
-            applyRuntime(id, runtimeRes.data);
-            active = runtimeRes.data.active_turn != null;
-          } else if (sessionRes.ok) {
-            active = isActiveStatus(sessionRes.data.status);
-          }
-
-          if (messagesRes.ok) {
-            const messages = messagesRes.data.messages ?? [];
-            const committedAssistantMessages = messages.filter(
-              (m) => m.role === "assistant" && (afterMessageId === undefined || m.id > afterMessageId)
-            );
-            sawAssistant = committedAssistantMessages.length > 0;
-            upsertConvo(id, (c) => ({
-              ...c,
-              loading: false,
-              streaming: active ? pruneCommittedStreaming(c.streaming, committedAssistantMessages) : [],
-              messages
-            }));
-          }
-
-          if (artifactsRes.ok) {
-            const list = artifactsRes.data.artifacts ?? [];
-            setState((p) => ({ ...p, artifacts: { ...p.artifacts, [id]: list } }));
-          }
-
-          if (!active || (sawAssistant && !sessionRes.ok)) return;
-          await delay(MESSAGE_POLL_INTERVAL_MS);
-        }
-      } finally {
-        pollingRef.current.delete(id);
+      while (aliveRef.current && epoch === authEpochRef.current && stateRef.current.selectedId === id && !streamLive() && Date.now() < deadline) {
+        const c = stateRef.current.conversations[id];
+        await readMessageWindow(id, c?.hasNewer ? { aroundId: readingAnchor(id)?.messageId, replace: true } : { afterId: c?.tailWatermark || undefined });
+        refreshRuntime(id);
+        await delay(MESSAGE_POLL_INTERVAL_MS);
       }
-    },
-    [ensureConvo, upsertConvo, setState, stateRef, applyRuntime]
-  );
+    } finally { pollingRef.current.delete(id); }
+  }, [readMessageWindow, refreshRuntime, stateRef]);
 
   const refreshNotifications = useCallback(async () => {
+    const epoch = authEpochRef.current;
     const res = await fetchNotifications();
+    if (epoch !== authEpochRef.current) return;
     if (!res.ok) return;
     setState((p) => ({ ...p, notifications: res.data.notifications ?? [] }));
   }, [setState]);
@@ -530,20 +529,17 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   // alone. Deliberately narrower than refresh(): callers below run this in the
   // background while the user is reading something.
   const refreshSessions = useCallback(async () => {
+    const epoch = authEpochRef.current;
     const before = stateRef.current.sessions;
     const res = await fetchSessions();
+    if (epoch !== authEpochRef.current) return;
     // Bail silently on failure: a transient error must not empty a healthy list.
     if (!res.ok) return;
     const list = (res.data.sessions ?? []).filter(
       (session) => !discardedSessionIdsRef.current.has(session.id)
     );
     setState((p) => {
-      const next = mergeSessionList(
-        { sessions: p.sessions, conversations: p.conversations },
-        reconcileSessionList(before, p.sessions, list),
-        { emptyConversation: emptyConvo }
-      );
-      return { ...p, sessions: next.sessions, conversations: next.conversations };
+      return { ...p, sessions: reconcileSessionList(before, p.sessions, list) };
     });
   }, [setState, stateRef]);
 
@@ -583,7 +579,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
             event,
             { emptyConversation: emptyConvo, time }
           );
-          return { ...p, sessions: next.sessions, conversations: next.conversations };
+          return { ...p, sessions: next.sessions, conversations: Object.fromEntries(Object.entries(next.conversations).filter(([id]) => id === p.selectedId || hotSessionsRef.current.includes(id))) };
         });
         // Whether the agent is still busy is decided by the turn queue, so the
         // projection settles activity rather than this event guessing from the
@@ -637,8 +633,11 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         }
         case "message.created": {
           if (!sessionId) return;
-          const msg = event.payload as ApiMessage | undefined;
-          if (!msg || typeof msg.id !== "number") return;
+          if (!hotSessionsRef.current.includes(sessionId) && stateRef.current.selectedId !== sessionId) return;
+          const raw = event.payload as ApiMessage | undefined;
+          const paged = stateRef.current.capabilities?.message_pages && process.env.NEXT_PUBLIC_HARNESS_MESSAGE_PAGES !== "0";
+          const msg = raw && typeof raw.content === "string" && paged ? boundedMessage(raw) : raw;
+          if (!msg || typeof msg.id !== "number" || typeof msg.content !== "string") return;
           if (msg.role === "user") draftSessionIdsRef.current.delete(sessionId);
           // Every message the server broadcasts belongs in the transcript: a turn
           // still queued has no message row exposed (listMessages excludes it), so
@@ -647,26 +646,35 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
             ...c,
             // A new user turn begins here: drop any live trace left from before.
             liveTrace: msg.role === "user" ? [] : c.liveTrace,
-            messages: c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg]
+            interruption: msg.role === "user" ? "" : c.interruption,
+            messages: !paged ? c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg] : c.hasNewer ? c.messages : mergeMessageWindow(c.messages, [msg], c.messages, readingAnchor(sessionId)?.following === false ? readingAnchor(sessionId)?.messageId : undefined),
+            latestID: Math.max(c.latestID, msg.id), hasNewer: c.hasNewer
           }));
           return;
         }
         case "agent.message": {
           if (!sessionId) return;
-          const msg = event.payload as ApiMessage | undefined;
-          if (!msg || typeof msg.id !== "number") return;
+          if (!hotSessionsRef.current.includes(sessionId) && stateRef.current.selectedId !== sessionId) return;
+          const raw = event.payload as ApiMessage | undefined;
+          const paged = stateRef.current.capabilities?.message_pages && process.env.NEXT_PUBLIC_HARNESS_MESSAGE_PAGES !== "0";
+          const msg = raw && typeof raw.content === "string" && paged ? boundedMessage(raw) : raw;
+          if (!msg || typeof msg.id !== "number" || typeof msg.content !== "string") return;
           upsertConvo(sessionId, (c) => ({
             ...c,
-            streaming: pruneCommittedStreaming(c.streaming, [msg]),
+            streaming: Array.isArray((event.payload as { stream_ids?: string[] }).stream_ids) ? c.streaming.filter((stream) => !(event.payload as { stream_ids: string[] }).stream_ids.includes(stream.id)) : pruneCommittedStreaming(c.streaming, [msg]),
             // The committed assistant message renders its own server trace; clear
             // the live nodes so they don't duplicate below it.
             liveTrace: [],
-            messages: c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg]
+            latestFinalID: msg.stop_reason === "stop" ? msg.id : c.latestFinalID,
+            interruption: msg.stop_reason === "stop" ? "" : msg.stop_reason === "sandbox_died" ? "sandbox" : msg.stop_reason === "error" ? "model" : c.interruption,
+            messages: !paged ? c.messages.some((m) => m.id === msg.id) ? c.messages : [...c.messages, msg] : c.hasNewer ? c.messages : mergeMessageWindow(c.messages, [msg], c.messages, readingAnchor(sessionId)?.following === false ? readingAnchor(sessionId)?.messageId : undefined),
+            latestID: Math.max(c.latestID, msg.id), hasNewer: c.hasNewer
           }));
           return;
         }
         case "agent.delta": {
           if (!sessionId || !isRecord(event.payload)) return;
+          if (stateRef.current.selectedId !== sessionId) return;
           const delta = readAgentDelta(event.payload);
           if (!delta) return;
           upsertConvo(sessionId, (c) => reduceAgentDelta(c, delta.id, delta.text, delta.deltaType));
@@ -782,6 +790,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         case "artifact.updated": {
+          if (sessionId && stateRef.current.capabilities?.artifact_pages && process.env.NEXT_PUBLIC_HARNESS_ARTIFACT_PAGES !== "0") { invalidateArtifacts(sessionId); return; }
           const artifact = readArtifact(event.payload);
           if (!artifact) return;
           setState((p) => {
@@ -795,6 +804,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         case "artifact.deleted": {
+          if (sessionId && stateRef.current.capabilities?.artifact_pages && process.env.NEXT_PUBLIC_HARNESS_ARTIFACT_PAGES !== "0") { invalidateArtifacts(sessionId); return; }
           if (!isRecord(event.payload)) return;
           const deletedSessionId =
             typeof event.payload.session_id === "string" ? event.payload.session_id : sessionId;
@@ -835,6 +845,13 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
 
 
   const handleUnauthorized = useCallback(() => {
+    authEpochRef.current++;
+    clearClientResources();
+    for (const request of messageRequestsRef.current.values()) request.abort();
+    messageRequestsRef.current.clear();
+    hotSessionsRef.current = [];
+    clearReadingAnchors();
+    clearArtifactInvalidations();
     aliveRef.current = false;
     draftSessionIdsRef.current.clear();
     pendingMessageSessionIdsRef.current.clear();
@@ -852,13 +869,14 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
   }, [setState]);
 
   const refresh = useCallback(async () => {
-    const health = await fetchHealth();
+    const epoch = authEpochRef.current;
+    const before = stateRef.current.sessions;
+    const [health, sessions, capabilities] = await Promise.all([fetchHealth(), fetchSessions(), fetchDeploymentCapabilities()]);
+    if (epoch !== authEpochRef.current) return;
     if (!health.ok) {
       setState((p) => ({ ...p, ready: true, bootError: health.error }));
       return;
     }
-    const before = stateRef.current.sessions;
-    const sessions = await fetchSessions();
     if (!sessions.ok) {
       if (sessions.status === 401) {
         handleUnauthorized();
@@ -867,21 +885,20 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       setState((p) => ({ ...p, ready: true, bootError: sessions.error }));
       return;
     }
-    const capabilities = await fetchDeploymentCapabilities();
+
     const list = (sessions.data.sessions ?? []).filter(
       (session) => !discardedSessionIdsRef.current.has(session.id)
     );
     const currentSelected = stateRef.current.selectedId;
     const selectable = list.filter((session) => !isTerminal(session.status));
     const selectedId =
-      currentSelected && selectable.some((session) => session.id === currentSelected)
+      currentSelected && list.some((session) => session.id === currentSelected)
         ? currentSelected
         : selectable[0]?.id ?? null;
+    if (selectedId) hotSessionsRef.current = [selectedId, ...hotSessionsRef.current.filter((id) => id !== selectedId)].slice(0, 5);
     setState((p) => {
       const conversations = { ...p.conversations };
-      for (const s of list) {
-        if (!conversations[s.id]) conversations[s.id] = emptyConvo();
-      }
+      if (selectedId && !conversations[selectedId]) conversations[selectedId] = emptyConvo();
       return {
         ...p,
         ready: true,
@@ -959,15 +976,50 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     (status: ConnectionStatus) => setState((p) => ({ ...p, connection: status })),
     [setState]
   );
+  const refreshingRef = useRef(false);
+  const refreshAgainRef = useRef(false);
   const onStreamRefresh = useCallback(() => {
-    void refresh();
-  }, [refresh]);
+    if (refreshingRef.current) { refreshAgainRef.current = true; return; }
+    refreshingRef.current = true;
+    setState((p) => ({ ...p, conversations: Object.fromEntries(Object.entries(p.conversations).map(([id,c]) => [id, { ...c, historyLoaded: false }])) }));
+    void refresh().finally(() => {
+      refreshingRef.current = false;
+      if (refreshAgainRef.current) { refreshAgainRef.current = false; void refresh(); }
+    });
+  }, [refresh, setState]);
+  const pendingDeltas = useRef(new Map<string, HarnessEvent>());
+  const deltaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushDeltas = useCallback(() => {
+    if (deltaTimer.current) clearTimeout(deltaTimer.current);
+    deltaTimer.current = null;
+    const events = [...pendingDeltas.current.values()]; pendingDeltas.current.clear();
+    for (const event of events) handleEvent(event);
+  }, [handleEvent]);
+  const receiveEvent = useCallback((event: HarnessEvent) => {
+    if (event.type !== "agent.delta") {
+      if (event.type === "agent.message" || event.type === "message.created" || event.type === "ack_turn_completed" || event.type === "generation.error" || event.type === "session.error" || event.type === "session.runtime") flushDeltas();
+      handleEvent(event); return;
+    }
+    if (event.session_id !== stateRef.current.selectedId || !isRecord(event.payload)) return;
+    const delta = readAgentDelta(event.payload); if (!delta) return;
+    const key = `${event.session_id}:${delta.id}`;
+    const previous = pendingDeltas.current.get(key);
+    const old = previous && isRecord(previous.payload) ? readAgentDelta(previous.payload)?.text ?? "" : "";
+    pendingDeltas.current.set(key, { ...event, payload: { ...event.payload, text: (old + delta.text).slice(0, 8192) } });
+    if (!deltaTimer.current) deltaTimer.current = setTimeout(flushDeltas, 50);
+  }, [flushDeltas, handleEvent, stateRef]);
+  useEffect(() => {
+    const pending = pendingDeltas.current;
+    const clear = () => { if (deltaTimer.current) clearTimeout(deltaTimer.current); deltaTimer.current = null; pending.clear(); };
+    const unregister = registerCache(clear);
+    return () => { clear(); unregister(); };
+  }, []);
 
   useEventStream({
     enabled: authReady,
     aliveRef,
     lastEventIdRef: lastEventIDRef,
-    onEvent: handleEvent,
+    onEvent: receiveEvent,
     onRefresh: onStreamRefresh,
     onConnectionChange: setConnection
   });
@@ -981,6 +1033,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       if (inFlight || document.visibilityState === "hidden") return;
       inFlight = true;
       const selectedId = stateRef.current.selectedId;
+      const current = selectedId ? stateRef.current.conversations[selectedId] : undefined;
+      if (selectedId && current?.historyLoaded) void readMessageWindow(selectedId, current.hasNewer ? { aroundId: readingAnchor(selectedId)?.messageId ?? current.messages[0]?.id } : { afterId: current.tailWatermark || undefined });
       void Promise.all([
         refreshSessions(),
         selectedId
@@ -998,11 +1052,20 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", tick);
       window.removeEventListener("online", tick);
     };
-  }, [authReady, refreshSessions, stateRef, applyRuntime]);
+  }, [authReady, refreshSessions, stateRef, applyRuntime, readMessageWindow]);
 
   const selectSession = useCallback(
     (id: string | null) => {
+      markWorkbench("select");
       const previousId = stateRef.current.selectedId;
+      if (previousId !== id) {
+        if (previousId) upsertConvo(previousId, (c) => ({ ...c, loading: false, loadingOlder: false }));
+        for (const [key, request] of messageRequestsRef.current) { request.abort(); messageRequestsRef.current.delete(key); }
+      }
+      if (id) {
+        hotSessionsRef.current = [id, ...hotSessionsRef.current.filter((x) => x !== id)].slice(0, 5);
+        setState((p) => ({ ...p, conversations: Object.fromEntries(Object.entries(p.conversations).filter(([key]) => hotSessionsRef.current.includes(key))), runtimes: Object.fromEntries(Object.entries(p.runtimes).filter(([key]) => hotSessionsRef.current.includes(key))), artifacts: Object.fromEntries(Object.entries(p.artifacts).filter(([key]) => hotSessionsRef.current.includes(key))) }));
+      }
       if (previousId && previousId !== id) void discardEmptySession(previousId);
       setState((p) => ({ ...p, selectedId: id }));
       if (!id) return;
@@ -1014,7 +1077,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         void pollConversation(id);
       }
     },
-    [discardEmptySession, loadSessionDetails, pollConversation, setState, stateRef]
+    [discardEmptySession, loadSessionDetails, pollConversation, setState, stateRef, upsertConvo]
   );
 
   const createSession = useCallback(
@@ -1215,6 +1278,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       sendMessage,
       submitFeedback,
       refresh,
+      loadOlderMessages,
+      loadMessageWindow,
+      loadNewerMessages,
       onLogin,
       logout,
       markNotificationRead
@@ -1231,6 +1297,9 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       sendMessage,
       submitFeedback,
       refresh,
+      loadOlderMessages,
+      loadMessageWindow,
+      loadNewerMessages,
       onLogin,
       logout,
       markNotificationRead
@@ -1387,4 +1456,11 @@ export function useReady() {
 
 export function useBootError() {
   return useStoreSelector((s) => s.bootError);
+}
+
+export function useTranscriptState(id: string | null) {
+  return useStoreSelector((s) => {
+    const c = id ? s.conversations[id] ?? EMPTY_CONVO : EMPTY_CONVO;
+    return { messages: c.messages, loading: c.loading, historyLoaded: c.historyLoaded, hasOlder: c.hasOlder, hasNewer: c.hasNewer, error: c.error, latestFinalID: c.latestFinalID };
+  }, shallowEqual);
 }

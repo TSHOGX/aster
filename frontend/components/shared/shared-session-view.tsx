@@ -1,4 +1,5 @@
 "use client";
+import { PagedSharedSession } from "./paged-shared-session";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Bot, Link2Off, RefreshCw } from "lucide-react";
@@ -43,6 +44,9 @@ type LoadState =
  * control rather than looking stuck while an owner keeps working.
  */
 export function SharedSessionView({ token }: { token: string }) {
+  return process.env.NEXT_PUBLIC_HARNESS_MESSAGE_PAGES === "0" ? <LegacySharedSessionView token={token} /> : <PagedSharedSession token={token} />;
+}
+export function LegacySharedSessionView({ token }: { token: string }) {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [refreshing, setRefreshing] = useState(false);
 

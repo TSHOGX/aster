@@ -38,6 +38,15 @@ export type ConversationState = {
   liveTrace: LiveTraceNode[];
   activity: ConversationActivity;
   loading: boolean;
+  historyLoaded: boolean;
+  tailWatermark: number;
+  latestID: number;
+  latestFinalID: number;
+  interruption: "" | "model" | "sandbox";
+  error: string | null;
+  hasOlder: boolean;
+  hasNewer: boolean;
+  loadingOlder: boolean;
 };
 
 export function idleActivity(): ConversationActivity {
@@ -50,7 +59,12 @@ export function emptyConvo(): ConversationState {
     streaming: [],
     liveTrace: [] as LiveTraceNode[],
     activity: idleActivity(),
-    loading: false
+    loading: false,
+    historyLoaded: false,
+    tailWatermark: 0, latestID: 0, latestFinalID: 0, interruption: "", error: null,
+    hasOlder: false,
+    hasNewer: false,
+    loadingOlder: false
   };
 }
 
@@ -68,10 +82,10 @@ export function appendStreaming(
 ): ConversationState["streaming"] {
   const idx = streaming.findIndex((entry) => entry.id === id);
   if (idx === -1) {
-    return [...streaming, { id, text, deltaType }];
+    return [...streaming, { id, text: text.slice(0, 8192), deltaType }];
   }
   return streaming.map((entry, entryIdx) =>
-    entryIdx === idx ? { ...entry, text: entry.text + text } : entry
+    entryIdx === idx ? { ...entry, text: (entry.text + text).slice(0, 8192) } : entry
   );
 }
 
@@ -162,7 +176,7 @@ export function reduceToolActivity(
     startedAt: new Date().toISOString(),
     toolCallId
   };
-  return { ...next, liveTrace: [...next.liveTrace, node] };
+  return { ...next, liveTrace: [...next.liveTrace, node].slice(-50) };
 }
 
 // A pi tool_execution_end frame: finalize the matching still-open tool node and
@@ -268,9 +282,8 @@ export function readAgentDelta(
   const deltaType = typeof payload.delta_type === "string" ? payload.delta_type : "text_delta";
   if (deltaType !== "text_delta") return null;
   if (!text) return null;
-  return { id, text, deltaType };
+  return { id, text: text.slice(0, 8192), deltaType };
 }
 
 // Re-export isRecord so the provider can import event helpers from one module.
 export { isRecord };
-

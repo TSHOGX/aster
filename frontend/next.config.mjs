@@ -67,6 +67,7 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  distDir: process.env.HARNESS_PERF_FIXTURES === "1" ? ".next-perf" : ".next",
   output: "standalone",
   outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
   reactStrictMode: true,

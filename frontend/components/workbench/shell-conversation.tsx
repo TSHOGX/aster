@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, Send, Square, TerminalSquare } from "lucide-react";
 
-import { useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
+import { useCapabilities, useConversation, useHarness, useSelectedSession } from "@/components/harness-provider";
+import { PagedTranscript } from "./paged-transcript";
 import { ShellEntry } from "./shell-entry";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -99,6 +100,8 @@ function ShellComposer({
 }
 
 export function ShellConversation() {
+  const capabilities = useCapabilities();
+  const paged = capabilities?.message_pages && process.env.NEXT_PUBLIC_HARNESS_MESSAGE_PAGES !== "0";
   const session = useSelectedSession();
   const convo = useConversation(session?.id ?? null);
   const { sendMessage, interruptSession, refresh } = useHarness();
@@ -159,7 +162,7 @@ export function ShellConversation() {
         </div>
       </header>
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-32">
+      {paged && (convo.messages.length > 0 || convo.loading) ? <PagedTranscript key={session.id} sessionId={session.id} shell /> : <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-32">
         {convo.loading && convo.messages.length === 0 ? (
           <ConversationSkeleton />
         ) : convo.messages.length === 0 ? (
@@ -188,7 +191,7 @@ export function ShellConversation() {
             ))}
           </div>
         )}
-      </div>
+      </div>}
 
       <ShellComposer
         disabled={!accepting}

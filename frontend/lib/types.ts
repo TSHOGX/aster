@@ -146,6 +146,8 @@ export type ShareLinkToken = {
 
 /** The trimmed session a public link exposes. Note there is no `user_id`. */
 export type SharedLinkSession = {
+  message_pages?: boolean;
+  artifact_pages?: boolean;
   id: string;
   title: string;
   mode: SessionMode;
@@ -186,6 +188,8 @@ export type DeploymentSessionMode = {
 };
 
 export type DeploymentCapabilities = {
+  message_pages?: boolean;
+  artifact_pages?: boolean;
   schema_version: 1;
   default_mode: SessionMode;
   session_modes: DeploymentSessionMode[];
@@ -207,6 +211,7 @@ export type TraceDiff = {
 };
 
 export type TraceNode = {
+  detail_index?: number;
   kind: "thinking" | "tool";
   toolName?: string;
   label?: string;
@@ -238,6 +243,22 @@ export type ApiMessage = {
   stop_reason?: "stop" | "toolUse" | "error" | "sandbox_died" | "";
   trace?: TraceNode[];
   feedback?: "up" | "down" | "";
+  /** Present on bounded transcript pages. */
+  content_truncated?: boolean;
+  content_length?: number;
+  has_trace?: boolean;
+  is_final_reply?: boolean;
+};
+
+export type MessagePage = {
+  messages: ApiMessage[] | null;
+  has_older: boolean;
+  has_newer: boolean;
+  latest_id: number;
+  before_id: number;
+  after_id: number;
+  latest_final_id: number;
+  interruption: "" | "model" | "sandbox";
 };
 
 export type ApiSchedule = {

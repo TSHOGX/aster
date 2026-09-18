@@ -1,5 +1,6 @@
 "use client";
 
+import { Virtuoso } from "react-virtuoso";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
@@ -110,7 +111,7 @@ const SessionRow = memo(function SessionRow({
 
   if (editing) {
     return (
-      <li>
+      <div role="listitem">
         <div className="flex items-center gap-2 rounded-[var(--radius)] px-2.5 py-1.5">
           <input
             ref={inputRef}
@@ -124,12 +125,12 @@ const SessionRow = memo(function SessionRow({
             className="w-full rounded-[var(--radius)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-2xs leading-tight outline-none transition-colors focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
           />
         </div>
-      </li>
+      </div>
     );
   }
 
   return (
-    <li>
+    <div role="listitem">
       <div
         className={cn(
           "group relative flex h-9 w-full items-center gap-2.5 rounded-[var(--radius)] px-2.5 text-left transition-colors",
@@ -233,7 +234,7 @@ const SessionRow = memo(function SessionRow({
           onClose={() => setShareOpen(false)}
         />
       ) : null}
-    </li>
+    </div>
   );
 });
 
@@ -286,19 +287,9 @@ function SessionSection({
         <span className="shrink-0 text-[12px] text-[var(--color-foreground-muted)]">{sessions.length}</span>
       </button>
       {open ? (
-        <ul className="space-y-0.5 px-2 pb-3">
-          {sessions.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              selected={s.id === selectedId}
-              closing={closingId === s.id}
-              onSelect={onSelect}
-              onClose={onClose}
-              onRename={onRename}
-            />
-          ))}
-        </ul>
+        <div role="list" className="px-2 pb-3" style={{ height: Math.min(440, sessions.length * 38 + 12) }}>
+          <Virtuoso data={sessions} increaseViewportBy={100} computeItemKey={(_, s) => s.id} itemContent={(_, s) => <SessionRow session={s} selected={s.id === selectedId} closing={closingId === s.id} onSelect={onSelect} onClose={onClose} onRename={onRename} />} />
+        </div>
       ) : null}
     </section>
   );

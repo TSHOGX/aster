@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useArtifacts, useLastReply, useSelectedSession } from "@/components/harness-provider";
+import { useCapabilities, useArtifacts, useLastReply, useSelectedSession } from "@/components/harness-provider";
+import { PagedArtifactPane } from "./paged-artifact-pane";
 import { InputWithIcon } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ArtifactViewer } from "./artifact-viewer";
@@ -38,7 +39,11 @@ type ArtifactPaneProps = {
   onExpandedChange?: (expanded: boolean) => void;
 };
 
-export function ArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
+export function ArtifactPane(props: ArtifactPaneProps) {
+  const cap = useCapabilities();
+  return cap?.artifact_pages && process.env.NEXT_PUBLIC_HARNESS_ARTIFACT_PAGES !== "0" ? <PagedArtifactPane {...props} /> : <LegacyArtifactPane {...props} />;
+}
+function LegacyArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
   const t = useT();
   const session = useSelectedSession();
   const artifacts = useArtifacts(session?.id ?? null);
