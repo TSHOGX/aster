@@ -62,3 +62,42 @@ Use a consistent private backup for preflight/rehearsal. Unknown schema, failed
 integrity checks or an incomplete external writer inventory block the upgrade.
 Do not upload real backup contents, host inventory or raw failure logs to public
 CI. Keep only sanitized technical assertions in release artifacts.
+
+## Workbench performance checks
+
+Browser tests use deterministic synthetic messages/files, never a live model or
+production database. Install the pinned browser with `npx playwright install
+chromium` from `frontend/`; Linux also needs the corresponding Playwright system
+libraries. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` can select the matching installed
+Chromium executable when the automatic download is unavailable.
+
+```bash
+cd frontend
+npm run test:e2e
+HARNESS_PERF_PRODUCTION=1 npm run test:e2e
+npm run test:performance
+cd ..
+go -C orchestrator test ./internal/store -run '^$' \
+  -bench BenchmarkWorkbenchPages -benchtime=5x -count=1
+```
+
+The production browser suite builds and launches the standalone app. Its
+`.next-perf` output and port 3187 are isolated from the regular development
+server. `/perf-fixtures/virtual` returns 404 unless `HARNESS_PERF_FIXTURES=1`.
+The browser suite checks dynamic heights, prepend anchors, restoration, bounded
+DOM counts, shared reads and full-body loading. Performance cases collect 30
+switches at each history scale, simulated network latency/throughput, 100-switch
+heap growth after GC, and a CPU-throttled scenario. Results and attachments live
+in ignored `frontend/test-results/`; record the browser, CPU, build and whether
+HTTP was mocked when comparing runs.
+
+A bounded in-memory diagnostic ring is available as
+`window.__workbenchPerformance()`: stages contain timestamps and durations, not
+message bodies, file paths or bearer URLs. `select` to `readable` measures
+application work separately from test-runner click/poll overhead. Resource-stage
+marks separate response headers, response body completion, JSON parsing and
+message merge. Browser measurements use production assets, but synthetic HTTP
+fixtures do not establish real deployment latency, compression or backend load.
+Verify these separately against an authorized deployment and retain sanitized
+measurements. Do not claim that a microbenchmark or mocked browser run proves
+production acceptance.
