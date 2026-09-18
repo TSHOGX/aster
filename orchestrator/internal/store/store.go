@@ -92,6 +92,12 @@ type Message struct {
 	// Feedback is the requesting user's thumbs rating for this message
 	// ("up"/"down"), or empty when unset. Populated by ListMessages.
 	Feedback string `json:"feedback,omitempty"`
+	// Bounded transcript projections set these fields. They remain omitted by
+	// the legacy full-history endpoint for wire compatibility.
+	ContentTruncated bool  `json:"content_truncated,omitempty"`
+	ContentLength    int   `json:"content_length,omitempty"`
+	HasTrace         bool  `json:"has_trace,omitempty"`
+	IsFinalReply     *bool `json:"is_final_reply,omitempty"`
 }
 
 type EnqueueTurnMessageParams struct {
@@ -1152,7 +1158,7 @@ ON CONFLICT(session_id, path) DO UPDATE SET
 }
 
 func (s *Store) ListArtifacts(ctx context.Context, sessionID string) ([]Artifact, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.reader().QueryContext(ctx, `
 SELECT session_id, path, size, mod_time, created_at, updated_at
 FROM artifacts WHERE session_id = ? ORDER BY path`, sessionID)
 	if err != nil {

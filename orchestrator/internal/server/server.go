@@ -711,12 +711,22 @@ func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodGet:
 		s.listMessages(w, r, sessionID)
+	case len(parts) == 3 && parts[1] == "messages" && parts[2] == "page" && r.Method == http.MethodGet:
+		s.listMessagesPage(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "runtime" && r.Method == http.MethodGet:
 		s.getSessionRuntime(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodPost:
 		s.sendMessage(w, r, sessionID)
 	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "feedback" && r.Method == http.MethodPost:
 		s.handlePostMessageFeedback(w, r, sessionID, parts[2])
+	case len(parts) == 4 && parts[1] == "messages" && (parts[3] == "content" || parts[3] == "trace-content") && r.Method == http.MethodGet:
+		s.messageContent(w, r, sessionID, parts[2])
+	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "mentioned-files" && r.Method == http.MethodGet:
+		s.mentionedFiles(w, r, sessionID, parts[2])
+	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "trace" && r.Method == http.MethodGet:
+		s.messageTrace(w, r, sessionID, parts[2])
+	case len(parts) == 3 && parts[1] == "artifacts" && (parts[2] == "children" || parts[2] == "search") && r.Method == http.MethodGet:
+		s.artifactPage(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodGet:
 		s.listArtifacts(w, r, sessionID)
 	case len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodPost:
@@ -898,6 +908,8 @@ func (s *Server) deploymentCapabilities(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schema_version": 1,
+		"message_pages":  true,
+		"artifact_pages": true,
 		"default_mode":   "agent",
 		"session_modes": []modeDTO{
 			{Mode: "agent", Label: "Agent", Visible: true, CreateEnabled: agentEnabled, DisabledReason: agentReason},
