@@ -498,3 +498,49 @@ not fabricate a default report or ship organization-specific SQL. See
 `GET /healthz` reports version/commit and deployment drain/background-hold status.
 These identify the running build but do not prove business acceptance of a
 particular database, model or external integration.
+
+## Bounded workbench reads
+
+`GET /api/deployment-capabilities` advertises `message_pages` and
+`artifact_pages`. Existing unpaged routes remain available. The new read routes
+use the same ownership/share gates; none grant write access.
+
+- `GET /api/sessions/{id}/messages/page`: optional mutually exclusive
+  `before_id`, `after_id`, or `around_id`; `limit` defaults to 40 and caps at 80.
+  Rows are ascending by message ID. `has_older`, `has_newer`, `before_id`,
+  `after_id`, `latest_id`, `latest_final_id`, and `interruption` describe the
+  window and authoritative tail. Summary visibility and the public link's
+  `max_message_id` apply before pagination. Encoded message rows have a 256 KiB
+  budget. Bodies over 4,096 Unicode characters become a 2,048-character preview,
+  identified by `content_truncated` and `content_length`. `has_trace` and
+  `is_final_reply` avoid downloading execution detail or guessing from page edges.
+- `GET .../messages/{messageId}/content`: `offset` and `limit` address Unicode
+  characters; default/maximum chunk size is 8,192. Returns `content`, `offset`,
+  `next_offset`, `total`, and `has_more`. `download=1` streams the body as a text
+  attachment. Reading a hidden or out-of-snapshot message returns 404.
+- `GET .../messages/{messageId}/trace`: node `offset`, up to 50 nodes and 256 KiB
+  per page; returns `trace`, `next_offset`, and `has_more`. Large nodes carry a
+  `detail_index`; `GET .../trace-content?node=N&offset=N` reads their raw JSON in
+  bounded character chunks. Summary readers cannot retrieve traces.
+- `GET .../messages/{messageId}/mentioned-files`: resolves up to 12 referenced
+  files against the accessible file set, independently of loaded directory pages.
+- `GET .../artifacts/children`: `directory`, `cursor`, and `limit` (200 default,
+  500 maximum). Returns direct child entries, directory size/count aggregates,
+  `next_cursor`, and `has_more`. `GET .../artifacts/search?q=...` searches the
+  full accessible path set. Empty search lists files. Responses are bounded to
+  256 KiB of entries; sort/cursor ordering is binary `(kind,path)` ordering.
+  Directory pages are live views, not cross-request frozen snapshots.
+
+The equivalent routes under `/api/shared/{token}` resolve the token and its
+visibility/frozen-message boundary on every request. File reads use only the
+link's frozen whitelist. Public message DTOs exclude session IDs, turn IDs and
+feedback. Public session metadata also advertises the page capabilities.
+
+`GET /api/events/stream?view=workbench` projects committed bodies to bounded
+previews and excludes eager trace/tool-result payloads. Commit events can carry
+`stream_ids` for removing corresponding live previews. The legacy event shape,
+durable event records and internal full-transcript consumers are unchanged.
+SSE is not a completeness guarantee; clients reconcile against HTTP windows.
+
+Message pages report database and encoding durations through `Server-Timing`.
+The new routes require no schema migration or additional index.

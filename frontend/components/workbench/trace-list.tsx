@@ -1,5 +1,6 @@
 "use client";
 
+import { Virtuoso } from "react-virtuoso";
 import { memo, useState } from "react";
 import { ChevronDown, ChevronRight, ListTree } from "lucide-react";
 
@@ -87,3 +88,5 @@ function TraceListImpl({
 // Memoized so a committed trace list doesn't re-parse as new turns stream in.
 export const TraceList = memo(TraceListImpl);
 TraceList.displayName = "TraceList";
+
+export function VirtualTrace({ nodes }: { nodes: TraceNodeData[] }) { return <div style={{ height: Math.min(400, Math.max(48, nodes.length * 36)) }}><Virtuoso data={nodes} itemContent={(_, node) => <TraceNode node={node} />} /></div>; }

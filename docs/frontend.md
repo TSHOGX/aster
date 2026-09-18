@@ -320,3 +320,44 @@ The UI renders actual configured report data; it does not embed domain SQL,
 production table names or fabricated successful-run fallbacks. Core user schedules,
 internal memory extraction and this external process have distinct lifecycles.
 See [memory and knowledge](agents-kb.md).
+
+## Bounded transcript and workspace rendering
+
+When backend page capabilities are present, the workbench uses cursor message
+windows (up to 200 retained messages per hot session) and `react-virtuoso`
+4.18.13. It keeps at most five hot conversations and applies an estimated 32 MiB
+message-content budget. Historical rows, live output and file metadata have
+separate subscriptions. Text deltas are coalesced for 50ms; file invalidations
+for 100ms. Live text previews retain at most 8,192 characters and live trace lists
+retain at most 50 nodes. A completed message supplies the authoritative body.
+
+Reading position uses a message ID and offset, not an absolute scroll height.
+Switching back restores that anchor. Search loads a window around its target;
+reading old messages does not force a jump to new output. Unmounted rows are not
+available to the browser's native find command; application search locates
+unloaded history. Large bodies use explicit previews and a modal chunk reader;
+copy requests the full body and downloads stream it. Trace pages load only on
+expansion, with a separate reader for large nodes.
+
+Directory pages load after transcript readiness (or when the mobile file drawer
+mounts). Directories default to collapsed; at most 50 expansions are retained
+per cached session. Virtual file rows have fixed 28px height. Each directory page
+has previous/next controls; search runs on the server. File metadata uses a 2 MiB shared cache plus a 2 MiB current-view budget;
+text cache has 4 MiB and trace cache has 8 MiB. Text reads
+revalidate, coalesce concurrent requests, and debounce updates by 300ms. Editing
+text remains independent of preview refreshes. Auth changes abort reads and clear
+resource caches. File, code and editor implementations load on demand.
+
+Requests merge by message ID and preserve changes that arrived after request
+start. An explicit `historyLoaded` flag distinguishes fetched windows from SSE
+fragments. A separate HTTP tail watermark avoids skipping gaps when newer SSE
+messages were observed. Visible selected conversations and directory pages
+reconcile every 15 seconds; disconnected active views use the message fallback
+poll. Switching cancels obsolete transcript requests. Public shares use the same
+presentational components with their own provider-free, scoped data adapter.
+
+Two build-time rollback switches independently select the retained legacy paths:
+`NEXT_PUBLIC_HARNESS_MESSAGE_PAGES=0` and
+`NEXT_PUBLIC_HARNESS_ARTIFACT_PAGES=0`. Publish a capable backend before enabling
+new frontend builds. Turning off message pages also selects the legacy SSE shape.
+These switches require rebuilding the frontend. No data migration is involved.

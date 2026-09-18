@@ -383,7 +383,7 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 		// real id and the empty-id fallback key, emitting it as this message's
 		// assistant.message rather than deferring to the turn_end bulk flush.
 		if salvaged := p.drainPending(id, "pi_assistant_pending"); salvaged != "" {
-			p.persistAssistant(salvaged, stopReason)
+			p.persistAssistant(salvaged, stopReason, id, "pi_assistant_pending")
 		}
 		return
 	}
@@ -392,7 +392,7 @@ func (p *streamParser) handlePiMessageEnd(event map[string]any) {
 	// again at turn_end.
 	p.dropPending(id)
 	p.dropPending("pi_assistant_pending")
-	p.persistAssistant(text, stopReason)
+	p.persistAssistant(text, stopReason, id, "pi_assistant_pending")
 }
 
 // persistAssistantError records a failed model call as an assistant message so
@@ -415,7 +415,7 @@ func (p *streamParser) persistAssistantError(id string, event map[string]any) {
 	// failures in one turn produce the same notice, and the second must not be
 	// swallowed.
 	p.last = ""
-	p.persistAssistant(text, piStopReasonError)
+	p.persistAssistant(text, piStopReasonError, id, "pi_assistant_pending")
 }
 
 // piMessageErrorMessage pulls pi's raw errorMessage off a message_end event.
@@ -669,7 +669,7 @@ func (p *streamParser) captureToolEvent(eventType string, event map[string]any) 
 // pi's terminator for the message ("stop" = turn-final reply, "toolUse" =
 // intermediate step, "" = unknown), recorded so the UI can tell a completed
 // answer from an interstitial.
-func (p *streamParser) persistAssistant(text, stopReason string) {
+func (p *streamParser) persistAssistant(text, stopReason string, streamIDs ...string) {
 	if strings.TrimSpace(text) == "" || text == p.last {
 		return
 	}
@@ -691,7 +691,15 @@ func (p *streamParser) persistAssistant(text, stopReason string) {
 			}
 		}
 	}
-	p.srv.hub.Publish(events.Event{Type: "agent.message", SessionID: p.sessionID, Payload: stored})
+	if len(streamIDs) > 0 {
+		payload := struct {
+			store.Message
+			StreamIDs []string `json:"stream_ids"`
+		}{stored, streamIDs}
+		p.srv.hub.Publish(events.Event{Type: "agent.message", SessionID: p.sessionID, Payload: payload})
+	} else {
+		p.srv.hub.Publish(events.Event{Type: "agent.message", SessionID: p.sessionID, Payload: stored})
+	}
 }
 
 func (p *streamParser) persistShellOutput(text string) {

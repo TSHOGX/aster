@@ -128,21 +128,18 @@ const COMPONENTS: Components = {
   )
 };
 
-/*
-  `detect: true` is the load-bearing option: by default rehype-highlight only
-  colors fences that carry an explicit language, and a good share of what the
-  agent emits is a bare ``` block — those were rendering as flat monochrome text,
-  which reads as "this app has no syntax highlighting".
-
-  Auto-detection can misjudge a two-line fragment, but a plausible guess beats
-  guaranteed monochrome, and any fence the agent does label still takes the
-  labeled path.
-*/
 const REHYPE_PLUGINS: PluggableList = [
+  () => (tree: HastNode) => {
+    const walk = (node: HastNode) => {
+      if (node.tagName === "code" && new TextEncoder().encode(nodeText(node)).length > 8192) node.properties = { ...node.properties, className: ["no-highlight"] };
+      node.children?.forEach(walk);
+    };
+    walk(tree);
+  },
   [
     rehypeHighlight,
     {
-      detect: true,
+      detect: false,
       // Includes lowlight's `common` set — this option replaces the plugin's
       // registry rather than extending it. See lib/highlight-languages.ts.
       languages: HIGHLIGHT_LANGUAGES
@@ -153,12 +150,12 @@ const REHYPE_PLUGINS: PluggableList = [
 // Parsing markdown + syntax highlighting is expensive, so we memoize: with a
 // shallow prop compare a committed bubble never re-parses, and during a stream
 // this only re-renders when `content` actually changes.
-function MarkdownViewImpl({ content, className }: { content: string; className?: string }) {
+function MarkdownViewImpl({ content, className, highlight = true }: { content: string; className?: string; highlight?: boolean }) {
   return (
     <div className={cn("markdown-body", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={REHYPE_PLUGINS}
+        rehypePlugins={highlight ? REHYPE_PLUGINS : []}
         components={COMPONENTS}
       >
         {content}

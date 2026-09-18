@@ -83,7 +83,7 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 
 	replayedThrough := lastEventID
 	if cursorProvided {
-		if nextAfter, err := s.writeSSEReplay(r.Context(), w, flusher, sessionID, lastEventID, userID); err != nil {
+		if nextAfter, err := s.writeSSEReplay(r.Context(), w, flusher, sessionID, lastEventID, userID, r.URL.Query().Get("view") == "workbench"); err != nil {
 			s.log.Warn("failed to replay stream events", "session_id", sessionID, "last_event_id", lastEventID, "error", err)
 			return
 		} else if nextAfter > replayedThrough {
@@ -118,7 +118,11 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if err := s.writeSSEEvent(w, event); err != nil {
+			event = s.publicEventForDelivery(event)
+			if r.URL.Query().Get("view") == "workbench" {
+				event = workbenchEvent(event)
+			}
+			if err := writeSSEEventFramed(w, event); err != nil {
 				return
 			}
 			if event.EventID > replayedThrough {
@@ -178,7 +182,7 @@ func (s *Server) storeSessionOwner(sessionID, userID string) {
 	}
 }
 
-func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, lastEventID int64, userID string) (int64, error) {
+func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sessionID string, lastEventID int64, userID string, workbench ...bool) (int64, error) {
 	replayAfter := lastEventID
 	if oldest, ok, err := s.store.OldestEventID(ctx, sessionID); err != nil {
 		return replayAfter, err
@@ -217,7 +221,11 @@ func (s *Server) writeSSEReplay(ctx context.Context, w http.ResponseWriter, flus
 			replayedThrough = record.EventID
 			continue
 		}
-		if err := s.writeSSEEventUncached(w, event); err != nil {
+		event = publicEvent(event)
+		if len(workbench) > 0 && workbench[0] {
+			event = workbenchEvent(event)
+		}
+		if err := writeSSEEventFramed(w, event); err != nil {
 			return replayedThrough, err
 		}
 		replayedThrough = record.EventID

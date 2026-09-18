@@ -3,10 +3,12 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { Bot } from "lucide-react";
 
+import { LazyTrace, MessagePreview, messageBase } from "./message-detail";
 import { MarkdownView } from "./markdown-view";
 import { TraceList } from "./trace-list";
 import { MessageActions } from "./message-actions";
 import type { ApiMessage, TraceNode } from "@/lib/types";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
 import { brandName } from "@/lib/ui-config";
 import { formatFullTimestamp, formatTime } from "@/lib/format";
@@ -14,6 +16,7 @@ import { formatFullTimestamp, formatTime } from "@/lib/format";
 function MessageBubbleImpl({
   message,
   sessionId,
+  resourceBase,
   showActions = true
 }: {
   message: ApiMessage;
@@ -22,7 +25,9 @@ function MessageBubbleImpl({
   // surface it on a turn's final assistant reply — the answer to the user's
   // message — not on the intermediate tool-use steps that precede it.
   showActions?: boolean;
+  resourceBase?: string;
 }) {
+  const base = messageBase(sessionId, message.id, resourceBase);
   const isUser = message.role === "user";
 
   // A user turn is a short quoted prompt: it gets a right-aligned bubble that
@@ -34,7 +39,7 @@ function MessageBubbleImpl({
       <div className="flex flex-col items-end gap-1 py-4">
         <div className="max-w-[85%] rounded-[var(--radius-xl)] rounded-br-[var(--radius-xs)] bg-[var(--color-user-bubble)] px-3.5 py-2.5">
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-            {message.content}
+            {message.content_truncated ? <MessagePreview message={message} base={base} /> : message.content}
           </div>
         </div>
         <time
@@ -65,8 +70,8 @@ function MessageBubbleImpl({
           </time>
         </div>
         <div className="mt-1.5">
-          <TraceList nodes={message.trace ?? []} />
-          <MarkdownView content={message.content} />
+          {message.has_trace && !message.trace ? <LazyTrace base={base} /> : <TraceList nodes={message.trace ?? []} />}
+          {message.content_truncated ? <MessagePreview message={message} base={base} /> : <MarkdownView content={message.content} />}
           {showActions ? <MessageActions message={message} sessionId={sessionId} /> : null}
         </div>
       </div>
@@ -116,6 +121,7 @@ function StreamingBubbleImpl({ text, liveTrace }: { text: string; liveTrace?: Tr
   // Throttle only the markdown text so the expensive parse/highlight runs at
   // ~12fps instead of once per streamed token. The live trace still updates
   // immediately below.
+  const t = useT();
   const throttled = useThrottledValue(text, 80);
   return (
     <div className="flex gap-3 py-4">
@@ -129,7 +135,8 @@ function StreamingBubbleImpl({ text, liveTrace }: { text: string; liveTrace?: Tr
         </div>
         <div className="mt-1.5">
           <TraceList nodes={liveTrace ?? []} defaultOpen />
-          <MarkdownView content={throttled || "…"} />
+          <MarkdownView content={throttled || "…"} highlight={false} />
+          {text.length >= 8192 && <p className="text-xs text-[var(--color-foreground-muted)]">{t("perf.preview")}</p>}
         </div>
       </div>
     </div>

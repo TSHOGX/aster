@@ -1,5 +1,6 @@
 "use client";
 
+import { MessagePreview, messageBase } from "./message-detail";
 import type { ApiMessage } from "@/lib/types";
 
 /**
@@ -11,7 +12,8 @@ import type { ApiMessage } from "@/lib/types";
  * from its own fetch. Data comes in as props; nothing here reaches for the
  * workbench's auth/SSE/session state.
  */
-export function ShellEntry({ message }: { message: ApiMessage }) {
+export function ShellEntry({ message, resourceBase }: { message: ApiMessage; resourceBase?: string }) {
+  if (message.content_truncated) return <MessagePreview message={message} base={messageBase(message.session_id, message.id, resourceBase)} />;
   const isUser = message.role === "user";
   // Horizontal padding belongs to the centering wrapper in the parent, so the
   // entry itself only owns its vertical rhythm.

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Check, Copy, MoreHorizontal, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
 
+import { completeMessageContent, messageBase } from "./message-detail";
 import { useHarness } from "@/components/harness-provider";
 import type { ApiMessage } from "@/lib/types";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -70,7 +71,9 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
   };
 
   const handleCopy = async () => {
-    if (await copyText(stripMarkdown(message.content), "message")) {
+    let content: string;
+    try { content = await completeMessageContent(message, messageBase(sessionId, message.id)); } catch { toast.error("Failed to load full message"); return; }
+    if (await copyText(stripMarkdown(content), "message")) {
       setCopied(true);
       toast.success(t("message.copied"));
     }
@@ -81,7 +84,9 @@ export function MessageActions({ message, sessionId }: { message: ApiMessage; se
     if (action === "sessionId") {
       if (await copyText(sessionId, "session id")) toast.success(t("message.copiedSessionId"));
     } else {
-      if (await copyText(message.content, "markdown")) toast.success(t("message.copiedMarkdown"));
+      let content: string;
+      try { content = await completeMessageContent(message, messageBase(sessionId, message.id)); } catch { toast.error("Failed to load full message"); return; }
+      if (await copyText(content, "markdown")) toast.success(t("message.copiedMarkdown"));
     }
   };
 

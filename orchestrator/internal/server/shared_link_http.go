@@ -230,7 +230,18 @@ func (s *Server) sharedAPI(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	scope := store.MessagePageParams{SessionID: link.SessionID, Summary: link.Visibility != store.ShareVisibilityFull, MaxID: link.MaxMessageID}
 	switch {
+	case len(parts) == 3 && parts[1] == "messages" && parts[2] == "page":
+		s.serveMessagePage(w, r, scope)
+	case len(parts) == 4 && parts[1] == "messages" && (parts[3] == "content" || parts[3] == "trace-content"):
+		s.serveMessageContent(w, r, scope, parts[2])
+	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "trace":
+		s.serveMessageTrace(w, r, scope, parts[2])
+	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "mentioned-files":
+		s.serveMentionedFiles(w, r, scope, parts[2], link.ID)
+	case len(parts) == 3 && parts[1] == "artifacts" && (parts[2] == "children" || parts[2] == "search"):
+		s.serveArtifactPage(w, r, store.ArtifactPageParams{SessionID: link.SessionID, LinkID: link.ID})
 	case len(parts) == 1:
 		writeJSON(w, http.StatusOK, sharedLinkSession(session, link))
 	case len(parts) == 2 && parts[1] == "messages":

@@ -12,18 +12,20 @@ import (
 // authed DTO is NOT automatically published here -- adding it to a public page
 // has to be a decision somebody makes on purpose.
 type apiSharedLinkSession struct {
-	ID         string     `json:"id"`
-	Title      string     `json:"title"`
-	Mode       string     `json:"mode"`
-	ModeLabel  string     `json:"mode_label"`
-	Status     string     `json:"status"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	Visibility string     `json:"visibility"`
-	ExpiresAt  time.Time  `json:"link_expires_at"`
-	SharedAt   time.Time  `json:"shared_at"`
-	Frozen     bool       `json:"frozen"`
-	FrozenAt   *time.Time `json:"frozen_at,omitempty"`
+	MessagePages  bool       `json:"message_pages"`
+	ArtifactPages bool       `json:"artifact_pages"`
+	ID            string     `json:"id"`
+	Title         string     `json:"title"`
+	Mode          string     `json:"mode"`
+	ModeLabel     string     `json:"mode_label"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	Visibility    string     `json:"visibility"`
+	ExpiresAt     time.Time  `json:"link_expires_at"`
+	SharedAt      time.Time  `json:"shared_at"`
+	Frozen        bool       `json:"frozen"`
+	FrozenAt      *time.Time `json:"frozen_at,omitempty"`
 }
 
 func sharedLinkSession(session store.Session, link store.ShareLink) apiSharedLinkSession {
@@ -32,6 +34,7 @@ func sharedLinkSession(session store.Session, link store.ShareLink) apiSharedLin
 		mode = store.ModeForDriver(session.Agent)
 	}
 	dto := apiSharedLinkSession{
+		MessagePages: true, ArtifactPages: true,
 		ID:         session.ID,
 		Title:      session.Title,
 		Mode:       mode,

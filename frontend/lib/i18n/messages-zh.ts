@@ -17,6 +17,20 @@ import type { MessageKey } from "./messages-en";
  * names (Enter, Shift, ⌘P), /workspace, and units.
  */
 export const ZH: Record<MessageKey, string> = {
+  "perf.readFull": "阅读完整消息 · {count} 字符",
+  "perf.fullMessage": "完整消息",
+  "perf.previous": "上一页",
+  "perf.next": "下一页",
+  "perf.trace": "执行过程",
+  "perf.fullTrace": "阅读完整执行详情",
+  "perf.latest": "回到最新",
+  "perf.more": "加载更多",
+  "perf.retry": "重试",
+  "perf.preview": "实时预览 · 完整回复将在完成后提供",
+  "perf.loading": "加载中…",
+  "perf.close": "关闭",
+  "perf.download": "下载",
+
   // ── Sidebar ────────────────────────────────────────────────────────────────
   "sidebar.newSession": "新对话",
   "sidebar.schedules": "已安排",

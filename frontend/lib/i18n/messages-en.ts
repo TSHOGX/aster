@@ -13,6 +13,20 @@
  * `{name}` placeholders are substituted by format() in ./index.ts.
  */
 export const EN = {
+  "perf.readFull": "Read full message · {count} characters",
+  "perf.fullMessage": "Full message",
+  "perf.previous": "Previous",
+  "perf.next": "Next",
+  "perf.trace": "Execution trace",
+  "perf.fullTrace": "Read full execution detail",
+  "perf.latest": "Latest",
+  "perf.more": "Load more",
+  "perf.retry": "Retry",
+  "perf.preview": "Live preview · full reply available when complete",
+  "perf.loading": "Loading…",
+  "perf.close": "Close",
+  "perf.download": "Download",
+
   // ── Sidebar ────────────────────────────────────────────────────────────────
   "sidebar.newSession": "New conversation",
   "sidebar.schedules": "Scheduled",

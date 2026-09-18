@@ -50,12 +50,17 @@ type sessionStore interface {
 // messageStore covers messages, turn enqueueing, per-message traces, feedback,
 // and search. stream_parser.go reaches this role through p.srv.
 type messageStore interface {
+	ArtifactPage(context.Context, store.ArtifactPageParams) (store.ArtifactPage, error)
 	AddMessage(context.Context, string, string, string) (store.Message, error)
 	AddAssistantMessage(context.Context, string, string, string, string) (store.Message, error)
 	// ListMessages has no per-viewer feedback join. The public-link path uses it
 	// because an anonymous viewer has no identity to join against.
 	ListMessages(context.Context, string) ([]store.Message, error)
 	ListMessagesForUser(context.Context, string, string) ([]store.Message, error)
+	ListMessagesPage(context.Context, store.MessagePageParams) (store.MessagePage, error)
+	MessageContent(context.Context, store.MessagePageParams, int64, int, int) (store.ContentPage, error)
+	MessageTrace(context.Context, store.MessagePageParams, int64, int, int) (store.TracePage, error)
+	TraceContent(context.Context, store.MessagePageParams, int64, int, int, int) (store.ContentPage, error)
 	TurnUserMessage(context.Context, string, int64) (store.Message, bool, error)
 	MessageSession(context.Context, int64) (string, bool, error)
 	SetMessageFeedback(context.Context, int64, string, string) (string, error)
