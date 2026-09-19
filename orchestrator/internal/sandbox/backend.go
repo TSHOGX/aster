@@ -11,6 +11,8 @@ import (
 
 type ErrorClass string
 
+const Backpressure ErrorClass = "backpressure"
+
 const (
 	Invalid         ErrorClass = "invalid"
 	NotFound        ErrorClass = "not_found"

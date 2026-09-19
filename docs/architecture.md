@@ -176,3 +176,11 @@ revisions, unresolved stop and distinct error classes. The server still uses the
 local execution backend until environment, process, workspace and gateway cutover
 is complete. Architecture guards prevent the application ports and Khora adapter
 from importing the embedded runtime, host command execution or engine internals.
+
+The Khora process adapter uses the generated public Connect client with a
+persisted start key, process handle and placement epoch. Every output frame is
+checked against the accepted handle and epoch, including replay and terminal
+frames. Reconnect preserves the transport cursor and gap/reset markers. Closing
+a subscription detaches it; interrupt, terminate and kill are separate explicit
+operations addressed to the durable handle. Inputs are sent once, leaving command
+identity and retry after partial delivery to the application bridge carrier.
