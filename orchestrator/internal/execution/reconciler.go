@@ -120,6 +120,9 @@ func (r *Reconciler) apply(ctx context.Context, kind ReconcileKind, p ReconcileW
 	switch kind {
 	case ReconcileIdle:
 		_, err := r.Controller.ReconnectIdle(ctx, p.SessionID, p.GenerationID, r.Owner)
+		if errors.Is(err, ErrIdleAttachmentLost) {
+			return r.Controller.RecoverInterrupted(ctx, p.SessionID, p.GenerationID, r.Owner, IdleAttachmentLostReason)
+		}
 		return err
 	case ReconcileAbort, ReconcileSteer:
 		return r.Controller.DeliverTurnCommand(ctx, p.Command)

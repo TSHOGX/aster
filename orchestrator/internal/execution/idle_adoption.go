@@ -3,10 +3,25 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/sandbox"
 	"time"
 )
+
+// ErrIdleAttachmentLost is returned only after exact placement inspection and
+// an attachment failure that cannot be repaired by reconnecting that process.
+// Recovery still uses conditional lifecycle operations and retained journal replay.
+var ErrIdleAttachmentLost = errors.New("recorded idle process is unavailable")
+
+const IdleAttachmentLostReason = "recorded idle process could not be reattached"
+
+func idleAttachmentError(err error) error {
+	if sandbox.Is(err, sandbox.NotFound) || sandbox.Is(err, sandbox.Precondition) {
+		return fmt.Errorf("%w: %w", ErrIdleAttachmentLost, err)
+	}
+	return err
+}
 
 type IdleAdoption struct {
 	Binding       Binding
@@ -110,7 +125,7 @@ func (c *Controller) ReconnectIdle(ctx context.Context, session, generation, own
 	reference := sandbox.ProcessReference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, Handle: binding.ProcessHandle}
 	connection, err := attacher.AttachIdle(agentCtx, binding, reference)
 	if err != nil {
-		return Binding{}, err
+		return Binding{}, idleAttachmentError(err)
 	}
 	defer func() {
 		if !accepted {
@@ -120,7 +135,7 @@ func (c *Controller) ReconnectIdle(ctx context.Context, session, generation, own
 	select {
 	case err := <-connection.Ready():
 		if err != nil {
-			return Binding{}, err
+			return Binding{}, idleAttachmentError(err)
 		}
 	case <-leaseCtx.Done():
 		return Binding{}, leaseCtx.Err()

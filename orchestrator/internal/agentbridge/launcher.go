@@ -58,6 +58,11 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 	}
 	carrier, err := bridge.NewProcessTransport(runCtx, l.Backend, stream, request.ProcessReference, bridge.Scope{SessionID: binding.SessionID, GenerationID: binding.GenerationID}, l.Receipts)
 	if err != nil {
+		if reconnect && sandbox.Is(err, sandbox.Unavailable) {
+			// A dead process can reject the initial sync write with a generic
+			// transport failure. Its already-attached stream can still prove exit.
+			err = confirmIdleProcessExit(runCtx, stream, err, time.Second)
+		}
 		stream.Close()
 		cancel()
 		return nil, err
@@ -130,6 +135,26 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 		}
 	}()
 	return connection, nil
+}
+
+func confirmIdleProcessExit(ctx context.Context, stream sandbox.ProcessStream, original error, window time.Duration) error {
+	probe, cancel := context.WithTimeout(ctx, window)
+	defer cancel()
+	stop := context.AfterFunc(probe, func() { _ = stream.Close() })
+	defer stop()
+	for probe.Err() == nil {
+		frame, err := stream.Next()
+		if err != nil {
+			if sandbox.Is(err, sandbox.NotFound) || sandbox.Is(err, sandbox.Precondition) {
+				return err
+			}
+			return original
+		}
+		if frame.Kind == "end" {
+			return &sandbox.Error{Class: sandbox.Precondition, Operation: "inspect idle process exit", Cause: fmt.Errorf("process exited with code %d after sync failed: %w", frame.ExitCode, original)}
+		}
+	}
+	return original
 }
 
 type connection struct {

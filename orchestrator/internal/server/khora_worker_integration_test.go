@@ -482,6 +482,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			verifyKhoraInventory(t, ctx, srv, st, session.ID, false)
 		}
 	}
+	binding = verifyKhoraDeadIdleRecovery(t, ctx, srv, st, controller, backend, controlBackend, binding, leaseOwner)
 	if driver == "sh" {
 		controlBackend.fail.Store(true)
 		verifyKhoraShellStop(t, ctx, srv, st, controller, binding, leaseOwner)
@@ -710,6 +711,53 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		}
 	}
 
+}
+
+func verifyKhoraDeadIdleRecovery(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, backend *khorabackend.Backend, processes *partialAbortBackend, previous execution.Binding, owner string) execution.Binding {
+	t.Helper()
+	controller.RecoveryReader = agentbridge.RecoveryReader{Backend: backend, Records: st}
+	controller.RecoveryProjector = srv
+	controller.NativeRestorer = driverstate.Restorer{Backend: backend}
+	if err := backend.SignalProcess(ctx, sandbox.ProcessReference{StoreID: previous.StoreID, SandboxID: previous.SandboxID, Handle: previous.ProcessHandle, Epoch: previous.Epoch}, 9); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DBForTest().Exec(`UPDATE runtime_generations SET lease_expires_at='2000-01-01T00:00:00Z' WHERE generation_id=?`, previous.GenerationID); err != nil {
+		t.Fatal(err)
+	}
+	starts := processes.starts.Load()
+	writer, ok := srv.workspaceWrites.(execution.WorkspaceRecovery)
+	if !ok {
+		t.Fatal("reconciliation writer unavailable")
+	}
+	stop := startKhoraReconciler(t, ctx, srv, st, controller, writer, owner)
+	defer stop()
+	for {
+		var complete int
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM execution_recoveries WHERE generation_id=? AND stage='complete' AND reason=?`, previous.GenerationID, execution.IdleAttachmentLostReason).Scan(&complete); err != nil {
+			t.Fatal(err)
+		}
+		if complete == 1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	stop()
+	if processes.starts.Load() != starts {
+		t.Fatal("failed idle attachment started another agent before journal recovery")
+	}
+	assertIntegrationCapacity(t, ctx, st, 0)
+	replacement, err := controller.Ensure(ctx, execution.Session{ID: previous.SessionID, Driver: previous.Driver}, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.GenerationID == previous.GenerationID || replacement.SandboxID != previous.SandboxID || replacement.Epoch != previous.Epoch+2 || processes.starts.Load() != starts+1 {
+		t.Fatalf("dead idle recovery lost retained lifecycle: %+v -> %+v", previous, replacement)
+	}
+	return replacement
 }
 
 func waitCaptureMaintenance(t *testing.T, ctx context.Context, st *store.Store, session, want string) {
@@ -1223,6 +1271,13 @@ func startKhoraReconciler(t *testing.T, ctx context.Context, srv *Server, st *st
 	run, cancel := context.WithCancel(ctx)
 	finished := make(chan error, 1)
 	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: 2, CaptureWindow: time.Minute, Interval: 20 * time.Millisecond, ActionTimeout: 5 * time.Second}
+	var reported sync.Map
+	reconciler.OnError = func(kind execution.ReconcileKind, key string, err error) {
+		message := fmt.Sprintf("%s %s: %v", kind, key, err)
+		if _, loaded := reported.LoadOrStore(message, true); !loaded {
+			t.Logf("reconciliation retry: %s", message)
+		}
+	}
 	go func() { finished <- reconciler.Run(run) }()
 	var once sync.Once
 	stop := func() {

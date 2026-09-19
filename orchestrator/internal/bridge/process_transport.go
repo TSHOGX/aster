@@ -96,7 +96,7 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 				}
 			}
 			if event.Kind == "end" {
-				return nil, fmt.Errorf("bridge process exited before journal settlement: code %d", event.ExitCode)
+				return nil, &sandbox.Error{Class: sandbox.Precondition, Operation: "receive bridge journal", Cause: fmt.Errorf("bridge process exited before journal settlement: code %d", event.ExitCode)}
 			}
 			if event.Kind != "data" || event.Stream != "stdout" {
 				continue

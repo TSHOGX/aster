@@ -10,6 +10,43 @@ import (
 	"time"
 )
 
+func TestFailedIdleAdoptionEntersDurableInterruptedRecovery(t *testing.T) {
+	ctx := context.Background()
+	st, _, b, observation := boundExecutionFixture(t)
+	if err := st.ObserveExecutionProcess(ctx, observation); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BindBridgeStream(ctx, b.StoreID, b.SessionID, b.GenerationID, observation.ProcessHandle, b.Epoch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.NextInterruptedRecovery(ctx, b.GenerationID, b.Owner, execution.IdleAttachmentLostReason); !errors.Is(err, execution.ErrBusy) {
+		t.Fatalf("ordinary startup entered idle recovery: %v", err)
+	}
+	if err := st.AcceptExecutionBinding(ctx, observation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.BeginIdleExecutionAdoption(ctx, b.GenerationID, b.Owner, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := st.NextInterruptedRecovery(ctx, b.GenerationID, b.Owner, execution.IdleAttachmentLostReason)
+	if err != nil || recovery.Stage != "pause" || recovery.Operation.Kind != "pause" || recovery.Operation.Fence != b.EnvironmentFence+1 {
+		t.Fatalf("failed adoption recovery: %+v %v", recovery, err)
+	}
+	if _, err := st.BeginIdleExecutionAdoption(ctx, b.GenerationID, b.Owner, time.Minute); err == nil {
+		t.Fatal("adoption crossed reserved recovery lifecycle")
+	}
+	if work, err := st.PendingExecutionWork(ctx, execution.ReconcileIdle, b.Owner, "", 16); err != nil || len(work) != 0 {
+		t.Fatalf("recovery duplicated idle adoption work: %+v %v", work, err)
+	}
+	if work, err := st.PendingExecutionWork(ctx, execution.ReconcileInterrupted, b.Owner, "", 16); err != nil || len(work) != 1 || work[0].Reason != execution.IdleAttachmentLostReason {
+		t.Fatalf("recovery obligation not restartable: %+v %v", work, err)
+	}
+	retry, err := st.NextInterruptedRecovery(ctx, b.GenerationID, b.Owner, execution.IdleAttachmentLostReason)
+	if err != nil || retry.Operation.ID != recovery.Operation.ID || retry.Operation.Fence != recovery.Operation.Fence {
+		t.Fatalf("recovery retry replaced lifecycle intent: %+v %v", retry, err)
+	}
+}
+
 func TestIdleAdoptionFencesDispatchUntilCurrentOwnerReplayAcceptance(t *testing.T) {
 	ctx := context.Background()
 	st, bridge, binding, observation := boundExecutionFixture(t)

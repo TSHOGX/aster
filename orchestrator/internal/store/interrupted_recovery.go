@@ -40,7 +40,16 @@ func (s *Store) NextInterruptedRecovery(ctx context.Context, generation, owner, 
 	now := time.Now().UTC()
 	if errors.Is(err, sql.ErrNoRows) {
 		if binding.State != "accepted" && binding.State != "retired" {
-			return recovery, execution.ErrBusy
+			// A failed idle attachment has already fenced dispatch. Only that
+			// durable adoption marker may enter recovery from starting; ordinary
+			// process startup and in-flight work cannot use this exception.
+			var adopting int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM idle_execution_adoptions a JOIN runtime_generations g ON g.generation_id=a.generation_id WHERE a.generation_id=? AND a.owner=? AND g.lease_owner=a.owner AND g.status='starting' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.session_id=? AND t.status IN ('leased','running'))`, generation, owner, binding.SessionID).Scan(&adopting); err != nil {
+				return recovery, err
+			}
+			if binding.State != "starting" || binding.Owner != owner || adopting != 1 {
+				return recovery, execution.ErrBusy
+			}
 		}
 		if binding.StoreID != environment.StoreID || binding.SandboxID != environment.SandboxID || binding.Epoch != environment.Epoch || binding.EnvironmentFence != environment.Fence {
 			return recovery, execution.ErrStaleOperation

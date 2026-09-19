@@ -474,6 +474,20 @@ adoptions. Successful adoption keeps the generation, process handle, epoch and
 native history; it does not reactivate old turn grants. In-flight attachment and
 unexpected-epoch recovery remain separate work.
 
+After exact placement inspection, a missing process or an attachment precondition
+failure enters interrupted recovery through the background reconciler. A process
+exit observed before the replay barrier has the same classification. The attached
+process stream is also checked for up to one second when the initial
+synchronization write returns a transport error; EOF or timeout alone does not prove process exit. The
+durable idle-adoption marker permits this transition from `starting`; ordinary
+startup and in-flight turns cannot use it. Recovery reserves the conditional pause before
+remote I/O, drains routes, replays the retained journal, restores completed native
+history and ends paused. Its durable operation is picked up by the interrupted
+recovery loop after a restart. No replacement agent starts during recovery.
+Transport outages, cancellation, incompatible protocols and changed backend
+identity do not trigger this fallback. A changed placement still fails the
+conditional lifecycle fence.
+
 Explicit idle recovery can fence an abandoned execution under the current product
 owner even when its previous lease expired. It preserves queued prompts and
 reuses the conditional pause/resume path to restore native history in a new
