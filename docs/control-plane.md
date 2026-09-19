@@ -183,3 +183,14 @@ reusing a terminal key for a new attempt, or applying an old callback after a
 successor advances the fence is refused. Only a reconciled successful outcome
 can update observed sandbox identity, placement epoch and mutation revision.
 These records do not activate execution or grant gateway authority by themselves.
+
+The environment execution service reserves and records an issued operation before
+calling the backend. Its repository calls finish before remote work begins;
+a blocked remote call does not hold the database writer. A lost pause/resume
+reply can be reconciled after a 412 only when current inspection establishes the
+original operation's exact postcondition and epoch. It never refreshes an old
+request's mutation revision. Other uncertain outcomes keep the lane occupied.
+Capacity and invalid-request refusals are terminal; a generic 409 remains
+uncertain because it may describe an in-progress idempotent operation. Successful
+terminal replay returns the committed result without remote redispatch, and an
+older operation cannot replay across a successor's fence.
