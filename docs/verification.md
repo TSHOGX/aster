@@ -20,7 +20,7 @@ npm test
 npm run build
 cd ..
 
-python3 -m unittest sandbox-image/tests/test_harness_bridge_client.py
+python3 -m unittest discover -s sandbox-image/tests -p 'test_*.py'
 python3 -m unittest discover -s scripts/release -p 'test_*.py'
 python3 scripts/check-public-docs.py
 ```

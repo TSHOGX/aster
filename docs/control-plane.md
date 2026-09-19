@@ -194,3 +194,24 @@ Capacity and invalid-request refusals are terminal; a generic 409 remains
 uncertain because it may describe an in-progress idempotent operation. Successful
 terminal replay returns the committed result without remote redispatch, and an
 older operation cannot replay across a successor's fence.
+
+## Process carrier framing and guest journal
+
+The process carrier codec uses version 1 JSON records prefixed by byte `0x1e`
+and terminated by newline, with an 8 MiB frame limit. JSON escapes those bytes
+inside strings. A new prefix abandons an incomplete send, allowing a retry to
+resynchronize without joining two partial commands. Go/Python interoperability
+tests cover split boundaries, Unicode, control characters and integer precision.
+Stream positions belong to an execution journal independently of Khora's process
+cursor. The framing contract includes an unconditional sync/state exchange for
+every attachment; an engine gap flag cannot replace that exchange.
+
+The guest journal uses SQLite WAL with FULL synchronization and one producer lock
+per execution. It commits records before returning them for publication, retains
+head and acknowledged positions across reopen, and deletes only acknowledged
+output. A host position below the retained boundary is an explicit gap. Command
+IDs retain payload digests, and contradictory duplicates are refused. The default
+logical journal capacity is 256 MiB; exhaustion fails instead of dropping records.
+Filesystem quota remains the physical storage bound. These codecs and persistence
+primitives are tested independently; the existing guest claim loop still uses the
+local queue carrier.

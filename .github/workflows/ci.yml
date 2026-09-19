@@ -25,6 +25,8 @@ jobs:
         working-directory: orchestrator
     steps:
       - uses: actions/checkout@v4
+      - name: Install guest protocol test runtime
+        run: apt-get update -qq && apt-get install -y --no-install-recommends python3
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Fetch pinned Go dependencies
         env:
@@ -61,7 +63,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest sandbox-image/tests/test_harness_bridge_client.py
+      - run: python3 -m unittest discover -s sandbox-image/tests -p 'test_*.py'
       - run: python3 -m py_compile scripts/release/*.py
       - run: python3 scripts/check-public-docs.py
       - run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
