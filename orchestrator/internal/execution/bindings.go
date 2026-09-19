@@ -1,0 +1,65 @@
+package execution
+
+import (
+	"encoding/json"
+	"errors"
+	"time"
+)
+
+var (
+	ErrBackendIdentityChanged = errors.New("sandbox backend durable identity changed")
+	ErrOperationConflict      = errors.New("environment operation conflicts with durable intent")
+	ErrStaleOperation         = errors.New("environment operation fence changed")
+)
+
+type BackendIdentity struct{ Name, StoreID, Version string }
+
+// Environment outlives an execution. Its sandbox identity and storage remain
+// bound while processes and accepted placement epochs are replaced.
+type Environment struct {
+	ID, SessionID, BackendName, StoreID, SandboxID string
+	Desired                                        json.RawMessage
+	Fence                                          int64
+	MutationRevision                               string
+	Epoch                                          uint64
+}
+
+type OperationState string
+
+const (
+	OperationPending   OperationState = "pending"
+	OperationIssued    OperationState = "issued"
+	OperationUncertain OperationState = "uncertain"
+	OperationSucceeded OperationState = "succeeded"
+	OperationFailed    OperationState = "failed"
+)
+
+// Operation preserves both the remote idempotency key and immutable request.
+// Uncertain outcomes retain the environment lane until reconciled; time alone
+// never authorizes a successor to reuse its sandbox or volumes.
+type Operation struct {
+	ID, EnvironmentID, Kind, IdempotencyKey, MutationRevision string
+	Fence                                                     int64
+	State                                                     OperationState
+	Request, Result                                           json.RawMessage
+	Error                                                     string
+	CreatedAt, UpdatedAt                                      time.Time
+}
+
+type OperationIntent struct {
+	ID, EnvironmentID, Kind, IdempotencyKey string
+	ExpectedFence                           int64
+	Request                                 json.RawMessage
+	Now                                     time.Time
+}
+
+type OperationOutcome struct {
+	ID                          string
+	Fence                       int64
+	State                       OperationState
+	Result                      json.RawMessage
+	Error                       string
+	SandboxID, MutationRevision string
+	Epoch                       uint64
+	Now                         time.Time
+}

@@ -237,6 +237,45 @@ CREATE TABLE IF NOT EXISTS bridge_projected_messages (
   UNIQUE(message_id)
 );
 
+CREATE TABLE IF NOT EXISTS sandbox_backends (
+  name TEXT PRIMARY KEY,
+  store_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  UNIQUE(name,store_id)
+);
+CREATE TABLE IF NOT EXISTS sandbox_environments (
+  environment_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),
+  backend_name TEXT NOT NULL,
+  store_id TEXT NOT NULL,
+  sandbox_id TEXT,
+  desired TEXT NOT NULL,
+  fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0 AND typeof(fence)='integer'),
+  mutation_revision TEXT NOT NULL DEFAULT '',
+  epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),
+  FOREIGN KEY(backend_name,store_id) REFERENCES sandbox_backends(name,store_id),
+  UNIQUE(store_id,sandbox_id)
+);
+CREATE TABLE IF NOT EXISTS environment_operations (
+  operation_id TEXT PRIMARY KEY,
+  environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
+  kind TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  fence INTEGER NOT NULL,
+  mutation_revision TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('pending','issued','uncertain','succeeded','failed')),
+  request TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  result TEXT NOT NULL,
+  error TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(environment_id,idempotency_key),
+  UNIQUE(environment_id,fence)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS environment_operations_unresolved_uq
+  ON environment_operations(environment_id) WHERE state IN ('pending','issued','uncertain');
+
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
   path TEXT NOT NULL,

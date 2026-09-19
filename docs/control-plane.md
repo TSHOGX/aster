@@ -166,3 +166,20 @@ execution under the prior-generation fence, or claim retained state for resume.
 A conflicting resume claim causes one session refresh and at most one retry.
 The current backend adapter translates database statuses, allocation configuration
 and driver-state tokens; HTTP and scheduler callers use the same service result.
+
+## Retained environments and remote operation intents
+
+The control store has additive backend, retained-environment and operation
+records. Backend names are pinned to the engine's durable `store_id`; a changed
+identity is refused without rewriting existing sandbox references. Environment
+bindings are scoped to a session and backend identity and retain their desired
+configuration independently of replaceable processes.
+
+Each environment admits one unresolved operation. Reserving it advances a durable
+fence and preserves its request bytes, request digest, remote idempotency key and
+expected engine mutation revision. Pending, issued and uncertain outcomes keep
+the lane occupied, including across restart. Reusing a key with different intent,
+reusing a terminal key for a new attempt, or applying an old callback after a
+successor advances the fence is refused. Only a reconciled successful outcome
+can update observed sandbox identity, placement epoch and mutation revision.
+These records do not activate execution or grant gateway authority by themselves.
