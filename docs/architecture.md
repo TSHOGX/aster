@@ -96,3 +96,33 @@ records establish the actual installation identity.
   responsibilities even when release artifact tests pass.
 
 Feature planning remains in [issue #3](https://github.com/TSHOGX/agent-runtime-platform/issues/3).
+
+## Egress policy compilation
+
+`internal/egress` is a pure compiler for typed model, Doris, OBS and web service
+policies. Services contain protocol restrictions and an upstream reference;
+credentials stay with gateways. Compilation requires explicit service operations,
+dormant execution bindings, gateway protocol declarations, a private synthetic
+address range and the deployment's protected network inventory.
+
+The result contains default-deny rules, exact `/32` TCP service routes, guest
+host aliases and explicit TCP/UDP DNS resolver endpoints. Direct exceptions must
+name a prefix, protocol and port. Rules intersecting protected networks, synthetic
+service destinations or gateway listeners are rejected, as are direct DNS rules.
+The current compiler accepts IPv4; other address families fail validation. Shell
+policies cannot grant model access, and data access requires explicit operations.
+One listener serves one protocol, while distinct executions can use that listener
+through distinct original-destination tuples.
+
+Canonical application-policy and network-plan digests have separate scopes.
+Changing model or database entitlements changes the policy digest. Changing a
+placement, binding revision or synthetic destination changes the network digest.
+Equivalent ordering and duplicate set members produce identical results. The
+compiler performs no name resolution, socket I/O, route installation or grant
+activation; architecture tests enforce its dependency boundary.
+
+The existing sandbox backend still consumes persisted legacy rule strings; the
+compiler is independently exercised by contract tests. Those tests establish
+policy construction, not gateway provenance or kernel enforcement. The legacy
+allocator's policy identity now includes unrestricted egress explicitly, so
+restricted and `allow_all` policies cannot share an identity.

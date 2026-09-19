@@ -174,7 +174,7 @@ func egressPolicyID(cfg ResourceAllocatorConfig) string {
 		strings.Join(cfg.EgressDorisFEHosts, ",") + "|" +
 		strings.Join(cfg.EgressDorisBEHosts, ",") + "|" +
 		fmt.Sprint(cfg.EgressDorisPorts) + "|" + cfg.EgressDNSPolicy + "|" +
-		fmt.Sprintf("dns_allowed=%t", egressAllowsDNS(cfg))
+		fmt.Sprintf("dns_allowed=%t|allow_all=%t", egressAllowsDNS(cfg), cfg.EgressAllowAll)
 	return "egress_" + strings.ReplaceAll(payload, " ", "_")
 }
 

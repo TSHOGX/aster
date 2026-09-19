@@ -3978,3 +3978,12 @@ func TestRuntimeRevisionTracksSandboxDependencies(t *testing.T) {
 		t.Fatalf("no-op advanced revision: %d -> %d", previous.Revision, next.Revision)
 	}
 }
+
+func TestEgressPolicyIdentityIncludesInternetAccess(t *testing.T) {
+	cfg := testAllocatorConfig(t)
+	restricted := egressPolicyID(cfg)
+	cfg.EgressAllowAll = true
+	if egressPolicyID(cfg) == restricted {
+		t.Fatal("unrestricted egress reused restricted policy identity")
+	}
+}
