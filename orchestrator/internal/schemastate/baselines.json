@@ -57,9 +57,12 @@
     "25214cf239ccac73a87c618924c1c363ecb7e66454c8617c1084512bf0a91cca": "previous-current-upgraded",
     "5f6e970b97428be9d97010df915ac6ac394a99103dea70fd3b3af1fc45de44ae": "previous-current-upgraded",
     "cadc52c383407d9a4293741a98940baacfdbdcb47c04359e19c966c021f010b4": "previous-current-upgraded",
-    "8201bb041da736c1d60211330f0513d2ce539fad4d5a4eba4585e64b83d1d77c": "target-current-upgraded",
-    "15e205707cd634538929c453b240b34f62a806be67f61b0c797916adc867b88b": "target-current-upgraded",
-    "1f0f10896ad3039d44aa8b253bace7a71f60a764208b78c5d3609b3817f7e83b": "target-current-upgraded"
+    "8201bb041da736c1d60211330f0513d2ce539fad4d5a4eba4585e64b83d1d77c": "previous-current-upgraded",
+    "15e205707cd634538929c453b240b34f62a806be67f61b0c797916adc867b88b": "previous-current-upgraded",
+    "1f0f10896ad3039d44aa8b253bace7a71f60a764208b78c5d3609b3817f7e83b": "previous-current-upgraded",
+    "4ef69a9f98b496a989a5f7bf233f68b73e5c7c62ddca98a77edc20650c35f9b1": "target-current-upgraded",
+    "0b9078f52e5ad1ced5cf5553ef130fb0ca90711565c5b340740e412f1712e458": "target-current-upgraded",
+    "647970d75ed6982d9d0a4f4471075d0381248f65def998d21dd7df07011b47b3": "target-current-upgraded"
   },
   "memorystore": {
     "522cb29bb1efba3bab12ab61d523840ea5719461ae4b645335c01e7cb8a4aac2": "target-current-upgraded"

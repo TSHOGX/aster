@@ -462,6 +462,7 @@ func (p *Processor) handle(ctx context.Context, inbox Transport, scope Scope, en
 		grant, ok, err := p.Store.ResumeTurn(ctx, store.ResumeTurnParams{
 			SessionID:       envelope.SessionID,
 			GenerationID:    envelope.GenerationID,
+			RequestID:       requestID(envelope),
 			TurnID:          *envelope.TurnID,
 			Owner:           p.Owner,
 			LeaseTTL:        p.leaseTTL(),

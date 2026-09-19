@@ -39,30 +39,29 @@ func (s BoundBridgeStore) ClaimNextTurn(ctx context.Context, p ClaimNextTurnPara
 	if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
 		return TurnGrant{}, false, err
 	}
-	var replayID int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id=? AND generation_id=? AND claim_request_id=? AND lease_owner=? AND lease_expires_at>? AND status IN ('leased','running')`, p.SessionID, p.GenerationID, p.RequestID, p.Owner, formatTime(p.Now)).Scan(&replayID)
-	if err == nil {
-		grant, err := boundTurnGrantTx(ctx, tx, p.SessionID, p.GenerationID, replayID, p.Owner, p.Now)
+	if grant, granted, found, err := readBoundTurnRequestTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.RequestID, "claim", 0, p.Now); found || err != nil {
 		if err != nil {
 			return TurnGrant{}, false, err
 		}
-		grant.Replayed = true
-		return grant, true, tx.Commit()
+		return grant, granted, tx.Commit()
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return TurnGrant{}, false, err
+	finish := func(grant TurnGrant, granted bool) (TurnGrant, bool, error) {
+		if err := writeBoundTurnRequestTx(ctx, tx, p.GenerationID, p.RequestID, "claim", 0, grant, granted, p.Now); err != nil {
+			return TurnGrant{}, false, err
+		}
+		return grant, granted, tx.Commit()
 	}
 	var busy int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND status IN ('leased','running')`, p.SessionID).Scan(&busy); err != nil {
 		return TurnGrant{}, false, err
 	}
 	if busy != 0 {
-		return TurnGrant{}, false, tx.Commit()
+		return finish(TurnGrant{}, false)
 	}
 	var id int64
 	err = tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id=? AND status='queued' AND auto_dispatch=1 ORDER BY sequence LIMIT 1`, p.SessionID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return TurnGrant{}, false, tx.Commit()
+		return finish(TurnGrant{}, false)
 	}
 	if err != nil {
 		return TurnGrant{}, false, err
@@ -89,15 +88,15 @@ func (s BoundBridgeStore) ClaimNextTurn(ctx context.Context, p ClaimNextTurnPara
 	if err != nil {
 		return TurnGrant{}, false, err
 	}
-	return grant, true, tx.Commit()
+	return finish(grant, true)
 }
 
 func (s BoundBridgeStore) ResumeTurn(ctx context.Context, p ResumeTurnParams) (TurnGrant, bool, error) {
 	if p.Now.IsZero() {
 		p.Now = time.Now().UTC()
 	}
-	if p.LeaseTTL <= 0 {
-		return TurnGrant{}, false, fmt.Errorf("positive turn lease required")
+	if p.LeaseTTL <= 0 || p.RequestID == "" || p.TurnID <= 0 {
+		return TurnGrant{}, false, fmt.Errorf("positive turn lease, turn and request identity required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -106,6 +105,18 @@ func (s BoundBridgeStore) ResumeTurn(ctx context.Context, p ResumeTurnParams) (T
 	defer tx.Rollback()
 	if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
 		return TurnGrant{}, false, err
+	}
+	if grant, granted, found, err := readBoundTurnRequestTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.RequestID, "resume", p.TurnID, p.Now); found || err != nil {
+		if err != nil {
+			return TurnGrant{}, false, err
+		}
+		return grant, granted, tx.Commit()
+	}
+	finish := func(grant TurnGrant, granted bool) (TurnGrant, bool, error) {
+		if err := writeBoundTurnRequestTx(ctx, tx, p.GenerationID, p.RequestID, "resume", p.TurnID, grant, granted, p.Now); err != nil {
+			return TurnGrant{}, false, err
+		}
+		return grant, granted, tx.Commit()
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE turns SET lease_expires_at=? WHERE id=? AND session_id=? AND generation_id=? AND lease_owner=? AND lease_expires_at>? AND status IN ('leased','running')`, formatTime(p.Now.Add(p.LeaseTTL)), p.TurnID, p.SessionID, p.GenerationID, p.Owner, formatTime(p.Now))
 	if err != nil {
@@ -116,7 +127,7 @@ func (s BoundBridgeStore) ResumeTurn(ctx context.Context, p ResumeTurnParams) (T
 		return TurnGrant{}, false, err
 	}
 	if affected == 0 {
-		return TurnGrant{}, false, tx.Commit()
+		return finish(TurnGrant{}, false)
 	}
 	if err := issueBoundGrantsTx(ctx, tx, p.GenerationID, p.TurnID, p.Now.Add(p.LeaseTTL)); err != nil {
 		return TurnGrant{}, false, err
@@ -126,7 +137,7 @@ func (s BoundBridgeStore) ResumeTurn(ctx context.Context, p ResumeTurnParams) (T
 		return TurnGrant{}, false, err
 	}
 	grant.Replayed = true
-	return grant, true, tx.Commit()
+	return finish(grant, true)
 }
 
 func (s BoundBridgeStore) AckTurnStarted(ctx context.Context, p AckStartedParams) (int64, error) {

@@ -358,6 +358,18 @@ Gateway authority is separate; this path does not create a model source-IP
 context. The legacy lifecycle remains available for sessions pinned to that
 backend during migration.
 
+Retained claim and resume requests persist their decisions in
+`execution_turn_requests`, keyed by generation and request ID. Both grants and
+no-work decisions commit atomically with any turn lease and service-grant changes.
+Retrying an empty or busy claim cannot consume a prompt queued later. A successful
+retry returns the original grant payload, including its expiration and replay
+flag, without renewing the lease or changing the response command identity.
+Resume requests require a request ID and pin their original turn. Reusing an ID
+for another operation or turn fails. A cached grant still requires current
+execution authority and the original live turn attempt; terminal or expired
+grants cannot regain authority through replay. Idle attachment also persists its
+no-work decisions, which remain no-work after readiness is accepted.
+
 ## Egress grant and request ledger
 
 Compiled service bindings are stored as dormant exact destinations under a backend

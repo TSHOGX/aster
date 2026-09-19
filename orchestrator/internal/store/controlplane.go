@@ -79,6 +79,7 @@ type BridgeProtocolEvidence struct {
 type ResumeTurnParams struct {
 	SessionID       string
 	GenerationID    string
+	RequestID       string
 	TurnID          int64
 	Owner           string
 	LeaseTTL        time.Duration

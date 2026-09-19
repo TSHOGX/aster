@@ -32,7 +32,7 @@ func TestEngineInvalidationAllowsOriginalTurnSettlementWithoutNewAuthority(t *te
 	if _, _, err := bridge.ClaimNextTurn(ctx, ClaimNextTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, RequestID: "original-claim", LeaseTTL: time.Minute}); err == nil {
 		t.Fatal("invalidation allowed even a replayed claim to dispatch")
 	}
-	if _, _, err := bridge.ResumeTurn(ctx, ResumeTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, LeaseTTL: time.Minute}); err == nil {
+	if _, _, err := bridge.ResumeTurn(ctx, ResumeTurnParams{RequestID: "resume", SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, LeaseTTL: time.Minute}); err == nil {
 		t.Fatal("invalidation allowed resume authority")
 	}
 	if _, err := st.AuthorizeEgressRequest(ctx, queryRequest(b)); !errors.Is(err, egress.ErrDenied) {

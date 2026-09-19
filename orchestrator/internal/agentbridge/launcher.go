@@ -192,13 +192,25 @@ type idleBridgeStore struct {
 
 func (s idleBridgeStore) ClaimNextTurn(ctx context.Context, p store.ClaimNextTurnParams) (store.TurnGrant, bool, error) {
 	if !s.active.Load() {
-		return store.TurnGrant{}, false, nil
+		repository, ok := s.Store.(interface {
+			IdleClaimNextTurn(context.Context, store.ClaimNextTurnParams) (store.TurnGrant, bool, error)
+		})
+		if !ok {
+			return store.TurnGrant{}, false, fmt.Errorf("durable idle claim decisions unavailable")
+		}
+		return repository.IdleClaimNextTurn(ctx, p)
 	}
 	return s.Store.ClaimNextTurn(ctx, p)
 }
 func (s idleBridgeStore) ResumeTurn(ctx context.Context, p store.ResumeTurnParams) (store.TurnGrant, bool, error) {
 	if !s.active.Load() {
-		return store.TurnGrant{}, false, nil
+		repository, ok := s.Store.(interface {
+			IdleResumeTurn(context.Context, store.ResumeTurnParams) (store.TurnGrant, bool, error)
+		})
+		if !ok {
+			return store.TurnGrant{}, false, fmt.Errorf("durable idle resume decisions unavailable")
+		}
+		return repository.IdleResumeTurn(ctx, p)
 	}
 	return s.Store.ResumeTurn(ctx, p)
 }

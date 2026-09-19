@@ -290,6 +290,17 @@ CREATE TABLE IF NOT EXISTS execution_turn_commands (
  created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS execution_turn_requests (
+ generation_id TEXT NOT NULL REFERENCES execution_bindings(generation_id),
+ request_id TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('claim','resume')),
+ requested_turn_id INTEGER NOT NULL,
+ granted INTEGER NOT NULL CHECK(granted IN (0,1)),
+ grant_payload TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(generation_id,request_id)
+);
+
 CREATE TABLE IF NOT EXISTS idle_execution_adoptions (
  generation_id TEXT PRIMARY KEY REFERENCES execution_bindings(generation_id),
  owner TEXT NOT NULL,

@@ -68,7 +68,7 @@ func TestOpaqueExecutionDrivesTurnWithoutLegacyRuntimeOrIPAuthority(t *testing.T
 		t.Fatalf("bound claim: %+v %t %v", grant, ok, err)
 	}
 	replay, ok, err := bridge.ClaimNextTurn(ctx, request)
-	if err != nil || !ok || !replay.Replayed || replay.Attempt != grant.Attempt {
+	if err != nil || !ok || replay.Replayed != grant.Replayed || replay.Attempt != grant.Attempt {
 		t.Fatalf("claim replay changed attempt: %+v %v", replay, err)
 	}
 	if _, err := bridge.AckTurnStarted(ctx, AckStartedParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: grant.TurnID, LeaseTTL: time.Minute, EventType: "ack_turn_started", EventDedupeKey: "bound-start"}); err != nil {
