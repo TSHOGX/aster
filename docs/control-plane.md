@@ -397,8 +397,23 @@ specification digest instead of a legacy host contract, and successful Pi turns
 must carry native state advancement. The completion lease is rechecked at the
 current time after validation finishes.
 
-Runtime snapshots and active-sandbox admission counts now include opaque
-execution bindings. Accepted bindings appear live without legacy resource rows;
+Runtime snapshots include opaque execution bindings. Accepted bindings appear
+live without legacy resource rows;
 starting bindings appear starting. Epoch/fence mismatch or pending engine
 reconciliation cannot appear live. Binding acceptance and invalidation advance the
 same session revision used by HTTP/SSE convergence.
+
+Active-session admission counts environment capacity independently of generation
+readiness. Known running or unknown retained placements, including those whose
+generation or session failed, remain counted. Pending or uncertain create/resume
+intents also count before any sandbox reply is recorded. Only verified pause or
+a definitive rejected activation releases that active slot. This count is a
+product concurrency limit; Khora's configured memory reservation remains a
+separate admission commitment even while paused.
+
+Historical engine events invalidate capacity observations. A current inspection
+may settle that uncertainty only under the same environment fence, epoch and
+mutation revision, with no later event than the captured watermark. A running
+inspection does not clear agent-readiness invalidation. Unexpected epochs remain
+unknown and counted for recovery. Upgrades initialize existing environment
+observations to unknown rather than inferring termination from old generations.

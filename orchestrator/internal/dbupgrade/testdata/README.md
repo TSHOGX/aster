@@ -4,6 +4,8 @@ Generated using the real `store.Open` and `memorystore.Open` implementations at:
 
 - `669542d4ab3453509a6872e996cdf38bc7331edf`: fresh old databases.
 - `237f8b3b82cb6bc03f141da3df1f98e55445670e`: fresh target and target opened over old databases.
+- `0ccddb5`: retained environment and historical journal schema before adding
+  independent environment capacity observations.
 
 The memory schema is identical in all three cases, so it has one fixture.
 SQLite virtual-table shadow DDL is created by FTS itself; indexes and triggers,

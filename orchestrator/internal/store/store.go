@@ -398,12 +398,14 @@ func (s *Store) CountSandboxOccupyingSessions(ctx context.Context) (int, error) 
 	err := s.db.QueryRowContext(ctx, `
 SELECT COUNT(DISTINCT s.id)
 FROM sessions s
-JOIN runtime_generations g ON g.generation_id = s.active_generation_id
+LEFT JOIN runtime_generations g ON g.generation_id = s.active_generation_id
   AND g.session_id = s.id
 LEFT JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
-LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
-WHERE s.status NOT IN ('failed', 'destroyed')
-  AND (r.resource_state IN ('allocating', 'ready', 'live', 'recreating') OR b.state IN ('starting','accepted'))`).Scan(&count)
+WHERE (s.status NOT IN ('failed', 'destroyed') AND r.resource_state IN ('allocating', 'ready', 'live', 'recreating'))
+ OR EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.session_id=s.id AND (
+   (e.sandbox_id IS NOT NULL AND e.observed_state!='paused') OR
+   EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=e.environment_id AND o.kind IN ('create','resume') AND o.state IN ('pending','issued','uncertain'))
+ ))`).Scan(&count)
 	return count, err
 }
 

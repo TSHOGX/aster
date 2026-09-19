@@ -22,6 +22,7 @@ type Environment struct {
 	Fence                                          int64
 	MutationRevision                               string
 	Epoch                                          uint64
+	ObservedState                                  string
 }
 
 type OperationState string

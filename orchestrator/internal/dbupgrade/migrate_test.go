@@ -31,7 +31,7 @@ func legacy(t *testing.T, base, kind, path string) {
 	}
 }
 func TestBaselineUpgradeAndRepeat(t *testing.T) {
-	for _, base := range []string{"669542d", "target-fresh", "target-upgraded"} {
+	for _, base := range []string{"669542d", "target-fresh", "target-upgraded", "0ccddb5"} {
 		t.Run(base, func(t *testing.T) {
 			dir := t.TempDir()
 			c, m := filepath.Join(dir, "control.db"), filepath.Join(dir, "memory.db")
@@ -42,6 +42,9 @@ func TestBaselineUpgradeAndRepeat(t *testing.T) {
 				t.Fatal(e)
 			}
 			_, e = db.Exec(`INSERT INTO users(id,display_name,created_at) VALUES('u','历史用户','2026-09-11'); INSERT INTO sessions(id,user_id,status,driver_id,mode,workspace,restore_id,created_at,updated_at) VALUES('s','u','created','pi','agent','/test','restore','2026-09-11','2026-09-11'); INSERT INTO messages(session_id,role,content,created_at) VALUES('s','user','历史消息','2026-09-11'); INSERT INTO turns(session_id,sequence,role,content,status,attempt,created_at) VALUES('s',1,'user','历史消息','queued',0,'2026-09-11')`)
+			if e == nil && base == "0ccddb5" {
+				_, e = db.Exec(`INSERT INTO sandbox_backends(name,store_id,version) VALUES('engine','retained-store','pinned'); INSERT INTO sandbox_environments(environment_id,session_id,backend_name,store_id,sandbox_id,desired,fence,mutation_revision,epoch) VALUES('retained','s','engine','retained-store','retained-sandbox','{}',4,'retained-revision',2)`)
+			}
 			db.Close()
 			if e != nil {
 				t.Fatal(e)
@@ -65,6 +68,12 @@ func TestBaselineUpgradeAndRepeat(t *testing.T) {
 			}
 			if e = db.QueryRow(`SELECT count(*),max(materializes_message) FROM turns`).Scan(&count, &materializes); e != nil || count != 1 || materializes != 0 {
 				t.Fatalf("turns: %d %d %v", count, materializes, e)
+			}
+			if base == "0ccddb5" {
+				var state, sandbox string
+				if e = db.QueryRow(`SELECT observed_state,sandbox_id FROM sandbox_environments WHERE environment_id='retained'`).Scan(&state, &sandbox); e != nil || state != "unknown" || sandbox != "retained-sandbox" {
+					t.Fatalf("retained environment migration: %s %s %v", state, sandbox, e)
+				}
 			}
 		})
 	}

@@ -44,7 +44,7 @@ func (s *Store) PinBackendIdentity(ctx context.Context, identity execution.Backe
 }
 
 func (s *Store) CreateEnvironmentBinding(ctx context.Context, p execution.Environment) error {
-	if p.ID == "" || p.SessionID == "" || p.BackendName == "" || p.StoreID == "" || p.SandboxID != "" || p.Fence != 0 || p.Epoch != 0 || p.MutationRevision != "" {
+	if p.ID == "" || p.SessionID == "" || p.BackendName == "" || p.StoreID == "" || p.SandboxID != "" || p.Fence != 0 || p.Epoch != 0 || p.MutationRevision != "" || p.ObservedState != "" {
 		return fmt.Errorf("new environment requires session/backend identity and no observed execution")
 	}
 	desired, err := normalizedOperationJSON(p.Desired)
@@ -83,7 +83,7 @@ func (s *Store) GetEnvironmentBinding(ctx context.Context, id string) (execution
 func environmentWith(ctx context.Context, db dbRunner, id string) (execution.Environment, error) {
 	var p execution.Environment
 	var desired string
-	err := db.QueryRowContext(ctx, `SELECT environment_id,session_id,backend_name,store_id,coalesce(sandbox_id,''),desired,fence,mutation_revision,epoch FROM sandbox_environments WHERE environment_id=?`, id).Scan(&p.ID, &p.SessionID, &p.BackendName, &p.StoreID, &p.SandboxID, &desired, &p.Fence, &p.MutationRevision, &p.Epoch)
+	err := db.QueryRowContext(ctx, `SELECT environment_id,session_id,backend_name,store_id,coalesce(sandbox_id,''),desired,fence,mutation_revision,epoch,observed_state FROM sandbox_environments WHERE environment_id=?`, id).Scan(&p.ID, &p.SessionID, &p.BackendName, &p.StoreID, &p.SandboxID, &desired, &p.Fence, &p.MutationRevision, &p.Epoch, &p.ObservedState)
 	p.Desired = json.RawMessage(desired)
 	return p, err
 }
@@ -278,13 +278,22 @@ func (s *Store) RecordEnvironmentOperationOutcome(ctx context.Context, p executi
 		return fmt.Errorf("only a reconciled successful operation can update environment observation")
 	}
 	if p.State == execution.OperationSucceeded && (p.SandboxID != "" || p.MutationRevision != "" || p.Epoch != 0) {
+		var observedState string
+		switch operation.Kind {
+		case "create", "resume":
+			observedState = "running"
+		case "pause", "configure":
+			observedState = "paused"
+		default:
+			return fmt.Errorf("only lifecycle operations can record environment observations")
+		}
 		if p.SandboxID == "" || p.MutationRevision == "" || p.Epoch == 0 || p.Epoch < environment.Epoch {
 			return fmt.Errorf("complete current sandbox observation required")
 		}
 		if environment.SandboxID != "" && environment.SandboxID != p.SandboxID {
 			return execution.ErrOperationConflict
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET sandbox_id=?,mutation_revision=?,epoch=? WHERE environment_id=? AND fence=?`, p.SandboxID, p.MutationRevision, p.Epoch, environment.ID, p.Fence); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET sandbox_id=?,mutation_revision=?,epoch=?,observed_state=? WHERE environment_id=? AND fence=?`, p.SandboxID, p.MutationRevision, p.Epoch, observedState, environment.ID, p.Fence); err != nil {
 			return err
 		}
 	}

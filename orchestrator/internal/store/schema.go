@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS sandbox_environments (
   fence INTEGER NOT NULL DEFAULT 0 CHECK(fence>=0 AND typeof(fence)='integer'),
   mutation_revision TEXT NOT NULL DEFAULT '',
   epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),
+  observed_state TEXT NOT NULL DEFAULT 'unknown' CHECK(observed_state IN ('unknown','running','paused')),
   FOREIGN KEY(backend_name,store_id) REFERENCES sandbox_backends(name,store_id),
   UNIQUE(store_id,sandbox_id)
 );
@@ -1244,6 +1245,13 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 	}
 	if err := s.ensureRuntimeGenerationColumns(ctx); err != nil {
 		return err
+	}
+	if exists, err := s.columnExists(ctx, "sandbox_environments", "observed_state"); err != nil {
+		return err
+	} else if !exists {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE sandbox_environments ADD COLUMN observed_state TEXT NOT NULL DEFAULT 'unknown' CHECK(observed_state IN ('unknown','running','paused'))`); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureTurnColumns(ctx); err != nil {
 		return err

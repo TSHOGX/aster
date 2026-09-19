@@ -113,6 +113,9 @@ func (s *Store) CommitEngineEvents(ctx context.Context, identity string, expecte
 		if err != nil {
 			return 0, err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET observed_state='unknown' WHERE store_id=? AND sandbox_id=?`, identity, event.SandboxID); err != nil {
+			return 0, err
+		}
 		if event.Sequence > current {
 			current = event.Sequence
 		}
@@ -122,6 +125,61 @@ func (s *Store) CommitEngineEvents(ctx context.Context, identity string, expecte
 		return 0, err
 	}
 	return current, tx.Commit()
+}
+
+func (s *Store) CommitEnvironmentInspection(ctx context.Context, p execution.EnvironmentInspection) error {
+	if p.EventSequence < -1 {
+		return fmt.Errorf("invalid inspection event watermark")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	environment, err := environmentWith(ctx, tx, p.EnvironmentID)
+	if err != nil {
+		return err
+	}
+	if environment.Fence != p.Fence {
+		return execution.ErrStaleOperation
+	}
+	if p.Observed.StoreID != environment.StoreID {
+		return execution.ErrBackendIdentityChanged
+	}
+	if p.Observed.SandboxID != environment.SandboxID || environment.SandboxID == "" {
+		return execution.ErrOperationConflict
+	}
+	var later int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM environment_reconcile_requests WHERE environment_id=? AND event_sequence>?`, environment.ID, p.EventSequence).Scan(&later); err != nil {
+		return err
+	}
+	if later != 0 {
+		return execution.ErrStaleOperation
+	}
+	validState := (p.Observed.State == "running" && p.Observed.PlacementState == "active") || (p.Observed.State == "paused" && p.Observed.PlacementState == "lost")
+	if !validState || p.Observed.Epoch != environment.Epoch || p.Observed.MutationRevision != environment.MutationRevision {
+		if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET observed_state='unknown' WHERE environment_id=?`, environment.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO environment_reconcile_requests(environment_id,reason,event_sequence) VALUES(?,'placement_changed',?) ON CONFLICT(environment_id) DO UPDATE SET reason=excluded.reason,event_sequence=max(environment_reconcile_requests.event_sequence,excluded.event_sequence)`, environment.ID, max(p.EventSequence, 0)); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return execution.ErrResumeConflict
+	}
+	// Running inspection does not re-enable protocol readiness. Only a current
+	// agent handshake can clear an execution's invalidation and grant authority.
+	if p.Observed.State == "paused" {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM environment_reconcile_requests WHERE environment_id=? AND event_sequence<=?`, environment.ID, p.EventSequence); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET observed_state=? WHERE environment_id=?`, p.Observed.State, environment.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) FinishEngineResync(ctx context.Context, identity string, expected int64) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE engine_event_cursors SET resync=0 WHERE store_id=? AND after_sequence=? AND after_sequence>=resync_watermark`, identity, expected)

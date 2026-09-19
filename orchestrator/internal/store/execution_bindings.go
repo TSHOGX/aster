@@ -151,6 +151,9 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 	if err := requireOneRow(result, "execution ready lease CAS failed"); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET observed_state='running' WHERE environment_id=(SELECT environment_id FROM execution_bindings WHERE generation_id=?)`, p.GenerationID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

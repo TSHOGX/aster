@@ -169,6 +169,7 @@ func runKhoraWorker(t *testing.T, driver string) {
 			if err := controller.ReleaseIdle(ctx, session.ID, binding.GenerationID, leaseOwner); err != nil {
 				t.Fatal(err)
 			}
+			assertIntegrationCapacity(t, ctx, st, 0)
 			// Replay the actual historical pause before the replacement starts.
 			// Its invalidation must be settled by new epoch readiness, not ignored.
 			for paused := false; !paused; {
@@ -196,6 +197,11 @@ func runKhoraWorker(t *testing.T, driver string) {
 					}
 				}
 			}
+			assertIntegrationCapacity(t, ctx, st, 1)
+			if _, err := execution.InspectEnvironment(ctx, st, backend, binding.EnvironmentID); err != nil {
+				t.Fatal(err)
+			}
+			assertIntegrationCapacity(t, ctx, st, 0)
 			binding, err = controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
 			if err != nil {
 				t.Fatal(err)
@@ -203,6 +209,7 @@ func runKhoraWorker(t *testing.T, driver string) {
 			if binding.SandboxID != initial.SandboxID || binding.Epoch != initial.Epoch+1 || binding.GenerationID == initial.GenerationID {
 				t.Fatalf("retained resume lost identity: %+v -> %+v", initial, binding)
 			}
+			assertIntegrationCapacity(t, ctx, st, 1)
 		}
 		if cycle == 2 {
 			if err := controller.Close(); err != nil {
@@ -339,6 +346,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		if _, err := st.FailGenerationWithEvent(ctx, store.FailGenerationParams{SessionID: session.ID, GenerationID: binding.GenerationID, TurnID: turn.TurnID, Owner: leaseOwner, ErrorClass: "placement_lost", Reason: "injected transport loss before output ingestion"}); err != nil {
 			t.Fatal(err)
 		}
+		assertIntegrationCapacity(t, ctx, st, 1)
 		for _, kind := range []string{"pause", "resume"} {
 			environment, err := st.GetSessionEnvironment(ctx, session.ID)
 			if err != nil {
@@ -348,6 +356,11 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			key := "historical-recovery-" + kind
 			if _, err := (execution.EnvironmentService{Repository: st, Backend: backend}).Run(ctx, execution.OperationIntent{ID: key, EnvironmentID: environment.ID, Kind: kind, IdempotencyKey: key, ExpectedFence: environment.Fence, Request: request}); err != nil {
 				t.Fatal(err)
+			}
+			if kind == "pause" {
+				assertIntegrationCapacity(t, ctx, st, 0)
+			} else {
+				assertIntegrationCapacity(t, ctx, st, 1)
 			}
 		}
 		faults := &recoveryFaultRecords{Store: st, fail: true}
@@ -392,6 +405,14 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
 	}
 
+}
+
+func assertIntegrationCapacity(t *testing.T, ctx context.Context, st *store.Store, want int) {
+	t.Helper()
+	count, err := st.CountSandboxOccupyingSessions(ctx)
+	if err != nil || count != want {
+		t.Fatalf("environment capacity: %d want %d: %v", count, want, err)
+	}
 }
 
 type recoveryFaultRecords struct {
