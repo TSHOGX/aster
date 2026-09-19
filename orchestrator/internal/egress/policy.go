@@ -89,6 +89,7 @@ type Grant struct {
 }
 
 type RequestContext struct {
+	SessionID, UserID                                                 string
 	RequestID, GrantID, BindingID, BackendID, GenerationID, ServiceID string
 	TurnID                                                            int64
 	Epoch, BindingRevision                                            uint64
@@ -125,6 +126,7 @@ type SelectedService struct {
 }
 
 type Compilation struct {
+	BackendID      string            `json:"backend_id"`
 	Version        int               `json:"version"`
 	PolicyRevision string            `json:"policy_revision"`
 	Driver         string            `json:"driver"`
@@ -147,7 +149,7 @@ var fixedProtected = []netip.Prefix{
 // resolver endpoints and exact TCP service routes. Broader internet access must
 // be represented by an explicitly granted service or validated direct rules.
 func Compile(policy Policy, catalog []Service, bindings []RuntimeBinding, deployment Deployment) (Compilation, error) {
-	out := Compilation{Version: 1, PolicyRevision: policy.Revision, Driver: policy.Driver, Default: "deny"}
+	out := Compilation{BackendID: deployment.BackendID, Version: 1, PolicyRevision: policy.Revision, Driver: policy.Driver, Default: "deny"}
 	if policy.Revision == "" || (policy.Driver != "pi" && policy.Driver != "sh") {
 		return out, fmt.Errorf("policy revision and supported driver required")
 	}
@@ -290,37 +292,7 @@ func Compile(policy Policy, catalog []Service, bindings []RuntimeBinding, deploy
 	sort.Slice(out.Resolvers, func(i, j int) bool { return out.Resolvers[i].Less(out.Resolvers[j]) })
 	sort.Slice(out.Allow, func(i, j int) bool { return tupleKey(out.Allow[i]) < tupleKey(out.Allow[j]) })
 	out.Allow = dedupeTuples(out.Allow)
-	type policyService struct {
-		Service Service
-		Access  ServiceAccess
-	}
-	var effectiveServices []policyService
-	var effectiveBindings []RuntimeBinding
-	for _, selected := range out.Services {
-		effectiveServices = append(effectiveServices, policyService{selected.Service, selected.Access})
-		effectiveBindings = append(effectiveBindings, selected.Binding)
-	}
-	var err error
-	out.PolicyDigest, err = contentDigest(struct {
-		Version                   int
-		Revision, Driver, Default string
-		Allow                     []Tuple
-		Resolvers                 []netip.Addr
-		Services                  []policyService
-	}{out.Version, out.PolicyRevision, out.Driver, out.Default, out.Allow, out.Resolvers, effectiveServices})
-	if err != nil {
-		return out, err
-	}
-	out.NetworkDigest, err = contentDigest(struct {
-		Version            int
-		BackendID, Default string
-		Allow              []Tuple
-		Via                []Route
-		Hosts              []GuestHost
-		Resolvers          []netip.Addr
-		Bindings           []RuntimeBinding
-	}{out.Version, deployment.BackendID, out.Default, out.Allow, out.Via, out.Hosts, out.Resolvers, effectiveBindings})
-	if err != nil {
+	if err := setCompilationDigests(&out, deployment.BackendID); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -387,6 +359,9 @@ func operationAllowed(s Service, operation string) bool {
 	case DorisMySQL:
 		return operation == "query"
 	case OBSHTTP:
+		if s.OBS == nil {
+			return false
+		}
 		return operation == "get" || operation == "list" || (!s.OBS.ReadOnly && (operation == "put" || operation == "delete"))
 	case WebHTTP:
 		return operation == "request"
@@ -454,4 +429,64 @@ func contentDigest(value any) (string, error) {
 	}
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func setCompilationDigests(out *Compilation, backendID string) error {
+	type policyService struct {
+		Service Service
+		Access  ServiceAccess
+	}
+	var effectiveServices []policyService
+	var effectiveBindings []RuntimeBinding
+	for _, selected := range out.Services {
+		effectiveServices = append(effectiveServices, policyService{selected.Service, selected.Access})
+		effectiveBindings = append(effectiveBindings, selected.Binding)
+	}
+	var err error
+	out.PolicyDigest, err = contentDigest(struct {
+		Version                   int
+		Revision, Driver, Default string
+		Allow                     []Tuple
+		Resolvers                 []netip.Addr
+		Services                  []policyService
+	}{out.Version, out.PolicyRevision, out.Driver, out.Default, out.Allow, out.Resolvers, effectiveServices})
+	if err != nil {
+		return err
+	}
+	out.NetworkDigest, err = contentDigest(struct {
+		Version            int
+		BackendID, Default string
+		Allow              []Tuple
+		Via                []Route
+		Hosts              []GuestHost
+		Resolvers          []netip.Addr
+		Bindings           []RuntimeBinding
+	}{out.Version, backendID, out.Default, out.Allow, out.Via, out.Hosts, out.Resolvers, effectiveBindings})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateCompilation detects mutation of a previously compiled policy before
+// persistence. It does not resolve configuration or activate route authority.
+func ValidateCompilation(compilation Compilation) error {
+	expectedPolicy, expectedNetwork := compilation.PolicyDigest, compilation.NetworkDigest
+	backend := compilation.BackendID
+	for _, selected := range compilation.Services {
+		if backend != "" && backend != selected.Binding.BackendID {
+			return fmt.Errorf("compiled policy spans backend identities")
+		}
+		backend = selected.Binding.BackendID
+	}
+	if backend == "" {
+		return fmt.Errorf("compiled backend identity required")
+	}
+	if err := setCompilationDigests(&compilation, backend); err != nil {
+		return err
+	}
+	if expectedPolicy != compilation.PolicyDigest || expectedNetwork != compilation.NetworkDigest {
+		return fmt.Errorf("compiled egress policy digest mismatch")
+	}
+	return nil
 }

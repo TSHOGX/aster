@@ -251,3 +251,23 @@ func TestTwoExecutionsUseExactTuplesOnOneProtocolListener(t *testing.T) {
 		t.Fatal("shared entitlements lost distinct binding identities")
 	}
 }
+
+func TestTypedResourceAuthorizationUsesServiceRestrictions(t *testing.T) {
+	service := Service{Protocol: OBSHTTP, OBS: &OBSService{Buckets: []string{"approved"}, Prefixes: []string{"reports/"}, ReadOnly: true}}
+	allowed := AuthorizationRequest{Operation: "get", Bucket: "approved", ObjectKey: "reports/result.parquet"}
+	if !AllowsResource(service, allowed) {
+		t.Fatal("approved object read refused")
+	}
+	for _, request := range []AuthorizationRequest{{Operation: "put", Bucket: "approved", ObjectKey: "reports/result.parquet"}, {Operation: "get", Bucket: "other", ObjectKey: "reports/result.parquet"}, {Operation: "get", Bucket: "approved", ObjectKey: "private/result.parquet"}, {Operation: "list", Bucket: "approved"}} {
+		if AllowsResource(service, request) {
+			t.Fatalf("object restriction bypassed: %+v", request)
+		}
+	}
+	if AllowsResource(Service{Protocol: OBSHTTP}, AuthorizationRequest{Operation: "put"}) {
+		t.Fatal("missing protocol configuration authorized")
+	}
+	model := Service{Protocol: ModelHTTP, Model: &ModelService{Models: []string{"approved-model"}}}
+	if !AllowsResource(model, AuthorizationRequest{Operation: "generate", Model: "approved-model"}) || AllowsResource(model, AuthorizationRequest{Operation: "generate", Model: "other-model"}) {
+		t.Fatal("model entitlement ignored")
+	}
+}

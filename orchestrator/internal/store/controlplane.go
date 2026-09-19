@@ -1130,6 +1130,9 @@ WHERE session_id = ?
   )`, formatTime(expiresAt), p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID, p.SessionID, p.GenerationID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE egress_grants SET expires_at=? WHERE generation_id=? AND state='active' AND turn_id IN (SELECT id FROM turns WHERE generation_id=? AND lease_owner=? AND status IN ('leased','running'))`, formatTime(expiresAt), p.GenerationID, p.GenerationID, p.Owner); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

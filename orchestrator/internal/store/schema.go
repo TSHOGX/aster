@@ -308,6 +308,50 @@ CREATE TABLE IF NOT EXISTS execution_bindings (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS execution_binding_process_uq ON execution_bindings(store_id,process_handle) WHERE process_handle!='';
 
+CREATE TABLE IF NOT EXISTS egress_route_bindings (
+ binding_id TEXT PRIMARY KEY,
+ backend_id TEXT NOT NULL,
+ generation_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ revision INTEGER NOT NULL,
+ service_id TEXT NOT NULL,
+ destination TEXT NOT NULL,
+ gateway TEXT NOT NULL,
+ policy_digest TEXT NOT NULL,
+ network_digest TEXT NOT NULL,
+ service TEXT NOT NULL,
+ operations TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('dormant','active','revoked')),
+ UNIQUE(backend_id,destination)
+);
+CREATE TABLE IF NOT EXISTS egress_grants (
+ grant_id TEXT PRIMARY KEY,
+ binding_id TEXT NOT NULL REFERENCES egress_route_bindings(binding_id),
+ generation_id TEXT NOT NULL REFERENCES runtime_generations(generation_id),
+ turn_id INTEGER NOT NULL REFERENCES turns(id),
+ policy_digest TEXT NOT NULL,
+ binding_revision INTEGER NOT NULL,
+ expires_at TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('active','revoked'))
+);
+CREATE TABLE IF NOT EXISTS egress_requests (
+ backend_id TEXT NOT NULL,
+ request_id TEXT NOT NULL,
+ request_digest TEXT NOT NULL,
+ binding_id TEXT NOT NULL,
+ grant_id TEXT NOT NULL,
+ generation_id TEXT NOT NULL,
+ turn_id INTEGER NOT NULL,
+ epoch INTEGER NOT NULL,
+ service_id TEXT NOT NULL,
+ operation TEXT NOT NULL,
+ started_at TEXT NOT NULL,
+ outcome TEXT,
+ bytes INTEGER,
+ finished_at TEXT,
+ PRIMARY KEY(backend_id,request_id)
+);
+
 CREATE TABLE IF NOT EXISTS engine_event_cursors (
   store_id TEXT PRIMARY KEY,
   after_sequence INTEGER NOT NULL,
@@ -702,7 +746,14 @@ BEGIN SELECT RAISE(ABORT,'workspace mutation in progress'); END;
 
 CREATE TRIGGER IF NOT EXISTS retire_execution_binding AFTER UPDATE OF status ON runtime_generations
 WHEN NEW.status IN ('failed','destroyed')
-BEGIN UPDATE execution_bindings SET state='retired' WHERE generation_id=NEW.generation_id; END;
+BEGIN
+ UPDATE execution_bindings SET state='retired' WHERE generation_id=NEW.generation_id;
+ UPDATE egress_route_bindings SET state='revoked' WHERE generation_id=NEW.generation_id;
+ UPDATE egress_grants SET state='revoked' WHERE generation_id=NEW.generation_id;
+END;
+CREATE TRIGGER IF NOT EXISTS revoke_completed_turn_grants AFTER UPDATE OF status ON turns
+WHEN NEW.status IN ('completed','failed','canceled')
+BEGIN UPDATE egress_grants SET state='revoked' WHERE turn_id=NEW.id; END;
 
 CREATE TABLE IF NOT EXISTS events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT,

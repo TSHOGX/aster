@@ -82,6 +82,9 @@ func (s BoundBridgeStore) ClaimNextTurn(ctx context.Context, p ClaimNextTurnPara
 	if err != nil {
 		return TurnGrant{}, false, err
 	}
+	if err := issueBoundGrantsTx(ctx, tx, p.GenerationID, id, p.Now.Add(p.LeaseTTL)); err != nil {
+		return TurnGrant{}, false, err
+	}
 	grant, err := boundTurnGrantTx(ctx, tx, p.SessionID, p.GenerationID, id, p.Owner, p.Now)
 	if err != nil {
 		return TurnGrant{}, false, err
@@ -114,6 +117,9 @@ func (s BoundBridgeStore) ResumeTurn(ctx context.Context, p ResumeTurnParams) (T
 	}
 	if affected == 0 {
 		return TurnGrant{}, false, tx.Commit()
+	}
+	if err := issueBoundGrantsTx(ctx, tx, p.GenerationID, p.TurnID, p.Now.Add(p.LeaseTTL)); err != nil {
+		return TurnGrant{}, false, err
 	}
 	grant, err := boundTurnGrantTx(ctx, tx, p.SessionID, p.GenerationID, p.TurnID, p.Owner, p.Now)
 	if err != nil {

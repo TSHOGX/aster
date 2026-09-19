@@ -295,3 +295,24 @@ Generation retirement revokes binding acceptance. Gateway authority is separate;
 this path does not create a model source-IP context. The legacy server lifecycle
 continues to run until the new worker is wired into HTTP and scheduler entry
 points.
+
+## Egress grant and request ledger
+
+Compiled service bindings are stored as dormant exact destinations under a backend
+store identity. They activate only for an accepted execution. Turn claim creates
+scoped service grants in the same transaction as the lease; completion, failure,
+retirement and explicit revocation invalidate them. Revoked routes remain as tuple
+tombstones and cannot be reactivated by registration replay.
+
+Authorization joins the trusted original destination to its service, binding,
+accepted execution, current turn and unexpired grant. It enforces typed model,
+Doris database and OBS bucket/prefix/operation restrictions. Shell cannot gain
+model access through a registered route. The request ledger captures immutable
+turn/epoch/grant attribution when work starts; a late finish remains attached to
+that original turn after another turn begins. Repeated identical finish calls
+are idempotent, while conflicting reuse of request identity is refused.
+
+This establishes application authorization and audit persistence. A production
+gateway must still derive the destination from the accepted socket, enforce its
+protocol-specific upstream rules and close affected established flows on revoke.
+Database revocation alone is not a claim that an external stream has terminated.
