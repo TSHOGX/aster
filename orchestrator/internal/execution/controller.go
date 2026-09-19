@@ -228,6 +228,30 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 }
 
 func (c *Controller) ReleaseIdle(ctx context.Context, session, generation, owner string) error {
+	return c.releaseIdle(ctx, session, generation, owner, false)
+}
+
+// RecoverIdle is an explicit cold-recovery policy for an abandoned idle agent.
+// It does not adopt a live turn or infer that transport loss killed a process.
+func (c *Controller) RecoverIdle(ctx context.Context, session Session, generation, owner string) (Binding, error) {
+	if c.Repository == nil {
+		return Binding{}, fmt.Errorf("execution controller repository required")
+	}
+	latest, found, err := c.Repository.FindLastExecutionBinding(ctx, session.ID)
+	if err != nil {
+		return Binding{}, err
+	}
+	successor := "gen_" + uuid.NewSHA1(uuid.NameSpaceOID, []byte("resume-execution:"+generation)).String()
+	if found && ((latest.GenerationID == generation && latest.State == "retired") || (latest.GenerationID == successor && latest.Owner == owner)) {
+		return c.Ensure(ctx, session, owner)
+	}
+	if err := c.releaseIdle(ctx, session.ID, generation, owner, true); err != nil {
+		return Binding{}, err
+	}
+	return c.Ensure(ctx, session, owner)
+}
+
+func (c *Controller) releaseIdle(ctx context.Context, session, generation, owner string, recovery bool) error {
 	if c.Lifetime == nil || c.Repository == nil || c.Backend == nil || c.Routes == nil {
 		return fmt.Errorf("idle release controller ports required")
 	}
@@ -247,7 +271,12 @@ func (c *Controller) ReleaseIdle(ctx context.Context, session, generation, owner
 	if !found || latest.GenerationID != generation {
 		return ErrStaleOperation
 	}
-	if err := (IdleReleaseService{Repository: c.Repository, Backend: c.Backend, Routes: c.Routes}).Run(requestContext, generation, owner); err != nil {
+	service := IdleReleaseService{Repository: c.Repository, Backend: c.Backend, Routes: c.Routes}
+	run := service.Run
+	if recovery {
+		run = service.Recover
+	}
+	if err := run(requestContext, generation, owner); err != nil {
 		return err
 	}
 	if worker.connection != nil {

@@ -17,6 +17,7 @@ type IdleRelease struct {
 type IdleReleaseRepository interface {
 	EnvironmentRepository
 	BeginIdleExecutionRelease(context.Context, string, string, time.Time) (IdleRelease, error)
+	BeginIdleExecutionRecovery(context.Context, string, string, time.Time) (IdleRelease, error)
 	FinishIdleExecutionRelease(context.Context, string, string, time.Time) error
 }
 
@@ -49,10 +50,25 @@ type IdleReleaseService struct {
 // reserves pause intent. Unknown drain/pause outcomes retain the generation and
 // immutable operation. Retirement follows verified writer termination only.
 func (s IdleReleaseService) Run(ctx context.Context, generation, owner string) error {
+	return s.run(ctx, generation, owner, false)
+}
+
+// Recover reclaims an idle execution after product/transport ownership loss.
+// It preserves queued prompts but cannot retire a leased/running turn. Cold
+// recovery verifies pause before the controller starts a new placement epoch.
+func (s IdleReleaseService) Recover(ctx context.Context, generation, owner string) error {
+	return s.run(ctx, generation, owner, true)
+}
+
+func (s IdleReleaseService) run(ctx context.Context, generation, owner string, recovery bool) error {
 	if s.Repository == nil || s.Backend == nil || s.Routes == nil {
 		return fmt.Errorf("idle release repository, backend and route revoker required")
 	}
-	release, err := s.Repository.BeginIdleExecutionRelease(ctx, generation, owner, time.Now().UTC())
+	begin := s.Repository.BeginIdleExecutionRelease
+	if recovery {
+		begin = s.Repository.BeginIdleExecutionRecovery
+	}
+	release, err := begin(ctx, generation, owner, time.Now().UTC())
 	if err != nil {
 		return err
 	}

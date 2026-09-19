@@ -153,3 +153,6 @@ control-plane acceptance, not production model gateway or entitlement acceptance
 The shell case also injects a failure after protocol readiness but before binding
 acceptance, then retries the same process key and recovers readiness after its
 original hello has been acknowledged.
+Both worker cases also replace the product owner after the second turn, recover
+the abandoned idle execution, and complete a third turn in the retained sandbox.
+Pi keeps the same native session through all three epochs.

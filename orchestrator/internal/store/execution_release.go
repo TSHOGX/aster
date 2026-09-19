@@ -13,6 +13,14 @@ import (
 )
 
 func (s *Store) BeginIdleExecutionRelease(ctx context.Context, generation, owner string, now time.Time) (execution.IdleRelease, error) {
+	return s.beginIdleExecutionRelease(ctx, generation, owner, now, false)
+}
+
+func (s *Store) BeginIdleExecutionRecovery(ctx context.Context, generation, owner string, now time.Time) (execution.IdleRelease, error) {
+	return s.beginIdleExecutionRelease(ctx, generation, owner, now, true)
+}
+
+func (s *Store) beginIdleExecutionRelease(ctx context.Context, generation, owner string, now time.Time, recovery bool) (execution.IdleRelease, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -43,12 +51,27 @@ func (s *Store) BeginIdleExecutionRelease(ctx context.Context, generation, owner
 			return release, execution.ErrStaleOperation
 		}
 	} else if errors.Is(err, sql.ErrNoRows) {
-		if err := acceptedExecutionTx(ctx, tx, binding.SessionID, generation, owner, now); err != nil {
-			return release, err
+		turnPredicate := pendingTurnPredicate
+		if recovery {
+			// The current product owner can fence an abandoned idle binding even
+			// if its old lease expired. It cannot borrow old turn authority.
+			var current int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN runtime_generations g ON g.generation_id=b.generation_id JOIN sessions s ON s.id=b.session_id
+ WHERE b.generation_id=? AND b.state='accepted' AND b.process_handle!='' AND b.store_id=e.store_id AND b.sandbox_id=e.sandbox_id AND b.epoch=e.epoch AND b.environment_fence=e.fence AND g.lease_owner=b.owner AND g.status='idle' AND s.active_generation_id=b.generation_id AND s.status IN ('running_idle','running_active')`, generation).Scan(&current); err != nil {
+				return release, err
+			}
+			if current != 1 {
+				return release, execution.ErrStaleOperation
+			}
+			turnPredicate = "status IN ('leased','running')"
+		} else {
+			if err := acceptedExecutionTx(ctx, tx, binding.SessionID, generation, owner, now); err != nil {
+				return release, err
+			}
 		}
 		var busy int
 		if err := tx.QueryRowContext(ctx, `SELECT
-		 (SELECT count(*) FROM turns WHERE session_id=? AND `+pendingTurnPredicate+`) +
+		 (SELECT count(*) FROM turns WHERE session_id=? AND `+turnPredicate+`) +
 		 (SELECT count(*) FROM workspace_mutations WHERE session_id=? AND state IN ('active','uncertain')) +
 		 (SELECT count(*) FROM bridge_ingress i LEFT JOIN bridge_projections p ON p.generation_id=i.generation_id AND p.turn_id=i.turn_id AND p.attempt=i.attempt WHERE i.generation_id=? AND i.id>coalesce(p.last_record_id,0))`, binding.SessionID, binding.SessionID, generation).Scan(&busy); err != nil {
 			return release, err
@@ -148,7 +171,7 @@ func (s *Store) FinishIdleExecutionRelease(ctx context.Context, generation, owne
 	if _, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET status='destroyed',ended_at=?,last_seen_at=?,lease_owner=NULL,lease_expires_at=NULL WHERE generation_id=?`, formatTime(now), formatTime(now), generation); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE sessions SET active_generation_id=NULL,status='running_idle',updated_at=? WHERE id=? AND active_generation_id=?`, formatTime(now), binding.SessionID, generation)
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET active_generation_id=NULL,status=CASE WHEN EXISTS(SELECT 1 FROM turns WHERE session_id=sessions.id AND `+pendingTurnPredicate+`) THEN 'running_active' ELSE 'running_idle' END,updated_at=? WHERE id=? AND active_generation_id=?`, formatTime(now), binding.SessionID, generation)
 	if err != nil {
 		return err
 	}

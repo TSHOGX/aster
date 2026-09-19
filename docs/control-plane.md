@@ -366,6 +366,13 @@ the next turn. Configuration changes and unexpected placement replacement
 require separate reconciliation. Restart adoption of a live execution is not
 implicit in this controller path.
 
+Explicit idle recovery can fence an abandoned execution under the current product
+owner even when its previous lease expired. It preserves queued prompts and
+reuses the conditional pause/resume path to restore native history in a new
+epoch. A leased/running turn, unfinished projection or workspace mutation blocks
+this path. Recovery does not silently replay input or adopt authority from the
+previous owner. In-flight recovery requires a separate journal recovery outcome.
+
 Retained Pi executions validate native state through the guest helper, using the
 accepted backend/sandbox/epoch reference and `/root/.pi/agent/sessions`. The helper
 checks the native JSONL session header ID and performs the file/parent durability

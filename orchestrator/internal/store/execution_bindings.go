@@ -83,7 +83,7 @@ func (s *Store) ReserveExecutionBinding(ctx context.Context, p execution.Reserve
 	if err != nil {
 		return execution.Binding{}, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE sessions SET active_generation_id=?,status='running_idle',updated_at=? WHERE id=?`, p.GenerationID, formatTime(p.Now), p.SessionID)
+	_, err = tx.ExecContext(ctx, `UPDATE sessions SET active_generation_id=?,status=CASE WHEN EXISTS(SELECT 1 FROM turns WHERE session_id=sessions.id AND `+pendingTurnPredicate+`) THEN 'running_active' ELSE 'running_idle' END,updated_at=? WHERE id=?`, p.GenerationID, formatTime(p.Now), p.SessionID)
 	if err != nil {
 		return execution.Binding{}, err
 	}

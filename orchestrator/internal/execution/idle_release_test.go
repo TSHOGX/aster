@@ -3,6 +3,7 @@ package execution_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -170,6 +171,76 @@ func TestControllerResumesRetainedEnvironmentWithNewExecutionAndSameVolumes(t *t
 			old, err := st.GetExecutionBinding(ctx, first.GenerationID)
 			if err != nil || old.State != "retired" {
 				t.Fatalf("old execution revived: %+v %v", old, err)
+			}
+		})
+	}
+}
+
+func TestControllerColdRecoversAbandonedIdleOwnerWithoutRedispatch(t *testing.T) {
+	for _, inflight := range []bool{false, true} {
+		t.Run(map[bool]string{false: "queued", true: "leased"}[inflight], func(t *testing.T) {
+			ctx := context.Background()
+			controller, st, backend, launcher, owner := controllerFixture(t)
+			first, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			queued, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: first.SessionID, Content: "after restart"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inflight {
+				if _, ok, err := (store.BoundBridgeStore{Store: st}).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: first.SessionID, GenerationID: first.GenerationID, Owner: owner, RequestID: "before-restart", LeaseTTL: time.Minute}); err != nil || !ok {
+					t.Fatalf("claim: %t %v", ok, err)
+				}
+			}
+			if err := controller.Close(); err != nil {
+				t.Fatal(err)
+			}
+			replacement, err := store.AcquireOwnerLock(filepath.Join(t.TempDir(), "replacement"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer replacement.Close()
+			if err := st.WriteOwner(ctx, replacement); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.DBForTest().Exec(`UPDATE runtime_generations SET lease_expires_at='2000-01-01T00:00:00Z' WHERE generation_id=?`, first.GenerationID); err != nil {
+				t.Fatal(err)
+			}
+			nextOwner := store.GenerationLeaseOwner(replacement.UUID)
+			next := &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: staticPlan{}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: &recordingRevoker{}}
+			defer next.Close()
+			before := backend.calls
+			backend.loseResume = !inflight
+			second, err := next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "sh"}, first.GenerationID, nextOwner)
+			if inflight {
+				if err == nil || backend.calls != before {
+					t.Fatalf("live turn silently recovered or paused: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("lost recovery resume reply ignored")
+			}
+			second, err = next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "sh"}, first.GenerationID, nextOwner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if second.Owner != nextOwner || second.Epoch != first.Epoch+1 || second.SandboxID != first.SandboxID {
+				t.Fatalf("recovery lost retained state: %+v", second)
+			}
+			status, _, err := st.TurnStatus(ctx, first.SessionID, queued.TurnID)
+			if err != nil || status != "queued" {
+				t.Fatalf("queued turn was reclassified: %s %v", status, err)
+			}
+			var attempt int
+			if err := st.DBForTest().QueryRow(`SELECT attempt FROM turns WHERE id=?`, queued.TurnID).Scan(&attempt); err != nil || attempt != 0 {
+				t.Fatalf("recovery redispatched input: %d %v", attempt, err)
+			}
+			replayed, err := next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "sh"}, first.GenerationID, nextOwner)
+			if err != nil || replayed.GenerationID != second.GenerationID {
+				t.Fatalf("recovery retry replaced successor: %+v %v", replayed, err)
 			}
 		})
 	}

@@ -53,6 +53,7 @@ func runKhoraWorker(t *testing.T, driver string) {
 	}
 	directory := t.TempDir()
 	st, owner := openServerOwnedStore(t, ctx, directory)
+	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
 	now := time.Now().UTC()
 	session := store.Session{ID: "khora-worker-" + driver + "-session", UserID: "lab", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque-workspace", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}
 	if err := st.CreateSession(ctx, session); err != nil {
@@ -135,21 +136,21 @@ func runKhoraWorker(t *testing.T, driver string) {
 	plan := execution.LaunchPlan{TemplateID: template, SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Mounts: mounts, Network: network, Environment: processEnvironment}
 	repository := &acceptanceFaultRepository{Store: st, fail: driver == "sh"}
 	controller := &execution.Controller{Repository: repository, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
-	defer controller.Close()
+	defer func() { controller.Close() }()
 	if driver == "sh" {
-		if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID)); err == nil {
+		if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner); err == nil {
 			t.Fatal("injected acceptance failure ignored")
 		}
 	}
-	binding, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID))
+	binding, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	initial := binding
 	var initialNativeID, initialNativeFile string
-	for cycle := 0; cycle < 2; cycle++ {
+	for cycle := 0; cycle < 3; cycle++ {
 		if cycle == 1 {
-			if err := controller.ReleaseIdle(ctx, session.ID, binding.GenerationID, store.GenerationLeaseOwner(owner.UUID)); err != nil {
+			if err := controller.ReleaseIdle(ctx, session.ID, binding.GenerationID, leaseOwner); err != nil {
 				t.Fatal(err)
 			}
 			// Replay the actual historical pause before the replacement starts.
@@ -179,12 +180,34 @@ func runKhoraWorker(t *testing.T, driver string) {
 					}
 				}
 			}
-			binding, err = controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID))
+			binding, err = controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if binding.SandboxID != initial.SandboxID || binding.Epoch != initial.Epoch+1 || binding.GenerationID == initial.GenerationID {
 				t.Fatalf("retained resume lost identity: %+v -> %+v", initial, binding)
+			}
+		}
+		if cycle == 2 {
+			if err := controller.Close(); err != nil {
+				t.Fatal(err)
+			}
+			replacement, err := store.AcquireOwnerLock(filepath.Join(t.TempDir(), "replacement-owner"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer replacement.Close()
+			if err := st.WriteOwner(ctx, replacement); err != nil {
+				t.Fatal(err)
+			}
+			leaseOwner = store.GenerationLeaseOwner(replacement.UUID)
+			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+			binding, err = controller.RecoverIdle(ctx, execution.Session{ID: session.ID, Driver: driver}, binding.GenerationID, leaseOwner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if binding.SandboxID != initial.SandboxID || binding.Epoch != initial.Epoch+2 || binding.Owner != leaseOwner {
+				t.Fatalf("idle owner recovery lost retained environment: %+v", binding)
 			}
 		}
 		content := "printf 'product-worker-ok\\n'"
