@@ -433,6 +433,23 @@ native digest. Completion cannot commit without that row and snapshot evidence.
 Retries retain one request per state version. The request is independent of
 memory/evolve, and preserving the source does not wait for host archival.
 
+`cmd/native-capture` consumes those requests independently. Each batch selects
+the oldest pending state per session, reads its retained snapshot through the
+confined guest source, and verifies recorded size, digest and native session ID
+before publishing the content-addressed archive and existing trajectory rows.
+A durable receipt follows successful publication; a crash before that receipt
+retries the same bytes and archive identity. Skipped test sessions get explicit
+receipts. Failures in one session leave its request pending while other sessions
+can progress.
+
+The worker holds a canonical per-control-database publisher lock, opens only
+verified managed schemas, and serializes publication to preserve state ordering.
+Its source accepts a later epoch of the same retained sandbox but retains the
+request's producing epoch. Changed backend identity is rejected. Paused sources
+are deferred until ordinary activation; automatic capture maintenance activation
+is not yet wired. Legacy host-path capture enumeration excludes retained Khora
+sessions so it cannot overwrite their native projections.
+
 Runtime snapshots include opaque execution bindings. Accepted bindings appear
 live without legacy resource rows;
 starting bindings appear starting. Epoch/fence mismatch or pending engine

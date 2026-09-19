@@ -170,3 +170,7 @@ The Pi case also interrupts a fourth turn before host completion ingestion,
 recovers its output, restores the exact completed native digest, and preserves
 the interrupted native file. It retries a lost restore reply, resumes the same
 sandbox, and completes a successor turn while keeping the interrupted turn failed.
+It then captures all four completed snapshots from earlier producing epochs,
+checks every archive against its recorded digest, retries an injected lost
+receipt, and verifies exactly four raw-source records. A paused source defers
+capture without acknowledging the request.

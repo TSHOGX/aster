@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/memorystore"
+	"harness-platform/orchestrator/internal/nativecapture"
 )
 
 type CaptureIdentity struct{ SessionID, UserID, Status, NativeSessionID string }
@@ -19,6 +20,18 @@ type CaptureIdentity struct{ SessionID, UserID, Status, NativeSessionID string }
 // Engine-backed producers can supply a confined source stream; downstream
 // memory/evolve consumers still receive the existing raw-source/event records.
 func (c *Capturer) CaptureStream(ctx context.Context, identity CaptureIdentity, source io.Reader, modified time.Time) (CaptureResult, error) {
+	return c.captureStream(ctx, identity, source, modified, "", 0)
+}
+
+func (c *Capturer) CaptureNativeSnapshot(ctx context.Context, p nativecapture.Request, source io.Reader) (nativecapture.Result, error) {
+	if c == nil || c.store == nil || p.Size <= 0 || p.Size > 512<<20 || len(p.NativeDigest) != 64 {
+		return nativecapture.Result{}, fmt.Errorf("enabled capturer and bounded native snapshot evidence required")
+	}
+	result, err := c.captureStream(ctx, CaptureIdentity{SessionID: p.SessionID, UserID: p.UserID, Status: p.Status, NativeSessionID: p.NativeID}, io.LimitReader(source, p.Size+1), p.CreatedAt, p.NativeDigest, p.Size)
+	return nativecapture.Result{ArchivePath: result.ArchivePath, Skipped: result.Skipped, Reason: result.Reason}, err
+}
+
+func (c *Capturer) captureStream(ctx context.Context, identity CaptureIdentity, source io.Reader, modified time.Time, expectedDigest string, expectedSize int64) (CaptureResult, error) {
 	if c == nil {
 		return CaptureResult{SessionID: identity.SessionID, Skipped: true, Reason: "capturer disabled"}, nil
 	}
@@ -43,6 +56,10 @@ func (c *Capturer) CaptureStream(ctx context.Context, identity CaptureIdentity, 
 	if err != nil {
 		return CaptureResult{}, err
 	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if expectedDigest != "" && (digest != expectedDigest || size != expectedSize) {
+		return CaptureResult{}, fmt.Errorf("captured native snapshot does not match committed size/digest")
+	}
 	if err := staging.Chmod(0444); err != nil {
 		return CaptureResult{}, err
 	}
@@ -62,7 +79,6 @@ func (c *Capturer) CaptureStream(ctx context.Context, identity CaptureIdentity, 
 	if identity.NativeSessionID != "" && identity.NativeSessionID != meta.NativeSessionID {
 		return CaptureResult{}, fmt.Errorf("captured native session identity mismatch")
 	}
-	digest := hex.EncodeToString(hash.Sum(nil))
 	name := sanitizeName(meta.NativeSessionID) + "-" + digest + ".jsonl"
 	archive := filepath.Join(directory, name)
 	if err := os.Link(staging.Name(), archive); err != nil {

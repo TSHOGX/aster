@@ -84,3 +84,22 @@ user, for example `sudo env "GOPATH=$(go env GOPATH)" GOPROXY=off go -C orchestr
 test ./...`. This avoids introducing another Git
 credential into the root account. The engine binary used by the Khora adapter
 must report build version `14174318159f` and enable `--manual-cold-recovery`.
+
+Build the independent native capture worker with
+`go -C orchestrator build -o ../native-capture ./cmd/native-capture`. Against
+already-migrated managed databases, run:
+
+```bash
+./native-capture \
+  --control-db /srv/batterygpt/control.db \
+  --memory-db /srv/batterygpt/memory.db \
+  --trajectory-root /srv/batterygpt/trajectories \
+  --engine-endpoint http://127.0.0.1:8090
+```
+
+`--once` processes one batch. Continuous mode polls every five seconds and bounds
+each batch to two minutes by default. Run one publisher per control database;
+the command enforces this through a canonical lock next to that database. Stop
+the capture process along with the application for schema migration or database
+restore. This worker opens managed schemas without migrating them. Paused
+snapshots remain pending until the application activates their retained sandbox.

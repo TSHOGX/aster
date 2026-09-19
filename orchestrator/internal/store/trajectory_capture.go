@@ -47,11 +47,12 @@ func (s *Store) ListPiSessionsForCapture(ctx context.Context, since time.Time) (
 SELECT s.id, s.user_id, s.status, h.host_path, st.state_payload, s.ended_at
 FROM sessions s
 JOIN session_driver_homes h ON h.session_id = s.id AND h.driver = ?
-LEFT JOIN session_driver_states st ON st.session_id = s.id AND st.driver_id = ?`
+LEFT JOIN session_driver_states st ON st.session_id = s.id AND st.driver_id = ?
+WHERE NOT EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.session_id=s.id)`
 	args := []any{driverPi, driverPi}
 	if !since.IsZero() {
 		query += `
-WHERE (s.ended_at IS NULL OR s.ended_at >= ?)`
+AND (s.ended_at IS NULL OR s.ended_at >= ?)`
 		args = append(args, formatTime(since))
 	}
 	query += `

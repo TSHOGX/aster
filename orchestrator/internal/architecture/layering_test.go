@@ -31,6 +31,7 @@ type rule struct {
 }
 
 var rules = []rule{
+	{pkg: "internal/nativecapture", forbidden: []string{"internal/store", "internal/memorystore", "internal/trajectory", "internal/server", "internal/runtime"}, why: "capture worker coordinates consumer-owned interfaces; adapters own persistence and source mechanisms"},
 	{pkg: "internal/workspace", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "workspace operations expose portable streams and metadata; provider paths and filesystem mechanisms belong to adapters"},
 	{pkg: "internal/execution", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "execution coordinates application ownership through consumer-owned operations, independent of HTTP, persistence implementations and substrate adapters"},
 	{
@@ -166,9 +167,9 @@ func TestControlsourceIsTheOnlyStoreToMemorystoreBridge(t *testing.T) {
 		}
 	}
 
-	// cmd/orchestrator legitimately wires both together at the process entry
-	// point (it opens both databases and constructs the ingestor).
-	permitted := map[string]bool{"cmd/orchestrator": true}
+	// Process entry points open both databases and compose consumer-owned ports.
+	// Neither capture orchestration nor its archive sink imports both stores.
+	permitted := map[string]bool{"cmd/orchestrator": true, "cmd/native-capture": true}
 	for _, pkg := range joiners {
 		if !permitted[pkg] {
 			t.Errorf("layering violation: %s imports both store and memorystore in production code; "+

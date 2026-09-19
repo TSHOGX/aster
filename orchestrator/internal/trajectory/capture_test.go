@@ -2,6 +2,8 @@ package trajectory
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"harness-platform/orchestrator/internal/controlsource"
 	"harness-platform/orchestrator/internal/memorystore"
+	"harness-platform/orchestrator/internal/nativecapture"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 )
@@ -26,6 +29,34 @@ func writeNativePiFile(t *testing.T, home, rel, content string) string {
 		t.Fatalf("write native: %v", err)
 	}
 	return full
+}
+
+func TestNativeCaptureVerifiesBytesBeforePublishingConsumerState(t *testing.T) {
+	_, mem, _, ctx := newCaptureTestStore(t)
+	root := t.TempDir()
+	capturer := NewCapturer(mem, nil, root, nil)
+	body := `{"type":"session","version":3,"id":"native","timestamp":"2026-09-19T00:00:00Z","cwd":"/workspace"}` + "\n"
+	request := nativecapture.Request{SessionID: "captured", NativeID: "native", NativeDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(body))), Size: int64(len(body)), CreatedAt: time.Now()}
+	for _, bad := range []string{body + "extra", strings.Replace(body, "native", "edited", 1), body[:len(body)-1]} {
+		if _, err := capturer.CaptureNativeSnapshot(ctx, request, strings.NewReader(bad)); err == nil {
+			t.Fatal("mismatched snapshot published")
+		}
+	}
+	var count int
+	if err := mem.DBForTest().QueryRow(`SELECT count(*) FROM raw_sources`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("failed verification published source: %d %v", count, err)
+	}
+	first, err := capturer.CaptureNativeSnapshot(ctx, request, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := capturer.CaptureNativeSnapshot(ctx, request, strings.NewReader(body))
+	if err != nil || first != again {
+		t.Fatalf("archive retry changed identity: %+v %+v %v", first, again, err)
+	}
+	if raw, err := os.ReadFile(first.ArchivePath); err != nil || string(raw) != body {
+		t.Fatalf("native archive bytes changed: %v", err)
+	}
 }
 
 // newCaptureTestStore opens the control+memory database pair capture needs since

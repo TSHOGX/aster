@@ -440,6 +440,18 @@ CREATE TABLE IF NOT EXISTS native_capture_requests (
  UNIQUE(generation_id,turn_id)
 );
 
+CREATE TABLE IF NOT EXISTS native_capture_receipts (
+ session_id TEXT NOT NULL,
+ state_version INTEGER NOT NULL,
+ native_digest TEXT NOT NULL,
+ archive_path TEXT NOT NULL,
+ skipped INTEGER NOT NULL CHECK(skipped IN (0,1)),
+ reason TEXT NOT NULL,
+ completed_at TEXT NOT NULL,
+ PRIMARY KEY(session_id,state_version),
+ FOREIGN KEY(session_id,state_version) REFERENCES native_capture_requests(session_id,state_version)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
   path TEXT NOT NULL,

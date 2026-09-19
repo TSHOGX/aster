@@ -26,9 +26,13 @@ import (
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
+	"harness-platform/orchestrator/internal/memorystore"
+	"harness-platform/orchestrator/internal/nativecapture"
+	capturesource "harness-platform/orchestrator/internal/nativecapture/guest"
 	"harness-platform/orchestrator/internal/sandbox"
 	khorabackend "harness-platform/orchestrator/internal/sandbox/khora"
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/trajectory"
 	"harness-platform/orchestrator/internal/workspace"
 	guestfiles "harness-platform/orchestrator/internal/workspace/guest"
 )
@@ -463,10 +467,72 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, session.ID).Scan(&advanced); err != nil || advanced != 5 {
 				t.Fatalf("successor native state advancement: %d %v", advanced, err)
 			}
+			mem, err := memorystore.Open(ctx, filepath.Join(directory, "capture-memory.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer mem.Close()
+			captureStore := &captureFaultRepository{Store: st, fail: true}
+			capture := nativecapture.Worker{Repository: captureStore, Source: capturesource.Source{Backend: backend}, Sink: trajectory.NewCapturer(mem, nil, filepath.Join(directory, "trajectory"), nil)}
+			if err := controller.ReleaseIdle(ctx, session.ID, successor.GenerationID, leaseOwner); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := capture.Step(ctx, 32); err != nil || n != 0 {
+				t.Fatalf("paused capture was not deferred: %d %v", n, err)
+			}
+			if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := capture.Step(ctx, 32); err == nil || n != 0 {
+				t.Fatalf("lost capture receipt not surfaced: %d %v", n, err)
+			}
+			for range 4 {
+				if n, err := capture.Step(ctx, 32); err != nil || n != 1 {
+					t.Fatalf("completed snapshot capture: %d %v", n, err)
+				}
+			}
+			if n, err := capture.Step(ctx, 32); err != nil || n != 0 {
+				t.Fatalf("capture replay duplicated work: %d %v", n, err)
+			}
+			rows, err := st.DBForTest().Query(`SELECT r.native_digest,c.archive_path FROM native_capture_requests r JOIN native_capture_receipts c USING(session_id,state_version) WHERE r.session_id=?`, session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var digest, path string
+				if err := rows.Scan(&digest, &path); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := os.ReadFile(path)
+				if err != nil || fmt.Sprintf("%x", sha256.Sum256(raw)) != digest {
+					t.Fatalf("consumer archive differs from completed source: %s %v", path, err)
+				}
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			rows.Close()
+			var archives int
+			if err := mem.DBForTest().QueryRow(`SELECT count(*) FROM raw_sources WHERE session_id=?`, session.ID).Scan(&archives); err != nil || archives != 4 {
+				t.Fatalf("capture retry changed consumer archive count: %d %v", archives, err)
+			}
 		}
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
 	}
 
+}
+
+type captureFaultRepository struct {
+	*store.Store
+	fail bool
+}
+
+func (r *captureFaultRepository) CompleteNativeCapture(ctx context.Context, request nativecapture.Request, result nativecapture.Result) error {
+	if r.fail {
+		r.fail = false
+		return errors.New("injected lost capture receipt before commit")
+	}
+	return r.Store.CompleteNativeCapture(ctx, request, result)
 }
 
 type nativeFaultRestorer struct {

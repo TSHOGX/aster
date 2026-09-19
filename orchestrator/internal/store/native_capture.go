@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/execution"
+	"harness-platform/orchestrator/internal/nativecapture"
 	"harness-platform/orchestrator/internal/sandbox"
+	"time"
 )
 
 // The capture request and native state advance share the completion transaction.
@@ -25,6 +28,71 @@ func recordNativeCaptureRequestTx(ctx context.Context, tx *sql.Tx, p CompleteTur
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO native_capture_requests(session_id,state_version,state_digest,generation_id,turn_id,store_id,sandbox_id,epoch,native_id,selected_path,snapshot_path,native_digest,size,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, p.SessionID, p.DriverStateUpdate.StateVersion, p.DriverStateUpdate.StateDigest, p.GenerationID, p.TurnID, binding.StoreID, binding.SandboxID, binding.Epoch, state.ID, state.Path, p.DriverStateEvidence.NativeSnapshotPath, p.DriverStateEvidence.NativeDigest, p.DriverStateEvidence.NativeSize, formatTime(p.Now))
 	return err
+}
+
+func (s *Store) PendingNativeCaptures(ctx context.Context, limit int) ([]nativecapture.Request, error) {
+	if limit <= 0 || limit > 128 {
+		limit = 32
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT r.session_id,s.user_id,s.status,r.state_version,r.state_digest,r.generation_id,r.turn_id,r.store_id,r.sandbox_id,r.epoch,r.native_id,r.snapshot_path,r.native_digest,r.size,r.created_at
+ FROM native_capture_requests r JOIN sessions s ON s.id=r.session_id
+ WHERE NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=r.session_id AND c.state_version=r.state_version)
+ AND NOT EXISTS(SELECT 1 FROM native_capture_requests older WHERE older.session_id=r.session_id AND older.state_version<r.state_version AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=older.session_id AND c.state_version=older.state_version))
+ ORDER BY r.created_at,r.session_id,r.state_version LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []nativecapture.Request
+	for rows.Next() {
+		var p nativecapture.Request
+		var created string
+		if err := rows.Scan(&p.SessionID, &p.UserID, &p.Status, &p.StateVersion, &p.StateDigest, &p.GenerationID, &p.TurnID, &p.StoreID, &p.SandboxID, &p.Epoch, &p.NativeID, &p.SnapshotPath, &p.NativeDigest, &p.Size, &created); err != nil {
+			return nil, err
+		}
+		p.CreatedAt = parseTime(created)
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) CompleteNativeCapture(ctx context.Context, p nativecapture.Request, result nativecapture.Result) error {
+	if (result.Skipped && (result.Reason == "" || result.ArchivePath != "")) || (!result.Skipped && result.ArchivePath == "") {
+		return fmt.Errorf("durable archive or explicit capture skip required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM native_capture_requests WHERE session_id=? AND state_version=? AND state_digest=? AND generation_id=? AND turn_id=? AND store_id=? AND sandbox_id=? AND epoch=? AND native_id=? AND snapshot_path=? AND native_digest=? AND size=?`, p.SessionID, p.StateVersion, p.StateDigest, p.GenerationID, p.TurnID, p.StoreID, p.SandboxID, p.Epoch, p.NativeID, p.SnapshotPath, p.NativeDigest, p.Size).Scan(&count); err != nil {
+		return err
+	}
+	if count != 1 {
+		return fmt.Errorf("native capture request identity changed")
+	}
+	var previous nativecapture.Result
+	var digest string
+	err = tx.QueryRowContext(ctx, `SELECT archive_path,skipped,reason,native_digest FROM native_capture_receipts WHERE session_id=? AND state_version=?`, p.SessionID, p.StateVersion).Scan(&previous.ArchivePath, &previous.Skipped, &previous.Reason, &digest)
+	if err == nil {
+		if previous != result || digest != p.NativeDigest {
+			return fmt.Errorf("native capture receipt changed")
+		}
+		return tx.Commit()
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM native_capture_requests r WHERE session_id=? AND state_version<? AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=r.session_id AND c.state_version=r.state_version)`, p.SessionID, p.StateVersion).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return fmt.Errorf("earlier native capture remains pending")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO native_capture_receipts(session_id,state_version,native_digest,archive_path,skipped,reason,completed_at) VALUES(?,?,?,?,?,?,?)`, p.SessionID, p.StateVersion, p.NativeDigest, result.ArchivePath, result.Skipped, result.Reason, formatTime(time.Now().UTC())); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func nativeRestoreRequestTx(ctx context.Context, tx *sql.Tx, binding execution.Binding, environment execution.Environment) (execution.NativeRestoreRequest, error) {
