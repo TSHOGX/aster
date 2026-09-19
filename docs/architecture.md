@@ -142,5 +142,8 @@ parents are synchronized, file metadata is applied before the file sync, and the
 parent is synchronized after rename. A failure before rename preserves the old
 file. A failure after rename returns an uncertain outcome and a content digest
 for reconciliation. These are native Linux file-operation guarantees; the tests
-are not power-loss or Khora substrate acceptance. Turn/upload admission fencing
-and provisioning still use the existing application and store boundaries.
+are not power-loss or Khora substrate acceptance. The local adapter also owns
+directory provisioning and evidence verification. Store methods read and write
+volume records only, and artifact scans close their database reads before
+checking filesystem evidence. Turn/upload admission fencing still uses the
+existing application boundary.

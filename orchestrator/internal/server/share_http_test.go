@@ -16,6 +16,7 @@ import (
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // shareFixture is a two-user server with one session owned by alice.
@@ -387,7 +388,7 @@ func newArtifactShareFixture(t *testing.T) (*shareFixture, string) {
 	if err != nil {
 		t.Fatalf("data volume config: %v", err)
 	}
-	workspace, err := st.ProvisionSessionWorkspace(ctx, store.ProvisionSessionWorkspaceParams{
+	workspace, err := (localworkspace.Volumes{Records: st}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
 		SessionID: session.ID,
 		Config:    volumeConfig,
 		Now:       now,

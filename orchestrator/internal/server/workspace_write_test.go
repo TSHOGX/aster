@@ -15,6 +15,7 @@ import (
 
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // newWorkspaceWriteServer builds a server with a provisioned workspace, matching
@@ -41,7 +42,7 @@ func newWorkspaceWriteServer(t *testing.T, sessionID string) (*Server, *store.St
 	if err != nil {
 		t.Fatalf("data volume config: %v", err)
 	}
-	workspace, err := st.ProvisionSessionWorkspace(ctx, store.ProvisionSessionWorkspaceParams{
+	workspace, err := (localworkspace.Volumes{Records: st}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
 		SessionID: sessionID,
 		Config:    volumeConfig,
 		Now:       time.Now().UTC(),

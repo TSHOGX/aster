@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"harness-platform/orchestrator/internal/store"
-	"harness-platform/orchestrator/internal/workspace"
-	"harness-platform/orchestrator/internal/workspace/local"
 	"io"
 	"net/http"
+
+	"harness-platform/orchestrator/internal/workspace"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // workspaceWriteError carries an HTTP status alongside a message so the caller
@@ -55,13 +55,13 @@ func (s *Server) writeWorkspaceFile(ctx context.Context, sessionID, relPath stri
 	if err != nil {
 		return "", err
 	}
-	volume, err := s.store.VerifySessionWorkspaceVolume(ctx, store.VerifySessionWorkspaceVolumeParams{SessionID: sessionID, Config: volumeConfig})
+	volume, err := (localworkspace.Volumes{Records: s.store}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{SessionID: sessionID, Config: volumeConfig})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", newWorkspaceWriteError(http.StatusNotFound, "session not found")
 	}
 	if err != nil {
 		return "", newWorkspaceWriteError(http.StatusForbidden, "workspace evidence invalid")
 	}
-	file, err := workspace.Write(ctx, local.Directory{Path: volume.HostPath, UID: volume.SandboxUID, GID: volume.SandboxGID}, relPath, content, maxBytes)
+	file, err := workspace.Write(ctx, localworkspace.Directory{Path: volume.HostPath, UID: volume.SandboxUID, GID: volume.SandboxGID}, relPath, content, maxBytes)
 	return file.Path, err
 }

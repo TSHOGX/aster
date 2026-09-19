@@ -15,21 +15,19 @@ import (
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/store"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
-// Store is the artifacts watcher's own view of persistence: the verified
-// workspace volumes it derives watch roots from, plus the artifact rows it
-// upserts and deletes as files appear and disappear. *store.Store satisfies it
-// implicitly, so the watcher no longer depends on the concrete store type.
+// Store contains workspace records and artifact metadata. The local workspace
+// adapter verifies filesystem evidence after these database calls return.
 type Store interface {
-	ListVerifiedSessionWorkspaceVolumes(context.Context, store.DataVolumeProvisionerConfig) ([]store.SessionWorkspaceVolume, error)
-	VerifySessionWorkspaceVolume(context.Context, store.VerifySessionWorkspaceVolumeParams) (store.SessionWorkspaceVolume, error)
+	localworkspace.VolumeRecords
 	UpsertArtifact(context.Context, store.Artifact) error
 	DeleteArtifactPath(context.Context, string, string) error
 }
 
 type Watcher struct {
-	volumeConfig store.DataVolumeProvisionerConfig
+	volumeConfig localworkspace.DataVolumeProvisionerConfig
 	store        Store
 	hub          *events.Hub
 	log          *slog.Logger
@@ -42,7 +40,7 @@ type Watcher struct {
 	workspaceCacheReady bool
 }
 
-func New(volumeConfig store.DataVolumeProvisionerConfig, store Store, hub *events.Hub, log *slog.Logger) *Watcher {
+func New(volumeConfig localworkspace.DataVolumeProvisionerConfig, store Store, hub *events.Hub, log *slog.Logger) *Watcher {
 	return &Watcher{volumeConfig: volumeConfig, store: store, hub: hub, log: log}
 }
 
@@ -92,7 +90,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 }
 
 func (w *Watcher) ScanSession(ctx context.Context, sessionID string) error {
-	workspace, err := w.store.VerifySessionWorkspaceVolume(ctx, store.VerifySessionWorkspaceVolumeParams{
+	workspace, err := (localworkspace.Volumes{Records: w.store}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{
 		SessionID: sessionID,
 		Config:    w.volumeConfig,
 	})
@@ -116,7 +114,7 @@ func (w *Watcher) ScanSession(ctx context.Context, sessionID string) error {
 }
 
 func (w *Watcher) refreshWorkspaceWatches(ctx context.Context, watcher *fsnotify.Watcher, watchedRoots map[string]struct{}) error {
-	workspaces, err := w.store.ListVerifiedSessionWorkspaceVolumes(ctx, w.volumeConfig)
+	workspaces, err := (localworkspace.Volumes{Records: w.store}).ListVerifiedSessionWorkspaceVolumes(ctx, w.volumeConfig)
 	if err != nil {
 		return err
 	}
@@ -265,7 +263,7 @@ func (w *Watcher) resolveArtifactPath(ctx context.Context, path string) (string,
 		// outside the Run loop). Fall back to a direct query so behavior is
 		// unchanged in that case.
 		var err error
-		workspaces, err = w.store.ListVerifiedSessionWorkspaceVolumes(ctx, w.volumeConfig)
+		workspaces, err = (localworkspace.Volumes{Records: w.store}).ListVerifiedSessionWorkspaceVolumes(ctx, w.volumeConfig)
 		if err != nil {
 			w.log.Warn("failed to resolve artifact workspace", "path", path, "error", err)
 			return "", "", "", false

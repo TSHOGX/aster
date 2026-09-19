@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/store"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // The interfaces in this file are the server's own view of persistence. They
@@ -180,12 +181,10 @@ type notificationStore interface {
 // contractVolumeStore covers sandbox contracts, artifact listings, the data
 // volumes backing a session workspace/driver home, and proxy request accounting.
 type contractVolumeStore interface {
+	localworkspace.VolumeRecords
 	StoreSandboxContract(context.Context, store.StoreSandboxContractParams) (store.SandboxContractRecord, error)
 	RecordSandboxContractArtifacts(context.Context, store.RecordSandboxContractArtifactsParams) (store.SandboxContractArtifacts, error)
 	ListArtifacts(context.Context, string) ([]store.Artifact, error)
-	ProvisionSessionWorkspace(context.Context, store.ProvisionSessionWorkspaceParams) (store.SessionWorkspaceVolume, error)
-	ProvisionSessionDriverHome(context.Context, store.ProvisionSessionDriverHomeParams) (store.SessionDriverHomeVolume, error)
-	VerifySessionWorkspaceVolume(context.Context, store.VerifySessionWorkspaceVolumeParams) (store.SessionWorkspaceVolume, error)
 	AppendEventsBatch(context.Context, []store.AppendEventParams) ([]store.AppendEventsBatchResult, error)
 	StartProxyRequest(context.Context, store.StartProxyRequestParams) (store.StartProxyRequestResult, error)
 	// Data-plane authorization is a pure decision — no events, no counters, and

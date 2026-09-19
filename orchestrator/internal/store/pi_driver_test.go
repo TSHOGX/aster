@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"harness-platform/orchestrator/internal/agents"
-
 	_ "modernc.org/sqlite"
+
+	"harness-platform/orchestrator/internal/agents"
 )
 
 func TestFreshSchemaAcceptsPiDriver(t *testing.T) {
@@ -366,7 +366,7 @@ func createPiRuntimeResourceLiveForTest(t *testing.T, ctx context.Context, st *S
 			"driver":                     "pi",
 			"driver_home_key":            "pi",
 			"host_path":                  agentHomeHostPath,
-			"layout_version":             DataVolumeLayoutVersion,
+			"layout_version":             1,
 			"runtime_identity_digest":    "sha256:driver-home",
 			"provisioning_marker_path":   filepath.Join(t.TempDir(), "pi-driver-home.json"),
 			"provisioning_marker_digest": "sha256:driver-home-marker",

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"harness-platform/orchestrator/internal/deploymentgate"
-	"harness-platform/orchestrator/internal/schemastate"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,14 +16,17 @@ import (
 	"harness-platform/orchestrator/internal/artifacts"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/controlsource"
+	"harness-platform/orchestrator/internal/deploymentgate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/memorystore"
 	"harness-platform/orchestrator/internal/runtime"
+	"harness-platform/orchestrator/internal/schemastate"
 	"harness-platform/orchestrator/internal/server"
 	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/trajectory"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // version is injected at build time via -ldflags, e.g.:
@@ -405,17 +406,17 @@ func main() {
 	shutdownWG.Wait()
 }
 
-func dataVolumeProvisionerConfig(cfg config.Config) (store.DataVolumeProvisionerConfig, error) {
+func dataVolumeProvisionerConfig(cfg config.Config) (localworkspace.DataVolumeProvisionerConfig, error) {
 	roots, err := config.ValidateIsolationRoots(cfg.IsolationRoots())
 	if err != nil {
-		return store.DataVolumeProvisionerConfig{}, err
+		return localworkspace.DataVolumeProvisionerConfig{}, err
 	}
 	identity := cfg.Harness.SandboxIdentity
-	return store.DataVolumeProvisionerConfig{
+	return localworkspace.DataVolumeProvisionerConfig{
 		SessionsRoot:   roots.SessionsRoot,
 		AgentHomesRoot: roots.AgentHomesRoot,
 		EvidenceRoot:   roots.DataVolumeEvidenceRoot,
-		LayoutVersion:  store.DataVolumeLayoutVersion,
+		LayoutVersion:  localworkspace.DataVolumeLayoutVersion,
 		RuntimeIdentity: store.RuntimeIdentity{
 			UID:              identity.UID,
 			GID:              identity.GID,

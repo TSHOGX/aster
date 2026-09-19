@@ -11,6 +11,7 @@ import (
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 func TestScanSessionSkipsSymlinkArtifacts(t *testing.T) {
@@ -99,7 +100,7 @@ func TestScanSessionRejectsMissingWorkspaceEvidence(t *testing.T) {
 	}
 }
 
-func newArtifactTestStore(t *testing.T, ctx context.Context, workspaceRoot, sessionID string) (*store.Store, store.DataVolumeProvisionerConfig, string) {
+func newArtifactTestStore(t *testing.T, ctx context.Context, workspaceRoot, sessionID string) (*store.Store, localworkspace.DataVolumeProvisionerConfig, string) {
 	t.Helper()
 
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
@@ -121,7 +122,7 @@ func newArtifactTestStore(t *testing.T, ctx context.Context, workspaceRoot, sess
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	volumeConfig := store.DataVolumeProvisionerConfig{
+	volumeConfig := localworkspace.DataVolumeProvisionerConfig{
 		SessionsRoot:   workspaceRoot,
 		AgentHomesRoot: filepath.Join(t.TempDir(), "agent-homes"),
 		EvidenceRoot:   filepath.Join(t.TempDir(), "volume-evidence"),
@@ -130,7 +131,7 @@ func newArtifactTestStore(t *testing.T, ctx context.Context, workspaceRoot, sess
 			GID: 65534,
 		},
 	}
-	workspace, err := st.ProvisionSessionWorkspace(ctx, store.ProvisionSessionWorkspaceParams{
+	workspace, err := (localworkspace.Volumes{Records: st}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
 		SessionID: sessionID,
 		Config:    volumeConfig,
 		Now:       now,

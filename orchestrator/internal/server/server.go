@@ -9,14 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"harness-platform/orchestrator/internal/deploymentgate"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +22,7 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+	pathpkg "path"
 
 	"github.com/gorilla/websocket"
 
@@ -32,6 +31,7 @@ import (
 	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/config"
+	"harness-platform/orchestrator/internal/deploymentgate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/pathutil"
@@ -40,6 +40,7 @@ import (
 	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/titler"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 const labUserID = "lab"
@@ -1479,7 +1480,7 @@ func (s *Server) ensureSessionRuntimeDataVolumes(ctx context.Context, session st
 		return sessionRuntimeDataVolumes{}, err
 	}
 	now := time.Now().UTC()
-	workspace, err := s.store.ProvisionSessionWorkspace(ctx, store.ProvisionSessionWorkspaceParams{
+	workspace, err := (localworkspace.Volumes{Records: s.store}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
 		SessionID: session.ID,
 		Config:    volumeConfig,
 		Now:       now,
@@ -1487,7 +1488,7 @@ func (s *Server) ensureSessionRuntimeDataVolumes(ctx context.Context, session st
 	if err != nil {
 		return sessionRuntimeDataVolumes{}, fmt.Errorf("provision session workspace volume: %w", err)
 	}
-	driverHome, err := s.store.ProvisionSessionDriverHome(ctx, store.ProvisionSessionDriverHomeParams{
+	driverHome, err := (localworkspace.Volumes{Records: s.store}).ProvisionSessionDriverHome(ctx, localworkspace.ProvisionSessionDriverHomeParams{
 		SessionID: session.ID,
 		Driver:    session.Agent,
 		Config:    volumeConfig,
@@ -2258,7 +2259,7 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath s
 	if err != nil {
 		return nil, nil, http.StatusInternalServerError, err.Error()
 	}
-	workspace, err := s.store.VerifySessionWorkspaceVolume(ctx, store.VerifySessionWorkspaceVolumeParams{
+	workspace, err := (localworkspace.Volumes{Records: s.store}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{
 		SessionID: sessionID,
 		Config:    volumeConfig,
 	})
@@ -2315,17 +2316,17 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath s
 	return file, info, 0, ""
 }
 
-func (s *Server) dataVolumeProvisionerConfig() (store.DataVolumeProvisionerConfig, error) {
+func (s *Server) dataVolumeProvisionerConfig() (localworkspace.DataVolumeProvisionerConfig, error) {
 	roots, err := config.ValidateIsolationRoots(s.cfg.IsolationRoots())
 	if err != nil {
-		return store.DataVolumeProvisionerConfig{}, err
+		return localworkspace.DataVolumeProvisionerConfig{}, err
 	}
 	identity := s.cfg.Harness.SandboxIdentity
-	return store.DataVolumeProvisionerConfig{
+	return localworkspace.DataVolumeProvisionerConfig{
 		SessionsRoot:   roots.SessionsRoot,
 		AgentHomesRoot: roots.AgentHomesRoot,
 		EvidenceRoot:   roots.DataVolumeEvidenceRoot,
-		LayoutVersion:  store.DataVolumeLayoutVersion,
+		LayoutVersion:  localworkspace.DataVolumeLayoutVersion,
 		RuntimeIdentity: store.RuntimeIdentity{
 			UID:              identity.UID,
 			GID:              identity.GID,

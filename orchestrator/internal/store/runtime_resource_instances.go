@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"harness-platform/orchestrator/internal/canonicaljson"
 )
 
 type RuntimeResourceState string
@@ -614,7 +616,7 @@ func runtimeResourceIdentity(p RuntimeResourceInstanceParams) ([]byte, string, e
 		LogDirPath:             strings.TrimSpace(p.LogDirPath),
 		RootPrefixes:           sortedStringMap(p.RootPrefixes),
 	}
-	data, err := canonicalDataVolumeJSON(payload)
+	data, err := canonicaljson.Marshal(payload)
 	if err != nil {
 		return nil, "", err
 	}
@@ -622,7 +624,7 @@ func runtimeResourceIdentity(p RuntimeResourceInstanceParams) ([]byte, string, e
 }
 
 func verifyRuntimeResourceIdentityPayload(instance RuntimeResourceInstance) (runtimeResourceIdentityPayload, error) {
-	canonical, err := canonicalDataVolumeJSONBytes(instance.ResourceIdentityPayload)
+	canonical, err := canonicaljson.Bytes(instance.ResourceIdentityPayload)
 	if err != nil {
 		return runtimeResourceIdentityPayload{}, err
 	}
@@ -710,7 +712,7 @@ func runtimeResourceInstanceFromIdentityPayload(instance RuntimeResourceInstance
 }
 
 func runtimeResourceEvidenceDigest(evidence ResourceReconciliationEvidence) ([]byte, string, error) {
-	data, err := canonicalDataVolumeJSON(evidence)
+	data, err := canonicaljson.Marshal(evidence)
 	if err != nil {
 		return nil, "", err
 	}
@@ -718,7 +720,7 @@ func runtimeResourceEvidenceDigest(evidence ResourceReconciliationEvidence) ([]b
 }
 
 func runtimeResourcePostStartProofDigest(proof RuntimeResourcePostStartProof) ([]byte, string, error) {
-	data, err := canonicalDataVolumeJSON(proof)
+	data, err := canonicaljson.Marshal(proof)
 	if err != nil {
 		return nil, "", err
 	}

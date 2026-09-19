@@ -1,4 +1,4 @@
-package store
+package local
 
 import (
 	"context"
@@ -9,16 +9,19 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"harness-platform/orchestrator/internal/canonicaljson"
+	"harness-platform/orchestrator/internal/store"
 )
 
 func TestProvisionSessionWorkspaceCreatesRowAndMarker(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_workspace")
 	cfg := testDataVolumeConfig(t)
 	now := time.Now().UTC()
 
-	volume, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	volume, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_workspace",
 		Config:    cfg,
 		Now:       now,
@@ -52,11 +55,11 @@ func TestProvisionSessionWorkspaceCreatesRowAndMarker(t *testing.T) {
 
 func TestProvisionSessionDriverHomeCreatesDriverScopedRows(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_driver_home")
 	cfg := testDataVolumeConfig(t)
 
-	shell, err := st.ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
+	shell, err := (Volumes{Records: st}).ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
 		SessionID: "sess_driver_home",
 		Driver:    "sh",
 		Config:    cfg,
@@ -65,7 +68,7 @@ func TestProvisionSessionDriverHomeCreatesDriverScopedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provision shell driver home: %v", err)
 	}
-	pi, err := st.ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
+	pi, err := (Volumes{Records: st}).ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
 		SessionID: "sess_driver_home",
 		Driver:    "pi",
 		Config:    cfg,
@@ -88,11 +91,11 @@ func TestProvisionSessionDriverHomeCreatesDriverScopedRows(t *testing.T) {
 
 func TestProvisionSessionDriverHomeRejectsNonCanonicalDrivers(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_driver_home_reject")
 	cfg := testDataVolumeConfig(t)
 	for _, driver := range []string{"claude", "unknown", ""} {
-		_, err := st.ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
+		_, err := (Volumes{Records: st}).ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
 			SessionID: "sess_driver_home_reject",
 			Driver:    driver,
 			Config:    cfg,
@@ -106,7 +109,7 @@ func TestProvisionSessionDriverHomeRejectsNonCanonicalDrivers(t *testing.T) {
 
 func TestProvisionSessionWorkspaceRejectsWritableEvidenceRoot(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_writable_evidence")
 	cfg := testDataVolumeConfig(t)
 	if err := os.MkdirAll(cfg.EvidenceRoot, 0o755); err != nil {
@@ -116,7 +119,7 @@ func TestProvisionSessionWorkspaceRejectsWritableEvidenceRoot(t *testing.T) {
 		t.Fatalf("chmod evidence root: %v", err)
 	}
 
-	_, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	_, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_writable_evidence",
 		Config:    cfg,
 		Now:       time.Now().UTC(),
@@ -131,7 +134,7 @@ func TestProvisionSessionWorkspaceRejectsNonRootEvidenceRoot(t *testing.T) {
 		t.Skip("requires root to create a non-root-owned evidence root")
 	}
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_nonroot_evidence")
 	cfg := testDataVolumeConfig(t)
 	if err := os.MkdirAll(cfg.EvidenceRoot, 0o755); err != nil {
@@ -141,7 +144,7 @@ func TestProvisionSessionWorkspaceRejectsNonRootEvidenceRoot(t *testing.T) {
 		t.Fatalf("chown evidence root: %v", err)
 	}
 
-	_, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	_, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_nonroot_evidence",
 		Config:    cfg,
 		Now:       time.Now().UTC(),
@@ -153,7 +156,7 @@ func TestProvisionSessionWorkspaceRejectsNonRootEvidenceRoot(t *testing.T) {
 
 func TestProvisionSessionWorkspaceRejectsSymlinkedMarkerDir(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_symlink_marker")
 	cfg := testDataVolumeConfig(t)
 	if err := os.MkdirAll(cfg.EvidenceRoot, 0o755); err != nil {
@@ -167,7 +170,7 @@ func TestProvisionSessionWorkspaceRejectsSymlinkedMarkerDir(t *testing.T) {
 		t.Fatalf("symlink marker dir: %v", err)
 	}
 
-	_, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	_, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_symlink_marker",
 		Config:    cfg,
 		Now:       time.Now().UTC(),
@@ -179,7 +182,7 @@ func TestProvisionSessionWorkspaceRejectsSymlinkedMarkerDir(t *testing.T) {
 
 func TestProvisionSessionWorkspaceRejectsNonEmptyFreshDirectory(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_non_empty")
 	cfg := testDataVolumeConfig(t)
 	workspacePath := filepath.Join(cfg.SessionsRoot, "sess_non_empty")
@@ -190,7 +193,7 @@ func TestProvisionSessionWorkspaceRejectsNonEmptyFreshDirectory(t *testing.T) {
 		t.Fatalf("write legacy content: %v", err)
 	}
 
-	_, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	_, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_non_empty",
 		Config:    cfg,
 		Now:       time.Now().UTC(),
@@ -202,12 +205,12 @@ func TestProvisionSessionWorkspaceRejectsNonEmptyFreshDirectory(t *testing.T) {
 
 func TestProvisionSessionWorkspaceIsIdempotentWithUserContent(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_idempotent")
 	cfg := testDataVolumeConfig(t)
 	now := time.Now().UTC()
 
-	first, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	first, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_idempotent",
 		Config:    cfg,
 		Now:       now,
@@ -218,7 +221,7 @@ func TestProvisionSessionWorkspaceIsIdempotentWithUserContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(first.HostPath, "report.txt"), []byte("user content"), 0o644); err != nil {
 		t.Fatalf("write user content: %v", err)
 	}
-	second, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	second, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_idempotent",
 		Config:    cfg,
 		Now:       now.Add(time.Hour),
@@ -234,11 +237,11 @@ func TestProvisionSessionWorkspaceIsIdempotentWithUserContent(t *testing.T) {
 
 func TestProvisionSessionWorkspaceRejectsMarkerTampering(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_tamper")
 	cfg := testDataVolumeConfig(t)
 
-	volume, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	volume, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_tamper",
 		Config:    cfg,
 		Now:       time.Now().UTC(),
@@ -250,7 +253,7 @@ func TestProvisionSessionWorkspaceRejectsMarkerTampering(t *testing.T) {
 		t.Fatalf("tamper marker: %v", err)
 	}
 
-	_, err = st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	_, err = (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_tamper",
 		Config:    cfg,
 		Now:       time.Now().UTC().Add(time.Second),
@@ -262,10 +265,10 @@ func TestProvisionSessionWorkspaceRejectsMarkerTampering(t *testing.T) {
 
 func TestVerifySessionWorkspaceVolumeRejectsConfigMismatch(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_config_mismatch")
 	cfg := testDataVolumeConfig(t)
-	if _, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	if _, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_config_mismatch",
 		Config:    cfg,
 		Now:       time.Now().UTC(),
@@ -275,7 +278,7 @@ func TestVerifySessionWorkspaceVolumeRejectsConfigMismatch(t *testing.T) {
 
 	other := cfg
 	other.SessionsRoot = filepath.Join(t.TempDir(), "sessions")
-	_, err := st.VerifySessionWorkspaceVolume(ctx, VerifySessionWorkspaceVolumeParams{
+	_, err := (Volumes{Records: st}).VerifySessionWorkspaceVolume(ctx, VerifySessionWorkspaceVolumeParams{
 		SessionID: "sess_config_mismatch",
 		Config:    other,
 	})
@@ -286,10 +289,10 @@ func TestVerifySessionWorkspaceVolumeRejectsConfigMismatch(t *testing.T) {
 
 func TestVerifySessionWorkspaceVolumeRejectsMarkerPayloadMismatch(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_marker_mismatch")
 	cfg := testDataVolumeConfig(t)
-	volume, err := st.ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
+	volume, err := (Volumes{Records: st}).ProvisionSessionWorkspace(ctx, ProvisionSessionWorkspaceParams{
 		SessionID: "sess_marker_mismatch",
 		Config:    cfg,
 		Now:       time.Now().UTC(),
@@ -310,24 +313,24 @@ func TestVerifySessionWorkspaceVolumeRejectsMarkerPayloadMismatch(t *testing.T) 
 			SandboxSupplementalGIDs: volume.SandboxSupplementalGIDs,
 		},
 		RuntimeIdentityDigest: volume.RuntimeIdentityDigest,
-		ProvisionedAt:         formatTime(volume.ProvisionedAt),
+		ProvisionedAt:         volume.ProvisionedAt.UTC().Format(time.RFC3339Nano),
 	}
-	payload, err := canonicalDataVolumeJSON(marker)
+	payload, err := canonicaljson.Marshal(marker)
 	if err != nil {
 		t.Fatalf("canonical marker: %v", err)
 	}
-	digest := SandboxContractDigest(payload)
+	digest := store.SandboxContractDigest(payload)
 	if err := os.WriteFile(volume.ProvisioningMarkerPath, payload, 0o644); err != nil {
 		t.Fatalf("write mismatched marker: %v", err)
 	}
-	if _, err := st.db.ExecContext(ctx, `
+	if _, err := st.DBForTest().ExecContext(ctx, `
 UPDATE session_workspaces
 SET provisioning_marker_digest = ?
 WHERE session_id = ?`, digest, volume.SessionID); err != nil {
 		t.Fatalf("update marker digest: %v", err)
 	}
 
-	_, err = st.VerifySessionWorkspaceVolume(ctx, VerifySessionWorkspaceVolumeParams{
+	_, err = (Volumes{Records: st}).VerifySessionWorkspaceVolume(ctx, VerifySessionWorkspaceVolumeParams{
 		SessionID: volume.SessionID,
 		Config:    cfg,
 	})
@@ -338,10 +341,10 @@ WHERE session_id = ?`, digest, volume.SessionID); err != nil {
 
 func TestVerifySessionDriverHomeVolumeRejectsConfigMismatch(t *testing.T) {
 	ctx := context.Background()
-	st, _ := openOwnedStore(t, ctx)
+	st := openVolumeStore(t, ctx)
 	createStoreSession(t, ctx, st, "sess_driver_verify")
 	cfg := testDataVolumeConfig(t)
-	if _, err := st.ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
+	if _, err := (Volumes{Records: st}).ProvisionSessionDriverHome(ctx, ProvisionSessionDriverHomeParams{
 		SessionID: "sess_driver_verify",
 		Driver:    "pi",
 		Config:    cfg,
@@ -352,7 +355,7 @@ func TestVerifySessionDriverHomeVolumeRejectsConfigMismatch(t *testing.T) {
 
 	other := cfg
 	other.AgentHomesRoot = filepath.Join(t.TempDir(), "agent-homes")
-	_, err := st.VerifySessionDriverHomeVolume(ctx, VerifySessionDriverHomeVolumeParams{
+	_, err := (Volumes{Records: st}).VerifySessionDriverHomeVolume(ctx, VerifySessionDriverHomeVolumeParams{
 		SessionID: "sess_driver_verify",
 		Driver:    "pi",
 		Config:    other,
@@ -417,7 +420,7 @@ func TestNormalizeDataVolumeConfigResolvesSymlinkedRoots(t *testing.T) {
 		SessionsRoot:    linkSessions,
 		AgentHomesRoot:  filepath.Join(dir, "agent-homes"),
 		EvidenceRoot:    filepath.Join(dir, "evidence"),
-		RuntimeIdentity: RuntimeIdentity{UID: 7000, GID: 7001},
+		RuntimeIdentity: store.RuntimeIdentity{UID: 7000, GID: 7001},
 	}
 	normalized, err := normalizeDataVolumeConfig(cfg)
 	if err != nil {
@@ -435,7 +438,7 @@ func testDataVolumeConfig(t *testing.T) DataVolumeProvisionerConfig {
 		SessionsRoot:   filepath.Join(dir, "sessions"),
 		AgentHomesRoot: filepath.Join(dir, "agent-homes"),
 		EvidenceRoot:   filepath.Join(dir, "evidence"),
-		RuntimeIdentity: RuntimeIdentity{
+		RuntimeIdentity: store.RuntimeIdentity{
 			UID:              7000,
 			GID:              7001,
 			SupplementalGIDs: []int{43, 42},
@@ -449,7 +452,7 @@ func assertMarkerDigest(t *testing.T, path, digest string) {
 	if err != nil {
 		t.Fatalf("read marker %s: %v", path, err)
 	}
-	if got := SandboxContractDigest(data); got != digest {
+	if got := store.SandboxContractDigest(data); got != digest {
 		t.Fatalf("marker digest = %s, want %s", got, digest)
 	}
 }
@@ -501,5 +504,22 @@ func assertRootOwnedProtectedPath(t *testing.T, path string, wantDir bool) {
 	}
 	if info.Mode().Perm()&0o022 != 0 {
 		t.Fatalf("protected path %s mode=%#o is group/world writable", path, info.Mode().Perm())
+	}
+}
+
+func openVolumeStore(t *testing.T, ctx context.Context) *store.Store {
+	t.Helper()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+func createStoreSession(t *testing.T, ctx context.Context, st *store.Store, id string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := st.CreateSession(ctx, store.Session{ID: id, UserID: "synthetic", Status: "created", Agent: "pi", Workspace: filepath.Join(t.TempDir(), id), RestoreID: "fixture-" + id, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
 	}
 }

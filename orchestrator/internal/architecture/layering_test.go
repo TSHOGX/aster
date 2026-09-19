@@ -38,6 +38,7 @@ var rules = []rule{
 			"internal/artifacts",
 			"internal/bridge",
 			"internal/runtime",
+			"internal/workspace/local",
 			"internal/memorystore",
 			"internal/controlsource",
 			"internal/dbsplit",

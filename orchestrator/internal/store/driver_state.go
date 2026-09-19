@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
+	"harness-platform/orchestrator/internal/canonicaljson"
 )
 
 const (
@@ -124,7 +125,7 @@ func CheckpointDriverStatesDigest(generationID string, states []DriverStateToken
 		"generation_id":  strings.TrimSpace(generationID),
 		"drivers":        drivers,
 	}
-	canonical, err := canonicalDataVolumeJSON(payload)
+	canonical, err := canonicaljson.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -149,11 +150,11 @@ func canonicalDriverStatePayload(value any, driverID string) ([]byte, string, er
 	var err error
 	switch v := value.(type) {
 	case []byte:
-		canonical, err = canonicalDataVolumeJSONBytes(v)
+		canonical, err = canonicaljson.Bytes(v)
 	case json.RawMessage:
-		canonical, err = canonicalDataVolumeJSONBytes(v)
+		canonical, err = canonicaljson.Bytes(v)
 	default:
-		canonical, err = canonicalDataVolumeJSON(value)
+		canonical, err = canonicaljson.Marshal(value)
 	}
 	if err != nil {
 		return nil, "", err

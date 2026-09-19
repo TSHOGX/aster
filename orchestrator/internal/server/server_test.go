@@ -32,6 +32,7 @@ import (
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/titler"
+	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 func TestCreateSessionRejectsLegacyAgentInput(t *testing.T) {
@@ -2661,14 +2662,14 @@ func TestStartEnsuredGenerationRenewsLeaseDuringSlowPrepare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("data volume config: %v", err)
 	}
-	workspaceVolume, err := st.VerifySessionWorkspaceVolume(ctx, store.VerifySessionWorkspaceVolumeParams{
+	workspaceVolume, err := (localworkspace.Volumes{Records: st}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{
 		SessionID: session.ID,
 		Config:    volumeConfig,
 	})
 	if err != nil {
 		t.Fatalf("verify workspace volume: %v", err)
 	}
-	driverHomeVolume, err := st.VerifySessionDriverHomeVolume(ctx, store.VerifySessionDriverHomeVolumeParams{
+	driverHomeVolume, err := (localworkspace.Volumes{Records: st}).VerifySessionDriverHomeVolume(ctx, localworkspace.VerifySessionDriverHomeVolumeParams{
 		SessionID: session.ID,
 		Driver:    session.Agent,
 		Config:    volumeConfig,
@@ -2884,7 +2885,7 @@ func TestSandboxContractPayloadRecordsPiMaterializedConfig(t *testing.T) {
 		Workspace: store.SessionWorkspaceVolume{
 			SessionID:                session.ID,
 			HostPath:                 workspaceHostPath,
-			LayoutVersion:            store.DataVolumeLayoutVersion,
+			LayoutVersion:            localworkspace.DataVolumeLayoutVersion,
 			RuntimeIdentityDigest:    "sha256:workspace-identity",
 			ProvisioningMarkerPath:   filepath.Join(dir, "evidence", "workspaces", session.ID+".json"),
 			ProvisioningMarkerDigest: "sha256:workspace-marker",
@@ -2893,7 +2894,7 @@ func TestSandboxContractPayloadRecordsPiMaterializedConfig(t *testing.T) {
 			SessionID:                session.ID,
 			Driver:                   "pi",
 			HostPath:                 agentHomeHostPath,
-			LayoutVersion:            store.DataVolumeLayoutVersion,
+			LayoutVersion:            localworkspace.DataVolumeLayoutVersion,
 			RuntimeIdentityDigest:    "sha256:driver-home-identity",
 			ProvisioningMarkerPath:   filepath.Join(dir, "evidence", "driver-homes", session.ID, "pi.json"),
 			ProvisioningMarkerDigest: "sha256:driver-home-marker",
@@ -3062,14 +3063,14 @@ func TestRuntimeResourceInstanceCheckpointRestoreTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("data volume config: %v", err)
 	}
-	workspaceVolume, err := st.VerifySessionWorkspaceVolume(ctx, store.VerifySessionWorkspaceVolumeParams{
+	workspaceVolume, err := (localworkspace.Volumes{Records: st}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{
 		SessionID: session.ID,
 		Config:    volumeConfig,
 	})
 	if err != nil {
 		t.Fatalf("verify workspace volume: %v", err)
 	}
-	driverHomeVolume, err := st.VerifySessionDriverHomeVolume(ctx, store.VerifySessionDriverHomeVolumeParams{
+	driverHomeVolume, err := (localworkspace.Volumes{Records: st}).VerifySessionDriverHomeVolume(ctx, localworkspace.VerifySessionDriverHomeVolumeParams{
 		SessionID: session.ID,
 		Driver:    session.Agent,
 		Config:    volumeConfig,
@@ -4926,7 +4927,7 @@ func newArtifactDownloadServer(t *testing.T, sessionID string) (*Server, *store.
 	if err != nil {
 		t.Fatalf("data volume config: %v", err)
 	}
-	workspace, err := st.ProvisionSessionWorkspace(ctx, store.ProvisionSessionWorkspaceParams{
+	workspace, err := (localworkspace.Volumes{Records: st}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
 		SessionID: sessionID,
 		Config:    volumeConfig,
 		Now:       time.Now().UTC(),
@@ -5960,7 +5961,7 @@ WHERE g.session_id = ?
 
 func newServerTestWatcher(t *testing.T, sessionsRoot string, st *store.Store, hub *events.Hub) *artifacts.Watcher {
 	t.Helper()
-	return artifacts.New(store.DataVolumeProvisionerConfig{
+	return artifacts.New(localworkspace.DataVolumeProvisionerConfig{
 		SessionsRoot:   sessionsRoot,
 		AgentHomesRoot: filepath.Join(t.TempDir(), "agent-homes"),
 		EvidenceRoot:   filepath.Join(t.TempDir(), "volume-evidence"),

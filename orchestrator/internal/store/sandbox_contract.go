@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
+	"harness-platform/orchestrator/internal/canonicaljson"
 )
 
 const SandboxContractVersion = "sandbox-isolation-v1"
@@ -365,7 +366,7 @@ func canonicalizeSandboxContractJSON(data []byte) ([]byte, error) {
 	if _, ok := object["sandbox_contract_digest"]; ok {
 		return nil, fmt.Errorf("sandbox contract payload must not contain sandbox_contract_digest")
 	}
-	if err := rejectFloatingPointJSONNumbers(object); err != nil {
+	if err := canonicaljson.RejectFloatingPointNumbers(object); err != nil {
 		return nil, err
 	}
 	var buf bytes.Buffer
@@ -375,28 +376,6 @@ func canonicalizeSandboxContractJSON(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
-}
-
-func rejectFloatingPointJSONNumbers(value any) error {
-	switch v := value.(type) {
-	case map[string]any:
-		for key, child := range v {
-			if err := rejectFloatingPointJSONNumbers(child); err != nil {
-				return fmt.Errorf("%s: %w", key, err)
-			}
-		}
-	case []any:
-		for i, child := range v {
-			if err := rejectFloatingPointJSONNumbers(child); err != nil {
-				return fmt.Errorf("[%d]: %w", i, err)
-			}
-		}
-	case json.Number:
-		if strings.ContainsAny(v.String(), ".eE") {
-			return fmt.Errorf("sandbox contract payload numbers must be integers, got %s", v.String())
-		}
-	}
-	return nil
 }
 
 func validateSandboxContractPayload(canonicalPayload []byte, p StoreSandboxContractParams) error {
@@ -636,7 +615,7 @@ func CredentialPolicyDigest(value any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	canonical, err := canonicalDataVolumeJSON(policy)
+	canonical, err := canonicaljson.Marshal(policy)
 	if err != nil {
 		return "", err
 	}
