@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -73,87 +72,7 @@ func TestFreshSchemaAcceptsPiDriver(t *testing.T) {
 	}
 }
 
-func TestPiDriverStateValidation(t *testing.T) {
-	payload, digest, err := canonicalBootstrapDriverState("pi")
-	if err != nil {
-		t.Fatalf("bootstrap pi state: %v", err)
-	}
-	if digest != DriverStateDigest(payload) {
-		t.Fatalf("bootstrap digest mismatch")
-	}
-	if err := ValidatePiDriverStatePayloadForHost(payload, "", ""); err == nil || !strings.Contains(err.Error(), "host path is required") {
-		t.Fatalf("expected missing pi host path rejection, got %v", err)
-	}
-	initialized := map[string]any{
-		"schema_version":           1,
-		"driver_id":                "pi",
-		"state_kind":               "pi_session",
-		"session_dir":              "/agent-home/.pi/agent/sessions",
-		"selected_session_relpath": "session-1.jsonl",
-		"selected_session_file":    "/agent-home/.pi/agent/sessions/session-1.jsonl",
-		"selected_session_id":      "pi-session-1",
-		"last_completed_turn_id":   "42",
-	}
-	if _, _, err := canonicalDriverStatePayload(initialized, "pi"); err != nil {
-		t.Fatalf("initialized pi state rejected: %v", err)
-	}
-
-	for _, rel := range []string{"../escape.jsonl", "/tmp/session.jsonl", "nested/../escape.jsonl", ""} {
-		initialized["selected_session_relpath"] = rel
-		initialized["selected_session_file"] = "/agent-home/.pi/agent/sessions/" + rel
-		if _, _, err := canonicalDriverStatePayload(initialized, "pi"); err == nil {
-			t.Fatalf("pi state relpath %q should be rejected", rel)
-		}
-	}
-
-	agentHome := t.TempDir()
-	sessionRoot := filepath.Join(agentHome, ".pi", "agent", "sessions")
-	if err := os.MkdirAll(sessionRoot, 0o755); err != nil {
-		t.Fatalf("create pi session root: %v", err)
-	}
-	sessionFile := filepath.Join(sessionRoot, "session-1.jsonl")
-	if err := os.WriteFile(sessionFile, []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write pi session file: %v", err)
-	}
-	initialized["selected_session_relpath"] = "session-1.jsonl"
-	initialized["selected_session_file"] = agents.PiSessionDir + "/session-1.jsonl"
-	canonical, _, err := canonicalDriverStatePayload(initialized, "pi")
-	if err != nil {
-		t.Fatalf("canonical pi host state: %v", err)
-	}
-	if err := ValidatePiDriverStatePayloadForHost(canonical, agentHome, "42"); err != nil {
-		t.Fatalf("host pi state rejected valid session file: %v", err)
-	}
-	if err := os.Remove(sessionFile); err != nil {
-		t.Fatalf("remove pi session file: %v", err)
-	}
-	if err := os.Symlink(filepath.Join(t.TempDir(), "escape.jsonl"), sessionFile); err != nil {
-		t.Fatalf("symlink pi session file: %v", err)
-	}
-	if err := ValidatePiDriverStatePayloadForHost(canonical, agentHome, "42"); err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink session file rejection, got %v", err)
-	}
-
-	symlinkHome := t.TempDir()
-	outsideRoot := filepath.Join(t.TempDir(), "sessions")
-	if err := os.MkdirAll(outsideRoot, 0o755); err != nil {
-		t.Fatalf("create external pi session root: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(outsideRoot, "session-1.jsonl"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write external pi session file: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(symlinkHome, ".pi", "agent"), 0o755); err != nil {
-		t.Fatalf("create pi agent dir: %v", err)
-	}
-	if err := os.Symlink(outsideRoot, filepath.Join(symlinkHome, ".pi", "agent", "sessions")); err != nil {
-		t.Fatalf("symlink pi session root: %v", err)
-	}
-	if err := ValidatePiDriverStatePayloadForHost(canonical, symlinkHome, "42"); err == nil || !strings.Contains(err.Error(), "session root realpath escapes") {
-		t.Fatalf("expected symlink session root rejection, got %v", err)
-	}
-}
-
-func TestPiCompletedTurnAdvancesSidecarOnlyAfterHostSessionValidation(t *testing.T) {
+func TestPiCompletedTurnRequiresMatchingStorageValidationEvidence(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	now := time.Now().UTC()
@@ -218,26 +137,38 @@ func TestPiCompletedTurnAdvancesSidecarOnlyAfterHostSessionValidation(t *testing
 		TerminalStatus:    "completed",
 		DriverStateUpdate: &update,
 		Now:               now.Add(6 * time.Second),
-	}); err == nil || !strings.Contains(err.Error(), "host file missing") {
-		t.Fatalf("expected missing pi host session file rejection, got %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "quiesced storage evidence") {
+		t.Fatalf("expected missing native validation evidence rejection, got %v", err)
 	}
-	sessionRoot := filepath.Join(agentHome, ".pi", "agent", "sessions")
-	if err := os.MkdirAll(sessionRoot, 0o755); err != nil {
-		t.Fatalf("create pi session root: %v", err)
+	prepared, err := st.DriverStateValidationInput(ctx, CompleteTurnParams{SessionID: sessionID, GenerationID: allocation.GenerationID, TurnID: turnID, Owner: allocation.Owner, DriverStateUpdate: &update})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, "session-1.jsonl"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write pi host session: %v", err)
+	prepared.Evidence.NativeDigest = strings.Repeat("a", 64)
+	for _, mutate := range []func(*DriverStateEvidence){
+		func(e *DriverStateEvidence) { e.ContractDigest = "changed-binding" },
+		func(e *DriverStateEvidence) { e.TurnID++ },
+		func(e *DriverStateEvidence) { e.StateDigest = "changed-state" },
+		func(e *DriverStateEvidence) { e.Owner = "other-owner" },
+	} {
+		wrong := prepared.Evidence
+		mutate(&wrong)
+		if _, err := st.CompleteTurn(ctx, CompleteTurnParams{SessionID: sessionID, GenerationID: allocation.GenerationID, TurnID: turnID, Owner: allocation.Owner, TerminalStatus: "completed", DriverStateUpdate: &update, DriverStateEvidence: &wrong, Now: now.Add(7 * time.Second)}); err == nil {
+			t.Fatal("stale validation evidence advanced driver state")
+		}
 	}
+
 	if _, err := st.CompleteTurn(ctx, CompleteTurnParams{
-		SessionID:         sessionID,
-		GenerationID:      allocation.GenerationID,
-		TurnID:            turnID,
-		Owner:             allocation.Owner,
-		TerminalStatus:    "completed",
-		DriverStateUpdate: &update,
-		Now:               now.Add(7 * time.Second),
+		SessionID:           sessionID,
+		GenerationID:        allocation.GenerationID,
+		TurnID:              turnID,
+		Owner:               allocation.Owner,
+		TerminalStatus:      "completed",
+		DriverStateUpdate:   &update,
+		DriverStateEvidence: &prepared.Evidence,
+		Now:                 now.Add(7 * time.Second),
 	}); err != nil {
-		t.Fatalf("complete pi turn after host validation: %v", err)
+		t.Fatalf("complete pi turn after application validation: %v", err)
 	}
 	var version int
 	var payload string

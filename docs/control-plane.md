@@ -257,3 +257,14 @@ outcomes are fenced by operation identity and owner, and terminal outcomes canno
 be rewritten. Recovery must establish that the prior writer stopped before
 settling an interrupted mutation. The remote helper is not yet wired into this
 local mutation path.
+
+Pi native-file validation now belongs to `internal/driverstate`, outside store
+transactions. Before completion, the application validates canonical state,
+opens the selected native source through the confined workspace reader and
+computes its digest. It passes evidence bound to session, generation, turn,
+owner, state digest and sandbox contract digest. Completion rechecks those values
+alongside the existing driver-state CAS and owner lease; missing evidence or a
+changed storage binding refuses advancement. Guest payloads cannot supply this
+application-only evidence field. The turn remains active through validation, so
+HTTP workspace mutation remains fenced. Launch validation uses the same source
+validator. The store's driver-state codecs perform metadata validation only.

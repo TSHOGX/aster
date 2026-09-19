@@ -41,6 +41,7 @@ var rules = []rule{
 			"internal/bridge",
 			"internal/runtime",
 			"internal/workspace/local",
+			"internal/driverstate",
 			"internal/memorystore",
 			"internal/controlsource",
 			"internal/dbsplit",

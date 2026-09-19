@@ -49,12 +49,10 @@ type driverStateRow struct {
 type driverStateBootstrapContext struct{}
 
 type driverStateCodec struct {
-	driverID                             agents.ID
-	bootstrap                            func(driverStateBootstrapContext) (any, error)
-	validatePayload                      func(map[string]any) error
-	validateHostPayload                  func(canonicalPayload []byte, agentHomeHostPath, expectedCompletedTurnID string) error
-	validateCompletedUpdateAgainstHostTx func(context.Context, *sql.Tx, CompleteTurnParams, []byte) error
-	synthesizeCompletedUpdateTx          func(context.Context, *sql.Tx, CompleteTurnParams, driverStateRow) error
+	driverID                    agents.ID
+	bootstrap                   func(driverStateBootstrapContext) (any, error)
+	validatePayload             func(map[string]any) error
+	synthesizeCompletedUpdateTx func(context.Context, *sql.Tx, CompleteTurnParams, driverStateRow) error
 }
 
 func driverStateCodecRegistry() map[agents.ID]driverStateCodec {
@@ -71,11 +69,9 @@ func driverStateCodecRegistry() map[agents.ID]driverStateCodec {
 			validatePayload: validateEmptyDriverStatePayload,
 		},
 		agents.Pi: {
-			driverID:                             agents.Pi,
-			bootstrap:                            bootstrapPiDriverState,
-			validatePayload:                      validatePiDriverStatePayload,
-			validateHostPayload:                  validatePiDriverStatePayloadForHost,
-			validateCompletedUpdateAgainstHostTx: validatePiDriverStateUpdateAgainstHostTx,
+			driverID:        agents.Pi,
+			bootstrap:       bootstrapPiDriverState,
+			validatePayload: validatePiDriverStatePayload,
 		},
 	}
 }
@@ -360,8 +356,8 @@ WHERE id = ?
 	if turnCount != 1 {
 		return permanentTurnCompletionf("driver state update turn does not belong to generation")
 	}
-	if codec, ok := driverStateCodecFor(string(driverID)); ok && codec.validateCompletedUpdateAgainstHostTx != nil {
-		if err := codec.validateCompletedUpdateAgainstHostTx(ctx, tx, p, canonical); err != nil {
+	if driverID == agents.Pi {
+		if err := assertDriverStateEvidenceTx(ctx, tx, p, nextDigest); err != nil {
 			return err
 		}
 	}
@@ -394,34 +390,6 @@ WHERE session_id = ?
 		return err
 	}
 	return permanentRequireOneRow(res, "driver state CAS failed")
-}
-
-func ValidateDriverStatePayloadForRuntimeLaunch(driverID string, canonicalPayload []byte, agentHomeHostPath string) error {
-	codec, ok := driverStateCodecFor(driverID)
-	if !ok {
-		return fmt.Errorf("unsupported driver %q", driverID)
-	}
-	if codec.validateHostPayload == nil {
-		return nil
-	}
-	if len(canonicalPayload) == 0 {
-		return fmt.Errorf("%s runtime launch requires driver state payload", codec.driverID)
-	}
-	if err := codec.validateHostPayload(canonicalPayload, agentHomeHostPath, ""); err != nil {
-		return fmt.Errorf("%s runtime launch driver state validation: %w", codec.driverID, err)
-	}
-	return nil
-}
-
-func ValidateDriverStatePayloadForHost(driverID string, canonicalPayload []byte, agentHomeHostPath, expectedCompletedTurnID string) error {
-	codec, ok := driverStateCodecFor(driverID)
-	if !ok {
-		return fmt.Errorf("unsupported driver %q", driverID)
-	}
-	if codec.validateHostPayload == nil {
-		return nil
-	}
-	return codec.validateHostPayload(canonicalPayload, agentHomeHostPath, expectedCompletedTurnID)
 }
 
 func synthesizeCompletedDriverStateUpdateTx(ctx context.Context, tx *sql.Tx, p CompleteTurnParams) error {
@@ -480,4 +448,9 @@ WHERE id = ?
 		}
 	}
 	return permanentTurnCompletionf("driver state stale digest: got %s want %s", update.PreviousStateDigest, current.StateDigest)
+}
+
+// CanonicalDriverStatePayload validates portable state metadata without I/O.
+func CanonicalDriverStatePayload(value any, driverID string) ([]byte, string, error) {
+	return canonicalDriverStatePayload(value, driverID)
 }

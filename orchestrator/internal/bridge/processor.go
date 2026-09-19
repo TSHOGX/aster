@@ -35,7 +35,7 @@ type Processor struct {
 	Now                     func() time.Time
 	ProbeHandler            func(context.Context, Envelope) error
 	AfterCommit             func(context.Context, Envelope, int64)
-	BeforeComplete          func(context.Context, store.CompleteTurnParams) error
+	BeforeComplete          func(context.Context, *store.CompleteTurnParams) error
 	// AfterEventCommit is used for durable events produced by a failure path that
 	// has no committed bridge envelope of its own (for example a protocol
 	// sequence mismatch). It deliberately receives only the event id so callers
@@ -542,7 +542,7 @@ func (p *Processor) handle(ctx context.Context, inbox Transport, scope Scope, en
 		var eventID int64
 		var err error
 		if p.BeforeComplete != nil {
-			err = p.BeforeComplete(ctx, completion)
+			err = p.BeforeComplete(ctx, &completion)
 		}
 		if err == nil {
 			eventID, err = p.Store.CompleteTurn(ctx, completion)

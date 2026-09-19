@@ -31,6 +31,7 @@ import (
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/deploymentgate"
+	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/runtime"
@@ -1467,7 +1468,8 @@ func (s *Server) runtimeStartRequest(session store.Session, generationID string,
 }
 
 func validateDriverStateForRuntimeLaunch(details store.RuntimeGenerationDetails, volumes sessionRuntimeDataVolumes) error {
-	return store.ValidateDriverStatePayloadForRuntimeLaunch(details.Agent, details.DriverStatePayload, volumes.DriverHome.HostPath)
+	_, err := driverstate.ValidateLocal(context.Background(), details.Agent, details.DriverStatePayload, volumes.DriverHome.HostPath, "")
+	return err
 }
 
 func (s *Server) ensureSessionRuntimeDataVolumes(ctx context.Context, session store.Session) (sessionRuntimeDataVolumes, error) {

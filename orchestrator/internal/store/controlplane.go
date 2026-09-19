@@ -131,6 +131,7 @@ type AckStartedParams struct {
 }
 
 type CompleteTurnParams struct {
+	DriverStateEvidence *DriverStateEvidence
 	FinalOutputSequence *int64
 	SessionID           string
 	GenerationID        string

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/bridge"
+	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/store"
 )
@@ -149,12 +150,29 @@ func (s *Server) projectBridgeRecord(ctx context.Context, record store.BridgeRec
 	return nil
 }
 
-func (s *Server) projectBeforeBridgeCompletion(ctx context.Context, p store.CompleteTurnParams) error {
-	if err := s.store.PrepareBridgeCompletion(ctx, p); err != nil {
+func (s *Server) projectBeforeBridgeCompletion(ctx context.Context, p *store.CompleteTurnParams) error {
+	if err := s.store.PrepareBridgeCompletion(ctx, *p); err != nil {
 		return err
 	}
-	// Do not permit successful completion (or driver-state advancement) while
-	// accepted producer input still lacks a committed message/trace projection.
+	if err := s.projectBridgeTurn(ctx, *p); err != nil {
+		return err
+	}
+	if p.DriverStateUpdate != nil && p.DriverStateUpdate.DriverID == "pi" {
+		input, err := s.store.DriverStateValidationInput(ctx, *p)
+		if err != nil {
+			return err
+		}
+		digest, err := driverstate.ValidateLocal(ctx, "pi", input.CanonicalPayload, input.AgentHomePath, fmt.Sprint(p.TurnID))
+		if err != nil {
+			return err
+		}
+		input.Evidence.NativeDigest = digest
+		p.DriverStateEvidence = &input.Evidence
+	}
+	return nil
+}
+
+func (s *Server) projectBridgeTurn(ctx context.Context, p store.CompleteTurnParams) error {
 	s.bridgeProjectionMu.Lock()
 	defer s.bridgeProjectionMu.Unlock()
 	for {

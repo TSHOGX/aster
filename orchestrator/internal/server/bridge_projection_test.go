@@ -65,7 +65,7 @@ func TestBridgeProjectionRecoversAfterIngestAndCheckpointRestart(t *testing.T) {
 	srv = &Server{store: st, hub: events.NewHub(), log: slog.Default()}
 	appendProjectionLine(t, st, p, 3, `{"type":"tool_execution_end","toolCallId":"tool-1","result":"synthetic result"}`)
 	appendProjectionLine(t, st, p, 4, `{"type":"message_end","messageId":"native-message","message":{"role":"assistant","content":[],"stopReason":"stop"}}`)
-	if err := srv.projectBeforeBridgeCompletion(ctx, p); err != nil {
+	if err := srv.projectBeforeBridgeCompletion(ctx, &p); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.CompleteTurn(ctx, p); err != nil {
@@ -90,7 +90,7 @@ func TestBridgeProjectionRecoversAfterIngestAndCheckpointRestart(t *testing.T) {
 	if err := srv.projectBridgeRecords(ctx, 128); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.projectBeforeBridgeCompletion(ctx, p); err != nil {
+	if err := srv.projectBeforeBridgeCompletion(ctx, &p); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.CompleteTurn(ctx, p); err != nil {
@@ -143,7 +143,7 @@ func TestBridgeCompletionWaitsForProjectionAndRetriesLostCommit(t *testing.T) {
 			appendProjectionLine(t, st, p, 1, `{"type":"message_update","messageId":"unfinished","assistantMessageEvent":{"type":"text_delta","delta":"retained partial"}}`)
 			wrapper := &projectionFailureStore{serverStore: st, fail: true, afterCommit: afterCommit}
 			srv.store = wrapper
-			if err := srv.projectBeforeBridgeCompletion(ctx, p); err == nil {
+			if err := srv.projectBeforeBridgeCompletion(ctx, &p); err == nil {
 				t.Fatal("ignored projector failure")
 			}
 			if _, err := st.CompleteTurn(ctx, p); err == nil {
@@ -154,7 +154,7 @@ func TestBridgeCompletionWaitsForProjectionAndRetriesLostCommit(t *testing.T) {
 				t.Fatalf("turn completed early: %s %v", status, err)
 			}
 			wrapper.fail = false
-			if err := srv.projectBeforeBridgeCompletion(ctx, p); err != nil {
+			if err := srv.projectBeforeBridgeCompletion(ctx, &p); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := st.CompleteTurn(ctx, p); err != nil {
