@@ -36,6 +36,7 @@ import (
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/runtime"
+	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
@@ -63,6 +64,7 @@ const (
 )
 
 type Server struct {
+	workspaceReads       sessionWorkspaceReader
 	executions           sessionExecutionController
 	newSessionBackend    string
 	nativeStateValidator func(context.Context, store.DriverStateValidationInput, int64) (workspace.File, error)
@@ -133,6 +135,12 @@ type Server struct {
 	shutdownOnce sync.Once
 	shutdownCh   chan struct{}
 }
+
+type sessionWorkspaceReader interface {
+	OpenSession(context.Context, string, string, string) (io.ReadSeekCloser, workspace.File, error)
+}
+
+func (s *Server) SetWorkspaceReader(reader sessionWorkspaceReader) { s.workspaceReads = reader }
 
 type sessionExecutionController interface {
 	Ensure(context.Context, execution.Session, string) (execution.Binding, error)
@@ -2280,6 +2288,20 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath s
 	} else if err != nil {
 		return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
 	}
+	backend, err := s.store.SessionExecutionBackend(ctx, sessionID)
+	if err != nil {
+		return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
+	}
+	if backend == "khora" {
+		if s.workspaceReads == nil {
+			return nil, workspace.File{}, http.StatusServiceUnavailable, "workspace backend unavailable"
+		}
+		file, info, err := s.workspaceReads.OpenSession(ctx, sessionID, store.GenerationLeaseOwner(s.ownerUUID), cleanPath)
+		return artifactFileResult(file, info, err)
+	}
+	if backend != "legacy" {
+		return nil, workspace.File{}, http.StatusServiceUnavailable, "unsupported workspace backend"
+	}
 
 	volumeConfig, err := s.dataVolumeProvisionerConfig()
 	if err != nil {
@@ -2297,12 +2319,20 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath s
 	}
 
 	file, info, err := workspace.Open(ctx, localworkspace.Directory{Path: volume.HostPath, UID: volume.SandboxUID, GID: volume.SandboxGID}, cleanPath)
+	return artifactFileResult(file, info, err)
+}
+
+func artifactFileResult(file io.ReadSeekCloser, info workspace.File, err error) (io.ReadSeekCloser, workspace.File, int, string) {
 	if err != nil {
 		switch {
-		case os.IsNotExist(err):
+		case errors.Is(err, os.ErrNotExist), errors.Is(err, sql.ErrNoRows):
 			return nil, workspace.File{}, http.StatusNotFound, "artifact not found"
 		case errors.Is(err, workspace.ErrForbidden), errors.Is(err, os.ErrPermission):
 			return nil, workspace.File{}, http.StatusForbidden, "artifact path is not a regular file or directory"
+		case errors.Is(err, workspace.ErrMutationBusy), errors.Is(err, execution.ErrBusy):
+			return nil, workspace.File{}, http.StatusConflict, "workspace is changing state"
+		case sandbox.Is(err, sandbox.Unavailable), sandbox.Is(err, sandbox.Precondition), sandbox.Is(err, sandbox.IdentityChanged):
+			return nil, workspace.File{}, http.StatusServiceUnavailable, "workspace backend unavailable"
 		default:
 			return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
 		}

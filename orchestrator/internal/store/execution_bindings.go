@@ -37,6 +37,13 @@ func (s *Store) ReserveExecutionBinding(ctx context.Context, p execution.Reserve
 	if environment.SessionID != p.SessionID || environment.SandboxID == "" || environment.Epoch == 0 {
 		return execution.Binding{}, fmt.Errorf("observed environment binding required")
 	}
+	var readers int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM workspace_read_leases WHERE environment_id=?`, environment.ID).Scan(&readers); err != nil {
+		return execution.Binding{}, err
+	}
+	if readers != 0 {
+		return execution.Binding{}, execution.ErrBusy
+	}
 	var recovering int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_recoveries WHERE environment_id=? AND stage!='complete'`, environment.ID).Scan(&recovering); err != nil {
 		return execution.Binding{}, err

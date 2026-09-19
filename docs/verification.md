@@ -175,3 +175,7 @@ checks every archive against its recorded digest, retries an injected lost
 receipt, and verifies exactly four raw-source records. A paused source requests
 maintenance activation. The controller resumes with zero active execution
 bindings, captures the backlog, pauses again and releases its active-capacity slot.
+The shell case reads workspace files through the HTTP range-download path while
+live and while paused. It rejects symlink parents and missing files, verifies
+that a held offline read blocks resume, and checks that closing/error paths release
+the lease without activating compute.

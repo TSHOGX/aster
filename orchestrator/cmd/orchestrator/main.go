@@ -158,6 +158,10 @@ func main() {
 		log.Error("failed to write orchestrator owner", "error", err)
 		os.Exit(1)
 	}
+	if err := db.ReconcileOfflineWorkspaceReaders(ctx, store.GenerationLeaseOwner(owner.UUID)); err != nil {
+		log.Error("failed to reconcile replaced workspace readers", "error", err)
+		os.Exit(1)
+	}
 	// The memory/distillation database is physically separate from the control
 	// plane, with its own writer connection, so a distillation sweep can no
 	// longer take the lock that serves HTTP traffic and session state. It is

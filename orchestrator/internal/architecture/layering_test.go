@@ -31,6 +31,7 @@ type rule struct {
 }
 
 var rules = []rule{
+	{pkg: "internal/sessionfiles", forbidden: []string{"internal/store", "internal/server", "internal/runtime", "internal/workspace/local"}, why: "retained workspace access uses consumer-owned records and opaque engine references"},
 	{pkg: "internal/nativecapture", forbidden: []string{"internal/store", "internal/memorystore", "internal/trajectory", "internal/server", "internal/runtime"}, why: "capture worker coordinates consumer-owned interfaces; adapters own persistence and source mechanisms"},
 	{pkg: "internal/workspace", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "workspace operations expose portable streams and metadata; provider paths and filesystem mechanisms belong to adapters"},
 	{pkg: "internal/execution", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "execution coordinates application ownership through consumer-owned operations, independent of HTTP, persistence implementations and substrate adapters"},

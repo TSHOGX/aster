@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"time"
 )
 
 type ErrorClass string
@@ -92,4 +93,14 @@ type Volume struct {
 	VolumeReference
 	Capacity  int64
 	UsedBytes *int64
+}
+
+type VolumeEntry struct {
+	Name, Type string
+	Size       int64
+	ModifiedAt time.Time
+}
+type VolumeReads interface {
+	LstatVolume(context.Context, VolumeReference, string) (VolumeEntry, error)
+	ReadVolume(context.Context, VolumeReference, string, int64, int64) ([]byte, error)
 }

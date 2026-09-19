@@ -32,6 +32,7 @@ import (
 	capturesource "harness-platform/orchestrator/internal/nativecapture/guest"
 	"harness-platform/orchestrator/internal/sandbox"
 	khorabackend "harness-platform/orchestrator/internal/sandbox/khora"
+	"harness-platform/orchestrator/internal/sessionfiles"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/trajectory"
 	"harness-platform/orchestrator/internal/workspace"
@@ -143,6 +144,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		processEnvironment = []string{"PI_MODEL=synthetic-model", "ANTHROPIC_BASE_URL=" + modelURL}
 	}
 	srv := &Server{store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
+	srv.SetWorkspaceReader(sessionfiles.Reader{Repository: st, Backend: backend})
 	srv.nativeStateValidator = func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), "native-state-"+driver+"-"+fmt.Sprint(turn), guestfiles.Files{Backend: backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	}
@@ -196,6 +198,9 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				t.Fatal(err)
 			}
 			assertIntegrationCapacity(t, ctx, st, 0)
+			if driver == "sh" {
+				verifyKhoraWorkspaceDownload(t, ctx, srv, st, controller, session.ID, leaseOwner, true)
+			}
 			// Replay the actual historical pause before the replacement starts.
 			// Its invalidation must be settled by new epoch readiness, not ignored.
 			for paused := false; !paused; {
@@ -262,7 +267,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		content := "printf 'product-worker-ok\\n'"
 		if driver == "sh" {
 			if cycle == 0 {
-				content = "printf 'product-worker-ok\\n' > /workspace/retained-controller-proof; cat /workspace/retained-controller-proof"
+				content = "printf 'product-worker-ok\\n' > /workspace/retained-controller-proof; ln -s /workspace /workspace/symlink-parent; cat /workspace/retained-controller-proof"
 			} else {
 				content = "cat /workspace/retained-controller-proof"
 			}
@@ -356,6 +361,9 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			}
 		}
 		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
+		if driver == "sh" && cycle == 0 {
+			verifyKhoraWorkspaceDownload(t, ctx, srv, st, controller, session.ID, leaseOwner, false)
+		}
 	}
 	{
 		target := binding.GenerationID
@@ -559,6 +567,50 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
 	}
 
+}
+
+func verifyKhoraWorkspaceDownload(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, session, owner string, paused bool) {
+	t.Helper()
+	reader, _, status, message := srv.openArtifactFile(ctx, session, "retained-controller-proof", accessOwner)
+	if status != 0 || reader == nil {
+		t.Fatalf("workspace open paused=%t: %d %s", paused, status, message)
+	}
+	if paused {
+		if _, err := controller.Ensure(ctx, execution.Session{ID: session, Driver: "sh"}, owner); !errors.Is(err, execution.ErrBusy) {
+			t.Fatalf("offline download did not fence resume: %v", err)
+		}
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/artifacts/"+session+"/retained-controller-proof", nil).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
+	request.Header.Set("Range", "bytes=8-13")
+	response := httptest.NewRecorder()
+	srv.getArtifact(response, request)
+	if response.Code != http.StatusPartialContent || response.Body.String() != "worker" {
+		t.Fatalf("workspace range paused=%t: %d %q", paused, response.Code, response.Body.String())
+	}
+	for _, path := range []string{"symlink-parent/retained-controller-proof", "missing"} {
+		file, _, status, _ := srv.openArtifactFile(ctx, session, path, accessOwner)
+		if file != nil {
+			file.Close()
+			t.Fatal("unexpected workspace file")
+		}
+		want := http.StatusForbidden
+		if path == "missing" {
+			want = http.StatusNotFound
+		}
+		if status != want {
+			t.Fatalf("workspace refusal paused=%t path=%s status=%d want=%d", paused, path, status, want)
+		}
+	}
+	var leases int
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM workspace_read_leases WHERE session_id=?`, session).Scan(&leases); err != nil || leases != 0 {
+		t.Fatalf("download leaked read lease: %d %v", leases, err)
+	}
+	if paused {
+		assertIntegrationCapacity(t, ctx, st, 0)
+	}
 }
 
 type captureFaultRepository struct {

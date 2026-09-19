@@ -469,6 +469,18 @@ CREATE TABLE IF NOT EXISTS native_capture_activations (
  updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workspace_read_leases (
+ lease_id TEXT PRIMARY KEY,
+ session_id TEXT NOT NULL REFERENCES sessions(id),
+ environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
+ owner TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ mutation_revision TEXT NOT NULL,
+ volume_id TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workspace_read_leases_environment_idx ON workspace_read_leases(environment_id);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
   path TEXT NOT NULL,

@@ -141,6 +141,13 @@ func beginEnvironmentOperationTx(ctx context.Context, tx *sql.Tx, p execution.Op
 	if environment.Fence != p.ExpectedFence {
 		return execution.Operation{}, execution.ErrStaleOperation
 	}
+	var readers int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM workspace_read_leases WHERE environment_id=?`, p.EnvironmentID).Scan(&readers); err != nil {
+		return execution.Operation{}, err
+	}
+	if readers != 0 {
+		return execution.Operation{}, execution.ErrBusy
+	}
 	var recovering int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_recoveries WHERE environment_id=? AND stage!='complete' AND operation_id!=?`, p.EnvironmentID, p.ID).Scan(&recovering); err != nil {
 		return execution.Operation{}, err

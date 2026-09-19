@@ -489,3 +489,19 @@ mutation revision, with no later event than the captured watermark. A running
 inspection does not clear agent-readiness invalidation. Unexpected epochs remain
 unknown and counted for recovery. Upgrades initialize existing environment
 observations to unknown rather than inferring termination from old generations.
+
+Workspace downloads and share snapshots select their reader from the session's
+persisted backend. A missing Khora reader returns unavailable rather than falling
+back to a host path. Live reads use the confined guest helper. Paused reads use
+bounded volume ranges without activating compute, under a durable read lease.
+The lease prevents lifecycle activation, worker reservation and workspace writes
+while the adapter rejects symlinks at every path component. This supplements
+Khora's volume-root confinement, which permits links within the volume.
+
+Range reads preserve seeking and HTTP download behavior; short volume replies
+fail rather than masquerading as complete files. Closing a download releases its
+lease. Startup releases abandoned leases only after acquiring the product process
+lock and recording the replacement owner. Reader leases have no timer that could
+permit a writer to race a slow live download. The API reader adapter is injectable;
+default startup still awaits full Khora composition, and remote workspace uploads
+remain a separate integration step.

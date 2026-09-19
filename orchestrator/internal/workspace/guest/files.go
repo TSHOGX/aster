@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"time"
 
@@ -238,6 +239,12 @@ func (f Files) call(ctx context.Context, key string, args []string, input io.Rea
 			}
 		case "end":
 			completed = true
+			if frame.ExitCode == 44 {
+				return nil, os.ErrNotExist
+			}
+			if frame.ExitCode == 43 {
+				return nil, workspace.ErrForbidden
+			}
 			if frame.ExitCode != 0 {
 				return nil, fmt.Errorf("guest helper failed (%d): %s", frame.ExitCode, diagnostic.String())
 			}
