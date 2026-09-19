@@ -4,13 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
+	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
@@ -19,22 +18,24 @@ import (
 func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Session, ensured ensuredGeneration, failureMode generationStartFailureMode) error {
 	allocation := ensured.Allocation
 	startCtx := ctx
-	leaseKeeper := noopStartLeaseKeeper()
+	var leaseKeeper *execution.StartLease
 	if ensured.IsNew || ensured.RestoreFromCheckpoint {
 		var err error
-		startCtx, leaseKeeper, err = s.beginGenerationStartLease(ctx, session.ID, allocation.GenerationID, allocation.Owner)
+		startCtx, leaseKeeper, err = execution.HoldStartLease(ctx, s.cfg.Harness.Bridge.LeaseTTL.Duration, func(renewCtx context.Context) error {
+			return s.store.RenewGenerationStartLease(renewCtx, store.RenewGenerationStartLeaseParams{SessionID: session.ID, GenerationID: allocation.GenerationID, Owner: allocation.Owner, LeaseTTL: s.cfg.Harness.Bridge.LeaseTTL.Duration, Now: time.Now().UTC()})
+		})
 		if err != nil {
 			return err
 		}
 	}
-	defer leaseKeeper.stop()
+	defer leaseKeeper.Stop()
 	generationDetails, err := s.runtimeGenerationDetails(ctx, session.ID, allocation.GenerationID)
 	if err != nil {
 		return err
 	}
 	dataVolumes, err := s.ensureSessionRuntimeDataVolumes(ctx, session)
 	if err != nil {
-		if leaseErr := leaseKeeper.err(); leaseErr != nil {
+		if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 			return leaseErr
 		}
 		if ensured.RestoreFromCheckpoint {
@@ -71,21 +72,21 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 	if ensured.IsNew {
 		preparedArtifacts, err = s.runtime.PrepareGeneration(startCtx, s.runtimeStartRequest(session, allocation.GenerationID, generationDetails, runtime.GenerationArtifacts{}, dataVolumes))
 		if err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
-			if leaseErr := leaseKeeper.ensureOwned(); leaseErr != nil {
+			if leaseErr := leaseKeeper.EnsureOwned(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			return err
 		}
 		runtimeResourceParams, err := s.runtimeResourceInstanceParams(generationDetails, preparedArtifacts, resourceHostID)
 		if err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
@@ -93,7 +94,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 		}
 		_, resourceIdentityDigest, err := store.RuntimeResourceIdentityForParams(runtimeResourceParams)
 		if err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
@@ -101,7 +102,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 		}
 		contractPayload, err := s.sandboxContractPayload(session, generationDetails, preparedArtifacts, resourceIdentityDigest, dataVolumes)
 		if err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
@@ -109,7 +110,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 		}
 		inputEvidence, err := s.sandboxContractInputEvidenceFor(session, generationDetails.Agent)
 		if err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
@@ -130,23 +131,23 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			AgentManifestPayload:   inputEvidence.AgentManifestPayload,
 			Now:                    time.Now().UTC(),
 		}); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			return err
 		}
 		if err := s.store.RecordGenerationRuntimeArtifactDigests(ctx, allocation.GenerationID, runtimeArtifactDigests(preparedArtifacts)); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			return err
 		}
 		if _, err := s.store.RecordSandboxContractArtifacts(ctx, store.RecordSandboxContractArtifactsParams{
@@ -156,18 +157,18 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			BundleDigest:          preparedArtifacts.BundleDigest,
 			Now:                   time.Now().UTC(),
 		}); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			return err
 		}
 		instance, err := s.createRuntimeResourceInstance(ctx, runtimeResourceParams)
 		if err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
@@ -184,14 +185,14 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			IdempotencyToken: "start:" + allocation.GenerationID,
 			Now:              materializeNow,
 		}); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			retireRuntimeResource()
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			retireRuntimeResource()
 			return err
 		}
@@ -201,26 +202,26 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			HostID:       resourceHostID,
 			Now:          time.Now().UTC(),
 		}); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			retireRuntimeResource()
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			retireRuntimeResource()
 			return err
 		}
 		if err := s.store.MarkGenerationStarting(ctx, session.ID, allocation.GenerationID, allocation.Owner, time.Now().UTC()); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			retireRuntimeResource()
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			retireRuntimeResource()
 			return err
 		}
@@ -255,10 +256,10 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 	startReq.RestoreFromCheckpoint = ensured.RestoreFromCheckpoint
 	result := s.runtime.Start(startCtx, startReq, nil)
 	if result.Err != nil {
-		if leaseErr := leaseKeeper.err(); leaseErr != nil {
+		if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 			return leaseErr
 		}
-		if leaseErr := leaseKeeper.ensureOwned(); leaseErr != nil {
+		if leaseErr := leaseKeeper.EnsureOwned(); leaseErr != nil {
 			return leaseErr
 		}
 		if ensured.RestoreFromCheckpoint {
@@ -272,7 +273,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 		s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, result.Err, failureMode)
 		return result.Err
 	}
-	if err := leaseKeeper.ensureOwned(); err != nil {
+	if err := leaseKeeper.EnsureOwned(); err != nil {
 		if destroyErr := s.destroyGenerationRuntime(context.Background(), generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
 			s.log.Warn("failed to destroy runtime after start lease loss", "session_id", session.ID, "generation_id", allocation.GenerationID, "error", destroyErr)
 			return destroyErr
@@ -293,7 +294,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			})
 		}
 		if err := renewRuntimeResourceWorkerLease(); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			if destroyErr := s.destroyGenerationRuntime(ctx, generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
@@ -312,7 +313,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 		}
 		bridgeStartupEvidence, err = s.waitForBridgeStartupReadiness(startCtx, allocation, runtimeResourceInstance)
 		if err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				if destroyErr := s.destroyGenerationRuntime(context.Background(), generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
 					s.log.Warn("failed to destroy runtime after bridge startup lease loss", "session_id", session.ID, "generation_id", allocation.GenerationID, "error", destroyErr)
 					return destroyErr
@@ -320,7 +321,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 				retireRuntimeResource()
 				return leaseErr
 			}
-			if leaseErr := leaseKeeper.ensureOwned(); leaseErr != nil {
+			if leaseErr := leaseKeeper.EnsureOwned(); leaseErr != nil {
 				if destroyErr := s.destroyGenerationRuntime(context.Background(), generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
 					s.log.Warn("failed to destroy runtime after bridge startup lease loss", "session_id", session.ID, "generation_id", allocation.GenerationID, "error", destroyErr)
 					return destroyErr
@@ -343,7 +344,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			return err
 		}
 		if err := renewRuntimeResourceWorkerLease(); err != nil {
-			if leaseErr := leaseKeeper.err(); leaseErr != nil {
+			if leaseErr := leaseKeeper.Err(); leaseErr != nil {
 				return leaseErr
 			}
 			if destroyErr := s.destroyGenerationRuntime(ctx, generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
@@ -360,7 +361,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			}
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			if destroyErr := s.destroyGenerationRuntime(context.Background(), generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
 				s.log.Warn("failed to destroy runtime after bridge startup lease loss", "session_id", session.ID, "generation_id", allocation.GenerationID, "error", destroyErr)
 				return destroyErr
@@ -395,7 +396,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			if destroyErr := s.destroyGenerationRuntime(context.Background(), generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
 				s.log.Warn("failed to destroy runtime after resource live lease loss", "session_id", session.ID, "generation_id", allocation.GenerationID, "error", destroyErr)
 				return destroyErr
@@ -412,7 +413,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			s.failGenerationBeforeTurn(session, allocation.GenerationID, allocation.Owner, err, failureMode)
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			if destroyErr := s.destroyGenerationRuntime(context.Background(), generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
 				s.log.Warn("failed to destroy runtime after generation live lease loss", "session_id", session.ID, "generation_id", allocation.GenerationID, "error", destroyErr)
 				return destroyErr
@@ -430,7 +431,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 					return destroyErr
 				}
 				retireRuntimeResource()
-				if leaseErr := leaseKeeper.ensureOwned(); leaseErr != nil {
+				if leaseErr := leaseKeeper.EnsureOwned(); leaseErr != nil {
 					return leaseErr
 				}
 				if retireErr := s.retireGenerationForRestoreFallback(session.ID, allocation.GenerationID, allocation.Owner, err); retireErr != nil {
@@ -450,7 +451,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 					return destroyErr
 				}
 				retireRuntimeResource()
-				if leaseErr := leaseKeeper.ensureOwned(); leaseErr != nil {
+				if leaseErr := leaseKeeper.EnsureOwned(); leaseErr != nil {
 					return leaseErr
 				}
 				if retireErr := s.retireGenerationForRestoreFallback(session.ID, allocation.GenerationID, allocation.Owner, err); retireErr != nil {
@@ -465,7 +466,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 				return destroyErr
 			}
 			retireRuntimeResource()
-			if leaseErr := leaseKeeper.ensureOwned(); leaseErr != nil {
+			if leaseErr := leaseKeeper.EnsureOwned(); leaseErr != nil {
 				return leaseErr
 			}
 			if retireErr := s.retireGenerationForRestoreFallback(session.ID, allocation.GenerationID, allocation.Owner, err); retireErr != nil {
@@ -473,7 +474,7 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 			}
 			return err
 		}
-		if err := leaseKeeper.ensureOwned(); err != nil {
+		if err := leaseKeeper.EnsureOwned(); err != nil {
 			if destroyErr := s.destroyGenerationRuntime(context.Background(), generationDetails); destroyErr != nil && !errors.Is(destroyErr, context.Canceled) {
 				s.log.Warn("failed to destroy runtime after restore start lease loss", "session_id", session.ID, "generation_id", allocation.GenerationID, "error", destroyErr)
 				return destroyErr
@@ -482,117 +483,6 @@ func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Sessi
 		}
 	}
 	return nil
-}
-
-type startLeaseKeeper struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	renew  func() error
-
-	mu      sync.Mutex
-	failure error
-}
-
-func noopStartLeaseKeeper() *startLeaseKeeper {
-	done := make(chan struct{})
-	close(done)
-	return &startLeaseKeeper{
-		cancel: func() {},
-		done:   done,
-		renew:  func() error { return nil },
-	}
-}
-
-func (s *Server) beginGenerationStartLease(ctx context.Context, sessionID, generationID, owner string) (context.Context, *startLeaseKeeper, error) {
-	startCtx, cancel := context.WithCancel(ctx)
-	ttl := s.cfg.Harness.Bridge.LeaseTTL.Duration
-	keeper := &startLeaseKeeper{
-		cancel: cancel,
-		done:   make(chan struct{}),
-	}
-	keeper.renew = func() error {
-		renewCtx, renewCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer renewCancel()
-		return s.store.RenewGenerationStartLease(renewCtx, store.RenewGenerationStartLeaseParams{
-			SessionID:    sessionID,
-			GenerationID: generationID,
-			Owner:        owner,
-			LeaseTTL:     ttl,
-			Now:          time.Now().UTC(),
-		})
-	}
-	if err := keeper.ensureOwned(); err != nil {
-		cancel()
-		close(keeper.done)
-		return startCtx, keeper, err
-	}
-	go func() {
-		defer close(keeper.done)
-		ticker := time.NewTicker(startLeaseRenewalInterval(ttl))
-		defer ticker.Stop()
-		for {
-			select {
-			case <-startCtx.Done():
-				return
-			case <-ticker.C:
-				if err := keeper.ensureOwned(); err != nil {
-					return
-				}
-			}
-		}
-	}()
-	return startCtx, keeper, nil
-}
-
-func startLeaseRenewalInterval(ttl time.Duration) time.Duration {
-	interval := ttl / 2
-	if interval < time.Millisecond {
-		return time.Millisecond
-	}
-	return interval
-}
-
-func (k *startLeaseKeeper) ensureOwned() error {
-	if err := k.getErr(); err != nil {
-		return err
-	}
-	if k.renew == nil {
-		return nil
-	}
-	if err := k.renew(); err != nil {
-		wrapped := fmt.Errorf("%w: %v", errGenerationStartLeaseLost, err)
-		k.setErr(wrapped)
-		return wrapped
-	}
-	return k.getErr()
-}
-
-func (k *startLeaseKeeper) err() error {
-	return k.getErr()
-}
-
-func (k *startLeaseKeeper) getErr() error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.failure
-}
-
-func (k *startLeaseKeeper) setErr(err error) {
-	if err == nil {
-		return
-	}
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.failure != nil {
-		return
-	}
-	k.failure = err
-	k.cancel()
-}
-
-func (k *startLeaseKeeper) stop() {
-	k.cancel()
-	<-k.done
 }
 
 func (s *Server) failGenerationBeforeTurn(session store.Session, generationID, owner string, failure error, failureMode generationStartFailureMode) {

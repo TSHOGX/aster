@@ -28,6 +28,7 @@ import (
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
@@ -3124,7 +3125,7 @@ WHERE generation_id = ?`, time.Now().UTC().Add(time.Minute).Format(time.RFC3339N
 		Allocation: allocation,
 		IsNew:      true,
 	}, startFailureInputAcceptable)
-	if !errors.Is(err, errGenerationStartLeaseLost) {
+	if !errors.Is(err, execution.ErrStartLeaseLost) {
 		t.Fatalf("expected start lease loss, got %v", err)
 	}
 	runscID := serverRunscContainerID(t, ctx, st, session.ID, allocation.GenerationID)

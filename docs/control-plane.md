@@ -151,3 +151,11 @@ completion handling can reach persistence. Batched output receives the same
 check. Replies use the host scope, including replies rejecting a forged scope.
 Carrier receipts remain separate from envelope and output identities, so a lost
 acknowledgment can redeliver input without allocating a second journal record.
+
+Generation-start ownership is coordinated by `internal/execution`. HTTP and
+scheduled starts use the same lease guard while preparation and readiness run.
+The guard renews the durable owner fence, cancels backend startup on renewal
+failure, and cannot revive a failed attempt. Renewal calls are bounded by half
+the lease TTL, capped at five seconds, so a blocked renewal cannot consume an
+unrelated fixed timeout for short leases. Backend provisioning and readiness
+mechanics remain in the existing lifecycle path.

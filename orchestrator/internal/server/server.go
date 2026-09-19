@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,7 +23,6 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
-	pathpkg "path"
 
 	"github.com/gorilla/websocket"
 
@@ -53,8 +53,7 @@ const (
 )
 
 var (
-	errGenerationBusy           = errors.New("generation lifecycle is busy")
-	errGenerationStartLeaseLost = errors.New("generation start lease lost")
+	errGenerationBusy = errors.New("generation lifecycle is busy")
 )
 
 type generationStartFailureMode int
