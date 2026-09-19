@@ -27,7 +27,8 @@ def finalize(root, engine_module):
     files = {}
     for relative in ('usr/sbin/sandboxd', 'usr/local/bin/harness-khora-launcher',
                      'usr/local/bin/harness-bridge-client', 'usr/local/bin/harness-shell-agent',
-                     'usr/local/lib/harness_stream.py', 'usr/local/lib/harness_launch.py'):
+                     'usr/local/lib/harness_stream.py', 'usr/local/lib/harness_launch.py',
+                     'usr/local/lib/harness_files.py', 'usr/local/bin/harness-workspace-helper'):
         path = root / relative
         if path.is_symlink() or not path.is_file():
             raise ValueError(f'missing regular template component: {relative}')

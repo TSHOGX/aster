@@ -153,6 +153,26 @@ func TestKhoraTemplateShellAndNativeHistory(t *testing.T) {
 	if !strings.Contains(output.String(), "khora-shell-ok") {
 		t.Fatalf("shell output missing: %s", output.String())
 	}
+	confined := runProbe(t, ctx, backend, observed.Reference, "workspace-helper", `import sys,os,io,hashlib
+sys.path.insert(0,'/usr/local/lib')
+from harness_files import open_root,replace,read_range,file_digest
+root=open_root('/workspace')
+try:
+ payload=b'durable guest helper content'
+ result=replace(root,'nested/helper.txt',io.BytesIO(payload),len(payload),hashlib.sha256(payload).hexdigest(),'substrate-operation')
+ output=io.BytesIO();read_range(root,'nested/helper.txt',output,3,7)
+ assert output.getvalue()==payload[3:10]
+ assert file_digest(root,'nested/helper.txt',sync=True)['sha256']==result['sha256']
+ os.symlink('/root','/workspace/escape')
+ try:replace(root,'escape/outside',io.BytesIO(b'x'),1,hashlib.sha256(b'x').hexdigest(),'escape-operation')
+ except (OSError,ValueError):pass
+ else:raise AssertionError('symlink parent accepted')
+ print('workspace-helper-ok')
+finally:os.close(root)
+`)
+	if !strings.Contains(confined, "workspace-helper-ok") {
+		t.Fatalf("guest helper failed: %s", confined)
+	}
 	// Exercise the real pinned Pi SessionManager and RPC selector without model
 	// traffic; gateway credential/protocol acceptance remains a separate gate.
 	script := piNativeProbe(false)

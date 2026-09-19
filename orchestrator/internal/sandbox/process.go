@@ -34,4 +34,5 @@ type Processes interface {
 	// a failed send may have written a prefix and must not be blindly retried.
 	SendProcessInput(context.Context, ProcessReference, []byte) error
 	SignalProcess(context.Context, ProcessReference, int32) error
+	CloseProcessInput(context.Context, ProcessReference) error
 }

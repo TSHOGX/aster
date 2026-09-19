@@ -1010,6 +1010,10 @@ class PiRPCTurnRunner:
         session_id = str(stats.get("sessionId") or "").strip()
         if not session_id:
             raise RuntimeError("pi sessionId is required")
+        if os.environ.get("HARNESS_BACKEND") == "khora":
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+            from harness_files import native_state_barrier
+            native_state_barrier(selected_file, PI_SESSION_DIR)
         state_payload = {
             "schema_version": 1,
             "driver_id": "pi",

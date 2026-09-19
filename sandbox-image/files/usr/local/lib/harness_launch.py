@@ -13,6 +13,8 @@ def _directory(path):
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not path.is_dir():
         raise ValueError('agent path is not a directory')
+    _sync_dir(path)
+    _sync_dir(path.parent)
 
 
 def _read_config(path):

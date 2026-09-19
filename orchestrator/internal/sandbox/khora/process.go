@@ -145,3 +145,13 @@ func processError(operation string, err error) error {
 }
 
 var _ sandbox.Processes = (*Backend)(nil)
+
+func (b *Backend) CloseProcessInput(ctx context.Context, reference sandbox.ProcessReference) error {
+	if err := b.validateProcess(ctx, reference); err != nil {
+		return err
+	}
+	request := connect.NewRequest(&v1.CloseStdinRequest{ProcessHandle: reference.Handle, PlacementEpoch: reference.Epoch})
+	request.Header().Set(sandboxHeader, reference.SandboxID)
+	_, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).CloseStdin(ctx, request)
+	return processError("close process input", err)
+}

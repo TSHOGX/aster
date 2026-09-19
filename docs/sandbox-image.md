@@ -276,3 +276,19 @@ from the Khora template. The existing local-backend rootfs builder remains
 available during migration. The engine and application manifests have distinct
 roles: engine template identity is immutable storage input; application metadata
 pins the driver, bridge and launcher that the product expects to start.
+
+`harness-workspace-helper` provides confined guest read, replace and sync
+operations for `/workspace` and Pi's native session directory. It walks entries
+with `O_PATH|O_NOFOLLOW`, checks each type, and opens the pinned descriptor for
+I/O. This explicit check is required by the tested gVisor behavior; a directory
+open with `O_DIRECTORY|O_NOFOLLOW` alone was insufficient. Replacement verifies
+its declared size and SHA-256, synchronizes file metadata, renames within the
+pinned parent and synchronizes that parent. Post-rename sync failure is reported
+as uncertain, so the application must reconcile its operation before retrying.
+The helper is a mechanism, not a lifecycle or mutation-ledger owner.
+
+At a completed Pi RPC boundary, the Khora bridge synchronizes the selected native
+JSONL and its parent before producing the driver-state update. A failed barrier
+fails that advancement. This establishes successful fsync calls on the tested
+guest; it does not claim a power-loss simulation or prevent an independently
+running guest writer from modifying the file afterward.

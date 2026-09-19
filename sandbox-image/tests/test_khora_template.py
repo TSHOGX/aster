@@ -16,7 +16,7 @@ class KhoraTemplateTests(unittest.TestCase):
             root = Path(directory)
             for component in ('usr/sbin/sandboxd', 'usr/local/bin/harness-khora-launcher', 'usr/local/bin/harness-bridge-client',
                               'usr/local/bin/harness-shell-agent', 'usr/local/lib/harness_stream.py', 'usr/local/lib/harness_launch.py',
-                              'usr/local/bin/harness-agent-entrypoint'):
+                              'usr/local/bin/harness-agent-entrypoint', 'usr/local/lib/harness_files.py', 'usr/local/bin/harness-workspace-helper'):
                 path = root / component
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('synthetic component')
