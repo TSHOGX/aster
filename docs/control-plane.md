@@ -367,8 +367,18 @@ flag, without renewing the lease or changing the response command identity.
 Resume requests require a request ID and pin their original turn. Reusing an ID
 for another operation or turn fails. A cached grant still requires current
 execution authority and the original live turn attempt; terminal or expired
-grants cannot regain authority through replay. Idle attachment also persists its
-no-work decisions, which remain no-work after readiness is accepted.
+grants cannot regain authority through replay.
+
+During attachment, claim/resume envelopes are persisted in
+`deferred_turn_requests` before their journal receipts are acknowledged. No reply
+is sent until manifest negotiation, recovery through the captured journal head,
+and binding acceptance have completed. The launcher then delivers pending
+requests in bounded pages through the ordinary decision path. It persists each
+response command ID before sending; only the matching guest command ACK marks
+delivery complete. A lost send or attachment retries the same response even if
+the guest has already collected its original request record. Terminal grants are
+marked obsolete and never redispatched. Receipt processing retains the original
+process/epoch/owner fences and does not restore readiness after an engine event.
 
 ## Egress grant and request ledger
 
@@ -476,8 +486,8 @@ Idle executions have an explicit same-epoch attachment path. The current product
 owner fences dispatch, revokes and drains old grants, and inspects the recorded
 sandbox/epoch/revision before connecting to the original process handle. It uses
 `ConnectProcess`, never a replacement start. Fresh manifest negotiation and
-durable processing through the captured journal head precede acceptance. Idle
-claims receive no work during replay; terminal output is accepted only if it
+durable processing through the captured journal head precede acceptance. Turn
+requests are deferred during replay; terminal output is accepted only if it
 matches already-committed producer records. An in-flight turn or unprojected
 output blocks this path.
 

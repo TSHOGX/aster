@@ -27,6 +27,7 @@ type ProcessTransport struct {
 	// already been acknowledged and collected from the guest journal.
 	OnSynchronize         func(context.Context, json.RawMessage) error
 	OnCommandAcknowledged func(context.Context, string) error
+	OnCommandPrepared     func(context.Context, Envelope) error
 	OnRecovered           func(context.Context) error
 	recoveryHead          uint64
 	recoveryNotified      bool
@@ -191,6 +192,11 @@ func (t *ProcessTransport) Send(ctx context.Context, envelope Envelope) error {
 		}
 		digest := sha256.Sum256(raw)
 		envelope.MessageID = "response_" + hex.EncodeToString(digest[:])
+	}
+	if t.OnCommandPrepared != nil {
+		if err := t.OnCommandPrepared(ctx, envelope); err != nil {
+			return err
+		}
 	}
 	return t.sendFrame(ctx, StreamFrame{Version: 1, Kind: "command", Execution: t.scope.GenerationID, CommandID: envelope.MessageID, Envelope: &envelope})
 }

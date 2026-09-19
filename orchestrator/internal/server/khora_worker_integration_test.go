@@ -179,7 +179,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	invalidationResult := make(chan error, 1)
 	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
 	controlBackend := &partialAbortBackend{Processes: backend}
-	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, Requests: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
 		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
 		if envelope.Type == bridge.TypeAckTurnStarted && invalidateFirstTurn.CompareAndSwap(true, false) {
@@ -315,6 +315,19 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			if err := controller.Close(); err != nil {
 				t.Fatal(err)
 			}
+			watermark, err := st.BridgeStreamWatermark(ctx, previous.StoreID, previous.GenerationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			probe := fmt.Sprintf(`import json,sqlite3,time
+db=sqlite3.connect('file:/harness-bridge/%s/journal.db?mode=ro',uri=True)
+for attempt in range(300):
+ records=[json.loads(bytes(row[0])[1:]) for row in db.execute('SELECT payload FROM records WHERE sequence>?',(%d,)).fetchall()]
+ if any(r.get('envelope',{}).get('type')=='claim_next_turn' for r in records):break
+ time.sleep(0.02)
+else:raise RuntimeError('detached guest did not journal its next claim')
+`, previous.GenerationID, watermark)
+			runHistoricalRecoveryProbe(t, ctx, backend, previous, "inspect-idle-request", probe)
 			replacement, err := store.AcquireOwnerLock(filepath.Join(t.TempDir(), "replacement-owner"))
 			if err != nil {
 				t.Fatal(err)
@@ -338,7 +351,13 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 					t.Fatal(err)
 				}
 				if binding.Owner == leaseOwner && binding.State == "accepted" {
-					break
+					var delivered int
+					if err := st.DBForTest().QueryRow(`SELECT count(*) FROM deferred_turn_requests WHERE generation_id=? AND state='delivered'`, previous.GenerationID).Scan(&delivered); err != nil {
+						t.Fatal(err)
+					}
+					if delivered > 0 {
+						break
+					}
 				}
 				select {
 				case <-ctx.Done():
@@ -518,7 +537,7 @@ for attempt in range(300):
  time.sleep(0.02)
 else:raise RuntimeError('guest did not commit terminal journal record')
 `, binding.GenerationID, terminal, turn.TurnID)
-		runHistoricalRecoveryProbe(t, ctx, backend, binding, probe)
+		runHistoricalRecoveryProbe(t, ctx, backend, binding, "inspect-retained-journal", probe)
 		if err := controller.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -1357,9 +1376,9 @@ func (r *recoveryFaultReader) Recover(ctx context.Context, op execution.Operatio
 	return head, err
 }
 
-func runHistoricalRecoveryProbe(t *testing.T, ctx context.Context, backend sandbox.Processes, binding execution.Binding, script string) {
+func runHistoricalRecoveryProbe(t *testing.T, ctx context.Context, backend sandbox.Processes, binding execution.Binding, handle, script string) {
 	t.Helper()
-	stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, Handle: "inspect-retained-journal"}, IdempotencyKey: "inspect-retained-journal", Command: "/usr/bin/python3", Arguments: []string{"-c", script}})
+	stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/usr/bin/python3", Arguments: []string{"-c", script}})
 	if err != nil {
 		t.Fatal(err)
 	}

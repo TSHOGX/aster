@@ -615,6 +615,16 @@ func (p *Processor) handle(ctx context.Context, inbox Transport, scope Scope, en
 	}
 }
 
+// DeliverDeferred runs the ordinary protocol path after a host-owned replay
+// ledger has recovered a request. Its original journal receipt was committed
+// when it was deferred; the response still needs the guest's command ACK.
+func (p *Processor) DeliverDeferred(ctx context.Context, carrier Transport, scope Scope, envelope Envelope) error {
+	if envelope.Type != TypeClaimNextTurn && envelope.Type != TypeResumeTurn {
+		return fmt.Errorf("only turn requests can be delivered from the deferred ledger")
+	}
+	return p.handle(ctx, scopedTransport{Transport: carrier, scope: scope}, scope, envelope)
+}
+
 func (p *Processor) writeResponse(ctx context.Context, inbox Transport, request Envelope, responseType string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {

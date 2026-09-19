@@ -74,7 +74,7 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	hooks := app.ExecutionHooks()
-	launcher := agentbridge.Launcher{Backend: p.Backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: hooks.BeforeComplete, AfterEventCommit: hooks.AfterEventCommit}
+	launcher := agentbridge.Launcher{Backend: p.Backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: hooks.BeforeComplete, AfterEventCommit: hooks.AfterEventCommit}
 	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: p.Plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
 	reader := sessionfiles.Reader{Repository: st, Backend: p.Backend}
 	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: content, MaxActive: p.MaxActive, Provisioner: controller}

@@ -307,6 +307,18 @@ CREATE TABLE IF NOT EXISTS idle_execution_adoptions (
  event_sequence INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS deferred_turn_requests (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+ generation_id TEXT NOT NULL REFERENCES execution_bindings(generation_id),
+ request_id TEXT NOT NULL,
+ envelope TEXT NOT NULL,
+ command_id TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','delivered','obsolete')),
+ UNIQUE(generation_id,request_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS deferred_turn_reply_uq
+ ON deferred_turn_requests(generation_id,command_id) WHERE command_id!='';
+
 CREATE TABLE IF NOT EXISTS execution_steering (
  command_id TEXT PRIMARY KEY REFERENCES execution_turn_commands(command_id),
  queued_turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id),

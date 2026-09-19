@@ -29,14 +29,15 @@ type Launcher struct {
 	AfterEventCommit func(context.Context, int64)
 	OnExit           func(execution.Binding, error)
 	Commands         execution.TurnCommandRepository
+	Requests         execution.DeferredTurnRequests
 }
 
 func (l Launcher) Start(ctx context.Context, binding execution.Binding, request sandbox.StartProcessRequest) (execution.AgentConnection, error) {
 	return l.connect(ctx, binding, request, false)
 }
 func (l Launcher) AttachIdle(ctx context.Context, binding execution.Binding, reference sandbox.ProcessReference) (execution.AgentConnection, error) {
-	if l.IdleReplay == nil {
-		return nil, fmt.Errorf("idle adoption replay verifier required")
+	if l.IdleReplay == nil || l.Requests == nil {
+		return nil, fmt.Errorf("idle adoption replay verifier and deferred request ledger required")
 	}
 	return l.connect(ctx, binding, sandbox.StartProcessRequest{ProcessReference: reference}, true)
 }
@@ -70,12 +71,17 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 	connection := &connection{ready: make(chan error, 1), done: make(chan struct{}), activate: make(chan struct{}), cancel: cancel, carrier: carrier}
 	processor := &bridge.Processor{Store: l.Store, Owner: binding.Owner, LeaseTTL: l.LeaseTTL, AfterCommit: l.AfterCommit, BeforeComplete: l.BeforeComplete, AfterEventCommit: l.AfterEventCommit}
 	if reconnect {
-		processor.Store = idleBridgeStore{Store: l.Store, active: &connection.active}
 		processor.BeforeEnvelope = func(ctx context.Context, envelope bridge.Envelope) (bool, error) {
 			if connection.active.Load() {
 				return false, nil
 			}
 			switch envelope.Type {
+			case bridge.TypeClaimNextTurn, bridge.TypeResumeTurn:
+				raw, err := json.Marshal(envelope)
+				if err != nil {
+					return true, err
+				}
+				return true, l.Requests.DeferTurnRequest(ctx, binding, raw)
 			case bridge.TypeEmitOutput, bridge.TypeAckTurnStarted, bridge.TypeAckTurnCompleted, "turn_control_result":
 				return true, l.IdleReplay.VerifyIdleExecutionReplay(ctx, binding, envelope.Type, envelope.TurnID, envelope.Payload)
 			}
@@ -91,17 +97,34 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 		}
 		return nil
 	}
-	if l.Commands != nil {
-		carrier.OnCommandAcknowledged = func(ctx context.Context, id string) error {
-			scope := binding
-			scope.ProcessHandle = request.Handle
-			return l.Commands.AcknowledgeTurnCommand(ctx, scope, id)
+	if reconnect {
+		carrier.OnCommandPrepared = func(ctx context.Context, envelope bridge.Envelope) error {
+			if envelope.RequestID == "" {
+				return nil
+			}
+			return l.Requests.PrepareDeferredTurnReply(ctx, binding, envelope.RequestID, envelope.MessageID)
 		}
+	}
+	carrier.OnCommandAcknowledged = func(ctx context.Context, id string) error {
+		scope := binding
+		scope.ProcessHandle = request.Handle
+		if l.Commands != nil {
+			if err := l.Commands.AcknowledgeTurnCommand(ctx, scope, id); err != nil {
+				return err
+			}
+		}
+		if reconnect {
+			return l.Requests.AcknowledgeDeferredTurnReply(ctx, scope, id)
+		}
+		return nil
 	}
 	ready := func(ctx context.Context) error {
 		connection.readyOnce.Do(func() { connection.ready <- nil })
 		select {
 		case <-connection.activate:
+			if reconnect {
+				return deliverDeferredRequests(ctx, l.Requests, binding, processor, carrier)
+			}
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
@@ -185,42 +208,34 @@ func (c *connection) SendTurnCommand(ctx context.Context, p execution.TurnComman
 	return c.carrier.Send(ctx, bridge.Envelope{MessageID: p.ID, Type: "turn_control", SessionID: p.SessionID, GenerationID: p.GenerationID, TurnID: &p.TurnID, Payload: payload})
 }
 
-type idleBridgeStore struct {
-	bridge.Store
-	active *atomic.Bool
-}
-
-func (s idleBridgeStore) ClaimNextTurn(ctx context.Context, p store.ClaimNextTurnParams) (store.TurnGrant, bool, error) {
-	if !s.active.Load() {
-		repository, ok := s.Store.(interface {
-			IdleClaimNextTurn(context.Context, store.ClaimNextTurnParams) (store.TurnGrant, bool, error)
-		})
-		if !ok {
-			return store.TurnGrant{}, false, fmt.Errorf("durable idle claim decisions unavailable")
+// Visit each pending request once per recovered attachment. Command ACKs are
+// read afterward, so restarting a page at zero here would endlessly resend it.
+func deliverDeferredRequests(ctx context.Context, repository execution.DeferredTurnRequests, binding execution.Binding, processor *bridge.Processor, carrier bridge.Transport) error {
+	var after int64
+	for {
+		page, err := repository.PendingDeferredTurnRequests(ctx, binding, after, 16)
+		if err != nil {
+			return err
 		}
-		return repository.IdleClaimNextTurn(ctx, p)
-	}
-	return s.Store.ClaimNextTurn(ctx, p)
-}
-func (s idleBridgeStore) ResumeTurn(ctx context.Context, p store.ResumeTurnParams) (store.TurnGrant, bool, error) {
-	if !s.active.Load() {
-		repository, ok := s.Store.(interface {
-			IdleResumeTurn(context.Context, store.ResumeTurnParams) (store.TurnGrant, bool, error)
-		})
-		if !ok {
-			return store.TurnGrant{}, false, fmt.Errorf("durable idle resume decisions unavailable")
+		if page.After == after {
+			return nil
 		}
-		return repository.IdleResumeTurn(ctx, p)
+		if page.After < after {
+			return fmt.Errorf("deferred request cursor moved backward")
+		}
+		for _, request := range page.Requests {
+			if request.Sequence <= after || request.Sequence > page.After {
+				return fmt.Errorf("unordered deferred request page")
+			}
+			var envelope bridge.Envelope
+			if err := json.Unmarshal(request.Envelope, &envelope); err != nil {
+				return err
+			}
+			if err := processor.DeliverDeferred(ctx, carrier, bridge.Scope{SessionID: binding.SessionID, GenerationID: binding.GenerationID}, envelope); err != nil {
+				return err
+			}
+			after = request.Sequence
+		}
+		after = page.After
 	}
-	return s.Store.ResumeTurn(ctx, p)
-}
-
-func (s idleBridgeStore) RecordSteeringOutcome(ctx context.Context, session, generation, owner string, turn int64, p execution.SteeringOutcome) (int64, error) {
-	repository, ok := s.Store.(interface {
-		RecordSteeringOutcome(context.Context, string, string, string, int64, execution.SteeringOutcome) (int64, error)
-	})
-	if !ok {
-		return 0, fmt.Errorf("steering outcome persistence unavailable")
-	}
-	return repository.RecordSteeringOutcome(ctx, session, generation, owner, turn, p)
 }
