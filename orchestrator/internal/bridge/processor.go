@@ -145,10 +145,11 @@ type nativeEventPayload struct {
 }
 
 type ackCompletedPayload struct {
-	Status            string                   `json:"status"`
-	ErrorClass        string                   `json:"error_class,omitempty"`
-	Error             string                   `json:"error,omitempty"`
-	DriverStateUpdate *store.DriverStateUpdate `json:"driver_state_update,omitempty"`
+	FinalOutputSequence *int64                   `json:"final_output_sequence,omitempty"`
+	Status              string                   `json:"status"`
+	ErrorClass          string                   `json:"error_class,omitempty"`
+	Error               string                   `json:"error,omitempty"`
+	DriverStateUpdate   *store.DriverStateUpdate `json:"driver_state_update,omitempty"`
 }
 
 func (p *Processor) Process(ctx context.Context, scope Scope, carrier Transport) error {
@@ -524,18 +525,19 @@ func (p *Processor) handle(ctx context.Context, inbox Transport, scope Scope, en
 			payload.Status = "completed"
 		}
 		completion := store.CompleteTurnParams{
-			SessionID:         envelope.SessionID,
-			GenerationID:      envelope.GenerationID,
-			TurnID:            *envelope.TurnID,
-			Owner:             p.Owner,
-			TerminalStatus:    payload.Status,
-			ErrorClass:        payload.ErrorClass,
-			Error:             payload.Error,
-			DriverStateUpdate: payload.DriverStateUpdate,
-			EventType:         TypeAckTurnCompleted,
-			EventDedupeKey:    fmt.Sprintf("ack_completed:%s:%d", envelope.GenerationID, *envelope.TurnID),
-			EventPayload:      payload,
-			Now:               now,
+			FinalOutputSequence: payload.FinalOutputSequence,
+			SessionID:           envelope.SessionID,
+			GenerationID:        envelope.GenerationID,
+			TurnID:              *envelope.TurnID,
+			Owner:               p.Owner,
+			TerminalStatus:      payload.Status,
+			ErrorClass:          payload.ErrorClass,
+			Error:               payload.Error,
+			DriverStateUpdate:   payload.DriverStateUpdate,
+			EventType:           TypeAckTurnCompleted,
+			EventDedupeKey:      fmt.Sprintf("ack_completed:%s:%d", envelope.GenerationID, *envelope.TurnID),
+			EventPayload:        payload,
+			Now:                 now,
 		}
 		var eventID int64
 		var err error

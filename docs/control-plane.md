@@ -212,6 +212,13 @@ head and acknowledged positions across reopen, and deletes only acknowledged
 output. A host position below the retained boundary is an explicit gap. Command
 IDs retain payload digests, and contradictory duplicates are refused. The default
 logical journal capacity is 256 MiB; exhaustion fails instead of dropping records.
-Filesystem quota remains the physical storage bound. These codecs and persistence
-primitives are tested independently; the existing guest claim loop still uses the
-local queue carrier.
+Filesystem quota remains the physical storage bound. The guest claim loop supports `--transport stdio` with this journal; the file
+carrier remains the default during migration. The host process carrier performs
+sync/state before accepting records, persists exact receipt digests and a
+contiguous watermark before ACK, and requests replay after gaps. Receipt state
+is bound to backend identity, execution, process handle and epoch. Stdio
+completion declares its final output sequence; persistence refuses completion
+or driver-state advancement with missing output or pending projection. A local
+integration test runs the actual shell driver through framed stdin/stdout and
+verifies retained completion data. Template/substrate integration remains a
+separate acceptance gate.

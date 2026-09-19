@@ -187,6 +187,18 @@ class Journal:
                 result.append(frames[0])
             return result
 
+    def output_watermarks(self):
+        with self.lock:
+            rows = self.db.execute("SELECT payload FROM records ORDER BY sequence").fetchall()
+            result = {}
+            for (payload,) in rows:
+                envelope = Decoder().feed(payload)[0]['envelope']
+                if envelope.get('type') == 'emit_output':
+                    turn = int(envelope['turn_id'])
+                    sequence = int(envelope['payload']['output_sequence'])
+                    result[turn] = max(sequence, result.get(turn, 0))
+            return result
+
     def acknowledge(self, sequence):
         with self.lock, self.db:
             head, ack, _ = self.db.execute("SELECT head,ack,bytes FROM positions WHERE singleton=1").fetchone()
@@ -216,3 +228,110 @@ class Journal:
             self.db.execute("INSERT INTO commands VALUES(?,?,?)", (frame["command_id"], payload, digest))
             self.db.execute("UPDATE positions SET bytes=bytes+? WHERE singleton=1", (len(payload),))
         return True
+
+
+class StdioChannel:
+    """Single input reader and serialized output over a persisted journal.
+
+    A sync response precedes replay under the same output lock. Records emitted
+    while detached remain in the journal and are recovered on the next sync.
+    """
+    def __init__(self, journal, source, destination):
+        self.journal = journal
+        self.source = source
+        self.destination = destination
+        self.output_lock = threading.RLock()
+        self.condition = threading.Condition()
+        self.error = None
+        self.synchronized = False
+        self.commands = {}
+        self.controls = []
+        self.decoder = Decoder()
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _write(self, frame):
+        self.destination.write(encode(frame))
+        self.destination.flush()
+
+    def emit(self, envelope):
+        with self.output_lock:
+            frame = self.journal.append(envelope)
+            if self.synchronized:
+                self._write(frame)
+            return frame
+
+    def _receive(self, frame):
+        if frame['execution'] != self.journal.execution:
+            raise ValueError('host frame names another execution')
+        if frame['kind'] == 'sync':
+            with self.output_lock:
+                after = frame.get('after', 0)
+                head, acknowledged = self.journal.positions()
+                self.journal.replay(after, 1)  # Validate even an empty window.
+                self._write({'version': VERSION, 'kind': 'state', 'execution': self.journal.execution,
+                             'command_id': frame.get('command_id', ''), 'after': acknowledged, 'head': head})
+                while after < head:
+                    records = self.journal.replay(after)
+                    if not records:
+                        raise JournalGap('journal sequence is missing')
+                    for record in records:
+                        if record['sequence'] != after + 1:
+                            raise JournalGap('journal sequence is missing')
+                        self._write(record)
+                        after = record['sequence']
+                self.synchronized = True
+        elif frame['kind'] == 'ack':
+            self.journal.acknowledge(frame.get('after', 0))
+        elif frame['kind'] == 'command':
+            first = self.journal.receive_command(frame)
+            envelope = frame['envelope']
+            with self.condition:
+                request_id = envelope.get('request_id')
+                if request_id:
+                    self.commands[request_id] = envelope
+                if first and envelope.get('type') == 'turn_control':
+                    self.controls.append(dict(envelope.get('payload') or {}, token=frame['command_id'], turn_id=envelope.get('turn_id')))
+                self.condition.notify_all()
+            with self.output_lock:
+                self._write({'version': VERSION, 'kind': 'command_ack', 'execution': self.journal.execution,
+                             'command_id': frame['command_id']})
+        else:
+            raise ValueError('unexpected host bridge frame')
+
+    def _read(self):
+        try:
+            while True:
+                # Read the descriptor directly: a daemon blocked while holding
+                # BufferedReader's lock can abort CPython during process exit.
+                chunk = os.read(self.source.fileno(), 65536)
+                if not chunk:
+                    raise EOFError('bridge process input closed')
+                for frame in self.decoder.feed(chunk):
+                    self._receive(frame)
+        except BaseException as error:
+            with self.condition:
+                self.error = error
+                self.condition.notify_all()
+
+    def wait_response(self, request_id, timeout):
+        import time
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self.condition:
+            while request_id not in self.commands:
+                if self.error:
+                    raise RuntimeError(f'bridge input unavailable: {self.error}') from self.error
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError(f'timed out waiting for {request_id}')
+                self.condition.wait(remaining)
+            envelope = self.commands.pop(request_id)
+        if envelope.get('type') == 'error':
+            raise RuntimeError((envelope.get('payload') or {}).get('error') or 'bridge error')
+        return envelope
+
+    def take_controls(self, turn_id):
+        with self.condition:
+            selected = [command for command in self.controls if command.get('turn_id') == turn_id]
+            self.controls = [command for command in self.controls if command.get('turn_id') != turn_id]
+            return selected

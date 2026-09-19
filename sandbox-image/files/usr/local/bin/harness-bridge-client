@@ -444,6 +444,83 @@ class BridgeClient:
         self.send("ack_turn_completed", turn_id=turn_id, payload=payload)
 
 
+class StdioBridgeClient(BridgeClient):
+    def __init__(self, root, session_id, generation_id, driver_id, poll_interval=0.05):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+        import harness_stream
+        self.root = Path(root)
+        self.session_id = session_id
+        self.generation_id = generation_id
+        self.driver_id = driver_id
+        self.poll_interval = poll_interval
+        self.last_output_sequence_by_turn = {}
+        self.leased_turn_id = None
+        self.journal = harness_stream.Journal(root, generation_id)
+        self.channel = harness_stream.StdioChannel(self.journal, sys.stdin.buffer, sys.stdout.buffer)
+
+    def acquire_producer_lock(self):
+        pass  # Journal acquired the execution's producer lock before reading stdin.
+
+    def release_producer_lock(self):
+        # The reader is daemon-scoped to this process. Closing stdin by the host
+        # ends it; journal commits are already durable before each send returns.
+        if not self.channel.reader.is_alive():
+            self.journal.close()
+
+    def send(self, message_type, request_id=None, turn_id=None, payload=None):
+        envelope = self.envelope(message_type, request_id=request_id, turn_id=turn_id, payload=payload)
+        self.channel.emit(envelope)
+        return envelope
+
+    def wait_response(self, request_id, timeout=None):
+        return self.channel.wait_response(request_id, timeout)
+
+    def hello(self, timeout=None):
+        request = self.send("hello", payload={"protocol_version": 2, "driver_id": self.driver_id, "turn_input_schema": "RunTurn"})
+        response = self.wait_response(request["request_id"], timeout)
+        if response.get("type") != "hello_ack":
+            raise RuntimeError("bridge hello acknowledgment required")
+        payload = response.get("payload") or {}
+        self.last_output_sequence_by_turn = {int(turn): int(sequence) for turn, sequence in (payload.get("last_output_sequence_by_turn") or {}).items()}
+        self.leased_turn_id = payload.get("leased_turn_id")
+        for turn, sequence in self.journal.output_watermarks().items():
+            self.last_output_sequence_by_turn[turn] = max(sequence, self.last_output_sequence_by_turn.get(turn, 0))
+        return payload
+
+    def touch_bridge_heartbeat(self):
+        pass
+
+    def mark_checkpoint_ready(self):
+        pass
+
+    def clear_checkpoint_ready(self):
+        pass
+
+    def ack_turn_started(self, turn_id, sandbox_source_ip):
+        self.send("ack_turn_started", turn_id=turn_id, payload={})
+
+    def ack_turn_completed(self, turn_id, status="completed", error_class="", error="", driver_state_update=None):
+        payload = {"status": status, "final_output_sequence": self.last_output_sequence_by_turn.get(turn_id, 0)}
+        if error_class:
+            payload["error_class"] = error_class
+        if error:
+            payload["error"] = error
+        if driver_state_update is not None:
+            payload["driver_state_update"] = driver_state_update
+        self.send("ack_turn_completed", turn_id=turn_id, payload=payload)
+
+    def start_control_watcher(self, runner, turn_id):
+        stop = threading.Event()
+        if not hasattr(runner, "deliver_control"):
+            return stop
+        def watch():
+            while not stop.wait(0.02):
+                for command in self.channel.take_controls(turn_id):
+                    runner.deliver_control(command["command"], turn_id, command.get("message", ""))
+        threading.Thread(target=watch, daemon=True).start()
+        return stop
+
+
 class ShellTurnRunner:
     def __init__(self):
         self.proc = None
@@ -1128,7 +1205,7 @@ def execute_grant(client, runner, grant):
     content = str(run_turn.get("content") or "")
     output_sequence = int(client.last_output_sequence_by_turn.get(turn_id, 0)) + 1
     client.clear_checkpoint_ready()
-    client.ack_turn_started(turn_id, sandbox_source_ip())
+    client.ack_turn_started(turn_id, "" if isinstance(client, StdioBridgeClient) else sandbox_source_ip())
 
     def emit(stream, line):
         nonlocal output_sequence
@@ -1138,7 +1215,7 @@ def execute_grant(client, runner, grant):
 
     # Started before the turn and stopped in the finally below, so the window in
     # which a Stop can land is exactly the window in which the turn is running.
-    stop_control_watch = start_turn_control_watcher(client.root, runner, turn_id)
+    stop_control_watch = client.start_control_watcher(runner, turn_id) if hasattr(client, "start_control_watcher") else start_turn_control_watcher(client.root, runner, turn_id)
     try:
         if hasattr(runner, "set_turn_context"):
             runner.set_turn_context(grant)
@@ -1174,7 +1251,8 @@ def execute_grant(client, runner, grant):
 
 def run_claim_loop(args, runner=None):
     driver_id = args_driver_id(args)
-    client = BridgeClient(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
+    client_type = StdioBridgeClient if getattr(args, "transport", "files") == "stdio" else BridgeClient
+    client = client_type(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
     client.acquire_producer_lock()
     try:
         client.heartbeat()
@@ -1238,6 +1316,7 @@ def run_claim_loop(args, runner=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
+    parser.add_argument("--transport", choices=("files", "stdio"), default="files")
     parser.add_argument("--bridge-dir", default=os.environ.get("HARNESS_BRIDGE_DIR", "/harness-control/bridge"))
     parser.add_argument("--session-id", default=os.environ.get("SESSION_ID"))
     parser.add_argument("--generation-id", default=os.environ.get("GENERATION_ID"))

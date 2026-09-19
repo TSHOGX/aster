@@ -127,3 +127,29 @@ func TestBridgeJournalRequiresContiguousOutputAndKeepsHelloWatermark(t *testing.
 		t.Fatal(err)
 	}
 }
+
+func TestCompletionWatermarkRefusesMissingDurableOutput(t *testing.T) {
+	ctx := context.Background()
+	s, p := journalFixture(t)
+	if _, err := s.AppendEvent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	final := int64(2)
+	completion := CompleteTurnParams{SessionID: p.SessionID, GenerationID: p.GenerationID, TurnID: *p.TurnID, Owner: p.Owner, TerminalStatus: "completed", FinalOutputSequence: &final, Now: p.Now}
+	if err := s.PrepareBridgeCompletion(ctx, completion); err == nil {
+		t.Fatal("completion marker skipped missing output")
+	}
+	if _, err := s.CompleteTurn(ctx, completion); err == nil {
+		t.Fatal("successful completion skipped missing output")
+	}
+	p.OutputSequence = &final
+	if _, err := s.AppendEvent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PrepareBridgeCompletion(ctx, completion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CompleteTurn(ctx, completion); err == nil {
+		t.Fatal("completion ignored pending projection")
+	}
+}

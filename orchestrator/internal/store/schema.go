@@ -237,6 +237,25 @@ CREATE TABLE IF NOT EXISTS bridge_projected_messages (
   UNIQUE(message_id)
 );
 
+CREATE TABLE IF NOT EXISTS bridge_streams (
+  backend_id TEXT NOT NULL,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  generation_id TEXT NOT NULL,
+  process_handle TEXT NOT NULL,
+  epoch INTEGER NOT NULL CHECK(epoch>0),
+  watermark INTEGER NOT NULL DEFAULT 0 CHECK(watermark>=0),
+  PRIMARY KEY(backend_id,generation_id),
+  UNIQUE(backend_id,process_handle)
+);
+CREATE TABLE IF NOT EXISTS bridge_stream_receipts (
+  backend_id TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK(sequence>0),
+  digest TEXT NOT NULL,
+  PRIMARY KEY(backend_id,generation_id,sequence),
+  FOREIGN KEY(backend_id,generation_id) REFERENCES bridge_streams(backend_id,generation_id)
+);
+
 CREATE TABLE IF NOT EXISTS sandbox_backends (
   name TEXT PRIMARY KEY,
   store_id TEXT NOT NULL,

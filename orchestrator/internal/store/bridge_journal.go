@@ -270,6 +270,9 @@ func (s *Store) PrepareBridgeCompletion(ctx context.Context, p CompleteTurnParam
 	if allowed != 1 {
 		return permanentTurnCompletionf("bridge completion ownership check failed")
 	}
+	if err := assertCompletionOutputTx(ctx, tx, p); err != nil {
+		return err
+	}
 	payload, err := completeTurnEventPayload(p.EventPayload, p, false)
 	if err != nil {
 		return err
@@ -283,4 +286,23 @@ func (s *Store) PrepareBridgeCompletion(ctx context.Context, p CompleteTurnParam
 		return err
 	}
 	return tx.Commit()
+}
+
+func assertCompletionOutputTx(ctx context.Context, tx *sql.Tx, p CompleteTurnParams) error {
+	if p.FinalOutputSequence == nil {
+		return nil
+	}
+	if *p.FinalOutputSequence < 0 {
+		return permanentTurnCompletionf("negative completion output watermark")
+	}
+	var maximum, count int64
+	err := tx.QueryRowContext(ctx, `SELECT coalesce(max(output_sequence),0),count(*) FROM bridge_ingress i JOIN turns t ON t.id=i.turn_id
+      WHERE i.session_id=? AND i.generation_id=? AND i.turn_id=? AND i.attempt=t.attempt AND i.type='emit_output'`, p.SessionID, p.GenerationID, p.TurnID).Scan(&maximum, &count)
+	if err != nil {
+		return err
+	}
+	if maximum != *p.FinalOutputSequence || count != maximum {
+		return fmt.Errorf("completion output watermark unresolved: received %d contiguous records through %d, expected %d", count, maximum, *p.FinalOutputSequence)
+	}
+	return nil
 }
