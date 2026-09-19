@@ -250,3 +250,29 @@ clears a previous abort marker — without it the turn after a stopped one is
 cancelled the moment it starts. The rest cover reading a malformed log without
 raising, command ordering, applying abort vs steer to pi, the watcher surviving a
 runner that raises, and the watcher stopping at the first abort.
+
+## Khora template build and launch
+
+`sandbox-image/build-khora-template.sh NEW_TEMPLATE_DIRECTORY` builds a fresh
+Pi/shell rootfs, installs `sandboxd` from the pinned Khora module, and writes the
+application driver manifest with engine revision and guest component hashes.
+The destination must not exist. Run it as root in a disposable builder with the
+private Go dependency already available. Template directories are immutable
+release inputs; never rebuild one under retained sandboxes.
+
+Khora owns PID 1. The application starts `/usr/local/bin/harness-khora-launcher`
+with session, generation and driver arguments. The launcher uses `/root` as HOME,
+`/workspace` as working directory, `/harness-bridge` for execution-partitioned
+journals, `/harness-config` for immutable configuration sources, and `/root/.agents`
+for shared read-only assets. Pi native history lives in the retained overlay.
+The launcher materializes model/settings files into `/root/.pi/agent`, whose
+directory remains writable for Pi's lock files. Model credentials remain outside
+the guest; the model config requires a non-secret placeholder. Shared `AGENTS.md`
+is linked into Pi's global context location only when session content does not
+already occupy it.
+
+The builder removes the old application init wrapper and `/agent-home` layout
+from the Khora template. The existing local-backend rootfs builder remains
+available during migration. The engine and application manifests have distinct
+roles: engine template identity is immutable storage input; application metadata
+pins the driver, bridge and launcher that the product expects to start.

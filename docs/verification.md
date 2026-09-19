@@ -121,3 +121,24 @@ The schema generator only opens temporary synthetic databases. It preserves
 historical DDL fixtures and reviewed fingerprints while deriving current targets
 from the checked-out store implementations. Review catalog changes with schema
 changes; deployments still use the explicit offline migration command.
+
+## Khora application template acceptance
+
+On an isolated engine built at `14174318159f`, with manual cold recovery enabled,
+a positive memory admission budget, dedicated quota-capable btrfs storage and a
+built application template, run:
+
+```bash
+KHORA_INTEGRATION_ENDPOINT=http://127.0.0.1:18191 \
+KHORA_INTEGRATION_TEMPLATE=battery \
+go -C orchestrator test -tags khoraintegration ./internal/sandbox/khora \
+  -run '^TestKhoraTemplateShellAndNativeHistory$' -count=1 -v
+```
+
+This test creates synthetic volumes and a sandbox, runs the shell through the
+actual process stdio journal, checks a compute-free workspace read while paused,
+and verifies Pi 0.77.0 settings and native session selection after cold resume.
+It uses the real Pi SessionManager to seed history without a model request.
+It does not establish model/Doris/OBS gateway integration or a fresh reproducible
+release build. Use a disposable engine: the fixture explicitly destroys only
+its own sandbox and volumes during cleanup.

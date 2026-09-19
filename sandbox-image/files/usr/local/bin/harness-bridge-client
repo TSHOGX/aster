@@ -41,7 +41,7 @@ TURN_CONTROL_COMMANDS = frozenset({"abort", "steer"})
 # than guessed at, so a host and a rootfs that disagree fail visibly instead of
 # dropping the user's Stop.
 TURN_CONTROL_VERSION = 1
-PI_CODING_AGENT_DIR = "/agent-home/.pi/agent"
+PI_CODING_AGENT_DIR = "/root/.pi/agent" if os.environ.get("HARNESS_BACKEND") == "khora" else "/agent-home/.pi/agent"
 PI_SESSION_DIR = f"{PI_CODING_AGENT_DIR}/sessions"
 PI_MODELS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/models.json"
 PI_SETTINGS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/settings.json"
@@ -716,18 +716,20 @@ class PiRPCTurnRunner:
             pi_command.extend(["--append-system-prompt", system_prompt])
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            "HOME": "/agent-home",
-            "USER": "harness",
-            "LOGNAME": "harness",
+            "HOME": "/root" if os.environ.get("HARNESS_BACKEND") == "khora" else "/agent-home",
+            "USER": "root" if os.environ.get("HARNESS_BACKEND") == "khora" else "harness",
+            "LOGNAME": "root" if os.environ.get("HARNESS_BACKEND") == "khora" else "harness",
             "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", ""),
         }
         env.update(pi_runtime_env)
+        if os.environ.get("HARNESS_BACKEND") == "khora":
+            env["HARNESS_BACKEND"] = "khora"
         for optional_name in ("LANG", "TMPDIR"):
             optional_value = os.environ.get(optional_name)
             if optional_value:
                 env[optional_name] = optional_value
-        target_uid = os.environ.get("HARNESS_AGENT_UID", "65534")
-        target_gid = os.environ.get("HARNESS_AGENT_GID", "65534")
+        target_uid = "0" if os.environ.get("HARNESS_BACKEND") == "khora" else os.environ.get("HARNESS_AGENT_UID", "65534")
+        target_gid = "0" if os.environ.get("HARNESS_BACKEND") == "khora" else os.environ.get("HARNESS_AGENT_GID", "65534")
         if str(os.geteuid()) == target_uid and str(os.getegid()) == target_gid:
             command = pi_command
         else:

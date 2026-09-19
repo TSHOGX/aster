@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+import argparse
+import os
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
+from harness_launch import launch_environment, prepare_pi
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--session-id', required=True)
+    parser.add_argument('--generation-id', required=True)
+    parser.add_argument('--driver-id', choices=('pi', 'sh'), required=True)
+    parser.add_argument('--max-turns', type=int, default=0)
+    args = parser.parse_args()
+    environment = launch_environment(args.driver_id)
+    if args.driver_id == 'pi':
+        prepare_pi()
+    command = ['/usr/local/bin/harness-bridge-client', '--transport', 'stdio',
+               '--bridge-dir', '/harness-bridge', '--session-id', args.session_id,
+               '--generation-id', args.generation_id, '--driver-id', args.driver_id,
+               'claim-loop', '--max-turns', str(args.max_turns)]
+    os.chdir('/workspace')
+    os.execve(command[0], command, environment)
+
+
+if __name__ == '__main__':
+    main()
