@@ -134,6 +134,13 @@ func beginEnvironmentOperationTx(ctx context.Context, tx *sql.Tx, p execution.Op
 	if environment.Fence != p.ExpectedFence {
 		return execution.Operation{}, execution.ErrStaleOperation
 	}
+	var recovering int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_recoveries WHERE environment_id=? AND stage!='complete' AND operation_id!=?`, p.EnvironmentID, p.ID).Scan(&recovering); err != nil {
+		return execution.Operation{}, err
+	}
+	if recovering != 0 {
+		return execution.Operation{}, execution.ErrBusy
+	}
 	if p.Kind == "start_process" || p.Kind == "recover_journal" {
 		var active int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings WHERE environment_id=? AND state!='retired'`, p.EnvironmentID).Scan(&active); err != nil {

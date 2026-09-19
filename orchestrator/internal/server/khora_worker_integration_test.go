@@ -34,7 +34,10 @@ import (
 
 func TestKhoraExecutionWorkerCommitsTurnMessagesAndJournal(t *testing.T) { runKhoraWorker(t, "sh") }
 func TestKhoraPiExecutionWorkerCommitsNativeState(t *testing.T)          { runKhoraWorker(t, "pi") }
-func runKhoraWorker(t *testing.T, driver string) {
+func TestKhoraInterruptedRecoveryFlushesMissingCompletion(t *testing.T) {
+	runKhoraWorker(t, "sh", true)
+}
+func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	endpoint, template := os.Getenv("KHORA_INTEGRATION_ENDPOINT"), os.Getenv("KHORA_INTEGRATION_TEMPLATE")
 	if endpoint == "" || template == "" {
 		t.Fatal("isolated Khora endpoint/template required")
@@ -58,6 +61,9 @@ func runKhoraWorker(t *testing.T, driver string) {
 	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
 	now := time.Now().UTC()
 	session := store.Session{ID: "khora-worker-" + driver + "-session", UserID: "lab", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque-workspace", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}
+	if len(truncated) > 0 && truncated[0] {
+		session.ID += "-truncated"
+	}
 	if err := st.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +323,13 @@ func runKhoraWorker(t *testing.T, driver string) {
 	if driver == "sh" {
 		target := binding.GenerationID
 		interruptedGeneration.Store(&target)
-		turn, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: `python3 -c 'print("historical-recovery-ok" + "x" * 262144)'`})
+		content := `python3 -c 'print("historical-recovery-ok" + "x" * 262144)'`
+		terminal := "ack_turn_completed"
+		if len(truncated) > 0 && truncated[0] {
+			content = `python3 -c 'import time; print("historical-recovery-ok" + "x" * 262144, flush=True); time.sleep(60)'`
+			terminal = "emit_output"
+		}
+		turn, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: content})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -330,10 +342,10 @@ func runKhoraWorker(t *testing.T, driver string) {
 db=sqlite3.connect('file:/harness-bridge/%s/journal.db?mode=ro',uri=True)
 for attempt in range(300):
  records=[json.loads(bytes(row[0])[1:]) for row in db.execute('SELECT payload FROM records').fetchall()]
- if any(r.get('envelope',{}).get('type')=='ack_turn_completed' and r['envelope'].get('turn_id')==%d for r in records):break
+ if any(r.get('envelope',{}).get('type')=='%s' and r['envelope'].get('turn_id')==%d for r in records):break
  time.sleep(0.02)
 else:raise RuntimeError('guest did not commit terminal journal record')
-`, binding.GenerationID, turn.TurnID)
+`, binding.GenerationID, terminal, turn.TurnID)
 		runHistoricalRecoveryProbe(t, ctx, backend, binding, probe)
 		if err := controller.Close(); err != nil {
 			t.Fatal(err)
@@ -343,42 +355,31 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		}
-		if _, err := st.FailGenerationWithEvent(ctx, store.FailGenerationParams{SessionID: session.ID, GenerationID: binding.GenerationID, TurnID: turn.TurnID, Owner: leaseOwner, ErrorClass: "placement_lost", Reason: "injected transport loss before output ingestion"}); err != nil {
-			t.Fatal(err)
-		}
 		assertIntegrationCapacity(t, ctx, st, 1)
-		for _, kind := range []string{"pause", "resume"} {
-			environment, err := st.GetSessionEnvironment(ctx, session.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request, _ := json.Marshal(execution.EnvironmentRequest{Reference: sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID, Epoch: environment.Epoch, MutationRevision: environment.MutationRevision}})
-			key := "historical-recovery-" + kind
-			if _, err := (execution.EnvironmentService{Repository: st, Backend: backend}).Run(ctx, execution.OperationIntent{ID: key, EnvironmentID: environment.ID, Kind: kind, IdempotencyKey: key, ExpectedFence: environment.Fence, Request: request}); err != nil {
-				t.Fatal(err)
-			}
-			if kind == "pause" {
-				assertIntegrationCapacity(t, ctx, st, 0)
-			} else {
-				assertIntegrationCapacity(t, ctx, st, 1)
-			}
-		}
 		faults := &recoveryFaultRecords{Store: st, fail: true}
 		reader := &recoveryFaultReader{Reader: agentbridge.RecoveryReader{Backend: backend, Records: faults}, fail: true}
-		recovery := execution.JournalRecoveryService{Repository: st, Reader: reader}
+		recovery := &execution.Controller{Repository: st, Backend: backend, Routes: gateway.NewFlows(), RecoveryReader: reader, RecoveryProjector: srv, Lifetime: ctx}
+		defer recovery.Close()
+		const reason = "injected transport loss before output ingestion"
 		for _, failure := range []string{"lost ingest reply", "lost stopped-reader reply"} {
-			if _, err := recovery.Run(ctx, binding.GenerationID, leaseOwner); err == nil {
+			if err := recovery.RecoverInterrupted(ctx, session.ID, binding.GenerationID, leaseOwner, reason); err == nil {
 				t.Fatalf("%s injection ignored", failure)
 			}
+			status, _, err := st.TurnStatus(ctx, session.ID, turn.TurnID)
+			if err != nil || status != "running" {
+				t.Fatalf("interrupted turn classified before recovered output: %s %v", status, err)
+			}
+			assertIntegrationCapacity(t, ctx, st, 1)
 		}
-		head, err := recovery.Run(ctx, binding.GenerationID, leaseOwner)
-		if err != nil {
+		if err := recovery.RecoverInterrupted(ctx, session.ID, binding.GenerationID, leaseOwner, reason); err != nil {
 			t.Fatal(err)
 		}
-		if repeated, err := recovery.Run(ctx, binding.GenerationID, leaseOwner); err != nil || repeated != head {
-			t.Fatalf("recovery replay: %d %v", repeated, err)
+		if err := recovery.RecoverInterrupted(ctx, session.ID, binding.GenerationID, leaseOwner, reason); err != nil {
+			t.Fatal(err)
 		}
-		if err := srv.projectBridgeRecords(ctx, 1024); err != nil {
+		assertIntegrationCapacity(t, ctx, st, 0)
+		head, err := st.BridgeStreamWatermark(ctx, binding.StoreID, binding.GenerationID)
+		if err != nil {
 			t.Fatal(err)
 		}
 		messages, err := st.ListMessages(ctx, session.ID)

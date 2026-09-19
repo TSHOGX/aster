@@ -387,7 +387,23 @@ owner even when its previous lease expired. It preserves queued prompts and
 reuses the conditional pause/resume path to restore native history in a new
 epoch. A leased/running turn, unfinished projection or workspace mutation blocks
 this path. Recovery does not silently replay input or adopt authority from the
-previous owner. In-flight recovery requires a separate journal recovery outcome.
+previous owner.
+
+Interrupted execution recovery has a durable ledger spanning gateway drain,
+verified pause, maintenance resume, historical journal replay, message/trace
+projection and final pause. Each step reserves its immutable operation before
+remote I/O. An unresolved workflow blocks unrelated lifecycle work and workspace
+mutations, including between completed steps. Current product ownership is
+checked at every transition, so a replacement owner can continue after a crash.
+
+After verified writer termination the old execution is retired, but unfinished
+turn classification waits for recovered output and projection. A producer that
+died without completion gets a host failure boundary after its complete retained
+head is ingested, allowing partial text to be projected. At the final verified
+pause, still-leased or running turns become `execution_interrupted` failures;
+already-terminal turns retain their outcomes and queued prompts remain queued.
+The workflow does not redispatch input or resume an agent. Native history repair
+and replacement readiness remain separate requirements.
 
 Retained Pi executions validate native state through the guest helper, using the
 accepted backend/sandbox/epoch reference and `/root/.pi/agent/sessions`. The helper

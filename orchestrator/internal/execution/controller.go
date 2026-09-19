@@ -19,6 +19,7 @@ type ControllerRepository interface {
 	WorkerRepository
 	IdleReleaseRepository
 	RetainedResumeRepository
+	InterruptedRecoveryRepository
 	PinBackendIdentity(context.Context, BackendIdentity) error
 	CreateEnvironmentBinding(context.Context, Environment) error
 	FindSessionEnvironment(context.Context, string) (Environment, bool, error)
@@ -51,19 +52,21 @@ type desiredEnvironment struct {
 }
 
 type Controller struct {
-	Repository  ControllerRepository
-	Backend     ControllerBackend
-	Agents      AgentLauncher
-	Plans       PlanSource
-	BackendName string
-	LeaseTTL    time.Duration
-	Lifetime    context.Context
-	Routes      RouteRevoker
-	mu          sync.Mutex
-	closed      bool
-	runContext  context.Context
-	cancel      context.CancelFunc
-	sessions    map[string]*sessionWorker
+	Repository        ControllerRepository
+	Backend           ControllerBackend
+	Agents            AgentLauncher
+	Plans             PlanSource
+	BackendName       string
+	LeaseTTL          time.Duration
+	Lifetime          context.Context
+	Routes            RouteRevoker
+	RecoveryReader    JournalRecoveryReader
+	RecoveryProjector RecoveryProjector
+	mu                sync.Mutex
+	closed            bool
+	runContext        context.Context
+	cancel            context.CancelFunc
+	sessions          map[string]*sessionWorker
 }
 type sessionWorker struct {
 	mu         sync.Mutex
@@ -229,6 +232,52 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 
 func (c *Controller) ReleaseIdle(ctx context.Context, session, generation, owner string) error {
 	return c.releaseIdle(ctx, session, generation, owner, false)
+}
+
+func (c *Controller) RecoverInterrupted(ctx context.Context, session, generation, owner, reason string) error {
+	if c.Lifetime == nil || c.Repository == nil || c.Backend == nil || c.Routes == nil || c.RecoveryReader == nil || c.RecoveryProjector == nil {
+		return fmt.Errorf("interrupted recovery controller ports required")
+	}
+	worker, lifetime, err := c.session(session)
+	if err != nil {
+		return err
+	}
+	requestContext, cancel := context.WithCancel(ctx)
+	stopShutdown := context.AfterFunc(lifetime, cancel)
+	defer func() { stopShutdown(); cancel() }()
+	worker.mu.Lock()
+	defer worker.mu.Unlock()
+	binding, err := c.Repository.GetExecutionBinding(requestContext, generation)
+	if err != nil {
+		return err
+	}
+	if binding.SessionID != session {
+		return ErrOperationConflict
+	}
+	if worker.connection != nil && worker.binding.GenerationID != generation {
+		return ErrStaleOperation
+	}
+	prepared, err := c.Repository.NextInterruptedRecovery(requestContext, generation, owner, reason)
+	if err != nil {
+		return err
+	}
+	if prepared.Stage == "complete" {
+		return nil
+	}
+	// Detaching cancels local ingest; the durable workflow separately proves
+	// writer termination through pause before advancing recovery.
+	if worker.connection != nil {
+		if err := worker.connection.Close(); err != nil {
+			return err
+		}
+		select {
+		case <-worker.connection.Done():
+		case <-requestContext.Done():
+			return requestContext.Err()
+		}
+		worker.connection = nil
+	}
+	return (InterruptedRecoveryService{Repository: c.Repository, Backend: c.Backend, Routes: c.Routes, Reader: c.RecoveryReader, Projector: c.RecoveryProjector}).Run(requestContext, generation, owner, reason)
 }
 
 // RecoverIdle is an explicit cold-recovery policy for an abandoned idle agent.

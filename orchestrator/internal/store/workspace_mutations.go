@@ -44,7 +44,8 @@ func (s *Store) BeginWorkspaceMutation(ctx context.Context, p workspace.Mutation
  (SELECT count(*) FROM workspace_mutations WHERE session_id=? AND state IN ('active','uncertain')) +
  (SELECT count(*) FROM runtime_generations g JOIN sessions s ON s.active_generation_id=g.generation_id WHERE s.id=? AND g.status NOT IN ('idle','checkpointed','failed')) +
  (SELECT count(*) FROM environment_operations o JOIN sandbox_environments e ON e.environment_id=o.environment_id WHERE e.session_id=? AND o.state IN ('pending','issued','uncertain')) +
- (SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id WHERE b.session_id=? AND b.state!='retired' AND b.environment_fence!=e.fence)`, p.SessionID, p.SessionID, p.SessionID, p.SessionID, p.SessionID).Scan(&busy); err != nil {
+ (SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id WHERE b.session_id=? AND b.state!='retired' AND b.environment_fence!=e.fence) +
+ (SELECT count(*) FROM execution_recoveries r JOIN sandbox_environments e ON e.environment_id=r.environment_id WHERE e.session_id=? AND r.stage!='complete')`, p.SessionID, p.SessionID, p.SessionID, p.SessionID, p.SessionID, p.SessionID).Scan(&busy); err != nil {
 		return err
 	}
 	if busy != 0 {

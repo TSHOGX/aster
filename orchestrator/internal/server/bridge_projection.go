@@ -33,6 +33,30 @@ type projectionFrame struct {
 	phases   []store.SetTurnPhaseParams
 }
 
+// ProjectRecoveredExecution drains one host-authorized historical origin. The
+// producer checkpoint transaction preserves normal message/trace identities.
+func (s *Server) ProjectRecoveredExecution(ctx context.Context, generation string) error {
+	s.bridgeProjectionMu.Lock()
+	defer s.bridgeProjectionMu.Unlock()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		records, err := s.store.PendingBridgeExecutionRecords(ctx, generation, 128)
+		if err != nil {
+			return err
+		}
+		if len(records) == 0 {
+			return nil
+		}
+		for _, record := range records {
+			if err := s.projectBridgeRecord(ctx, record); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 func (p *streamParser) checkpoint() (json.RawMessage, error) {
 	state := parserCheckpoint{Version: 1, DriverID: p.driverID, Pending: map[string]string{}, PendingOrder: p.pendingOrder, Last: p.last, LastPhase: p.lastPhase, Finished: p.trace.finished, Tools: p.trace.pending, LastEventAt: p.trace.lastEventAt}
 	for id, value := range p.pending {

@@ -37,6 +37,11 @@ type JournalRecoveryService struct {
 	Reader     JournalRecoveryReader
 }
 
+func JournalReplayRequest(origin Binding, environment Environment) (string, JournalRecoveryRequest) {
+	id := fmt.Sprintf("recover-journal:%s:%d", origin.GenerationID, environment.Epoch)
+	return id, JournalRecoveryRequest{GenerationID: origin.GenerationID, Process: sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: environment.StoreID, SandboxID: environment.SandboxID, Epoch: environment.Epoch, Handle: fmt.Sprintf("replay_%s_%d", origin.GenerationID, environment.Epoch)}, IdempotencyKey: id, Command: "/usr/local/bin/harness-journal-replay", Arguments: []string{"--generation-id", origin.GenerationID}, Directory: "/"}}
+}
+
 // Run replays a retired partition during a later maintenance epoch. Its lane
 // stays unresolved on transport/ingest failure, blocking a replacement worker.
 func (s JournalRecoveryService) Run(ctx context.Context, generation, owner string) (uint64, error) {
@@ -54,8 +59,7 @@ func (s JournalRecoveryService) Run(ctx context.Context, generation, owner strin
 	if origin.State != "retired" || origin.StoreID != environment.StoreID || origin.SandboxID != environment.SandboxID || origin.Epoch >= environment.Epoch {
 		return 0, ErrOperationConflict
 	}
-	id := fmt.Sprintf("recover-journal:%s:%d", generation, environment.Epoch)
-	request := JournalRecoveryRequest{GenerationID: generation, Process: sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: environment.StoreID, SandboxID: environment.SandboxID, Epoch: environment.Epoch, Handle: fmt.Sprintf("replay_%s_%d", generation, environment.Epoch)}, IdempotencyKey: id, Command: "/usr/local/bin/harness-journal-replay", Arguments: []string{"--generation-id", generation}, Directory: "/"}}
+	id, request := JournalReplayRequest(origin, environment)
 	raw, err := json.Marshal(request)
 	if err != nil {
 		return 0, err

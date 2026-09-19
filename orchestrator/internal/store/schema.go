@@ -408,6 +408,18 @@ CREATE TABLE IF NOT EXISTS environment_operations (
 CREATE UNIQUE INDEX IF NOT EXISTS environment_operations_unresolved_uq
   ON environment_operations(environment_id) WHERE state IN ('pending','issued','uncertain');
 
+CREATE TABLE IF NOT EXISTS execution_recoveries (
+ generation_id TEXT PRIMARY KEY REFERENCES execution_bindings(generation_id),
+ environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
+ reason TEXT NOT NULL,
+ stage TEXT NOT NULL CHECK(stage IN ('pause','resume','replay','final_pause','complete')),
+ operation_id TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS execution_recoveries_active_uq
+ ON execution_recoveries(environment_id) WHERE stage!='complete';
+
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
   path TEXT NOT NULL,

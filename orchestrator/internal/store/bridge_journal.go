@@ -133,6 +133,13 @@ func (s *Store) PendingBridgeTurnRecords(ctx context.Context, sessionID, generat
 	return s.pendingBridgeRecords(ctx, limit, " AND i.session_id=? AND i.generation_id=? AND i.turn_id=?", []any{sessionID, generationID, turnID})
 }
 
+func (s *Store) PendingBridgeExecutionRecords(ctx context.Context, generation string, limit int) ([]BridgeRecord, error) {
+	if generation == "" {
+		return nil, fmt.Errorf("execution identity required for recovery projection")
+	}
+	return s.pendingBridgeRecords(ctx, limit, " AND i.generation_id=?", []any{generation})
+}
+
 func (s *Store) pendingBridgeRecords(ctx context.Context, limit int, filter string, args []any) ([]BridgeRecord, error) {
 	if limit <= 0 || limit > 1024 {
 		limit = 128

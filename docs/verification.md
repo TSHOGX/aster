@@ -132,7 +132,7 @@ built application template, run:
 KHORA_INTEGRATION_ENDPOINT=http://127.0.0.1:18191 \
 KHORA_INTEGRATION_TEMPLATE=battery \
 go -C orchestrator test -tags khoraintegration ./internal/sandbox/khora ./internal/server \
-  -run '^TestKhora(TemplateShellAndNativeHistory|ExecutionWorkerCommitsTurnMessagesAndJournal|PiExecutionWorkerCommitsNativeState)$' -count=1 -v
+  -run '^TestKhora(TemplateShellAndNativeHistory|ExecutionWorkerCommitsTurnMessagesAndJournal|PiExecutionWorkerCommitsNativeState|InterruptedRecoveryFlushesMissingCompletion)$' -count=1 -v
 ```
 
 This test creates synthetic volumes and a sandbox, runs the shell through the
@@ -159,7 +159,9 @@ Pi keeps the same native session through all three epochs.
 
 The shell case then blocks host ingestion after a fourth turn starts, waits for
 the guest to journal a 256 KiB output and completion, and interrupts the carrier.
-After pause/resume, historical recovery projects the old output exactly once
-while preserving the turn's failed classification. It retries injected lost
-ingest and stopped-reader replies and verifies that recovery retains the full
-producer payload beyond the engine's process tail.
+The interrupted-recovery service pauses, resumes for historical replay, projects
+the old output exactly once and pauses again before classifying the turn as
+failed. It retries injected lost ingest and stopped-reader replies and verifies
+that recovery retains the full producer payload beyond the engine's process
+tail. A separate case interrupts a still-running producer after output, before
+completion, to exercise the host failure boundary and partial-output projection.

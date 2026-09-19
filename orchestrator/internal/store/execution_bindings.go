@@ -37,6 +37,13 @@ func (s *Store) ReserveExecutionBinding(ctx context.Context, p execution.Reserve
 	if environment.SessionID != p.SessionID || environment.SandboxID == "" || environment.Epoch == 0 {
 		return execution.Binding{}, fmt.Errorf("observed environment binding required")
 	}
+	var recovering int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_recoveries WHERE environment_id=? AND stage!='complete'`, environment.ID).Scan(&recovering); err != nil {
+		return execution.Binding{}, err
+	}
+	if recovering != 0 {
+		return execution.Binding{}, execution.ErrBusy
+	}
 	if existing, err := bindingWith(ctx, tx, p.GenerationID); err == nil {
 		if existing.SessionID != p.SessionID || existing.EnvironmentID != p.EnvironmentID || existing.Owner != p.Owner || existing.Driver != p.Driver || existing.SpecDigest != p.SpecDigest || existing.ManifestDigest != p.ManifestDigest || existing.EnvironmentFence != environment.Fence || existing.Epoch != environment.Epoch || existing.State != "starting" {
 			return execution.Binding{}, execution.ErrOperationConflict
