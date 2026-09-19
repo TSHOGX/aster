@@ -480,9 +480,15 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if n, err := capture.Step(ctx, 32); err != nil || n != 0 {
 				t.Fatalf("paused capture was not deferred: %d %v", n, err)
 			}
-			if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner); err != nil {
-				t.Fatal(err)
+			maintenance, err := controller.MaintainCapture(ctx, session.ID, leaseOwner, 2, time.Minute)
+			if err != nil || maintenance.Stage != "reading" {
+				t.Fatalf("capture activation: %+v %v", maintenance, err)
 			}
+			var active int
+			if err := st.DBForTest().QueryRow(`SELECT count(*) FROM execution_bindings WHERE session_id=? AND state!='retired'`, session.ID).Scan(&active); err != nil || active != 0 {
+				t.Fatalf("capture maintenance started agent: %d %v", active, err)
+			}
+			assertIntegrationCapacity(t, ctx, st, 1)
 			if n, err := capture.Step(ctx, 32); err == nil || n != 0 {
 				t.Fatalf("lost capture receipt not surfaced: %d %v", n, err)
 			}
@@ -494,6 +500,11 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if n, err := capture.Step(ctx, 32); err != nil || n != 0 {
 				t.Fatalf("capture replay duplicated work: %d %v", n, err)
 			}
+			maintenance, err = controller.MaintainCapture(ctx, session.ID, leaseOwner, 2, time.Minute)
+			if err != nil || maintenance.Stage != "complete" {
+				t.Fatalf("capture pause: %+v %v", maintenance, err)
+			}
+			assertIntegrationCapacity(t, ctx, st, 0)
 			rows, err := st.DBForTest().Query(`SELECT r.native_digest,c.archive_path FROM native_capture_requests r JOIN native_capture_receipts c USING(session_id,state_version) WHERE r.session_id=?`, session.ID)
 			if err != nil {
 				t.Fatal(err)

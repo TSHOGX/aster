@@ -452,6 +452,18 @@ CREATE TABLE IF NOT EXISTS native_capture_receipts (
  FOREIGN KEY(session_id,state_version) REFERENCES native_capture_requests(session_id,state_version)
 );
 
+CREATE TABLE IF NOT EXISTS native_capture_activations (
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+ environment_id TEXT NOT NULL UNIQUE REFERENCES sandbox_environments(environment_id),
+ through_version INTEGER NOT NULL,
+ attempt INTEGER NOT NULL DEFAULT 1,
+ stage TEXT NOT NULL CHECK(stage IN ('requested','resuming','reading','pausing','complete')),
+ operation_id TEXT NOT NULL DEFAULT '',
+ last_pause_operation_id TEXT NOT NULL DEFAULT '',
+ deadline TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
   path TEXT NOT NULL,

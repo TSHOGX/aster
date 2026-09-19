@@ -446,9 +446,19 @@ The worker holds a canonical per-control-database publisher lock, opens only
 verified managed schemas, and serializes publication to preserve state ordering.
 Its source accepts a later epoch of the same retained sandbox but retains the
 request's producing epoch. Changed backend identity is rejected. Paused sources
-are deferred until ordinary activation; automatic capture maintenance activation
-is not yet wired. Legacy host-path capture enumeration excludes retained Khora
+create a durable activation request and remain pending. Legacy host-path capture enumeration excludes retained Khora
 sessions so it cannot overwrite their native projections.
+
+The controller's capture-maintenance service reserves capacity and resumes the
+same paused environment without an agent, turn claim or service grant. The
+capture process retains read-only responsibility. Maintenance ends after receipts
+cover its captured backlog, its fixed window expires, or new user work arrives;
+the controller then verifies pause before releasing the lane. Competing lifecycle
+changes and workspace writes are blocked throughout the window. Lost resume/pause
+replies retain conditional intents, and the current product owner can reconcile
+them after restart. Definitively rejected activation is followed by verified
+pause before the workflow is released. Application startup must poll the pending
+activation requests; this service is not yet selected by the legacy startup path.
 
 Runtime snapshots include opaque execution bindings. Accepted bindings appear
 live without legacy resource rows;

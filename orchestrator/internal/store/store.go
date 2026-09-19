@@ -394,8 +394,11 @@ WHERE status IN (`+placeholders+`)`, args...).Scan(&count)
 // reclaimed. Only the compute-occupying resource states count: 'allocating',
 // 'ready', 'live', and 'recreating' (a checkpoint being restored).
 func (s *Store) CountSandboxOccupyingSessions(ctx context.Context) (int, error) {
+	return countSandboxOccupyingSessions(ctx, s.db)
+}
+func countSandboxOccupyingSessions(ctx context.Context, db dbRunner) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 SELECT COUNT(DISTINCT s.id)
 FROM sessions s
 LEFT JOIN runtime_generations g ON g.generation_id = s.active_generation_id

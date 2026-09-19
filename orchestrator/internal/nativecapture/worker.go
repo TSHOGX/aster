@@ -27,6 +27,7 @@ type Result struct {
 type Repository interface {
 	PendingNativeCaptures(context.Context, int) ([]Request, error)
 	CompleteNativeCapture(context.Context, Request, Result) error
+	RequestNativeCaptureActivation(context.Context, Request) error
 }
 type Source interface {
 	OpenNativeSnapshot(context.Context, Request) (io.ReadCloser, error)
@@ -63,6 +64,9 @@ func (w *Worker) Step(ctx context.Context, limit int) (int, error) {
 		}
 		source, err := w.Source.OpenNativeSnapshot(ctx, request)
 		if errors.Is(err, ErrDeferred) {
+			if err := w.Repository.RequestNativeCaptureActivation(ctx, request); err != nil {
+				failures = append(failures, err)
+			}
 			continue
 		}
 		if err != nil {

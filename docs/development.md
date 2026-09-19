@@ -102,4 +102,6 @@ each batch to two minutes by default. Run one publisher per control database;
 the command enforces this through a canonical lock next to that database. Stop
 the capture process along with the application for schema migration or database
 restore. This worker opens managed schemas without migrating them. Paused
-snapshots remain pending until the application activates their retained sandbox.
+snapshots request activation through the control ledger; the application-owned
+capture-maintenance service must poll those requests. The worker does not call
+engine lifecycle mutations itself.

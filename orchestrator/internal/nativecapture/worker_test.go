@@ -14,6 +14,8 @@ type workerRepository struct {
 	fail      bool
 }
 
+func (r *workerRepository) RequestNativeCaptureActivation(context.Context, Request) error { return nil }
+
 func (r *workerRepository) PendingNativeCaptures(context.Context, int) ([]Request, error) {
 	return r.requests, nil
 }

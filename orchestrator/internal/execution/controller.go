@@ -20,6 +20,7 @@ type ControllerRepository interface {
 	IdleReleaseRepository
 	RetainedResumeRepository
 	InterruptedRecoveryRepository
+	CaptureMaintenanceRepository
 	PinBackendIdentity(context.Context, BackendIdentity) error
 	CreateEnvironmentBinding(context.Context, Environment) error
 	FindSessionEnvironment(context.Context, string) (Environment, bool, error)
@@ -233,6 +234,22 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 
 func (c *Controller) ReleaseIdle(ctx context.Context, session, generation, owner string) error {
 	return c.releaseIdle(ctx, session, generation, owner, false)
+}
+
+func (c *Controller) MaintainCapture(ctx context.Context, session, owner string, maximum int, window time.Duration) (CaptureMaintenance, error) {
+	if c.Repository == nil || c.Backend == nil || c.Lifetime == nil {
+		return CaptureMaintenance{}, fmt.Errorf("capture maintenance controller ports required")
+	}
+	worker, lifetime, err := c.session(session)
+	if err != nil {
+		return CaptureMaintenance{}, err
+	}
+	requestContext, cancel := context.WithCancel(ctx)
+	stopShutdown := context.AfterFunc(lifetime, cancel)
+	defer func() { stopShutdown(); cancel() }()
+	worker.mu.Lock()
+	defer worker.mu.Unlock()
+	return (CaptureMaintenanceService{Repository: c.Repository, Backend: c.Backend, MaxActive: maximum, Window: window}).Step(requestContext, session, owner)
 }
 
 func (c *Controller) RecoverInterrupted(ctx context.Context, session, generation, owner, reason string) error {

@@ -172,5 +172,6 @@ the interrupted native file. It retries a lost restore reply, resumes the same
 sandbox, and completes a successor turn while keeping the interrupted turn failed.
 It then captures all four completed snapshots from earlier producing epochs,
 checks every archive against its recorded digest, retries an injected lost
-receipt, and verifies exactly four raw-source records. A paused source defers
-capture without acknowledging the request.
+receipt, and verifies exactly four raw-source records. A paused source requests
+maintenance activation. The controller resumes with zero active execution
+bindings, captures the backlog, pauses again and releases its active-capacity slot.

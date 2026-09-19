@@ -240,6 +240,16 @@ func (s *Store) BeginRetainedExecutionResume(ctx context.Context, generation, ow
 	if err != nil {
 		return execution.Operation{}, err
 	}
+	if pause.Fence != environment.Fence {
+		var maintenancePause string
+		if err := tx.QueryRowContext(ctx, `SELECT last_pause_operation_id FROM native_capture_activations WHERE environment_id=? AND stage IN ('complete','requested') AND last_pause_operation_id!=''`, environment.ID).Scan(&maintenancePause); err != nil {
+			return execution.Operation{}, err
+		}
+		pause, err = operationWith(ctx, tx, maintenancePause)
+		if err != nil {
+			return execution.Operation{}, err
+		}
+	}
 	var observed sandbox.Observation
 	if err := json.Unmarshal(pause.Result, &observed); err != nil {
 		return execution.Operation{}, err

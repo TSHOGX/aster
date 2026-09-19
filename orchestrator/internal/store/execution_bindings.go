@@ -44,6 +44,12 @@ func (s *Store) ReserveExecutionBinding(ctx context.Context, p execution.Reserve
 	if recovering != 0 {
 		return execution.Binding{}, execution.ErrBusy
 	}
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM native_capture_activations WHERE environment_id=? AND stage IN ('resuming','reading','pausing')`, environment.ID).Scan(&recovering); err != nil {
+		return execution.Binding{}, err
+	}
+	if recovering != 0 {
+		return execution.Binding{}, execution.ErrBusy
+	}
 	if existing, err := bindingWith(ctx, tx, p.GenerationID); err == nil {
 		if existing.SessionID != p.SessionID || existing.EnvironmentID != p.EnvironmentID || existing.Owner != p.Owner || existing.Driver != p.Driver || existing.SpecDigest != p.SpecDigest || existing.ManifestDigest != p.ManifestDigest || existing.EnvironmentFence != environment.Fence || existing.Epoch != environment.Epoch || existing.State != "starting" {
 			return execution.Binding{}, execution.ErrOperationConflict
