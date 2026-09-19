@@ -85,8 +85,8 @@ func issueBoundGrantsTx(ctx context.Context, tx *sql.Tx, generation string, turn
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO egress_grants(grant_id,binding_id,generation_id,turn_id,policy_digest,binding_revision,expires_at,state)
- SELECT binding_id || ':' || ?,binding_id,generation_id,?,policy_digest,revision,?,'active' FROM egress_route_bindings WHERE generation_id=? AND state='active'
- ON CONFLICT(grant_id) DO UPDATE SET expires_at=excluded.expires_at WHERE egress_grants.state='active'`, turn, turn, formatTime(expires), generation)
+ SELECT binding_id || ':' || ? || coalesce((SELECT ':' || a.revision FROM active_execution_adoptions a WHERE a.generation_id=egress_route_bindings.generation_id),''),binding_id,generation_id,?,policy_digest,revision,?,'active' FROM egress_route_bindings WHERE generation_id=? AND state='active' AND NOT EXISTS(SELECT 1 FROM execution_turn_commands c WHERE c.generation_id=egress_route_bindings.generation_id AND c.turn_id=? AND c.kind='abort')
+ ON CONFLICT(grant_id) DO UPDATE SET expires_at=excluded.expires_at WHERE egress_grants.state='active'`, turn, turn, formatTime(expires), generation, turn)
 	return err
 }
 

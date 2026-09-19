@@ -33,6 +33,9 @@ func reserveTurnCommandTx(ctx context.Context, tx *sql.Tx, p execution.TurnComma
 	err := tx.QueryRowContext(ctx, `SELECT command_id,session_id,generation_id,turn_id,owner,kind,message,acknowledged FROM execution_turn_commands WHERE command_id=?`, p.ID).Scan(&previous.ID, &previous.SessionID, &previous.GenerationID, &previous.TurnID, &previous.Owner, &previous.Kind, &previous.Message, &previous.Acknowledged)
 	if err == nil {
 		p.Acknowledged = previous.Acknowledged
+		// The persisted owner records who issued the immutable intent. Current
+		// delivery authority comes from the accepted same-process binding.
+		previous.Owner = p.Owner
 		if p != previous {
 			return p, execution.ErrOperationConflict
 		}
@@ -75,7 +78,7 @@ func reserveTurnCommandTx(ctx context.Context, tx *sql.Tx, p execution.TurnComma
 }
 
 func (s *Store) TurnCommandGrantIDs(ctx context.Context, p execution.TurnCommand) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.grant_id FROM egress_grants g JOIN execution_turn_commands c ON c.generation_id=g.generation_id AND c.turn_id=g.turn_id WHERE c.command_id=? AND c.owner=? AND c.kind='abort' ORDER BY g.grant_id`, p.ID, p.Owner)
+	rows, err := s.db.QueryContext(ctx, `SELECT g.grant_id FROM egress_grants g JOIN execution_turn_commands c ON c.generation_id=g.generation_id AND c.turn_id=g.turn_id JOIN execution_bindings b ON b.generation_id=c.generation_id WHERE c.command_id=? AND b.owner=? AND c.kind='abort' ORDER BY g.grant_id`, p.ID, p.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +156,6 @@ func (s *Store) AcknowledgeTurnCommand(ctx context.Context, b execution.Binding,
 }
 func (s *Store) TurnCommandAcknowledged(ctx context.Context, p execution.TurnCommand) (bool, error) {
 	var ack bool
-	err := s.db.QueryRowContext(ctx, `SELECT acknowledged FROM execution_turn_commands WHERE command_id=? AND session_id=? AND generation_id=? AND turn_id=? AND owner=? AND kind=? AND message=?`, p.ID, p.SessionID, p.GenerationID, p.TurnID, p.Owner, p.Kind, p.Message).Scan(&ack)
+	err := s.db.QueryRowContext(ctx, `SELECT acknowledged FROM execution_turn_commands WHERE command_id=? AND session_id=? AND generation_id=? AND turn_id=? AND EXISTS(SELECT 1 FROM execution_bindings b WHERE b.generation_id=execution_turn_commands.generation_id AND b.owner=?) AND kind=? AND message=?`, p.ID, p.SessionID, p.GenerationID, p.TurnID, p.Owner, p.Kind, p.Message).Scan(&ack)
 	return ack, err
 }

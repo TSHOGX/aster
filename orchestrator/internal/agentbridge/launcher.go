@@ -17,6 +17,9 @@ import (
 )
 
 type Launcher struct {
+	ActiveReplay interface {
+		VerifyActiveExecutionReplay(context.Context, execution.Binding, string, *int64, json.RawMessage) (bool, error)
+	}
 	IdleReplay interface {
 		VerifyIdleExecutionReplay(context.Context, execution.Binding, string, *int64, json.RawMessage) error
 	}
@@ -33,15 +36,21 @@ type Launcher struct {
 }
 
 func (l Launcher) Start(ctx context.Context, binding execution.Binding, request sandbox.StartProcessRequest) (execution.AgentConnection, error) {
-	return l.connect(ctx, binding, request, false)
+	return l.connect(ctx, binding, request, false, false)
 }
 func (l Launcher) AttachIdle(ctx context.Context, binding execution.Binding, reference sandbox.ProcessReference) (execution.AgentConnection, error) {
 	if l.IdleReplay == nil || l.Requests == nil {
 		return nil, fmt.Errorf("idle adoption replay verifier and deferred request ledger required")
 	}
-	return l.connect(ctx, binding, sandbox.StartProcessRequest{ProcessReference: reference}, true)
+	return l.connect(ctx, binding, sandbox.StartProcessRequest{ProcessReference: reference}, true, false)
 }
-func (l Launcher) connect(ctx context.Context, binding execution.Binding, request sandbox.StartProcessRequest, reconnect bool) (execution.AgentConnection, error) {
+func (l Launcher) AttachActive(ctx context.Context, binding execution.Binding, reference sandbox.ProcessReference) (execution.AgentConnection, error) {
+	if l.ActiveReplay == nil || l.Requests == nil {
+		return nil, fmt.Errorf("active replay verifier and deferred request ledger required")
+	}
+	return l.connect(ctx, binding, sandbox.StartProcessRequest{ProcessReference: reference}, true, true)
+}
+func (l Launcher) connect(ctx context.Context, binding execution.Binding, request sandbox.StartProcessRequest, reconnect, activeTurn bool) (execution.AgentConnection, error) {
 	if l.Backend == nil || l.Store == nil || l.Receipts == nil || l.LeaseTTL <= 0 {
 		return nil, fmt.Errorf("agent bridge ports and lease TTL required")
 	}
@@ -62,7 +71,7 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 		if reconnect && sandbox.Is(err, sandbox.Unavailable) {
 			// A dead process can reject the initial sync write with a generic
 			// transport failure. Its already-attached stream can still prove exit.
-			err = confirmIdleProcessExit(runCtx, stream, err, time.Second)
+			err = confirmProcessExit(runCtx, stream, err, time.Second)
 		}
 		stream.Close()
 		cancel()
@@ -83,6 +92,9 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 				}
 				return true, l.Requests.DeferTurnRequest(ctx, binding, raw)
 			case bridge.TypeEmitOutput, bridge.TypeAckTurnStarted, bridge.TypeAckTurnCompleted, "turn_control_result":
+				if activeTurn {
+					return l.ActiveReplay.VerifyActiveExecutionReplay(ctx, binding, envelope.Type, envelope.TurnID, envelope.Payload)
+				}
 				return true, l.IdleReplay.VerifyIdleExecutionReplay(ctx, binding, envelope.Type, envelope.TurnID, envelope.Payload)
 			}
 			return false, nil
@@ -160,7 +172,7 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 	return connection, nil
 }
 
-func confirmIdleProcessExit(ctx context.Context, stream sandbox.ProcessStream, original error, window time.Duration) error {
+func confirmProcessExit(ctx context.Context, stream sandbox.ProcessStream, original error, window time.Duration) error {
 	probe, cancel := context.WithTimeout(ctx, window)
 	defer cancel()
 	stop := context.AfterFunc(probe, func() { _ = stream.Close() })
@@ -174,7 +186,7 @@ func confirmIdleProcessExit(ctx context.Context, stream sandbox.ProcessStream, o
 			return original
 		}
 		if frame.Kind == "end" {
-			return &sandbox.Error{Class: sandbox.Precondition, Operation: "inspect idle process exit", Cause: fmt.Errorf("process exited with code %d after sync failed: %w", frame.ExitCode, original)}
+			return &sandbox.Error{Class: sandbox.Precondition, Operation: "inspect retained process exit", Cause: fmt.Errorf("process exited with code %d after sync failed: %w", frame.ExitCode, original)}
 		}
 	}
 	return original

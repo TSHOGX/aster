@@ -23,14 +23,16 @@ func idleAttachmentError(err error) error {
 	return err
 }
 
-type IdleAdoption struct {
+type ExecutionAdoption struct {
 	Binding       Binding
 	EventSequence int64
 	Grants        []string
 }
-type IdleAdoptionRepository interface {
-	BeginIdleExecutionAdoption(context.Context, string, string, time.Duration) (IdleAdoption, error)
-	IsIdleExecutionAdopting(context.Context, string) (bool, error)
+type AdoptionRepository interface {
+	BeginActiveExecutionAdoption(context.Context, string, string, time.Duration) (ExecutionAdoption, error)
+	VerifyActiveExecutionReplay(context.Context, Binding, string, *int64, json.RawMessage) (bool, error)
+	BeginIdleExecutionAdoption(context.Context, string, string, time.Duration) (ExecutionAdoption, error)
+	IsExecutionAdopting(context.Context, string) (bool, error)
 	VerifyIdleExecutionReplay(context.Context, Binding, string, *int64, json.RawMessage) error
 }
 type IdleAgentAttacher interface {
@@ -41,12 +43,38 @@ type IdleAgentAttacher interface {
 // It never starts a process or continues an in-flight turn. Ownership/dispatch
 // are fenced before attachment and acceptance follows manifest and journal replay.
 func (c *Controller) ReconnectIdle(ctx context.Context, session, generation, owner string) (Binding, error) {
-	if c.Repository == nil || c.Backend == nil || c.Agents == nil || c.Lifetime == nil || c.LeaseTTL <= 0 {
-		return Binding{}, fmt.Errorf("idle adoption controller ports required")
-	}
 	attacher, ok := c.Agents.(IdleAgentAttacher)
-	if !ok {
-		return Binding{}, fmt.Errorf("agent launcher cannot attach retained processes")
+	if !ok || c.Repository == nil {
+		return Binding{}, fmt.Errorf("idle attachment ports required")
+	}
+	return c.reconnect(ctx, session, generation, owner, c.Repository.BeginIdleExecutionAdoption, attacher.AttachIdle, idleAttachmentError)
+}
+
+type ActiveAgentAttacher interface {
+	AttachActive(context.Context, Binding, sandbox.ProcessReference) (AgentConnection, error)
+}
+
+var ErrActiveAttachmentLost = errors.New("recorded active process is unavailable")
+
+const ActiveAttachmentLostReason = "recorded active process could not be reattached"
+
+func (c *Controller) ReconnectActive(ctx context.Context, session, generation, owner string) (Binding, error) {
+	attacher, ok := c.Agents.(ActiveAgentAttacher)
+	if !ok || c.Repository == nil {
+		return Binding{}, fmt.Errorf("active attachment ports required")
+	}
+	classify := func(err error) error {
+		if sandbox.Is(err, sandbox.NotFound) || sandbox.Is(err, sandbox.Precondition) {
+			return fmt.Errorf("%w: %w", ErrActiveAttachmentLost, err)
+		}
+		return err
+	}
+	return c.reconnect(ctx, session, generation, owner, c.Repository.BeginActiveExecutionAdoption, attacher.AttachActive, classify)
+}
+
+func (c *Controller) reconnect(ctx context.Context, session, generation, owner string, begin func(context.Context, string, string, time.Duration) (ExecutionAdoption, error), attach func(context.Context, Binding, sandbox.ProcessReference) (AgentConnection, error), classify func(error) error) (Binding, error) {
+	if c.Repository == nil || c.Backend == nil || c.Agents == nil || c.Lifetime == nil || c.LeaseTTL <= 0 {
+		return Binding{}, fmt.Errorf("adoption controller ports required")
 	}
 	worker, lifetime, err := c.session(session)
 	if err != nil {
@@ -68,13 +96,13 @@ func (c *Controller) ReconnectIdle(ctx context.Context, session, generation, own
 	if err := c.Repository.AssertExecutionOwner(ctx, owner); err != nil {
 		return Binding{}, err
 	}
-	adoption, err := c.Repository.BeginIdleExecutionAdoption(ctx, generation, owner, c.LeaseTTL)
+	adoption, err := begin(ctx, generation, owner, c.LeaseTTL)
 	if err != nil {
 		return Binding{}, err
 	}
 	binding = adoption.Binding
 	if len(adoption.Grants) > 0 && c.GrantRevoker == nil {
-		return Binding{}, fmt.Errorf("idle adoption requires gateway grant drain")
+		return Binding{}, fmt.Errorf("adoption requires gateway grant drain")
 	}
 	for _, grant := range adoption.Grants {
 		if err := c.GrantRevoker.RevokeGrant(ctx, grant); err != nil {
@@ -85,13 +113,8 @@ func (c *Controller) ReconnectIdle(ctx context.Context, session, generation, own
 		if worker.binding.GenerationID != generation {
 			return Binding{}, ErrStaleOperation
 		}
-		if err := worker.connection.Close(); err != nil {
+		if err := detachAgent(ctx, worker.connection); err != nil {
 			return Binding{}, err
-		}
-		select {
-		case <-worker.connection.Done():
-		case <-ctx.Done():
-			return Binding{}, ctx.Err()
 		}
 		worker.connection = nil
 	}
@@ -123,9 +146,9 @@ func (c *Controller) ReconnectIdle(ctx context.Context, session, generation, own
 		}
 	}()
 	reference := sandbox.ProcessReference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, Handle: binding.ProcessHandle}
-	connection, err := attacher.AttachIdle(agentCtx, binding, reference)
+	connection, err := attach(agentCtx, binding, reference)
 	if err != nil {
-		return Binding{}, idleAttachmentError(err)
+		return Binding{}, classify(err)
 	}
 	defer func() {
 		if !accepted {
@@ -135,7 +158,7 @@ func (c *Controller) ReconnectIdle(ctx context.Context, session, generation, own
 	select {
 	case err := <-connection.Ready():
 		if err != nil {
-			return Binding{}, idleAttachmentError(err)
+			return Binding{}, classify(err)
 		}
 	case <-leaseCtx.Done():
 		return Binding{}, leaseCtx.Err()

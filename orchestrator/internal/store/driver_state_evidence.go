@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/sandbox"
+	"time"
 )
 
 // DriverStateEvidence is produced by the application after quiesced storage
@@ -33,8 +34,16 @@ func (s *Store) DriverStateValidationInput(ctx context.Context, p CompleteTurnPa
 		return DriverStateValidationInput{}, err
 	}
 	if binding, err := s.GetExecutionBinding(ctx, p.GenerationID); err == nil {
-		if binding.SessionID != p.SessionID || binding.Owner != p.Owner || binding.State != "accepted" {
-			return DriverStateValidationInput{}, fmt.Errorf("native state execution binding is not accepted")
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return DriverStateValidationInput{}, err
+		}
+		defer tx.Rollback()
+		if err := executionIngressTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, time.Now().UTC()); err != nil {
+			return DriverStateValidationInput{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return DriverStateValidationInput{}, err
 		}
 		return DriverStateValidationInput{CanonicalPayload: canonical, Reference: sandbox.Reference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch}, Evidence: DriverStateEvidence{SessionID: p.SessionID, GenerationID: p.GenerationID, Owner: p.Owner, TurnID: p.TurnID, StateDigest: digest, ContractDigest: binding.SpecDigest}}, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {

@@ -31,6 +31,10 @@ type workActions struct {
 	writes                                    atomic.Int32
 }
 
+func (a *workActions) ReconnectActive(context.Context, string, string, string) (Binding, error) {
+	return Binding{}, nil
+}
+
 func (a *workActions) ReconnectIdle(context.Context, string, string, string) (Binding, error) {
 	return Binding{}, nil
 }

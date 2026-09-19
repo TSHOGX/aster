@@ -49,7 +49,7 @@ func TestIdleSyncFailureRequiresExplicitProcessExitEvidence(t *testing.T) {
 				stream.err = &sandbox.Error{Class: sandbox.Precondition, Cause: errors.New("process gone")}
 			}
 			original := &sandbox.Error{Class: sandbox.Unavailable, Cause: errors.New("sync send failed")}
-			err := confirmIdleProcessExit(context.Background(), stream, original, 10*time.Millisecond)
+			err := confirmProcessExit(context.Background(), stream, original, 10*time.Millisecond)
 			if outcome == "exit" || outcome == "precondition" {
 				if !sandbox.Is(err, sandbox.Precondition) {
 					t.Fatalf("explicit process exit lost: %v", err)

@@ -97,6 +97,8 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	})
 	var network sandbox.Network
 	var blockModel atomic.Bool
+	var adoptionModelHold atomic.Pointer[chan struct{}]
+	adoptionModelEntered := make(chan struct{}, 1)
 	modelEntered := make(chan struct{}, 1)
 	var processEnvironment []string
 	if driver == "pi" {
@@ -124,6 +126,20 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				}
 				_ = json.Unmarshal([]byte(frame), &event)
 				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, frame)
+				if event.Type == "message_start" {
+					if hold := adoptionModelHold.Load(); hold != nil {
+						w.(http.Flusher).Flush()
+						select {
+						case adoptionModelEntered <- struct{}{}:
+						default:
+						}
+						select {
+						case <-*hold:
+						case <-r.Context().Done():
+							return
+						}
+					}
+				}
 				if event.Type == "message_start" && blockModel.Load() {
 					w.(http.Flusher).Flush()
 					select {
@@ -179,7 +195,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	invalidationResult := make(chan error, 1)
 	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
 	controlBackend := &partialAbortBackend{Processes: backend}
-	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, Requests: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
 		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
 		if envelope.Type == bridge.TypeAckTurnStarted && invalidateFirstTurn.CompareAndSwap(true, false) {
@@ -501,6 +517,7 @@ else:raise RuntimeError('detached guest did not journal its next claim')
 			verifyKhoraInventory(t, ctx, srv, st, session.ID, false)
 		}
 	}
+	controller, binding, leaseOwner = verifyKhoraActiveAdoption(t, ctx, srv, st, controller, backend, controlBackend, launcher, plans, binding, leaseOwner, &adoptionModelHold, adoptionModelEntered, configureInventory)
 	binding = verifyKhoraDeadIdleRecovery(t, ctx, srv, st, controller, backend, controlBackend, binding, leaseOwner)
 	if driver == "sh" {
 		controlBackend.fail.Store(true)
@@ -512,6 +529,12 @@ else:raise RuntimeError('detached guest did not journal its next claim')
 		blockModel.Store(false)
 	}
 	{
+		var completedNativeVersion int
+		if driver == "pi" {
+			if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=? AND driver_id='pi'`, session.ID).Scan(&completedNativeVersion); err != nil {
+				t.Fatal(err)
+			}
+		}
 		target := binding.GenerationID
 		interruptedGeneration.Store(&target)
 		content := `python3 -c 'print("historical-recovery-ok" + "x" * 262144)'`
@@ -615,7 +638,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		if driver == "pi" {
 			var digest, path string
 			var version int
-			if err := st.DBForTest().QueryRow(`SELECT c.native_digest,c.selected_path,d.state_version FROM native_capture_requests c JOIN session_driver_states d ON d.session_id=c.session_id AND d.state_version=c.state_version WHERE c.session_id=?`, session.ID).Scan(&digest, &path, &version); err != nil || version != 4 {
+			if err := st.DBForTest().QueryRow(`SELECT c.native_digest,c.selected_path,d.state_version FROM native_capture_requests c JOIN session_driver_states d ON d.session_id=c.session_id AND d.state_version=c.state_version WHERE c.session_id=?`, session.ID).Scan(&digest, &path, &version); err != nil || version != completedNativeVersion {
 				t.Fatalf("failed native turn advanced state: %d %v", version, err)
 			}
 			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
@@ -655,7 +678,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 				}
 			}
 			var advanced int
-			if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, session.ID).Scan(&advanced); err != nil || advanced != 5 {
+			if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, session.ID).Scan(&advanced); err != nil || advanced != completedNativeVersion+1 {
 				t.Fatalf("successor native state advancement: %d %v", advanced, err)
 			}
 			mem, err := memorystore.Open(ctx, filepath.Join(directory, "capture-memory.db"))
@@ -685,7 +708,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if n, err := capture.Step(ctx, 32); err == nil || n != 0 {
 				t.Fatalf("lost capture receipt not surfaced: %d %v", n, err)
 			}
-			for range 4 {
+			for range completedNativeVersion {
 				if n, err := capture.Step(ctx, 32); err != nil || n != 1 {
 					t.Fatalf("completed snapshot capture: %d %v", n, err)
 				}
@@ -715,7 +738,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			}
 			rows.Close()
 			var archives int
-			if err := mem.DBForTest().QueryRow(`SELECT count(*) FROM raw_sources WHERE session_id=?`, session.ID).Scan(&archives); err != nil || archives != 4 {
+			if err := mem.DBForTest().QueryRow(`SELECT count(*) FROM raw_sources WHERE session_id=?`, session.ID).Scan(&archives); err != nil || archives != completedNativeVersion {
 				t.Fatalf("capture retry changed consumer archive count: %d %v", archives, err)
 			}
 		}
@@ -730,6 +753,158 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		}
 	}
 
+}
+
+func verifyKhoraActiveAdoption(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, backend *khorabackend.Backend, processes *partialAbortBackend, launcher agentbridge.Launcher, plans execution.PlanSource, binding execution.Binding, owner string, modelHold *atomic.Pointer[chan struct{}], modelEntered <-chan struct{}, inventory func(string)) (*execution.Controller, execution.Binding, string) {
+	t.Helper()
+	for cycle := 0; cycle < 3; cycle++ {
+		previous := binding
+		if cycle == 2 {
+			processes.failGrant.Store(true)
+		}
+		hold := make(chan struct{})
+		if binding.Driver == "pi" {
+			modelHold.Store(&hold)
+		}
+		content := fmt.Sprintf("printf 'before-active-adoption\\n'; while [ ! -f /workspace/active-adoption-%d ]; do sleep 0.05; done; printf 'product-worker-ok\\n'", cycle)
+		turn, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if binding.Driver == "pi" && cycle != 2 {
+			select {
+			case <-modelEntered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+		}
+		for {
+			status, reason, err := st.TurnStatus(ctx, binding.SessionID, turn.TurnID)
+			if err != nil || status == "failed" || status == "canceled" {
+				t.Fatalf("active adoption input: %s %s %v", status, reason, err)
+			}
+			if (cycle != 2 && status == "running") || (cycle == 2 && status == "leased" && !processes.failGrant.Load()) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		if err := controller.Close(); err != nil {
+			t.Fatal(err)
+		}
+		release := func() {
+			if binding.Driver == "pi" {
+				modelHold.Store(nil)
+				close(hold)
+			} else {
+				runHistoricalRecoveryProbe(t, ctx, backend, binding, fmt.Sprintf("release-active-%d", cycle), fmt.Sprintf("from pathlib import Path; Path('/workspace/active-adoption-%d').write_text('go')", cycle))
+			}
+		}
+		if cycle == 1 {
+			release()
+			probe := fmt.Sprintf(`import json,sqlite3,time
+ db=sqlite3.connect('file:/harness-bridge/%s/journal.db?mode=ro',uri=True)
+ for attempt in range(300):
+  records=[json.loads(bytes(row[0])[1:]) for row in db.execute('SELECT payload FROM records').fetchall()]
+  if any(r.get('envelope',{}).get('type')=='ack_turn_completed' and r['envelope'].get('turn_id')==%d for r in records):break
+  time.sleep(0.02)
+ else:raise RuntimeError('detached active turn did not journal completion')
+ `, binding.GenerationID, turn.TurnID)
+			probe = strings.ReplaceAll(probe, "\n ", "\n")
+			runHistoricalRecoveryProbe(t, ctx, backend, binding, "inspect-active-completion", probe)
+		}
+		if cycle == 0 {
+			cursor, err := st.EngineCursor(ctx, binding.StoreID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			page, err := backend.Events(ctx, cursor.After, 128)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.CommitEngineEvents(ctx, binding.StoreID, cursor.After, page.Events); err != nil {
+				t.Fatal(err)
+			}
+			if sequence, err := st.EnvironmentInvalidationSequence(ctx, binding.EnvironmentID); err != nil || sequence < 0 {
+				t.Fatalf("active revalidation lacked an engine event: %d %v", sequence, err)
+			}
+		} else {
+			replacementOwner, err := store.AcquireOwnerLock(filepath.Join(t.TempDir(), "active-owner"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = replacementOwner.Close() })
+			if err := st.WriteOwner(ctx, replacementOwner); err != nil {
+				t.Fatal(err)
+			}
+			owner = store.GenerationLeaseOwner(replacementOwner.UUID)
+			srv.ownerUUID = replacementOwner.UUID
+		}
+		inventory(owner)
+		controller = &execution.Controller{Repository: &acceptanceFaultRepository{Store: st, fail: true}, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+		if err := srv.SetExecutionController(controller, "khora"); err != nil {
+			t.Fatal(err)
+		}
+		starts, connects := processes.starts.Load(), processes.connects.Load()
+		writer, ok := srv.workspaceWrites.(execution.WorkspaceRecovery)
+		if !ok {
+			t.Fatal("active adoption recovery writer unavailable")
+		}
+		stop := startKhoraReconciler(t, ctx, srv, st, controller, writer, owner)
+		for {
+			binding, err = st.GetExecutionBinding(ctx, previous.GenerationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if binding.Owner == owner && binding.State == "accepted" {
+				var adopted int
+				if err := st.DBForTest().QueryRow(`SELECT count(*) FROM active_execution_adoptions WHERE generation_id=? AND turn_id=? AND owner=? AND state='accepted'`, binding.GenerationID, turn.TurnID, owner).Scan(&adopted); err != nil {
+					t.Fatal(err)
+				}
+				if adopted == 1 {
+					break
+				}
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		stop()
+		if binding.Epoch != previous.Epoch || binding.ProcessHandle != previous.ProcessHandle || binding.SandboxID != previous.SandboxID || processes.starts.Load() != starts || processes.connects.Load() < connects+2 {
+			t.Fatalf("active adoption replaced original process: %+v -> %+v", previous, binding)
+		}
+		if cycle != 1 {
+			release()
+		}
+		for {
+			status, reason, err := st.TurnStatus(ctx, binding.SessionID, turn.TurnID)
+			if err != nil || status == "failed" || status == "canceled" {
+				t.Fatalf("adopted active turn: %s %s %v", status, reason, err)
+			}
+			if status == "completed" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		var attempt, messages int
+		if err := st.DBForTest().QueryRow(`SELECT attempt FROM turns WHERE id=? AND generation_id=?`, turn.TurnID, previous.GenerationID).Scan(&attempt); err != nil || attempt != 1 {
+			t.Fatalf("active reconnect redispatched turn: %d %v", attempt, err)
+		}
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='assistant' AND content LIKE '%product-worker-ok%'`, turn.TurnID).Scan(&messages); err != nil || messages != 1 {
+			t.Fatalf("active reconnect duplicated or lost transcript: %d %v", messages, err)
+		}
+		t.Logf("active same-epoch adoption driver=%s turn=%d completed_while_detached=%t lost_grant_reply=%t", binding.Driver, turn.TurnID, cycle == 1, cycle == 2)
+	}
+	return controller, binding, owner
 }
 
 func verifyKhoraDeadIdleRecovery(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, backend *khorabackend.Backend, processes *partialAbortBackend, previous execution.Binding, owner string) execution.Binding {
@@ -1258,6 +1433,7 @@ type partialAbortBackend struct {
 	starts, connects atomic.Int32
 	fail             atomic.Bool
 	failSteer        atomic.Bool
+	failGrant        atomic.Bool
 }
 
 func (b *partialAbortBackend) StartProcess(ctx context.Context, p sandbox.StartProcessRequest) (sandbox.ProcessStream, error) {
@@ -1275,6 +1451,12 @@ func (b *partialAbortBackend) SendProcessInput(ctx context.Context, reference sa
 		return err
 	}
 	for _, frame := range frames {
+		if frame.Kind == "command" && frame.Envelope != nil && frame.Envelope.Type == bridge.TypeGrant && b.failGrant.CompareAndSwap(true, false) {
+			if err := b.Processes.SendProcessInput(ctx, reference, data[:len(data)/2]); err != nil {
+				return err
+			}
+			return errors.New("injected partial grant reply")
+		}
 		if frame.Kind == "command" && ((strings.HasPrefix(frame.CommandID, "control_abort_") && b.fail.CompareAndSwap(true, false)) || (strings.HasPrefix(frame.CommandID, "control_steer_") && b.failSteer.CompareAndSwap(true, false))) {
 			if err := b.Processes.SendProcessInput(ctx, reference, data[:len(data)/2]); err != nil {
 				return err

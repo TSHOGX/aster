@@ -157,19 +157,42 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
+	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch AND e.store_id=execution_bindings.store_id AND e.sandbox_id=execution_bindings.sandbox_id) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
 	if err != nil {
 		return err
 	}
 	if err := requireOneRow(result, "execution acceptance CAS failed"); err != nil {
 		return err
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE runtime_generations SET status='idle',last_seen_at=? WHERE generation_id=? AND lease_owner=? AND lease_expires_at>? AND status='starting'`, formatTime(p.Now), p.GenerationID, p.Owner, formatTime(p.Now))
+	var activeAdoption int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM active_execution_adoptions WHERE generation_id=? AND owner=? AND state='adopting'`, p.GenerationID, p.Owner).Scan(&activeAdoption); err != nil {
+		return err
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE runtime_generations SET status=CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.generation_id=runtime_generations.generation_id AND t.status IN ('leased','running')) THEN 'active' ELSE 'idle' END,last_seen_at=? WHERE generation_id=? AND lease_owner=? AND lease_expires_at>? AND (status='starting' OR (?=1 AND status IN ('idle','active')))`, formatTime(p.Now), p.GenerationID, p.Owner, formatTime(p.Now), activeAdoption)
 	if err != nil {
 		return err
 	}
 	if err := requireOneRow(result, "execution ready lease CAS failed"); err != nil {
 		return err
+	}
+	if activeAdoption == 1 {
+		var turn int64
+		var expires string
+		err := tx.QueryRowContext(ctx, `SELECT t.id,t.lease_expires_at FROM active_execution_adoptions a JOIN turns t ON t.id=a.turn_id AND t.attempt=a.attempt WHERE a.generation_id=? AND t.generation_id=a.generation_id AND t.lease_owner=? AND t.status IN ('leased','running')`, p.GenerationID, p.Owner).Scan(&turn, &expires)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			if !parseTime(expires).After(p.Now) {
+				return execution.ErrStartLeaseLost
+			}
+			if err := issueBoundGrantsTx(ctx, tx, p.GenerationID, turn, parseTime(expires)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE active_execution_adoptions SET state='accepted' WHERE generation_id=? AND owner=? AND state='adopting'`, p.GenerationID, p.Owner); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET observed_state='running' WHERE environment_id=(SELECT environment_id FROM execution_bindings WHERE generation_id=?)`, p.GenerationID); err != nil {
 		return err
@@ -183,11 +206,11 @@ func acceptedExecutionTx(ctx context.Context, tx *sql.Tx, session, generation, o
 	if err := executionIngressTx(ctx, tx, session, generation, owner, now); err != nil {
 		return err
 	}
-	var pending int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM environment_reconcile_requests r JOIN execution_bindings b ON b.environment_id=r.environment_id WHERE b.generation_id=?`, generation).Scan(&pending); err != nil {
+	var ready int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b WHERE b.generation_id=? AND b.state='accepted' AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id)`, generation).Scan(&ready); err != nil {
 		return err
 	}
-	if pending != 0 {
+	if ready != 1 {
 		return fmt.Errorf("execution readiness awaits engine reconciliation")
 	}
 	return nil
@@ -202,7 +225,7 @@ func executionIngressTx(ctx context.Context, tx *sql.Tx, session, generation, ow
 		return err
 	}
 	var count int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN runtime_generations g ON g.generation_id=b.generation_id JOIN sessions s ON s.id=b.session_id WHERE b.session_id=? AND b.generation_id=? AND b.owner=? AND b.state='accepted' AND b.process_handle!='' AND b.store_id=e.store_id AND b.sandbox_id=e.sandbox_id AND b.epoch=e.epoch AND b.environment_fence=e.fence AND g.lease_owner=b.owner AND g.lease_expires_at>? AND g.status IN ('idle','active') AND s.active_generation_id=b.generation_id AND s.status NOT IN ('failed','destroyed') AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=b.environment_id AND o.state IN ('pending','issued','uncertain'))`, session, generation, owner, formatTime(now)).Scan(&count)
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN runtime_generations g ON g.generation_id=b.generation_id JOIN sessions s ON s.id=b.session_id WHERE b.session_id=? AND b.generation_id=? AND b.owner=? AND (b.state='accepted' OR (b.state='starting' AND EXISTS(SELECT 1 FROM active_execution_adoptions a WHERE a.generation_id=b.generation_id AND a.owner=b.owner AND a.state='adopting'))) AND b.process_handle!='' AND b.store_id=e.store_id AND b.sandbox_id=e.sandbox_id AND b.epoch=e.epoch AND b.environment_fence=e.fence AND g.lease_owner=b.owner AND g.lease_expires_at>? AND g.status IN ('idle','active') AND s.active_generation_id=b.generation_id AND s.status NOT IN ('failed','destroyed') AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=b.environment_id AND o.state IN ('pending','issued','uncertain'))`, session, generation, owner, formatTime(now)).Scan(&count)
 	if err != nil {
 		return err
 	}
@@ -219,7 +242,12 @@ func (s *Store) RenewExecutionBindingLease(ctx context.Context, generation, owne
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE runtime_generations SET lease_expires_at=?,last_seen_at=?
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET lease_expires_at=?,last_seen_at=?
  WHERE generation_id=? AND lease_owner=? AND lease_expires_at>? AND status IN ('starting','idle','active')
  AND EXISTS(SELECT 1 FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN sessions s ON s.id=b.session_id
  WHERE b.generation_id=runtime_generations.generation_id AND b.owner=? AND b.state!='retired' AND b.environment_fence=e.fence AND b.epoch=e.epoch AND s.active_generation_id=b.generation_id AND s.status NOT IN ('failed','destroyed'))
@@ -230,7 +258,21 @@ func (s *Store) RenewExecutionBindingLease(ctx context.Context, generation, owne
 	if err := requireOneRow(result, "execution lease renewal CAS failed"); err != nil {
 		return fmt.Errorf("%w: %v", execution.ErrStartLeaseLost, err)
 	}
-	return nil
+	var turn int64
+	err = tx.QueryRowContext(ctx, `SELECT t.id FROM active_execution_adoptions a JOIN turns t ON t.id=a.turn_id AND t.attempt=a.attempt WHERE a.generation_id=? AND a.owner=? AND a.state='adopting' AND t.status IN ('leased','running')`, generation, owner).Scan(&turn)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		result, err := tx.ExecContext(ctx, `UPDATE turns SET lease_expires_at=? WHERE id=? AND generation_id=? AND lease_owner=? AND lease_expires_at>?`, formatTime(now.Add(ttl)), turn, generation, owner, formatTime(now))
+		if err != nil {
+			return err
+		}
+		if err := requireOneRow(result, "adopted turn lease renewal CAS failed"); err != nil {
+			return fmt.Errorf("%w: %v", execution.ErrStartLeaseLost, err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) AssertExecutionAccepted(ctx context.Context, generation, owner string, now time.Time) error {

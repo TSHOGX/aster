@@ -18,6 +18,7 @@ const (
 	ReconcileWorkspace   ReconcileKind = "workspace"
 	ReconcileCapture     ReconcileKind = "capture"
 	ReconcileInterrupted ReconcileKind = "interrupted"
+	ReconcileActive      ReconcileKind = "active_adoption"
 	ReconcileIdle        ReconcileKind = "idle_adoption"
 )
 
@@ -29,6 +30,7 @@ type ReconcileRepository interface {
 	PendingExecutionWork(context.Context, ReconcileKind, string, string, int) ([]ReconcileWork, error)
 }
 type ReconcileController interface {
+	ReconnectActive(context.Context, string, string, string) (Binding, error)
 	ReconnectIdle(context.Context, string, string, string) (Binding, error)
 	DeliverTurnCommand(context.Context, TurnCommand) error
 	MaintainCapture(context.Context, string, string, int, time.Duration) (CaptureMaintenance, error)
@@ -68,7 +70,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	var workers sync.WaitGroup
-	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle} {
+	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle, ReconcileActive} {
 		workers.Add(1)
 		go func(kind ReconcileKind) {
 			defer workers.Done()
@@ -118,6 +120,12 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 func (r *Reconciler) apply(ctx context.Context, kind ReconcileKind, p ReconcileWork) error {
 	switch kind {
+	case ReconcileActive:
+		_, err := r.Controller.ReconnectActive(ctx, p.SessionID, p.GenerationID, r.Owner)
+		if errors.Is(err, ErrActiveAttachmentLost) {
+			return r.Controller.RecoverInterrupted(ctx, p.SessionID, p.GenerationID, r.Owner, ActiveAttachmentLostReason)
+		}
+		return err
 	case ReconcileIdle:
 		_, err := r.Controller.ReconnectIdle(ctx, p.SessionID, p.GenerationID, r.Owner)
 		if errors.Is(err, ErrIdleAttachmentLost) {

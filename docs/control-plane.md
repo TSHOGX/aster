@@ -496,16 +496,39 @@ cannot fall through ordinary process startup, and an event arriving after the
 captured invalidation sequence prevents acceptance. The background reconciler
 selects idle bindings from a replaced owner, expired idle leases, and unfinished
 adoptions. Successful adoption keeps the generation, process handle, epoch and
-native history; it does not reactivate old turn grants. In-flight attachment and
-unexpected-epoch recovery remain separate work.
+native history; it does not reactivate old turn grants.
+
+Active turns have a separate adoption marker that pins the original turn and
+attempt. The current product owner transfers the execution and turn leases,
+fences dispatch, and revokes/drains old grants before inspecting and attaching
+the original process. Startup retries preserve the marker and grant revision;
+ordinary Ensure cannot fall through to a replacement start. Both leases renew
+together while replay is in progress. Original output, steering results and
+native completion can settle during this fenced phase. Terminal duplicates must
+match committed records; unknown late output requires historical recovery.
+
+After the recovered journal head, manifest evidence, leases and event watermark
+are accepted, the binding becomes active or idle according to the recovered turn
+state. A still-running turn receives new grant identities; revoked grants remain
+revoked. An existing abort intent prevents fresh grants. Pending control commands
+retain their original issuer in storage and use the current accepted owner for
+delivery, without changing command IDs or payloads. Deferred request replies use
+the original decision ledger, including a grant whose first send was partial.
+The turn attempt, process handle, placement epoch and native history are retained.
+
+The background adoption loops select owner changes, expired leases, unfinished
+markers and engine-event invalidations. They can revalidate an active same-epoch
+process once an event has been ingested. The event source is not yet continuously
+polled by the retained application runtime. Unexpected placement or backend
+identity changes remain fenced; inspection alone cannot accept them.
 
 After exact placement inspection, a missing process or an attachment precondition
-failure enters interrupted recovery through the background reconciler. A process
-exit observed before the replay barrier has the same classification. The attached
+failure enters interrupted recovery through the background reconciler for either
+idle or active adoption. A process exit observed before the replay barrier has the same classification. The attached
 process stream is also checked for up to one second when the initial
-synchronization write returns a transport error; EOF or timeout alone does not prove process exit. The
-durable idle-adoption marker permits this transition from `starting`; ordinary
-startup and in-flight turns cannot use it. Recovery reserves the conditional pause before
+synchronization write returns a transport error; EOF or timeout alone does not
+prove process exit. The durable adoption marker permits this transition from `starting`; ordinary
+startup cannot use it. Recovery reserves the conditional pause before
 remote I/O, drains routes, replays the retained journal, restores completed native
 history and ends paused. Its durable operation is picked up by the interrupted
 recovery loop after a restart. No replacement agent starts during recovery.
@@ -593,8 +616,8 @@ activation requests; the injectable execution reconciler performs this polling.
 Default executable composition still needs to select that reconciler.
 
 The retained execution reconciler runs independent sequential loops for pending
-aborts, steering sends, workspace mutations, capture activations, idle adoption
-and interrupted-recovery ledgers.
+aborts, steering sends, workspace mutations, capture activations, idle and active
+adoption, and interrupted-recovery ledgers.
 Each loop uses bounded pages, per-action deadlines and a rotating key cursor so
 old failures do not hide newer obligations. A task that ignores cancellation
 continues to occupy its loop; it is never restarted merely because a deadline

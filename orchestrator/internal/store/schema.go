@@ -307,6 +307,17 @@ CREATE TABLE IF NOT EXISTS idle_execution_adoptions (
  event_sequence INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS active_execution_adoptions (
+ generation_id TEXT PRIMARY KEY REFERENCES execution_bindings(generation_id),
+ turn_id INTEGER NOT NULL REFERENCES turns(id),
+ attempt INTEGER NOT NULL,
+ previous_owner TEXT NOT NULL,
+ owner TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ event_sequence INTEGER NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('adopting','accepted'))
+);
+
 CREATE TABLE IF NOT EXISTS deferred_turn_requests (
  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
  generation_id TEXT NOT NULL REFERENCES execution_bindings(generation_id),

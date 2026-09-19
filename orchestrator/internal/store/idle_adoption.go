@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 
 	"encoding/json"
 	"fmt"
@@ -9,13 +10,13 @@ import (
 	"time"
 )
 
-func (s *Store) IsIdleExecutionAdopting(ctx context.Context, generation string) (bool, error) {
+func (s *Store) IsExecutionAdopting(ctx context.Context, generation string) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM idle_execution_adoptions a JOIN execution_bindings b ON b.generation_id=a.generation_id WHERE a.generation_id=? AND b.state='starting'`, generation).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b WHERE b.generation_id=? AND b.state='starting' AND (EXISTS(SELECT 1 FROM idle_execution_adoptions a WHERE a.generation_id=b.generation_id AND a.owner=b.owner) OR EXISTS(SELECT 1 FROM active_execution_adoptions a WHERE a.generation_id=b.generation_id AND a.owner=b.owner AND a.state='adopting'))`, generation).Scan(&count)
 	return count != 0, err
 }
-func (s *Store) BeginIdleExecutionAdoption(ctx context.Context, generation, owner string, ttl time.Duration) (execution.IdleAdoption, error) {
-	var result execution.IdleAdoption
+func (s *Store) BeginIdleExecutionAdoption(ctx context.Context, generation, owner string, ttl time.Duration) (execution.ExecutionAdoption, error) {
+	var result execution.ExecutionAdoption
 	if ttl <= 0 {
 		return result, fmt.Errorf("positive adoption lease required")
 	}
@@ -53,7 +54,7 @@ func (s *Store) BeginIdleExecutionAdoption(ctx context.Context, generation, owne
 		if adopting != 1 || status != "starting" {
 			return result, execution.ErrBusy
 		}
-	} else if status != "idle" {
+	} else if status != "idle" && status != "active" {
 		return result, execution.ErrBusy
 	}
 	var busy int
@@ -128,8 +129,15 @@ func (s *Store) VerifyIdleExecutionReplay(ctx context.Context, b execution.Bindi
 	if terminal != 1 {
 		return execution.ErrOperationConflict
 	}
+	if err := verifyTerminalExecutionRecordTx(ctx, tx, b, kind, turn, payload); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func verifyTerminalExecutionRecordTx(ctx context.Context, tx *sql.Tx, b execution.Binding, kind string, turn *int64, payload json.RawMessage) error {
 	if kind == "ack_turn_started" {
-		return tx.Commit()
+		return nil
 	}
 	if kind == "turn_control_result" {
 		var outcome execution.SteeringOutcome
@@ -143,10 +151,11 @@ func (s *Store) VerifyIdleExecutionReplay(ctx context.Context, b execution.Bindi
 		if prior != outcome.Status || prior == "pending" {
 			return execution.ErrOperationConflict
 		}
-		return tx.Commit()
+		return nil
 	}
 	p := AppendEventParams{SessionID: b.SessionID, GenerationID: b.GenerationID, TurnID: turn, Type: kind, Now: time.Now().UTC()}
 	var raw []byte
+	var err error
 	var key string
 	if kind == "emit_output" {
 		var output struct {
@@ -188,5 +197,5 @@ func (s *Store) VerifyIdleExecutionReplay(ctx context.Context, b execution.Bindi
 	if !duplicate {
 		return execution.ErrOperationConflict
 	}
-	return tx.Commit()
+	return nil
 }

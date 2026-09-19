@@ -13,7 +13,7 @@ import (
 )
 
 type ControllerRepository interface {
-	IdleAdoptionRepository
+	AdoptionRepository
 	TurnCommandRepository
 	AssertExecutionOwner(context.Context, string) error
 	ExecutionSession(context.Context, string) (Session, error)
@@ -131,10 +131,10 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	generation := "gen_" + uuid.NewSHA1(uuid.NameSpaceOID, []byte("initial-execution:"+session.ID)).String()
 	var predecessor Binding
 	if found {
-		if adopting, err := c.Repository.IsIdleExecutionAdopting(ctx, existing.GenerationID); err != nil {
+		if adopting, err := c.Repository.IsExecutionAdopting(ctx, existing.GenerationID); err != nil {
 			return Binding{}, err
 		} else if adopting {
-			return Binding{}, fmt.Errorf("existing execution requires idle attachment reconciliation")
+			return Binding{}, fmt.Errorf("existing execution requires attachment reconciliation")
 		}
 		if existing.StoreID != identity.StoreID {
 			return Binding{}, ErrBackendIdentityChanged
@@ -266,13 +266,8 @@ func (c *Controller) RecoverInterrupted(ctx context.Context, session, generation
 	// Detaching cancels local ingest; the durable workflow separately proves
 	// writer termination through pause before advancing recovery.
 	if worker.connection != nil {
-		if err := worker.connection.Close(); err != nil {
+		if err := detachAgent(requestContext, worker.connection); err != nil {
 			return err
-		}
-		select {
-		case <-worker.connection.Done():
-		case <-requestContext.Done():
-			return requestContext.Err()
 		}
 		worker.connection = nil
 	}

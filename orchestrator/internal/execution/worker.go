@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -176,4 +177,17 @@ func (c *workerConnection) SendTurnCommand(ctx context.Context, p TurnCommand) e
 		return fmt.Errorf("agent connection does not support turn commands")
 	}
 	return sender.SendTurnCommand(ctx, p)
+}
+
+// Closing a spent HTTP stream may report its existing cancellation error. Done,
+// not that transport error, proves the local ingest worker has stopped. This
+// says nothing about guest process termination, which requires engine evidence.
+func detachAgent(ctx context.Context, connection AgentConnection) error {
+	closeErr := connection.Close()
+	select {
+	case <-connection.Done():
+		return nil
+	case <-ctx.Done():
+		return errors.Join(ctx.Err(), closeErr)
+	}
 }
