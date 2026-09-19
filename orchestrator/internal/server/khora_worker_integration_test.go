@@ -14,11 +14,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/agentbridge"
+	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
@@ -132,7 +134,21 @@ func runKhoraWorker(t *testing.T, driver string) {
 	srv.nativeStateValidator = func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), "native-state-"+driver+"-"+fmt.Sprint(turn), guestfiles.Files{Backend: backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	}
-	launcher := agentbridge.Launcher{Backend: backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, LeaseTTL: time.Minute, AfterCommit: srv.handleBridgeCommittedEnvelope, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	var interruptedGeneration atomic.Pointer[string]
+	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
+	launcher := agentbridge.Launcher{Backend: backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
+		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
+		if target := interruptedGeneration.Load(); target != nil && *target == envelope.GenerationID && envelope.Type == bridge.TypeAckTurnStarted {
+			interrupted <- struct{}{}
+			<-ctx.Done()
+		}
+	}
+	launcher.OnExit = func(binding execution.Binding, _ error) {
+		if target := interruptedGeneration.Load(); target != nil && *target == binding.GenerationID {
+			detached <- struct{}{}
+		}
+	}
 	plan := execution.LaunchPlan{TemplateID: template, SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Mounts: mounts, Network: network, Environment: processEnvironment}
 	repository := &acceptanceFaultRepository{Store: st, fail: driver == "sh"}
 	controller := &execution.Controller{Repository: repository, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
@@ -291,7 +307,147 @@ func runKhoraWorker(t *testing.T, driver string) {
 		}
 		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
 	}
+	if driver == "sh" {
+		target := binding.GenerationID
+		interruptedGeneration.Store(&target)
+		turn, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: `python3 -c 'print("historical-recovery-ok" + "x" * 262144)'`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-interrupted:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		probe := fmt.Sprintf(`import json,sqlite3,time
+db=sqlite3.connect('file:/harness-bridge/%s/journal.db?mode=ro',uri=True)
+for attempt in range(300):
+ records=[json.loads(bytes(row[0])[1:]) for row in db.execute('SELECT payload FROM records').fetchall()]
+ if any(r.get('envelope',{}).get('type')=='ack_turn_completed' and r['envelope'].get('turn_id')==%d for r in records):break
+ time.sleep(0.02)
+else:raise RuntimeError('guest did not commit terminal journal record')
+`, binding.GenerationID, turn.TurnID)
+		runHistoricalRecoveryProbe(t, ctx, backend, binding, probe)
+		if err := controller.Close(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-detached:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		if _, err := st.FailGenerationWithEvent(ctx, store.FailGenerationParams{SessionID: session.ID, GenerationID: binding.GenerationID, TurnID: turn.TurnID, Owner: leaseOwner, ErrorClass: "placement_lost", Reason: "injected transport loss before output ingestion"}); err != nil {
+			t.Fatal(err)
+		}
+		for _, kind := range []string{"pause", "resume"} {
+			environment, err := st.GetSessionEnvironment(ctx, session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, _ := json.Marshal(execution.EnvironmentRequest{Reference: sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID, Epoch: environment.Epoch, MutationRevision: environment.MutationRevision}})
+			key := "historical-recovery-" + kind
+			if _, err := (execution.EnvironmentService{Repository: st, Backend: backend}).Run(ctx, execution.OperationIntent{ID: key, EnvironmentID: environment.ID, Kind: kind, IdempotencyKey: key, ExpectedFence: environment.Fence, Request: request}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		faults := &recoveryFaultRecords{Store: st, fail: true}
+		reader := &recoveryFaultReader{Reader: agentbridge.RecoveryReader{Backend: backend, Records: faults}, fail: true}
+		recovery := execution.JournalRecoveryService{Repository: st, Reader: reader}
+		for _, failure := range []string{"lost ingest reply", "lost stopped-reader reply"} {
+			if _, err := recovery.Run(ctx, binding.GenerationID, leaseOwner); err == nil {
+				t.Fatalf("%s injection ignored", failure)
+			}
+		}
+		head, err := recovery.Run(ctx, binding.GenerationID, leaseOwner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repeated, err := recovery.Run(ctx, binding.GenerationID, leaseOwner); err != nil || repeated != head {
+			t.Fatalf("recovery replay: %d %v", repeated, err)
+		}
+		if err := srv.projectBridgeRecords(ctx, 1024); err != nil {
+			t.Fatal(err)
+		}
+		messages, err := st.ListMessages(ctx, session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := 0
+		for _, message := range messages {
+			if message.TurnID != nil && *message.TurnID == turn.TurnID && message.Role == "assistant" && strings.Contains(message.Content, "historical-recovery-ok") {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Fatalf("historical journal recovery duplicated or lost interrupted output: %d", found)
+		}
+		var bytes int
+		if err := st.DBForTest().QueryRow(`SELECT coalesce(sum(length(payload)),0) FROM bridge_ingress WHERE generation_id=? AND turn_id=? AND type='emit_output'`, binding.GenerationID, turn.TurnID).Scan(&bytes); err != nil || bytes < 262144 {
+			t.Fatalf("recovery accepted only a process tail: %d %v", bytes, err)
+		}
+		status, _, err := st.TurnStatus(ctx, session.ID, turn.TurnID)
+		if err != nil || status != "failed" {
+			t.Fatalf("historical completion changed turn classification: %s %v", status, err)
+		}
+		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
+	}
 
+}
+
+type recoveryFaultRecords struct {
+	*store.Store
+	fail bool
+}
+
+func (r *recoveryFaultRecords) CommitRecoveredJournalRecord(ctx context.Context, id string, fence int64, owner string, record execution.RecoveredJournalRecord) (int64, error) {
+	event, err := r.Store.CommitRecoveredJournalRecord(ctx, id, fence, owner, record)
+	if err == nil && r.fail && record.Type == "emit_output" {
+		r.fail = false
+		return 0, errors.New("injected lost recovery ingest reply")
+	}
+	return event, err
+}
+
+type recoveryFaultReader struct {
+	Reader execution.JournalRecoveryReader
+	fail   bool
+}
+
+func (r *recoveryFaultReader) Recover(ctx context.Context, op execution.Operation, origin execution.Binding, owner string, request execution.JournalRecoveryRequest) (uint64, error) {
+	head, err := r.Reader.Recover(ctx, op, origin, owner, request)
+	if err == nil && r.fail {
+		r.fail = false
+		return 0, errors.New("injected lost stopped-reader reply")
+	}
+	return head, err
+}
+
+func runHistoricalRecoveryProbe(t *testing.T, ctx context.Context, backend sandbox.Processes, binding execution.Binding, script string) {
+	t.Helper()
+	stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, Handle: "inspect-retained-journal"}, IdempotencyKey: "inspect-retained-journal", Command: "/usr/bin/python3", Arguments: []string{"-c", script}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var diagnostics strings.Builder
+	for {
+		frame, err := stream.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.Gap {
+			t.Fatal("journal observation process gap")
+		}
+		if frame.Kind == "data" {
+			diagnostics.Write(frame.Data)
+		}
+		if frame.Kind == "end" {
+			if frame.ExitCode != 0 {
+				t.Fatalf("journal observation failed: %s", diagnostics.String())
+			}
+			return
+		}
+	}
 }
 
 type integrationLaunchPlan struct{ plan execution.LaunchPlan }

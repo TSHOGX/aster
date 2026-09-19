@@ -292,3 +292,11 @@ JSONL and its parent before producing the driver-state update. A failed barrier
 fails that advancement. This establishes successful fsync calls on the tested
 guest; it does not claim a power-loss simulation or prevent an independently
 running guest writer from modifying the file afterward.
+
+`harness-journal-replay` reads a retired partition under `/harness-bridge` during
+maintenance recovery. It refuses a live producer, missing files and symlinked
+path components. It copies the database and committed WAL into a private
+snapshot bounded to 512 MiB, then opens that copy read-only. The original journal,
+ACK position and command ledger remain unchanged. Its protocol accepts only
+scoped synchronization requests; it cannot execute old commands or collect the
+source partition. The template manifest includes the reader and its library.

@@ -227,6 +227,22 @@ integration test runs the actual shell driver through framed stdin/stdout and
 verifies retained completion data. Template/substrate integration remains a
 separate acceptance gate.
 
+Historical journal recovery uses a recorded `recover_journal` operation for a
+retired execution, carried by a separate process in a later maintenance epoch.
+The origin retains its original backend, session, generation, turn and receipt
+watermark. Recovery commits output and receipts atomically and feeds the existing
+durable projector, including for an already-failed turn. Recovered completion
+checks its final output watermark but does not change turn status, advance native
+state or publish a successful completion. Old claims, resumes, heartbeats and
+start acknowledgments have no execution side effects.
+
+The operation pins the journal head and remains unresolved after an interrupted
+read or ingest. Retries use the same reader key and durable origin watermark.
+Completion requires all records through the captured head and a scoped process
+end event. A rejected signal to an already-exited reader is not termination
+evidence by itself. This recovery service does not select the outcome of an
+interrupted turn or automatically start a replacement agent.
+
 ## Engine event recovery
 
 Engine events are retained in a separate inbox scoped by durable engine store

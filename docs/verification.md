@@ -156,3 +156,10 @@ original hello has been acknowledged.
 Both worker cases also replace the product owner after the second turn, recover
 the abandoned idle execution, and complete a third turn in the retained sandbox.
 Pi keeps the same native session through all three epochs.
+
+The shell case then blocks host ingestion after a fourth turn starts, waits for
+the guest to journal a 256 KiB output and completion, and interrupts the carrier.
+After pause/resume, historical recovery projects the old output exactly once
+while preserving the turn's failed classification. It retries injected lost
+ingest and stopped-reader replies and verifies that recovery retains the full
+producer payload beyond the engine's process tail.

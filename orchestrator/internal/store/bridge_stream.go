@@ -56,8 +56,15 @@ func (s *Store) CommitBridgeStreamReceipt(ctx context.Context, backendID, genera
 		return err
 	}
 	defer tx.Rollback()
+	if err := commitBridgeStreamReceiptTx(ctx, tx, backendID, generationID, sequence, digest); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func commitBridgeStreamReceiptTx(ctx context.Context, tx *sql.Tx, backendID, generationID string, sequence uint64, digest string) error {
 	var watermark uint64
-	err = tx.QueryRowContext(ctx, `SELECT watermark FROM bridge_streams WHERE backend_id=? AND generation_id=?`, backendID, generationID).Scan(&watermark)
+	err := tx.QueryRowContext(ctx, `SELECT watermark FROM bridge_streams WHERE backend_id=? AND generation_id=?`, backendID, generationID).Scan(&watermark)
 	if err != nil {
 		return err
 	}
@@ -80,5 +87,5 @@ func (s *Store) CommitBridgeStreamReceipt(ctx context.Context, backendID, genera
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }

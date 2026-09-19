@@ -93,7 +93,7 @@ func (s *Store) BeginEnvironmentOperation(ctx context.Context, p execution.Opera
 		return execution.Operation{}, fmt.Errorf("operation identity, idempotency key and fence required")
 	}
 	switch p.Kind {
-	case "create", "pause", "resume", "configure", "start_process", "workspace_write", "create_volume":
+	case "create", "pause", "resume", "configure", "start_process", "workspace_write", "create_volume", "recover_journal":
 	default:
 		return execution.Operation{}, fmt.Errorf("unsupported environment operation %q", p.Kind)
 	}
@@ -134,7 +134,7 @@ func beginEnvironmentOperationTx(ctx context.Context, tx *sql.Tx, p execution.Op
 	if environment.Fence != p.ExpectedFence {
 		return execution.Operation{}, execution.ErrStaleOperation
 	}
-	if p.Kind == "start_process" {
+	if p.Kind == "start_process" || p.Kind == "recover_journal" {
 		var active int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings WHERE environment_id=? AND state!='retired'`, p.EnvironmentID).Scan(&active); err != nil {
 			return execution.Operation{}, err
@@ -234,6 +234,28 @@ func (s *Store) RecordEnvironmentOperationOutcome(ctx context.Context, p executi
 	}
 	if p.State == execution.OperationSucceeded {
 		switch operation.Kind {
+		case "recover_journal":
+			var request execution.JournalRecoveryRequest
+			var recorded, completed execution.JournalRecoveryResult
+			if err := json.Unmarshal(operation.Request, &request); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(operation.Result, &recorded); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(result, &completed); err != nil {
+				return err
+			}
+			if recorded.Head == nil || completed.Head == nil || *recorded.Head != *completed.Head || !completed.ReaderStopped {
+				return fmt.Errorf("journal recovery requires captured head and stopped reader")
+			}
+			var watermark uint64
+			if err := tx.QueryRowContext(ctx, `SELECT watermark FROM bridge_streams WHERE backend_id=? AND generation_id=?`, environment.StoreID, request.GenerationID).Scan(&watermark); err != nil {
+				return err
+			}
+			if watermark != *completed.Head {
+				return fmt.Errorf("journal recovery has uncommitted records")
+			}
 		case "create", "pause", "resume", "configure":
 			if p.SandboxID == "" || p.MutationRevision == "" || p.Epoch == 0 {
 				return fmt.Errorf("successful lifecycle operation requires a complete current observation")
