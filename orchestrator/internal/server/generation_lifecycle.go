@@ -2,13 +2,10 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
@@ -545,90 +542,12 @@ func (s *Server) retireGenerationForRestoreFallback(sessionID, generationID, own
 }
 
 func (s *Server) ensureActiveGeneration(ctx context.Context, session store.Session, owner string) (ensuredGeneration, error) {
-	return s.ensureActiveGenerationWithRestoreRefetch(ctx, session, owner, true)
-}
-
-func (s *Server) ensureActiveGenerationWithRestoreRefetch(ctx context.Context, session store.Session, owner string, allowRestoreRefetch bool) (ensuredGeneration, error) {
-	activeGenerationID := strings.TrimSpace(session.ActiveGenerationID)
-	if activeGenerationID != "" {
-		status, err := s.store.GetRuntimeGenerationStatus(ctx, session.ID, activeGenerationID)
-		if err != nil {
-			return ensuredGeneration{}, err
-		}
-		if status == "checkpointed" {
-			allocation, err := s.store.ClaimCheckpointedGenerationForRestore(ctx, store.ClaimCheckpointedGenerationParams{
-				SessionID:    session.ID,
-				GenerationID: activeGenerationID,
-				Owner:        owner,
-				LeaseTTL:     s.cfg.Harness.Bridge.LeaseTTL.Duration,
-				Now:          time.Now().UTC(),
-			})
-			if err != nil {
-				if allowRestoreRefetch && errors.Is(err, store.ErrStaleCheckpointRestore) {
-					refreshed, refreshErr := s.store.GetSession(ctx, session.ID)
-					if refreshErr != nil {
-						return ensuredGeneration{}, refreshErr
-					}
-					return s.ensureActiveGenerationWithRestoreRefetch(ctx, refreshed, owner, false)
-				}
-				return ensuredGeneration{}, err
-			}
-			return ensuredGeneration{
-				Allocation:            allocation,
-				RestoreFromCheckpoint: true,
-			}, nil
-		}
-		if generationLifecycleBusy(status) {
-			return ensuredGeneration{}, errGenerationBusy
-		}
-		if status != "failed" {
-			return ensuredGeneration{
-				Allocation: store.GenerationAllocation{
-					GenerationID: activeGenerationID,
-					Owner:        owner,
-				},
-				IsNew: false,
-			}, nil
-		}
-		if _, capabilityErr := s.resolveDriverDeployment(store.ModeForDriver(session.Agent), agents.ID(session.Agent)); capabilityErr != nil {
-			return ensuredGeneration{}, capabilityErr
-		}
-		allocation, err := s.store.AllocateGeneration(ctx, store.AllocateGenerationParams{
-			SessionID:            session.ID,
-			ExpectedGenerationID: sql.NullString{String: activeGenerationID, Valid: true},
-			Owner:                owner,
-			LeaseTTL:             s.cfg.Harness.Bridge.LeaseTTL.Duration,
-			Now:                  time.Now().UTC(),
-			Config:               s.resourceAllocatorConfig(session.Agent),
-		})
-		if err != nil {
-			return ensuredGeneration{}, err
-		}
-		return ensuredGeneration{Allocation: allocation, IsNew: true}, nil
-	}
-	if _, capabilityErr := s.resolveDriverDeployment(store.ModeForDriver(session.Agent), agents.ID(session.Agent)); capabilityErr != nil {
-		return ensuredGeneration{}, capabilityErr
-	}
-	allocation, err := s.store.AllocateGeneration(ctx, store.AllocateGenerationParams{
-		SessionID: session.ID,
-		Owner:     owner,
-		LeaseTTL:  s.cfg.Harness.Bridge.LeaseTTL.Duration,
-		Now:       time.Now().UTC(),
-		Config:    s.resourceAllocatorConfig(session.Agent),
-	})
+	result, err := (execution.Service{Generations: legacyGenerationRepository{server: s}}).EnsureGeneration(ctx, execution.Session{ID: session.ID, Driver: session.Agent, ActiveGenerationID: session.ActiveGenerationID}, owner)
 	if err != nil {
 		return ensuredGeneration{}, err
 	}
-	return ensuredGeneration{Allocation: allocation, IsNew: true}, nil
-}
-
-func generationLifecycleBusy(status string) bool {
-	switch status {
-	case "allocating", "starting", "probing", "checkpointing", "restoring":
-		return true
-	default:
-		return false
-	}
+	generation := result.Generation
+	return ensuredGeneration{Allocation: store.GenerationAllocation{GenerationID: generation.ID, Owner: generation.Owner, DriverState: store.DriverStateToken{DriverID: generation.DriverState.DriverID, StateDigest: generation.DriverState.Digest, StateVersion: generation.DriverState.Version}}, IsNew: result.New, RestoreFromCheckpoint: result.Resume}, nil
 }
 
 // writeEnsureGenerationError maps an ensureActiveGeneration failure onto its HTTP
@@ -640,7 +559,7 @@ func (s *Server) writeEnsureGenerationError(w http.ResponseWriter, err error) bo
 		return true
 	case errors.Is(err, store.ErrPoolExhausted):
 		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
-	case errors.Is(err, errGenerationBusy):
+	case errors.Is(err, execution.ErrBusy):
 		writeError(w, http.StatusConflict, "session is busy")
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())

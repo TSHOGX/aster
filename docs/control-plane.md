@@ -159,3 +159,10 @@ failure, and cannot revive a failed attempt. Renewal calls are bounded by half
 the lease TTL, capped at five seconds, so a blocked renewal cannot consume an
 unrelated fixed timeout for short leases. Backend provisioning and readiness
 mechanics remain in the existing lifecycle path.
+
+The execution service also owns generation selection: reuse a usable execution,
+refuse a transition already in progress, reserve a replacement for a failed
+execution under the prior-generation fence, or claim retained state for resume.
+A conflicting resume claim causes one session refresh and at most one retry.
+The current backend adapter translates database statuses, allocation configuration
+and driver-state tokens; HTTP and scheduler callers use the same service result.

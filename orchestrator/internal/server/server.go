@@ -52,9 +52,7 @@ const (
 	proxyCorrelationSocket  = "proxy-correlation.sock"
 )
 
-var (
-	errGenerationBusy = errors.New("generation lifecycle is busy")
-)
+var ()
 
 type generationStartFailureMode int
 
