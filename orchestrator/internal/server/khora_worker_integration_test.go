@@ -317,6 +317,10 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			} else if native.ID != initialNativeID || native.File != initialNativeFile {
 				t.Fatalf("cold resume selected another native history: %+v", native)
 			}
+			var snapshots int
+			if err := st.DBForTest().QueryRow(`SELECT count(*) FROM native_capture_requests WHERE session_id=? AND native_id=?`, session.ID, native.ID).Scan(&snapshots); err != nil || snapshots != cycle+1 {
+				t.Fatalf("native snapshots not committed with state: %d %v", snapshots, err)
+			}
 		}
 		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
 	}

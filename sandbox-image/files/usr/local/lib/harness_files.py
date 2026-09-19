@@ -121,6 +121,77 @@ def file_digest(root, name, sync=False, native_id=None):
         os.close(parent)
 
 
+def snapshot_native(root, name, destination, native_id, hook=None):
+    clean_path(destination)
+    if not destination.startswith('.harness-completed/') or len(destination.split('/')) != 2 or not native_id:
+        raise ValueError('completed native snapshot destination and identity required')
+    parent, leaf = parent_fd(root, name)
+    try:
+        target, final = parent_fd(root, destination, create=True)
+    except BaseException:
+        os.close(parent)
+        raise
+    staging = '.harness-snapshot-' + uuid.uuid4().hex
+    try:
+        source = regular_fd(parent, leaf)
+        try:
+            before = os.fstat(source)
+            descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=target)
+            try:
+                digest, size = hashlib.sha256(), 0
+                header, complete = bytearray(), False
+                while True:
+                    chunk = os.read(source, 1 << 20)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > 512 << 20:
+                        raise ValueError('native snapshot exceeds byte limit')
+                    digest.update(chunk)
+                    if not complete:
+                        prefix, separator, _ = chunk.partition(b'\n')
+                        header.extend(prefix)
+                        if len(header) > 65536:
+                            raise ValueError('native session header exceeds limit')
+                        complete = bool(separator)
+                    view = memoryview(chunk)
+                    while view:
+                        view = view[os.write(descriptor, view):]
+                identity = json.loads(header)
+                if identity.get('type') != 'session' or identity.get('id') != native_id:
+                    raise ValueError('native snapshot identity mismatch')
+                after = os.fstat(source)
+                if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                    raise ValueError('native source changed during completed snapshot')
+                os.fsync(source)
+                os.fsync(parent)
+                os.fchmod(descriptor, 0o444)
+                os.fsync(descriptor)
+                if hook:
+                    hook('snapshot-synced')
+                try:
+                    os.link(staging, final, src_dir_fd=target, dst_dir_fd=target, follow_symlinks=False)
+                except FileExistsError:
+                    prior = file_digest(root, destination, sync=True, native_id=native_id)
+                    if prior['size'] != size or prior['sha256'] != digest.hexdigest():
+                        raise ValueError('completed native snapshot already names different bytes')
+                if hook:
+                    hook('snapshot-published')
+                os.fsync(target)
+                return {'path': destination, 'size': size, 'sha256': digest.hexdigest()}
+            finally:
+                os.close(descriptor)
+        finally:
+            os.close(source)
+    finally:
+        try:
+            os.unlink(staging, dir_fd=target)
+        except FileNotFoundError:
+            pass
+        os.close(target)
+        os.close(parent)
+
+
 def replace(root, name, source, size, expected_digest, operation, hook=None):
     if type(size) is not int or size < 0 or size > 8 << 30:
         raise ValueError('invalid replacement size')

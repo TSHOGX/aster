@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
@@ -13,6 +14,8 @@ import (
 type DriverStateEvidence struct {
 	SessionID, GenerationID, Owner, StateDigest, ContractDigest, NativeDigest string
 	TurnID                                                                    int64
+	NativeSnapshotPath                                                        string
+	NativeSize                                                                int64
 }
 type DriverStateValidationInput struct {
 	Reference        sandbox.Reference
@@ -57,6 +60,13 @@ func assertDriverStateEvidenceTx(ctx context.Context, tx *sql.Tx, p CompleteTurn
 		return fmt.Errorf("driver state requires matching quiesced storage evidence")
 	}
 	if binding, err := bindingWith(ctx, tx, p.GenerationID); err == nil {
+		expected, err := agents.PiCompletedSnapshotPath(digest)
+		if err != nil {
+			return err
+		}
+		if evidence.NativeSnapshotPath != expected || evidence.NativeSize <= 0 {
+			return fmt.Errorf("completed Pi state requires retained native snapshot evidence")
+		}
 		if binding.SpecDigest != evidence.ContractDigest {
 			return fmt.Errorf("driver state execution specification changed after validation")
 		}

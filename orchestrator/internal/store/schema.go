@@ -420,6 +420,26 @@ CREATE TABLE IF NOT EXISTS execution_recoveries (
 CREATE UNIQUE INDEX IF NOT EXISTS execution_recoveries_active_uq
  ON execution_recoveries(environment_id) WHERE stage!='complete';
 
+CREATE TABLE IF NOT EXISTS native_capture_requests (
+ session_id TEXT NOT NULL REFERENCES sessions(id),
+ state_version INTEGER NOT NULL CHECK(state_version>1),
+ state_digest TEXT NOT NULL,
+ generation_id TEXT NOT NULL REFERENCES execution_bindings(generation_id),
+ turn_id INTEGER NOT NULL REFERENCES turns(id),
+ store_id TEXT NOT NULL,
+ sandbox_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL CHECK(epoch>0),
+ native_id TEXT NOT NULL,
+ selected_path TEXT NOT NULL,
+ snapshot_path TEXT NOT NULL,
+ native_digest TEXT NOT NULL,
+ size INTEGER NOT NULL CHECK(size>0),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(session_id,state_version),
+ UNIQUE(session_id,state_digest),
+ UNIQUE(generation_id,turn_id)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
   path TEXT NOT NULL,

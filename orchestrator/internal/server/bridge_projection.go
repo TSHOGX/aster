@@ -195,6 +195,8 @@ func (s *Server) projectBeforeBridgeCompletion(ctx context.Context, p *store.Com
 				return err
 			}
 			input.Evidence.NativeDigest = file.Digest
+			input.Evidence.NativeSnapshotPath = file.Path
+			input.Evidence.NativeSize = file.Size
 		} else {
 			digest, err := driverstate.ValidateLocal(ctx, "pi", input.CanonicalPayload, input.AgentHomePath, fmt.Sprint(p.TurnID))
 			if err != nil {

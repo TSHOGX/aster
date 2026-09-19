@@ -91,6 +91,30 @@ func (f Files) ReplacePrepared(ctx context.Context, key, name string, size int64
 func (f Files) Sync(ctx context.Context, key, name string) (workspace.File, error) {
 	return f.sync(ctx, key, name, "")
 }
+
+func (f Files) SnapshotNative(ctx context.Context, key, name, destination, nativeID string) (workspace.File, error) {
+	if err := f.validate(name); err != nil {
+		return workspace.File{}, err
+	}
+	if err := f.validate(destination); err != nil {
+		return workspace.File{}, err
+	}
+	if nativeID == "" || f.Root != "/root/.pi/agent/sessions" {
+		return workspace.File{}, fmt.Errorf("native snapshot requires selected Pi identity")
+	}
+	output, err := f.call(ctx, key, []string{"--operation", "snapshot-native", "--path", name, "--destination", destination, "--native-id", nativeID}, nil, 4096)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	var result helperResult
+	if err := json.Unmarshal(output, &result); err != nil {
+		return workspace.File{}, err
+	}
+	if result.Path != destination || result.Size <= 0 || len(result.Digest) != 64 {
+		return workspace.File{}, fmt.Errorf("invalid completed native snapshot evidence")
+	}
+	return workspace.File{Path: result.Path, Size: result.Size, Digest: result.Digest}, nil
+}
 func (f Files) SyncNative(ctx context.Context, key, name, nativeID string) (workspace.File, error) {
 	if nativeID == "" || f.Root != "/root/.pi/agent/sessions" {
 		return workspace.File{}, fmt.Errorf("selected native identity and Pi session root required")

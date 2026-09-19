@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"harness-platform/orchestrator/internal/agents"
 	"strings"
 	"testing"
 	"time"
@@ -245,10 +246,33 @@ func TestOpaquePiCompletionRequiresRetainedNativeStateEvidence(t *testing.T) {
 	}
 	input.Evidence.NativeDigest = strings.Repeat("c", 64)
 	completion.DriverStateEvidence = &input.Evidence
+	if _, err := bridge.CompleteTurn(ctx, completion); err == nil {
+		t.Fatal("native state advanced without retained snapshot")
+	}
+	input.Evidence.NativeSnapshotPath, _ = agents.PiCompletedSnapshotPath(digest)
+	input.Evidence.NativeSize = 128
+	completion.DriverStateEvidence = &input.Evidence
+	if _, err := st.db.Exec(`CREATE TRIGGER reject_capture BEFORE INSERT ON native_capture_requests BEGIN SELECT RAISE(ABORT,'injected capture request failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.CompleteTurn(ctx, completion); err == nil {
+		t.Fatal("native state ignored capture request failure")
+	}
+	var unchanged int
+	if err := st.db.QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, binding.SessionID).Scan(&unchanged); err != nil || unchanged != grant.DriverState.StateVersion {
+		t.Fatalf("capture failure advanced native state: %d %v", unchanged, err)
+	}
+	if _, err := st.db.Exec(`DROP TRIGGER reject_capture`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := bridge.CompleteTurn(ctx, completion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := bridge.CompleteTurn(ctx, completion); err != nil {
 		t.Fatalf("completed native state replay failed: %v", err)
+	}
+	var count int
+	if err := st.db.QueryRow(`SELECT count(*) FROM native_capture_requests WHERE session_id=? AND state_digest=? AND epoch=? AND snapshot_path=?`, binding.SessionID, digest, binding.Epoch, input.Evidence.NativeSnapshotPath).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("native capture request not atomic/idempotent: %d %v", count, err)
 	}
 }

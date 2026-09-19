@@ -375,6 +375,11 @@ WHERE id = ?
 	if update.StateVersion != current.StateVersion+1 {
 		return permanentTurnCompletionf("driver state version = %d, want %d", update.StateVersion, current.StateVersion+1)
 	}
+	if driverID == agents.Pi && p.DriverStateEvidence != nil && p.DriverStateEvidence.NativeSnapshotPath != "" {
+		if err := recordNativeCaptureRequestTx(ctx, tx, p, canonical); err != nil {
+			return err
+		}
+	}
 	res, err := tx.ExecContext(ctx, `
 UPDATE session_driver_states
 SET state_payload = ?,

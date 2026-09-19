@@ -413,6 +413,19 @@ specification digest instead of a legacy host contract, and successful Pi turns
 must carry native state advancement. The completion lease is rechecked at the
 current time after validation finishes.
 
+Completed Pi validation also writes a separate snapshot beneath
+`/root/.pi/agent/sessions/.harness-completed`, named by the canonical state digest.
+It copies the quiesced native bytes into a separate inode, verifies the native
+session ID, and synchronizes the file and parent before returning evidence.
+Existing snapshot names cannot be replaced with different bytes. Guest root can
+still modify retained files; later readers must verify the recorded digest.
+
+The state-advancement transaction records a `native_capture_requests` row with
+the original generation, epoch, turn, selected path, snapshot path, size and
+native digest. Completion cannot commit without that row and snapshot evidence.
+Retries retain one request per state version. The request is independent of
+memory/evolve, and preserving the source does not wait for host archival.
+
 Runtime snapshots include opaque execution bindings. Accepted bindings appear
 live without legacy resource rows;
 starting bindings appear starting. Epoch/fence mismatch or pending engine

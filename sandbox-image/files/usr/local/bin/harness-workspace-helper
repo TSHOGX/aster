@@ -6,18 +6,19 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
-from harness_files import ALLOWED_ROOTS, open_root, replace, read_range, file_digest, metadata
+from harness_files import ALLOWED_ROOTS, open_root, replace, read_range, file_digest, metadata, snapshot_native
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', choices=sorted(ALLOWED_ROOTS), required=True)
-    parser.add_argument('--operation', choices=('replace', 'read', 'sync', 'stat'), required=True)
+    parser.add_argument('--operation', choices=('replace', 'read', 'sync', 'stat', 'snapshot-native'), required=True)
     parser.add_argument('--path', required=True)
     parser.add_argument('--size', type=int)
     parser.add_argument('--sha256')
     parser.add_argument('--key')
     parser.add_argument('--native-id')
+    parser.add_argument('--destination')
     parser.add_argument('--offset', type=int, default=0)
     parser.add_argument('--length', type=int)
     args = parser.parse_args()
@@ -25,6 +26,10 @@ def main():
     try:
         if args.operation == 'replace':
             result = replace(root, args.path, sys.stdin.buffer, args.size, args.sha256, args.key)
+        elif args.operation == 'snapshot-native':
+            if args.root != '/root/.pi/agent/sessions':
+                raise ValueError('native snapshot requires Pi session root')
+            result = snapshot_native(root, args.path, args.destination, args.native_id)
         elif args.operation == 'stat':
             result = metadata(root, args.path)
         elif args.operation == 'sync':

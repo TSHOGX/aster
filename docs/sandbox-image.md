@@ -293,6 +293,13 @@ fails that advancement. This establishes successful fsync calls on the tested
 guest; it does not claim a power-loss simulation or prevent an independently
 running guest writer from modifying the file afterward.
 
+The `snapshot-native` helper operation preserves the completed JSONL under a
+state-specific name in `.harness-completed`. It uses a separate inode, verifies
+the session header, bounds copies to 512 MiB, and rejects a changed source or an
+existing destination with different bytes. File and parent synchronization
+precede success. Snapshot retries and symlink rejection use the same confined
+descriptor walk as workspace operations.
+
 `harness-journal-replay` reads a retired partition under `/harness-bridge` during
 maintenance recovery. It refuses a live producer, missing files and symlinked
 path components. It copies the database and committed WAL into a private

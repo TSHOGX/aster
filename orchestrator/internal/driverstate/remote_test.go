@@ -15,11 +15,11 @@ type nativeSyncFixture struct {
 	failure       error
 }
 
-func (f *nativeSyncFixture) SyncNative(_ context.Context, key, path, id string) (workspace.File, error) {
+func (f *nativeSyncFixture) SnapshotNative(_ context.Context, key, path, destination, id string) (workspace.File, error) {
 	f.key = key
 	f.path = path
 	f.id = id
-	return workspace.File{Path: path, Size: 42, Digest: strings.Repeat("a", 64)}, f.failure
+	return workspace.File{Path: destination, Size: 42, Digest: strings.Repeat("a", 64)}, f.failure
 }
 func TestRemoteNativeStateRequiresSelectedIdentityAndCompletedTurn(t *testing.T) {
 	payload, _, err := store.CanonicalDriverStatePayload(map[string]any{"schema_version": 1, "driver_id": "pi", "state_kind": "pi_session", "session_dir": "/root/.pi/agent/sessions", "selected_session_file": "/root/.pi/agent/sessions/native.jsonl", "selected_session_relpath": "native.jsonl", "selected_session_id": "native-id", "last_completed_turn_id": "7"}, "pi")

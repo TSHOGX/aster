@@ -5,23 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"harness-platform/orchestrator/internal/agents"
 
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/workspace"
 )
 
-type NativeSync interface {
-	SyncNative(context.Context, string, string, string) (workspace.File, error)
+type NativeSnapshot interface {
+	SnapshotNative(context.Context, string, string, string, string) (workspace.File, error)
 }
 
-// ValidateRemote uses a confined helper to inspect and synchronize the selected
-// native file. It returns small durable evidence without copying full history
-// through the turn-completion path; archival is an independent consumer.
-func ValidateRemote(ctx context.Context, payload []byte, completedTurn, key string, files NativeSync) (workspace.File, error) {
+// ValidateRemote preserves completed native bytes in the retained overlay. Only
+// the snapshot's metadata crosses the completion path; host archival is separate.
+func ValidateRemote(ctx context.Context, payload []byte, completedTurn, key string, files NativeSnapshot) (workspace.File, error) {
 	if files == nil || key == "" {
 		return workspace.File{}, fmt.Errorf("native source and operation identity required")
 	}
-	canonical, _, err := store.CanonicalDriverStatePayload(payload, "pi")
+	canonical, digest, err := store.CanonicalDriverStatePayload(payload, "pi")
 	if err != nil {
 		return workspace.File{}, err
 	}
@@ -41,5 +41,9 @@ func ValidateRemote(ctx context.Context, payload []byte, completedTurn, key stri
 	if state.Kind != "pi_session" || state.Directory != "/root/.pi/agent/sessions" || state.Completed != completedTurn {
 		return workspace.File{}, fmt.Errorf("native state does not match retained Pi history and completed turn")
 	}
-	return files.SyncNative(ctx, key, state.Relative, state.NativeID)
+	destination, err := agents.PiCompletedSnapshotPath(digest)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	return files.SnapshotNative(ctx, key, state.Relative, destination, state.NativeID)
 }

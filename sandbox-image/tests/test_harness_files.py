@@ -13,6 +13,49 @@ spec.loader.exec_module(files)
 
 
 class GuestFilesystemTests(unittest.TestCase):
+    def test_completed_native_snapshot_survives_source_rewrite(self):
+        with tempfile.TemporaryDirectory() as root:
+            descriptor = files.open_root(root)
+            try:
+                body = b'{"type":"session","id":"native"}\n{"message":"completed"}\n'
+                source = Path(root) / 'native.jsonl'
+                source.write_bytes(body)
+                target = '.harness-completed/state.jsonl'
+                result = files.snapshot_native(descriptor, 'native.jsonl', target, 'native')
+                self.assertEqual(result['sha256'], hashlib.sha256(body).hexdigest())
+                self.assertEqual(files.snapshot_native(descriptor, 'native.jsonl', target, 'native'), result)
+                self.assertNotEqual(source.stat().st_ino, (Path(root) / target).stat().st_ino)
+                source.write_bytes(b'{"type":"session","id":"native"}\n{"message":"interrupted"}\n')
+                self.assertEqual((Path(root) / target).read_bytes(), body)
+                with self.assertRaises(ValueError):
+                    files.snapshot_native(descriptor, 'native.jsonl', target, 'native')
+                with self.assertRaises(ValueError):
+                    files.snapshot_native(descriptor, 'native.jsonl', '.harness-completed/other.jsonl', 'foreign-id')
+            finally:
+                os.close(descriptor)
+
+    def test_snapshot_publish_failure_retries_without_replacement(self):
+        with tempfile.TemporaryDirectory() as root:
+            descriptor = files.open_root(root)
+            try:
+                body = b'{"type":"session","id":"native"}\n'
+                (Path(root) / 'native.jsonl').write_bytes(body)
+                def fail(stage):
+                    if stage == 'snapshot-published':
+                        raise OSError('injected parent sync interruption')
+                target = '.harness-completed/state.jsonl'
+                with self.assertRaises(OSError):
+                    files.snapshot_native(descriptor, 'native.jsonl', target, 'native', hook=fail)
+                inode = (Path(root) / target).stat().st_ino
+                files.snapshot_native(descriptor, 'native.jsonl', target, 'native')
+                self.assertEqual((Path(root) / target).stat().st_ino, inode)
+                (Path(root) / target).unlink()
+                (Path(root) / target).symlink_to(Path(root) / 'native.jsonl')
+                with self.assertRaises(ValueError):
+                    files.snapshot_native(descriptor, 'native.jsonl', target, 'native')
+            finally:
+                os.close(descriptor)
+
     def test_atomic_replace_range_read_and_native_sync(self):
         with tempfile.TemporaryDirectory() as root:
             descriptor = files.open_root(root)
