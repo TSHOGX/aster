@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -148,8 +149,19 @@ func (c *traceCollector) drain() json.RawMessage {
 	c.finished = nil
 	// Flush unfinished tool nodes (rare: a message committed before the tool end
 	// event) so they still render, then forget them.
-	for _, node := range c.pending {
-		nodes = append(nodes, node)
+	keys := make([]string, 0, len(c.pending))
+	for key := range c.pending {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := c.pending[keys[i]], c.pending[keys[j]]
+		if a.StartedAt != b.StartedAt {
+			return a.StartedAt < b.StartedAt
+		}
+		return keys[i] < keys[j]
+	})
+	for _, key := range keys {
+		nodes = append(nodes, c.pending[key])
 	}
 	c.pending = map[string]traceNode{}
 	if len(nodes) == 0 {

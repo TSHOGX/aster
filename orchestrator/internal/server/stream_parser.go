@@ -17,11 +17,13 @@ import (
 // dispatched through outputNormalizers so adding a driver does not add another
 // branch to the bridge output path.
 type streamParser struct {
-	srv        *Server
-	sessionID  string
-	driverID   string
-	turnID     int64
-	normalizer outputNormalizer
+	projection    *projectionFrame
+	projectionErr error
+	srv           *Server
+	sessionID     string
+	driverID      string
+	turnID        int64
+	normalizer    outputNormalizer
 	// pending text chunks per assistant message id, flushed when we see the
 	// matching "assistant" full message (or when the runtime exits).
 	// pendingOrder records the order ids were first buffered so salvaged text
@@ -204,8 +206,10 @@ var outputNormalizers = map[string]outputNormalizerFactory{
 func (n unsupportedOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput) {
 	if n.driverID == "" {
 		p.err = fmt.Errorf("driver id is required")
+		p.projectionErr = p.err
 	} else {
 		p.err = fmt.Errorf("unsupported driver %q", n.driverID)
+		p.projectionErr = p.err
 	}
 	p.complete()
 }
@@ -257,6 +261,7 @@ func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput)
 	var event map[string]any
 	if err := json.Unmarshal([]byte(line), &event); err != nil {
 		p.err = fmt.Errorf("pi event decode failed: %w", err)
+		p.projectionErr = p.err
 		p.complete()
 		return
 	}
@@ -300,6 +305,7 @@ func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput)
 			// A well-formed pi event always carries a type; an empty type is
 			// malformed input and stays fatal, matching the decode-error path.
 			p.err = fmt.Errorf("pi event missing type")
+			p.projectionErr = p.err
 			p.complete()
 			return
 		}
@@ -356,6 +362,7 @@ func (p *streamParser) handlePiMessageUpdate(event map[string]any) {
 		})
 	default:
 		p.err = fmt.Errorf("unsupported pi assistant message event type %q", assistantEventType)
+		p.projectionErr = p.err
 		p.complete()
 	}
 }
@@ -531,11 +538,13 @@ func (nativeEventsOutputNormalizer) Handle(p *streamParser, output normalizerBri
 	var native nativeBridgeEventPayload
 	if err := json.Unmarshal(output.Payload, &native); err != nil {
 		p.err = fmt.Errorf("native event decode failed: %w", err)
+		p.projectionErr = p.err
 		p.complete()
 		return
 	}
 	if native.Schema != "harness_native_events_v1" {
 		p.err = fmt.Errorf("unsupported native event schema %q", native.Schema)
+		p.projectionErr = p.err
 		p.complete()
 		return
 	}
@@ -546,6 +555,7 @@ func (nativeEventsOutputNormalizer) Handle(p *streamParser, output normalizerBri
 		}
 		if err := json.Unmarshal(native.Event.Payload, &payload); err != nil {
 			p.err = fmt.Errorf("native agent.message decode failed: %w", err)
+			p.projectionErr = p.err
 			p.complete()
 			return
 		}
@@ -554,6 +564,7 @@ func (nativeEventsOutputNormalizer) Handle(p *streamParser, output normalizerBri
 		p.publish(native.Event.Type, nativeEventPublicPayload(native.Event.Payload))
 	default:
 		p.err = fmt.Errorf("unsupported native event type %q", native.Event.Type)
+		p.projectionErr = p.err
 		p.complete()
 	}
 }
@@ -673,6 +684,15 @@ func (p *streamParser) persistAssistant(text, stopReason string, streamIDs ...st
 	if strings.TrimSpace(text) == "" || text == p.last {
 		return
 	}
+	if p.projection != nil {
+		var trace json.RawMessage
+		if p.trace != nil {
+			trace = p.trace.drain()
+		}
+		p.projection.messages = append(p.projection.messages, store.ProjectedMessage{Content: text, StopReason: stopReason, Trace: trace, StreamIDs: append([]string(nil), streamIDs...)})
+		p.last = text
+		return
+	}
 	stored, err := p.srv.store.AddAssistantMessage(context.Background(), p.sessionID, "assistant", text, stopReason)
 	if err != nil {
 		p.srv.log.Warn("failed to store assistant message", "session_id", p.sessionID, "error", err)
@@ -703,6 +723,10 @@ func (p *streamParser) persistAssistant(text, stopReason string, streamIDs ...st
 }
 
 func (p *streamParser) persistShellOutput(text string) {
+	if p.projection != nil {
+		p.projection.messages = append(p.projection.messages, store.ProjectedMessage{Content: text})
+		return
+	}
 	stored, err := p.srv.store.AddMessage(context.Background(), p.sessionID, "assistant", text)
 	if err != nil {
 		p.srv.log.Warn("failed to store shell output", "session_id", p.sessionID, "error", err)
@@ -755,6 +779,10 @@ func (p *streamParser) setPhase(phase store.TurnPhase, toolName, toolDetail stri
 		return
 	}
 	p.lastPhase = key
+	if p.projection != nil {
+		p.projection.phases = append(p.projection.phases, store.SetTurnPhaseParams{SessionID: p.sessionID, TurnID: p.turnID, Phase: phase, ToolName: toolName, ToolDetail: toolDetail})
+		return
+	}
 	snapshot, err := p.srv.store.SetTurnPhase(context.Background(), store.SetTurnPhaseParams{
 		SessionID:  p.sessionID,
 		TurnID:     p.turnID,
@@ -773,5 +801,9 @@ func (p *streamParser) setPhase(phase store.TurnPhase, toolName, toolDetail stri
 }
 
 func (p *streamParser) publish(eventType string, payload any) {
+	if p.projection != nil {
+		p.projection.events = append(p.projection.events, events.Event{Type: eventType, SessionID: p.sessionID, Payload: payload})
+		return
+	}
 	p.srv.hub.Publish(events.Event{Type: eventType, SessionID: p.sessionID, Payload: payload})
 }

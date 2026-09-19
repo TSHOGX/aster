@@ -101,3 +101,23 @@ fixtures do not establish real deployment latency, compression or backend load.
 Verify these separately against an authorized deployment and retain sanitized
 measurements. Do not claim that a microbenchmark or mocked browser run proves
 production acceptance.
+
+## Bridge projection recovery
+
+The bridge journal tests use synthetic output larger than 64 KiB and exercise
+SSE pruning, contradictory duplicates, missing sequence refusal, reconnect
+watermarks, transaction rollback and stale checkpoint writes. Server projection
+tests simulate restart with partial text and pending tool state, loss before and
+after projection commit, completion retries and durable message-event replay.
+They do not establish Khora process transport or substrate acceptance.
+
+```bash
+sudo go -C orchestrator test -race ./internal/store ./internal/server \
+  -run 'TestBridge(Journal|Projection|Completion)'
+python3 scripts/release/generate-schema-baselines.py
+```
+
+The schema generator only opens temporary synthetic databases. It preserves
+historical DDL fixtures and reviewed fingerprints while deriving current targets
+from the checked-out store implementations. Review catalog changes with schema
+changes; deployments still use the explicit offline migration command.

@@ -93,8 +93,9 @@ type Server struct {
 	sessionOwnerMu    sync.Mutex
 	sessionOwnerCache map[string]sessionOwnerEntry
 
-	bridgeParserMu sync.Mutex
-	bridgeParsers  map[bridgeStreamParserKey]*streamParser
+	bridgeProjectionMu sync.Mutex
+	bridgeParserMu     sync.Mutex
+	bridgeParsers      map[bridgeStreamParserKey]*streamParser
 
 	// publicPayloads memoizes the sanitized client-facing payload per durable
 	// event id so a single event fanned out to N subscribers is sanitized once

@@ -1,29 +1,48 @@
 #!/usr/bin/env python3
-"""Developer-only regeneration from exact historical store implementations.
-Changes reviewed DDL fixtures/catalog; NEVER run on production or in a deploy.
+"""Refresh current schema fingerprints using synthetic databases only.
+
+Historical DDL fixtures and reviewed fingerprints remain intact. This is a
+source-development tool, never a deployment or production-database command.
 """
-import pathlib,subprocess,tempfile,shutil,json,sqlite3
-repo=pathlib.Path(__file__).resolve().parents[2]; root=pathlib.Path(tempfile.mkdtemp(prefix='harness-baselines-'))
-helper='''package main
-import("context";"fmt";"os";"path/filepath";"harness-platform/orchestrator/internal/store";"harness-platform/orchestrator/internal/memorystore";"harness-platform/orchestrator/internal/schemastate")
-func main(){c:=context.Background();s,e:=store.Open(c,filepath.Join(os.Args[1],"orchestrator.db"));if e!=nil{panic(e)};h,e:=schemastate.Fingerprint(c,s.DBForTest());if e!=nil{panic(e)};fmt.Println(h);s.Close();m,e:=memorystore.Open(c,filepath.Join(os.Args[1],"memory.db"));if e!=nil{panic(e)};h,e=schemastate.Fingerprint(c,m.DBForTest());if e!=nil{panic(e)};fmt.Println(h);m.Close()}
+import json
+import pathlib
+import sqlite3
+import subprocess
+import tempfile
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+ORCHESTRATOR = REPO / "orchestrator"
+CATALOG = ORCHESTRATOR / "internal/schemastate/baselines.json"
+FIXTURES = ORCHESTRATOR / "internal/dbupgrade/testdata"
+HELPER = '''package main
+import("context";"fmt";"os";"harness-platform/orchestrator/internal/store";"harness-platform/orchestrator/internal/memorystore";"harness-platform/orchestrator/internal/schemastate")
+func main(){ctx:=context.Background();if os.Args[1]=="store"{s,e:=store.Open(ctx,os.Args[2]);if e!=nil{panic(e)};defer s.Close();h,e:=schemastate.Fingerprint(ctx,s.DBForTest());if e!=nil{panic(e)};fmt.Println(h)}else{s,e:=memorystore.Open(ctx,os.Args[2]);if e!=nil{panic(e)};defer s.Close();h,e:=schemastate.Fingerprint(ctx,s.DBForTest());if e!=nil{panic(e)};fmt.Println(h)}}
 '''
-cat={'store':{},'memorystore':{}}
-def build(rev,name):
- p=root/name;p.mkdir();archive=subprocess.check_output(['git','archive',rev,'orchestrator'],cwd=repo);subprocess.run(['tar','-x','-C',str(p)],input=archive,check=True)
- shutil.copytree(repo/'orchestrator/internal/schemastate',p/'orchestrator/internal/schemastate');d=p/'orchestrator/cmd/baseline';d.mkdir();(d/'main.go').write_text(helper)
- exe=p/'open';subprocess.run(['go','build','-buildvcs=false','-o',str(exe),'./cmd/baseline'],cwd=p/'orchestrator',check=True);return exe
-old=build('669542d','old');new=build('237f8b3','new')
-for label,exe,dirname in [('669542d',old,'old-db'),('target-fresh',new,'new-db'),('target-upgraded',new,'old-db')]:
- state=root/dirname;state.mkdir(exist_ok=True)
- hashes=subprocess.check_output([str(exe),str(state)],text=True).strip().splitlines()
- for kind,h in zip(cat,hashes):cat[kind][h]=label
- # Save DDL fixtures for integration tests, with virtual-table shadow DDL omitted.
- dest=repo/'orchestrator/internal/dbupgrade/testdata';dest.mkdir(exist_ok=True)
- for kind,filename in [('store','orchestrator.db'),('memorystore','memory.db')]:
-  with sqlite3.connect(state/filename) as db:
-   rows=db.execute("select type,name,sql from sqlite_master where sql is not null and name not like 'sqlite_%' order by case type when 'table' then 0 when 'index' then 1 else 2 end,name").fetchall()
-  ddl='\n'.join(sql+';' for typ,name,sql in rows if not (typ == 'table' and name.startswith('messages_fts_')))
-  (dest/('memorystore.sql' if kind=='memorystore' else label+'-'+kind+'.sql')).write_text(ddl+'\n')
-(repo/'orchestrator/internal/schemastate/baselines.json').write_text(json.dumps(cat,indent=2)+'\n')
-print(json.dumps(cat));print(root)
+
+
+def main():
+    catalog = json.loads(CATALOG.read_text())
+    with tempfile.TemporaryDirectory(prefix="schema-baseline-", dir=ORCHESTRATOR / "cmd") as source, tempfile.TemporaryDirectory(prefix="harness-baselines-") as scratch:
+        source, scratch = pathlib.Path(source), pathlib.Path(scratch)
+        (source / "main.go").write_text(HELPER)
+        binary = scratch / "open-schema"
+        subprocess.run(["go", "build", "-buildvcs=false", "-o", str(binary), "./cmd/" + source.name], cwd=ORCHESTRATOR, check=True)
+        for kind in ("store", "memorystore"):
+            fixtures = sorted(FIXTURES.glob("*-store.sql")) if kind == "store" else [FIXTURES / "memorystore.sql"]
+            targets = set()
+            for index, fixture in enumerate([None] + fixtures):
+                database = scratch / f"{kind}-{index}.db"
+                if fixture is not None:
+                    with sqlite3.connect(database) as db:
+                        db.executescript(fixture.read_text())
+                fingerprint = subprocess.check_output([str(binary), kind, str(database)], text=True).strip()
+                targets.add(fingerprint)
+                catalog[kind][fingerprint] = "target-current-" + ("fresh" if fixture is None else "upgraded")
+            for fingerprint, label in catalog[kind].items():
+                if label.startswith("target-") and fingerprint not in targets:
+                    catalog[kind][fingerprint] = "previous-" + label.removeprefix("target-")
+    CATALOG.write_text(json.dumps(catalog, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()

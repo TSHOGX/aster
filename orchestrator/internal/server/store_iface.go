@@ -222,6 +222,12 @@ type shareStore interface {
 // serverStore is the union of the roles the Server needs. It embeds bridge.Store
 // (via bridgeStore) so the bridge handoff keeps compiling off the same value.
 type serverStore interface {
+	PendingBridgeTurnRecords(context.Context, string, string, int64, int) ([]store.BridgeRecord, error)
+	PendingBridgeRecords(context.Context, int) ([]store.BridgeRecord, error)
+	LoadBridgeProjection(context.Context, store.BridgeRecord) (store.BridgeProjection, error)
+	CommitBridgeProjection(context.Context, store.BridgeRecord, int64, json.RawMessage, []store.ProjectedMessage) ([]store.ProjectedMessageResult, error)
+	PrepareBridgeCompletion(context.Context, store.CompleteTurnParams) error
+
 	sessionStore
 	scheduleStore
 	messageStore

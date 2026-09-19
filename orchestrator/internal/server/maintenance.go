@@ -39,6 +39,7 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		LeaseTTL:         s.cfg.Harness.Bridge.LeaseTTL.Duration,
 		AckStartedGrace:  s.cfg.Harness.Bridge.AckStartedGrace.Duration,
 		AfterCommit:      s.handleBridgeCommittedEnvelope,
+		BeforeComplete:   s.projectBeforeBridgeCompletion,
 		AfterEventCommit: s.publishDurableEvent,
 		// Commit a run of output envelopes together. This config existed and was
 		// validated but had no consumer, so every output line was still its own
@@ -339,6 +340,9 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		// goroutine/timer per 5ms tick.
 		pollCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
+		if err := s.projectBridgeRecords(pollCtx, 128); err != nil {
+			s.log.Warn("bridge projection replay failed", "error", err)
+		}
 		generations, err := s.store.ListBridgePollGenerations(pollCtx, owner, now, s.cfg.Harness.Bridge.AckStartedGrace.Duration)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
@@ -584,7 +588,9 @@ func (s *Server) handleBridgeCommittedEnvelope(ctx context.Context, envelope bri
 	s.publishDurableEvent(ctx, eventID)
 	switch envelope.Type {
 	case bridge.TypeEmitOutput:
-		s.handleBridgeOutput(ctx, envelope)
+		if err := s.projectBridgeRecords(ctx, 128); err != nil {
+			s.log.Warn("bridge projection pending", "error", err)
+		}
 	case bridge.TypeAckTurnStarted:
 		// The agent has the turn: it leaves the queue and enters the transcript here.
 		// AckTurnStarted committed the message row in the same transaction that

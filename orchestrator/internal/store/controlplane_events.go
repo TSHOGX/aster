@@ -55,7 +55,7 @@ func appendEventTx(ctx context.Context, tx *sql.Tx, p AppendEventParams) (int64,
 	if err != nil {
 		return 0, err
 	}
-	if duplicate {
+	if duplicate && p.Type == "emit_output" {
 		return 0, nil
 	}
 	res, err := tx.ExecContext(ctx, `
@@ -145,6 +145,13 @@ WHERE t.id = ?
 		// Turn exists but is terminal: permanent. The generation sent output for
 		// a turn the host already completed/failed. Discard the event.
 		return fmt.Errorf("%w: turn %d status %s", errOutputEventTurnNotRunning, *p.TurnID, turnStatus)
+	}
+	var complete int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM bridge_ingress WHERE generation_id=? AND turn_id=? AND record_key='completion')`, p.GenerationID, *p.TurnID).Scan(&complete); err != nil {
+		return err
+	}
+	if complete != 0 {
+		return fmt.Errorf("%w: output after completion marker", errOutputEventTurnNotRunning)
 	}
 	return nil
 }

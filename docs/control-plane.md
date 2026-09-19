@@ -125,3 +125,20 @@ Existing managed databases require the explicit offline `db migrate` workflow
 before starting this schema. Both previously stamped and unstamped reviewed
 baselines are supported. Migration preserves existing messages and traces and
 does not reinterpret historical SSE events as new producer input.
+
+The maintenance worker consumes this journal on every poll, including records
+whose original post-commit callback never ran. A checkpoint includes pending
+assistant text, tool traces, driver identity and normalizer version. Source
+capture timestamps drive trace timing, and unfinished tools have deterministic
+ordering. Message rows, traces, stable source ordinals, replayable `agent.message`
+events and the next checkpoint commit in one transaction. Live notifications
+follow commit; reconnecting clients can replay the durable message event.
+
+Before completing a bridge turn, the application durably records its completion
+marker and projects through it, including any remaining partial response. The
+store refuses completion and driver-state advancement while that marker or its
+preceding output is unprojected. New output after the marker is rejected. The
+ordered local carrier supplies the completion boundary; this is not yet a remote
+process-stream protocol. Reconnect output watermarks come from retained ingress,
+with historical event records used only for drained pre-upgrade turns. New
+output must be contiguous. Projection errors retain their input for retry.

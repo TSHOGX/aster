@@ -314,7 +314,10 @@ WHERE g.session_id = ?
 	rows, err := tx.QueryContext(ctx, `
 SELECT t.id, COALESCE(MAX(e.output_sequence), 0)
 FROM turns t
-LEFT JOIN events e ON e.turn_id = t.id
+LEFT JOIN (
+  SELECT turn_id,generation_id,output_sequence FROM bridge_ingress
+  UNION ALL SELECT turn_id,generation_id,output_sequence FROM events
+) e ON e.turn_id = t.id
   AND e.generation_id = t.generation_id
   AND e.output_sequence IS NOT NULL
 WHERE t.session_id = ?
@@ -944,6 +947,17 @@ func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, 
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var pending int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM bridge_ingress i
+      LEFT JOIN bridge_projections bp ON bp.generation_id=i.generation_id AND bp.turn_id=i.turn_id AND bp.attempt=i.attempt
+      WHERE i.session_id=? AND i.generation_id=? AND i.turn_id=? AND i.id>coalesce(bp.last_record_id,0)
+      AND EXISTS(SELECT 1 FROM bridge_ingress c WHERE c.generation_id=i.generation_id AND c.turn_id=i.turn_id AND c.attempt=i.attempt AND c.record_key='completion')
+      AND EXISTS(SELECT 1 FROM turns t WHERE t.id=i.turn_id AND t.status IN ('leased','running')))`, p.SessionID, p.GenerationID, p.TurnID).Scan(&pending); err != nil {
+		return 0, err
+	}
+	if pending != 0 {
+		return 0, fmt.Errorf("bridge completion awaits durable projection")
+	}
 	if err := applyDriverStateUpdateTx(ctx, tx, p); err != nil {
 		return 0, err
 	}

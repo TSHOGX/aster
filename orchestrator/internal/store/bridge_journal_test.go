@@ -103,3 +103,27 @@ func TestBridgeProjectionAtomicityOrderingAndRetry(t *testing.T) {
 		t.Fatalf("messages/trace: %+v %v", stored, err)
 	}
 }
+
+func TestBridgeJournalRequiresContiguousOutputAndKeepsHelloWatermark(t *testing.T) {
+	ctx := context.Background()
+	s, p := journalFixture(t)
+	if _, err := s.AppendEvent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	sequence := int64(3)
+	p.OutputSequence = &sequence
+	if _, err := s.AppendEvent(ctx, p); err == nil {
+		t.Fatal("accepted missing output sequence")
+	}
+	if _, err := s.db.Exec(`DELETE FROM events`); err != nil {
+		t.Fatal(err)
+	}
+	ack, err := s.BridgeHelloAck(ctx, p.SessionID, p.GenerationID, p.Owner, p.Now, 0)
+	if err != nil || ack.LastOutputSequenceByTurn[*p.TurnID] != 1 {
+		t.Fatalf("lost ingest watermark: %+v %v", ack, err)
+	}
+	sequence = 2
+	if _, err := s.AppendEvent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+}
