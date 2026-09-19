@@ -20,6 +20,13 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 	if strings.TrimSpace(s.ownerUUID) == "" {
 		return fmt.Errorf("maintenance requires owner uuid")
 	}
+	if s.executionReconciler != nil {
+		go func() {
+			if err := s.executionReconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Error("retained execution reconciler stopped", "error", err)
+			}
+		}()
+	}
 	heartbeatInterval := s.cfg.Harness.Bridge.HeartbeatInterval.Duration
 	if heartbeatInterval <= 0 {
 		heartbeatInterval = 30 * time.Second

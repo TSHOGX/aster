@@ -11,16 +11,54 @@ import (
 	"harness-platform/orchestrator/internal/workspace/guest"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
 
 type Writer struct {
+	mu          sync.Mutex
+	sessions    map[string]*writeLock
 	Repository  WriterRepository
 	Backend     sandbox.Processes
 	Lifecycle   sandbox.Lifecycle
 	Content     workspace.PreparedStore
 	MaxActive   int
 	Provisioner WorkspaceProvisioner
+}
+
+type writeLock struct {
+	token chan struct{}
+	users int
+}
+
+func (w *Writer) lockSession(ctx context.Context, session string) (func(), error) {
+	w.mu.Lock()
+	if w.sessions == nil {
+		w.sessions = map[string]*writeLock{}
+	}
+	lock := w.sessions[session]
+	if lock == nil {
+		lock = &writeLock{token: make(chan struct{}, 1)}
+		lock.token <- struct{}{}
+		w.sessions[session] = lock
+	}
+	lock.users++
+	w.mu.Unlock()
+	releaseUser := func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		lock.users--
+		if lock.users == 0 {
+			delete(w.sessions, session)
+		}
+	}
+	select {
+	case <-ctx.Done():
+		releaseUser()
+		return nil, ctx.Err()
+	case <-lock.token:
+	}
+	return func() { lock.token <- struct{}{}; releaseUser() }, nil
 }
 
 type WorkspaceProvisioner interface {
@@ -33,7 +71,7 @@ type WriterRepository interface {
 	NextGuestWorkspaceMaintenance(context.Context, string, string) (execution.WorkspaceMaintenance, error)
 }
 
-func (w Writer) WriteSession(ctx context.Context, session, owner, path string, source io.Reader, limit int64) (workspace.File, error) {
+func (w *Writer) WriteSession(ctx context.Context, session, owner, path string, source io.Reader, limit int64) (workspace.File, error) {
 	if w.Repository == nil || w.Backend == nil || w.Content == nil {
 		return workspace.File{}, fmt.Errorf("workspace writer ports required")
 	}
@@ -44,6 +82,11 @@ func (w Writer) WriteSession(ctx context.Context, session, owner, path string, s
 	if err != nil {
 		return workspace.File{}, err
 	}
+	unlock, err := w.lockSession(ctx, session)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	defer unlock()
 	if w.Provisioner != nil {
 		if err := w.Provisioner.EnsureWorkspace(ctx, session, owner, w.MaxActive); err != nil {
 			return workspace.File{}, err
@@ -53,12 +96,24 @@ func (w Writer) WriteSession(ctx context.Context, session, owner, path string, s
 	if err != nil {
 		return workspace.File{}, err
 	}
-	return w.Recover(ctx, mutation.ID, owner)
+	return w.recoverLocked(ctx, mutation.ID, owner)
 }
-func (w Writer) Recover(ctx context.Context, id, owner string) (workspace.File, error) {
+func (w *Writer) Recover(ctx context.Context, id, owner string) (workspace.File, error) {
 	if w.Repository == nil || w.Backend == nil || w.Content == nil {
 		return workspace.File{}, fmt.Errorf("workspace writer ports required")
 	}
+	session, err := w.Repository.GuestWorkspaceMutationSession(ctx, id)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	unlock, err := w.lockSession(ctx, session)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	defer unlock()
+	return w.recoverLocked(ctx, id, owner)
+}
+func (w *Writer) recoverLocked(ctx context.Context, id, owner string) (workspace.File, error) {
 	for {
 		mutation, err := w.Repository.LoadGuestWorkspaceMutation(ctx, id, owner)
 		if err != nil {
@@ -113,7 +168,7 @@ func (w Writer) Recover(ctx context.Context, id, owner string) (workspace.File, 
 		}
 	}
 }
-func (w Writer) reconcile(ctx context.Context, mutation workspace.GuestMutation) (workspace.File, error) {
+func (w *Writer) reconcile(ctx context.Context, mutation workspace.GuestMutation) (workspace.File, error) {
 	files := guest.Files{Backend: w.Backend, Reference: mutation.Reference, Root: "/workspace"}
 	if err := files.StopReplacement(ctx, mutation.ID); err != nil {
 		return workspace.File{}, w.uncertain(ctx, mutation, err)
@@ -137,7 +192,7 @@ func (w Writer) reconcile(ctx context.Context, mutation workspace.GuestMutation)
 	mutation.File = file
 	return file, w.Repository.FinishWorkspaceMutation(ctx, mutation.Mutation)
 }
-func (w Writer) apply(ctx context.Context, p workspace.GuestMutation) (workspace.File, error) {
+func (w *Writer) apply(ctx context.Context, p workspace.GuestMutation) (workspace.File, error) {
 	content, err := w.Content.Open(ctx, p.Content)
 	if err != nil {
 		// Nothing was issued remotely, so this preparation failure has a known
@@ -158,7 +213,7 @@ func (w Writer) apply(ctx context.Context, p workspace.GuestMutation) (workspace
 	p.File = file
 	return file, w.Repository.FinishWorkspaceMutation(ctx, p.Mutation)
 }
-func (w Writer) uncertain(ctx context.Context, p workspace.GuestMutation, cause error) error {
+func (w *Writer) uncertain(ctx context.Context, p workspace.GuestMutation, cause error) error {
 	p.State = "uncertain"
 	p.Error = cause.Error()
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

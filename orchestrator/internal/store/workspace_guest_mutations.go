@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+func (s *Store) GuestWorkspaceMutationSession(ctx context.Context, id string) (string, error) {
+	var session string
+	err := s.db.QueryRowContext(ctx, `SELECT m.session_id FROM workspace_mutations m JOIN workspace_guest_mutations g ON g.operation_id=m.operation_id WHERE m.operation_id=?`, id).Scan(&session)
+	return session, err
+}
+
 func (s *Store) BeginGuestWorkspaceMutation(ctx context.Context, p workspace.Mutation, content workspace.PreparedContent, maximum int) (workspace.GuestMutation, error) {
 	var result workspace.GuestMutation
 	if p.ID == "" || p.Owner == "" || p.SessionID == "" || content.Size < 0 || len(content.Digest) != 64 {

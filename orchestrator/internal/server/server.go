@@ -64,6 +64,7 @@ const (
 )
 
 type Server struct {
+	executionReconciler  interface{ Run(context.Context) error }
 	workspaceInventory   sessionInventoryScanner
 	workspaceWrites      sessionWorkspaceWriter
 	workspaceReads       sessionWorkspaceReader
@@ -136,6 +137,10 @@ type Server struct {
 	// Shutdown waiting until its deadline expires.
 	shutdownOnce sync.Once
 	shutdownCh   chan struct{}
+}
+
+func (s *Server) SetExecutionReconciler(reconciler interface{ Run(context.Context) error }) {
+	s.executionReconciler = reconciler
 }
 
 type sessionInventoryScanner interface {

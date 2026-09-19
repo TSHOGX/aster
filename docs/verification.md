@@ -196,6 +196,14 @@ abort ID without repeating delivery. The Pi case sends two queued prompts as
 steering, retries their receipts, aborts a blocked model request, and runs a later
 turn before historical recovery. The gateway flow tests separately verify that
 revoking one turn's grant drains its work without disabling a later grant.
+
+Background reconciliation tests inject a partial abort input and a lost upload
+completion reply, then let the worker settle them without another HTTP request.
+The Pi capture test uses the same worker for maintenance resume and final pause.
+Concurrency tests hold an upload request open while recovery waits and verify
+that the helper is not signaled. Separate-loop tests retain a blocked action past
+its deadline while other work progresses, and verify shutdown waits for that
+action rather than starting a replacement.
 Artifact checks scan a 40-file directory through multiple guest pages while live
 and through volume listings while paused. They verify uploaded files appear,
 stale index rows disappear, symlink descendants remain absent and paused scans

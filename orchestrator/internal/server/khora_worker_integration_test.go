@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,13 +168,14 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, MaxActive: 2, Content: preparedUploads})
+	srv.SetWorkspaceWriter(&sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, MaxActive: 2, Content: preparedUploads})
 	srv.nativeStateValidator = func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), "native-state-"+driver+"-"+fmt.Sprint(turn), guestfiles.Files{Backend: backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	}
 	var interruptedGeneration atomic.Pointer[string]
 	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
-	launcher := agentbridge.Launcher{Backend: backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	controlBackend := &partialAbortBackend{Processes: backend}
+	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
 		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
 		if target := interruptedGeneration.Load(); target != nil && *target == envelope.GenerationID && envelope.Type == bridge.TypeAckTurnStarted {
@@ -192,7 +194,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	defer func() { controller.Close() }()
 	if driver == "sh" {
 		srv.ownerUUID = owner.UUID
-		srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, Content: preparedUploads, MaxActive: 2, Provisioner: controller})
+		srv.SetWorkspaceWriter(&sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, Content: preparedUploads, MaxActive: 2, Provisioner: controller})
 		request := httptest.NewRequest(http.MethodPut, "/artifacts/"+session.ID+"/before-first-turn.txt", strings.NewReader("product-worker-ok\n")).WithContext(context.WithValue(ctx, userContextKey{}, session.UserID))
 		response := httptest.NewRecorder()
 		srv.writeArtifact(response, request)
@@ -402,11 +404,12 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
 		if driver == "sh" && cycle == 0 {
 			verifyKhoraWorkspaceDownload(t, ctx, srv, st, controller, session.ID, leaseOwner, false)
-			verifyKhoraWorkspaceWrite(t, ctx, srv, st, backend, preparedUploads, session.ID, leaseOwner)
+			verifyKhoraWorkspaceWrite(t, ctx, srv, st, controller, backend, preparedUploads, session.ID, leaseOwner)
 			verifyKhoraInventory(t, ctx, srv, st, session.ID, false)
 		}
 	}
 	if driver == "sh" {
+		controlBackend.fail.Store(true)
 		verifyKhoraShellStop(t, ctx, srv, st, controller, binding, leaseOwner)
 	} else {
 		blockModel.Store(true)
@@ -573,10 +576,12 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if n, err := capture.Step(ctx, 32); err != nil || n != 0 {
 				t.Fatalf("paused capture was not deferred: %d %v", n, err)
 			}
-			maintenance, err := controller.MaintainCapture(ctx, session.ID, leaseOwner, 2, time.Minute)
-			if err != nil || maintenance.Stage != "reading" {
-				t.Fatalf("capture activation: %+v %v", maintenance, err)
+			writer, ok := srv.workspaceWrites.(execution.WorkspaceRecovery)
+			if !ok {
+				t.Fatal("workspace recovery missing")
 			}
+			stopCaptureMaintenance := startKhoraReconciler(t, ctx, srv, st, controller, writer, leaseOwner)
+			waitCaptureMaintenance(t, ctx, st, session.ID, "reading")
 			var active int
 			if err := st.DBForTest().QueryRow(`SELECT count(*) FROM execution_bindings WHERE session_id=? AND state!='retired'`, session.ID).Scan(&active); err != nil || active != 0 {
 				t.Fatalf("capture maintenance started agent: %d %v", active, err)
@@ -593,10 +598,8 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if n, err := capture.Step(ctx, 32); err != nil || n != 0 {
 				t.Fatalf("capture replay duplicated work: %d %v", n, err)
 			}
-			maintenance, err = controller.MaintainCapture(ctx, session.ID, leaseOwner, 2, time.Minute)
-			if err != nil || maintenance.Stage != "complete" {
-				t.Fatalf("capture pause: %+v %v", maintenance, err)
-			}
+			waitCaptureMaintenance(t, ctx, st, session.ID, "complete")
+			stopCaptureMaintenance()
 			assertIntegrationCapacity(t, ctx, st, 0)
 			rows, err := st.DBForTest().Query(`SELECT r.native_digest,c.archive_path FROM native_capture_requests r JOIN native_capture_receipts c USING(session_id,state_version) WHERE r.session_id=?`, session.ID)
 			if err != nil {
@@ -632,6 +635,24 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		}
 	}
 
+}
+
+func waitCaptureMaintenance(t *testing.T, ctx context.Context, st *store.Store, session, want string) {
+	t.Helper()
+	for {
+		var stage string
+		if err := st.DBForTest().QueryRow(`SELECT stage FROM native_capture_activations WHERE session_id=?`, session).Scan(&stage); err != nil {
+			t.Fatal(err)
+		}
+		if stage == want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("capture maintenance remained %s waiting for %s: %v", stage, want, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func verifyKhoraPiControls(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, binding execution.Binding, owner string, entered <-chan struct{}) {
@@ -766,7 +787,7 @@ func verifyKhoraPausedWrite(t *testing.T, ctx context.Context, srv *Server, st *
 	process := &lostReplacementBackend{Processes: backend, lose: true}
 	lifecycle := &lostWorkspaceLifecycle{Lifecycle: backend, resume: true, pause: true}
 	writer := sessionfiles.Writer{Repository: st, Backend: process, Lifecycle: lifecycle, Content: content, MaxActive: 2}
-	srv.SetWorkspaceWriter(writer)
+	srv.SetWorkspaceWriter(&writer)
 	request := httptest.NewRequest(http.MethodPut, "/artifacts/"+session+"/paused-upload.txt", strings.NewReader("offline replacement")).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
 	response := httptest.NewRecorder()
 	srv.writeArtifact(response, request)
@@ -808,7 +829,7 @@ func verifyKhoraPausedWrite(t *testing.T, ctx context.Context, srv *Server, st *
 	if err != nil || string(data) != "offline replacement" {
 		t.Fatalf("offline upload bytes: %q %v", data, err)
 	}
-	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, Content: content, MaxActive: 2})
+	srv.SetWorkspaceWriter(&sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, Content: content, MaxActive: 2})
 }
 
 type lostReplacementBackend struct {
@@ -844,7 +865,7 @@ func (s lostReplacementStream) Next() (sandbox.ProcessFrame, error) {
 	return frame, err
 }
 
-func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, st *store.Store, backend interface {
+func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, backend interface {
 	sandbox.Processes
 	sandbox.Lifecycle
 }, content *prepared.Store, session, owner string) {
@@ -857,7 +878,7 @@ func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, s
 	}
 	fault := &lostReplacementBackend{Processes: backend, lose: true}
 	writer := sessionfiles.Writer{Repository: st, Backend: fault, Content: content}
-	srv.SetWorkspaceWriter(writer)
+	srv.SetWorkspaceWriter(&writer)
 	if _, err := srv.writeWorkspaceFile(ctx, session, "nested/uploaded.txt", strings.NewReader("recovered upload"), 1024); !errors.Is(err, workspace.ErrUncertain) {
 		t.Fatalf("lost replacement reply hidden: %v", err)
 	}
@@ -868,10 +889,22 @@ func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, s
 	if _, err := st.EnqueueTurn(ctx, session, "must wait for upload", time.Now()); err == nil {
 		t.Fatal("turn crossed unresolved replacement")
 	}
-	file, err := writer.Recover(ctx, mutations[0].ID, owner)
-	if err != nil || file.Size != 16 {
-		t.Fatalf("replacement recovery: %+v %v", file, err)
+	stop := startKhoraReconciler(t, ctx, srv, st, controller, &writer, owner)
+	for {
+		pending, err := st.ListUnresolvedWorkspaceMutations(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pending) == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
+	stop()
 	if _, err := writer.Recover(ctx, mutations[0].ID, owner); err != nil {
 		t.Fatal(err)
 	}
@@ -920,7 +953,7 @@ func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, s
 	if err != nil || string(raw) != changed || fault.starts != 2 {
 		t.Fatalf("failed recovery overwrote later content: %q starts=%d %v", raw, fault.starts, err)
 	}
-	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, MaxActive: 2, Content: content})
+	srv.SetWorkspaceWriter(&sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, MaxActive: 2, Content: content})
 }
 
 func verifyKhoraWorkspaceDownload(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, session, owner string, paused bool) {
@@ -999,9 +1032,15 @@ func verifyKhoraShellStop(t *testing.T, ctx context.Context, srv *Server, st *st
 	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+binding.SessionID+"/interrupt", nil).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
 	response := httptest.NewRecorder()
 	srv.interruptSession(response, request, binding.SessionID)
-	if response.Code != http.StatusAccepted {
+	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("shell process control: %d %s", response.Code, response.Body.String())
 	}
+	writer, ok := srv.workspaceWrites.(execution.WorkspaceRecovery)
+	if !ok {
+		t.Fatal("workspace reconciler not configured")
+	}
+	stop := startKhoraReconciler(t, ctx, srv, st, controller, writer, owner)
+	defer stop()
 	for {
 		status, reason, err := st.TurnStatus(ctx, binding.SessionID, turn.TurnID)
 		if err != nil {
@@ -1034,6 +1073,51 @@ func verifyKhoraShellStop(t *testing.T, ctx context.Context, srv *Server, st *st
 	if err != nil || current.State != "accepted" {
 		t.Fatalf("Stop retired retained execution: %+v %v", current, err)
 	}
+}
+
+type partialAbortBackend struct {
+	sandbox.Processes
+	fail atomic.Bool
+}
+
+func (b *partialAbortBackend) SendProcessInput(ctx context.Context, reference sandbox.ProcessReference, data []byte) error {
+	frames, err := (&bridge.StreamDecoder{}).Feed(data)
+	if err != nil {
+		return err
+	}
+	for _, frame := range frames {
+		if frame.Kind == "command" && strings.HasPrefix(frame.CommandID, "control_abort_") && b.fail.CompareAndSwap(true, false) {
+			if err := b.Processes.SendProcessInput(ctx, reference, data[:len(data)/2]); err != nil {
+				return err
+			}
+			return errors.New("injected partial abort input")
+		}
+	}
+	return b.Processes.SendProcessInput(ctx, reference, data)
+}
+
+func startKhoraReconciler(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, writer execution.WorkspaceRecovery, owner string) func() {
+	t.Helper()
+	run, cancel := context.WithCancel(ctx)
+	finished := make(chan error, 1)
+	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: 2, CaptureWindow: time.Minute, Interval: 20 * time.Millisecond, ActionTimeout: 5 * time.Second}
+	go func() { finished <- reconciler.Run(run) }()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			select {
+			case err := <-finished:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					t.Errorf("reconciler stopped: %v", err)
+				}
+			case <-time.After(8 * time.Second):
+				t.Error("reconciler did not stop")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func (r *captureFaultRepository) CompleteNativeCapture(ctx context.Context, request nativecapture.Request, result nativecapture.Result) error {

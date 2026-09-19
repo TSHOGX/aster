@@ -71,8 +71,10 @@ record settles cancellation, preserving output emitted during shutdown. Shell
 uses the existing PTY interrupt primitive; Pi uses its native abort RPC. Steering
 requires Pi and a matching acknowledged command before retiring the queued row
 and recording its transcript message. Delivery failures report pending control
-rather than falling back to the legacy host queue. Background command retry and
-bounded escalation remain part of the unfinished startup/reconciliation wiring.
+rather than falling back to the legacy host queue. Pending abort commands are
+eligible for background retry only while their original turn, owner and accepted
+binding remain current. Steering outcome reconciliation and bounded escalation
+remain unfinished.
 
 ## Recovery and resource lifecycle
 
@@ -484,7 +486,23 @@ changes and workspace writes are blocked throughout the window. Lost resume/paus
 replies retain conditional intents, and the current product owner can reconcile
 them after restart. Definitively rejected activation is followed by verified
 pause before the workflow is released. Application startup must poll the pending
-activation requests; this service is not yet selected by the legacy startup path.
+activation requests; the injectable execution reconciler performs this polling.
+Default executable composition still needs to select that reconciler.
+
+The retained execution reconciler runs independent sequential loops for pending
+aborts, workspace mutations, capture activations and interrupted-recovery ledgers.
+Each loop uses bounded pages, per-action deadlines and a rotating key cursor so
+old failures do not hide newer obligations. A task that ignores cancellation
+continues to occupy its loop; it is never restarted merely because a deadline
+expired. Shutdown waits for the loops to stop. Current-owner checks precede each
+page and actions retain their own identity/fence checks.
+
+HTTP uploads and background mutation recovery share one writer instance with a
+cancelable per-session lock. Recovery cannot stop a helper while its upload
+request is still using it. Waiting recovery can time out without touching the
+helper, and unused lock entries are removed. The durable mutation fence remains
+the cross-restart admission mechanism. The server maintenance entry point starts
+the reconciler when one is supplied during composition.
 
 Runtime snapshots include opaque execution bindings. Accepted bindings appear
 live without legacy resource rows;

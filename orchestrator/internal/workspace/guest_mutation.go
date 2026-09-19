@@ -22,6 +22,7 @@ type GuestMutation struct {
 	Maintenance bool
 }
 type GuestMutationRepository interface {
+	GuestWorkspaceMutationSession(context.Context, string) (string, error)
 	BeginGuestWorkspaceMutation(context.Context, Mutation, PreparedContent, int) (GuestMutation, error)
 	LoadGuestWorkspaceMutation(context.Context, string, string) (GuestMutation, error)
 	MarkGuestWorkspaceMutationIssued(context.Context, GuestMutation) error
