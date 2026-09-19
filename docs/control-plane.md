@@ -69,12 +69,25 @@ waits for the configured gateway grant revoker to drain established work before
 delivering abort. It leaves the current turn running until its terminal journal
 record settles cancellation, preserving output emitted during shutdown. Shell
 uses the existing PTY interrupt primitive; Pi uses its native abort RPC. Steering
-requires Pi and a matching acknowledged command before retiring the queued row
-and recording its transcript message. Delivery failures report pending control
+requires Pi. Its source prompt is atomically parked and associated with the
+command before delivery. A guest-journaled `turn_control_result` retires that row
+and records its transcript message and event together; a receipt alone does not.
+Late results retain the original turn attribution and duplicate results are
+idempotent. Delivery failures report pending control
 rather than falling back to the legacy host queue. Pending abort commands are
 eligible for background retry only while their original turn, owner and accepted
-binding remain current. Steering outcome reconciliation and bounded escalation
-remain unfinished.
+binding remain current. Pending steering sends use the same background retry
+rules. A rejected steering outcome leaves its source parked for explicit release.
+Interrupted recovery replays steering results from the old journal; after full
+recovery, missing results become `steering_outcome_unknown` failures without
+automatically replaying their input. Bounded abort escalation remains unfinished.
+
+The runtime projection marks unresolved source rows with `steering_pending` and
+advances its revision as intent/outcome changes. The UI shows delivery confirmation
+pending and disables source cancellation/redispatch until it settles. SQL guards
+enforce the same restriction independently of the client. Guest delivery means
+the driver's control input accepted the instruction, not that its external work
+has completed.
 
 ## Recovery and resource lifecycle
 
@@ -490,7 +503,7 @@ activation requests; the injectable execution reconciler performs this polling.
 Default executable composition still needs to select that reconciler.
 
 The retained execution reconciler runs independent sequential loops for pending
-aborts, workspace mutations, capture activations and interrupted-recovery ledgers.
+aborts, steering sends, workspace mutations, capture activations and interrupted-recovery ledgers.
 Each loop uses bounded pages, per-action deadlines and a rotating key cursor so
 old failures do not hide newer obligations. A task that ignores cancellation
 continues to occupy its loop; it is never restarted merely because a deadline

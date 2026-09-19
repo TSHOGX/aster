@@ -588,6 +588,11 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         return true;
       };
       switch (event.type) {
+        case "turn.steering_rejected":
+        case "turn.steering_uncertain": {
+          if (sessionId) refreshRuntime(sessionId);
+          return;
+        }
         case "session.created": {
           const sess = readSession(event.payload);
           if (!sess) return;
@@ -1176,7 +1181,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     if (!res.ok) {
       // 409 means the worker claimed it while the click was in flight: it is
       // running now, so re-read and let the user Stop it instead.
-      if (res.status === 409) refreshRuntime(id);
+      if (res.status === 409 || res.status === 503) refreshRuntime(id);
       return { ok: false as const, error: res.error };
     }
     applyRuntime(id, res.data);
@@ -1189,10 +1194,11 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       // 409 means the row moved on between render and click — claimed, cancelled,
       // or already sent. Re-read rather than retry: the queue the button was drawn
       // from is stale, and a retry would act on the same stale row.
-      if (res.status === 409) refreshRuntime(id);
+      if (res.status === 409 || res.status === 503) refreshRuntime(id);
       return { ok: false as const, error: res.error };
     }
     if (res.data.runtime) applyRuntime(id, res.data.runtime);
+    if (res.data.status === "steering") refreshRuntime(id);
     // A steer puts the prompt in the transcript straight away — the agent has been
     // told, so the user has to see what was said. The `message.created` event
     // carries it, and this poll covers the case where the stream is not attached.

@@ -129,14 +129,12 @@ func (s *Server) releaseQueuedTurn(w http.ResponseWriter, r *http.Request, sessi
 // without discarding what it has already done. Stop-and-resend is the same
 // instruction at the cost of the whole turn.
 func (s *Server) steerQueuedTurn(w http.ResponseWriter, r *http.Request, session store.Session, snapshot store.SessionRuntimeSnapshot, target store.TurnSnapshot) {
-	commandID := ""
 	backend, err := s.store.SessionExecutionBackend(r.Context(), session.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if backend == "khora" {
-		commandID = fmt.Sprintf("control_steer_%s_%d", session.ActiveGenerationID, target.ID)
 		commands, ok := s.executions.(interface {
 			DeliverTurnCommand(context.Context, execution.TurnCommand) error
 		})
@@ -144,10 +142,18 @@ func (s *Server) steerQueuedTurn(w http.ResponseWriter, r *http.Request, session
 			writeError(w, http.StatusServiceUnavailable, "execution control unavailable")
 			return
 		}
-		if err := commands.DeliverTurnCommand(r.Context(), execution.TurnCommand{ID: fmt.Sprintf("control_steer_%s_%d", session.ActiveGenerationID, target.ID), SessionID: session.ID, GenerationID: session.ActiveGenerationID, TurnID: snapshot.ActiveTurn.ID, Owner: store.GenerationLeaseOwner(s.ownerUUID), Kind: "steer", Message: target.Content}); err != nil {
+		command, err := s.store.RequestBoundSteer(r.Context(), session.ID, session.ActiveGenerationID, store.GenerationLeaseOwner(s.ownerUUID), target.ID, snapshot.ActiveTurn.ID)
+		if err != nil {
+			writeErrorClass(w, http.StatusConflict, "turn_not_steerable", "queued prompt changed before steering reservation")
+			return
+		}
+		s.publishSessionRuntimeFromStore(r.Context(), session.ID)
+		if err := commands.DeliverTurnCommand(r.Context(), command); err != nil {
 			writeErrorClass(w, http.StatusServiceUnavailable, "control_delivery_pending", "steering delivery is pending reconciliation")
 			return
 		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "steering", "command_id": command.ID})
+		return
 	} else {
 		details, err := s.runtimeGenerationDetails(r.Context(), session.ID, session.ActiveGenerationID)
 		if err != nil {
@@ -169,7 +175,6 @@ func (s *Server) steerQueuedTurn(w http.ResponseWriter, r *http.Request, session
 		}
 	}
 	result, err := s.store.RecordSteeredTurn(r.Context(), store.RecordSteeredTurnParams{
-		CommandID: commandID, GenerationID: session.ActiveGenerationID, Owner: store.GenerationLeaseOwner(s.ownerUUID),
 		SessionID:  session.ID,
 		TurnID:     target.ID,
 		IntoTurnID: snapshot.ActiveTurn.ID,

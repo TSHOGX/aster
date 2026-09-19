@@ -22,6 +22,8 @@ export const SSE_TYPED_EVENT_TYPES = [
   // follow-up GET, so a dispatched turn stayed visible in the queue and ran a
   // second time.
   "session.runtime",
+  "turn.steering_rejected",
+  "turn.steering_uncertain",
   "message.created",
   "agent.message",
   "agent.delta",

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sqlite3
 import threading
+import uuid
 
 VERSION = 1
 MAX_FRAME_BYTES = 8 << 20
@@ -247,6 +248,7 @@ class StdioChannel:
         self.synchronized = False
         self.commands = {}
         self.controls = []
+        self.closed_through = 0
         self.decoder = Decoder()
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
@@ -288,16 +290,25 @@ class StdioChannel:
         elif frame['kind'] == 'command':
             first = self.journal.receive_command(frame)
             envelope = frame['envelope']
+            rejected = False
             with self.condition:
                 request_id = envelope.get('request_id')
                 if request_id:
                     self.commands[request_id] = envelope
                 if first and envelope.get('type') == 'turn_control':
-                    self.controls.append(dict(envelope.get('payload') or {}, token=frame['command_id'], turn_id=envelope.get('turn_id')))
+                    if envelope.get('turn_id', 0) <= self.closed_through:
+                        rejected = (envelope.get('payload') or {}).get('command') == 'steer'
+                    else:
+                        self.controls.append(dict(envelope.get('payload') or {}, token=frame['command_id'], turn_id=envelope.get('turn_id')))
                 self.condition.notify_all()
             with self.output_lock:
                 self._write({'version': VERSION, 'kind': 'command_ack', 'execution': self.journal.execution,
                              'command_id': frame['command_id']})
+            if rejected:
+                self.emit({'message_id': str(uuid.uuid4()), 'type': 'turn_control_result',
+                           'session_id': envelope['session_id'], 'generation_id': envelope['generation_id'],
+                           'turn_id': envelope['turn_id'],
+                           'payload': {'command_id': frame['command_id'], 'status': 'rejected'}})
         else:
             raise ValueError('unexpected host bridge frame')
 
@@ -336,4 +347,11 @@ class StdioChannel:
         with self.condition:
             selected = [command for command in self.controls if command.get('turn_id') == turn_id]
             self.controls = [command for command in self.controls if command.get('turn_id') != turn_id]
+            return selected
+
+    def finish_controls(self, turn_id):
+        with self.condition:
+            self.closed_through = max(self.closed_through, turn_id)
+            selected = [command for command in self.controls if command.get('turn_id') == turn_id]
+            self.controls = [command for command in self.controls if command.get('turn_id', 0) > self.closed_through]
             return selected

@@ -521,11 +521,22 @@ class StdioBridgeClient(BridgeClient):
                     pending.extend(self.channel.take_controls(turn_id))
                     remaining = []
                     for command in pending:
-                        if not runner.deliver_control(command["command"], turn_id, command.get("message", "")):
+                        delivered = runner.deliver_control(command["command"], turn_id, command.get("message", ""))
+                        if not delivered:
                             remaining.append(command)
+                        elif command['command'] == 'steer':
+                            self.send('turn_control_result', turn_id=turn_id,
+                                      payload={'command_id': command['token'], 'status': 'delivered'})
                     pending = remaining
                 except Exception as error:
                     print(f"[bridge] turn control delivery failed: {error}", file=sys.stderr, flush=True)
+                    # Ambiguous driver delivery must never be applied twice.
+                    return
+            pending.extend(self.channel.finish_controls(turn_id))
+            for command in pending:
+                if command['command'] == 'steer':
+                    self.send('turn_control_result', turn_id=turn_id,
+                              payload={'command_id': command['token'], 'status': 'rejected'})
         threading.Thread(target=watch, daemon=True).start()
         return stop
 

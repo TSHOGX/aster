@@ -181,8 +181,9 @@ export async function cancelQueuedTurn(sessionId: string, turnId: number) {
  * Send one queued turn now.
  *
  * The server picks the mechanism from state the client cannot see reliably: with a
- * turn executing the text is steered into it (`status: "steered"`, and the prompt
- * becomes a transcript message immediately, because the agent has been told); with
+ * turn executing the text is steered into it. Process delivery returns
+ * `status: "steering"`; its journaled result later publishes the message and
+ * runtime update. Legacy delivery returns `status: "steered"` immediately. With
  * nothing executing the parked turn is released to run on its own
  * (`status: "released"`).
  *

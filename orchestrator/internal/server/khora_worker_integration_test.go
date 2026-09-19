@@ -413,6 +413,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		verifyKhoraShellStop(t, ctx, srv, st, controller, binding, leaseOwner)
 	} else {
 		blockModel.Store(true)
+		controlBackend.failSteer.Store(true)
 		verifyKhoraPiControls(t, ctx, srv, st, controller, binding, leaseOwner, modelEntered)
 		blockModel.Store(false)
 	}
@@ -666,7 +667,7 @@ func verifyKhoraPiControls(t *testing.T, ctx context.Context, srv *Server, st *s
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	for _, message := range []string{"first steering instruction", "second steering instruction"} {
+	for index, message := range []string{"first steering instruction", "second steering instruction"} {
 		queued, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: message})
 		if err != nil {
 			t.Fatal(err)
@@ -682,8 +683,44 @@ func verifyKhoraPiControls(t *testing.T, ctx context.Context, srv *Server, st *s
 		request := httptest.NewRequest(http.MethodPost, "/turn/steer", nil).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
 		response := httptest.NewRecorder()
 		srv.steerQueuedTurn(response, request, session, snapshot, store.TurnSnapshot{ID: queued.TurnID, Content: message})
-		if response.Code != http.StatusAccepted {
+		want := http.StatusAccepted
+		if index == 0 {
+			want = http.StatusServiceUnavailable
+		}
+		if response.Code != want {
 			t.Fatalf("Pi process steer: %d %s", response.Code, response.Body.String())
+		}
+		if index == 0 {
+			if _, err := st.ReleaseParkedTurn(ctx, store.ReleaseParkedTurnParams{SessionID: binding.SessionID, TurnID: queued.TurnID}); err == nil {
+				t.Fatal("partial steering send allowed independent redispatch")
+			}
+			writer, ok := srv.workspaceWrites.(execution.WorkspaceRecovery)
+			if !ok {
+				t.Fatal("reconciliation writer unavailable")
+			}
+			stop := startKhoraReconciler(t, ctx, srv, st, controller, writer, owner)
+			defer stop()
+		}
+		for {
+			status, reason, err := st.TurnStatus(ctx, binding.SessionID, queued.TurnID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status == "completed" {
+				break
+			}
+			if status != "queued" {
+				t.Fatalf("steering outcome changed source: %s %s", status, reason)
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		var count int
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='user'`, queued.TurnID).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("steering transcript not exactly once: %d %v", count, err)
 		}
 		if err := controller.DeliverTurnCommand(ctx, execution.TurnCommand{ID: fmt.Sprintf("control_steer_%s_%d", binding.GenerationID, queued.TurnID), SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, TurnID: turn.TurnID, Kind: "steer", Message: message}); err != nil {
 			t.Fatalf("steer receipt retry: %v", err)
@@ -1077,7 +1114,8 @@ func verifyKhoraShellStop(t *testing.T, ctx context.Context, srv *Server, st *st
 
 type partialAbortBackend struct {
 	sandbox.Processes
-	fail atomic.Bool
+	fail      atomic.Bool
+	failSteer atomic.Bool
 }
 
 func (b *partialAbortBackend) SendProcessInput(ctx context.Context, reference sandbox.ProcessReference, data []byte) error {
@@ -1086,7 +1124,7 @@ func (b *partialAbortBackend) SendProcessInput(ctx context.Context, reference sa
 		return err
 	}
 	for _, frame := range frames {
-		if frame.Kind == "command" && strings.HasPrefix(frame.CommandID, "control_abort_") && b.fail.CompareAndSwap(true, false) {
+		if frame.Kind == "command" && ((strings.HasPrefix(frame.CommandID, "control_abort_") && b.fail.CompareAndSwap(true, false)) || (strings.HasPrefix(frame.CommandID, "control_steer_") && b.failSteer.CompareAndSwap(true, false))) {
 			if err := b.Processes.SendProcessInput(ctx, reference, data[:len(data)/2]); err != nil {
 				return err
 			}

@@ -204,6 +204,12 @@ Concurrency tests hold an upload request open while recovery waits and verify
 that the helper is not signaled. Separate-loop tests retain a blocked action past
 its deadline while other work progresses, and verify shutdown waits for that
 action rather than starting a replacement.
+
+Steering acceptance injects a partial process-input send, leaves the source row
+parked, and waits for background retry and the guest's journaled delivery result.
+It checks one transcript message per source prompt. Store tests cover late
+delivery after the target turn ended, rejected delivery, atomic event rollback,
+historical outcome replay and explicit unknown classification after interruption.
 Artifact checks scan a 40-file directory through multiple guest pages while live
 and through volume listings while paused. They verify uploaded files appear,
 stale index rows disappear, symlink descendants remain absent and paused scans

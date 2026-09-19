@@ -224,6 +224,7 @@ type shareStore interface {
 // serverStore is the union of the roles the Server needs. It embeds bridge.Store
 // (via bridgeStore) so the bridge handoff keeps compiling off the same value.
 type serverStore interface {
+	RequestBoundSteer(context.Context, string, string, string, int64, int64) (execution.TurnCommand, error)
 	RequestBoundInterrupt(context.Context, string, string, string) (*execution.TurnCommand, store.SessionRuntimeSnapshot, error)
 	SessionExecutionBackend(context.Context, string) (string, error)
 	DriverStateValidationInput(context.Context, store.CompleteTurnParams) (store.DriverStateValidationInput, error)

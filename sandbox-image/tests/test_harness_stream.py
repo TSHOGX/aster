@@ -198,6 +198,7 @@ class StdioControlContractTest(unittest.TestCase):
                 channel.condition = threading.Condition()
                 channel.commands = {}
                 channel.controls = []
+                channel.closed_through = 0
                 channel.synchronized = False
                 channel._receive({'version': 1, 'kind': 'sync', 'execution': 'execution', 'command_id': 'sync-1', 'after': 0})
                 frames = stream.Decoder().feed(channel.destination.getvalue())
@@ -211,6 +212,16 @@ class StdioControlContractTest(unittest.TestCase):
                 channel._receive(command)
                 self.assertEqual(len(channel.take_controls(3)), 1)
                 self.assertEqual(channel.take_controls(3), [])
+                channel.finish_controls(3)
+                late = {'version': 1, 'kind': 'command', 'execution': 'execution', 'command_id': 'late-steer',
+                        'envelope': {'type': 'turn_control', 'session_id': 'session', 'generation_id': 'execution',
+                                     'turn_id': 3, 'payload': {'command': 'steer', 'message': 'too late'}}}
+                channel._receive(late)
+                channel._receive(late)
+                self.assertEqual(channel.take_controls(3), [])
+                results = [record for record in journal.replay(0) if record['envelope']['type'] == 'turn_control_result']
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0]['envelope']['payload'], {'command_id': 'late-steer', 'status': 'rejected'})
             finally:
                 journal.close()
 

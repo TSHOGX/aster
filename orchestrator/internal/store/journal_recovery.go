@@ -141,6 +141,21 @@ func (s *Store) CommitRecoveredJournalRecord(ctx context.Context, id string, fen
 	}
 	var eventID int64
 	switch record.Type {
+	case "turn_control_result":
+		if record.TurnID == nil {
+			return 0, fmt.Errorf("historical control outcome requires original turn")
+		}
+		var outcome execution.SteeringOutcome
+		if err := json.Unmarshal(record.Payload, &outcome); err != nil {
+			return 0, err
+		}
+		if outcome.Status != "delivered" && outcome.Status != "rejected" {
+			return 0, fmt.Errorf("historical guest steering result is invalid")
+		}
+		eventID, err = recordSteeringOutcomeTx(ctx, tx, origin.SessionID, origin.GenerationID, *record.TurnID, outcome)
+		if err != nil {
+			return 0, err
+		}
 	case "hello", "heartbeat", "probe_network", "claim_next_turn", "resume_turn", "ack_turn_started":
 		// Retain their exact receipt only. No old protocol command is executed.
 	case "emit_output":

@@ -405,7 +405,9 @@ function QueuedTurns({
             <div className="truncate text-sm text-[var(--color-foreground)]">{turn.content}</div>
             {/* Only a parked row gets the hint. An unparked one is already on its
                 way to the worker, so saying it waits for the user would be wrong. */}
-            {turn.parked ? (
+            {turn.steering_pending ? (
+              <div className="text-2xs text-[var(--color-foreground-muted)]">{t("composer.queueSteeringPending")}</div>
+            ) : turn.parked ? (
               <div className="text-2xs text-[var(--color-foreground-muted)]">{t("composer.queueParked")}</div>
             ) : null}
           </div>
@@ -416,12 +418,12 @@ function QueuedTurns({
           <button
             type="button"
             onClick={() => void onSend(turn.id)}
-            disabled={sending.has(turn.id) || cancelling.has(turn.id)}
+            disabled={turn.steering_pending || sending.has(turn.id) || cancelling.has(turn.id)}
             className="shrink-0 rounded p-0.5 text-[var(--color-foreground-muted)] transition-colors hover:text-[var(--color-accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-wait disabled:opacity-60"
             title={steers ? t("composer.queueSteer") : t("composer.queueSend")}
             aria-label={steers ? t("composer.queueSteer") : t("composer.queueSend")}
           >
-            {sending.has(turn.id) ? (
+            {turn.steering_pending || sending.has(turn.id) ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
               <ArrowUp className="h-3.5 w-3.5" aria-hidden />
@@ -432,7 +434,7 @@ function QueuedTurns({
             onClick={() => void onCancel(turn.id)}
             // Also inert mid-send: the row is being delivered, and withdrawing it
             // now would race a steer that has already reached the agent.
-            disabled={cancelling.has(turn.id) || sending.has(turn.id)}
+            disabled={turn.steering_pending || cancelling.has(turn.id) || sending.has(turn.id)}
             className="shrink-0 rounded p-0.5 text-[var(--color-foreground-muted)] transition-colors hover:text-[var(--color-danger)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-wait disabled:opacity-60"
             title={t("composer.queueCancel")}
             aria-label={t("composer.queueCancel")}

@@ -14,6 +14,7 @@ type ReconcileKind string
 
 const (
 	ReconcileAbort       ReconcileKind = "abort"
+	ReconcileSteer       ReconcileKind = "steer"
 	ReconcileWorkspace   ReconcileKind = "workspace"
 	ReconcileCapture     ReconcileKind = "capture"
 	ReconcileInterrupted ReconcileKind = "interrupted"
@@ -65,7 +66,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	var workers sync.WaitGroup
-	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted} {
+	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted} {
 		workers.Add(1)
 		go func(kind ReconcileKind) {
 			defer workers.Done()
@@ -115,7 +116,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 func (r *Reconciler) apply(ctx context.Context, kind ReconcileKind, p ReconcileWork) error {
 	switch kind {
-	case ReconcileAbort:
+	case ReconcileAbort, ReconcileSteer:
 		return r.Controller.DeliverTurnCommand(ctx, p.Command)
 	case ReconcileWorkspace:
 		_, err := r.Workspace.Recover(ctx, p.Key, r.Owner)

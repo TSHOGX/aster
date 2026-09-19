@@ -261,6 +261,33 @@ func verifiedRecoveryLifecycle(op execution.Operation, environment execution.Env
 }
 
 func finishInterruptedRecoveryTx(ctx context.Context, tx *sql.Tx, binding execution.Binding, reason string, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `SELECT c.command_id,c.turn_id FROM execution_steering q JOIN execution_turn_commands c ON c.command_id=q.command_id WHERE c.generation_id=? AND q.outcome='pending'`, binding.GenerationID)
+	if err != nil {
+		return err
+	}
+	type missing struct {
+		id   string
+		turn int64
+	}
+	var unresolved []missing
+	for rows.Next() {
+		var p missing
+		if err := rows.Scan(&p.id, &p.turn); err != nil {
+			rows.Close()
+			return err
+		}
+		unresolved = append(unresolved, p)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, p := range unresolved {
+		if _, err := recordSteeringOutcomeTx(ctx, tx, binding.SessionID, binding.GenerationID, p.turn, execution.SteeringOutcome{CommandID: p.id, Status: "unknown"}); err != nil {
+			return err
+		}
+	}
 	// A leased command may have reached the guest before its ACK was lost. Do
 	// not requeue either leased or running work and promise exactly-once effects.
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET status='failed',completed_at=?,completed_by_generation=?,error_class='execution_interrupted',error=?,lease_owner=NULL,lease_expires_at=NULL WHERE session_id=? AND generation_id=? AND status IN ('leased','running')`, formatTime(now), binding.GenerationID, reason, binding.SessionID, binding.GenerationID); err != nil {

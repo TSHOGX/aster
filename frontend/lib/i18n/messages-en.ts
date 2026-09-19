@@ -122,6 +122,7 @@ export const EN = {
   // Shown on rows Stop parked, which are waiting on the user and not on the agent.
   // Without this they look like they are about to run, and the user waits forever.
   "composer.queueParked": "Waiting for you to send",
+  "composer.queueSteeringPending": "Confirming delivery to the active turn",
   "composer.unavailable": "This session cannot accept messages.",
   "composer.hint": "Enter to send · Shift+Enter for newline",
 

@@ -113,7 +113,8 @@ SET auto_dispatch = 1
 WHERE id = ?
   AND session_id = ?
   AND status = 'queued'
-  AND auto_dispatch = 0`, p.TurnID, p.SessionID)
+  AND auto_dispatch = 0
+  AND NOT EXISTS(SELECT 1 FROM execution_steering q WHERE q.queued_turn_id=turns.id AND q.outcome='pending')`, p.TurnID, p.SessionID)
 	if err != nil {
 		return SessionRuntimeSnapshot{}, err
 	}
@@ -162,8 +163,7 @@ WHERE id = ?
 // RecordSteeredTurnParams describes a queued turn whose content was injected
 // into a turn that was already running.
 type RecordSteeredTurnParams struct {
-	GenerationID, Owner, CommandID string
-	SessionID                      string
+	SessionID string
 	// TurnID is the queued row the user released. It will never execute as a turn
 	// of its own.
 	TurnID int64
@@ -235,16 +235,8 @@ WHERE id = ?
 		return RecordSteeredTurnResult{}, err
 	}
 	if bound != 0 {
-		if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
-			return RecordSteeredTurnResult{}, err
-		}
-		var receipt int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_turn_commands c JOIN turns t ON t.id=? AND t.session_id=c.session_id WHERE c.command_id=? AND c.session_id=? AND c.generation_id=? AND c.owner=? AND c.turn_id=? AND c.kind='steer' AND c.acknowledged=1 AND c.message=t.content`, p.TurnID, p.CommandID, p.SessionID, p.GenerationID, p.Owner, p.IntoTurnID).Scan(&receipt); err != nil {
-			return RecordSteeredTurnResult{}, err
-		}
-		if receipt != 1 {
-			return RecordSteeredTurnResult{}, ErrTurnNotSteerable
-		}
+		// Process-stream steering commits only from a journaled delivery result.
+		return RecordSteeredTurnResult{}, ErrTurnNotSteerable
 	}
 
 	var content string

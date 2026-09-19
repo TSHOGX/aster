@@ -177,14 +177,22 @@ waits for the user, who sends it with the endpoint below or withdraws it with
 `DELETE`.
 
 **`POST /api/sessions/{id}/turns/{turnID}/send`** sends one queued turn now →
-`202 {"status", "message"?, "runtime"}`. The server picks the mechanism from the
+`202 {"status", "message"?, "runtime"?, "command_id"?}`. The server picks the mechanism from the
 projection, because the client cannot read it reliably at click time:
 
 - a turn is executing → **steer**: the text is injected into that turn, so the
-  work already done survives (`status: "steered"`). The prompt becomes a
+  work already done survives. Legacy delivery returns `status: "steered"`. The prompt becomes a
   transcript message immediately — the agent has been told, so the user has to
   see what was said — and the queue row retires, carrying
   `steered_into_turn_id`.
+
+  Khora delivery returns `status: "steering"` and a stable `command_id` after
+  the guest acknowledges receipt. The source row stays parked with
+  `steering_pending: true` until its journaled driver-delivery result arrives.
+  That result atomically publishes the transcript message and runtime update.
+  Pending rows cannot be canceled or dispatched independently. A rejected result
+  leaves the prompt parked for explicit release; interrupted recovery with no
+  delivery result marks it failed with `steering_outcome_unknown`.
 - nothing is executing → **release**: the parked turn is handed to the worker to
   run as a turn of its own (`status: "released"`). A parked queue does not hold a
   sandbox open — that is the point of excluding it from the pending-turn
@@ -201,7 +209,7 @@ turn_not_releasable` is the release-side counterpart: the row is queued but not
 parked, so it is already on its way to the worker and "send it" would be a no-op
 the user could not tell from success.
 
-A shell session answers `409` outright: its input goes straight to a pty, so there
+Legacy shell sessions answer `409` outright: their input goes straight to a pty, so there
 is no queue to park, release, or steer into.
 
 **Cron Agent (R2/R4).** `POST /api/schedules` accepts `name`, `prompt`, optional

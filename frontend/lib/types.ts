@@ -67,6 +67,7 @@ export type ApiTurn = {
    * promise nothing is going to keep.
    */
   parked?: boolean;
+  steering_pending?: boolean;
 };
 
 /**

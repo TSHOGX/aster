@@ -71,7 +71,8 @@ type TurnSnapshot struct {
 	// — the state Stop leaves the rest of the queue in. The queue row renders
 	// differently for it: a parked turn is waiting on the user, not on the agent,
 	// so presenting it as "up next" would be a lie the user cannot act on.
-	Parked bool `json:"parked,omitempty"`
+	Parked          bool `json:"parked,omitempty"`
+	SteeringPending bool `json:"steering_pending,omitempty"`
 }
 
 // SessionRuntimeSnapshot is the whole contract. The same value is served by
@@ -134,7 +135,7 @@ type SessionRuntimeSnapshot struct {
 	QueuedTurns []TurnSnapshot `json:"queued_turns"`
 }
 
-const turnSnapshotColumns = `id, sequence, content, status, phase, phase_at, phase_tool, phase_detail, started_at, created_at, auto_dispatch`
+const turnSnapshotColumns = `id, sequence, content, status, phase, phase_at, phase_tool, phase_detail, started_at, created_at, auto_dispatch, EXISTS(SELECT 1 FROM execution_steering q WHERE q.queued_turn_id=turns.id AND q.outcome='pending')`
 
 // GetSessionRuntimeSnapshot reads the durable projection for one session.
 func (s *Store) GetSessionRuntimeSnapshot(ctx context.Context, sessionID string) (SessionRuntimeSnapshot, error) {
@@ -236,7 +237,7 @@ func scanTurnSnapshot(row rowScanner) (TurnSnapshot, error) {
 		dispatch  int
 	)
 	if err := row.Scan(&turn.ID, &turn.Sequence, &turn.Content, &turn.Status,
-		&phase, &phaseAt, &tool, &detail, &startedAt, &createdAt, &dispatch); err != nil {
+		&phase, &phaseAt, &tool, &detail, &startedAt, &createdAt, &dispatch, &turn.SteeringPending); err != nil {
 		return TurnSnapshot{}, err
 	}
 	turn.Parked = dispatch == 0
@@ -356,7 +357,8 @@ SET status = 'canceled',
     lease_expires_at = NULL
 WHERE id = ?
   AND session_id = ?
-  AND status = 'queued'`, formatTime(p.Now), p.TurnID, p.SessionID)
+  AND status = 'queued'
+  AND NOT EXISTS(SELECT 1 FROM execution_steering q WHERE q.queued_turn_id=turns.id AND q.outcome='pending')`, formatTime(p.Now), p.TurnID, p.SessionID)
 	if err != nil {
 		return SessionRuntimeSnapshot{}, err
 	}

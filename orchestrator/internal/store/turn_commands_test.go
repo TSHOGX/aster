@@ -80,26 +80,21 @@ func TestBoundSteeringRequiresMatchingAcknowledgedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := execution.TurnCommand{ID: "control_steer", SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, Kind: "steer", Message: "steer this content", TurnID: turn.TurnID}
-	params := RecordSteeredTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, CommandID: command.ID, TurnID: queued, IntoTurnID: turn.TurnID}
-	if _, err := st.ReserveTurnCommand(ctx, command); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.RecordSteeredTurn(ctx, params); !errors.Is(err, ErrTurnNotSteerable) {
-		t.Fatalf("unacknowledged steering removed queued prompt: %v", err)
-	}
-	if err := st.AcknowledgeTurnCommand(ctx, binding, command.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.RecordSteeredTurn(ctx, params); err != nil {
-		t.Fatal(err)
-	}
-	other, err := st.EnqueueTurn(ctx, binding.SessionID, "different content", time.Now())
+	command, err := st.RequestBoundSteer(ctx, binding.SessionID, binding.GenerationID, binding.Owner, queued, turn.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	params.TurnID = other
+	params := RecordSteeredTurnParams{SessionID: binding.SessionID, TurnID: queued, IntoTurnID: turn.TurnID}
+	if err := st.AcknowledgeTurnCommand(ctx, binding, command.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.RecordSteeredTurn(ctx, params); !errors.Is(err, ErrTurnNotSteerable) {
-		t.Fatalf("receipt retired different queued content: %v", err)
+		t.Fatalf("receipt alone retired source prompt: %v", err)
+	}
+	if _, err := st.ReleaseParkedTurn(ctx, ReleaseParkedTurnParams{SessionID: binding.SessionID, TurnID: queued}); err == nil {
+		t.Fatal("unsettled steering allowed redispatch")
+	}
+	if _, err := st.RecordSteeringOutcome(ctx, binding.SessionID, binding.GenerationID, binding.Owner, turn.TurnID, execution.SteeringOutcome{CommandID: command.ID, Status: "delivered"}); err != nil {
+		t.Fatal(err)
 	}
 }

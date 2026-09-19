@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/store"
 )
 
@@ -360,6 +361,25 @@ func (p *Processor) handle(ctx context.Context, inbox Transport, scope Scope, en
 	now := p.now()
 	key := stateKey(envelope.SessionID, envelope.GenerationID)
 	switch envelope.Type {
+	case "turn_control_result":
+		if envelope.TurnID == nil {
+			return protocolErrorf("control result requires original turn")
+		}
+		var result execution.SteeringOutcome
+		if err := json.Unmarshal(envelope.Payload, &result); err != nil {
+			return protocolError(err)
+		}
+		repository, ok := p.Store.(interface {
+			RecordSteeringOutcome(context.Context, string, string, string, int64, execution.SteeringOutcome) (int64, error)
+		})
+		if !ok {
+			return protocolErrorf("control result store unavailable")
+		}
+		id, err := repository.RecordSteeringOutcome(ctx, envelope.SessionID, envelope.GenerationID, p.Owner, *envelope.TurnID, result)
+		if err == nil && id != 0 {
+			p.afterCommit(ctx, envelope, id)
+		}
+		return err
 	case TypeHello:
 		if _, _, err := p.validateHello(ctx, envelope); err != nil {
 			return err

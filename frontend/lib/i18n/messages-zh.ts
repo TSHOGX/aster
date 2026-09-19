@@ -120,6 +120,7 @@ export const ZH: Record<MessageKey, string> = {
   // 标注被「停止」暂存的队列行：它们在等用户，不是在等智能体。
   // 不标注的话，看起来像马上就会执行，用户会一直干等。
   "composer.queueParked": "等待你手动发送",
+  "composer.queueSteeringPending": "正在确认发送到当前轮次",
   "composer.unavailable": "此会话无法接收消息。",
   "composer.hint": "Enter 发送 · Shift+Enter 换行",
 

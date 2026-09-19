@@ -289,6 +289,15 @@ CREATE TABLE IF NOT EXISTS execution_turn_commands (
  acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
  created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS execution_steering (
+ command_id TEXT PRIMARY KEY REFERENCES execution_turn_commands(command_id),
+ queued_turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id),
+ outcome TEXT NOT NULL DEFAULT 'pending' CHECK(outcome IN ('pending','delivered','rejected','unknown')),
+ message_id INTEGER REFERENCES messages(id),
+ event_id INTEGER REFERENCES events(event_id)
+);
+
 CREATE TABLE IF NOT EXISTS bridge_stream_receipts (
   backend_id TEXT NOT NULL,
   generation_id TEXT NOT NULL,
@@ -849,6 +858,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS turns_session_sequence_uq
 
 CREATE INDEX IF NOT EXISTS turns_session_status_sequence_idx
   ON turns (session_id, status, sequence);
+
+CREATE TRIGGER IF NOT EXISTS steering_pending_turn_guard BEFORE UPDATE OF status,auto_dispatch ON turns
+WHEN EXISTS(SELECT 1 FROM execution_steering s WHERE s.queued_turn_id=NEW.id AND s.outcome='pending')
+ AND (NEW.status!='queued' OR NEW.auto_dispatch!=0)
+BEGIN SELECT RAISE(ABORT,'steering outcome unresolved'); END;
+CREATE TRIGGER IF NOT EXISTS steering_runtime_revision_insert AFTER INSERT ON execution_steering
+BEGIN UPDATE sessions SET turn_revision=turn_revision+1 WHERE id=(SELECT session_id FROM turns WHERE id=NEW.queued_turn_id); END;
+CREATE TRIGGER IF NOT EXISTS steering_runtime_revision_update AFTER UPDATE OF outcome ON execution_steering
+WHEN NEW.outcome!=OLD.outcome
+BEGIN UPDATE sessions SET turn_revision=turn_revision+1 WHERE id=(SELECT session_id FROM turns WHERE id=NEW.queued_turn_id); END;
 
 CREATE TRIGGER IF NOT EXISTS workspace_fence_turn_insert BEFORE INSERT ON turns
 WHEN NEW.status IN ('queued','leased','running') AND EXISTS(

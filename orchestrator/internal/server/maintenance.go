@@ -594,6 +594,8 @@ func (s *Server) cleanupGenerationResources(ctx context.Context, sessionID, gene
 func (s *Server) handleBridgeCommittedEnvelope(ctx context.Context, envelope bridge.Envelope, eventID int64) {
 	s.publishDurableEvent(ctx, eventID)
 	switch envelope.Type {
+	case "turn_control_result":
+		s.publishSessionRuntimeFromStore(ctx, envelope.SessionID)
 	case bridge.TypeEmitOutput:
 		if err := s.projectBridgeRecords(ctx, 128); err != nil {
 			s.log.Warn("bridge projection pending", "error", err)
