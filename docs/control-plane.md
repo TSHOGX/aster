@@ -282,6 +282,9 @@ identity. Event ID and sequence deduplication, payload-digest checks, reconcilia
 requests and cursor progress commit together. A contradictory replay rolls back
 the whole page. Historical events never overwrite an environment's accepted
 placement epoch or mutation revision; they schedule current inspection instead.
+An identical inbox replay advances a rewound cursor without repeating the
+invalidation, so readiness obtained after the original event remains valid. A
+new event still invalidates readiness, and contradictory replay still fails.
 
 The Khora SDK discards typed bounds on a 410 response, so the adapter obtains a
 fresh typed window with `Events(after=0, limit=1)`. The reconciler persists that

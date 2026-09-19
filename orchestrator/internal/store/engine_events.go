@@ -96,6 +96,12 @@ func (s *Store) CommitEngineEvents(ctx context.Context, identity string, expecte
 			if sequence != event.Sequence || digest != previous {
 				return 0, fmt.Errorf("contradictory engine event replay")
 			}
+			// The original inbox transaction already applied this invalidation.
+			// Reapplying it could revoke readiness obtained after that event was
+			// reconciled. Resync can rewind the cursor, so still advance through
+			// previously committed events without replaying their side effects.
+			current = max(current, event.Sequence)
+			continue
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return 0, err
 		} else {

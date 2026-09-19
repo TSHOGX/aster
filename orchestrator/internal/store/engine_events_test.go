@@ -4,10 +4,61 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sandbox"
 )
+
+func TestReplayedEngineEventDoesNotInvalidateLaterReadiness(t *testing.T) {
+	ctx := context.Background()
+	st, _, b, observed := boundExecutionFixture(t)
+	if err := st.ObserveExecutionProcess(ctx, observed); err != nil {
+		t.Fatal(err)
+	}
+	event := sandbox.Event{ID: "creation", Sequence: 2, SandboxID: b.SandboxID, Kind: "created", Epoch: b.Epoch}
+	if _, err := st.CommitEngineEvents(ctx, b.StoreID, 0, []sandbox.Event{event}); err != nil {
+		t.Fatal(err)
+	}
+	sequence := event.Sequence
+	observed.ReconciledEventSequence = &sequence
+	if err := st.AcceptExecutionBinding(ctx, observed); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.GetSessionRuntimeSnapshot(ctx, b.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rewind := range []bool{false, true} {
+		cursor := event.Sequence
+		if rewind {
+			if err := st.BeginEngineResync(ctx, b.StoreID, cursor, 1, 2); err != nil {
+				t.Fatal(err)
+			}
+			cursor = 1
+		}
+		if after, err := st.CommitEngineEvents(ctx, b.StoreID, cursor, []sandbox.Event{event}); err != nil || after != event.Sequence {
+			t.Fatalf("replay cursor: %d %v", after, err)
+		}
+		if err := st.AssertExecutionAccepted(ctx, b.GenerationID, b.Owner, time.Now()); err != nil {
+			t.Fatalf("duplicate event revoked later readiness: %v", err)
+		}
+		if after, err := st.GetSessionRuntimeSnapshot(ctx, b.SessionID); err != nil || after.Revision != before.Revision {
+			t.Fatalf("duplicate event changed public revision: %+v %v", after, err)
+		}
+	}
+	changed := event
+	changed.Kind = "paused"
+	if _, err := st.CommitEngineEvents(ctx, b.StoreID, sequence, []sandbox.Event{changed}); err == nil {
+		t.Fatal("duplicate side-effect suppression accepted contradictory history")
+	}
+	if _, err := st.CommitEngineEvents(ctx, b.StoreID, sequence, []sandbox.Event{event, {ID: "later", Sequence: 3, SandboxID: b.SandboxID, Kind: "paused", Epoch: b.Epoch}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AssertExecutionAccepted(ctx, b.GenerationID, b.Owner, time.Now()); err == nil {
+		t.Fatal("new event did not invalidate readiness")
+	}
+}
 
 func TestEngineEventInboxDedupAndCursorCommitAreAtomic(t *testing.T) {
 	ctx := context.Background()
