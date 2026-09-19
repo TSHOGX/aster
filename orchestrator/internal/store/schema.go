@@ -259,6 +259,14 @@ CREATE TABLE IF NOT EXISTS workspace_guest_mutations (
  issued INTEGER NOT NULL DEFAULT 0 CHECK(issued IN (0,1))
 );
 
+CREATE TABLE IF NOT EXISTS workspace_write_maintenance (
+ mutation_id TEXT PRIMARY KEY REFERENCES workspace_mutations(operation_id),
+ environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
+ stage TEXT NOT NULL CHECK(stage IN ('resuming','writing','pausing','complete')),
+ operation_id TEXT NOT NULL DEFAULT '',
+ outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','succeeded','failed'))
+);
+
 CREATE TABLE IF NOT EXISTS bridge_streams (
   backend_id TEXT NOT NULL,
   session_id TEXT NOT NULL REFERENCES sessions(id),

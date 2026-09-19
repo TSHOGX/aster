@@ -152,7 +152,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Content: preparedUploads})
+	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, MaxActive: 2, Content: preparedUploads})
 	srv.nativeStateValidator = func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), "native-state-"+driver+"-"+fmt.Sprint(turn), guestfiles.Files{Backend: backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	}
@@ -574,8 +574,89 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			}
 		}
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
+		if driver == "sh" {
+			verifyKhoraPausedWrite(t, ctx, srv, st, backend, preparedUploads, session.ID, leaseOwner)
+			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+			if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner); err != nil {
+				t.Fatalf("normal session resume after paused upload: %v", err)
+			}
+		}
 	}
 
+}
+
+type lostWorkspaceLifecycle struct {
+	sandbox.Lifecycle
+	resume, pause bool
+}
+
+func (b *lostWorkspaceLifecycle) Resume(ctx context.Context, r sandbox.Reference) (sandbox.Observation, error) {
+	observed, err := b.Lifecycle.Resume(ctx, r)
+	if err == nil && b.resume {
+		b.resume = false
+		return sandbox.Observation{}, &sandbox.Error{Class: sandbox.Unavailable, Cause: errors.New("injected lost workspace resume reply")}
+	}
+	return observed, err
+}
+func (b *lostWorkspaceLifecycle) Pause(ctx context.Context, r sandbox.Reference) (sandbox.Observation, error) {
+	observed, err := b.Lifecycle.Pause(ctx, r)
+	if err == nil && b.pause {
+		b.pause = false
+		return sandbox.Observation{}, &sandbox.Error{Class: sandbox.Unavailable, Cause: errors.New("injected lost workspace pause reply")}
+	}
+	return observed, err
+}
+func verifyKhoraPausedWrite(t *testing.T, ctx context.Context, srv *Server, st *store.Store, backend interface {
+	sandbox.Processes
+	sandbox.Lifecycle
+}, content *prepared.Store, session, owner string) {
+	t.Helper()
+	process := &lostReplacementBackend{Processes: backend, lose: true}
+	lifecycle := &lostWorkspaceLifecycle{Lifecycle: backend, resume: true, pause: true}
+	writer := sessionfiles.Writer{Repository: st, Backend: process, Lifecycle: lifecycle, Content: content, MaxActive: 2}
+	srv.SetWorkspaceWriter(writer)
+	request := httptest.NewRequest(http.MethodPut, "/artifacts/"+session+"/paused-upload.txt", strings.NewReader("offline replacement")).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
+	response := httptest.NewRecorder()
+	srv.writeArtifact(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("lost offline resume HTTP outcome: %d %s", response.Code, response.Body.String())
+	}
+	mutations, err := st.ListUnresolvedWorkspaceMutations(ctx)
+	if err != nil || len(mutations) != 1 {
+		t.Fatalf("offline upload intent: %+v %v", mutations, err)
+	}
+	for _, fault := range []string{"helper reply", "pause reply"} {
+		if _, err := writer.Recover(ctx, mutations[0].ID, owner); err == nil {
+			t.Fatalf("lost %s ignored", fault)
+		}
+		if _, err := st.EnqueueTurn(ctx, session, "must wait for complete offline upload", time.Now()); err == nil {
+			t.Fatal("offline upload released turn fence before final pause")
+		}
+	}
+	if _, err := writer.Recover(ctx, mutations[0].ID, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Recover(ctx, mutations[0].ID, owner); err != nil {
+		t.Fatal(err)
+	}
+	if process.starts != 1 {
+		t.Fatalf("offline upload retransmitted: %d", process.starts)
+	}
+	var active int
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM execution_bindings WHERE session_id=? AND state!='retired'`, session).Scan(&active); err != nil || active != 0 {
+		t.Fatalf("offline write launched agent: %d %v", active, err)
+	}
+	assertIntegrationCapacity(t, ctx, st, 0)
+	reader, _, status, message := srv.openArtifactFile(ctx, session, "paused-upload.txt", accessOwner)
+	if status != 0 {
+		t.Fatalf("offline upload read: %d %s", status, message)
+	}
+	data, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(data) != "offline replacement" {
+		t.Fatalf("offline upload bytes: %q %v", data, err)
+	}
+	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, Content: content, MaxActive: 2})
 }
 
 type lostReplacementBackend struct {
@@ -611,7 +692,10 @@ func (s lostReplacementStream) Next() (sandbox.ProcessFrame, error) {
 	return frame, err
 }
 
-func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, st *store.Store, backend sandbox.Processes, content *prepared.Store, session, owner string) {
+func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, st *store.Store, backend interface {
+	sandbox.Processes
+	sandbox.Lifecycle
+}, content *prepared.Store, session, owner string) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPut, "/artifacts/"+session+"/nested/uploaded.txt", strings.NewReader("first upload")).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
 	response := httptest.NewRecorder()
@@ -684,7 +768,7 @@ func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, s
 	if err != nil || string(raw) != changed || fault.starts != 2 {
 		t.Fatalf("failed recovery overwrote later content: %q starts=%d %v", raw, fault.starts, err)
 	}
-	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Content: content})
+	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, MaxActive: 2, Content: content})
 }
 
 func verifyKhoraWorkspaceDownload(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, session, owner string, paused bool) {

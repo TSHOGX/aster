@@ -19,7 +19,7 @@ func TestPreparedGuestMutationFencesTurnsLifecycleAndStaleOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := workspace.PreparedContent{Digest: strings.Repeat("a", 64), Size: 42}
-	p, err := st.BeginGuestWorkspaceMutation(ctx, workspace.Mutation{ID: "upload", SessionID: binding.SessionID, Owner: owner, Path: "nested/file"}, content)
+	p, err := st.BeginGuestWorkspaceMutation(ctx, workspace.Mutation{ID: "upload", SessionID: binding.SessionID, Owner: owner, Path: "nested/file"}, content, 2)
 	if err != nil {
 		t.Fatal(err)
 	}

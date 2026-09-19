@@ -242,7 +242,9 @@ func (s *Store) BeginRetainedExecutionResume(ctx context.Context, generation, ow
 	}
 	if pause.Fence != environment.Fence {
 		var maintenancePause string
-		if err := tx.QueryRowContext(ctx, `SELECT last_pause_operation_id FROM native_capture_activations WHERE environment_id=? AND stage IN ('complete','requested') AND last_pause_operation_id!=''`, environment.ID).Scan(&maintenancePause); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT o.operation_id FROM environment_operations o WHERE o.environment_id=? AND o.fence=? AND o.kind='pause' AND o.state='succeeded' AND (
+ EXISTS(SELECT 1 FROM native_capture_activations c WHERE c.environment_id=o.environment_id AND c.stage IN ('complete','requested') AND c.last_pause_operation_id=o.operation_id) OR
+ EXISTS(SELECT 1 FROM workspace_write_maintenance w WHERE w.environment_id=o.environment_id AND w.stage='complete' AND w.operation_id=o.operation_id))`, environment.ID, environment.Fence).Scan(&maintenancePause); err != nil {
 			return execution.Operation{}, err
 		}
 		pause, err = operationWith(ctx, tx, maintenancePause)

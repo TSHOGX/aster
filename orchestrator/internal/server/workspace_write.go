@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/google/uuid"
+	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/store"
 	"io"
 	"net/http"
@@ -46,6 +47,8 @@ func writeWorkspaceStatus(err error) (int, string) {
 		return http.StatusRequestEntityTooLarge, err.Error()
 	case errors.Is(err, workspace.ErrUncertain):
 		return http.StatusServiceUnavailable, err.Error()
+	case sandbox.Is(err, sandbox.Unavailable), sandbox.Is(err, sandbox.Uncertain), sandbox.Is(err, sandbox.Capacity):
+		return http.StatusServiceUnavailable, "workspace backend unavailable"
 	}
 	return http.StatusInternalServerError, err.Error()
 }

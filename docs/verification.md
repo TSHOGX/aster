@@ -183,3 +183,6 @@ The live shell case also writes through the HTTP editor handler, injects a lost
 helper completion reply, and verifies recovery without a second replacement.
 A second fault case changes the destination independently before recovery and
 checks that the changed content survives and the original mutation becomes failed.
+The paused-upload case injects lost resume, replacement and pause replies in one
+workflow, verifies exactly one replacement process, reads the result without
+compute, and then resumes a normal agent in the retained sandbox.

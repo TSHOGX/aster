@@ -111,6 +111,26 @@ func (s *Store) FinishWorkspaceMutation(ctx context.Context, p workspace.Mutatio
 				return fmt.Errorf("workspace result differs from prepared content")
 			}
 		}
+		var maintenance int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM workspace_write_maintenance WHERE mutation_id=?`, p.ID).Scan(&maintenance); err != nil {
+			return err
+		}
+		if maintenance != 0 && p.State != "uncertain" {
+			var stage, outcome string
+			if err := tx.QueryRowContext(ctx, `SELECT stage,outcome FROM workspace_write_maintenance WHERE mutation_id=?`, p.ID).Scan(&stage, &outcome); err != nil {
+				return err
+			}
+			if stage == "pausing" && outcome == p.State && result == string(raw) && reason == p.Error {
+				return tx.Commit()
+			}
+			if stage != "writing" {
+				return fmt.Errorf("workspace lifecycle is not ready to settle file result")
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE workspace_write_maintenance SET stage='pausing',operation_id='',outcome=? WHERE mutation_id=?`, p.State, p.ID); err != nil {
+				return err
+			}
+			p.State = "active" // Keep turn admission fenced until verified pause.
+		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE workspace_mutations SET state=?,result=?,error=?,updated_at=? WHERE operation_id=? AND owner=?`, p.State, string(raw), p.Error, formatTime(time.Now().UTC()), p.ID, p.Owner)
 	if err != nil {

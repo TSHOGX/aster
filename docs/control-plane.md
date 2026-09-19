@@ -517,4 +517,15 @@ for that operation, then verifies and synchronizes the destination. Matching
 bytes settle success; a definitive mismatch settles failure without overwriting
 later content. Unavailable termination or durability evidence keeps the fence.
 An issued write never retransmits its input automatically. Prepared content is
-retained for recovery; reclamation and paused-write maintenance are not yet wired.
+retained for recovery; reclamation is not yet wired.
+
+For an existing paused workspace, the write service atomically reserves active
+capacity and a conditional maintenance-resume intent with the content mutation.
+It starts no agent and grants no service access. The helper uses the newly
+observed epoch. File success or failure is recorded while the mutation fence
+stays held; a conditional pause must settle before the final result releases
+turn admission. Lost resume, helper or pause replies preserve their original
+identities. A replaced product owner can continue the same workflow. Preparation
+failure before helper issuance also completes a verified pause. Ordinary session
+resume uses the last verified upload-maintenance pause. Provisioning a workspace
+for a session that has never started remains a separate integration step.

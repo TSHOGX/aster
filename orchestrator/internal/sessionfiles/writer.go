@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/workspace"
 	"harness-platform/orchestrator/internal/workspace/guest"
@@ -14,9 +15,17 @@ import (
 )
 
 type Writer struct {
-	Repository workspace.GuestMutationRepository
+	Repository WriterRepository
 	Backend    sandbox.Processes
+	Lifecycle  sandbox.Lifecycle
 	Content    workspace.PreparedStore
+	MaxActive  int
+}
+
+type WriterRepository interface {
+	workspace.GuestMutationRepository
+	execution.EnvironmentRepository
+	NextGuestWorkspaceMaintenance(context.Context, string, string) (execution.WorkspaceMaintenance, error)
 }
 
 func (w Writer) WriteSession(ctx context.Context, session, owner, path string, source io.Reader, limit int64) (workspace.File, error) {
@@ -30,29 +39,71 @@ func (w Writer) WriteSession(ctx context.Context, session, owner, path string, s
 	if err != nil {
 		return workspace.File{}, err
 	}
-	mutation, err := w.Repository.BeginGuestWorkspaceMutation(ctx, workspace.Mutation{ID: uuid.NewString(), SessionID: session, Owner: owner, Path: path}, content)
+	mutation, err := w.Repository.BeginGuestWorkspaceMutation(ctx, workspace.Mutation{ID: uuid.NewString(), SessionID: session, Owner: owner, Path: path}, content, w.MaxActive)
 	if err != nil {
 		return workspace.File{}, err
 	}
-	return w.apply(ctx, mutation)
+	return w.Recover(ctx, mutation.ID, owner)
 }
 func (w Writer) Recover(ctx context.Context, id, owner string) (workspace.File, error) {
 	if w.Repository == nil || w.Backend == nil || w.Content == nil {
 		return workspace.File{}, fmt.Errorf("workspace writer ports required")
 	}
-	mutation, err := w.Repository.LoadGuestWorkspaceMutation(ctx, id, owner)
-	if err != nil {
-		return workspace.File{}, err
+	for {
+		mutation, err := w.Repository.LoadGuestWorkspaceMutation(ctx, id, owner)
+		if err != nil {
+			return workspace.File{}, err
+		}
+		if mutation.State == "succeeded" {
+			return mutation.File, nil
+		}
+		if mutation.State == "failed" {
+			return mutation.File, fmt.Errorf("workspace mutation failed: %s", mutation.Error)
+		}
+		if mutation.Maintenance {
+			if w.Lifecycle == nil {
+				return workspace.File{}, fmt.Errorf("workspace maintenance lifecycle port required")
+			}
+			state, err := w.Repository.NextGuestWorkspaceMaintenance(ctx, id, owner)
+			if err != nil {
+				return workspace.File{}, err
+			}
+			if state.Stage == "complete" {
+				continue
+			}
+			if state.Stage != "writing" {
+				op := state.Operation
+				if _, err := (execution.EnvironmentService{Repository: w.Repository, Backend: w.Lifecycle}).Run(ctx, execution.OperationIntent{ID: op.ID, EnvironmentID: op.EnvironmentID, Kind: op.Kind, IdempotencyKey: op.IdempotencyKey, ExpectedFence: op.Fence - 1, Request: op.Request}); err != nil {
+					return workspace.File{}, err
+				}
+				continue
+			}
+			mutation, err = w.Repository.LoadGuestWorkspaceMutation(ctx, id, owner)
+			if err != nil {
+				return workspace.File{}, err
+			}
+		}
+		var file workspace.File
+		if !mutation.Issued {
+			file, err = w.apply(ctx, mutation)
+		} else {
+			file, err = w.reconcile(ctx, mutation)
+		}
+		if err != nil && mutation.Maintenance {
+			state, nextErr := w.Repository.NextGuestWorkspaceMaintenance(ctx, id, owner)
+			if nextErr != nil {
+				return file, errors.Join(err, nextErr)
+			}
+			if state.Stage == "pausing" {
+				continue
+			}
+		}
+		if err != nil || !mutation.Maintenance {
+			return file, err
+		}
 	}
-	if mutation.State == "succeeded" {
-		return mutation.File, nil
-	}
-	if mutation.State == "failed" {
-		return mutation.File, fmt.Errorf("workspace mutation failed: %s", mutation.Error)
-	}
-	if !mutation.Issued {
-		return w.apply(ctx, mutation)
-	}
+}
+func (w Writer) reconcile(ctx context.Context, mutation workspace.GuestMutation) (workspace.File, error) {
 	files := guest.Files{Backend: w.Backend, Reference: mutation.Reference, Root: "/workspace"}
 	if err := files.StopReplacement(ctx, mutation.ID); err != nil {
 		return workspace.File{}, w.uncertain(ctx, mutation, err)
@@ -79,7 +130,11 @@ func (w Writer) Recover(ctx context.Context, id, owner string) (workspace.File, 
 func (w Writer) apply(ctx context.Context, p workspace.GuestMutation) (workspace.File, error) {
 	content, err := w.Content.Open(ctx, p.Content)
 	if err != nil {
-		return workspace.File{}, w.uncertain(ctx, p, err)
+		// Nothing was issued remotely, so this preparation failure has a known
+		// outcome. Maintenance still needs its final verified pause.
+		p.State = "failed"
+		p.Error = err.Error()
+		return workspace.File{}, errors.Join(err, w.Repository.FinishWorkspaceMutation(ctx, p.Mutation))
 	}
 	defer content.Close()
 	if err := w.Repository.MarkGuestWorkspaceMutationIssued(ctx, p); err != nil {

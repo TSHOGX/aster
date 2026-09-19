@@ -16,12 +16,13 @@ type PreparedStore interface {
 }
 type GuestMutation struct {
 	Mutation
-	Reference sandbox.Reference
-	Content   PreparedContent
-	Issued    bool
+	Reference   sandbox.Reference
+	Content     PreparedContent
+	Issued      bool
+	Maintenance bool
 }
 type GuestMutationRepository interface {
-	BeginGuestWorkspaceMutation(context.Context, Mutation, PreparedContent) (GuestMutation, error)
+	BeginGuestWorkspaceMutation(context.Context, Mutation, PreparedContent, int) (GuestMutation, error)
 	LoadGuestWorkspaceMutation(context.Context, string, string) (GuestMutation, error)
 	MarkGuestWorkspaceMutationIssued(context.Context, GuestMutation) error
 	FinishWorkspaceMutation(context.Context, Mutation) error
