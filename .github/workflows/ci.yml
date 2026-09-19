@@ -6,9 +6,14 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      KHORA_READ_TOKEN:
+        required: true
 
 jobs:
   backend:
+    env:
+      GOPRIVATE: github.com/TSHOGX/khora
     runs-on: ubuntu-latest
     # The orchestrator runs as root in production (see docs/operations.md) and
     # its store/artifacts tests assert root ownership / chown directories
@@ -21,6 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Fetch pinned Go dependencies
+        env:
+          KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
+        run: ../scripts/fetch-go-dependencies.sh
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...

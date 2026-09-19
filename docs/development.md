@@ -67,3 +67,20 @@ the trigger, resulting behavior and validation. Keep plans in Issues and update
 current reference docs with implementation, not proposal histories.
 
 [Verification](verification.md) lists the test commands and release checks.
+
+## Private engine dependency
+
+The Go module pins the private `TSHOGX/khora` repository at an immutable commit.
+Source builds need Git read access and `GOPRIVATE=github.com/TSHOGX/khora`.
+Developers can use their existing Git authentication. CI and reusable release
+verification require a `KHORA_READ_TOKEN` secret scoped to read that repository;
+`scripts/fetch-go-dependencies.sh` uses it only for the dependency download and
+removes its temporary credential helper afterward. The script never writes the
+credential into Git configuration or the source tree. Go dependency caches are
+not uploaded by these jobs.
+
+Root-owned fixture tests can reuse dependencies already fetched by the development
+user, for example `sudo env "GOPATH=$(go env GOPATH)" GOPROXY=off go -C orchestrator
+test ./...`. This avoids introducing another Git
+credential into the root account. The engine binary used by the Khora adapter
+must report build version `14174318159f` and enable `--manual-cold-recovery`.

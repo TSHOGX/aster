@@ -18,7 +18,11 @@ jobs:
   verify:
     needs: source
     uses: ./.github/workflows/ci.yml
+    secrets:
+      KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
   apps:
+    env:
+      GOPRIVATE: github.com/TSHOGX/khora
     needs: verify
     runs-on: ubuntu-22.04
     steps:
@@ -28,7 +32,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
-          cache-dependency-path: orchestrator/go.sum
+          cache: false
+      - name: Fetch pinned Go dependencies
+        env:
+          KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
+        run: scripts/fetch-go-dependencies.sh
       - run: python3 scripts/release/build-apps.py --version "$GITHUB_REF_NAME" --output /tmp/harness-release
       - uses: actions/upload-artifact@v4
         with:

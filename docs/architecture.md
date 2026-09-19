@@ -156,3 +156,23 @@ symlinks, verifies the final object is regular before opening it for I/O, and
 honors request cancellation. Replacing a directory entry does not redirect an
 already-open stream to the new object. Share blobs remain independent of their
 source workspace after capture.
+
+## Khora backend adapter
+
+`internal/sandbox` defines opaque sandbox references and lifecycle observations.
+Its Khora adapter uses the public Go HTTP client pinned to
+`14174318159f` (`v0.0.2-0.20260919064819-14174318159f`). It requires that build
+identity and manual cold recovery, pins the engine's durable store identity,
+uses conditional mutations, and inspects create results before accepting a
+binding. Pause succeeds only with a lost placement at the expected epoch;
+resume requires a newer active epoch. CPU and memory measurements remain absent
+when unavailable. Product-created environments explicitly disable engine idle
+and retention timers.
+
+The adapter permits plaintext HTTP only on loopback; remote control requires an
+authenticated TLS gateway supplied by the deployment. Fault tests cover lost
+create responses, stale replayed create IDs, backend rebuilds, stale mutation
+revisions, unresolved stop and distinct error classes. The server still uses the
+local execution backend until environment, process, workspace and gateway cutover
+is complete. Architecture guards prevent the application ports and Khora adapter
+from importing the embedded runtime, host command execution or engine internals.

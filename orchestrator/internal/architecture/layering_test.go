@@ -254,3 +254,53 @@ func moduleRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+func forbiddenApplicationDependency(root string, imports func(string) []string) string {
+	seen := map[string]bool{}
+	var visit func(string) string
+	visit = func(pkg string) string {
+		if seen[pkg] {
+			return ""
+		}
+		seen[pkg] = true
+		for _, dependency := range imports(pkg) {
+			if dependency == modulePrefix+"internal/runtime" || dependency == modulePrefix+"internal/server" || dependency == "os/exec" || dependency == "syscall" || dependency == "golang.org/x/sys/unix" || strings.HasPrefix(dependency, "github.com/TSHOGX/khora/internal/") {
+				return dependency
+			}
+			if strings.HasPrefix(dependency, modulePrefix) {
+				if bad := visit(dependency); bad != "" {
+					return bad
+				}
+			}
+		}
+		return ""
+	}
+	return visit(root)
+}
+
+func TestApplicationPortsCannotReachSubstrate(t *testing.T) {
+	root := moduleRoot(t)
+	imports := func(pkg string) []string {
+		set := productionImports(t, root, strings.TrimPrefix(pkg, modulePrefix))
+		var result []string
+		for dependency := range set {
+			result = append(result, dependency)
+		}
+		return result
+	}
+	for _, pkg := range []string{"internal/execution", "internal/sandbox", "internal/sandbox/khora", "internal/workspace", "internal/egress"} {
+		if bad := forbiddenApplicationDependency(modulePrefix+pkg, imports); bad != "" {
+			t.Errorf("%s reaches forbidden substrate dependency %s", pkg, bad)
+		}
+	}
+}
+
+func TestApplicationPortGuardRejectsIndirectSubstrateAccess(t *testing.T) {
+	root, helper := modulePrefix+"internal/execution", modulePrefix+"internal/helper"
+	for _, forbidden := range []string{modulePrefix + "internal/runtime", "os/exec", "syscall", "golang.org/x/sys/unix", "github.com/TSHOGX/khora/internal/lifecycle"} {
+		graph := map[string][]string{root: {helper}, helper: {forbidden}}
+		if got := forbiddenApplicationDependency(root, func(pkg string) []string { return graph[pkg] }); got != forbidden {
+			t.Fatalf("missed indirect substrate edge: %s", forbidden)
+		}
+	}
+}
