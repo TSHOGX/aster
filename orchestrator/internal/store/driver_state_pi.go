@@ -23,7 +23,8 @@ func bootstrapPiDriverState(driverStateBootstrapContext) (any, error) {
 }
 
 func validatePiDriverStatePayload(object map[string]any) error {
-	if sessionDir, _ := object["session_dir"].(string); sessionDir != agents.PiSessionDir {
+	sessionDir, _ := object["session_dir"].(string)
+	if sessionDir != agents.PiSessionDir && sessionDir != "/root/.pi/agent/sessions" {
 		return fmt.Errorf("pi driver state session_dir = %q", sessionDir)
 	}
 	switch got, _ := object["state_kind"].(string); got {
@@ -47,8 +48,8 @@ func validatePiDriverStatePayload(object map[string]any) error {
 			}
 		}
 		selectedFile, _ := object["selected_session_file"].(string)
-		if selectedFile != agents.PiSessionDir+"/"+rel {
-			return fmt.Errorf("pi driver state selected_session_file = %q, want %q", selectedFile, agents.PiSessionDir+"/"+rel)
+		if selectedFile != sessionDir+"/"+rel {
+			return fmt.Errorf("pi driver state selected_session_file = %q, want %q", selectedFile, sessionDir+"/"+rel)
 		}
 		if strings.TrimSpace(stringValue(object["selected_session_id"])) == "" {
 			return fmt.Errorf("pi driver state selected_session_id is required")

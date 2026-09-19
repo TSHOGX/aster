@@ -209,7 +209,8 @@ func ensureAllocationDriverStateTx(ctx context.Context, tx *sql.Tx, sessionID, g
 	if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(*)
 FROM runtime_generations g
-JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
   AND a.driver_id = ?
   AND g.generation_id <> ?`, sessionID, driverID, generationID).Scan(&priorGenerations); err != nil {
@@ -283,9 +284,10 @@ func validateDriverStateRow(state driverStateRow) error {
 func currentDriverStateTokenTx(ctx context.Context, tx *sql.Tx, sessionID, generationID string) (DriverStateToken, error) {
 	var driverID string
 	if err := tx.QueryRowContext(ctx, `
-SELECT a.driver_id
+SELECT COALESCE(b.driver_id,a.driver_id)
 FROM runtime_generations g
-JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
   AND g.generation_id = ?`, sessionID, generationID).Scan(&driverID); err != nil {
 		return DriverStateToken{}, err
@@ -327,10 +329,11 @@ func applyDriverStateUpdateTx(ctx context.Context, tx *sql.Tx, p CompleteTurnPar
 
 	var generationDriver string
 	if err := tx.QueryRowContext(ctx, `
-SELECT a.driver_id
+SELECT COALESCE(b.driver_id,a.driver_id)
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
-JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
   AND g.generation_id = ?
   AND g.lease_owner = ?
@@ -398,10 +401,11 @@ func synthesizeCompletedDriverStateUpdateTx(ctx context.Context, tx *sql.Tx, p C
 	}
 	var driverID string
 	if err := tx.QueryRowContext(ctx, `
-SELECT a.driver_id
+SELECT COALESCE(b.driver_id,a.driver_id)
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
-JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
+LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
   AND g.generation_id = ?
   AND g.lease_owner = ?

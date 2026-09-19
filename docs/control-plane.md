@@ -340,3 +340,17 @@ claim/start/output/completion, replayable message projection and durable receipt
 watermark. Its assertions require no legacy runtime, network or source-IP context
 rows. HTTP and scheduler selection still use the legacy entry path pending the
 controller cutover.
+
+Retained Pi executions validate native state through the guest helper, using the
+accepted backend/sandbox/epoch reference and `/root/.pi/agent/sessions`. The helper
+checks the native JSONL session header ID and performs the file/parent durability
+barrier before returning a digest. Store completion checks the execution's pinned
+specification digest instead of a legacy host contract, and successful Pi turns
+must carry native state advancement. The completion lease is rechecked at the
+current time after validation finishes.
+
+Runtime snapshots and active-sandbox admission counts now include opaque
+execution bindings. Accepted bindings appear live without legacy resource rows;
+starting bindings appear starting. Epoch/fence mismatch or pending engine
+reconciliation cannot appear live. Binding acceptance and invalidation advance the
+same session revision used by HTTP/SSE convergence.

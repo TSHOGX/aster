@@ -1,5 +1,6 @@
 """Descriptor-relative guest file operations; no engine/private host paths."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -85,19 +86,31 @@ def regular_fd(parent, name):
         os.close(descriptor)
 
 
-def file_digest(root, name, sync=False):
+def file_digest(root, name, sync=False, native_id=None):
     parent, leaf = parent_fd(root, name)
     try:
         descriptor = regular_fd(parent, leaf)
         try:
             digest = hashlib.sha256()
             size = 0
+            header = bytearray()
+            header_complete = False
             while True:
                 chunk = os.read(descriptor, 1 << 20)
                 if not chunk:
                     break
                 size += len(chunk)
                 digest.update(chunk)
+                if native_id is not None and not header_complete:
+                    prefix, separator, _ = chunk.partition(b'\n')
+                    header.extend(prefix)
+                    if len(header) > 65536:
+                        raise ValueError('native session header exceeds limit')
+                    header_complete = bool(separator)
+            if native_id is not None:
+                identity = json.loads(header)
+                if not native_id or identity.get('type') != 'session' or identity.get('id') != native_id:
+                    raise ValueError('native session identity mismatch')
             if sync:
                 os.fsync(descriptor)
                 os.fsync(parent)

@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--size', type=int)
     parser.add_argument('--sha256')
     parser.add_argument('--key')
+    parser.add_argument('--native-id')
     parser.add_argument('--offset', type=int, default=0)
     parser.add_argument('--length', type=int)
     args = parser.parse_args()
@@ -27,7 +28,9 @@ def main():
         elif args.operation == 'stat':
             result = metadata(root, args.path)
         elif args.operation == 'sync':
-            result = file_digest(root, args.path, sync=True)
+            if args.native_id is not None and args.root != '/root/.pi/agent/sessions':
+                raise ValueError('native validation requires the Pi session root')
+            result = file_digest(root, args.path, sync=True, native_id=args.native_id)
         else:
             read_range(root, args.path, sys.stdout.buffer, args.offset, args.length)
             return

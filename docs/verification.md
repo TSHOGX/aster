@@ -132,7 +132,7 @@ built application template, run:
 KHORA_INTEGRATION_ENDPOINT=http://127.0.0.1:18191 \
 KHORA_INTEGRATION_TEMPLATE=battery \
 go -C orchestrator test -tags khoraintegration ./internal/sandbox/khora ./internal/server \
-  -run '^TestKhora(TemplateShellAndNativeHistory|ExecutionWorkerCommitsTurnMessagesAndJournal)$' -count=1 -v
+  -run '^TestKhora(TemplateShellAndNativeHistory|ExecutionWorkerCommitsTurnMessagesAndJournal|PiExecutionWorkerCommitsNativeState)$' -count=1 -v
 ```
 
 This test creates synthetic volumes and a sandbox, runs the shell through the
@@ -142,3 +142,8 @@ It uses the real Pi SessionManager to seed history without a model request.
 It does not establish model/Doris/OBS gateway integration or a fresh reproducible
 release build. Use a disposable engine: the fixture explicitly destroys only
 its own sandbox and volumes during cleanup.
+
+The Pi worker case uses a local synthetic Anthropic-compatible event stream,
+without upstream credentials. It verifies product turn/message/journal commits
+and native-state advancement through the confined helper. This is driver and
+control-plane acceptance, not production model gateway or entitlement acceptance.

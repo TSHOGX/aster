@@ -89,10 +89,24 @@ func (f Files) ReplacePrepared(ctx context.Context, key, name string, size int64
 }
 
 func (f Files) Sync(ctx context.Context, key, name string) (workspace.File, error) {
+	return f.sync(ctx, key, name, "")
+}
+func (f Files) SyncNative(ctx context.Context, key, name, nativeID string) (workspace.File, error) {
+	if nativeID == "" || f.Root != "/root/.pi/agent/sessions" {
+		return workspace.File{}, fmt.Errorf("selected native identity and Pi session root required")
+	}
+	return f.sync(ctx, key, name, nativeID)
+}
+
+func (f Files) sync(ctx context.Context, key, name, nativeID string) (workspace.File, error) {
 	if err := f.validate(name); err != nil {
 		return workspace.File{}, err
 	}
-	output, err := f.call(ctx, key, []string{"--operation", "sync", "--path", name}, nil, 4096)
+	args := []string{"--operation", "sync", "--path", name}
+	if nativeID != "" {
+		args = append(args, "--native-id", nativeID)
+	}
+	output, err := f.call(ctx, key, args, nil, 4096)
 	if err != nil {
 		return workspace.File{}, err
 	}

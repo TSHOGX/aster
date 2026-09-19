@@ -766,6 +766,14 @@ CREATE TRIGGER IF NOT EXISTS revoke_completed_turn_grants AFTER UPDATE OF status
 WHEN NEW.status IN ('completed','failed','canceled')
 BEGIN UPDATE egress_grants SET state='revoked' WHERE turn_id=NEW.id; END;
 
+CREATE TRIGGER IF NOT EXISTS execution_binding_revision AFTER UPDATE OF state,process_handle,epoch ON execution_bindings
+WHEN NEW.state!=OLD.state OR NEW.process_handle!=OLD.process_handle OR NEW.epoch!=OLD.epoch
+BEGIN UPDATE sessions SET turn_revision=turn_revision+1 WHERE id=NEW.session_id; END;
+CREATE TRIGGER IF NOT EXISTS execution_invalidation_revision AFTER INSERT ON environment_reconcile_requests
+BEGIN UPDATE sessions SET turn_revision=turn_revision+1 WHERE id=(SELECT session_id FROM sandbox_environments WHERE environment_id=NEW.environment_id); END;
+CREATE TRIGGER IF NOT EXISTS execution_revalidated_revision AFTER DELETE ON environment_reconcile_requests
+BEGIN UPDATE sessions SET turn_revision=turn_revision+1 WHERE id=(SELECT session_id FROM sandbox_environments WHERE environment_id=OLD.environment_id); END;
+
 CREATE TABLE IF NOT EXISTS events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT,

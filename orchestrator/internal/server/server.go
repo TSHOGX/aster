@@ -62,17 +62,18 @@ const (
 )
 
 type Server struct {
-	cfg         config.Config
-	store       serverStore
-	runtime     runtimeDriver
-	watcher     *artifacts.Watcher
-	hub         *events.Hub
-	log         *slog.Logger
-	titler      *titler.Client
-	upgrader    websocket.Upgrader
-	ownerUUID   string
-	version     string
-	buildCommit string
+	nativeStateValidator func(context.Context, store.DriverStateValidationInput, int64) (workspace.File, error)
+	cfg                  config.Config
+	store                serverStore
+	runtime              runtimeDriver
+	watcher              *artifacts.Watcher
+	hub                  *events.Hub
+	log                  *slog.Logger
+	titler               *titler.Client
+	upgrader             websocket.Upgrader
+	ownerUUID            string
+	version              string
+	buildCommit          string
 
 	creds        *authRegistry
 	loginLimiter *auth.RateLimiter

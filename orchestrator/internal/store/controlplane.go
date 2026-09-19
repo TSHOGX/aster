@@ -958,6 +958,15 @@ func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, 
 			return 0, err
 		}
 	}
+	if bound != 0 && p.TerminalStatus == "completed" && p.DriverStateUpdate == nil {
+		binding, err := bindingWith(ctx, tx, p.GenerationID)
+		if err != nil {
+			return 0, err
+		}
+		if binding.Driver == "pi" {
+			return 0, permanentTurnCompletionf("completed Pi execution requires native state advancement")
+		}
+	}
 	var pending int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM bridge_ingress i
       LEFT JOIN bridge_projections bp ON bp.generation_id=i.generation_id AND bp.turn_id=i.turn_id AND bp.attempt=i.attempt

@@ -80,6 +80,18 @@ class GuestFilesystemTests(unittest.TestCase):
             finally:
                 os.close(descriptor)
 
+class NativeIdentityBarrierTests(unittest.TestCase):
+    def test_native_sync_checks_session_header_identity(self):
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / 'native.jsonl').write_text('{"type":"session","id":"native-id"}\n')
+            descriptor = files.open_root(root)
+            try:
+                self.assertEqual(files.file_digest(descriptor, 'native.jsonl', sync=True, native_id='native-id')['size'], 36)
+                with self.assertRaises(ValueError):
+                    files.file_digest(descriptor, 'native.jsonl', sync=True, native_id='other-id')
+            finally:
+                os.close(descriptor)
+
 
 if __name__ == '__main__':
     unittest.main()
