@@ -66,6 +66,7 @@ type ClaimNextTurnParams struct {
 }
 
 type BridgeProtocolEvidence struct {
+	RequireManifestDigest bool
 	DriverID              string
 	ProtocolVersion       int
 	TurnInputSchema       string

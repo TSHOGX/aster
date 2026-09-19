@@ -21,7 +21,7 @@ func (s BoundBridgeStore) BridgeProtocolEvidence(ctx context.Context, session, g
 	if binding.SessionID != session || binding.State == "retired" {
 		return BridgeProtocolEvidence{}, fmt.Errorf("bridge execution binding unavailable")
 	}
-	return BridgeProtocolEvidence{DriverID: binding.Driver, ProtocolVersion: binding.ProtocolVersion, TurnInputSchema: binding.TurnInputSchema, AgentManifestDigest: binding.ManifestDigest, RuntimeConfigDigest: binding.SpecDigest, SandboxContractDigest: binding.SpecDigest, ContractGateVersion: SandboxContractGateDriverManifest}, nil
+	return BridgeProtocolEvidence{RequireManifestDigest: true, DriverID: binding.Driver, ProtocolVersion: binding.ProtocolVersion, TurnInputSchema: binding.TurnInputSchema, AgentManifestDigest: binding.ManifestDigest, RuntimeConfigDigest: binding.SpecDigest, SandboxContractDigest: binding.SpecDigest, ContractGateVersion: SandboxContractGateDriverManifest}, nil
 }
 
 func (s BoundBridgeStore) ClaimNextTurn(ctx context.Context, p ClaimNextTurnParams) (TurnGrant, bool, error) {

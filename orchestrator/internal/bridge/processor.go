@@ -128,6 +128,7 @@ func grantDriverStatePayload(grant store.TurnGrant) *grantDriverState {
 }
 
 type helloPayload struct {
+	ManifestDigest  string `json:"manifest_digest,omitempty"`
 	ProtocolVersion int    `json:"protocol_version"`
 	DriverID        string `json:"driver_id"`
 	TurnInputSchema string `json:"turn_input_schema"`
@@ -662,6 +663,9 @@ func ValidateHelloPayload(ctx context.Context, st ProtocolEvidenceStore, envelop
 	}
 	if payload.DriverID != evidence.DriverID {
 		return helloPayload{}, store.BridgeProtocolEvidence{}, protocolErrorf("hello driver_id %q does not match generation driver %q", payload.DriverID, evidence.DriverID)
+	}
+	if evidence.RequireManifestDigest && payload.ManifestDigest != evidence.AgentManifestDigest {
+		return helloPayload{}, store.BridgeProtocolEvidence{}, protocolErrorf("guest template manifest differs from accepted release")
 	}
 	if evidence.ProtocolVersion != requiredProtocolVersion {
 		return helloPayload{}, store.BridgeProtocolEvidence{}, protocolErrorf("generation manifest bridge protocol_version %d is incompatible", evidence.ProtocolVersion)

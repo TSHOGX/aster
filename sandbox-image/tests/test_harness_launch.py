@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import hashlib
 import os
 from pathlib import Path
 import tempfile
@@ -12,6 +13,29 @@ spec.loader.exec_module(launch)
 
 
 class KhoraLauncherTests(unittest.TestCase):
+    def test_template_protocol_verifies_manifest_and_component_bytes(self):
+        with tempfile.TemporaryDirectory() as root:
+            files = {}
+            for name in ('/usr/local/bin/harness-bridge-client', '/usr/local/bin/harness-khora-launcher',
+                         '/usr/local/lib/harness_stream.py', '/usr/local/lib/harness_launch.py'):
+                path = Path(root) / name.lstrip('/')
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'component')
+                files[name] = 'sha256:' + hashlib.sha256(b'component').hexdigest()
+            metadata = {'schema_version': 1, 'runtime': {'backend': 'khora', 'engine_revision': '14174318159f',
+                                    'engine_module': 'v0.0.2-0.20260919064819-14174318159f',
+                                    'bridge_stream_version': 1, 'home': '/root', 'retained_overlay': True, 'files': files},
+                        'drivers': [{'driver_id': 'sh', 'bridge_protocol_version': 2, 'turn_input_schema': 'RunTurn',
+                                     'binary_path': '/usr/local/bin/harness-khora-launcher',
+                                     'installed_binary_digest': 'sha256:' + hashlib.sha256(b'component').hexdigest()}]}
+            manifest = Path(root) / 'manifest.json'
+            manifest.write_text(json.dumps(metadata))
+            protocol = launch.template_protocol('sh', manifest, Path(root))
+            canonical = json.dumps(metadata, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+            self.assertEqual(protocol['manifest_digest'], 'sha256:' + hashlib.sha256(canonical).hexdigest())
+            (Path(root) / 'usr/local/lib/harness_stream.py').write_bytes(b'changed')
+            with self.assertRaises(ValueError):
+                launch.template_protocol('sh', manifest, Path(root))
     def fixture(self, root):
         home, source, assets = Path(root) / 'root', Path(root) / 'config', Path(root) / 'assets'
         source.mkdir()

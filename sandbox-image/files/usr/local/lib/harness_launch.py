@@ -1,10 +1,60 @@
 """Application launch/configuration for retained Khora guest overlays."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import tempfile
 
 MAX_CONFIG_BYTES = 1 << 20
+
+
+def template_protocol(driver, manifest=Path('/etc/harness-image/agents.json'), component_root=Path('/')):
+    raw, metadata = _read_config(manifest)
+    if metadata.get('schema_version') != 1:
+        raise ValueError('guest template manifest schema is incompatible')
+    runtime = metadata.get('runtime') or {}
+    if (runtime.get('backend'), runtime.get('engine_revision'), runtime.get('bridge_stream_version'), runtime.get('home'), runtime.get('retained_overlay')) != ('khora', '14174318159f', 1, '/root', True):
+        raise ValueError('guest template runtime is incompatible')
+    if runtime.get('engine_module') != 'v0.0.2-0.20260919064819-14174318159f':
+        raise ValueError('guest template engine module is incompatible')
+    selected = [entry for entry in metadata.get('drivers', []) if entry.get('driver_id') == driver]
+    if len(selected) != 1 or selected[0].get('bridge_protocol_version') != 2 or selected[0].get('turn_input_schema') != 'RunTurn':
+        raise ValueError('guest template driver protocol is incompatible')
+    binary = Path(selected[0].get('binary_path', ''))
+    if not binary.is_absolute() or '..' in binary.parts:
+        raise ValueError('guest template driver binary path is invalid')
+    binary = component_root / binary.relative_to('/')
+    # Pi's installed executable is an npm symlink; its declared target bytes
+    # are still checked against the release manifest.
+    if not binary.is_file():
+        raise ValueError('guest template driver binary is missing')
+    with binary.open('rb') as source:
+        driver_digest = hashlib.sha256()
+        for chunk in iter(lambda: source.read(1 << 20), b''):
+            driver_digest.update(chunk)
+    if 'sha256:' + driver_digest.hexdigest() != selected[0].get('installed_binary_digest'):
+        raise ValueError('guest driver binary digest mismatch')
+    files = runtime.get('files') or {}
+    required = ('/usr/local/bin/harness-bridge-client', '/usr/local/bin/harness-khora-launcher',
+                '/usr/local/lib/harness_stream.py', '/usr/local/lib/harness_launch.py')
+    if any(path not in files for path in required):
+        raise ValueError('guest template component identity missing')
+    for name, expected in files.items():
+        path = Path(name)
+        if not path.is_absolute() or '..' in path.parts:
+            raise ValueError('guest template component path is invalid')
+        path = component_root / path.relative_to('/')
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('guest template component is not a regular file')
+        digest = hashlib.sha256()
+        with path.open('rb') as source:
+            for chunk in iter(lambda: source.read(1 << 20), b''):
+                digest.update(chunk)
+        if 'sha256:' + digest.hexdigest() != expected:
+            raise ValueError('guest template component digest mismatch')
+    canonical = json.dumps(metadata, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    return {'protocol_version': 2, 'driver_id': driver, 'turn_input_schema': 'RunTurn',
+            'manifest_digest': 'sha256:' + hashlib.sha256(canonical).hexdigest()}
 
 
 def _directory(path):

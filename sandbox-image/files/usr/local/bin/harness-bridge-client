@@ -456,8 +456,12 @@ class StdioBridgeClient(BridgeClient):
         self.last_output_sequence_by_turn = {}
         self.leased_turn_id = None
         self.journal = harness_stream.Journal(root, generation_id)
+        self.protocol = {"protocol_version": 2, "driver_id": driver_id, "turn_input_schema": "RunTurn"}
+        if os.environ.get('HARNESS_BACKEND') == 'khora':
+            from harness_launch import template_protocol
+            self.protocol = template_protocol(driver_id)
         self.channel = harness_stream.StdioChannel(self.journal, sys.stdin.buffer, sys.stdout.buffer,
-                                                 {"protocol_version": 2, "driver_id": driver_id, "turn_input_schema": "RunTurn"})
+                                                 self.protocol)
 
     def acquire_producer_lock(self):
         pass  # Journal acquired the execution's producer lock before reading stdin.
@@ -477,7 +481,7 @@ class StdioBridgeClient(BridgeClient):
         return self.channel.wait_response(request_id, timeout)
 
     def hello(self, timeout=None):
-        request = self.send("hello", payload={"protocol_version": 2, "driver_id": self.driver_id, "turn_input_schema": "RunTurn"})
+        request = self.send("hello", payload=self.protocol)
         response = self.wait_response(request["request_id"], timeout)
         if response.get("type") != "hello_ack":
             raise RuntimeError("bridge hello acknowledgment required")

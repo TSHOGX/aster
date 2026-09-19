@@ -260,6 +260,13 @@ The destination must not exist. Run it as root in a disposable builder with the
 private Go dependency already available. Template directories are immutable
 release inputs; never rebuild one under retained sandboxes.
 
+The builder also exports `NEW_TEMPLATE_DIRECTORY.manifest.json` and
+`NEW_TEMPLATE_DIRECTORY.manifest.sha256` beside the template. These are
+application release inputs: deploy them outside engine-owned storage so the
+application can validate its template contract without opening an engine rootfs.
+The checksum names canonical manifest JSON, matching the manifest inside the
+template. Existing export paths are refused.
+
 Khora owns PID 1. The application starts `/usr/local/bin/harness-khora-launcher`
 with session, generation and driver arguments. The launcher uses `/root` as HOME,
 `/workspace` as working directory, `/harness-bridge` for execution-partitioned
@@ -276,6 +283,13 @@ from the Khora template. The existing local-backend rootfs builder remains
 available during migration. The engine and application manifests have distinct
 roles: engine template identity is immutable storage input; application metadata
 pins the driver, bridge and launcher that the product expects to start.
+
+The retained bridge computes its canonical manifest digest and advertises it in
+both hello and attachment state. Before starting its stream it verifies declared
+component bytes and the installed driver binary against that manifest. The host
+requires the reported digest to match its pinned execution release before
+readiness or replay delivery. This detects incompatible templates and changed
+components; it does not turn guest-root files into a security boundary.
 
 `harness-workspace-helper` provides confined guest read, replace and sync
 operations for `/workspace` and Pi's native session directory. It walks entries

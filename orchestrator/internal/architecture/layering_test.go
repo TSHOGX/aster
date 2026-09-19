@@ -31,6 +31,7 @@ type rule struct {
 }
 
 var rules = []rule{
+	{pkg: "internal/launchplan", forbidden: []string{"internal/store", "internal/server", "internal/runtime", "internal/sandbox/khora"}, why: "release launch plans validate exported metadata and domain values without provider internals or persistence"},
 	{pkg: "internal/sessionfiles", forbidden: []string{"internal/store", "internal/server", "internal/runtime", "internal/workspace/local"}, why: "retained workspace access uses consumer-owned records and opaque engine references"},
 	{pkg: "internal/nativecapture", forbidden: []string{"internal/store", "internal/memorystore", "internal/trajectory", "internal/server", "internal/runtime"}, why: "capture worker coordinates consumer-owned interfaces; adapters own persistence and source mechanisms"},
 	{pkg: "internal/workspace", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "workspace operations expose portable streams and metadata; provider paths and filesystem mechanisms belong to adapters"},

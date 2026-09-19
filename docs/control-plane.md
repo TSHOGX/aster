@@ -389,6 +389,16 @@ Successful process readiness clears only invalidations through that sequence in
 the acceptance transaction. A later event still blocks promotion, and a failed
 epoch/fence/lease check rolls back the invalidation removal with acceptance.
 
+`internal/launchplan` freezes plans from a pinned exported template manifest.
+It checks the engine revision/module, bridge version, retained root layout,
+required driver capabilities and package identity. Plans require positive resource
+caps, a template identity and immutable configuration/asset mounts at the supported
+destinations. Guest environment inputs are limited to the Pi model selector and
+credential-free gateway URL. The specification digest is computed from the full
+plan; callers cannot supply a substitute. Returned plans are independent copies.
+This loader supplies release validation for composition; it does not configure or
+authorize gateway service routes by itself.
+
 The Khora integration profile includes a real worker turn through this path:
 keyed volume/environment provisioning, process journal handshake, accepted binding,
 claim/start/output/completion, replayable message projection and durable receipt

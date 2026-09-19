@@ -29,6 +29,7 @@ import (
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
+	"harness-platform/orchestrator/internal/launchplan"
 	"harness-platform/orchestrator/internal/memorystore"
 	"harness-platform/orchestrator/internal/nativecapture"
 	capturesource "harness-platform/orchestrator/internal/nativecapture/guest"
@@ -188,9 +189,20 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			detached <- struct{}{}
 		}
 	}
-	plan := execution.LaunchPlan{TemplateID: template, SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Mounts: mounts, Network: network, Environment: processEnvironment}
+	manifest, err := os.ReadFile(os.Getenv("KHORA_INTEGRATION_MANIFEST"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest, err := launchplan.Digest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans, err := launchplan.Load(strings.NewReader(string(manifest)), manifestDigest, map[string]execution.LaunchPlan{driver: {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Mounts: mounts, Network: network, Environment: processEnvironment}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	repository := &acceptanceFaultRepository{Store: st, fail: driver == "sh"}
-	controller := &execution.Controller{Repository: repository, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+	controller := &execution.Controller{Repository: repository, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 	defer func() { controller.Close() }()
 	if driver == "sh" {
 		srv.ownerUUID = owner.UUID
@@ -296,7 +308,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			}
 			leaseOwner = store.GenerationLeaseOwner(replacement.UUID)
 			configureInventory(leaseOwner)
-			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 			binding, err = controller.RecoverIdle(ctx, execution.Session{ID: session.ID, Driver: driver}, binding.GenerationID, leaseOwner)
 			if err != nil {
 				t.Fatal(err)
@@ -524,7 +536,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if err := st.DBForTest().QueryRow(`SELECT c.native_digest,c.selected_path,d.state_version FROM native_capture_requests c JOIN session_driver_states d ON d.session_id=c.session_id AND d.state_version=c.state_version WHERE c.session_id=?`, session.ID).Scan(&digest, &path, &version); err != nil || version != 4 {
 				t.Fatalf("failed native turn advanced state: %d %v", version, err)
 			}
-			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 			successor, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
 			if err != nil {
 				t.Fatal(err)
@@ -629,7 +641,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		if driver == "sh" {
 			verifyKhoraPausedWrite(t, ctx, srv, st, backend, preparedUploads, session.ID, leaseOwner)
 			verifyKhoraInventory(t, ctx, srv, st, session.ID, true)
-			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 			if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner); err != nil {
 				t.Fatalf("normal session resume after paused upload: %v", err)
 			}
@@ -1246,8 +1258,6 @@ func runHistoricalRecoveryProbe(t *testing.T, ctx context.Context, backend sandb
 	}
 }
 
-type integrationLaunchPlan struct{ plan execution.LaunchPlan }
-
 type acceptanceFaultRepository struct {
 	*store.Store
 	fail bool
@@ -1259,8 +1269,4 @@ func (r *acceptanceFaultRepository) AcceptExecutionBinding(ctx context.Context, 
 		return errors.New("injected failure after protocol readiness before acceptance")
 	}
 	return r.Store.AcceptExecutionBinding(ctx, p)
-}
-
-func (p integrationLaunchPlan) Plan(context.Context, execution.Session, string) (execution.LaunchPlan, error) {
-	return p.plan, nil
 }

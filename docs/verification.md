@@ -131,6 +131,7 @@ built application template, run:
 ```bash
 KHORA_INTEGRATION_ENDPOINT=http://127.0.0.1:18191 \
 KHORA_INTEGRATION_TEMPLATE=battery \
+KHORA_INTEGRATION_MANIFEST=/srv/batterygpt/releases/battery.manifest.json \
 go -C orchestrator test -tags khoraintegration ./internal/sandbox/khora ./internal/server \
   -run '^TestKhora(TemplateShellAndNativeHistory|ExecutionWorkerCommitsTurnMessagesAndJournal|PiExecutionWorkerCommitsNativeState|InterruptedRecoveryFlushesMissingCompletion)$' -count=1 -v
 ```
@@ -150,6 +151,9 @@ the HTTP message handler and execution controller to pause after the first turn 
 the same retained sandbox at the next epoch. The Pi case checks that its native
 session ID and path survive the transition. This is driver and
 control-plane acceptance, not production model gateway or entitlement acceptance.
+The manifest input is the application-owned export for the tested template. The
+worker tests derive real specification digests from validated plans and require
+the guest's advertised manifest digest, including on a readiness retry.
 The shell case also injects a failure after protocol readiness but before binding
 acceptance, then retries the same process key and recovers readiness after its
 original hello has been acknowledged.
