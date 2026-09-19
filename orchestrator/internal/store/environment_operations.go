@@ -109,12 +109,20 @@ func (s *Store) BeginEnvironmentOperation(ctx context.Context, p execution.Opera
 		return execution.Operation{}, err
 	}
 	defer tx.Rollback()
+	operation, err := beginEnvironmentOperationTx(ctx, tx, p, request)
+	if err != nil {
+		return execution.Operation{}, err
+	}
+	return operation, tx.Commit()
+}
+
+func beginEnvironmentOperationTx(ctx context.Context, tx *sql.Tx, p execution.OperationIntent, request []byte) (execution.Operation, error) {
 	existing, err := operationWith(ctx, tx, p.ID)
 	if err == nil {
 		if existing.EnvironmentID != p.EnvironmentID || existing.Kind != p.Kind || existing.IdempotencyKey != p.IdempotencyKey || existing.Fence != p.ExpectedFence+1 || !bytes.Equal(existing.Request, request) {
 			return execution.Operation{}, execution.ErrOperationConflict
 		}
-		return existing, tx.Commit()
+		return existing, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return execution.Operation{}, err
@@ -166,7 +174,7 @@ func (s *Store) BeginEnvironmentOperation(ctx context.Context, p execution.Opera
 	if err != nil {
 		return execution.Operation{}, err
 	}
-	return operation, tx.Commit()
+	return operation, nil
 }
 
 func (s *Store) GetEnvironmentOperation(ctx context.Context, id string) (execution.Operation, error) {

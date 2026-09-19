@@ -341,6 +341,23 @@ watermark. Its assertions require no legacy runtime, network or source-IP contex
 rows. HTTP and scheduler selection still use the legacy entry path pending the
 controller cutover.
 
+The execution controller serializes each session's provision/start and idle
+release paths. Retries preserve the original generation, remote operation keys,
+process handle and desired configuration. A cached connection must still have a
+live stream and durable acceptance under the current product owner. Shutdown
+cancels blocked provisioning and readiness before closing connections.
+
+Idle release refuses pending work, workspace mutations and unprojected output.
+It reserves an immutable pause intent and revokes route authority atomically,
+then waits for the configured gateway revoker to acknowledge flow termination.
+Verified pause retires the execution while preserving the sandbox, overlay and
+volume bindings. Lost replies retain the original transition precondition.
+Resuming a completed idle release creates a fresh generation in the next epoch
+using the same sandbox and volumes; Pi selects its saved native session before
+the next turn. Configuration changes and unexpected placement replacement
+require separate reconciliation. Restart adoption of a live execution is not
+implicit in this controller path.
+
 Retained Pi executions validate native state through the guest helper, using the
 accepted backend/sandbox/epoch reference and `/root/.pi/agent/sessions`. The helper
 checks the native JSONL session header ID and performs the file/parent durability

@@ -21,6 +21,7 @@ import (
 	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
+	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/sandbox"
 	khorabackend "harness-platform/orchestrator/internal/sandbox/khora"
 	"harness-platform/orchestrator/internal/store"
@@ -56,31 +57,23 @@ func runKhoraWorker(t *testing.T, driver string) {
 	if err := st.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PinBackendIdentity(ctx, execution.BackendIdentity{Name: "engine", StoreID: identity.StoreID, Version: identity.Version}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.CreateEnvironmentBinding(ctx, execution.Environment{ID: "worker-" + driver + "-environment", SessionID: session.ID, BackendName: "engine", StoreID: identity.StoreID, Desired: json.RawMessage(`{"template":"battery"}`)}); err != nil {
-		t.Fatal(err)
-	}
-	storage := execution.StorageService{Repository: st, Backend: backend}
 	var mounts []sandbox.Mount
 	var volumes []string
-	for _, purpose := range []string{"workspace", "bridge"} {
-		binding, err := storage.EnsureVolume(ctx, "worker-"+driver+"-environment", purpose, 64<<20)
-		if err != nil {
-			t.Fatal(err)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if environment, err := st.GetSessionEnvironment(cleanup, session.ID); err == nil {
+			_ = client.Destroy(cleanup, environment.SandboxID)
 		}
-		volumes = append(volumes, binding.VolumeID)
-		destination := "/workspace"
-		if purpose == "bridge" {
-			destination = "/harness-bridge"
+		for _, purpose := range []string{"workspace", "bridge"} {
+			if binding, found, err := st.GetStorageBinding(cleanup, session.ID, purpose); err == nil && found {
+				_ = client.DeleteVolume(cleanup, binding.VolumeID)
+			}
 		}
-		mounts = append(mounts, sandbox.Mount{VolumeID: binding.VolumeID, Destination: destination, Access: "exclusive"})
-	}
-	environment, err := st.GetEnvironmentBinding(ctx, "worker-"+driver+"-environment")
-	if err != nil {
-		t.Fatal(err)
-	}
+		for _, volume := range volumes {
+			_ = client.DeleteVolume(cleanup, volume)
+		}
+	})
 	var network sandbox.Network
 	var processEnvironment []string
 	if driver == "pi" {
@@ -133,89 +126,119 @@ func runKhoraWorker(t *testing.T, driver string) {
 		mounts = append(mounts, sandbox.Mount{VolumeID: configVolume.VolumeID, Destination: "/harness-config", Access: "shared-ro"})
 		processEnvironment = []string{"PI_MODEL=synthetic-model", "ANTHROPIC_BASE_URL=" + modelURL}
 	}
-	request := sandbox.CreateRequest{IdempotencyKey: "worker-" + driver + "-create-key", TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, Mounts: mounts, Network: network}
-	raw, _ := json.Marshal(execution.EnvironmentRequest{Reference: sandbox.Reference{StoreID: identity.StoreID}, Create: &request})
-	observed, err := (execution.EnvironmentService{Repository: st, Backend: backend}).Run(ctx, execution.OperationIntent{ID: "worker-" + driver + "-create", EnvironmentID: environment.ID, Kind: "create", IdempotencyKey: request.IdempotencyKey, ExpectedFence: environment.Fence, Request: raw})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		_ = client.Destroy(cleanup, observed.SandboxID)
-		for _, volume := range volumes {
-			_ = client.DeleteVolume(cleanup, volume)
-		}
-	})
 	srv := &Server{store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
 	srv.nativeStateValidator = func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), "native-state-"+driver+"-"+fmt.Sprint(turn), guestfiles.Files{Backend: backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	}
 	launcher := agentbridge.Launcher{Backend: backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, LeaseTTL: time.Minute, AfterCommit: srv.handleBridgeCommittedEnvelope, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
-	worker := execution.Worker{Repository: st, Agents: launcher}
-	binding, connection, err := worker.Start(ctx, execution.WorkerRequest{Reserve: execution.ReserveBindingParams{GenerationID: "khora-worker-" + driver + "-generation", SessionID: session.ID, EnvironmentID: environment.ID, Owner: store.GenerationLeaseOwner(owner.UUID), Driver: driver, SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), LeaseTTL: time.Minute}, Process: sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "product-worker-" + driver + "-bridge"}, IdempotencyKey: "worker-" + driver + "-start", Command: "/usr/local/bin/harness-khora-launcher", Arguments: []string{"--session-id", session.ID, "--generation-id", "khora-worker-" + driver + "-generation", "--driver-id", driver}, Directory: "/workspace", Environment: processEnvironment}})
+	plan := execution.LaunchPlan{TemplateID: template, SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Mounts: mounts, Network: network, Environment: processEnvironment}
+	controller := &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+	defer controller.Close()
+	binding, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
-	enqueued, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: "printf 'product-worker-ok\\n'"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		status, reason, err := st.TurnStatus(ctx, session.ID, enqueued.TurnID)
+	initial := binding
+	var initialNativeID, initialNativeFile string
+	for cycle := 0; cycle < 2; cycle++ {
+		if cycle == 1 {
+			if err := controller.ReleaseIdle(ctx, session.ID, binding.GenerationID, store.GenerationLeaseOwner(owner.UUID)); err != nil {
+				t.Fatal(err)
+			}
+			binding, err = controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if binding.SandboxID != initial.SandboxID || binding.Epoch != initial.Epoch+1 || binding.GenerationID == initial.GenerationID {
+				t.Fatalf("retained resume lost identity: %+v -> %+v", initial, binding)
+			}
+		}
+		content := "printf 'product-worker-ok\\n'"
+		if driver == "sh" {
+			if cycle == 0 {
+				content = "printf 'product-worker-ok\\n' > /workspace/retained-controller-proof; cat /workspace/retained-controller-proof"
+			} else {
+				content = "cat /workspace/retained-controller-proof"
+			}
+		}
+		enqueued, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: content})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status == "completed" {
-			break
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			status, reason, err := st.TurnStatus(ctx, session.ID, enqueued.TurnID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status == "completed" {
+				break
+			}
+			if status == "failed" || status == "canceled" {
+				t.Fatalf("worker turn ended %s: %s", status, reason)
+			}
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
 		}
-		if status == "failed" || status == "canceled" {
-			t.Fatalf("worker turn ended %s: %s", status, reason)
-		}
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		}
-	}
-	messages, err := st.ListMessages(ctx, session.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, message := range messages {
-		if message.Role == "assistant" && strings.Contains(message.Content, "product-worker-ok") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("durable transcript lost native output: %+v", messages)
-	}
-	watermark, err := st.BridgeStreamWatermark(ctx, identity.StoreID, binding.GenerationID)
-	if err != nil || watermark == 0 {
-		t.Fatalf("journal watermark: %d %v", watermark, err)
-	}
-	for _, table := range []string{"network_profiles", "runtime_resource_instances", "active_model_request_contexts"} {
-		var count int
-		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("legacy %s populated: %d %v", table, count, err)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(directory, "sessions", session.ID)); err == nil {
-		t.Fatal("opaque execution provisioned a host workspace")
-	}
-	if driver == "pi" {
-		var version int
-		var payload string
-		if err := st.DBForTest().QueryRow(`SELECT state_version,state_payload FROM session_driver_states WHERE session_id=? AND driver_id='pi'`, session.ID).Scan(&version, &payload); err != nil {
+		messages, err := st.ListMessages(ctx, session.ID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 2 || !strings.Contains(payload, "/root/.pi/agent/sessions") || !strings.Contains(payload, "selected_session_id") {
-			t.Fatalf("native Pi state not committed: version=%d payload=%s", version, payload)
+		found := false
+		for _, message := range messages {
+			if message.Role == "assistant" && message.TurnID != nil && *message.TurnID == enqueued.TurnID && strings.Contains(message.Content, "product-worker-ok") {
+				found = true
+			}
 		}
+		if !found {
+			t.Fatalf("durable transcript lost native output: %+v", messages)
+		}
+		watermark, err := st.BridgeStreamWatermark(ctx, identity.StoreID, binding.GenerationID)
+		if err != nil || watermark == 0 {
+			t.Fatalf("journal watermark: %d %v", watermark, err)
+		}
+		for _, table := range []string{"network_profiles", "runtime_resource_instances", "active_model_request_contexts"} {
+			var count int
+			if err := st.DBForTest().QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("legacy %s populated: %d %v", table, count, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(directory, "sessions", session.ID)); err == nil {
+			t.Fatal("opaque execution provisioned a host workspace")
+		}
+		if driver == "pi" {
+			var version int
+			var payload string
+			if err := st.DBForTest().QueryRow(`SELECT state_version,state_payload FROM session_driver_states WHERE session_id=? AND driver_id='pi'`, session.ID).Scan(&version, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if version != cycle+2 || !strings.Contains(payload, "/root/.pi/agent/sessions") || !strings.Contains(payload, "selected_session_id") {
+				t.Fatalf("native Pi state not committed: version=%d payload=%s", version, payload)
+			}
+			var native struct {
+				ID   string `json:"selected_session_id"`
+				File string `json:"selected_session_file"`
+			}
+			if err := json.Unmarshal([]byte(payload), &native); err != nil {
+				t.Fatal(err)
+			}
+			if cycle == 0 {
+				initialNativeID, initialNativeFile = native.ID, native.File
+			} else if native.ID != initialNativeID || native.File != initialNativeFile {
+				t.Fatalf("cold resume selected another native history: %+v", native)
+			}
+		}
+		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
 	}
-	t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
+
+}
+
+type integrationLaunchPlan struct{ plan execution.LaunchPlan }
+
+func (p integrationLaunchPlan) Plan(context.Context, execution.Session, string) (execution.LaunchPlan, error) {
+	return p.plan, nil
 }

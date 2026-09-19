@@ -67,3 +67,16 @@ func (s *Store) FindActiveExecutionBinding(ctx context.Context, session string) 
 	binding, err := s.GetExecutionBinding(ctx, generation)
 	return binding, err == nil, err
 }
+
+func (s *Store) FindLastExecutionBinding(ctx context.Context, session string) (execution.Binding, bool, error) {
+	var generation string
+	err := s.db.QueryRowContext(ctx, `SELECT b.generation_id FROM execution_bindings b JOIN runtime_generations g ON g.generation_id=b.generation_id WHERE b.session_id=? ORDER BY b.epoch DESC,g.rowid DESC LIMIT 1`, session).Scan(&generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return execution.Binding{}, false, nil
+	}
+	if err != nil {
+		return execution.Binding{}, false, err
+	}
+	binding, err := s.GetExecutionBinding(ctx, generation)
+	return binding, err == nil, err
+}

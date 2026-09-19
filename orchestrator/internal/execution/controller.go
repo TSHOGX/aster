@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -16,10 +17,13 @@ type ControllerRepository interface {
 	EnvironmentRepository
 	StorageRepository
 	WorkerRepository
+	IdleReleaseRepository
+	RetainedResumeRepository
 	PinBackendIdentity(context.Context, BackendIdentity) error
 	CreateEnvironmentBinding(context.Context, Environment) error
 	FindSessionEnvironment(context.Context, string) (Environment, bool, error)
 	FindActiveExecutionBinding(context.Context, string) (Binding, bool, error)
+	FindLastExecutionBinding(context.Context, string) (Binding, bool, error)
 }
 type ControllerBackend interface {
 	sandbox.Lifecycle
@@ -39,8 +43,11 @@ type PlanSource interface {
 }
 
 type desiredEnvironment struct {
-	Driver, Template  string
-	CPU, Memory, Disk int64
+	Driver, Template, SpecDigest, ManifestDigest string
+	CPU, Memory, Disk, Workspace, Journal        int64
+	Network                                      sandbox.Network
+	Mounts                                       []sandbox.Mount
+	Environment                                  []string
 }
 
 type Controller struct {
@@ -51,6 +58,7 @@ type Controller struct {
 	BackendName string
 	LeaseTTL    time.Duration
 	Lifetime    context.Context
+	Routes      RouteRevoker
 	mu          sync.Mutex
 	closed      bool
 	runContext  context.Context
@@ -96,6 +104,7 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 		return Binding{}, err
 	}
 	generation := "gen_" + uuid.NewSHA1(uuid.NameSpaceOID, []byte("initial-execution:"+session.ID)).String()
+	var predecessor Binding
 	if found {
 		if existing.StoreID != identity.StoreID {
 			return Binding{}, ErrBackendIdentityChanged
@@ -115,6 +124,18 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 			return Binding{}, fmt.Errorf("existing execution requires explicit reconciliation before use")
 		}
 		generation = existing.GenerationID
+	} else {
+		previous, found, err := c.Repository.FindLastExecutionBinding(ctx, session.ID)
+		if err != nil {
+			return Binding{}, err
+		}
+		if found {
+			if previous.State != "retired" || previous.StoreID != identity.StoreID {
+				return Binding{}, ErrOperationConflict
+			}
+			predecessor = previous
+			generation = "gen_" + uuid.NewSHA1(uuid.NameSpaceOID, []byte("resume-execution:"+previous.GenerationID)).String()
+		}
 	}
 	plan, err := c.Plans.Plan(ctx, session, generation)
 	if err != nil {
@@ -127,7 +148,7 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	if err != nil {
 		return Binding{}, err
 	}
-	desiredSpec := desiredEnvironment{session.Driver, plan.TemplateID, plan.CPUMillis, plan.MemoryBytes, plan.DiskBytes}
+	desiredSpec := desiredEnvironment{Driver: session.Driver, Template: plan.TemplateID, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, CPU: plan.CPUMillis, Memory: plan.MemoryBytes, Disk: plan.DiskBytes, Workspace: plan.WorkspaceBytes, Journal: plan.JournalBytes, Network: plan.Network, Mounts: plan.Mounts, Environment: plan.Environment}
 	desired, _ := json.Marshal(desiredSpec)
 	if !found {
 		environment = Environment{ID: "env_" + session.ID, SessionID: session.ID, BackendName: c.BackendName, StoreID: identity.StoreID, Desired: desired}
@@ -136,7 +157,7 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 		}
 	} else {
 		var persisted desiredEnvironment
-		if err := json.Unmarshal(environment.Desired, &persisted); err != nil || environment.StoreID != identity.StoreID || environment.BackendName != c.BackendName || persisted != desiredSpec {
+		if err := json.Unmarshal(environment.Desired, &persisted); err != nil || environment.StoreID != identity.StoreID || environment.BackendName != c.BackendName || !reflect.DeepEqual(persisted, desiredSpec) {
 			return Binding{}, ErrOperationConflict
 		}
 	}
@@ -172,6 +193,19 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 			return Binding{}, err
 		}
 	} else {
+		if predecessor.GenerationID != "" {
+			if _, starting, err := c.Repository.FindEnvironmentOperation(ctx, "start:"+generation); err != nil {
+				return Binding{}, err
+			} else if !starting {
+				if _, err := ResumeRetainedExecution(ctx, c.Repository, c.Backend, predecessor.GenerationID, owner); err != nil {
+					return Binding{}, err
+				}
+				environment, err = c.Repository.GetEnvironmentBinding(ctx, environment.ID)
+				if err != nil {
+					return Binding{}, err
+				}
+			}
+		}
 		observed, err = c.Backend.Inspect(ctx, sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID})
 		if err != nil {
 			return Binding{}, err
@@ -191,6 +225,36 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	worker.binding = binding
 	worker.connection = connection
 	return binding, nil
+}
+
+func (c *Controller) ReleaseIdle(ctx context.Context, session, generation, owner string) error {
+	if c.Lifetime == nil || c.Repository == nil || c.Backend == nil || c.Routes == nil {
+		return fmt.Errorf("idle release controller ports required")
+	}
+	worker, lifetime, err := c.session(session)
+	if err != nil {
+		return err
+	}
+	requestContext, cancel := context.WithCancel(ctx)
+	stopShutdown := context.AfterFunc(lifetime, cancel)
+	defer func() { stopShutdown(); cancel() }()
+	worker.mu.Lock()
+	defer worker.mu.Unlock()
+	latest, found, err := c.Repository.FindLastExecutionBinding(requestContext, session)
+	if err != nil {
+		return err
+	}
+	if !found || latest.GenerationID != generation {
+		return ErrStaleOperation
+	}
+	if err := (IdleReleaseService{Repository: c.Repository, Backend: c.Backend, Routes: c.Routes}).Run(requestContext, generation, owner); err != nil {
+		return err
+	}
+	if worker.connection != nil {
+		_ = worker.connection.Close()
+		worker.connection = nil
+	}
+	return nil
 }
 func (c *Controller) session(id string) (*sessionWorker, context.Context, error) {
 	c.mu.Lock()

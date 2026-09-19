@@ -126,6 +126,9 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 		return err
 	}
 	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
 	if err != nil {
 		return err
@@ -144,6 +147,9 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 }
 
 func acceptedExecutionTx(ctx context.Context, tx *sql.Tx, session, generation, owner string, now time.Time) error {
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return err
+	}
 	var count int
 	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN runtime_generations g ON g.generation_id=b.generation_id JOIN sessions s ON s.id=b.session_id WHERE b.session_id=? AND b.generation_id=? AND b.owner=? AND b.state='accepted' AND b.process_handle!='' AND b.store_id=e.store_id AND b.sandbox_id=e.sandbox_id AND b.epoch=e.epoch AND b.environment_fence=e.fence AND g.lease_owner=b.owner AND g.lease_expires_at>? AND g.status IN ('idle','active') AND s.active_generation_id=b.generation_id AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=b.environment_id AND o.state IN ('pending','issued','uncertain'))`, session, generation, owner, formatTime(now)).Scan(&count)
 	if err != nil {
@@ -156,14 +162,24 @@ func acceptedExecutionTx(ctx context.Context, tx *sql.Tx, session, generation, o
 }
 
 func (s *Store) RenewExecutionBindingLease(ctx context.Context, generation, owner string, ttl time.Duration, now time.Time) error {
-	binding, err := s.GetExecutionBinding(ctx, generation)
+	if ttl <= 0 {
+		return fmt.Errorf("positive execution lease required")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE runtime_generations SET lease_expires_at=?,last_seen_at=?
+ WHERE generation_id=? AND lease_owner=? AND lease_expires_at>? AND status IN ('starting','idle','active')
+ AND EXISTS(SELECT 1 FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN sessions s ON s.id=b.session_id
+ WHERE b.generation_id=runtime_generations.generation_id AND b.owner=? AND b.state!='retired' AND b.environment_fence=e.fence AND b.epoch=e.epoch AND s.active_generation_id=b.generation_id AND s.status NOT IN ('failed','destroyed'))
+ AND EXISTS(SELECT 1 FROM orchestrator_owner WHERE singleton=1 AND uuid=?)`, formatTime(now.Add(ttl)), formatTime(now), generation, owner, formatTime(now), owner, ownerUUIDFromLeaseOwner(owner))
 	if err != nil {
 		return err
 	}
-	if binding.Owner != owner || binding.State == "retired" {
-		return execution.ErrStartLeaseLost
+	if err := requireOneRow(result, "execution lease renewal CAS failed"); err != nil {
+		return fmt.Errorf("%w: %v", execution.ErrStartLeaseLost, err)
 	}
-	return s.RenewGenerationStartLease(ctx, RenewGenerationStartLeaseParams{SessionID: binding.SessionID, GenerationID: generation, Owner: owner, LeaseTTL: ttl, Now: now})
+	return nil
 }
 
 func (s *Store) AssertExecutionAccepted(ctx context.Context, generation, owner string, now time.Time) error {

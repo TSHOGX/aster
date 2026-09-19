@@ -18,7 +18,20 @@ type controllerBackend struct {
 	sandbox.Processes
 	volumeCalls int
 	loseCreate  bool
+	loseResume  bool
 	createKeys  []string
+}
+
+func (b *controllerBackend) Resume(ctx context.Context, p sandbox.Reference) (sandbox.Observation, error) {
+	if p.MutationRevision != b.current.MutationRevision {
+		return sandbox.Observation{}, &sandbox.Error{Class: sandbox.Precondition, Cause: errors.New("stale resume revision")}
+	}
+	observed, err := b.lifecycleBackend.Resume(ctx, p)
+	if b.loseResume {
+		b.loseResume = false
+		return sandbox.Observation{}, &sandbox.Error{Class: sandbox.Unavailable, Cause: errors.New("lost resume reply")}
+	}
+	return observed, err
 }
 
 func (b *controllerBackend) CreateVolume(_ context.Context, key string, capacity int64) (sandbox.Volume, error) {
