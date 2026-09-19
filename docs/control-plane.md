@@ -268,3 +268,13 @@ changed storage binding refuses advancement. Guest payloads cannot supply this
 application-only evidence field. The turn remains active through validation, so
 HTTP workspace mutation remains fenced. Launch validation uses the same source
 validator. The store's driver-state codecs perform metadata validation only.
+
+Native trajectory capture accepts a source stream and portable session identity.
+It copies bytes once into a synchronized staging file, parses that same snapshot,
+then publishes an immutable archive named by native identity and content digest.
+The archive directory is synchronized before the existing raw-source and
+trajectory records are updated. A native rewrite with the same byte count now
+creates a new archive reference; unchanged bytes reuse the existing verified
+archive. Older references remain readable. The local session enumerator is a
+source adapter during migration; memory/evolve schemas and algorithms are
+unchanged and require no engine client.

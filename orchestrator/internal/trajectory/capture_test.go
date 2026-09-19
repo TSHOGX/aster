@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,5 +143,57 @@ func TestCaptureSessionFullFidelity(t *testing.T) {
 	}
 	if res2.EventCount != res.EventCount {
 		t.Fatalf("re-capture event count drift: %d != %d", res2.EventCount, res.EventCount)
+	}
+}
+
+func TestCaptureStreamPreservesSameSizeRevisionsAndImmutableReferences(t *testing.T) {
+	_, memory, ingest, ctx := newCaptureTestStore(t)
+	capturer := NewCapturer(memory, ingest, t.TempDir(), nil)
+	identity := CaptureIdentity{SessionID: "stream-session", UserID: "u1", Status: "created", NativeSessionID: "native-stream"}
+	first := `{"type":"session","version":3,"id":"native-stream","timestamp":"2026-09-19T00:00:00Z","cwd":"/workspace"}
+{"type":"message","id":"message","parentId":"native-stream","timestamp":"2026-09-19T00:00:01Z","message":{"role":"user","content":"alpha","timestamp":1789776001000}}
+`
+	second := strings.Replace(first, "alpha", "omega", 1)
+	if len(first) != len(second) {
+		t.Fatal("fixture must preserve source size")
+	}
+	one, err := capturer.CaptureStream(ctx, identity, strings.NewReader(first), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := capturer.CaptureStream(ctx, identity, strings.NewReader(second), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.ArchivePath == two.ArchivePath {
+		t.Fatal("same-size native rewrite reused an archive reference")
+	}
+	for path, want := range map[string]string{one.ArchivePath: first, two.ArchivePath: second} {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("immutable raw archive changed: %s %v", got, err)
+		}
+	}
+	replay, err := capturer.CaptureStream(ctx, identity, strings.NewReader(second), time.Now().UTC())
+	if err != nil || replay.ArchivePath != two.ArchivePath {
+		t.Fatalf("unchanged capture allocated new reference: %+v %v", replay, err)
+	}
+	events, err := memory.GetTrajectoryEvents(ctx, identity.SessionID)
+	if err != nil || len(events) != 1 || events[0].Text != "omega" {
+		t.Fatalf("consumer projection disagrees with archived bytes: %+v %v", events, err)
+	}
+}
+
+func TestCaptureStreamRejectsNativeIdentityMismatchWithoutPublishingSource(t *testing.T) {
+	_, memory, ingest, ctx := newCaptureTestStore(t)
+	capturer := NewCapturer(memory, ingest, t.TempDir(), nil)
+	identity := CaptureIdentity{SessionID: "stream-session", UserID: "u1", Status: "created", NativeSessionID: "expected"}
+	raw := `{"type":"session","version":3,"id":"different","timestamp":"2026-09-19T00:00:00Z","cwd":"/workspace"}` + "\n"
+	if _, err := capturer.CaptureStream(ctx, identity, strings.NewReader(raw), time.Now().UTC()); err == nil {
+		t.Fatal("native source crossed selected session identity")
+	}
+	var count int
+	if err := memory.DBForTest().QueryRow(`SELECT count(*) FROM raw_sources WHERE session_id='stream-session'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("mismatched source published: %d %v", count, err)
 	}
 }
