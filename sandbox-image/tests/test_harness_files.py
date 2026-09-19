@@ -13,6 +13,30 @@ spec.loader.exec_module(files)
 
 
 class GuestFilesystemTests(unittest.TestCase):
+    def test_native_restore_preserves_interrupted_bytes_and_retries(self):
+        with tempfile.TemporaryDirectory() as root:
+            descriptor = files.open_root(root)
+            try:
+                original = b'{"type":"session","id":"native"}\n{"message":"completed"}\n'
+                selected = Path(root) / 'native.jsonl'
+                selected.write_bytes(original)
+                snapshot = '.harness-completed/state.jsonl'
+                saved = files.snapshot_native(descriptor, 'native.jsonl', snapshot, 'native')
+                interrupted = original + b'{"message":"interrupted"}\n'
+                selected.write_bytes(interrupted)
+                for _ in range(2):
+                    files.restore_native(descriptor, 'native.jsonl', snapshot, 'native', len(original), saved['sha256'], 'operation')
+                    self.assertEqual(selected.read_bytes(), original)
+                    self.assertEqual((Path(root) / '.harness-completed/interrupted-operation.jsonl').read_bytes(), interrupted)
+                selected.write_bytes(interrupted)
+                (Path(root) / snapshot).chmod(0o600)
+                (Path(root) / snapshot).write_bytes(original.replace(b'completed', b'tampered!'))
+                with self.assertRaises(ValueError):
+                    files.restore_native(descriptor, 'native.jsonl', snapshot, 'native', len(original), saved['sha256'], 'operation')
+                self.assertEqual(selected.read_bytes(), interrupted)
+            finally:
+                os.close(descriptor)
+
     def test_completed_native_snapshot_survives_source_rewrite(self):
         with tempfile.TemporaryDirectory() as root:
             descriptor = files.open_root(root)

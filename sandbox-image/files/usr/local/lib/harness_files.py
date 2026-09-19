@@ -192,6 +192,32 @@ def snapshot_native(root, name, destination, native_id, hook=None):
         os.close(parent)
 
 
+def restore_native(root, name, snapshot, native_id, size, digest, operation):
+    if not snapshot.startswith('.harness-completed/'):
+        raise ValueError('completed native snapshot required')
+    preserved = file_digest(root, snapshot, sync=True, native_id=native_id)
+    if preserved['size'] != size or preserved['sha256'] != digest:
+        raise ValueError('completed native snapshot no longer matches recorded bytes')
+    current = file_digest(root, name, sync=True, native_id=native_id)
+    if current['size'] == size and current['sha256'] == digest:
+        return current
+    # Preserve the interrupted native source before replacing the selected file.
+    # A retry following rename checks the restored digest first, avoiding a
+    # contradictory second archive of the already-restored completed bytes.
+    snapshot_native(root, name, '.harness-completed/interrupted-' + operation + '.jsonl', native_id)
+    parent, leaf = parent_fd(root, snapshot)
+    try:
+        descriptor = regular_fd(parent, leaf)
+        with os.fdopen(descriptor, 'rb') as source:
+            result = replace(root, name, source, size, digest, operation)
+        verified = file_digest(root, name, sync=True, native_id=native_id)
+        if result != verified:
+            raise ValueError('restored native state changed before verification')
+        return result
+    finally:
+        os.close(parent)
+
+
 def replace(root, name, source, size, expected_digest, operation, hook=None):
     if type(size) is not int or size < 0 or size > 8 << 30:
         raise ValueError('invalid replacement size')

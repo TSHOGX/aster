@@ -78,6 +78,9 @@ func (l *scriptedLauncher) Start(_ context.Context, _ execution.Binding, request
 }
 
 func controllerFixture(t *testing.T) (*execution.Controller, *store.Store, *controllerBackend, *scriptedLauncher, string) {
+	return controllerFixtureDriver(t, "sh")
+}
+func controllerFixtureDriver(t *testing.T, driver string) (*execution.Controller, *store.Store, *controllerBackend, *scriptedLauncher, string) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "control.db"))
@@ -94,7 +97,7 @@ func controllerFixture(t *testing.T) (*execution.Controller, *store.Store, *cont
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	if err := st.CreateSession(ctx, store.Session{ID: "session", UserID: "synthetic", Agent: "sh", Mode: "shell", Status: "created", Workspace: "opaque", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := st.CreateSession(ctx, store.Session{ID: "session", UserID: "synthetic", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	backend := &controllerBackend{lifecycleBackend: lifecycleBackend{current: sandbox.Observation{Reference: sandbox.Reference{StoreID: "store", SandboxID: "sandbox", MutationRevision: "created-revision", Epoch: 1}, State: "running", PlacementState: "active"}}}

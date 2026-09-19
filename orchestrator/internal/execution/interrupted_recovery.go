@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"harness-platform/orchestrator/internal/sandbox"
@@ -26,6 +27,7 @@ type InterruptedRecoveryService struct {
 	Routes     RouteRevoker
 	Reader     JournalRecoveryReader
 	Projector  RecoveryProjector
+	Native     NativeRestorer
 }
 
 // Run ends at a verified paused environment. Unfinished turns are explicitly
@@ -52,6 +54,28 @@ func (s InterruptedRecoveryService) Run(ctx context.Context, generation, owner, 
 			}
 		}
 		if recovery.Stage == "replay" {
+			if recovery.Operation.Kind == "restore_native" {
+				if s.Native == nil {
+					return fmt.Errorf("completed native restorer required for Pi recovery")
+				}
+				op := recovery.Operation
+				if op.State == OperationPending {
+					if err := s.Repository.RecordEnvironmentOperationOutcome(ctx, OperationOutcome{ID: op.ID, Fence: op.Fence, State: OperationIssued}); err != nil {
+						return err
+					}
+				}
+				var request NativeRestoreRequest
+				if err := json.Unmarshal(op.Request, &request); err != nil {
+					return err
+				}
+				if err := s.Native.RestoreCompletedNative(ctx, op, request); err != nil {
+					return err
+				}
+				if err := s.Repository.RecordEnvironmentOperationOutcome(ctx, OperationOutcome{ID: op.ID, Fence: op.Fence, State: OperationSucceeded, Result: op.Request}); err != nil {
+					return err
+				}
+				continue
+			}
 			if _, err := (JournalRecoveryService{Repository: s.Repository, Reader: s.Reader}).Run(ctx, generation, owner); err != nil {
 				return err
 			}

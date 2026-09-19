@@ -227,6 +227,16 @@ func (s *Store) BeginRetainedExecutionResume(ctx context.Context, generation, ow
 		return execution.Operation{}, err
 	}
 	pause, err := operationWith(ctx, tx, "idle-pause:"+generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		var stage string
+		if findErr := tx.QueryRowContext(ctx, `SELECT stage FROM execution_recoveries WHERE generation_id=?`, generation).Scan(&stage); findErr != nil {
+			return execution.Operation{}, findErr
+		}
+		if stage != "complete" {
+			return execution.Operation{}, execution.ErrBusy
+		}
+		pause, err = operationWith(ctx, tx, "interrupt-final-pause:"+generation)
+	}
 	if err != nil {
 		return execution.Operation{}, err
 	}

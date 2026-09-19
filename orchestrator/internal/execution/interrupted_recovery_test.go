@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"harness-platform/orchestrator/internal/agents"
 	"strings"
 	"testing"
 	"time"
@@ -201,5 +202,81 @@ func TestInterruptedRecoveryResumesEachDurableStageWithoutRedispatch(t *testing.
 				t.Fatalf("retained recovery outcome: %+v %v", environment, err)
 			}
 		})
+	}
+}
+
+type nativeRepair struct {
+	fail     bool
+	requests []execution.NativeRestoreRequest
+}
+
+func (r *nativeRepair) RestoreCompletedNative(_ context.Context, _ execution.Operation, request execution.NativeRestoreRequest) error {
+	r.requests = append(r.requests, request)
+	if r.fail {
+		r.fail = false
+		return errors.New("lost native restore result")
+	}
+	return nil
+}
+
+func TestPiInterruptedRecoveryPinsCompletedSnapshotAndBlocksUntilRepair(t *testing.T) {
+	ctx := context.Background()
+	controller, st, backend, launcher, owner := controllerFixtureDriver(t, "pi")
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BindBridgeStream(ctx, binding.StoreID, binding.SessionID, binding.GenerationID, binding.ProcessHandle, binding.Epoch); err != nil {
+		t.Fatal(err)
+	}
+	bridge := store.BoundBridgeStore{Store: st}
+	first, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "completed history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, ok, err := bridge.ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, RequestID: "first", LeaseTTL: time.Minute})
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	payload, digest, err := store.CanonicalDriverStatePayload(map[string]any{"schema_version": 1, "driver_id": "pi", "state_kind": "pi_session", "session_dir": "/root/.pi/agent/sessions", "selected_session_file": "/root/.pi/agent/sessions/native.jsonl", "selected_session_relpath": "native.jsonl", "selected_session_id": "native-id", "last_completed_turn_id": "1"}, "pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := agents.PiCompletedSnapshotPath(digest)
+	evidence := store.DriverStateEvidence{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, TurnID: first.TurnID, StateDigest: digest, ContractDigest: binding.SpecDigest, NativeDigest: strings.Repeat("a", 64), NativeSize: 128, NativeSnapshotPath: snapshot}
+	if _, err := bridge.CompleteTurn(ctx, store.CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, TurnID: first.TurnID, TerminalStatus: "completed", DriverStateUpdate: &store.DriverStateUpdate{DriverID: "pi", PreviousStateDigest: grant.DriverState.StateDigest, StatePayload: payload, StateDigest: digest, StateVersion: 2}, DriverStateEvidence: &evidence}); err != nil {
+		t.Fatal(err)
+	}
+	next, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "interrupted history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := bridge.ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, RequestID: "second", LeaseTTL: time.Minute}); err != nil || !ok {
+		t.Fatal(err)
+	}
+	if err := controller.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repair := &nativeRepair{fail: true}
+	service := execution.InterruptedRecoveryService{Repository: st, Backend: backend, Routes: &recordingRevoker{}, Reader: &retainedReader{store: st, turn: next.TurnID}, Projector: &recoveryProjector{store: st}, Native: repair}
+	if err := service.Run(ctx, binding.GenerationID, owner, "interrupted"); err == nil {
+		t.Fatal("lost restore reply ignored")
+	}
+	if len(repair.requests) != 1 || repair.requests[0].SnapshotPath != snapshot || repair.requests[0].StateVersion != 2 || repair.requests[0].NativeDigest != evidence.NativeDigest {
+		t.Fatalf("repair did not pin completed state: %+v", repair.requests)
+	}
+	if backend.current.State != "running" {
+		t.Fatal("paused before repair settled")
+	}
+	if err := service.Run(ctx, binding.GenerationID, owner, "interrupted"); err != nil {
+		t.Fatal(err)
+	}
+	if len(repair.requests) != 2 || repair.requests[0] != repair.requests[1] {
+		t.Fatal("repair retry changed immutable state")
+	}
+	resumed := &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: staticPlan{}, BackendName: "engine", Lifetime: ctx, LeaseTTL: time.Minute}
+	defer resumed.Close()
+	if nextBinding, err := resumed.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "pi"}, owner); err != nil || nextBinding.Epoch != binding.Epoch+2 {
+		t.Fatalf("repaired session cannot resume: %+v %v", nextBinding, err)
 	}
 }

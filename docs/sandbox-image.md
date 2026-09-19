@@ -300,6 +300,12 @@ existing destination with different bytes. File and parent synchronization
 precede success. Snapshot retries and symlink rejection use the same confined
 descriptor walk as workspace operations.
 
+`restore-native` verifies the completed snapshot against recorded size, digest
+and native identity before touching the selected file. It retains the interrupted
+file separately, then uses atomic replacement with file/parent synchronization.
+A retry first checks whether the completed bytes are already restored. It neither
+overwrites the retained interrupted copy nor treats a changed snapshot as valid.
+
 `harness-journal-replay` reads a retired partition under `/harness-bridge` during
 maintenance recovery. It refuses a live producer, missing files and symlinked
 path components. It copies the database and committed WAL into a private

@@ -165,3 +165,8 @@ failed. It retries injected lost ingest and stopped-reader replies and verifies
 that recovery retains the full producer payload beyond the engine's process
 tail. A separate case interrupts a still-running producer after output, before
 completion, to exercise the host failure boundary and partial-output projection.
+
+The Pi case also interrupts a fourth turn before host completion ingestion,
+recovers its output, restores the exact completed native digest, and preserves
+the interrupted native file. It retries a lost restore reply, resumes the same
+sandbox, and completes a successor turn while keeping the interrupted turn failed.

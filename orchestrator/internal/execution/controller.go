@@ -62,6 +62,7 @@ type Controller struct {
 	Routes            RouteRevoker
 	RecoveryReader    JournalRecoveryReader
 	RecoveryProjector RecoveryProjector
+	NativeRestorer    NativeRestorer
 	mu                sync.Mutex
 	closed            bool
 	runContext        context.Context
@@ -277,7 +278,7 @@ func (c *Controller) RecoverInterrupted(ctx context.Context, session, generation
 		}
 		worker.connection = nil
 	}
-	return (InterruptedRecoveryService{Repository: c.Repository, Backend: c.Backend, Routes: c.Routes, Reader: c.RecoveryReader, Projector: c.RecoveryProjector}).Run(requestContext, generation, owner, reason)
+	return (InterruptedRecoveryService{Repository: c.Repository, Backend: c.Backend, Routes: c.Routes, Reader: c.RecoveryReader, Projector: c.RecoveryProjector, Native: c.NativeRestorer}).Run(requestContext, generation, owner, reason)
 }
 
 // RecoverIdle is an explicit cold-recovery policy for an abandoned idle agent.

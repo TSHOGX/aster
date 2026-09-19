@@ -93,7 +93,7 @@ func (s *Store) BeginEnvironmentOperation(ctx context.Context, p execution.Opera
 		return execution.Operation{}, fmt.Errorf("operation identity, idempotency key and fence required")
 	}
 	switch p.Kind {
-	case "create", "pause", "resume", "configure", "start_process", "workspace_write", "create_volume", "recover_journal":
+	case "create", "pause", "resume", "configure", "start_process", "workspace_write", "create_volume", "recover_journal", "restore_native":
 	default:
 		return execution.Operation{}, fmt.Errorf("unsupported environment operation %q", p.Kind)
 	}
@@ -241,6 +241,21 @@ func (s *Store) RecordEnvironmentOperationOutcome(ctx context.Context, p executi
 	}
 	if p.State == execution.OperationSucceeded {
 		switch operation.Kind {
+		case "restore_native":
+			if !bytes.Equal(operation.Request, result) {
+				return execution.ErrOperationConflict
+			}
+			var request execution.NativeRestoreRequest
+			if err := json.Unmarshal(operation.Request, &request); err != nil {
+				return err
+			}
+			state, err := getDriverStateTx(ctx, tx, environment.SessionID, "pi")
+			if err != nil {
+				return err
+			}
+			if state.StateDigest != request.StateDigest || state.StateVersion != request.StateVersion || request.Reference.StoreID != environment.StoreID || request.Reference.SandboxID != environment.SandboxID || request.Reference.Epoch != environment.Epoch || request.Reference.MutationRevision != environment.MutationRevision {
+				return execution.ErrStaleOperation
+			}
 		case "recover_journal":
 			var request execution.JournalRecoveryRequest
 			var recorded, completed execution.JournalRecoveryResult

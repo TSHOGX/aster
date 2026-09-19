@@ -92,6 +92,30 @@ func (f Files) Sync(ctx context.Context, key, name string) (workspace.File, erro
 	return f.sync(ctx, key, name, "")
 }
 
+func (f Files) RestoreNative(ctx context.Context, key, name, snapshot, nativeID string, size int64, digest string) error {
+	if err := f.validate(name); err != nil {
+		return err
+	}
+	if err := f.validate(snapshot); err != nil {
+		return err
+	}
+	if f.Root != "/root/.pi/agent/sessions" || nativeID == "" || size <= 0 || len(digest) != 64 {
+		return fmt.Errorf("recorded native snapshot evidence required")
+	}
+	output, err := f.call(ctx, key, []string{"--operation", "restore-native", "--path", name, "--destination", snapshot, "--native-id", nativeID, "--key", key, "--size", strconv.FormatInt(size, 10), "--sha256", digest}, nil, 4096)
+	if err != nil {
+		return err
+	}
+	var result helperResult
+	if err := json.Unmarshal(output, &result); err != nil {
+		return err
+	}
+	if result.Path != name || result.Size != size || result.Digest != digest {
+		return fmt.Errorf("native restore result differs from completed snapshot")
+	}
+	return nil
+}
+
 func (f Files) SnapshotNative(ctx context.Context, key, name, destination, nativeID string) (workspace.File, error) {
 	if err := f.validate(name); err != nil {
 		return workspace.File{}, err

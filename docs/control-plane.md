@@ -402,8 +402,15 @@ died without completion gets a host failure boundary after its complete retained
 head is ingested, allowing partial text to be projected. At the final verified
 pause, still-leased or running turns become `execution_interrupted` failures;
 already-terminal turns retain their outcomes and queued prompts remain queued.
-The workflow does not redispatch input or resume an agent. Native history repair
-and replacement readiness remain separate requirements.
+The workflow does not redispatch input or resume an agent. For Pi, it restores
+the selected native file from the last completed snapshot after historical
+projection and before final pause. The recorded state version, selected path,
+native session ID, size and digest are pinned in a `restore_native` operation.
+Missing or changed snapshot evidence keeps recovery unresolved. The helper
+preserves interrupted native bytes separately, then atomically replaces and
+synchronizes the selected file. An uninitialized state remains uninitialized.
+Completed recovery can subsequently resume through ordinary controller readiness;
+the original interrupted turn is never automatically replayed.
 
 Retained Pi executions validate native state through the guest helper, using the
 accepted backend/sandbox/epoch reference and `/root/.pi/agent/sessions`. The helper

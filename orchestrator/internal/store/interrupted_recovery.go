@@ -125,8 +125,12 @@ func (s *Store) NextInterruptedRecovery(ctx context.Context, generation, owner, 
 				if pending != 0 {
 					break
 				} // Return replay action so projection retries.
-				recovery.Stage = "final_pause"
-				operationID = "interrupt-final-pause:" + generation
+				if binding.Driver == "pi" && operation.Kind == "recover_journal" {
+					operationID = "interrupt-native-restore:" + generation
+				} else {
+					recovery.Stage = "final_pause"
+					operationID = "interrupt-final-pause:" + generation
+				}
 			case "final_pause":
 				if err := verifiedRecoveryLifecycle(operation, environment, "paused", binding.Epoch+1); err != nil {
 					return recovery, err
@@ -218,8 +222,17 @@ func reserveRecoveryOperationTx(ctx context.Context, tx *sql.Tx, binding executi
 		kind = "resume"
 	}
 	if stage == "replay" {
-		kind = "recover_journal"
-		_, request = execution.JournalReplayRequest(binding, environment)
+		if id == "interrupt-native-restore:"+binding.GenerationID {
+			kind = "restore_native"
+			var err error
+			request, err = nativeRestoreRequestTx(ctx, tx, binding, environment)
+			if err != nil {
+				return execution.Operation{}, err
+			}
+		} else {
+			kind = "recover_journal"
+			_, request = execution.JournalReplayRequest(binding, environment)
+		}
 	}
 	raw, err := json.Marshal(request)
 	if err != nil {

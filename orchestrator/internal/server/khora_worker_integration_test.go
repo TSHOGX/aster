@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,7 +43,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	if endpoint == "" || template == "" {
 		t.Fatal("isolated Khora endpoint/template required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
 	defer cancel()
 	backend, err := khorabackend.New(ctx, khorabackend.Config{Endpoint: endpoint})
 	if err != nil {
@@ -324,7 +325,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		}
 		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
 	}
-	if driver == "sh" {
+	{
 		target := binding.GenerationID
 		interruptedGeneration.Store(&target)
 		content := `python3 -c 'print("historical-recovery-ok" + "x" * 262144)'`
@@ -362,10 +363,15 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		assertIntegrationCapacity(t, ctx, st, 1)
 		faults := &recoveryFaultRecords{Store: st, fail: true}
 		reader := &recoveryFaultReader{Reader: agentbridge.RecoveryReader{Backend: backend, Records: faults}, fail: true}
-		recovery := &execution.Controller{Repository: st, Backend: backend, Routes: gateway.NewFlows(), RecoveryReader: reader, RecoveryProjector: srv, Lifetime: ctx}
+		nativeRestorer := &nativeFaultRestorer{Native: driverstate.Restorer{Backend: backend}, fail: driver == "pi"}
+		recovery := &execution.Controller{Repository: st, Backend: backend, Routes: gateway.NewFlows(), RecoveryReader: reader, RecoveryProjector: srv, NativeRestorer: nativeRestorer, Lifetime: ctx}
 		defer recovery.Close()
 		const reason = "injected transport loss before output ingestion"
-		for _, failure := range []string{"lost ingest reply", "lost stopped-reader reply"} {
+		failures := []string{"lost ingest reply", "lost stopped-reader reply"}
+		if driver == "pi" {
+			failures = append(failures, "lost native restore reply")
+		}
+		for _, failure := range failures {
 			if err := recovery.RecoverInterrupted(ctx, session.ID, binding.GenerationID, leaseOwner, reason); err == nil {
 				t.Fatalf("%s injection ignored", failure)
 			}
@@ -390,9 +396,13 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		if err != nil {
 			t.Fatal(err)
 		}
+		needle := "historical-recovery-ok"
+		if driver == "pi" {
+			needle = "product-worker-ok"
+		}
 		found := 0
 		for _, message := range messages {
-			if message.TurnID != nil && *message.TurnID == turn.TurnID && message.Role == "assistant" && strings.Contains(message.Content, "historical-recovery-ok") {
+			if message.TurnID != nil && *message.TurnID == turn.TurnID && message.Role == "assistant" && strings.Contains(message.Content, needle) {
 				found++
 			}
 		}
@@ -400,16 +410,79 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			t.Fatalf("historical journal recovery duplicated or lost interrupted output: %d", found)
 		}
 		var bytes int
-		if err := st.DBForTest().QueryRow(`SELECT coalesce(sum(length(payload)),0) FROM bridge_ingress WHERE generation_id=? AND turn_id=? AND type='emit_output'`, binding.GenerationID, turn.TurnID).Scan(&bytes); err != nil || bytes < 262144 {
+		if err := st.DBForTest().QueryRow(`SELECT coalesce(sum(length(payload)),0) FROM bridge_ingress WHERE generation_id=? AND turn_id=? AND type='emit_output'`, binding.GenerationID, turn.TurnID).Scan(&bytes); err != nil || (driver == "sh" && bytes < 262144) {
 			t.Fatalf("recovery accepted only a process tail: %d %v", bytes, err)
 		}
 		status, _, err := st.TurnStatus(ctx, session.ID, turn.TurnID)
 		if err != nil || status != "failed" {
 			t.Fatalf("historical completion changed turn classification: %s %v", status, err)
 		}
+		if driver == "pi" {
+			var digest, path string
+			var version int
+			if err := st.DBForTest().QueryRow(`SELECT c.native_digest,c.selected_path,d.state_version FROM native_capture_requests c JOIN session_driver_states d ON d.session_id=c.session_id AND d.state_version=c.state_version WHERE c.session_id=?`, session.ID).Scan(&digest, &path, &version); err != nil || version != 4 {
+				t.Fatalf("failed native turn advanced state: %d %v", version, err)
+			}
+			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+			successor, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files := guestfiles.Files{Backend: backend, Reference: sandbox.Reference{StoreID: successor.StoreID, SandboxID: successor.SandboxID, Epoch: successor.Epoch}, Root: "/root/.pi/agent/sessions"}
+			restored, err := files.SyncNative(ctx, "verify-restored-native", path, initialNativeID)
+			if err != nil || restored.Digest != digest {
+				t.Fatalf("native recovery did not restore completed bytes: %+v %v", restored, err)
+			}
+			archive := fmt.Sprintf(".harness-completed/interrupted-native-restore-%x.jsonl", sha256.Sum256([]byte("interrupt-native-restore:"+binding.GenerationID)))
+			interrupted, err := files.SyncNative(ctx, "verify-interrupted-native", archive, initialNativeID)
+			if err != nil || interrupted.Digest == digest {
+				t.Fatalf("interrupted native bytes not retained separately: %+v %v", interrupted, err)
+			}
+			next, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: "continue after explicit recovery"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				status, reason, err := st.TurnStatus(ctx, session.ID, next.TurnID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if status == "completed" {
+					break
+				}
+				if status == "failed" || status == "canceled" {
+					t.Fatalf("successor turn: %s %s", status, reason)
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+			var advanced int
+			if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, session.ID).Scan(&advanced); err != nil || advanced != 5 {
+				t.Fatalf("successor native state advancement: %d %v", advanced, err)
+			}
+		}
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
 	}
 
+}
+
+type nativeFaultRestorer struct {
+	Native execution.NativeRestorer
+	fail   bool
+}
+
+func (r *nativeFaultRestorer) RestoreCompletedNative(ctx context.Context, op execution.Operation, request execution.NativeRestoreRequest) error {
+	if err := r.Native.RestoreCompletedNative(ctx, op, request); err != nil {
+		return err
+	}
+	if r.fail {
+		r.fail = false
+		return errors.New("injected lost native restore reply")
+	}
+	return nil
 }
 
 func assertIntegrationCapacity(t *testing.T, ctx context.Context, st *store.Store, want int) {
