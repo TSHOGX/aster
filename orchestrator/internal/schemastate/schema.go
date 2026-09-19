@@ -176,9 +176,10 @@ func Check(ctx context.Context, path, kind string) (Status, error) {
 	if err = db.QueryRowContext(ctx, `SELECT count(*),coalesce(max(version),0),coalesce(max(checksum),'') FROM harness_schema_migrations`).Scan(&count, &s.Version, &checksum); err != nil {
 		return s, err
 	}
-	if count != 1 || s.Version != Version || checksum != Checksum || !strings.HasPrefix(s.Baseline, "target") {
+	if count != 1 || s.Version != Version || checksum != Checksum {
 		return s, fmt.Errorf("unsupported or modified %s migration history", kind)
 	}
+	s.Pending = !strings.HasPrefix(s.Baseline, "target")
 	return s, nil
 }
 func Verify(ctx context.Context, path, kind string) error {
@@ -192,7 +193,7 @@ func Verify(ctx context.Context, path, kind string) error {
 	return nil
 }
 func Stamp(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `CREATE TABLE harness_schema_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL,applied_at TEXT NOT NULL); INSERT INTO harness_schema_migrations VALUES(?,?,?)`, Version, Checksum, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS harness_schema_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL,applied_at TEXT NOT NULL); INSERT INTO harness_schema_migrations VALUES(?,?,?) ON CONFLICT(version) DO UPDATE SET checksum=excluded.checksum,applied_at=excluded.applied_at`, Version, Checksum, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 func Integrity(ctx context.Context, db *sql.DB) error {

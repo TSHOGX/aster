@@ -51,6 +51,13 @@ func appendEventTx(ctx context.Context, tx *sql.Tx, p AppendEventParams) (int64,
 	if err != nil {
 		return 0, err
 	}
+	duplicate, err := appendBridgeRecordTx(ctx, tx, p, payload)
+	if err != nil {
+		return 0, err
+	}
+	if duplicate {
+		return 0, nil
+	}
 	res, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO events (
   session_id, turn_id, generation_id, output_sequence, dedupe_key,

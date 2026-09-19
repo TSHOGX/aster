@@ -169,3 +169,35 @@ func TestManagedOpenDoesNotRewriteSchema(t *testing.T) {
 		t.Fatalf("schema changed: %v", e)
 	}
 }
+
+func TestStampedPreviousSchemaRequiresExplicitUpgrade(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	c, m := filepath.Join(dir, "control.db"), filepath.Join(dir, "memory.db")
+	legacy(t, "target-fresh", "store", c)
+	legacy(t, "target-fresh", "memorystore", m)
+	for _, path := range []string{c, m} {
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = schemastate.Stamp(ctx, db)
+		db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, err := schemastate.Check(ctx, c, "store")
+	if err != nil || !status.Pending {
+		t.Fatalf("old stamped schema accepted: %+v %v", status, err)
+	}
+	if err := schemastate.Verify(ctx, c, "store"); err == nil {
+		t.Fatal("old schema passed startup verification")
+	}
+	if err := Migrate(ctx, c, m, false, openFixture); err != nil {
+		t.Fatal(err)
+	}
+	if err := schemastate.Verify(ctx, c, "store"); err != nil {
+		t.Fatal(err)
+	}
+}

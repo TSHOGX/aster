@@ -105,3 +105,23 @@ Runtime snapshots read lifecycle and turns consistently and carry a revision
 covering all dependencies. HTTP and SSE snapshots have the same semantics;
 clients reject stale revisions and reconcile after gaps. See
 [runtime synchronization](runtime-state-synchronization.md).
+
+## Durable bridge ingress
+
+Accepted bridge output and completion records are also retained in
+`bridge_ingress`, independently of SSE event retention. Their identity includes
+runtime generation, turn, attempt and source sequence (or completion marker).
+Contradictory output replay fails closed even after the public event has been
+pruned. The payload digest covers the event type, stream and JSON bytes.
+
+`bridge_projections` stores a versioned consumer checkpoint. The store's
+projection transaction checks the preceding checkpoint and next source record,
+then writes messages, message traces and source-to-message identities together.
+A failed write rolls back the entire projection; a stale worker cannot allocate
+a second message. Ingress collection is not enabled: source records remain
+available until all consumer and recovery obligations can be established.
+
+Existing managed databases require the explicit offline `db migrate` workflow
+before starting this schema. Both previously stamped and unstamped reviewed
+baselines are supported. Migration preserves existing messages and traces and
+does not reinterpret historical SSE events as new producer input.

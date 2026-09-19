@@ -203,6 +203,40 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
   INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
 END;
 
+-- Durable bridge input and transactional consumer progress are deliberately
+-- separate from the prunable public event log.
+CREATE TABLE IF NOT EXISTS bridge_ingress (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  generation_id TEXT NOT NULL,
+  turn_id INTEGER NOT NULL,
+  attempt INTEGER NOT NULL,
+  record_key TEXT NOT NULL,
+  output_sequence INTEGER,
+  type TEXT NOT NULL,
+  stream TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(generation_id, turn_id, attempt, record_key)
+);
+CREATE INDEX IF NOT EXISTS bridge_ingress_stream_idx ON bridge_ingress(generation_id,turn_id,attempt,id);
+CREATE TABLE IF NOT EXISTS bridge_projections (
+  generation_id TEXT NOT NULL,
+  turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL,
+  last_record_id INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  PRIMARY KEY(generation_id,turn_id,attempt)
+);
+CREATE TABLE IF NOT EXISTS bridge_projected_messages (
+  record_id INTEGER NOT NULL REFERENCES bridge_ingress(id),
+  ordinal INTEGER NOT NULL,
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  PRIMARY KEY(record_id,ordinal),
+  UNIQUE(message_id)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   session_id TEXT NOT NULL,
   path TEXT NOT NULL,
