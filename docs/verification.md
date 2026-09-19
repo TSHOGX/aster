@@ -186,6 +186,9 @@ checks that the changed content survives and the original mutation becomes faile
 The paused-upload case injects lost resume, replacement and pause replies in one
 workflow, verifies exactly one replacement process, reads the result without
 compute, and then resumes a normal agent in the retained sandbox.
+Before any shell execution, the test uploads through HTTP to a new session,
+asserts that no execution binding was allocated and the environment is paused,
+then verifies the first turn reads those uploaded bytes.
 Artifact checks scan a 40-file directory through multiple guest pages while live
 and through volume listings while paused. They verify uploaded files appear,
 stale index rows disappear, symlink descendants remain absent and paused scans

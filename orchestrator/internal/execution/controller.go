@@ -13,6 +13,11 @@ import (
 )
 
 type ControllerRepository interface {
+	AssertExecutionOwner(context.Context, string) error
+	ExecutionSession(context.Context, string) (Session, error)
+	BeginSessionProvisioning(context.Context, OperationIntent, string, int) (Operation, error)
+	BeginInitialExecutionResume(context.Context, string, string, int) (Operation, error)
+	BeginWorkspaceProvisionPause(context.Context, string, string) (Operation, error)
 	SessionExecutionBackend(context.Context, string) (string, error)
 	AssertExecutionAccepted(context.Context, string, string, time.Time) error
 	EnvironmentRepository
@@ -60,6 +65,7 @@ type Controller struct {
 	Plans             PlanSource
 	BackendName       string
 	LeaseTTL          time.Duration
+	MaxActive         int
 	Lifetime          context.Context
 	Routes            RouteRevoker
 	RecoveryReader    JournalRecoveryReader
@@ -104,6 +110,9 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	}
 	if selected != "khora" {
 		return Binding{}, ErrOperationConflict
+	}
+	if err := c.Repository.AssertExecutionOwner(ctx, owner); err != nil {
+		return Binding{}, err
 	}
 	identity, err := c.Backend.Identity(ctx)
 	if err != nil {
@@ -154,81 +163,37 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	if err != nil {
 		return Binding{}, err
 	}
-	if plan.TemplateID == "" || plan.SpecDigest == "" || plan.ManifestDigest == "" || plan.CPUMillis <= 0 || plan.MemoryBytes <= 0 || plan.DiskBytes <= 0 || plan.WorkspaceBytes <= 0 || plan.JournalBytes <= 0 {
-		return Binding{}, fmt.Errorf("driver plan requires pinned release and positive resource caps")
-	}
-	environment, found, err := c.Repository.FindSessionEnvironment(ctx, session.ID)
+	environment, err := c.provisionEnvironment(ctx, session, identity, plan, owner, c.MaxActive)
 	if err != nil {
 		return Binding{}, err
 	}
-	desiredSpec := desiredEnvironment{Driver: session.Driver, Template: plan.TemplateID, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, CPU: plan.CPUMillis, Memory: plan.MemoryBytes, Disk: plan.DiskBytes, Workspace: plan.WorkspaceBytes, Journal: plan.JournalBytes, Network: plan.Network, Mounts: plan.Mounts, Environment: plan.Environment}
-	desired, _ := json.Marshal(desiredSpec)
-	if !found {
-		environment = Environment{ID: "env_" + session.ID, SessionID: session.ID, BackendName: c.BackendName, StoreID: identity.StoreID, Desired: desired}
-		if err := c.Repository.CreateEnvironmentBinding(ctx, environment); err != nil {
-			return Binding{}, err
+	if _, starting, err := c.Repository.FindEnvironmentOperation(ctx, "start:"+generation); err != nil {
+		return Binding{}, err
+	} else if !starting {
+		if predecessor.GenerationID != "" {
+			if _, err := ResumeRetainedExecution(ctx, c.Repository, c.Backend, predecessor.GenerationID, owner); err != nil {
+				return Binding{}, err
+			}
+		} else if environment.ObservedState == "paused" {
+			op, err := c.Repository.BeginInitialExecutionResume(ctx, environment.ID, owner, c.MaxActive)
+			if err != nil {
+				return Binding{}, err
+			}
+			if _, err := (EnvironmentService{Repository: c.Repository, Backend: c.Backend}).Run(ctx, OperationIntent{ID: op.ID, EnvironmentID: op.EnvironmentID, Kind: op.Kind, IdempotencyKey: op.IdempotencyKey, ExpectedFence: op.Fence - 1, Request: op.Request}); err != nil {
+				return Binding{}, err
+			}
 		}
-	} else {
-		var persisted desiredEnvironment
-		if err := json.Unmarshal(environment.Desired, &persisted); err != nil || environment.StoreID != identity.StoreID || environment.BackendName != c.BackendName || !reflect.DeepEqual(persisted, desiredSpec) {
-			return Binding{}, ErrOperationConflict
-		}
-	}
-	storage := StorageService{Repository: c.Repository, Backend: c.Backend}
-	mounts := append([]sandbox.Mount(nil), plan.Mounts...)
-	for _, volume := range []struct {
-		purpose, destination string
-		capacity             int64
-	}{{"workspace", "/workspace", plan.WorkspaceBytes}, {"bridge", "/harness-bridge", plan.JournalBytes}} {
-		binding, err := storage.EnsureVolume(ctx, environment.ID, volume.purpose, volume.capacity)
-		if err != nil {
-			return Binding{}, err
-		}
-		mounts = append(mounts, sandbox.Mount{VolumeID: binding.VolumeID, Destination: volume.destination, Access: "exclusive"})
 	}
 	environment, err = c.Repository.GetEnvironmentBinding(ctx, environment.ID)
 	if err != nil {
 		return Binding{}, err
 	}
-	lifecycle := EnvironmentService{Repository: c.Repository, Backend: c.Backend}
-	var observed sandbox.Observation
-	if environment.SandboxID == "" {
-		request := sandbox.CreateRequest{IdempotencyKey: "create:" + environment.ID, TemplateID: plan.TemplateID, CPUMillis: plan.CPUMillis, MemoryBytes: plan.MemoryBytes, DiskBytes: plan.DiskBytes, Mounts: mounts, Network: plan.Network}
-		raw, _ := json.Marshal(EnvironmentRequest{Reference: sandbox.Reference{StoreID: identity.StoreID}, Create: &request})
-		intent := OperationIntent{ID: "create:" + environment.ID, EnvironmentID: environment.ID, Kind: "create", IdempotencyKey: request.IdempotencyKey, ExpectedFence: environment.Fence, Request: raw}
-		if previous, found, err := c.Repository.FindEnvironmentOperation(ctx, intent.ID); err != nil {
-			return Binding{}, err
-		} else if found {
-			intent.ExpectedFence = previous.Fence - 1
-		}
-		observed, err = lifecycle.Run(ctx, intent)
-		if err != nil {
-			return Binding{}, err
-		}
-	} else {
-		if predecessor.GenerationID != "" {
-			if _, starting, err := c.Repository.FindEnvironmentOperation(ctx, "start:"+generation); err != nil {
-				return Binding{}, err
-			} else if !starting {
-				if _, err := ResumeRetainedExecution(ctx, c.Repository, c.Backend, predecessor.GenerationID, owner); err != nil {
-					return Binding{}, err
-				}
-				environment, err = c.Repository.GetEnvironmentBinding(ctx, environment.ID)
-				if err != nil {
-					return Binding{}, err
-				}
-			}
-		}
-		observed, err = c.Backend.Inspect(ctx, sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID})
-		if err != nil {
-			return Binding{}, err
-		}
-		if observed.Epoch != environment.Epoch || observed.State != "running" || observed.PlacementState != "active" || observed.MutationRevision != environment.MutationRevision {
-			return Binding{}, fmt.Errorf("retained environment requires reconciled resume before a new execution")
-		}
-		// The initial generation identity is stable across interrupted starts;
-		// ReserveExecutionBinding refuses a previously retired incarnation.
-
+	observed, err := c.Backend.Inspect(ctx, sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID})
+	if err != nil {
+		return Binding{}, err
+	}
+	if observed.Epoch != environment.Epoch || observed.State != "running" || observed.PlacementState != "active" || observed.MutationRevision != environment.MutationRevision {
+		return Binding{}, fmt.Errorf("retained environment requires reconciled resume before a new execution")
 	}
 	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: []string{"--session-id", session.ID, "--generation-id", generation, "--driver-id", session.Driver}, Environment: plan.Environment, Directory: "/workspace"}
 	binding, connection, err := (Worker{Repository: c.Repository, Agents: c.Agents}).Start(lifetime, WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request})
@@ -397,4 +362,62 @@ func (c *Controller) Close() error {
 		worker.mu.Unlock()
 	}
 	return nil
+}
+
+func (c *Controller) provisionEnvironment(ctx context.Context, session Session, identity sandbox.Identity, plan LaunchPlan, owner string, maximum int) (Environment, error) {
+	if plan.TemplateID == "" || plan.SpecDigest == "" || plan.ManifestDigest == "" || plan.CPUMillis <= 0 || plan.MemoryBytes <= 0 || plan.DiskBytes <= 0 || plan.WorkspaceBytes <= 0 || plan.JournalBytes <= 0 {
+		return Environment{}, fmt.Errorf("driver plan requires pinned release and positive resource caps")
+	}
+	environment, found, err := c.Repository.FindSessionEnvironment(ctx, session.ID)
+	if err != nil {
+		return Environment{}, err
+	}
+	desiredSpec := desiredEnvironment{Driver: session.Driver, Template: plan.TemplateID, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, CPU: plan.CPUMillis, Memory: plan.MemoryBytes, Disk: plan.DiskBytes, Workspace: plan.WorkspaceBytes, Journal: plan.JournalBytes, Network: plan.Network, Mounts: plan.Mounts, Environment: plan.Environment}
+	desired, _ := json.Marshal(desiredSpec)
+	if !found {
+		environment = Environment{ID: "env_" + session.ID, SessionID: session.ID, BackendName: c.BackendName, StoreID: identity.StoreID, Desired: desired}
+		if err := c.Repository.CreateEnvironmentBinding(ctx, environment); err != nil {
+			return Environment{}, err
+		}
+	} else {
+		var persisted desiredEnvironment
+		if err := json.Unmarshal(environment.Desired, &persisted); err != nil || environment.StoreID != identity.StoreID || environment.BackendName != c.BackendName || !reflect.DeepEqual(persisted, desiredSpec) {
+			return Environment{}, ErrOperationConflict
+		}
+	}
+	storage := StorageService{Repository: c.Repository, Backend: c.Backend}
+	mounts := append([]sandbox.Mount(nil), plan.Mounts...)
+	for _, volume := range []struct {
+		purpose, destination string
+		capacity             int64
+	}{{"workspace", "/workspace", plan.WorkspaceBytes}, {"bridge", "/harness-bridge", plan.JournalBytes}} {
+		binding, err := storage.EnsureVolume(ctx, environment.ID, volume.purpose, volume.capacity)
+		if err != nil {
+			return Environment{}, err
+		}
+		mounts = append(mounts, sandbox.Mount{VolumeID: binding.VolumeID, Destination: volume.destination, Access: "exclusive"})
+	}
+	environment, err = c.Repository.GetEnvironmentBinding(ctx, environment.ID)
+	if err != nil {
+		return Environment{}, err
+	}
+	lifecycle := EnvironmentService{Repository: c.Repository, Backend: c.Backend}
+	if environment.SandboxID == "" {
+		request := sandbox.CreateRequest{IdempotencyKey: "create:" + environment.ID, TemplateID: plan.TemplateID, CPUMillis: plan.CPUMillis, MemoryBytes: plan.MemoryBytes, DiskBytes: plan.DiskBytes, Mounts: mounts, Network: plan.Network}
+		raw, _ := json.Marshal(EnvironmentRequest{Reference: sandbox.Reference{StoreID: identity.StoreID}, Create: &request})
+		intent := OperationIntent{ID: "create:" + environment.ID, EnvironmentID: environment.ID, Kind: "create", IdempotencyKey: request.IdempotencyKey, ExpectedFence: environment.Fence, Request: raw}
+		if previous, found, err := c.Repository.FindEnvironmentOperation(ctx, intent.ID); err != nil {
+			return Environment{}, err
+		} else if found {
+			intent.ExpectedFence = previous.Fence - 1
+		}
+		if _, err := c.Repository.BeginSessionProvisioning(ctx, intent, owner, maximum); err != nil {
+			return Environment{}, err
+		}
+		_, err = lifecycle.Run(ctx, intent)
+		if err != nil {
+			return Environment{}, err
+		}
+	}
+	return c.Repository.GetEnvironmentBinding(ctx, environment.ID)
 }

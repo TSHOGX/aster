@@ -527,8 +527,17 @@ stays held; a conditional pause must settle before the final result releases
 turn admission. Lost resume, helper or pause replies preserve their original
 identities. A replaced product owner can continue the same workflow. Preparation
 failure before helper issuance also completes a verified pause. Ordinary session
-resume uses the last verified upload-maintenance pause. Provisioning a workspace
-for a session that has never started remains a separate integration step.
+resume uses the last verified upload-maintenance pause.
+
+An upload before the first turn can invoke the controller's workspace provisioner.
+It verifies the session backend and current owner, pins the normal launch plan,
+creates the workspace/journal volumes and retained sandbox with stable keys, then
+verifies pause without allocating an execution or launching an agent. Sandbox
+creation and initial resume reserve the configured active-session capacity before
+remote dispatch. The ordinary write workflow then uses that paused environment.
+The first turn resumes the same sandbox and volumes through normal readiness,
+preserving files uploaded before agent startup. Repeated provisioning verifies the
+existing desired plan and reuses its identities.
 
 Retained artifact inventory uses bounded full scans through the engine. Live
 directories are read through the confined helper in pages of 32; paused scans

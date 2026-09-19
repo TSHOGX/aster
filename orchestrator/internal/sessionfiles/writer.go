@@ -15,11 +15,16 @@ import (
 )
 
 type Writer struct {
-	Repository WriterRepository
-	Backend    sandbox.Processes
-	Lifecycle  sandbox.Lifecycle
-	Content    workspace.PreparedStore
-	MaxActive  int
+	Repository  WriterRepository
+	Backend     sandbox.Processes
+	Lifecycle   sandbox.Lifecycle
+	Content     workspace.PreparedStore
+	MaxActive   int
+	Provisioner WorkspaceProvisioner
+}
+
+type WorkspaceProvisioner interface {
+	EnsureWorkspace(context.Context, string, string, int) error
 }
 
 type WriterRepository interface {
@@ -38,6 +43,11 @@ func (w Writer) WriteSession(ctx context.Context, session, owner, path string, s
 	content, err := w.Content.Prepare(ctx, source, limit)
 	if err != nil {
 		return workspace.File{}, err
+	}
+	if w.Provisioner != nil {
+		if err := w.Provisioner.EnsureWorkspace(ctx, session, owner, w.MaxActive); err != nil {
+			return workspace.File{}, err
+		}
 	}
 	mutation, err := w.Repository.BeginGuestWorkspaceMutation(ctx, workspace.Mutation{ID: uuid.NewString(), SessionID: session, Owner: owner, Path: path}, content, w.MaxActive)
 	if err != nil {

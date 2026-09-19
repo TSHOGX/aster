@@ -180,6 +180,21 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	controller := &execution.Controller{Repository: repository, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 	defer func() { controller.Close() }()
 	if driver == "sh" {
+		srv.ownerUUID = owner.UUID
+		srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Lifecycle: backend, Content: preparedUploads, MaxActive: 2, Provisioner: controller})
+		request := httptest.NewRequest(http.MethodPut, "/artifacts/"+session.ID+"/before-first-turn.txt", strings.NewReader("product-worker-ok\n")).WithContext(context.WithValue(ctx, userContextKey{}, session.UserID))
+		response := httptest.NewRecorder()
+		srv.writeArtifact(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("new-session workspace upload: %d %s", response.Code, response.Body.String())
+		}
+		var executions int
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM execution_bindings WHERE session_id=?`, session.ID).Scan(&executions); err != nil || executions != 0 {
+			t.Fatalf("first upload launched an agent: %d %v", executions, err)
+		}
+		assertIntegrationCapacity(t, ctx, st, 0)
+	}
+	if driver == "sh" {
 		if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner); err == nil {
 			t.Fatal("injected acceptance failure ignored")
 		}
@@ -280,7 +295,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		content := "printf 'product-worker-ok\\n'"
 		if driver == "sh" {
 			if cycle == 0 {
-				content = "printf 'product-worker-ok\\n' > /workspace/retained-controller-proof; ln -s /workspace /workspace/symlink-parent; python3 -c 'from pathlib import Path; p=Path(\"/workspace/pages\"); p.mkdir(); [(p/f\"file-{i:02d}\").write_text(\"page\") for i in range(40)]'; cat /workspace/retained-controller-proof"
+				content = "cp /workspace/before-first-turn.txt /workspace/retained-controller-proof; ln -s /workspace /workspace/symlink-parent; python3 -c 'from pathlib import Path; p=Path(\"/workspace/pages\"); p.mkdir(); [(p/f\"file-{i:02d}\").write_text(\"page\") for i in range(40)]'; cat /workspace/retained-controller-proof"
 			} else {
 				content = "cat /workspace/retained-controller-proof"
 			}
