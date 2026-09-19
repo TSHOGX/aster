@@ -289,6 +289,17 @@ CREATE TABLE IF NOT EXISTS sandbox_environments (
   FOREIGN KEY(backend_name,store_id) REFERENCES sandbox_backends(name,store_id),
   UNIQUE(store_id,sandbox_id)
 );
+CREATE TABLE IF NOT EXISTS session_storage_bindings (
+ session_id TEXT NOT NULL REFERENCES sessions(id),
+ environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
+ purpose TEXT NOT NULL CHECK(purpose IN ('workspace','bridge')),
+ store_id TEXT NOT NULL,
+ volume_id TEXT NOT NULL,
+ capacity INTEGER NOT NULL CHECK(capacity>0),
+ PRIMARY KEY(session_id,purpose),
+ UNIQUE(store_id,volume_id)
+);
+
 CREATE TABLE IF NOT EXISTS execution_bindings (
   generation_id TEXT PRIMARY KEY REFERENCES runtime_generations(generation_id),
   session_id TEXT NOT NULL REFERENCES sessions(id),

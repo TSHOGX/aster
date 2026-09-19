@@ -313,3 +313,11 @@ func (s *Store) ListUnresolvedEnvironmentOperations(ctx context.Context, limit i
 	}
 	return result, nil
 }
+
+func (s *Store) FindEnvironmentOperation(ctx context.Context, id string) (execution.Operation, bool, error) {
+	operation, err := s.GetEnvironmentOperation(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return operation, false, nil
+	}
+	return operation, err == nil, err
+}

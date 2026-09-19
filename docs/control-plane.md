@@ -316,3 +316,12 @@ This establishes application authorization and audit persistence. A production
 gateway must still derive the destination from the accepted socket, enforce its
 protocol-specific upstream rules and close affected established flows on revoke.
 Database revocation alone is not a claim that an external stream has terminated.
+
+Session workspace and bridge-journal volumes have independent opaque storage
+bindings. Provisioning verifies the pinned backend identity and uses a recorded
+idempotency key through the environment operation lane. Lost responses retry the
+same request. If the operation committed but its session binding did not, replay
+records the already-created volume without another remote create. Existing
+bindings are never provisioned again or silently reassigned, including after an
+engine store rebuild. Pi's native home is intentionally absent from this volume
+map because it belongs to the retained sandbox overlay.
