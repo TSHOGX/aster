@@ -61,7 +61,7 @@ func TestTurnStartLatencyGate(t *testing.T) {
 		if _, err := outbox.Write(ctx, envelope); err != nil {
 			t.Fatalf("write outbox %s: %v", envelope.Type, err)
 		}
-		if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+		if err := processor.ProcessOnce(ctx, details.BridgeDirPath, bridge.Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 			t.Fatalf("process %s: %v", envelope.Type, err)
 		}
 	}

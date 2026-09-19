@@ -43,7 +43,7 @@ func TestProcessorRequiresHelloAndProbeBeforeClaimGrant(t *testing.T) {
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process early claim: %v", err)
 	}
 	assertSingleInboxResponse(t, details.BridgeDirPath, TypeNoWork, "req_claim")
@@ -56,7 +56,7 @@ func TestProcessorRequiresHelloAndProbeBeforeClaimGrant(t *testing.T) {
 		GenerationID: allocation.GenerationID,
 		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process hello: %v", err)
 	}
 	assertSingleInboxResponse(t, details.BridgeDirPath, TypeHelloAck, "req_hello")
@@ -68,7 +68,7 @@ func TestProcessorRequiresHelloAndProbeBeforeClaimGrant(t *testing.T) {
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process probe: %v", err)
 	}
 	assertSingleInboxResponse(t, details.BridgeDirPath, TypeNoWork, "req_probe")
@@ -80,7 +80,7 @@ func TestProcessorRequiresHelloAndProbeBeforeClaimGrant(t *testing.T) {
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process ready claim: %v", err)
 	}
 	response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeGrant, "req_claim_ready")
@@ -130,7 +130,7 @@ func TestProcessorRejectsInvalidV2Hello(t *testing.T) {
 				GenerationID: allocation.GenerationID,
 				Payload:      tc.payload,
 			})
-			if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+			if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 				t.Fatalf("process invalid hello: %v", err)
 			}
 			response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeError, "req_bad_hello")
@@ -180,7 +180,7 @@ func TestProcessorMarkReadyAllowsClaimAfterExternalStartupProbe(t *testing.T) {
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process marked-ready claim: %v", err)
 	}
 	response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeGrant, "req_mark_ready_claim")
@@ -235,7 +235,7 @@ func TestProcessorRequiresProbeBeforeRestoredGenerationClaimsTurn(t *testing.T) 
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process restore claim before probe: %v", err)
 	}
 	response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeNoWork, "req_restore_claim_early")
@@ -265,7 +265,7 @@ WHERE id = ?`, turnID).Scan(&turnStatus, &turnGeneration, &turnOwner); err != ni
 		GenerationID: allocation.GenerationID,
 		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process restore hello: %v", err)
 	}
 	assertSingleInboxResponse(t, details.BridgeDirPath, TypeHelloAck, "req_restore_hello")
@@ -276,7 +276,7 @@ WHERE id = ?`, turnID).Scan(&turnStatus, &turnGeneration, &turnOwner); err != ni
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process restore probe: %v", err)
 	}
 	assertSingleInboxResponse(t, details.BridgeDirPath, TypeNoWork, "req_restore_probe")
@@ -292,7 +292,7 @@ WHERE id = ?`, turnID).Scan(&turnStatus, &turnGeneration, &turnOwner); err != ni
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process restore claim after probe: %v", err)
 	}
 	response = assertSingleInboxResponse(t, details.BridgeDirPath, TypeGrant, "req_restore_claim_ready")
@@ -361,7 +361,7 @@ func TestProcessorLifecycleMessagesUpdateTurnAndEvents(t *testing.T) {
 	}
 	writeOutbox(t, ctx, details.BridgeDirPath, started)
 	writeOutbox(t, ctx, details.BridgeDirPath, output)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process start/output: %v", err)
 	}
 	assertInboxEmpty(t, details.BridgeDirPath)
@@ -376,7 +376,7 @@ WHERE sandbox_source_ip = '10.240.0.2'`); err != nil {
 	output.MessageID = "msg_output_replay"
 	writeOutbox(t, ctx, details.BridgeDirPath, started)
 	writeOutbox(t, ctx, details.BridgeDirPath, output)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process start/output replay: %v", err)
 	}
 	assertInboxEmpty(t, details.BridgeDirPath)
@@ -392,7 +392,7 @@ WHERE sandbox_source_ip = '10.240.0.2'`).Scan(&nextRequestSequence); err != nil 
 	}
 
 	writeOutbox(t, ctx, details.BridgeDirPath, done)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process completion: %v", err)
 	}
 	assertInboxEmpty(t, details.BridgeDirPath)
@@ -421,7 +421,7 @@ WHERE session_id = ?
 
 	done.MessageID = "msg_done_replay"
 	writeOutbox(t, ctx, details.BridgeDirPath, done)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process completion replay: %v", err)
 	}
 	assertInboxEmpty(t, details.BridgeDirPath)
@@ -476,7 +476,7 @@ func TestProcessorResumeTurnRequiresReadyBridgeAndExistingLease(t *testing.T) {
 		TurnID:       &turnID,
 	}
 	writeOutbox(t, ctx, details.BridgeDirPath, resume)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process early resume: %v", err)
 	}
 	assertSingleInboxResponse(t, details.BridgeDirPath, TypeNoWork, "req_resume_early")
@@ -489,7 +489,7 @@ func TestProcessorResumeTurnRequiresReadyBridgeAndExistingLease(t *testing.T) {
 	resume.MessageID = "msg_resume_ready"
 	resume.RequestID = "req_resume_ready"
 	writeOutbox(t, ctx, details.BridgeDirPath, resume)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process ready resume: %v", err)
 	}
 	response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeGrant, "req_resume_ready")
@@ -575,7 +575,7 @@ WHERE id = ?`, store.GenerationLeaseOwner("previous-owner"), formatStoreTimeForB
 		GenerationID: allocation.GenerationID,
 		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process hello: %v", err)
 	}
 	response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeHelloAck, "req_hello")
@@ -594,7 +594,7 @@ WHERE id = ?`, store.GenerationLeaseOwner("previous-owner"), formatStoreTimeForB
 		SessionID:    sessionID,
 		GenerationID: allocation.GenerationID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process probe: %v", err)
 	}
 	assertSingleInboxResponse(t, details.BridgeDirPath, TypeNoWork, "req_probe")
@@ -607,7 +607,7 @@ WHERE id = ?`, store.GenerationLeaseOwner("previous-owner"), formatStoreTimeForB
 		GenerationID: allocation.GenerationID,
 		TurnID:       &turnID,
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process resume: %v", err)
 	}
 	response = assertSingleInboxResponse(t, details.BridgeDirPath, TypeGrant, "req_resume")
@@ -676,12 +676,12 @@ func TestProcessorReplayAfterCommitBeforeUnlinkIsIdempotent(t *testing.T) {
 	}
 	writeOutbox(t, ctx, details.BridgeDirPath, started)
 	writeOutbox(t, ctx, details.BridgeDirPath, output)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process first delivery: %v", err)
 	}
 	writeOutbox(t, ctx, details.BridgeDirPath, started)
 	writeOutbox(t, ctx, details.BridgeDirPath, output)
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process replay delivery: %v", err)
 	}
 
@@ -744,14 +744,14 @@ func TestProcessorDedupesMidStreamOutputReplayUnderLoad(t *testing.T) {
 		TurnID:       &turnID,
 		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process ack started: %v", err)
 	}
 
 	for seq := 1; seq <= 100; seq++ {
 		writeOutbox(t, ctx, details.BridgeDirPath, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, seq, "first"))
 	}
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process first output burst: %v", err)
 	}
 
@@ -763,7 +763,7 @@ func TestProcessorDedupesMidStreamOutputReplayUnderLoad(t *testing.T) {
 		GenerationID: allocation.GenerationID,
 		Payload:      bridgeHelloPayloadForTest("pi"),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process reconnect hello: %v", err)
 	}
 	response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeHelloAck, "req_hello_reconnect")
@@ -781,7 +781,7 @@ func TestProcessorDedupesMidStreamOutputReplayUnderLoad(t *testing.T) {
 	for seq := 101; seq <= 120; seq++ {
 		writeOutbox(t, ctx, details.BridgeDirPath, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, seq, "replay"))
 	}
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process replay output burst: %v", err)
 	}
 	assertInboxEmpty(t, details.BridgeDirPath)
@@ -826,7 +826,7 @@ func TestProcessorRejectsUnknownNativeEventPayload(t *testing.T) {
 			"payload":{"schema":"harness_native_events_v1","event":{"type":"agent.future","payload":{}}}
 		}`),
 	})
-	if err := processor.ProcessOnce(ctx, root); err != nil {
+	if err := processor.ProcessOnce(ctx, root, Scope{SessionID: "sess_native", GenerationID: "gen_native"}); err != nil {
 		t.Fatalf("process unknown native event: %v", err)
 	}
 	response := assertSingleInboxResponse(t, root, TypeError, "req_native_unknown")
@@ -876,12 +876,12 @@ func TestProcessorFailsGenerationOnOutputSequenceMismatch(t *testing.T) {
 		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
 	})
 	writeOutbox(t, ctx, details.BridgeDirPath, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "first"))
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process first output: %v", err)
 	}
 
 	writeOutbox(t, ctx, details.BridgeDirPath, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "changed"))
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process mismatched duplicate: %v", err)
 	}
 	response := assertSingleInboxResponse(t, details.BridgeDirPath, TypeError, "req_output_changed_001")
@@ -979,7 +979,7 @@ func TestProcessorDiscardsOutputForTerminalTurn(t *testing.T) {
 		TurnID:       &turnID,
 		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process ack started: %v", err)
 	}
 
@@ -1012,7 +1012,7 @@ func TestProcessorDiscardsOutputForTerminalTurn(t *testing.T) {
 		GenerationID: allocation.GenerationID,
 		Payload:      json.RawMessage(`{}`),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process late output: %v", err)
 	}
 
@@ -1091,7 +1091,7 @@ func TestProcessorFailsGenerationWhenCompletionCommitFailsAfterOutput(t *testing
 		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
 	})
 	writeOutbox(t, ctx, details.BridgeDirPath, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "prefix"))
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process output prefix: %v", err)
 	}
 
@@ -1122,7 +1122,7 @@ func TestProcessorFailsGenerationWhenCompletionCommitFailsAfterOutput(t *testing
 			}
 		}`),
 	})
-	if err := processor.ProcessOnce(ctx, details.BridgeDirPath); err != nil {
+	if err := processor.ProcessOnce(ctx, details.BridgeDirPath, Scope{SessionID: details.SessionID, GenerationID: details.GenerationID}); err != nil {
 		t.Fatalf("process bad completion: %v", err)
 	}
 	assertInboxEmpty(t, details.BridgeDirPath)
@@ -1182,7 +1182,7 @@ func TestProcessorRetainsOutboxMessageWhenCompletionIsTransient(t *testing.T) {
 		TurnID:       &turnID,
 		Payload:      json.RawMessage(`{"status":"completed"}`),
 	})
-	if err := processor.ProcessOnce(ctx, root); err == nil || !strings.Contains(err.Error(), "database is locked") {
+	if err := processor.ProcessOnce(ctx, root, Scope{SessionID: "sess_retry", GenerationID: "gen_retry"}); err == nil || !strings.Contains(err.Error(), "database is locked") {
 		t.Fatalf("process transient completion err=%v, want database is locked", err)
 	}
 	if failGenCalled {
@@ -1227,7 +1227,7 @@ func TestProcessorRetainsOutboxMessageWhenStoreApplyFails(t *testing.T) {
 		SessionID:    "sess_retry",
 		GenerationID: "gen_retry",
 	})
-	if err := processor.ProcessOnce(ctx, root); err == nil || !strings.Contains(err.Error(), "database is locked") {
+	if err := processor.ProcessOnce(ctx, root, Scope{SessionID: "sess_retry", GenerationID: "gen_retry"}); err == nil || !strings.Contains(err.Error(), "database is locked") {
 		t.Fatalf("process with store failure err=%v, want database is locked", err)
 	}
 	assertInboxEmpty(t, root)
@@ -1262,7 +1262,7 @@ func TestProcessorProtocolErrorWritesErrorAndUnlinks(t *testing.T) {
 		SessionID:    "sess_bad",
 		GenerationID: "gen_bad",
 	})
-	if err := processor.ProcessOnce(ctx, root); err != nil {
+	if err := processor.ProcessOnce(ctx, root, Scope{SessionID: "sess_bad", GenerationID: "gen_bad"}); err != nil {
 		t.Fatalf("process protocol error: %v", err)
 	}
 	response := assertSingleInboxResponse(t, root, TypeError, "req_bad")
@@ -1824,7 +1824,7 @@ func TestProcessorBatchesConsecutiveOutputEnvelopes(t *testing.T) {
 	for sequence := 1; sequence <= 10; sequence++ {
 		writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, sequence, "batch"))
 	}
-	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+	if err := processor.ProcessOnce(ctx, bridgeDir, Scope{SessionID: sessionID, GenerationID: allocation.GenerationID}); err != nil {
 		t.Fatalf("process batch: %v", err)
 	}
 
@@ -1896,7 +1896,7 @@ func TestProcessorBatchIsolatesOutputSequenceMismatch(t *testing.T) {
 		Payload:      json.RawMessage(`{"sandbox_source_ip":"10.240.0.2"}`),
 	})
 	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "first"))
-	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+	if err := processor.ProcessOnce(ctx, bridgeDir, Scope{SessionID: sessionID, GenerationID: allocation.GenerationID}); err != nil {
 		t.Fatalf("process first output: %v", err)
 	}
 
@@ -1904,7 +1904,7 @@ func TestProcessorBatchIsolatesOutputSequenceMismatch(t *testing.T) {
 	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 2, "good"))
 	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 1, "changed"))
 	writeOutbox(t, ctx, bridgeDir, emitOutputEnvelope(sessionID, allocation.GenerationID, turnID, 3, "good"))
-	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+	if err := processor.ProcessOnce(ctx, bridgeDir, Scope{SessionID: sessionID, GenerationID: allocation.GenerationID}); err != nil {
 		t.Fatalf("process mismatched batch: %v", err)
 	}
 
@@ -1981,7 +1981,7 @@ func TestProcessorBatchDoesNotSpanOtherEnvelopeTypes(t *testing.T) {
 		TurnID:       &turnID,
 		Payload:      json.RawMessage(`{"status":"completed"}`),
 	})
-	if err := processor.ProcessOnce(ctx, bridgeDir); err != nil {
+	if err := processor.ProcessOnce(ctx, bridgeDir, Scope{SessionID: sessionID, GenerationID: allocation.GenerationID}); err != nil {
 		t.Fatalf("process mixed run: %v", err)
 	}
 

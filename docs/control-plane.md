@@ -142,3 +142,12 @@ ordered local carrier supplies the completion boundary; this is not yet a remote
 process-stream protocol. Reconnect output watermarks come from retained ingress,
 with historical event records used only for drained pre-upgrade turns. New
 output must be contiguous. Projection errors retain their input for retry.
+
+Bridge protocol processing uses a transport interface with receive, send and
+acknowledge operations. The local queue is one carrier for that interface. The
+host supplies the accepted session/generation scope from its binding record;
+every incoming envelope must match before hello, claim, heartbeat, output or
+completion handling can reach persistence. Batched output receives the same
+check. Replies use the host scope, including replies rejecting a forged scope.
+Carrier receipts remain separate from envelope and output identities, so a lost
+acknowledgment can redeliver input without allocating a second journal record.

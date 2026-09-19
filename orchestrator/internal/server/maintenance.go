@@ -352,7 +352,7 @@ func (s *Server) RunMaintenance(ctx context.Context) error {
 		}
 		for _, generation := range generations {
 			processor.MarkReady(generation.SessionID, generation.GenerationID)
-			if err := processor.ProcessOnce(pollCtx, generation.BridgeDirPath); err != nil {
+			if err := processor.ProcessOnce(pollCtx, generation.BridgeDirPath, bridge.Scope{SessionID: generation.SessionID, GenerationID: generation.GenerationID}); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return
 				}

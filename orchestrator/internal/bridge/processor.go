@@ -150,19 +150,18 @@ type ackCompletedPayload struct {
 	DriverStateUpdate *store.DriverStateUpdate `json:"driver_state_update,omitempty"`
 }
 
-func (p *Processor) ProcessOnce(ctx context.Context, root string) error {
+func (p *Processor) Process(ctx context.Context, scope Scope, carrier Transport) error {
 	if p.Store == nil {
 		return fmt.Errorf("bridge processor store is required")
 	}
-	inbox, err := OpenQueue(root, InboxDir)
-	if err != nil {
+	if err := scope.validate(); err != nil {
 		return err
 	}
-	outbox, err := OpenQueue(root, OutboxDir)
-	if err != nil {
-		return err
+	if carrier == nil {
+		return fmt.Errorf("bridge transport required")
 	}
-	files, err := outbox.ReadAll()
+	inbox := scopedTransport{Transport: carrier, scope: scope}
+	files, err := carrier.Receive(ctx)
 	if err != nil {
 		return err
 	}
@@ -177,11 +176,11 @@ func (p *Processor) ProcessOnce(ctx context.Context, root string) error {
 		// envelope type (ack_turn_started, ack_turn_completed, …) is untouched:
 		// a batch never spans one.
 		if batch := outputBatchAt(files, i, p.emitOutputBatchMaxRows()); len(batch) > 1 {
-			if err := p.handleOutputBatch(ctx, inbox, batch); err != nil {
+			if err := p.handleOutputBatch(ctx, inbox, scope, batch); err != nil {
 				return err
 			}
 			for _, file := range batch {
-				if err := file.Unlink(); err != nil {
+				if err := carrier.Acknowledge(ctx, file.Receipt); err != nil {
 					return err
 				}
 			}
@@ -189,7 +188,7 @@ func (p *Processor) ProcessOnce(ctx context.Context, root string) error {
 			continue
 		}
 		file := files[i]
-		if err := p.handle(ctx, inbox, file.Envelope); err != nil {
+		if err := p.handle(ctx, inbox, scope, file.Envelope); err != nil {
 			if !errors.Is(err, errProtocol) {
 				return err
 			}
@@ -197,7 +196,7 @@ func (p *Processor) ProcessOnce(ctx context.Context, root string) error {
 				return writeErr
 			}
 		}
-		if err := file.Unlink(); err != nil {
+		if err := carrier.Acknowledge(ctx, file.Receipt); err != nil {
 			return err
 		}
 		i++
@@ -211,7 +210,7 @@ func (p *Processor) ProcessOnce(ctx context.Context, root string) error {
 // The session+generation constraint keeps the batch inside a single
 // authorization scope: every event in it is validated against the same turn CAS,
 // and a mixed batch would make one envelope's failure harder to attribute.
-func outputBatchAt(files []MessageFile, start, maxRows int) []MessageFile {
+func outputBatchAt(files []Delivery, start, maxRows int) []Delivery {
 	if maxRows <= 1 || start >= len(files) {
 		return nil
 	}
@@ -238,7 +237,7 @@ func outputBatchAt(files []MessageFile, start, maxRows int) []MessageFile {
 // validation, its own committed-callback, and — on a sequence mismatch — its own
 // generation retirement. Batching changes the number of transactions, not who is
 // accountable for what.
-func (p *Processor) handleOutputBatch(ctx context.Context, inbox Queue, batch []MessageFile) error {
+func (p *Processor) handleOutputBatch(ctx context.Context, inbox Transport, scope Scope, batch []Delivery) error {
 	now := p.now()
 	events := make([]store.AppendEventParams, 0, len(batch))
 	// Envelopes that fail validation before reaching the store are recorded here
@@ -248,6 +247,10 @@ func (p *Processor) handleOutputBatch(ctx context.Context, inbox Queue, batch []
 
 	for i, file := range batch {
 		envelope := file.Envelope
+		if err := scope.accepts(envelope); err != nil {
+			protocolFailures[i] = err
+			continue
+		}
 		if err := validateEnvelope(envelope); err != nil {
 			protocolFailures[i] = protocolError(err)
 			continue
@@ -332,7 +335,10 @@ func (p *Processor) emitOutputBatchMaxRows() int {
 	return p.EmitOutputBatchMaxRows
 }
 
-func (p *Processor) handle(ctx context.Context, inbox Queue, envelope Envelope) error {
+func (p *Processor) handle(ctx context.Context, inbox Transport, scope Scope, envelope Envelope) error {
+	if err := scope.accepts(envelope); err != nil {
+		return err
+	}
 	if err := validateEnvelope(envelope); err != nil {
 		return protocolError(err)
 	}
@@ -564,12 +570,12 @@ func (p *Processor) handle(ctx context.Context, inbox Queue, envelope Envelope) 
 	}
 }
 
-func (p *Processor) writeResponse(ctx context.Context, inbox Queue, request Envelope, responseType string, payload any) error {
+func (p *Processor) writeResponse(ctx context.Context, inbox Transport, request Envelope, responseType string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	_, err = inbox.Write(ctx, Envelope{
+	err = inbox.Send(ctx, Envelope{
 		RequestID:    requestID(request),
 		Type:         responseType,
 		SessionID:    request.SessionID,
