@@ -222,3 +222,20 @@ or driver-state advancement with missing output or pending projection. A local
 integration test runs the actual shell driver through framed stdin/stdout and
 verifies retained completion data. Template/substrate integration remains a
 separate acceptance gate.
+
+## Engine event recovery
+
+Engine events are retained in a separate inbox scoped by durable engine store
+identity. Event ID and sequence deduplication, payload-digest checks, reconciliation
+requests and cursor progress commit together. A contradictory replay rolls back
+the whole page. Historical events never overwrite an environment's accepted
+placement epoch or mutation revision; they schedule current inspection instead.
+
+The Khora SDK discards typed bounds on a 410 response, so the adapter obtains a
+fresh typed window with `Events(after=0, limit=1)`. The reconciler persists that
+window before scanning known bindings, then replays from `earliest - 1`. A crash
+repeats the scan and replay; after reaching the captured watermark, another scan
+settles current state before resync completes. If retention overtakes recovery,
+the new 410 starts another persisted resync window. This service is independently
+tested and awaits wiring into the Khora execution worker; the existing local
+maintenance path remains active.

@@ -275,6 +275,30 @@ CREATE TABLE IF NOT EXISTS sandbox_environments (
   FOREIGN KEY(backend_name,store_id) REFERENCES sandbox_backends(name,store_id),
   UNIQUE(store_id,sandbox_id)
 );
+CREATE TABLE IF NOT EXISTS engine_event_cursors (
+  store_id TEXT PRIMARY KEY,
+  after_sequence INTEGER NOT NULL,
+  resync_watermark INTEGER NOT NULL,
+  resync INTEGER NOT NULL CHECK(resync IN (0,1))
+);
+CREATE TABLE IF NOT EXISTS engine_event_inbox (
+  store_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  epoch INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  PRIMARY KEY(store_id,event_id),
+  UNIQUE(store_id,sequence)
+);
+CREATE TABLE IF NOT EXISTS environment_reconcile_requests (
+  environment_id TEXT PRIMARY KEY REFERENCES sandbox_environments(environment_id),
+  reason TEXT NOT NULL,
+  event_sequence INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS environment_operations (
   operation_id TEXT PRIMARY KEY,
   environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
