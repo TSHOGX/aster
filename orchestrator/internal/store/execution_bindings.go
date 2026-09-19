@@ -177,17 +177,37 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 	return tx.Commit()
 }
 
+// acceptedExecutionTx gates new dispatch and service authority. An engine event
+// invalidates readiness until fresh process evidence has been reconciled.
 func acceptedExecutionTx(ctx context.Context, tx *sql.Tx, session, generation, owner string, now time.Time) error {
+	if err := executionIngressTx(ctx, tx, session, generation, owner, now); err != nil {
+		return err
+	}
+	var pending int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM environment_reconcile_requests r JOIN execution_bindings b ON b.environment_id=r.environment_id WHERE b.generation_id=?`, generation).Scan(&pending); err != nil {
+		return err
+	}
+	if pending != 0 {
+		return fmt.Errorf("execution readiness awaits engine reconciliation")
+	}
+	return nil
+}
+
+// executionIngressTx permits settlement from the original accepted process while
+// an event is awaiting inspection. This grants no new work or egress authority.
+// Owner, lease, placement, lifecycle and session fences still apply; a replaced
+// execution must use the explicit historical recovery path.
+func executionIngressTx(ctx context.Context, tx *sql.Tx, session, generation, owner string, now time.Time) error {
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
 		return err
 	}
 	var count int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN runtime_generations g ON g.generation_id=b.generation_id JOIN sessions s ON s.id=b.session_id WHERE b.session_id=? AND b.generation_id=? AND b.owner=? AND b.state='accepted' AND b.process_handle!='' AND b.store_id=e.store_id AND b.sandbox_id=e.sandbox_id AND b.epoch=e.epoch AND b.environment_fence=e.fence AND g.lease_owner=b.owner AND g.lease_expires_at>? AND g.status IN ('idle','active') AND s.active_generation_id=b.generation_id AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=b.environment_id AND o.state IN ('pending','issued','uncertain'))`, session, generation, owner, formatTime(now)).Scan(&count)
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN sandbox_environments e ON e.environment_id=b.environment_id JOIN runtime_generations g ON g.generation_id=b.generation_id JOIN sessions s ON s.id=b.session_id WHERE b.session_id=? AND b.generation_id=? AND b.owner=? AND b.state='accepted' AND b.process_handle!='' AND b.store_id=e.store_id AND b.sandbox_id=e.sandbox_id AND b.epoch=e.epoch AND b.environment_fence=e.fence AND g.lease_owner=b.owner AND g.lease_expires_at>? AND g.status IN ('idle','active') AND s.active_generation_id=b.generation_id AND s.status NOT IN ('failed','destroyed') AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=b.environment_id AND o.state IN ('pending','issued','uncertain'))`, session, generation, owner, formatTime(now)).Scan(&count)
 	if err != nil {
 		return err
 	}
 	if count != 1 {
-		return fmt.Errorf("accepted execution binding CAS failed")
+		return fmt.Errorf("execution ingress binding CAS failed")
 	}
 	return nil
 }

@@ -138,7 +138,7 @@ func (s BoundBridgeStore) AckTurnStarted(ctx context.Context, p AckStartedParams
 		return 0, err
 	}
 	defer tx.Rollback()
-	if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
+	if err := executionIngressTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
 		return 0, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE turns SET status='running',started_at=coalesce(started_at,?),ack_started_at=coalesce(ack_started_at,?) WHERE id=? AND session_id=? AND generation_id=? AND lease_owner=? AND lease_expires_at>? AND status IN ('leased','running')`, formatTime(p.Now), formatTime(p.Now), p.TurnID, p.SessionID, p.GenerationID, p.Owner, formatTime(p.Now))

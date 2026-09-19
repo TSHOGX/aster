@@ -340,12 +340,20 @@ placement epoch, driver/configuration manifests and the observed process handle.
 Acceptance requires that the environment still matches, its operation lane is
 settled and no engine event has requested reconciliation.
 
-The bound bridge store uses that acceptance to claim, replay, resume and start
-turns with the existing public turn/message identities. A changed epoch, newer
-environment operation or pending reconciliation refuses claims and live output.
-Generation retirement revokes binding acceptance. Gateway authority is separate;
-this path does not create a model source-IP context. The legacy lifecycle remains
-available for sessions pinned to that backend during migration.
+The bound bridge store requires current acceptance to claim or resume turns and
+authorize gateway requests. Pending engine reconciliation blocks those actions,
+including replayed claims and requests. The original accepted process can still
+settle its already granted turn: start receipts, output, steering outcomes and
+completion retain their turn identities, replay checks, output watermarks and
+native-state validation. Settlement does not clear the reconciliation request or
+restore dispatch authority.
+
+Ingress still requires the current product owner, unexpired leases, the exact
+backend/sandbox/epoch/environment fence, an active session and a settled lifecycle
+operation lane. A replaced or retired execution must use historical recovery.
+Gateway authority is separate; this path does not create a model source-IP
+context. The legacy lifecycle remains available for sessions pinned to that
+backend during migration.
 
 ## Egress grant and request ledger
 

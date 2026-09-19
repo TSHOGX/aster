@@ -265,6 +265,12 @@ func TestOpaquePiCompletionRequiresRetainedNativeStateEvidence(t *testing.T) {
 	if _, err := st.db.Exec(`DROP TRIGGER reject_capture`); err != nil {
 		t.Fatal(err)
 	}
+	// An event blocks new authority, but the original process can still commit
+	// its quiesced native snapshot and the atomic capture obligation.
+	invalidateExecution(t, st, binding)
+	if _, err := st.DriverStateValidationInput(ctx, completion); err != nil {
+		t.Fatalf("event blocked original native validation: %v", err)
+	}
 	if _, err := bridge.CompleteTurn(ctx, completion); err != nil {
 		t.Fatal(err)
 	}

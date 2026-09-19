@@ -174,11 +174,27 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), "native-state-"+driver+"-"+fmt.Sprint(turn), guestfiles.Files{Backend: backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	}
 	var interruptedGeneration atomic.Pointer[string]
+	var invalidateFirstTurn atomic.Bool
+	invalidateFirstTurn.Store(true)
+	invalidationResult := make(chan error, 1)
 	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
 	controlBackend := &partialAbortBackend{Processes: backend}
 	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
 		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
+		if envelope.Type == bridge.TypeAckTurnStarted && invalidateFirstTurn.CompareAndSwap(true, false) {
+			// Deliver actual retained engine history after the guest has begun its
+			// first turn. Output and native completion must settle behind that fence.
+			cursor, err := st.EngineCursor(ctx, identity.StoreID)
+			if err == nil {
+				var page sandbox.EventPage
+				page, err = backend.Events(ctx, cursor.After, 128)
+				if err == nil {
+					_, err = st.CommitEngineEvents(ctx, identity.StoreID, cursor.After, page.Events)
+				}
+			}
+			invalidationResult <- err
+		}
 		if target := interruptedGeneration.Load(); target != nil && *target == envelope.GenerationID && envelope.Type == bridge.TypeAckTurnStarted {
 			interrupted <- struct{}{}
 			<-ctx.Done()
@@ -435,6 +451,31 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			}
 		}
 		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
+		if cycle == 0 {
+			select {
+			case err := <-invalidationResult:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			if sequence, err := st.EnvironmentInvalidationSequence(ctx, binding.EnvironmentID); err != nil || sequence < 0 {
+				t.Fatalf("first turn did not settle behind engine invalidation: %d %v", sequence, err)
+			}
+			if err := st.AssertExecutionAccepted(ctx, binding.GenerationID, leaseOwner, time.Now()); err == nil {
+				t.Fatal("turn settlement restored readiness without process reconciliation")
+			}
+			starts := controlBackend.starts.Load()
+			previous := binding
+			binding, err = controller.ReconnectIdle(ctx, session.ID, binding.GenerationID, leaseOwner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if controlBackend.starts.Load() != starts || binding.Epoch != previous.Epoch || binding.ProcessHandle != previous.ProcessHandle {
+				t.Fatal("post-settlement reconciliation replaced the original process")
+			}
+		}
 		if driver == "sh" && cycle == 0 {
 			verifyKhoraWorkspaceDownload(t, ctx, srv, st, controller, session.ID, leaseOwner, false)
 			verifyKhoraWorkspaceWrite(t, ctx, srv, st, controller, backend, preparedUploads, session.ID, leaseOwner)

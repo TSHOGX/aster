@@ -955,7 +955,7 @@ func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, 
 		return 0, err
 	}
 	if bound != 0 {
-		if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
+		if err := executionIngressTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
 			return 0, err
 		}
 	}

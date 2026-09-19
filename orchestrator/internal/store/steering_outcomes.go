@@ -63,7 +63,7 @@ func (s *Store) RecordSteeringOutcome(ctx context.Context, session, generation, 
 		return 0, err
 	}
 	defer tx.Rollback()
-	if err := acceptedExecutionTx(ctx, tx, session, generation, owner, time.Now().UTC()); err != nil {
+	if err := executionIngressTx(ctx, tx, session, generation, owner, time.Now().UTC()); err != nil {
 		return 0, err
 	}
 	id, err := recordSteeringOutcomeTx(ctx, tx, session, generation, turn, p)

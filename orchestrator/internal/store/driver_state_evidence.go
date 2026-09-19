@@ -70,7 +70,7 @@ func assertDriverStateEvidenceTx(ctx context.Context, tx *sql.Tx, p CompleteTurn
 		if binding.SpecDigest != evidence.ContractDigest {
 			return fmt.Errorf("driver state execution specification changed after validation")
 		}
-		return acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now)
+		return executionIngressTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now)
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
