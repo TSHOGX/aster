@@ -104,3 +104,7 @@ type VolumeReads interface {
 	LstatVolume(context.Context, VolumeReference, string) (VolumeEntry, error)
 	ReadVolume(context.Context, VolumeReference, string, int64, int64) ([]byte, error)
 }
+
+type VolumeListings interface {
+	ListVolume(context.Context, VolumeReference, string) ([]VolumeEntry, error)
+}

@@ -18,6 +18,11 @@ func TestVolumeReadAdapterPinsIdentityAndBoundsRanges(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"store_id": storeID, "version": EngineRevision, "manual_cold_recovery": true})
 		case "/v1/volumes/volume/lstat":
 			json.NewEncoder(w).Encode(map[string]any{"name": "file", "type": "file", "size": 6, "mod_time": "2026-09-19T00:00:00Z"})
+		case "/v1/volumes/volume/list":
+			if r.URL.Query().Get("path") != "." {
+				t.Error("volume root listing changed")
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{"name": "file", "type": "file", "size": 6, "mod_time": "2026-09-19T00:00:00Z"}})
 		case "/v1/volumes/volume/read":
 			reads++
 			if r.URL.Query().Get("offset") != "1" || r.URL.Query().Get("length") != "2" {
@@ -35,6 +40,9 @@ func TestVolumeReadAdapterPinsIdentityAndBoundsRanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	reference := sandbox.VolumeReference{StoreID: "store", VolumeID: "volume"}
+	if entries, err := backend.ListVolume(ctx, reference, ""); err != nil || len(entries) != 1 || entries[0].Name != "file" {
+		t.Fatalf("volume directory: %+v %v", entries, err)
+	}
 	entry, err := backend.LstatVolume(ctx, reference, "file")
 	if err != nil || entry.Type != "file" || entry.Size != 6 {
 		t.Fatalf("portable metadata: %+v %v", entry, err)

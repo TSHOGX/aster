@@ -206,7 +206,7 @@ WHERE session_id = ?
 }
 
 func (s *Store) ListSessionWorkspaceRecords(ctx context.Context) ([]SessionWorkspaceVolume, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT session_id,host_path,layout_version,sandbox_uid,sandbox_gid,sandbox_supplemental_gids,runtime_identity_digest,provisioned_at,provisioning_marker_path,provisioning_marker_digest FROM session_workspaces ORDER BY session_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT session_id,host_path,layout_version,sandbox_uid,sandbox_gid,sandbox_supplemental_gids,runtime_identity_digest,provisioned_at,provisioning_marker_path,provisioning_marker_digest FROM session_workspaces WHERE NOT EXISTS(SELECT 1 FROM session_execution_backends b WHERE b.session_id=session_workspaces.session_id AND b.backend='khora') ORDER BY session_id`)
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,26 @@ spec.loader.exec_module(files)
 
 
 class GuestFilesystemTests(unittest.TestCase):
+    def test_directory_inventory_pages_reject_symlink_traversal(self):
+        with tempfile.TemporaryDirectory() as root:
+            descriptor = files.open_root(root)
+            try:
+                nested = Path(root) / 'nested'
+                nested.mkdir()
+                for number in range(40):
+                    (nested / f'file-{number:02d}').write_text('content')
+                (Path(root) / 'alias').symlink_to(nested, target_is_directory=True)
+                first = files.list_directory(descriptor, 'nested')
+                second = files.list_directory(descriptor, 'nested', first['next'])
+                self.assertEqual(len(first['entries']), 32)
+                self.assertEqual(len(second['entries']), 8)
+                self.assertEqual(second['next'], '')
+                self.assertEqual(files.list_directory(descriptor, '')['entries'][0]['type'], 'symlink')
+                with self.assertRaises(ValueError):
+                    files.list_directory(descriptor, 'alias')
+            finally:
+                os.close(descriptor)
+
     def test_replacement_cleanup_keeps_other_operations_and_target(self):
         with tempfile.TemporaryDirectory() as root:
             descriptor = files.open_root(root)

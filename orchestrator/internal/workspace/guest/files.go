@@ -19,6 +19,45 @@ import (
 
 const maxReadChunk = 256 << 10
 
+func (f Files) List(ctx context.Context, path, after string) (workspace.DirectoryPage, error) {
+	check := path
+	if check == "" {
+		check = "root"
+	}
+	if err := f.validate(check); err != nil {
+		return workspace.DirectoryPage{}, err
+	}
+	if after != "" {
+		if _, err := workspace.CleanPath(after); err != nil {
+			return workspace.DirectoryPage{}, err
+		}
+	}
+	output, err := f.call(ctx, "list-"+uuid.NewString(), []string{"--operation", "list", "--path", path, "--after", after}, nil, 60<<10)
+	if err != nil {
+		return workspace.DirectoryPage{}, err
+	}
+	var raw struct {
+		Entries []struct {
+			Name       string `json:"name"`
+			Type       string `json:"type"`
+			Size       int64  `json:"size"`
+			ModifiedNS int64  `json:"modified_ns"`
+		}
+		Next string `json:"next"`
+	}
+	if err := json.Unmarshal(output, &raw); err != nil {
+		return workspace.DirectoryPage{}, err
+	}
+	if len(raw.Entries) > 32 {
+		return workspace.DirectoryPage{}, fmt.Errorf("guest inventory page exceeds bound")
+	}
+	page := workspace.DirectoryPage{Next: raw.Next}
+	for _, entry := range raw.Entries {
+		page.Entries = append(page.Entries, workspace.Entry{Name: entry.Name, Type: entry.Type, Size: entry.Size, ModifiedAt: time.Unix(0, entry.ModifiedNS).UTC()})
+	}
+	return page, nil
+}
+
 // StopReplacement never equates detachment or a signal reply with termination.
 // An unknown handle leaves the mutation unresolved because Start may be delayed.
 func (f Files) StopReplacement(ctx context.Context, key string) error {

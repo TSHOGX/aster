@@ -64,6 +64,7 @@ const (
 )
 
 type Server struct {
+	workspaceInventory   sessionInventoryScanner
 	workspaceWrites      sessionWorkspaceWriter
 	workspaceReads       sessionWorkspaceReader
 	executions           sessionExecutionController
@@ -135,6 +136,49 @@ type Server struct {
 	// Shutdown waiting until its deadline expires.
 	shutdownOnce sync.Once
 	shutdownCh   chan struct{}
+}
+
+type sessionInventoryScanner interface {
+	ScanSession(context.Context, string) error
+}
+
+func (s *Server) SetWorkspaceInventory(scanner sessionInventoryScanner) {
+	s.workspaceInventory = scanner
+}
+
+func (s *Server) scanSessionArtifacts(ctx context.Context, session string) error {
+	backend, err := s.store.SessionExecutionBackend(ctx, session)
+	if err != nil {
+		return err
+	}
+	if backend == "khora" {
+		if s.workspaceInventory == nil {
+			return fmt.Errorf("workspace inventory unavailable")
+		}
+		return s.workspaceInventory.ScanSession(ctx, session)
+	}
+	if backend != "legacy" {
+		return fmt.Errorf("unsupported workspace backend")
+	}
+	if s.watcher != nil {
+		return s.watcher.ScanSession(ctx, session)
+	}
+	return nil
+}
+
+func (s *Server) refreshRetainedArtifacts(w http.ResponseWriter, r *http.Request, session string) bool {
+	backend, err := s.store.SessionExecutionBackend(r.Context(), session)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if backend == "khora" {
+		if err := s.scanSessionArtifacts(r.Context(), session); err != nil {
+			writeErrorClass(w, http.StatusServiceUnavailable, "artifact_scan_pending", "workspace inventory is reconciling")
+			return false
+		}
+	}
+	return true
 }
 
 type sessionWorkspaceReader interface {
@@ -2152,6 +2196,9 @@ func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionI
 // per-file whitelist exists only for anonymous links.
 func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if _, _, _, ok := s.authorizeRead(w, r, sessionID); !ok {
+		return
+	}
+	if !s.refreshRetainedArtifacts(w, r, sessionID) {
 		return
 	}
 	items, err := s.store.ListArtifacts(r.Context(), sessionID)

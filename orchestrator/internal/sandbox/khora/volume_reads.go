@@ -2,8 +2,12 @@ package khora
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"harness-platform/orchestrator/internal/sandbox"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -25,6 +29,61 @@ func (b *Backend) validateVolumeRead(ctx context.Context, reference sandbox.Volu
 		}
 	}
 	return nil
+}
+
+func (b *Backend) ListVolume(ctx context.Context, reference sandbox.VolumeReference, name string) ([]sandbox.VolumeEntry, error) {
+	check := name
+	if check == "" {
+		check = "root"
+	}
+	if err := b.validateVolumeRead(ctx, reference, check); err != nil {
+		return nil, err
+	}
+	path := name
+	if path == "" {
+		path = "."
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, b.endpoint+"/v1/volumes/"+url.PathEscape(reference.VolumeID)+"/list?"+url.Values{"path": []string{path}}.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := b.httpClient.Do(request)
+	if err != nil {
+		return nil, mapError("volume list", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, failure("volume list", sandbox.Unavailable, fmt.Errorf("engine volume listing returned HTTP %d", response.StatusCode))
+	}
+	const limit = 8 << 20
+	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > limit {
+		return nil, failure("volume list", sandbox.Capacity, fmt.Errorf("volume directory metadata exceeds bound"))
+	}
+	var entries []struct {
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Size     int64  `json:"size"`
+		Modified string `json:"mod_time"`
+	}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	if len(entries) > 10000 {
+		return nil, failure("volume list", sandbox.Capacity, fmt.Errorf("volume directory entries exceed bound"))
+	}
+	result := make([]sandbox.VolumeEntry, 0, len(entries))
+	for _, entry := range entries {
+		stamp, err := time.Parse(time.RFC3339Nano, entry.Modified)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, sandbox.VolumeEntry{Name: entry.Name, Type: entry.Type, Size: entry.Size, ModifiedAt: stamp})
+	}
+	return result, nil
 }
 func (b *Backend) LstatVolume(ctx context.Context, reference sandbox.VolumeReference, name string) (sandbox.VolumeEntry, error) {
 	if err := b.validateVolumeRead(ctx, reference, name); err != nil {

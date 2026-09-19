@@ -311,6 +311,13 @@ upload operation key, then synchronizes their directory. The host invokes it
 only after observing the original helper's termination. It leaves the destination
 and other operations' staging entries intact.
 
+The helper's `list` operation returns up to 32 directory entries with an explicit
+continuation name. It pins each directory through the no-symlink descriptor walk,
+uses metadata without following final symlinks, and caps directories at 10,000
+entries. JSON responses stay below 60 KiB so metadata pages do not depend on a
+larger process replay tail. The host excludes symlinks and temporary upload files
+from the artifact inventory.
+
 `harness-journal-replay` reads a retired partition under `/harness-bridge` during
 maintenance recovery. It refuses a live producer, missing files and symlinked
 path components. It copies the database and committed WAL into a private

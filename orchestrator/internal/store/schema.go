@@ -508,6 +508,19 @@ CREATE TABLE IF NOT EXISTS artifacts (
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS workspace_inventory_scans (
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+ scan_id TEXT NOT NULL,
+ owner TEXT NOT NULL,
+ environment_id TEXT NOT NULL,
+ fence INTEGER NOT NULL,
+ reference TEXT NOT NULL,
+ event_sequence INTEGER NOT NULL,
+ mutation_sequence INTEGER NOT NULL,
+ started_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS engine_event_sandbox_sequence_idx ON engine_event_inbox(store_id,sandbox_id,sequence);
+
 CREATE TABLE IF NOT EXISTS orchestrator_owner (
   singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
   uuid TEXT NOT NULL,

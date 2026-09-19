@@ -79,6 +79,9 @@ func (s *Server) serveMentionedFiles(w http.ResponseWriter, r *http.Request, p s
 	}
 	files := []store.Artifact{}
 	if linkID == "" {
+		if !s.refreshRetainedArtifacts(w, r, p.SessionID) {
+			return
+		}
 		files, e = s.store.ListArtifacts(r.Context(), p.SessionID)
 	} else {
 		var shared []store.ShareLinkFile

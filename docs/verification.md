@@ -186,3 +186,8 @@ checks that the changed content survives and the original mutation becomes faile
 The paused-upload case injects lost resume, replacement and pause replies in one
 workflow, verifies exactly one replacement process, reads the result without
 compute, and then resumes a normal agent in the retained sandbox.
+Artifact checks scan a 40-file directory through multiple guest pages while live
+and through volume listings while paused. They verify uploaded files appear,
+stale index rows disappear, symlink descendants remain absent and paused scans
+keep the active-capacity count at zero. Unit tests cover incomplete scans,
+overflow, stale scans, lifecycle/upload races and atomic event/index rollback.

@@ -148,6 +148,10 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	srv := &Server{store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
 	srv.cfg.MaxEditBytes = 1 << 20
 	srv.SetWorkspaceReader(sessionfiles.Reader{Repository: st, Backend: backend})
+	configureInventory := func(owner string) {
+		srv.SetWorkspaceInventory(sessionfiles.Scanner{Repository: st, Source: sessionfiles.Reader{Repository: st, Backend: backend}, Owner: owner, Limit: 10000, AfterCommit: srv.publishDurableEvent})
+	}
+	configureInventory(leaseOwner)
 	preparedUploads, err := prepared.New(filepath.Join(directory, "prepared-uploads"))
 	if err != nil {
 		t.Fatal(err)
@@ -263,6 +267,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				t.Fatal(err)
 			}
 			leaseOwner = store.GenerationLeaseOwner(replacement.UUID)
+			configureInventory(leaseOwner)
 			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 			binding, err = controller.RecoverIdle(ctx, execution.Session{ID: session.ID, Driver: driver}, binding.GenerationID, leaseOwner)
 			if err != nil {
@@ -275,7 +280,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		content := "printf 'product-worker-ok\\n'"
 		if driver == "sh" {
 			if cycle == 0 {
-				content = "printf 'product-worker-ok\\n' > /workspace/retained-controller-proof; ln -s /workspace /workspace/symlink-parent; cat /workspace/retained-controller-proof"
+				content = "printf 'product-worker-ok\\n' > /workspace/retained-controller-proof; ln -s /workspace /workspace/symlink-parent; python3 -c 'from pathlib import Path; p=Path(\"/workspace/pages\"); p.mkdir(); [(p/f\"file-{i:02d}\").write_text(\"page\") for i in range(40)]'; cat /workspace/retained-controller-proof"
 			} else {
 				content = "cat /workspace/retained-controller-proof"
 			}
@@ -372,6 +377,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		if driver == "sh" && cycle == 0 {
 			verifyKhoraWorkspaceDownload(t, ctx, srv, st, controller, session.ID, leaseOwner, false)
 			verifyKhoraWorkspaceWrite(t, ctx, srv, st, backend, preparedUploads, session.ID, leaseOwner)
+			verifyKhoraInventory(t, ctx, srv, st, session.ID, false)
 		}
 	}
 	{
@@ -576,6 +582,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
 		if driver == "sh" {
 			verifyKhoraPausedWrite(t, ctx, srv, st, backend, preparedUploads, session.ID, leaseOwner)
+			verifyKhoraInventory(t, ctx, srv, st, session.ID, true)
 			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 			if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner); err != nil {
 				t.Fatalf("normal session resume after paused upload: %v", err)
@@ -583,6 +590,46 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		}
 	}
 
+}
+
+func verifyKhoraInventory(t *testing.T, ctx context.Context, srv *Server, st *store.Store, session string, paused bool) {
+	t.Helper()
+	if err := st.UpsertArtifact(ctx, store.Artifact{SessionID: session, Path: "deleted-file", Size: 1, ModTime: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions/"+session+"/artifacts", nil).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
+	response := httptest.NewRecorder()
+	srv.listArtifacts(response, request, session)
+	if response.Code != http.StatusOK {
+		t.Fatalf("inventory paused=%t: %d %s", paused, response.Code, response.Body.String())
+	}
+	var result struct {
+		Artifacts []store.Artifact `json:"artifacts"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]bool{}
+	for _, artifact := range result.Artifacts {
+		paths[artifact.Path] = true
+		if artifact.Path == "deleted-file" || strings.HasPrefix(artifact.Path, "symlink-parent/") || strings.Contains(artifact.Path, ".harness-upload-") {
+			t.Fatalf("inventory exposed stale/symlink/staging path: %s", artifact.Path)
+		}
+	}
+	if !paths["retained-controller-proof"] || !paths["nested/uploaded.txt"] {
+		t.Fatalf("inventory missed guest/uploaded artifacts: %+v", paths)
+	}
+	if paused && !paths["paused-upload.txt"] {
+		t.Fatal("paused inventory missed maintenance upload")
+	}
+	for i := 0; i < 40; i++ {
+		if !paths[fmt.Sprintf("pages/file-%02d", i)] {
+			t.Fatalf("directory pagination lost artifact %d", i)
+		}
+	}
+	if paused {
+		assertIntegrationCapacity(t, ctx, st, 0)
+	}
 }
 
 type lostWorkspaceLifecycle struct {

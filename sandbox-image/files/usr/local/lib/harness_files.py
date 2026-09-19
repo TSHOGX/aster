@@ -335,3 +335,43 @@ def metadata(root, name):
             os.close(descriptor)
     finally:
         os.close(parent)
+
+
+def list_directory(root, name, after='', limit=32):
+    if name:
+        parent, leaf = parent_fd(root, name)
+        try:
+            descriptor = directory_fd(leaf, parent)
+        finally:
+            os.close(parent)
+    else:
+        descriptor = os.dup(root)
+    try:
+        names = []
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                names.append(entry.name)
+                if len(names) > 10000:
+                    raise ValueError('workspace directory exceeds inventory limit')
+        names.sort()
+        selected = [entry for entry in names if entry > after][:limit]
+        entries = []
+        for entry in selected:
+            clean_path(entry)
+            entry.encode('utf-8')
+            try:
+                info = os.stat(entry, dir_fd=descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            kind = 'other'
+            if stat.S_ISREG(info.st_mode):
+                kind = 'file'
+            elif stat.S_ISDIR(info.st_mode):
+                kind = 'directory'
+            elif stat.S_ISLNK(info.st_mode):
+                kind = 'symlink'
+            entries.append({'name': entry, 'type': kind, 'size': info.st_size, 'modified_ns': info.st_mtime_ns})
+        next_name = selected[-1] if selected and any(entry > selected[-1] for entry in names) else ''
+        return {'entries': entries, 'next': next_name}
+    finally:
+        os.close(descriptor)

@@ -6,17 +6,18 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
-from harness_files import ALLOWED_ROOTS, open_root, replace, read_range, file_digest, metadata, snapshot_native, restore_native, cleanup_replacement
+from harness_files import ALLOWED_ROOTS, open_root, replace, read_range, file_digest, metadata, snapshot_native, restore_native, cleanup_replacement, list_directory
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', choices=sorted(ALLOWED_ROOTS), required=True)
-    parser.add_argument('--operation', choices=('replace', 'read', 'sync', 'stat', 'snapshot-native', 'restore-native', 'cleanup-replacement'), required=True)
+    parser.add_argument('--operation', choices=('replace', 'read', 'sync', 'stat', 'snapshot-native', 'restore-native', 'cleanup-replacement', 'list'), required=True)
     parser.add_argument('--path', required=True)
     parser.add_argument('--size', type=int)
     parser.add_argument('--sha256')
     parser.add_argument('--key')
+    parser.add_argument('--after', default='')
     parser.add_argument('--native-id')
     parser.add_argument('--destination')
     parser.add_argument('--offset', type=int, default=0)
@@ -24,7 +25,9 @@ def main():
     args = parser.parse_args()
     root = open_root(args.root)
     try:
-        if args.operation == 'replace':
+        if args.operation == 'list':
+            result = list_directory(root, args.path, args.after)
+        elif args.operation == 'replace':
             result = replace(root, args.path, sys.stdin.buffer, args.size, args.sha256, args.key)
         elif args.operation == 'cleanup-replacement':
             result = cleanup_replacement(root, args.path, args.key)
@@ -45,7 +48,10 @@ def main():
         else:
             read_range(root, args.path, sys.stdout.buffer, args.offset, args.length)
             return
-        print(json.dumps(result, sort_keys=True, separators=(',', ':')), flush=True)
+        encoded = json.dumps(result, sort_keys=True, separators=(',', ':'))
+        if len(encoded.encode('utf-8')) > 60 << 10:
+            raise ValueError('helper response exceeds bounded replay window')
+        print(encoded, flush=True)
     finally:
         os.close(root)
 

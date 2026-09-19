@@ -10,6 +10,9 @@ func (s *Server) artifactPage(w http.ResponseWriter, r *http.Request, id string)
 	if _, _, _, ok := s.authorizeRead(w, r, id); !ok {
 		return
 	}
+	if r.URL.Query().Get("cursor") == "" && !s.refreshRetainedArtifacts(w, r, id) {
+		return
+	}
 	s.serveArtifactPage(w, r, store.ArtifactPageParams{SessionID: id})
 }
 func (s *Server) serveArtifactPage(w http.ResponseWriter, r *http.Request, p store.ArtifactPageParams) {

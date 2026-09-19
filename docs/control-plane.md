@@ -529,3 +529,20 @@ identities. A replaced product owner can continue the same workflow. Preparation
 failure before helper issuance also completes a verified pause. Ordinary session
 resume uses the last verified upload-maintenance pause. Provisioning a workspace
 for a session that has never started remains a separate integration step.
+
+Retained artifact inventory uses bounded full scans through the engine. Live
+directories are read through the confined helper in pages of 32; paused scans
+hold an offline read lease and use bounded volume listings without compute.
+Symlinks, special files and incomplete upload staging are excluded. The walk
+limits entries, path length and depth, and never publishes a partial result after
+an error or overflow.
+
+The control store atomically applies changed files, removes absent files and
+records their durable `artifact.updated`/`artifact.deleted` events. A scan must
+still match its recorded identity, current owner, environment fence/epoch/revision,
+engine-event watermark and workspace-mutation sequence. A newer scan supersedes
+an older one; intervening lifecycle or upload work rejects the old result.
+Concurrent guest writes can require a subsequent scan, so the scanner also offers
+a bounded periodic backstop. Completion, uploads and artifact API refreshes call
+the injected scanner. Default startup still needs to run that periodic service.
+Legacy host watchers exclude sessions pinned to Khora.
