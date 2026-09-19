@@ -449,6 +449,23 @@ the next turn. Configuration changes and unexpected placement replacement
 require separate reconciliation. Restart adoption of a live execution is not
 implicit in this controller path.
 
+Idle executions have an explicit same-epoch attachment path. The current product
+owner fences dispatch, revokes and drains old grants, and inspects the recorded
+sandbox/epoch/revision before connecting to the original process handle. It uses
+`ConnectProcess`, never a replacement start. Fresh manifest negotiation and
+durable processing through the captured journal head precede acceptance. Idle
+claims receive no work during replay; terminal output is accepted only if it
+matches already-committed producer records. An in-flight turn or unprojected
+output blocks this path.
+
+A durable adoption marker preserves interrupted attachment attempts. Retries
+cannot fall through ordinary process startup, and an event arriving after the
+captured invalidation sequence prevents acceptance. The background reconciler
+selects idle bindings from a replaced owner, expired idle leases, and unfinished
+adoptions. Successful adoption keeps the generation, process handle, epoch and
+native history; it does not reactivate old turn grants. In-flight attachment and
+unexpected-epoch recovery remain separate work.
+
 Explicit idle recovery can fence an abandoned execution under the current product
 owner even when its previous lease expired. It preserves queued prompts and
 reuses the conditional pause/resume path to restore native history in a new
@@ -529,7 +546,8 @@ activation requests; the injectable execution reconciler performs this polling.
 Default executable composition still needs to select that reconciler.
 
 The retained execution reconciler runs independent sequential loops for pending
-aborts, steering sends, workspace mutations, capture activations and interrupted-recovery ledgers.
+aborts, steering sends, workspace mutations, capture activations, idle adoption
+and interrupted-recovery ledgers.
 Each loop uses bounded pages, per-action deadlines and a rotating key cursor so
 old failures do not hide newer obligations. A task that ignores cancellation
 continues to occupy its loop; it is never restarted merely because a deadline

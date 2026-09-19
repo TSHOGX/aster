@@ -290,6 +290,12 @@ CREATE TABLE IF NOT EXISTS execution_turn_commands (
  created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS idle_execution_adoptions (
+ generation_id TEXT PRIMARY KEY REFERENCES execution_bindings(generation_id),
+ owner TEXT NOT NULL,
+ event_sequence INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS execution_steering (
  command_id TEXT PRIMARY KEY REFERENCES execution_turn_commands(command_id),
  queued_turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id),

@@ -164,9 +164,11 @@ under the composed runtime's lifetime.
 The shell case also injects a failure after protocol readiness but before binding
 acceptance, then retries the same process key and recovers readiness after its
 original hello has been acknowledged.
-Both worker cases also replace the product owner after the second turn, recover
-the abandoned idle execution, and complete a third turn in the retained sandbox.
-Pi keeps the same native session through all three epochs.
+Both worker cases replace the product owner after the second turn and let the
+background reconciler adopt the idle process at the same epoch. An injected
+acceptance failure requires another attachment; assertions require zero new
+process starts and unchanged generation/handle/epoch. A third turn then completes
+through that connection. Pi keeps the same native session throughout.
 
 The shell case then blocks host ingestion after a fourth turn starts, waits for
 the guest to journal a 256 KiB output and completion, and interrupts the carrier.

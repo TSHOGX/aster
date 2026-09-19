@@ -176,7 +176,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	var interruptedGeneration atomic.Pointer[string]
 	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
 	controlBackend := &partialAbortBackend{Processes: backend}
-	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
 		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
 		if target := interruptedGeneration.Load(); target != nil && *target == envelope.GenerationID && envelope.Type == bridge.TypeAckTurnStarted {
@@ -295,6 +295,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			assertIntegrationCapacity(t, ctx, st, 1)
 		}
 		if cycle == 2 {
+			previous := binding
 			if err := controller.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -308,12 +309,32 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			}
 			leaseOwner = store.GenerationLeaseOwner(replacement.UUID)
 			configureInventory(leaseOwner)
-			controller = &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
-			binding, err = controller.RecoverIdle(ctx, execution.Session{ID: session.ID, Driver: driver}, binding.GenerationID, leaseOwner)
-			if err != nil {
-				t.Fatal(err)
+			controller = &execution.Controller{Repository: &acceptanceFaultRepository{Store: st, fail: true}, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+			starts := controlBackend.starts.Load()
+			writer, ok := srv.workspaceWrites.(execution.WorkspaceRecovery)
+			if !ok {
+				t.Fatal("reconciliation writer unavailable")
 			}
-			if binding.SandboxID != initial.SandboxID || binding.Epoch != initial.Epoch+2 || binding.Owner != leaseOwner {
+			stopAdoption := startKhoraReconciler(t, ctx, srv, st, controller, writer, leaseOwner)
+			for {
+				binding, err = st.GetExecutionBinding(ctx, previous.GenerationID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if binding.Owner == leaseOwner && binding.State == "accepted" {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+			stopAdoption()
+			if controlBackend.starts.Load() != starts || controlBackend.connects.Load() < 2 {
+				t.Fatal("idle adoption retry started a new process instead of reconnecting")
+			}
+			if binding.SandboxID != previous.SandboxID || binding.Epoch != previous.Epoch || binding.GenerationID != previous.GenerationID || binding.ProcessHandle != previous.ProcessHandle || binding.Owner != leaseOwner {
 				t.Fatalf("idle owner recovery lost retained environment: %+v", binding)
 			}
 		}
@@ -1126,8 +1147,18 @@ func verifyKhoraShellStop(t *testing.T, ctx context.Context, srv *Server, st *st
 
 type partialAbortBackend struct {
 	sandbox.Processes
-	fail      atomic.Bool
-	failSteer atomic.Bool
+	starts, connects atomic.Int32
+	fail             atomic.Bool
+	failSteer        atomic.Bool
+}
+
+func (b *partialAbortBackend) StartProcess(ctx context.Context, p sandbox.StartProcessRequest) (sandbox.ProcessStream, error) {
+	b.starts.Add(1)
+	return b.Processes.StartProcess(ctx, p)
+}
+func (b *partialAbortBackend) ConnectProcess(ctx context.Context, p sandbox.ProcessReference, after uint64) (sandbox.ProcessStream, error) {
+	b.connects.Add(1)
+	return b.Processes.ConnectProcess(ctx, p, after)
 }
 
 func (b *partialAbortBackend) SendProcessInput(ctx context.Context, reference sandbox.ProcessReference, data []byte) error {

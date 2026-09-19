@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"harness-platform/orchestrator/internal/bridge"
@@ -16,6 +17,9 @@ import (
 )
 
 type Launcher struct {
+	IdleReplay interface {
+		VerifyIdleExecutionReplay(context.Context, execution.Binding, string, *int64, json.RawMessage) error
+	}
 	Backend          sandbox.Processes
 	Store            bridge.Store
 	Receipts         bridge.StreamReceipts
@@ -28,11 +32,26 @@ type Launcher struct {
 }
 
 func (l Launcher) Start(ctx context.Context, binding execution.Binding, request sandbox.StartProcessRequest) (execution.AgentConnection, error) {
+	return l.connect(ctx, binding, request, false)
+}
+func (l Launcher) AttachIdle(ctx context.Context, binding execution.Binding, reference sandbox.ProcessReference) (execution.AgentConnection, error) {
+	if l.IdleReplay == nil {
+		return nil, fmt.Errorf("idle adoption replay verifier required")
+	}
+	return l.connect(ctx, binding, sandbox.StartProcessRequest{ProcessReference: reference}, true)
+}
+func (l Launcher) connect(ctx context.Context, binding execution.Binding, request sandbox.StartProcessRequest, reconnect bool) (execution.AgentConnection, error) {
 	if l.Backend == nil || l.Store == nil || l.Receipts == nil || l.LeaseTTL <= 0 {
 		return nil, fmt.Errorf("agent bridge ports and lease TTL required")
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	stream, err := l.Backend.StartProcess(runCtx, request)
+	var stream sandbox.ProcessStream
+	var err error
+	if reconnect {
+		stream, err = l.Backend.ConnectProcess(runCtx, request.ProcessReference, 0)
+	} else {
+		stream, err = l.Backend.StartProcess(runCtx, request)
+	}
 	if err != nil {
 		cancel()
 		return nil, err
@@ -45,8 +64,27 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 	}
 	connection := &connection{ready: make(chan error, 1), done: make(chan struct{}), activate: make(chan struct{}), cancel: cancel, carrier: carrier}
 	processor := &bridge.Processor{Store: l.Store, Owner: binding.Owner, LeaseTTL: l.LeaseTTL, AfterCommit: l.AfterCommit, BeforeComplete: l.BeforeComplete, AfterEventCommit: l.AfterEventCommit}
+	if reconnect {
+		processor.Store = idleBridgeStore{Store: l.Store, active: &connection.active}
+		processor.BeforeEnvelope = func(ctx context.Context, envelope bridge.Envelope) (bool, error) {
+			if connection.active.Load() {
+				return false, nil
+			}
+			switch envelope.Type {
+			case bridge.TypeEmitOutput, bridge.TypeAckTurnStarted, bridge.TypeAckTurnCompleted, "turn_control_result":
+				return true, l.IdleReplay.VerifyIdleExecutionReplay(ctx, binding, envelope.Type, envelope.TurnID, envelope.Payload)
+			}
+			return false, nil
+		}
+	}
 	carrier.OnSynchronize = func(ctx context.Context, payload json.RawMessage) error {
-		return processor.AcceptAttachment(ctx, bridge.Scope{SessionID: binding.SessionID, GenerationID: binding.GenerationID}, payload)
+		if err := processor.AcceptAttachment(ctx, bridge.Scope{SessionID: binding.SessionID, GenerationID: binding.GenerationID}, payload); err != nil {
+			return err
+		}
+		if reconnect {
+			processor.MarkReady(binding.SessionID, binding.GenerationID)
+		}
+		return nil
 	}
 	if l.Commands != nil {
 		carrier.OnCommandAcknowledged = func(ctx context.Context, id string) error {
@@ -55,7 +93,7 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 			return l.Commands.AcknowledgeTurnCommand(ctx, scope, id)
 		}
 	}
-	processor.ProbeHandler = func(ctx context.Context, _ bridge.Envelope) error {
+	ready := func(ctx context.Context) error {
 		connection.readyOnce.Do(func() { connection.ready <- nil })
 		select {
 		case <-connection.activate:
@@ -63,6 +101,12 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	if reconnect {
+		carrier.OnRecovered = ready
+		processor.ProbeHandler = func(context.Context, bridge.Envelope) error { return nil }
+	} else {
+		processor.ProbeHandler = func(ctx context.Context, _ bridge.Envelope) error { return ready(ctx) }
 	}
 	go func() {
 		var failure error
@@ -89,6 +133,7 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 }
 
 type connection struct {
+	active                  atomic.Bool
 	done                    chan struct{}
 	ready                   chan error
 	activate                chan struct{}
@@ -98,8 +143,10 @@ type connection struct {
 }
 
 func (c *connection) Ready() <-chan error { return c.ready }
-func (c *connection) Activate()           { c.activateOnce.Do(func() { close(c.activate) }) }
-func (c *connection) Close() error        { c.cancel(); return c.carrier.Close() }
+func (c *connection) Activate() {
+	c.activateOnce.Do(func() { c.active.Store(true); close(c.activate) })
+}
+func (c *connection) Close() error { c.cancel(); return c.carrier.Close() }
 
 var _ execution.AgentLauncher = Launcher{}
 
@@ -111,4 +158,32 @@ func (c *connection) SendTurnCommand(ctx context.Context, p execution.TurnComman
 		return err
 	}
 	return c.carrier.Send(ctx, bridge.Envelope{MessageID: p.ID, Type: "turn_control", SessionID: p.SessionID, GenerationID: p.GenerationID, TurnID: &p.TurnID, Payload: payload})
+}
+
+type idleBridgeStore struct {
+	bridge.Store
+	active *atomic.Bool
+}
+
+func (s idleBridgeStore) ClaimNextTurn(ctx context.Context, p store.ClaimNextTurnParams) (store.TurnGrant, bool, error) {
+	if !s.active.Load() {
+		return store.TurnGrant{}, false, nil
+	}
+	return s.Store.ClaimNextTurn(ctx, p)
+}
+func (s idleBridgeStore) ResumeTurn(ctx context.Context, p store.ResumeTurnParams) (store.TurnGrant, bool, error) {
+	if !s.active.Load() {
+		return store.TurnGrant{}, false, nil
+	}
+	return s.Store.ResumeTurn(ctx, p)
+}
+
+func (s idleBridgeStore) RecordSteeringOutcome(ctx context.Context, session, generation, owner string, turn int64, p execution.SteeringOutcome) (int64, error) {
+	repository, ok := s.Store.(interface {
+		RecordSteeringOutcome(context.Context, string, string, string, int64, execution.SteeringOutcome) (int64, error)
+	})
+	if !ok {
+		return 0, fmt.Errorf("steering outcome persistence unavailable")
+	}
+	return repository.RecordSteeringOutcome(ctx, session, generation, owner, turn, p)
 }

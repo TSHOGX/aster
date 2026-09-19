@@ -27,6 +27,7 @@ type Store interface {
 }
 
 type Processor struct {
+	BeforeEnvelope          func(context.Context, Envelope) (bool, error)
 	Store                   Store
 	Owner                   string
 	LeaseTTL                time.Duration
@@ -358,6 +359,12 @@ func (p *Processor) handle(ctx context.Context, inbox Transport, scope Scope, en
 	}
 	if err := validateEnvelope(envelope); err != nil {
 		return protocolError(err)
+	}
+	if p.BeforeEnvelope != nil {
+		handled, err := p.BeforeEnvelope(ctx, envelope)
+		if handled || err != nil {
+			return err
+		}
 	}
 	now := p.now()
 	key := stateKey(envelope.SessionID, envelope.GenerationID)

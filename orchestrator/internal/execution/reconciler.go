@@ -18,6 +18,7 @@ const (
 	ReconcileWorkspace   ReconcileKind = "workspace"
 	ReconcileCapture     ReconcileKind = "capture"
 	ReconcileInterrupted ReconcileKind = "interrupted"
+	ReconcileIdle        ReconcileKind = "idle_adoption"
 )
 
 type ReconcileWork struct {
@@ -28,6 +29,7 @@ type ReconcileRepository interface {
 	PendingExecutionWork(context.Context, ReconcileKind, string, string, int) ([]ReconcileWork, error)
 }
 type ReconcileController interface {
+	ReconnectIdle(context.Context, string, string, string) (Binding, error)
 	DeliverTurnCommand(context.Context, TurnCommand) error
 	MaintainCapture(context.Context, string, string, int, time.Duration) (CaptureMaintenance, error)
 	RecoverInterrupted(context.Context, string, string, string, string) error
@@ -66,7 +68,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	var workers sync.WaitGroup
-	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted} {
+	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle} {
 		workers.Add(1)
 		go func(kind ReconcileKind) {
 			defer workers.Done()
@@ -116,6 +118,9 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 func (r *Reconciler) apply(ctx context.Context, kind ReconcileKind, p ReconcileWork) error {
 	switch kind {
+	case ReconcileIdle:
+		_, err := r.Controller.ReconnectIdle(ctx, p.SessionID, p.GenerationID, r.Owner)
+		return err
 	case ReconcileAbort, ReconcileSteer:
 		return r.Controller.DeliverTurnCommand(ctx, p.Command)
 	case ReconcileWorkspace:

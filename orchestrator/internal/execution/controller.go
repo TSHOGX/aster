@@ -13,6 +13,7 @@ import (
 )
 
 type ControllerRepository interface {
+	IdleAdoptionRepository
 	TurnCommandRepository
 	AssertExecutionOwner(context.Context, string) error
 	ExecutionSession(context.Context, string) (Session, error)
@@ -130,6 +131,11 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	generation := "gen_" + uuid.NewSHA1(uuid.NameSpaceOID, []byte("initial-execution:"+session.ID)).String()
 	var predecessor Binding
 	if found {
+		if adopting, err := c.Repository.IsIdleExecutionAdopting(ctx, existing.GenerationID); err != nil {
+			return Binding{}, err
+		} else if adopting {
+			return Binding{}, fmt.Errorf("existing execution requires idle attachment reconciliation")
+		}
 		if existing.StoreID != identity.StoreID {
 			return Binding{}, ErrBackendIdentityChanged
 		}

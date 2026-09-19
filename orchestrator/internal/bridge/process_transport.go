@@ -27,6 +27,9 @@ type ProcessTransport struct {
 	// already been acknowledged and collected from the guest journal.
 	OnSynchronize         func(context.Context, json.RawMessage) error
 	OnCommandAcknowledged func(context.Context, string) error
+	OnRecovered           func(context.Context) error
+	recoveryHead          uint64
+	recoveryNotified      bool
 	backend               sandbox.Processes
 	stream                sandbox.ProcessStream
 	reference             sandbox.ProcessReference
@@ -67,6 +70,7 @@ func NewProcessTransport(ctx context.Context, backend sandbox.Processes, stream 
 
 func (t *ProcessTransport) synchronize(ctx context.Context) error {
 	t.synced.Store(false)
+	t.recoveryNotified = false
 	t.syncID = uuid.NewString()
 	t.frames = nil
 	t.decoder.Reset()
@@ -125,6 +129,10 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 				}
 			}
 			t.synced.Store(true)
+			t.recoveryHead = frame.Head
+			if err := t.recovered(ctx); err != nil {
+				return nil, err
+			}
 		case "record":
 			if !t.synced.Load() {
 				continue
@@ -199,7 +207,20 @@ func (t *ProcessTransport) Acknowledge(ctx context.Context, receipt string) erro
 	}
 	t.watermark = t.pending.Sequence
 	t.pending = nil
-	return t.sendAcknowledgment(ctx)
+	if err := t.sendAcknowledgment(ctx); err != nil {
+		return err
+	}
+	return t.recovered(ctx)
+}
+
+func (t *ProcessTransport) recovered(ctx context.Context) error {
+	if t.OnRecovered != nil && t.synced.Load() && !t.recoveryNotified && t.watermark >= t.recoveryHead {
+		if err := t.OnRecovered(ctx); err != nil {
+			return err
+		}
+		t.recoveryNotified = true
+	}
+	return nil
 }
 func (t *ProcessTransport) sendAcknowledgment(ctx context.Context) error {
 	return t.sendFrame(ctx, StreamFrame{Version: 1, Kind: "ack", Execution: t.scope.GenerationID, After: t.watermark})

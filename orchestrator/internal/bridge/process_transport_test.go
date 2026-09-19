@@ -61,6 +61,40 @@ func (p *journalProcess) Next() (sandbox.ProcessFrame, error) {
 }
 func (p *journalProcess) Close() error { p.closed = true; return nil }
 
+func TestProcessCarrierRecoveryBarrierFollowsDurableReceipts(t *testing.T) {
+	ctx := context.Background()
+	session := "recovery-head"
+	st, allocation, _, turn := setupBridgeRunningTurn(t, ctx, session)
+	envelope := emitOutputEnvelope(session, allocation.GenerationID, turn, 1, "retained")
+	peer := &journalProcess{records: []StreamFrame{{Version: 1, Kind: "record", Execution: allocation.GenerationID, Sequence: 1, Envelope: &envelope}}}
+	carrier, err := NewProcessTransport(ctx, peer, peer, sandbox.ProcessReference{StoreID: "backend", SandboxID: "sandbox", Handle: "process", Epoch: 3}, Scope{SessionID: session, GenerationID: allocation.GenerationID}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	carrier.OnRecovered = func(ctx context.Context) error {
+		mark, err := st.BridgeStreamWatermark(ctx, "backend", allocation.GenerationID)
+		if err != nil || mark != 1 {
+			t.Fatalf("ready before durable recovered head: %d %v", mark, err)
+		}
+		called = true
+		return nil
+	}
+	deliveries, err := carrier.Receive(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("handshake alone crossed replay barrier")
+	}
+	if err := carrier.Acknowledge(ctx, deliveries[0].Receipt); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("complete journal did not release recovery barrier")
+	}
+}
+
 func TestProcessCarrierAttachmentNegotiatesAfterHelloWasCollected(t *testing.T) {
 	for _, driver := range []string{"recorded", "wrong-driver"} {
 		t.Run(driver, func(t *testing.T) {

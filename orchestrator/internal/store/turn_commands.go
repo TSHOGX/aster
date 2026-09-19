@@ -142,7 +142,7 @@ func (s *Store) AcknowledgeTurnCommand(ctx context.Context, b execution.Binding,
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(b.Owner)); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE execution_turn_commands SET acknowledged=1 WHERE command_id=? AND session_id=? AND generation_id=? AND owner=? AND EXISTS(SELECT 1 FROM bridge_streams s WHERE s.backend_id=? AND s.generation_id=execution_turn_commands.generation_id AND s.process_handle=? AND s.epoch=?)`, id, b.SessionID, b.GenerationID, b.Owner, b.StoreID, b.ProcessHandle, b.Epoch)
+	result, err := tx.ExecContext(ctx, `UPDATE execution_turn_commands SET acknowledged=1 WHERE command_id=? AND session_id=? AND generation_id=? AND EXISTS(SELECT 1 FROM execution_bindings b WHERE b.generation_id=execution_turn_commands.generation_id AND b.owner=?) AND EXISTS(SELECT 1 FROM bridge_streams s WHERE s.backend_id=? AND s.generation_id=execution_turn_commands.generation_id AND s.process_handle=? AND s.epoch=?)`, id, b.SessionID, b.GenerationID, b.Owner, b.StoreID, b.ProcessHandle, b.Epoch)
 	if err != nil {
 		return err
 	}
