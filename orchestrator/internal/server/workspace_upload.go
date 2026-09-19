@@ -217,7 +217,7 @@ func (s *Server) artifactIsStale(r *http.Request, sessionID, artifactPath string
 	}
 	defer file.Close()
 	// Truncate to second granularity: HTTP dates carry no sub-second component.
-	return info.ModTime().Truncate(time.Second).After(since), 0, ""
+	return info.ModifiedAt.Truncate(time.Second).After(since), 0, ""
 }
 
 // errorClassForStatus maps an HTTP status to a stable error_class string for the

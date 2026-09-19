@@ -147,3 +147,12 @@ directory provisioning and evidence verification. Store methods read and write
 volume records only, and artifact scans close their database reads before
 checking filesystem evidence. Turn/upload admission fencing still uses the
 existing application boundary.
+
+Artifact GET, edit freshness checks and immutable-share capture use the same
+workspace reader interface. It returns a seekable stream and portable metadata,
+not a host file or `os.FileInfo`. HTTP range and conditional reads continue through
+`http.ServeContent`. The local reader pins each path component without following
+symlinks, verifies the final object is regular before opening it for I/O, and
+honors request cancellation. Replacing a directory entry does not redirect an
+already-open stream to the new object. Share blobs remain independent of their
+source workspace after capture.

@@ -31,6 +31,7 @@ type rule struct {
 }
 
 var rules = []rule{
+	{pkg: "internal/workspace", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "workspace operations expose portable streams and metadata; provider paths and filesystem mechanisms belong to adapters"},
 	{pkg: "internal/execution", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "execution coordinates application ownership through consumer-owned operations, independent of HTTP, persistence implementations and substrate adapters"},
 	{
 		pkg: "internal/store",

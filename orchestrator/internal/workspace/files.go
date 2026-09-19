@@ -51,3 +51,17 @@ func Write(ctx context.Context, files Replacer, name string, content io.Reader, 
 	}
 	return files.Replace(ctx, clean, content, maxBytes)
 }
+
+// Reader exposes range-capable content without host descriptors or stat data.
+// Remote adapters can implement seeking through range requests.
+type Reader interface {
+	Open(context.Context, string) (io.ReadSeekCloser, File, error)
+}
+
+func Open(ctx context.Context, files Reader, name string) (io.ReadSeekCloser, File, error) {
+	clean, err := CleanPath(name)
+	if err != nil {
+		return nil, File{}, err
+	}
+	return files.Open(ctx, clean)
+}

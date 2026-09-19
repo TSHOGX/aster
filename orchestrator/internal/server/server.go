@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,12 +33,12 @@ import (
 	"harness-platform/orchestrator/internal/deploymentgate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/memory"
-	"harness-platform/orchestrator/internal/pathutil"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/titler"
+	"harness-platform/orchestrator/internal/workspace"
 	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
@@ -2163,7 +2162,7 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 	// path: no outbound connect/img/font to other hosts, no forms, no nested
 	// frames or plugins. Inline script/style are allowed so self-contained pages
 	// render, but they can only touch same-origin resources and cannot phone home.
-	ext := strings.ToLower(filepath.Ext(info.Name()))
+	ext := strings.ToLower(filepath.Ext(info.Path))
 	switch ext {
 	case ".html", ".htm":
 		s.setPreviewFraming(w, []string{
@@ -2197,10 +2196,10 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 		w.Header().Set("X-Frame-Options", "DENY")
 	}
-	// http.ServeContent sets Last-Modified from info.ModTime(); the online
+	// http.ServeContent sets Last-Modified from the workspace metadata; the online
 	// editor reads it and echoes it back in If-Unmodified-Since on PUT so we can
 	// detect a stale edit (the agent changed the file since the editor loaded).
-	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+	http.ServeContent(w, r, filepath.Base(info.Path), info.ModifiedAt, file)
 }
 
 // openArtifactFile opens one file under a session's verified live workspace.
@@ -2219,96 +2218,59 @@ func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
 // preserving the property that a bad path says nothing about whether the session
 // exists.
 func validateArtifactRequestPath(sessionID, artifactPath string) (string, int, string) {
-	if !safePathSegment(sessionID) || artifactPath == "" || strings.Contains(artifactPath, `\`) {
+	if !safePathSegment(sessionID) {
 		return "", http.StatusBadRequest, "invalid artifact path"
 	}
-	for _, segment := range strings.Split(artifactPath, "/") {
-		if !safePathSegment(segment) {
-			return "", http.StatusBadRequest, "invalid artifact path"
-		}
-	}
-	cleanPath := pathpkg.Clean(artifactPath)
-	if cleanPath == "." || strings.HasPrefix(cleanPath, "../") || cleanPath == ".." {
+	clean, err := workspace.CleanPath(artifactPath)
+	if err != nil {
 		return "", http.StatusBadRequest, "invalid artifact path"
 	}
-	return cleanPath, 0, ""
+	return clean, 0, ""
 }
 
-func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath string, granted accessLevel) (*os.File, os.FileInfo, int, string) {
+func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath string, granted accessLevel) (io.ReadSeekCloser, workspace.File, int, string) {
 	if granted < accessReader {
-		return nil, nil, http.StatusNotFound, "artifact not found"
+		return nil, workspace.File{}, http.StatusNotFound, "artifact not found"
 	}
 	cleanPath, status, message := validateArtifactRequestPath(sessionID, artifactPath)
 	if status != 0 {
-		return nil, nil, status, message
+		return nil, workspace.File{}, status, message
 	}
 
 	// Access was decided by the caller (see granted). Confirm the session row
 	// still exists before exposing any file metadata, so a deleted session cannot
 	// be probed through a stale grant.
 	if _, err := s.store.GetSession(ctx, sessionID); errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, http.StatusNotFound, "artifact not found"
+		return nil, workspace.File{}, http.StatusNotFound, "artifact not found"
 	} else if err != nil {
-		return nil, nil, http.StatusInternalServerError, err.Error()
+		return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
 	}
 
 	volumeConfig, err := s.dataVolumeProvisionerConfig()
 	if err != nil {
-		return nil, nil, http.StatusInternalServerError, err.Error()
+		return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
 	}
-	workspace, err := (localworkspace.Volumes{Records: s.store}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{
+	volume, err := (localworkspace.Volumes{Records: s.store}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{
 		SessionID: sessionID,
 		Config:    volumeConfig,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, http.StatusNotFound, "artifact not found"
+		return nil, workspace.File{}, http.StatusNotFound, "artifact not found"
 	}
 	if err != nil {
-		return nil, nil, http.StatusForbidden, "workspace evidence invalid"
+		return nil, workspace.File{}, http.StatusForbidden, "workspace evidence invalid"
 	}
 
-	sessionRoot := workspace.HostPath
-	fullPath := filepath.Join(sessionRoot, filepath.FromSlash(cleanPath))
-	if !pathutil.Within(sessionRoot, fullPath) {
-		return nil, nil, http.StatusBadRequest, "invalid artifact path"
-	}
-
-	realSessionRoot, err := filepath.EvalSymlinks(sessionRoot)
+	file, info, err := workspace.Open(ctx, localworkspace.Directory{Path: volume.HostPath, UID: volume.SandboxUID, GID: volume.SandboxGID}, cleanPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil, http.StatusNotFound, "artifact not found"
+		switch {
+		case os.IsNotExist(err):
+			return nil, workspace.File{}, http.StatusNotFound, "artifact not found"
+		case errors.Is(err, workspace.ErrForbidden), errors.Is(err, os.ErrPermission):
+			return nil, workspace.File{}, http.StatusForbidden, "artifact path is not a regular file or directory"
+		default:
+			return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
 		}
-		return nil, nil, http.StatusInternalServerError, err.Error()
-	}
-	if status, message := rejectSymlinkComponents(sessionRoot, cleanPath); status != 0 {
-		return nil, nil, status, message
-	}
-	realPath, err := filepath.EvalSymlinks(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil, http.StatusNotFound, "artifact not found"
-		}
-		return nil, nil, http.StatusInternalServerError, err.Error()
-	}
-	if !pathutil.Within(realSessionRoot, realPath) {
-		return nil, nil, http.StatusForbidden, "artifact path escapes session workspace"
-	}
-
-	file, err := os.Open(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil, http.StatusNotFound, "artifact not found"
-		}
-		return nil, nil, http.StatusInternalServerError, err.Error()
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, nil, http.StatusInternalServerError, err.Error()
-	}
-	if info.IsDir() || !info.Mode().IsRegular() {
-		_ = file.Close()
-		return nil, nil, http.StatusForbidden, "artifact is not a regular file"
 	}
 	return file, info, 0, ""
 }
@@ -2334,24 +2296,6 @@ func (s *Server) dataVolumeProvisionerConfig() (localworkspace.DataVolumeProvisi
 
 func safePathSegment(segment string) bool {
 	return segment != "" && segment != "." && segment != ".." && !strings.Contains(segment, "/")
-}
-
-func rejectSymlinkComponents(root, slashPath string) (int, string) {
-	current := root
-	for _, segment := range strings.Split(slashPath, "/") {
-		current = filepath.Join(current, segment)
-		info, err := os.Lstat(current)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return http.StatusNotFound, "artifact not found"
-			}
-			return http.StatusInternalServerError, err.Error()
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return http.StatusForbidden, "artifact path uses a symlink"
-		}
-	}
-	return 0, ""
 }
 
 const (
