@@ -57,6 +57,13 @@ func (s *Store) CreateEnvironmentBinding(ctx context.Context, p execution.Enviro
 	}
 	defer tx.Rollback()
 	var identity string
+	var backend string
+	if err := tx.QueryRowContext(ctx, `SELECT backend FROM session_execution_backends WHERE session_id=?`, p.SessionID).Scan(&backend); err != nil {
+		return err
+	}
+	if backend != "khora" {
+		return fmt.Errorf("session is pinned to another execution backend")
+	}
 	if err := tx.QueryRowContext(ctx, `SELECT store_id FROM sandbox_backends WHERE name=?`, p.BackendName).Scan(&identity); err != nil {
 		return err
 	}

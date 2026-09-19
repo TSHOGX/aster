@@ -3,16 +3,22 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
+	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/runtime"
+	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 )
 
 func (s *Server) startEnsuredGeneration(ctx context.Context, session store.Session, ensured ensuredGeneration, failureMode generationStartFailureMode) error {
+	if ensured.Backend == "khora" {
+		return nil
+	} // Controller already completed protocol readiness.
 	allocation := ensured.Allocation
 	startCtx := ctx
 	var leaseKeeper *execution.StartLease
@@ -542,12 +548,29 @@ func (s *Server) retireGenerationForRestoreFallback(sessionID, generationID, own
 }
 
 func (s *Server) ensureActiveGeneration(ctx context.Context, session store.Session, owner string) (ensuredGeneration, error) {
+	backend, err := s.store.SessionExecutionBackend(ctx, session.ID)
+	if err != nil {
+		return ensuredGeneration{}, err
+	}
+	if backend == "khora" {
+		if s.executions == nil {
+			return ensuredGeneration{}, fmt.Errorf("session's Khora execution controller is unavailable")
+		}
+		binding, err := s.executions.Ensure(ctx, execution.Session{ID: session.ID, Driver: session.Agent, ActiveGenerationID: session.ActiveGenerationID}, owner)
+		if err != nil {
+			return ensuredGeneration{}, err
+		}
+		return ensuredGeneration{Backend: "khora", Allocation: store.GenerationAllocation{GenerationID: binding.GenerationID, Owner: binding.Owner}}, nil
+	}
+	if backend != "legacy" {
+		return ensuredGeneration{}, fmt.Errorf("unsupported persisted execution backend %q", backend)
+	}
 	result, err := (execution.Service{Generations: legacyGenerationRepository{server: s}}).EnsureGeneration(ctx, execution.Session{ID: session.ID, Driver: session.Agent, ActiveGenerationID: session.ActiveGenerationID}, owner)
 	if err != nil {
 		return ensuredGeneration{}, err
 	}
 	generation := result.Generation
-	return ensuredGeneration{Allocation: store.GenerationAllocation{GenerationID: generation.ID, Owner: generation.Owner, DriverState: store.DriverStateToken{DriverID: generation.DriverState.DriverID, StateDigest: generation.DriverState.Digest, StateVersion: generation.DriverState.Version}}, IsNew: result.New, RestoreFromCheckpoint: result.Resume}, nil
+	return ensuredGeneration{Backend: "legacy", Allocation: store.GenerationAllocation{GenerationID: generation.ID, Owner: generation.Owner, DriverState: store.DriverStateToken{DriverID: generation.DriverState.DriverID, StateDigest: generation.DriverState.Digest, StateVersion: generation.DriverState.Version}}, IsNew: result.New, RestoreFromCheckpoint: result.Resume}, nil
 }
 
 // writeEnsureGenerationError maps an ensureActiveGeneration failure onto its HTTP
@@ -557,14 +580,45 @@ func (s *Server) writeEnsureGenerationError(w http.ResponseWriter, err error) bo
 	switch {
 	case err == nil:
 		return true
-	case errors.Is(err, store.ErrPoolExhausted):
+	case errors.Is(err, store.ErrPoolExhausted), sandbox.Is(err, sandbox.Capacity):
 		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
 	case errors.Is(err, execution.ErrBusy), store.IsWorkspaceMutationBusy(err):
 		writeError(w, http.StatusConflict, "session is busy")
+	case sandbox.Is(err, sandbox.Unavailable), sandbox.Is(err, sandbox.Uncertain):
+		writeErrorClass(w, http.StatusServiceUnavailable, "runtime_unavailable", "execution backend is reconciling")
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}
 	return false
+}
+
+func (s *Server) releaseScheduledIdle(ctx context.Context, session store.Session, owner string) error {
+	backend, err := s.store.SessionExecutionBackend(ctx, session.ID)
+	if err != nil {
+		return err
+	}
+	if backend == "khora" {
+		if s.executions == nil {
+			return fmt.Errorf("session's Khora controller is unavailable")
+		}
+		if err := s.executions.ReleaseIdle(ctx, session.ID, session.ActiveGenerationID, owner); err != nil {
+			return err
+		}
+		if snapshot, err := s.store.GetSessionRuntimeSnapshot(ctx, session.ID); err == nil {
+			s.publishSessionRuntime(session.ID, snapshot)
+		}
+		return nil
+	}
+	if backend != "legacy" {
+		return fmt.Errorf("unsupported persisted execution backend")
+	}
+	if err := s.store.ReleaseIdleGeneration(ctx, session.ID, session.ActiveGenerationID, owner, time.Now().UTC()); err != nil {
+		return err
+	}
+	if s.hub != nil {
+		s.hub.Publish(events.Event{Type: "session.checkpointed", SessionID: session.ID})
+	}
+	return nil
 }
 
 // ensureRunnableGenerationHTTP gives a request a live sandbox to dispatch into,

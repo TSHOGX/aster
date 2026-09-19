@@ -413,6 +413,11 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 	} else {
 		id := newID("sess")
 		session = store.Session{ID: id, UserID: run.UserID, Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: filepath.Join(s.cfg.SessionsRoot, id), RestoreID: "unused-" + id, AutoCheckpointEnabled: true, CreatedAt: now, UpdatedAt: now}
+		session.ExecutionBackend = s.newSessionBackend
+		if s.newSessionBackend == "khora" {
+			session.Workspace = "workspace:" + id
+			session.AutoCheckpointEnabled = false
+		}
 		if s.cfg.SessionRetention > 0 {
 			expires := now.Add(s.cfg.SessionRetention)
 			session.ExpiresAt = &expires
@@ -502,8 +507,8 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 				_ = s.store.FinishScheduleRun(parent, run.ID, "succeeded", "", "", truncateScheduleOutput(summary), time.Now().UTC())
 				if sched.ResultMode != "existing_session" {
 					if latest, loadErr := s.store.GetSession(parent, id); loadErr == nil && latest.Status == string(sessionstate.RunningIdle) && latest.ActiveGenerationID != "" {
-						if releaseErr := s.store.ReleaseIdleGeneration(parent, id, latest.ActiveGenerationID, owner, time.Now().UTC()); releaseErr == nil {
-							s.hub.Publish(events.Event{Type: "session.checkpointed", SessionID: id})
+						if releaseErr := s.releaseScheduledIdle(parent, latest, owner); releaseErr != nil && s.log != nil {
+							s.log.Warn("scheduled idle release pending", "session_id", id, "error", releaseErr)
 						}
 					}
 				}
@@ -634,8 +639,8 @@ func (s *Server) finishScheduleSuccess(parent context.Context, run store.Schedul
 			return
 		}
 		owner := store.GenerationLeaseOwner(s.ownerUUID)
-		if releaseErr := s.store.ReleaseIdleGeneration(parent, run.SessionID, latest.ActiveGenerationID, owner, time.Now().UTC()); releaseErr == nil && s.hub != nil {
-			s.hub.Publish(events.Event{Type: "session.checkpointed", SessionID: run.SessionID})
+		if releaseErr := s.releaseScheduledIdle(parent, latest, owner); releaseErr != nil && s.log != nil {
+			s.log.Warn("scheduled idle release pending", "session_id", run.SessionID, "error", releaseErr)
 		}
 	}
 }

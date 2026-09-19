@@ -420,6 +420,11 @@ CREATE TABLE IF NOT EXISTS execution_recoveries (
 CREATE UNIQUE INDEX IF NOT EXISTS execution_recoveries_active_uq
  ON execution_recoveries(environment_id) WHERE stage!='complete';
 
+CREATE TABLE IF NOT EXISTS session_execution_backends (
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+ backend TEXT NOT NULL CHECK(backend IN ('legacy','khora'))
+);
+
 CREATE TABLE IF NOT EXISTS native_capture_requests (
  session_id TEXT NOT NULL REFERENCES sessions(id),
  state_version INTEGER NOT NULL CHECK(state_version>1),
@@ -1312,6 +1317,7 @@ CREATE TABLE IF NOT EXISTS share_link_files (
 	if err := s.ensureTurnColumns(ctx); err != nil {
 		return err
 	}
+	if _,err:=s.db.ExecContext(ctx,`INSERT OR IGNORE INTO session_execution_backends(session_id,backend) SELECT s.id,CASE WHEN EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.session_id=s.id) THEN 'khora' ELSE 'legacy' END FROM sessions s`);err!=nil{return err}
 	return s.backfillMessagesFTS(ctx)
 }
 

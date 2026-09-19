@@ -385,6 +385,13 @@ func (s *Store) AllocateGeneration(ctx context.Context, p AllocateGenerationPara
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
 		return GenerationAllocation{}, err
 	}
+	var selectedBackend string
+	if err := tx.QueryRowContext(ctx, `SELECT backend FROM session_execution_backends WHERE session_id=?`, p.SessionID).Scan(&selectedBackend); err != nil {
+		return GenerationAllocation{}, err
+	}
+	if selectedBackend != "legacy" {
+		return GenerationAllocation{}, fmt.Errorf("session is pinned to another execution backend")
+	}
 	slot, err := nextFreeSlot(ctx, tx, p.Config.CIDRPool)
 	if err != nil {
 		return GenerationAllocation{}, err

@@ -1447,17 +1447,21 @@ func createStoreSession(t *testing.T, ctx context.Context, st *Store, id string)
 }
 
 func createStoreSessionWithAgent(t *testing.T, ctx context.Context, st *Store, id, agent string) {
+	createStoreSessionBackend(t, ctx, st, id, agent, "legacy")
+}
+func createStoreSessionBackend(t *testing.T, ctx context.Context, st *Store, id, agent, backend string) {
 	t.Helper()
 	now := time.Now().UTC()
 	if err := st.CreateSession(ctx, Session{
-		ID:        id,
-		UserID:    "lab",
-		Status:    string(sessionstate.Created),
-		Agent:     agent,
-		Workspace: filepath.Join(t.TempDir(), id),
-		RestoreID: "phase3-" + id,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ExecutionBackend: backend,
+		ID:               id,
+		UserID:           "lab",
+		Status:           string(sessionstate.Created),
+		Agent:            agent,
+		Workspace:        filepath.Join(t.TempDir(), id),
+		RestoreID:        "phase3-" + id,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}); err != nil {
 		t.Fatalf("create session %s: %v", id, err)
 	}

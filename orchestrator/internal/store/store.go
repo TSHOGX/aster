@@ -18,6 +18,7 @@ import (
 )
 
 type Session struct {
+	ExecutionBackend      string     `json:"-"`
 	ID                    string     `json:"id"`
 	UserID                string     `json:"user_id"`
 	Status                string     `json:"status"`
@@ -294,10 +295,25 @@ func (s *Store) CreateSession(ctx context.Context, session Session) error {
 	if session.Mode == "" {
 		return fmt.Errorf("unsupported session mode for driver %q", session.Agent)
 	}
-	if strings.TrimSpace(session.AgentHomePath) == "" {
+	if session.ExecutionBackend == "" {
+		session.ExecutionBackend = "legacy"
+	}
+	if session.ExecutionBackend != "legacy" && session.ExecutionBackend != "khora" {
+		return fmt.Errorf("unsupported session execution backend")
+	}
+	if session.ExecutionBackend == "legacy" && strings.TrimSpace(session.AgentHomePath) == "" {
 		session.AgentHomePath = filepath.Join(s.options.AgentHomesRoot, session.ID)
 	}
-	_, err := s.db.ExecContext(ctx, `
+	if session.ExecutionBackend == "khora" {
+		session.AgentHomePath = ""
+		session.AutoCheckpointEnabled = false
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO sessions (
   id, user_id, status, driver_id, mode, workspace, agent_home_path, restore_id,
   created_at, updated_at, expires_at, auto_checkpoint_enabled
@@ -307,7 +323,19 @@ INSERT INTO sessions (
 		formatTime(session.CreatedAt), formatTime(session.UpdatedAt), formatOptionalTime(session.ExpiresAt),
 		boolInt(session.AutoCheckpointEnabled),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO session_execution_backends(session_id,backend) VALUES(?,?)`, session.ID, session.ExecutionBackend); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SessionExecutionBackend(ctx context.Context, session string) (string, error) {
+	var backend string
+	err := s.db.QueryRowContext(ctx, `SELECT b.backend FROM sessions s JOIN session_execution_backends b ON b.session_id=s.id WHERE s.id=?`, session).Scan(&backend)
+	return backend, err
 }
 
 // sessionSelectColumns is the 21-column projection consumed by scanSession. It

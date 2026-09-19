@@ -146,7 +146,7 @@ its own sandbox and volumes during cleanup.
 The Pi worker case uses a local synthetic Anthropic-compatible event stream,
 without upstream credentials. It verifies product turn/message/journal commits
 and native-state advancement through the confined helper. Both worker cases use
-the execution controller to pause after the first turn and run a second turn in
+the HTTP message handler and execution controller to pause after the first turn and run a second turn in
 the same retained sandbox at the next epoch. The Pi case checks that its native
 session ID and path survive the transition. This is driver and
 control-plane acceptance, not production model gateway or entitlement acceptance.

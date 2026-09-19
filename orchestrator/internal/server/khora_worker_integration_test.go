@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -65,7 +66,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	st, owner := openServerOwnedStore(t, ctx, directory)
 	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
 	now := time.Now().UTC()
-	session := store.Session{ID: "khora-worker-" + driver + "-session", UserID: "lab", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque-workspace", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}
+	session := store.Session{ExecutionBackend: "khora", ID: "khora-worker-" + driver + "-session", UserID: "lab", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque-workspace", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}
 	if len(truncated) > 0 && truncated[0] {
 		session.ID += "-truncated"
 	}
@@ -169,7 +170,17 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			t.Fatal("injected acceptance failure ignored")
 		}
 	}
-	binding, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
+	if err := srv.SetExecutionController(controller, "khora"); err != nil {
+		t.Fatal(err)
+	}
+	ensured, err := srv.ensureActiveGeneration(ctx, session, leaseOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.startEnsuredGeneration(ctx, session, ensured, startFailureInputAcceptable); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := st.GetExecutionBinding(ctx, ensured.Allocation.GenerationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +188,11 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	var initialNativeID, initialNativeFile string
 	for cycle := 0; cycle < 3; cycle++ {
 		if cycle == 1 {
-			if err := controller.ReleaseIdle(ctx, session.ID, binding.GenerationID, leaseOwner); err != nil {
+			latest, err := st.GetSession(ctx, session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := srv.releaseScheduledIdle(ctx, latest, leaseOwner); err != nil {
 				t.Fatal(err)
 			}
 			assertIntegrationCapacity(t, ctx, st, 0)
@@ -252,9 +267,22 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				content = "cat /workspace/retained-controller-proof"
 			}
 		}
-		enqueued, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: content})
-		if err != nil {
+		if err := srv.SetExecutionController(controller, "khora"); err != nil {
 			t.Fatal(err)
+		}
+		srv.ownerUUID, _, _ = strings.Cut(leaseOwner, ":")
+		body, _ := json.Marshal(map[string]string{"content": content})
+		request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/messages", strings.NewReader(string(body))).WithContext(context.WithValue(ctx, userContextKey{}, session.UserID))
+		response := httptest.NewRecorder()
+		srv.sendMessage(response, request, session.ID)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("Khora HTTP dispatch: %d %s", response.Code, response.Body.String())
+		}
+		var enqueued struct {
+			TurnID int64 `json:"turn_id"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &enqueued); err != nil || enqueued.TurnID == 0 {
+			t.Fatalf("HTTP turn identity: %+v %v", enqueued, err)
 		}
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()

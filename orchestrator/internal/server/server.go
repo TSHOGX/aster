@@ -33,6 +33,7 @@ import (
 	"harness-platform/orchestrator/internal/deploymentgate"
 	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
@@ -62,6 +63,8 @@ const (
 )
 
 type Server struct {
+	executions           sessionExecutionController
+	newSessionBackend    string
 	nativeStateValidator func(context.Context, store.DriverStateValidationInput, int64) (workspace.File, error)
 	cfg                  config.Config
 	store                serverStore
@@ -131,6 +134,25 @@ type Server struct {
 	shutdownCh   chan struct{}
 }
 
+type sessionExecutionController interface {
+	Ensure(context.Context, execution.Session, string) (execution.Binding, error)
+	ReleaseIdle(context.Context, string, string, string) error
+}
+
+// SetExecutionController configures the Khora execution port during startup.
+// Creation policy affects new rows only; dispatch reads each persisted backend.
+func (s *Server) SetExecutionController(controller sessionExecutionController, newSessionBackend string) error {
+	if newSessionBackend != "legacy" && newSessionBackend != "khora" {
+		return fmt.Errorf("explicit new-session backend required")
+	}
+	if newSessionBackend == "khora" && controller == nil {
+		return fmt.Errorf("Khora creation requires an execution controller")
+	}
+	s.executions = controller
+	s.newSessionBackend = newSessionBackend
+	return nil
+}
+
 type sessionOwnerEntry struct {
 	userID    string
 	expiresAt time.Time
@@ -165,6 +187,7 @@ type bridgeStore interface {
 }
 
 type ensuredGeneration struct {
+	Backend               string
 	Allocation            store.GenerationAllocation
 	IsNew                 bool
 	RestoreFromCheckpoint bool
@@ -966,6 +989,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &value
 	}
 	session := store.Session{
+		ExecutionBackend:      s.newSessionBackend,
 		ID:                    id,
 		UserID:                userIDFromContext(r.Context()),
 		Status:                string(sessionstate.Created),
@@ -977,6 +1001,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:             now,
 		UpdatedAt:             now,
 		ExpiresAt:             expiresAt,
+	}
+	if s.newSessionBackend == "khora" {
+		session.Workspace = "workspace:" + id
+		session.AutoCheckpointEnabled = false
 	}
 	// Domain admission check, moved out of store.CreateSession: a bad status or
 	// an unsupported driver is a bad request, not a persistence failure.

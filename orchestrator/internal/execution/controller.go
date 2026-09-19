@@ -13,6 +13,7 @@ import (
 )
 
 type ControllerRepository interface {
+	SessionExecutionBackend(context.Context, string) (string, error)
 	AssertExecutionAccepted(context.Context, string, string, time.Time) error
 	EnvironmentRepository
 	StorageRepository
@@ -97,6 +98,13 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	ctx = requestContext
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
+	selected, err := c.Repository.SessionExecutionBackend(ctx, session.ID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if selected != "khora" {
+		return Binding{}, ErrOperationConflict
+	}
 	identity, err := c.Backend.Identity(ctx)
 	if err != nil {
 		return Binding{}, err

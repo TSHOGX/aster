@@ -312,9 +312,8 @@ The bound bridge store uses that acceptance to claim, replay, resume and start
 turns with the existing public turn/message identities. A changed epoch, newer
 environment operation or pending reconciliation refuses claims and live output.
 Generation retirement revokes binding acceptance. Gateway authority is separate;
-this path does not create a model source-IP context. The legacy server lifecycle
-continues to run until the new worker is wired into HTTP and scheduler entry
-points.
+this path does not create a model source-IP context. The legacy lifecycle remains
+available for sessions pinned to that backend during migration.
 
 ## Egress grant and request ledger
 
@@ -362,8 +361,18 @@ The Khora integration profile includes a real worker turn through this path:
 keyed volume/environment provisioning, process journal handshake, accepted binding,
 claim/start/output/completion, replayable message projection and durable receipt
 watermark. Its assertions require no legacy runtime, network or source-IP context
-rows. HTTP and scheduler selection still use the legacy entry path pending the
-controller cutover.
+rows. The shared HTTP/scheduler entry path dispatches through an injected
+controller for sessions pinned to Khora. The default executable startup still
+constructs the legacy runtime until deployment composition is complete.
+
+Session creation persists its backend in the same transaction as the session.
+Existing sessions keep their backend when the new-session policy changes.
+Migration classifies retained environment bindings as Khora and other existing
+sessions as legacy. Both allocators refuse a session pinned to the other backend;
+missing or unavailable Khora controllers do not trigger embedded-runtime fallback.
+New Khora sessions have opaque workspace references, no fabricated host home and
+no memory-checkpoint policy. Scheduled work uses the same dispatch choice, and
+scheduled idle release routes to retained pause for Khora sessions.
 
 The execution controller serializes each session's provision/start and idle
 release paths. Retries preserve the original generation, remote operation keys,

@@ -75,6 +75,14 @@ func TestBaselineUpgradeAndRepeat(t *testing.T) {
 					t.Fatalf("retained environment migration: %s %s %v", state, sandbox, e)
 				}
 			}
+			var backend string
+			wantBackend := "legacy"
+			if base == "0ccddb5" {
+				wantBackend = "khora"
+			}
+			if e = db.QueryRow(`SELECT backend FROM session_execution_backends WHERE session_id='s'`).Scan(&backend); e != nil || backend != wantBackend {
+				t.Fatalf("migration changed session runtime ownership: %s want %s: %v", backend, wantBackend, e)
+			}
 		})
 	}
 }

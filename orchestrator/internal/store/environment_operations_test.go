@@ -19,7 +19,7 @@ func operationFixture(t *testing.T) (*Store, execution.Environment) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	createStoreSession(t, ctx, st, "environment-session")
+	createStoreSessionBackend(t, ctx, st, "environment-session", "pi", "khora")
 	identity := execution.BackendIdentity{Name: "engine", StoreID: "durable-store", Version: "pinned-build"}
 	if err := st.PinBackendIdentity(ctx, identity); err != nil {
 		t.Fatal(err)

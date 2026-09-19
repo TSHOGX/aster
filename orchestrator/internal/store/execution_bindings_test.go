@@ -21,7 +21,7 @@ func boundExecutionFixtureForDriver(t *testing.T, driver string) (*Store, BoundB
 	t.Helper()
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
-	createStoreSessionWithAgent(t, ctx, st, "bound-session", driver)
+	createStoreSessionBackend(t, ctx, st, "bound-session", driver, "khora")
 	if err := st.PinBackendIdentity(ctx, execution.BackendIdentity{Name: "engine", StoreID: "backend", Version: "pinned"}); err != nil {
 		t.Fatal(err)
 	}
