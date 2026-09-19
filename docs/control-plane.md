@@ -239,3 +239,21 @@ settles current state before resync completes. If retention overtakes recovery,
 the new 410 starts another persisted resync window. This service is independently
 tested and awaits wiring into the Khora execution worker; the existing local
 maintenance path remains active.
+
+## Workspace mutation admission
+
+Local upload/edit writes reserve a durable session mutation before consuming the
+content stream. The reservation checks session and generation state together
+with queued/leased/running work. SQL constraints then reject turn admission,
+parked-turn dispatch, generation allocation and session/generation transitions
+while that mutation is active or uncertain. This closes the earlier gap between
+an HTTP busy check and the actual file replacement.
+
+File I/O runs outside the reservation transaction. Successful or definitely
+failed replacement records its outcome and releases the fence. An uncertain
+post-rename durability outcome retains the fence and its content digest for
+reconciliation; elapsed time does not authorize another writer. Mutation
+outcomes are fenced by operation identity and owner, and terminal outcomes cannot
+be rewritten. Recovery must establish that the prior writer stopped before
+settling an interrupted mutation. The remote helper is not yet wired into this
+local mutation path.

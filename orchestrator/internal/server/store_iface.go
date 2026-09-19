@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/workspace"
 	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
@@ -181,6 +182,7 @@ type notificationStore interface {
 // contractVolumeStore covers sandbox contracts, artifact listings, the data
 // volumes backing a session workspace/driver home, and proxy request accounting.
 type contractVolumeStore interface {
+	workspace.MutationRepository
 	localworkspace.VolumeRecords
 	StoreSandboxContract(context.Context, store.StoreSandboxContractParams) (store.SandboxContractRecord, error)
 	RecordSandboxContractArtifacts(context.Context, store.RecordSandboxContractArtifactsParams) (store.SandboxContractArtifacts, error)

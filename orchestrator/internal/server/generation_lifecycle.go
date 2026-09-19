@@ -559,7 +559,7 @@ func (s *Server) writeEnsureGenerationError(w http.ResponseWriter, err error) bo
 		return true
 	case errors.Is(err, store.ErrPoolExhausted):
 		writeErrorClass(w, http.StatusServiceUnavailable, "pool_exhausted", "resource pool exhausted")
-	case errors.Is(err, execution.ErrBusy):
+	case errors.Is(err, execution.ErrBusy), store.IsWorkspaceMutationBusy(err):
 		writeError(w, http.StatusConflict, "session is busy")
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())

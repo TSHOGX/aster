@@ -3,18 +3,21 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
+	"harness-platform/orchestrator/internal/workspace"
 	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
@@ -373,5 +376,48 @@ func assertOwnedBySandbox(t *testing.T, srv *Server, path string) {
 	}
 	if int(sysStat.Uid) != wantUID || int(sysStat.Gid) != wantGID {
 		t.Fatalf("%s owned by %d:%d, want %d:%d", path, sysStat.Uid, sysStat.Gid, wantUID, wantGID)
+	}
+}
+
+type heldUploadReader struct {
+	entered, release chan struct{}
+	reader           *strings.Reader
+	once             sync.Once
+}
+
+func (r *heldUploadReader) Read(buffer []byte) (int, error) {
+	r.once.Do(func() { close(r.entered); <-r.release })
+	return r.reader.Read(buffer)
+}
+
+func TestUploadMutationAndTurnAdmissionCannotCross(t *testing.T) {
+	srv, st, root := newWorkspaceWriteServer(t, "sess_1")
+	reader := &heldUploadReader{entered: make(chan struct{}), release: make(chan struct{}), reader: strings.NewReader("new workspace content")}
+	result := make(chan error, 1)
+	go func() {
+		_, err := srv.writeWorkspaceFile(context.Background(), "sess_1", "file.txt", reader, 1024)
+		result <- err
+	}()
+	select {
+	case <-reader.entered:
+	case <-time.After(time.Second):
+		t.Fatal("upload did not reach stream copy")
+	}
+	if _, err := st.EnqueueTurn(context.Background(), "sess_1", "concurrent prompt", time.Now().UTC()); !store.IsWorkspaceMutationBusy(err) {
+		close(reader.release)
+		t.Fatalf("turn admitted while upload writes: %v", err)
+	}
+	close(reader.release)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "file.txt")); err != nil || string(got) != "new workspace content" {
+		t.Fatalf("file: %s %v", got, err)
+	}
+	if _, err := st.EnqueueTurn(context.Background(), "sess_1", "after upload", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.writeWorkspaceFile(context.Background(), "sess_1", "other.txt", strings.NewReader("racing"), 1024); !errors.Is(err, workspace.ErrMutationBusy) {
+		t.Fatalf("upload passed queued turn: %v", err)
 	}
 }

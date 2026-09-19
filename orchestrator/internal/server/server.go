@@ -1105,7 +1105,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 		Now:       time.Now().UTC(),
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "session cannot accept input") {
+		if strings.Contains(err.Error(), "session cannot accept input") || store.IsWorkspaceMutationBusy(err) {
 			writeError(w, http.StatusConflict, "session is busy")
 			return
 		}
@@ -1754,6 +1754,10 @@ func runtimeFailureMessage(errorClass, reason string) string {
 }
 
 func writeRuntimeStartError(w http.ResponseWriter, err error) {
+	if store.IsWorkspaceMutationBusy(err) {
+		writeError(w, http.StatusConflict, "workspace mutation in progress")
+		return
+	}
 	reason := ""
 	if err != nil {
 		reason = err.Error()

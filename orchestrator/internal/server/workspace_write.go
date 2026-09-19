@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/google/uuid"
+	"harness-platform/orchestrator/internal/store"
 	"io"
 	"net/http"
+	"time"
 
 	"harness-platform/orchestrator/internal/workspace"
 	localworkspace "harness-platform/orchestrator/internal/workspace/local"
@@ -33,6 +36,8 @@ func writeWorkspaceStatus(err error) (int, string) {
 		return we.status, we.message
 	}
 	switch {
+	case errors.Is(err, workspace.ErrMutationBusy), store.IsWorkspaceMutationBusy(err):
+		return http.StatusConflict, "session is busy; workspace mutation in progress"
 	case errors.Is(err, workspace.ErrInvalidPath):
 		return http.StatusBadRequest, "invalid artifact path"
 	case errors.Is(err, workspace.ErrForbidden):
@@ -62,6 +67,26 @@ func (s *Server) writeWorkspaceFile(ctx context.Context, sessionID, relPath stri
 	if err != nil {
 		return "", newWorkspaceWriteError(http.StatusForbidden, "workspace evidence invalid")
 	}
+	owner := s.ownerUUID
+	if owner == "" {
+		owner = "local-" + uuid.NewString()
+	}
+	mutation := workspace.Mutation{ID: uuid.NewString(), SessionID: sessionID, Owner: owner, Path: relPath}
+	if err := s.store.BeginWorkspaceMutation(ctx, mutation); err != nil {
+		return "", err
+	}
 	file, err := workspace.Write(ctx, localworkspace.Directory{Path: volume.HostPath, UID: volume.SandboxUID, GID: volume.SandboxGID}, relPath, content, maxBytes)
-	return file.Path, err
+	mutation.File = file
+	mutation.State = "succeeded"
+	if err != nil {
+		mutation.State = "failed"
+		mutation.Error = err.Error()
+		if errors.Is(err, workspace.ErrUncertain) {
+			mutation.State = "uncertain"
+		}
+	}
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	finishErr := s.store.FinishWorkspaceMutation(finishCtx, mutation)
+	return file.Path, errors.Join(err, finishErr)
 }

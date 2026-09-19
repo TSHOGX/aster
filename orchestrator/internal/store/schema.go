@@ -237,6 +237,20 @@ CREATE TABLE IF NOT EXISTS bridge_projected_messages (
   UNIQUE(message_id)
 );
 
+CREATE TABLE IF NOT EXISTS workspace_mutations (
+  operation_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  owner TEXT NOT NULL,
+  path TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('active','uncertain','succeeded','failed')),
+  result TEXT NOT NULL,
+  error TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_mutation_active_uq
+ ON workspace_mutations(session_id) WHERE state IN ('active','uncertain');
+
 CREATE TABLE IF NOT EXISTS bridge_streams (
   backend_id TEXT NOT NULL,
   session_id TEXT NOT NULL REFERENCES sessions(id),
@@ -646,6 +660,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS turns_session_sequence_uq
 
 CREATE INDEX IF NOT EXISTS turns_session_status_sequence_idx
   ON turns (session_id, status, sequence);
+
+CREATE TRIGGER IF NOT EXISTS workspace_fence_turn_insert BEFORE INSERT ON turns
+WHEN NEW.status IN ('queued','leased','running') AND EXISTS(
+ SELECT 1 FROM workspace_mutations WHERE session_id=NEW.session_id AND state IN ('active','uncertain'))
+BEGIN SELECT RAISE(ABORT,'workspace mutation in progress'); END;
+CREATE TRIGGER IF NOT EXISTS workspace_fence_turn_dispatch BEFORE UPDATE OF status,auto_dispatch ON turns
+WHEN NEW.status IN ('queued','leased','running') AND NEW.auto_dispatch=1 AND EXISTS(
+ SELECT 1 FROM workspace_mutations WHERE session_id=NEW.session_id AND state IN ('active','uncertain'))
+BEGIN SELECT RAISE(ABORT,'workspace mutation in progress'); END;
+CREATE TRIGGER IF NOT EXISTS workspace_fence_generation_insert BEFORE INSERT ON runtime_generations
+WHEN EXISTS(SELECT 1 FROM workspace_mutations WHERE session_id=NEW.session_id AND state IN ('active','uncertain'))
+BEGIN SELECT RAISE(ABORT,'workspace mutation in progress'); END;
+CREATE TRIGGER IF NOT EXISTS workspace_fence_generation_transition BEFORE UPDATE OF status ON runtime_generations
+WHEN NEW.status!=OLD.status AND EXISTS(
+ SELECT 1 FROM workspace_mutations WHERE session_id=NEW.session_id AND state IN ('active','uncertain'))
+BEGIN SELECT RAISE(ABORT,'workspace mutation in progress'); END;
+CREATE TRIGGER IF NOT EXISTS workspace_fence_session_transition BEFORE UPDATE OF status,active_generation_id ON sessions
+WHEN (NEW.status!=OLD.status OR NEW.active_generation_id IS NOT OLD.active_generation_id) AND EXISTS(
+ SELECT 1 FROM workspace_mutations WHERE session_id=NEW.id AND state IN ('active','uncertain'))
+BEGIN SELECT RAISE(ABORT,'workspace mutation in progress'); END;
 
 CREATE TABLE IF NOT EXISTS events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT,
