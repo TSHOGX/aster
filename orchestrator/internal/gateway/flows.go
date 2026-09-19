@@ -18,12 +18,15 @@ type bindingFlows struct {
 	flows    map[string]*Flow
 }
 type Flows struct {
-	closed   bool
-	mu       sync.Mutex
-	bindings map[string]*bindingFlows
+	closed        bool
+	mu            sync.Mutex
+	bindings      map[string]*bindingFlows
+	revokedGrants map[string]bool
 }
 
-func NewFlows() *Flows { return &Flows{bindings: map[string]*bindingFlows{}} }
+func NewFlows() *Flows {
+	return &Flows{bindings: map[string]*bindingFlows{}, revokedGrants: map[string]bool{}}
+}
 
 // Activate is called only after reconciliation with committed application
 // authority. A fresh gateway has no active bindings; revoked IDs stay tombstoned.
@@ -55,7 +58,7 @@ func (f *Flows) Begin(parent context.Context, authorization egress.Authorization
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed {
+	if f.closed || f.revokedGrants[authorization.GrantID] {
 		return nil, nil, ErrRevoked
 	}
 	binding := f.bindings[authorization.BindingID]
@@ -69,6 +72,37 @@ func (f *Flows) Begin(parent context.Context, authorization egress.Authorization
 	flow := &Flow{registry: f, binding: authorization.BindingID, request: authorization.RequestID, grant: authorization.GrantID, cancel: cancel, done: make(chan struct{})}
 	binding.flows[authorization.RequestID] = flow
 	return ctx, flow, nil
+}
+
+// RevokeGrant drains only the interrupted turn's work. A later turn can still
+// use the accepted route under a different grant; old grants stay tombstoned.
+func (f *Flows) RevokeGrant(ctx context.Context, grant string) error {
+	if grant == "" {
+		return fmt.Errorf("grant identity required")
+	}
+	f.mu.Lock()
+	if f.revokedGrants == nil {
+		f.revokedGrants = map[string]bool{}
+	}
+	f.revokedGrants[grant] = true
+	var flows []*Flow
+	for _, binding := range f.bindings {
+		for _, flow := range binding.flows {
+			if flow.grant == grant {
+				flows = append(flows, flow)
+				flow.cancel()
+			}
+		}
+	}
+	f.mu.Unlock()
+	for _, flow := range flows {
+		select {
+		case <-flow.done:
+		case <-ctx.Done():
+			return fmt.Errorf("gateway grant teardown unresolved: %w", ctx.Err())
+		}
+	}
+	return nil
 }
 
 type Flow struct {

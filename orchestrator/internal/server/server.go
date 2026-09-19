@@ -2076,6 +2076,34 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 		writeError(w, http.StatusConflict, "session is not running")
 		return
 	}
+	backend, err := s.store.SessionExecutionBackend(r.Context(), sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if backend == "khora" {
+		commands, ok := s.executions.(interface {
+			DeliverTurnCommand(context.Context, execution.TurnCommand) error
+		})
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "execution control unavailable")
+			return
+		}
+		command, snapshot, err := s.store.RequestBoundInterrupt(r.Context(), sessionID, session.ActiveGenerationID, store.GenerationLeaseOwner(s.ownerUUID))
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		s.publishSessionRuntime(sessionID, snapshot)
+		if command != nil {
+			if err := commands.DeliverTurnCommand(r.Context(), *command); err != nil {
+				writeErrorClass(w, http.StatusServiceUnavailable, "control_delivery_pending", "interrupt delivery is pending reconciliation")
+				return
+			}
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "interrupting", "runtime": snapshot})
+		return
+	}
 	if session.Agent == string(agents.Shell) {
 		if err := s.runtime.Interrupt(sessionID); err != nil {
 			writeError(w, http.StatusConflict, err.Error())

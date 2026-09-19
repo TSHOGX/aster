@@ -14,6 +14,40 @@ import (
 func authorization() egress.Authorization {
 	return egress.Authorization{RequestContext: egress.RequestContext{RequestID: "request", GrantID: "grant", BindingID: "binding", BindingRevision: 1}, ExpiresAt: time.Now().Add(time.Minute)}
 }
+
+func TestGrantRevocationDrainsOldTurnAndPermitsNewGrant(t *testing.T) {
+	flows := NewFlows()
+	auth := authorization()
+	if err := flows.Activate(auth.BindingID, auth.BindingRevision); err != nil {
+		t.Fatal(err)
+	}
+	ctx, flow, err := flows.Begin(context.Background(), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := flows.RevokeGrant(deadline, auth.GrantID); err == nil {
+		t.Fatal("revocation did not wait for termination")
+	}
+	if ctx.Err() == nil {
+		t.Fatal("grant request was not canceled")
+	}
+	flow.Finish()
+	if err := flows.RevokeGrant(context.Background(), auth.GrantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := flows.Begin(context.Background(), auth); !errors.Is(err, ErrRevoked) {
+		t.Fatal("old grant revived")
+	}
+	auth.GrantID = "next-turn"
+	auth.RequestID = "next-request"
+	_, next, err := flows.Begin(context.Background(), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Finish()
+}
 func TestGatewayStartsDeniedAndRevocationWaitsForActualFlowTermination(t *testing.T) {
 	registry := NewFlows()
 	auth := authorization()

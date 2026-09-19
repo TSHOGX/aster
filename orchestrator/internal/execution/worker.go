@@ -169,3 +169,11 @@ type workerConnection struct {
 }
 
 func (c *workerConnection) Close() error { c.cancel(); return c.AgentConnection.Close() }
+
+func (c *workerConnection) SendTurnCommand(ctx context.Context, p TurnCommand) error {
+	sender, ok := c.AgentConnection.(TurnCommandSender)
+	if !ok {
+		return fmt.Errorf("agent connection does not support turn commands")
+	}
+	return sender.SendTurnCommand(ctx, p)
+}

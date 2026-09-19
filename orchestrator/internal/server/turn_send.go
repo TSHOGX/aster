@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 )
@@ -35,8 +37,15 @@ func (s *Server) sendQueuedTurn(w http.ResponseWriter, r *http.Request, sessionI
 	// Shell sessions have no turn queue: their input goes straight to a pty, so
 	// there is nothing parked to release and nothing to steer into.
 	if session.Agent == string(agents.Shell) {
-		writeError(w, http.StatusConflict, "session does not queue turns")
-		return
+		backend, err := s.store.SessionExecutionBackend(r.Context(), sessionID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if backend != "khora" {
+			writeError(w, http.StatusConflict, "session does not queue turns")
+			return
+		}
 	}
 	// The same states that accept a new prompt. `checkpointed` is included on
 	// purpose: parked rows do not hold a sandbox open, so one can be reclaimed
@@ -66,6 +75,10 @@ func (s *Server) sendQueuedTurn(w http.ResponseWriter, r *http.Request, sessionI
 	}
 	if snapshot.ActiveTurn == nil {
 		s.releaseQueuedTurn(w, r, session, turnID)
+		return
+	}
+	if session.Agent == string(agents.Shell) {
+		writeError(w, http.StatusConflict, "shell turns cannot steer a running command")
 		return
 	}
 	s.steerQueuedTurn(w, r, session, snapshot, *target)
@@ -116,25 +129,47 @@ func (s *Server) releaseQueuedTurn(w http.ResponseWriter, r *http.Request, sessi
 // without discarding what it has already done. Stop-and-resend is the same
 // instruction at the cost of the whole turn.
 func (s *Server) steerQueuedTurn(w http.ResponseWriter, r *http.Request, session store.Session, snapshot store.SessionRuntimeSnapshot, target store.TurnSnapshot) {
-	details, err := s.runtimeGenerationDetails(r.Context(), session.ID, session.ActiveGenerationID)
+	commandID := ""
+	backend, err := s.store.SessionExecutionBackend(r.Context(), session.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Deliver before recording, exactly as Stop does. The command names the turn it
-	// is for, so if that turn ends first the sandbox watcher discards the entry and
-	// RecordSteeredTurn refuses below — the row stays queued and the user can still
-	// send it as a turn of its own. Recording first would instead retire the row
-	// against a delivery that never landed.
-	if _, err := bridge.AppendTurnControl(details.BridgeDirPath, bridge.TurnControlCommand{
-		TurnID:  snapshot.ActiveTurn.ID,
-		Command: bridge.TurnControlSteer,
-		Message: target.Content,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("deliver steer to sandbox: %v", err))
-		return
+	if backend == "khora" {
+		commandID = fmt.Sprintf("control_steer_%s_%d", session.ActiveGenerationID, target.ID)
+		commands, ok := s.executions.(interface {
+			DeliverTurnCommand(context.Context, execution.TurnCommand) error
+		})
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "execution control unavailable")
+			return
+		}
+		if err := commands.DeliverTurnCommand(r.Context(), execution.TurnCommand{ID: fmt.Sprintf("control_steer_%s_%d", session.ActiveGenerationID, target.ID), SessionID: session.ID, GenerationID: session.ActiveGenerationID, TurnID: snapshot.ActiveTurn.ID, Owner: store.GenerationLeaseOwner(s.ownerUUID), Kind: "steer", Message: target.Content}); err != nil {
+			writeErrorClass(w, http.StatusServiceUnavailable, "control_delivery_pending", "steering delivery is pending reconciliation")
+			return
+		}
+	} else {
+		details, err := s.runtimeGenerationDetails(r.Context(), session.ID, session.ActiveGenerationID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Deliver before recording, exactly as Stop does. The command names the turn it
+		// is for, so if that turn ends first the sandbox watcher discards the entry and
+		// RecordSteeredTurn refuses below — the row stays queued and the user can still
+		// send it as a turn of its own. Recording first would instead retire the row
+		// against a delivery that never landed.
+		if _, err := bridge.AppendTurnControl(details.BridgeDirPath, bridge.TurnControlCommand{
+			TurnID:  snapshot.ActiveTurn.ID,
+			Command: bridge.TurnControlSteer,
+			Message: target.Content,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("deliver steer to sandbox: %v", err))
+			return
+		}
 	}
 	result, err := s.store.RecordSteeredTurn(r.Context(), store.RecordSteeredTurnParams{
+		CommandID: commandID, GenerationID: session.ActiveGenerationID, Owner: store.GenerationLeaseOwner(s.ownerUUID),
 		SessionID:  session.ID,
 		TurnID:     target.ID,
 		IntoTurnID: snapshot.ActiveTurn.ID,

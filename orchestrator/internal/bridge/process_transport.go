@@ -9,6 +9,7 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/sandbox"
@@ -24,19 +25,20 @@ type ProcessTransport struct {
 	// OnSynchronize validates fresh driver evidence before replay is delivered.
 	// It runs for every attachment/reset, even when the original hello has
 	// already been acknowledged and collected from the guest journal.
-	OnSynchronize func(context.Context, json.RawMessage) error
-	backend       sandbox.Processes
-	stream        sandbox.ProcessStream
-	reference     sandbox.ProcessReference
-	scope         Scope
-	receipts      StreamReceipts
-	decoder       StreamDecoder
-	frames        []StreamFrame
-	pending       *StreamFrame
-	watermark     uint64
-	syncID        string
-	synced        bool
-	sendMu        sync.Mutex
+	OnSynchronize         func(context.Context, json.RawMessage) error
+	OnCommandAcknowledged func(context.Context, string) error
+	backend               sandbox.Processes
+	stream                sandbox.ProcessStream
+	reference             sandbox.ProcessReference
+	scope                 Scope
+	receipts              StreamReceipts
+	decoder               StreamDecoder
+	frames                []StreamFrame
+	pending               *StreamFrame
+	watermark             uint64
+	syncID                string
+	synced                atomic.Bool
+	sendMu                sync.Mutex
 }
 
 // NewProcessTransport always initiates a journal handshake. The process replay
@@ -64,7 +66,7 @@ func NewProcessTransport(ctx context.Context, backend sandbox.Processes, stream 
 }
 
 func (t *ProcessTransport) synchronize(ctx context.Context) error {
-	t.synced = false
+	t.synced.Store(false)
 	t.syncID = uuid.NewString()
 	t.frames = nil
 	t.decoder.Reset()
@@ -122,9 +124,9 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 					return nil, err
 				}
 			}
-			t.synced = true
+			t.synced.Store(true)
 		case "record":
-			if !t.synced {
+			if !t.synced.Load() {
 				continue
 			}
 			if frame.Sequence > t.watermark+1 {
@@ -149,6 +151,11 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 			t.pending = &frame
 			return []Delivery{{Receipt: strconv.FormatUint(frame.Sequence, 10), Envelope: *frame.Envelope}}, nil
 		case "command_ack":
+			if t.OnCommandAcknowledged != nil {
+				if err := t.OnCommandAcknowledged(ctx, frame.CommandID); err != nil {
+					return nil, err
+				}
+			}
 			// The owning command ledger determines whether durable receipt is enough
 			// or an explicit driver-application result is also required.
 		case "error":
@@ -160,7 +167,7 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 }
 
 func (t *ProcessTransport) Send(ctx context.Context, envelope Envelope) error {
-	if !t.synced {
+	if !t.synced.Load() {
 		return fmt.Errorf("bridge journal handshake is incomplete")
 	}
 	if err := t.scope.accepts(envelope); err != nil {

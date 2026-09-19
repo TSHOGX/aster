@@ -277,6 +277,18 @@ CREATE TABLE IF NOT EXISTS bridge_streams (
   PRIMARY KEY(backend_id,generation_id),
   UNIQUE(backend_id,process_handle)
 );
+
+CREATE TABLE IF NOT EXISTS execution_turn_commands (
+ command_id TEXT PRIMARY KEY,
+ session_id TEXT NOT NULL REFERENCES sessions(id),
+ generation_id TEXT NOT NULL REFERENCES execution_bindings(generation_id),
+ turn_id INTEGER NOT NULL REFERENCES turns(id),
+ owner TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('abort','steer')),
+ message TEXT NOT NULL,
+ acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
+ created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS bridge_stream_receipts (
   backend_id TEXT NOT NULL,
   generation_id TEXT NOT NULL,

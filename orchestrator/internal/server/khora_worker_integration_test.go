@@ -94,6 +94,8 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		}
 	})
 	var network sandbox.Network
+	var blockModel atomic.Bool
+	modelEntered := make(chan struct{}, 1)
 	var processEnvironment []string
 	if driver == "pi" {
 		listener, err := net.Listen("tcp4", "192.0.2.1:0")
@@ -120,6 +122,15 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				}
 				_ = json.Unmarshal([]byte(frame), &event)
 				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, frame)
+				if event.Type == "message_start" && blockModel.Load() {
+					w.(http.Flusher).Flush()
+					select {
+					case modelEntered <- struct{}{}:
+					default:
+					}
+					<-r.Context().Done()
+					return
+				}
 			}
 		})}
 		go modelServer.Serve(listener)
@@ -162,7 +173,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	}
 	var interruptedGeneration atomic.Pointer[string]
 	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
-	launcher := agentbridge.Launcher{Backend: backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	launcher := agentbridge.Launcher{Backend: backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
 		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
 		if target := interruptedGeneration.Load(); target != nil && *target == envelope.GenerationID && envelope.Type == bridge.TypeAckTurnStarted {
@@ -395,6 +406,13 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			verifyKhoraInventory(t, ctx, srv, st, session.ID, false)
 		}
 	}
+	if driver == "sh" {
+		verifyKhoraShellStop(t, ctx, srv, st, controller, binding, leaseOwner)
+	} else {
+		blockModel.Store(true)
+		verifyKhoraPiControls(t, ctx, srv, st, controller, binding, leaseOwner, modelEntered)
+		blockModel.Store(false)
+	}
 	{
 		target := binding.GenerationID
 		interruptedGeneration.Store(&target)
@@ -477,6 +495,15 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			}
 		}
 		if found != 1 {
+			rows, _ := st.DBForTest().Query(`SELECT type,substr(payload,1,1500) FROM bridge_ingress WHERE generation_id=? AND turn_id=? ORDER BY id`, binding.GenerationID, turn.TurnID)
+			if rows != nil {
+				for rows.Next() {
+					var kind, payload string
+					rows.Scan(&kind, &payload)
+					t.Logf("recovered %s: %s", kind, payload)
+				}
+				rows.Close()
+			}
 			t.Fatalf("historical journal recovery duplicated or lost interrupted output: %d", found)
 		}
 		var bytes int
@@ -605,6 +632,69 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		}
 	}
 
+}
+
+func verifyKhoraPiControls(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, binding execution.Binding, owner string, entered <-chan struct{}) {
+	t.Helper()
+	turn, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "wait for steering and abort"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	for _, message := range []string{"first steering instruction", "second steering instruction"} {
+		queued, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: message})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := st.GetSessionRuntimeSnapshot(ctx, binding.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		session, err := st.GetSession(ctx, binding.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/turn/steer", nil).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
+		response := httptest.NewRecorder()
+		srv.steerQueuedTurn(response, request, session, snapshot, store.TurnSnapshot{ID: queued.TurnID, Content: message})
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("Pi process steer: %d %s", response.Code, response.Body.String())
+		}
+		if err := controller.DeliverTurnCommand(ctx, execution.TurnCommand{ID: fmt.Sprintf("control_steer_%s_%d", binding.GenerationID, queued.TurnID), SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, TurnID: turn.TurnID, Kind: "steer", Message: message}); err != nil {
+			t.Fatalf("steer receipt retry: %v", err)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/interrupt", nil).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
+	response := httptest.NewRecorder()
+	srv.interruptSession(response, request, binding.SessionID)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("Pi process abort: %d %s", response.Code, response.Body.String())
+	}
+	for {
+		status, reason, err := st.TurnStatus(ctx, binding.SessionID, turn.TurnID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status == "canceled" {
+			break
+		}
+		if status == "completed" || status == "failed" {
+			t.Fatalf("Pi abort outcome: %s %s", status, reason)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	var receipts int
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM execution_turn_commands WHERE generation_id=? AND turn_id=? AND acknowledged=1`, binding.GenerationID, turn.TurnID).Scan(&receipts); err != nil || receipts != 3 {
+		t.Fatalf("Pi control ledger: %d %v", receipts, err)
+	}
 }
 
 func verifyKhoraInventory(t *testing.T, ctx context.Context, srv *Server, st *store.Store, session string, paused bool) {
@@ -880,6 +970,70 @@ func verifyKhoraWorkspaceDownload(t *testing.T, ctx context.Context, srv *Server
 type captureFaultRepository struct {
 	*store.Store
 	fail bool
+}
+
+func verifyKhoraShellStop(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, binding execution.Binding, owner string) {
+	t.Helper()
+	turn, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "printf 'before-interrupt\\n'; sleep 30"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var outputs int
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM bridge_ingress WHERE turn_id=? AND type='emit_output'`, turn.TurnID).Scan(&outputs); err != nil {
+			t.Fatal(err)
+		}
+		if outputs > 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	queued, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "must remain parked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+binding.SessionID+"/interrupt", nil).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
+	response := httptest.NewRecorder()
+	srv.interruptSession(response, request, binding.SessionID)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("shell process control: %d %s", response.Code, response.Body.String())
+	}
+	for {
+		status, reason, err := st.TurnStatus(ctx, binding.SessionID, turn.TurnID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status == "canceled" {
+			break
+		}
+		if status == "completed" || status == "failed" {
+			t.Fatalf("shell abort classification: %s %s", status, reason)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	snapshot, err := st.GetSessionRuntimeSnapshot(ctx, binding.SessionID)
+	if err != nil || len(snapshot.QueuedTurns) != 1 || !snapshot.QueuedTurns[0].Parked {
+		t.Fatalf("Stop lost parked queue: %+v %v", snapshot, err)
+	}
+	command := execution.TurnCommand{ID: fmt.Sprintf("control_abort_%s_%d", binding.GenerationID, turn.TurnID), SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, TurnID: turn.TurnID, Kind: "abort"}
+	if err := controller.DeliverTurnCommand(ctx, command); err != nil {
+		t.Fatalf("durable abort retry: %v", err)
+	}
+	if _, err := st.CancelQueuedTurn(ctx, store.CancelQueuedTurnParams{SessionID: binding.SessionID, TurnID: queued.TurnID}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := st.GetExecutionBinding(ctx, binding.GenerationID)
+	if err != nil || current.State != "accepted" {
+		t.Fatalf("Stop retired retained execution: %+v %v", current, err)
+	}
 }
 
 func (r *captureFaultRepository) CompleteNativeCapture(ctx context.Context, request nativecapture.Request, result nativecapture.Result) error {

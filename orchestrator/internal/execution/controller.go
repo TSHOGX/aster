@@ -13,6 +13,7 @@ import (
 )
 
 type ControllerRepository interface {
+	TurnCommandRepository
 	AssertExecutionOwner(context.Context, string) error
 	ExecutionSession(context.Context, string) (Session, error)
 	BeginSessionProvisioning(context.Context, OperationIntent, string, int) (Operation, error)
@@ -68,6 +69,7 @@ type Controller struct {
 	MaxActive         int
 	Lifetime          context.Context
 	Routes            RouteRevoker
+	GrantRevoker      GrantRevoker
 	RecoveryReader    JournalRecoveryReader
 	RecoveryProjector RecoveryProjector
 	NativeRestorer    NativeRestorer

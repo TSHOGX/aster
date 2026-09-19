@@ -57,6 +57,23 @@ Stop aborts the active Pi turn and parks the remaining queue. A parked turn has
 released sandbox. Steered input records its destination turn and does not create
 a competing live turn. See [drivers](drivers.md).
 
+For Khora sessions, Stop and steering use durable turn-command rows and the
+existing process carrier's serialized input writer. Commands name the session,
+generation and original turn and retain the same ID after an ambiguous send.
+The guest's command journal deduplicates them; scoped receipt acknowledgments
+are persisted separately from driver completion. A receipt proves durable guest
+acceptance, not exactly-once external tool execution or completed cancellation.
+
+Stop atomically parks queued turns and revokes the active turn's grants, then
+waits for the configured gateway grant revoker to drain established work before
+delivering abort. It leaves the current turn running until its terminal journal
+record settles cancellation, preserving output emitted during shutdown. Shell
+uses the existing PTY interrupt primitive; Pi uses its native abort RPC. Steering
+requires Pi and a matching acknowledged command before retiring the queued row
+and recording its transcript message. Delivery failures report pending control
+rather than falling back to the legacy host queue. Background command retry and
+bounded escalation remain part of the unfinished startup/reconciliation wiring.
+
 ## Recovery and resource lifecycle
 
 Maintenance stages have independent deadlines and do not overlap themselves.

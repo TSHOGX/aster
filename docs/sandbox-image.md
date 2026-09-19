@@ -325,3 +325,11 @@ snapshot bounded to 512 MiB, then opens that copy read-only. The original journa
 ACK position and command ledger remain unchanged. Its protocol accepts only
 scoped synchronization requests; it cannot execute old commands or collect the
 source partition. The template manifest includes the reader and its library.
+
+The stdio control watcher retains an early command until the driver's prompt is
+ready. Shell abort sends an interrupt frame to its PTY agent and reports a
+canceled turn at the prompt boundary. Pi waits for the abort RPC's idle reply
+before its normal statistics barrier. It then reselects and verifies the same
+native session to reset queued steering in Pi's in-memory runtime. This preserves
+native history and prevents the following prompt from racing a still-processing
+agent. The host's command receipt and terminal completion remain separate events.

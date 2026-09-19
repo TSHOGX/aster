@@ -162,7 +162,8 @@ WHERE id = ?
 // RecordSteeredTurnParams describes a queued turn whose content was injected
 // into a turn that was already running.
 type RecordSteeredTurnParams struct {
-	SessionID string
+	GenerationID, Owner, CommandID string
+	SessionID                      string
 	// TurnID is the queued row the user released. It will never execute as a turn
 	// of its own.
 	TurnID int64
@@ -228,6 +229,22 @@ WHERE id = ?
 	}
 	if targetActive != 1 {
 		return RecordSteeredTurnResult{}, ErrTurnNotSteerable
+	}
+	var bound int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN turns t ON t.generation_id=b.generation_id WHERE t.id=? AND t.session_id=?`, p.IntoTurnID, p.SessionID).Scan(&bound); err != nil {
+		return RecordSteeredTurnResult{}, err
+	}
+	if bound != 0 {
+		if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
+			return RecordSteeredTurnResult{}, err
+		}
+		var receipt int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_turn_commands c JOIN turns t ON t.id=? AND t.session_id=c.session_id WHERE c.command_id=? AND c.session_id=? AND c.generation_id=? AND c.owner=? AND c.turn_id=? AND c.kind='steer' AND c.acknowledged=1 AND c.message=t.content`, p.TurnID, p.CommandID, p.SessionID, p.GenerationID, p.Owner, p.IntoTurnID).Scan(&receipt); err != nil {
+			return RecordSteeredTurnResult{}, err
+		}
+		if receipt != 1 {
+			return RecordSteeredTurnResult{}, ErrTurnNotSteerable
+		}
 	}
 
 	var content string

@@ -1785,6 +1785,35 @@ class PiTurnBoundaryTest(unittest.TestCase):
                 terminals = [e for e in events if e.get("type") in {"turn_end", "agent_end"}]
                 self.assertTrue(terminals, f"turn produced no terminal event: {events}")
 
+    def test_host_abort_waits_for_idle_ack_before_stats_boundary(self):
+        with tempfile.TemporaryDirectory() as root:
+            agent_dir, session_dir, session_file, models, settings = self._pi_env(root)
+            fake = ScriptedPi(session_file, abort_on_prompt={'harness-turn-1'})
+            runner = bridge.PiRPCTurnRunner()
+            original_dispatch = fake._dispatch
+            original_read = fake.readline
+            acknowledged = []
+            def dispatch(request):
+                if request.get('id') == 'harness-turn-1-stats':
+                    self.assertTrue(acknowledged, 'stats raced ahead of asynchronous abort settlement')
+                original_dispatch(request)
+                if request.get('type') == 'prompt':
+                    runner.aborted_turn_id = 1
+                    fake.pending[-1] = jline({'id': 'harness-abort-1', 'type': 'response', 'command': 'abort', 'success': True})
+            def read():
+                line = original_read()
+                if line and json.loads(line).get('id') == 'harness-abort-1':
+                    acknowledged.append(True)
+                return line
+            fake._dispatch = dispatch
+            fake.readline = read
+            with contextlib.ExitStack() as stack:
+                for patch in self._patches(agent_dir, session_dir, models, settings, fake):
+                    stack.enter_context(patch)
+                result, _ = self._run(runner, self._grant(1, session_file, 1), 'interrupt me')
+            self.assertEqual(result[0], 'canceled')
+            self.assertTrue(acknowledged)
+
     def test_turn_after_abort_runs_its_own_prompt(self):
         """The production failure: turn N is stopped, turn N+1 completes instantly.
 
@@ -1996,6 +2025,8 @@ class EntrypointStaticTest(unittest.TestCase):
         runner.proc.poll.return_value = None
         written = []
         runner._write_rpc = lambda payload: written.append(payload)
+        runner.current_grant = {'turn_id': 7}
+        runner.control_ready = True
 
         self.assertTrue(runner.deliver_control("abort", 7))
         self.assertEqual([p["type"] for p in written], ["abort"])
@@ -2015,6 +2046,8 @@ class EntrypointStaticTest(unittest.TestCase):
         runner.proc.poll.return_value = None
         written = []
         runner._write_rpc = lambda payload: written.append(payload)
+        runner.current_grant = {'turn_id': 7}
+        runner.control_ready = True
 
         self.assertTrue(runner.deliver_control("steer", 7, "actually, do this"))
         self.assertEqual(written, [{"id": "harness-steer-7", "type": "steer", "message": "actually, do this"}])
@@ -2028,9 +2061,34 @@ class EntrypointStaticTest(unittest.TestCase):
     def test_deliver_control_is_a_noop_without_a_live_pi(self):
         runner = bridge.PiRPCTurnRunner()
         self.assertFalse(runner.deliver_control("abort", 7))
+        runner.current_grant = {'turn_id': 7}
+        runner.control_ready = True
         runner.proc = mock.Mock()
-        runner.proc.poll.return_value = 1  # exited
-        self.assertFalse(runner.deliver_control("abort", 7))
+        runner.proc.poll.return_value = 1
+        self.assertFalse(runner.deliver_control('abort', 7))
+
+    def test_pi_control_waits_until_prompt_is_ready(self):
+        runner = bridge.PiRPCTurnRunner()
+        runner.proc = mock.Mock()
+        runner.proc.poll.return_value = None
+        written = []
+        runner._write_rpc = lambda payload: written.append(payload)
+        runner.set_turn_context({'turn_id': 7})
+        self.assertFalse(runner.deliver_control('abort', 7))
+        self.assertEqual(written, [])
+        runner.control_ready = True
+        self.assertTrue(runner.deliver_control('abort', 7))
+        runner.set_turn_context({'turn_id': 8})
+        self.assertFalse(runner.deliver_control('abort', 7))
+
+    def test_shell_control_before_process_start_is_retained_for_current_turn(self):
+        runner = bridge.ShellTurnRunner()
+        runner.set_turn_context({'turn_id': 7})
+        self.assertTrue(runner.deliver_control('abort', 7))
+        self.assertTrue(runner.aborted)
+        runner.set_turn_context({'turn_id': 8})
+        self.assertFalse(runner.deliver_control('abort', 7))
+        self.assertFalse(runner.aborted)
 
     def test_set_turn_context_clears_a_previous_abort_marker(self):
         """Otherwise the turn after a stopped one is cancelled on arrival."""

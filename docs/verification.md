@@ -189,6 +189,13 @@ compute, and then resumes a normal agent in the retained sandbox.
 Before any shell execution, the test uploads through HTTP to a new session,
 asserts that no execution binding was allocated and the environment is paused,
 then verifies the first turn reads those uploaded bytes.
+
+Process-control acceptance interrupts a long-running shell command through the
+HTTP Stop handler, verifies queued prompts remain parked, and retries the same
+abort ID without repeating delivery. The Pi case sends two queued prompts as
+steering, retries their receipts, aborts a blocked model request, and runs a later
+turn before historical recovery. The gateway flow tests separately verify that
+revoking one turn's grant drains its work without disabling a later grant.
 Artifact checks scan a 40-file directory through multiple guest pages while live
 and through volume listings while paused. They verify uploaded files appear,
 stale index rows disappear, symlink descendants remain absent and paused scans

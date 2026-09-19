@@ -24,6 +24,7 @@ type Launcher struct {
 	BeforeComplete   func(context.Context, *store.CompleteTurnParams) error
 	AfterEventCommit func(context.Context, int64)
 	OnExit           func(execution.Binding, error)
+	Commands         execution.TurnCommandRepository
 }
 
 func (l Launcher) Start(ctx context.Context, binding execution.Binding, request sandbox.StartProcessRequest) (execution.AgentConnection, error) {
@@ -46,6 +47,13 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 	processor := &bridge.Processor{Store: l.Store, Owner: binding.Owner, LeaseTTL: l.LeaseTTL, AfterCommit: l.AfterCommit, BeforeComplete: l.BeforeComplete, AfterEventCommit: l.AfterEventCommit}
 	carrier.OnSynchronize = func(ctx context.Context, payload json.RawMessage) error {
 		return processor.AcceptAttachment(ctx, bridge.Scope{SessionID: binding.SessionID, GenerationID: binding.GenerationID}, payload)
+	}
+	if l.Commands != nil {
+		carrier.OnCommandAcknowledged = func(ctx context.Context, id string) error {
+			scope := binding
+			scope.ProcessHandle = request.Handle
+			return l.Commands.AcknowledgeTurnCommand(ctx, scope, id)
+		}
 	}
 	processor.ProbeHandler = func(ctx context.Context, _ bridge.Envelope) error {
 		connection.readyOnce.Do(func() { connection.ready <- nil })
@@ -96,3 +104,11 @@ func (c *connection) Close() error        { c.cancel(); return c.carrier.Close()
 var _ execution.AgentLauncher = Launcher{}
 
 func (c *connection) Done() <-chan struct{} { return c.done }
+
+func (c *connection) SendTurnCommand(ctx context.Context, p execution.TurnCommand) error {
+	payload, err := json.Marshal(map[string]string{"command": p.Kind, "message": p.Message})
+	if err != nil {
+		return err
+	}
+	return c.carrier.Send(ctx, bridge.Envelope{MessageID: p.ID, Type: "turn_control", SessionID: p.SessionID, GenerationID: p.GenerationID, TurnID: &p.TurnID, Payload: payload})
+}

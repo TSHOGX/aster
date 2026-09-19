@@ -515,9 +515,17 @@ class StdioBridgeClient(BridgeClient):
         if not hasattr(runner, "deliver_control"):
             return stop
         def watch():
+            pending = []
             while not stop.wait(0.02):
-                for command in self.channel.take_controls(turn_id):
-                    runner.deliver_control(command["command"], turn_id, command.get("message", ""))
+                try:
+                    pending.extend(self.channel.take_controls(turn_id))
+                    remaining = []
+                    for command in pending:
+                        if not runner.deliver_control(command["command"], turn_id, command.get("message", "")):
+                            remaining.append(command)
+                    pending = remaining
+                except Exception as error:
+                    print(f"[bridge] turn control delivery failed: {error}", file=sys.stderr, flush=True)
         threading.Thread(target=watch, daemon=True).start()
         return stop
 
@@ -525,6 +533,26 @@ class StdioBridgeClient(BridgeClient):
 class ShellTurnRunner:
     def __init__(self):
         self.proc = None
+        self.write_lock = threading.Lock()
+        self.aborted = False
+        self.current_turn_id = None
+        self.running_turn = False
+
+    def set_turn_context(self, grant):
+        with self.write_lock:
+            self.current_turn_id = int(grant['turn_id'])
+            self.aborted = False
+            self.running_turn = False
+
+    def deliver_control(self, command, turn_id, message=''):
+        with self.write_lock:
+            if command != 'abort' or turn_id != self.current_turn_id:
+                return False
+            self.aborted = True
+            if self.running_turn and self.proc is not None and self.proc.poll() is None:
+                self.proc.stdin.write('{"type":"interrupt"}\n')
+                self.proc.stdin.flush()
+            return True
 
     def _start(self):
         if self.proc is not None and self.proc.poll() is None:
@@ -541,8 +569,12 @@ class ShellTurnRunner:
     def run_turn(self, content, emit):
         self._start()
         frame = json.dumps({"type": "turn", "content": content}, ensure_ascii=False, separators=(",", ":"))
-        self.proc.stdin.write(frame + "\n")
-        self.proc.stdin.flush()
+        with self.write_lock:
+            self.proc.stdin.write(frame + "\n")
+            self.running_turn = True
+            if self.aborted:
+                self.proc.stdin.write('{"type":"interrupt"}\n')
+            self.proc.stdin.flush()
         while True:
             line = self.proc.stdout.readline()
             if line == "":
@@ -554,6 +586,11 @@ class ShellTurnRunner:
                 emit("stdout", stripped)
                 continue
             if payload.get("type") == "harness.turn_done":
+                with self.write_lock:
+                    self.running_turn = False
+                    aborted = self.aborted
+                if aborted:
+                    return 'canceled', 'user_interrupted', 'interrupted by user'
                 return "completed", "", ""
             emit("stdout", stripped)
 
@@ -688,12 +725,15 @@ class PiRPCTurnRunner:
         # Set by the watcher when it delivers an abort, so run_turn can recognize
         # a user stop even if pi's terminal event omits the stopReason.
         self.aborted_turn_id = None
+        self.control_lock = threading.RLock()
+        self.control_ready = False
 
     def set_turn_context(self, grant):
         self.current_grant = dict(grant or {})
         # Cleared per turn: a marker left from the turn the user just stopped must
         # never cancel the next one.
         self.aborted_turn_id = None
+        self.control_ready = False
 
     def _start(self):
         pi_runtime_env = validate_pi_runtime_environment()
@@ -786,6 +826,12 @@ class PiRPCTurnRunner:
             self.proc.stdin.flush()
 
     def deliver_control(self, command, turn_id, message=""):
+        with self.control_lock:
+            if not self.control_ready or turn_id != int(self.current_grant.get('turn_id') or 0):
+                return False
+            return self._deliver_control(command, turn_id, message)
+
+    def _deliver_control(self, command, turn_id, message=""):
         """Apply a host control command to the turn currently executing.
 
         Called from the control-watcher thread, never from the turn thread. Both
@@ -922,14 +968,19 @@ class PiRPCTurnRunner:
         error_class = ""
         error = ""
         stats_event = None
+        abort_confirmed = False
         try:
-            self._write_rpc({"id": prompt_id, "type": "prompt", "message": content or ""})
+            with self.control_lock:
+                self._write_rpc({"id": prompt_id, "type": "prompt", "message": content or ""})
+                self.control_ready = True
             while True:
                 stripped, event = self._read_rpc()
                 event_type = event.get("type")
                 if event_type in {"turn_end", "agent_end"} and pi_event_stop_reason(event) in {"toolUse", "tool_use"}:
                     continue
                 emit("stdout", stripped)
+                if event_type == 'response' and event.get('id') == f'harness-abort-{turn_id}' and event.get('success'):
+                    abort_confirmed = True
                 if event_type == "response" and event.get("id") == prompt_id and not event.get("success", False):
                     status = "failed"
                     error_class = "agent_prompt_rejected"
@@ -953,11 +1004,34 @@ class PiRPCTurnRunner:
                         error = f"pi turn ended with status {terminal_status}"
                     break
         finally:
+            with self.control_lock:
+                self.control_ready = False
+            if self.aborted_turn_id == turn_id and not abort_confirmed:
+                # get_session_stats can reply while Pi is still unwinding its
+                # async abort. Its abort response follows waitForIdle and is the
+                # boundary required before a subsequent prompt can be sent.
+                aborted = self._drain_to_barrier(f'harness-abort-{turn_id}', f'turn {turn_id} abort', timeout=12.0)
+                if not aborted or not aborted.get('success'):
+                    raise RuntimeError('pi abort did not establish an idle boundary')
             # INVARIANT: every turn exit leaves pi's stdout at an agent boundary,
             # so the next turn's first read is its own first event. The stats call
             # is the boundary barrier for completed turns (reuses that response),
             # and for failed/abort turns (which need no stats) it drains residue.
             stats_event = self._barrier_request(barrier_id, f"turn {turn_id} boundary", timeout=12.0)
+        if status == 'canceled' and self.aborted_turn_id == turn_id:
+            if not stats_event or not stats_event.get('success'):
+                raise RuntimeError('pi abort native selector unavailable')
+            stats = stats_event.get('data') or {}
+            relative, selected = normalize_pi_session_file(stats.get('sessionFile'))
+            native_id = stats.get('sessionId')
+            # Pi can retain queued steering after abort. Re-selecting the same
+            # file replaces its in-memory runtime without changing the native
+            # session identity or discarding retained partial history.
+            self._request_response({'id': f'harness-abort-reset-{turn_id}', 'type': 'switch_session', 'sessionPath': selected})
+            checked = self._request_response({'id': f'harness-abort-reset-{turn_id}-stats', 'type': 'get_session_stats'}).get('data') or {}
+            checked_rel, checked_file = normalize_pi_session_file(checked.get('sessionFile'))
+            if (checked_rel, checked_file, checked.get('sessionId')) != (relative, selected, native_id):
+                raise RuntimeError('pi abort changed selected native session')
         if status != "completed":
             return status, error_class, error
         if not stats_event or not stats_event.get("success", False):
@@ -1222,10 +1296,10 @@ def execute_grant(client, runner, grant):
 
     # Started before the turn and stopped in the finally below, so the window in
     # which a Stop can land is exactly the window in which the turn is running.
+    if hasattr(runner, "set_turn_context"):
+        runner.set_turn_context(grant)
     stop_control_watch = client.start_control_watcher(runner, turn_id) if hasattr(client, "start_control_watcher") else start_turn_control_watcher(client.root, runner, turn_id)
     try:
-        if hasattr(runner, "set_turn_context"):
-            runner.set_turn_context(grant)
         result = runner.run_turn(content, emit)
         driver_state_update = None
         if isinstance(result, dict):
