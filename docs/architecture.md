@@ -126,3 +126,21 @@ compiler is independently exercised by contract tests. Those tests establish
 policy construction, not gateway provenance or kernel enforcement. The legacy
 allocator's policy identity now includes unrestricted egress explicitly, so
 restricted and `allow_all` policies cannot share an identity.
+
+## Workspace mutation boundary
+
+`internal/workspace` owns relative-path policy and the portable replacement
+interface. The local adapter in `internal/workspace/local` owns host descriptors
+and file ownership. Upload and edit handlers resolve a verified workspace and
+pass a stream through that interface; they no longer create directories or stage,
+chmod, chown and rename files themselves.
+
+The local adapter walks directories using pinned descriptors and `O_NOFOLLOW`,
+then stages and renames relative to the final directory descriptor. A path
+component swapped for a symlink cannot redirect the write. Newly created
+parents are synchronized, file metadata is applied before the file sync, and the
+parent is synchronized after rename. A failure before rename preserves the old
+file. A failure after rename returns an uncertain outcome and a content digest
+for reconciliation. These are native Linux file-operation guarantees; the tests
+are not power-loss or Khora substrate acceptance. Turn/upload admission fencing
+and provisioning still use the existing application and store boundaries.
