@@ -64,6 +64,7 @@ const (
 )
 
 type Server struct {
+	retainedDrivers      map[agents.ID]bool
 	executionReconciler  interface{ Run(context.Context) error }
 	workspaceInventory   sessionInventoryScanner
 	workspaceWrites      sessionWorkspaceWriter

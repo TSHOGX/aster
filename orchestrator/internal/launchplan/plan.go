@@ -13,6 +13,7 @@ import (
 	"harness-platform/orchestrator/internal/execution"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -46,6 +47,15 @@ type templateManifest struct {
 		Launcher string            `json:"launcher"`
 		Files    map[string]string `json:"files"`
 	} `json:"runtime"`
+}
+
+func (s *Source) Drivers() []string {
+	var ids []string
+	for id := range s.plans {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func Digest(manifest []byte) (string, error) {

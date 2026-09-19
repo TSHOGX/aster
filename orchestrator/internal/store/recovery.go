@@ -46,6 +46,7 @@ LEFT JOIN runtime_resource_instances ri
   ON ri.generation_id = g.generation_id
  AND ri.session_id = s.id
 WHERE s.status = 'running_active'
+  AND NOT EXISTS(SELECT 1 FROM session_execution_backends b WHERE b.session_id=s.id AND b.backend='khora')
   AND (
     g.generation_id IS NULL
     OR g.status IN ('failed', 'destroyed')

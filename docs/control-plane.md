@@ -399,6 +399,22 @@ plan; callers cannot supply a substitute. Returned plans are independent copies.
 This loader supplies release validation for composition; it does not configure or
 authorize gateway service routes by itself.
 
+`internal/retainedapp.Attach` composes the validated plan, scoped bridge store,
+controller, native validator/restorer, shared workspace writer, inventory scanner
+and reconciliation workers for a server. Backend, gateway revocation ports,
+product owner, prepared-content root and service/capacity bounds are explicit
+inputs. Its background runtime runs inventory and reconciliation together and
+cancels both on shutdown or a fatal worker exit. The server exposes application
+projection callbacks instead of constructing engine clients itself.
+
+When new-session policy selects Khora, create-mode availability comes from the
+validated plan's enabled drivers, without legacy image/provider validation. Legacy
+stale-session repair, host-liveness lease renewal and cold-fallback selection
+exclude sessions pinned to Khora. This prevents absent host runtime rows from
+being treated as evidence of a dead retained sandbox. The normal executable's
+deployment configuration and external gateway composition are not yet switched
+to this composition package.
+
 The Khora integration profile includes a real worker turn through this path:
 keyed volume/environment provisioning, process journal handshake, accepted binding,
 claim/start/output/completion, replayable message projection and durable receipt

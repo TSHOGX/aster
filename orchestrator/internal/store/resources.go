@@ -953,6 +953,7 @@ UPDATE runtime_generations
 SET lease_expires_at = ?,
     last_seen_at = ?
 WHERE status IN ('starting','probing','active','idle','checkpointing','restoring')
+  AND NOT EXISTS(SELECT 1 FROM session_execution_backends b WHERE b.session_id=runtime_generations.session_id AND b.backend='khora')
   AND lease_owner = ?
   AND lease_expires_at > ?
   AND EXISTS (
@@ -1100,6 +1101,7 @@ JOIN runtime_generations g ON g.generation_id = s.active_generation_id
   AND g.session_id = s.id
 JOIN turns t ON t.session_id = s.id
 WHERE g.status = 'failed'
+  AND NOT EXISTS(SELECT 1 FROM session_execution_backends b WHERE b.session_id=s.id AND b.backend='khora')
   AND s.status NOT IN ('failed', 'destroyed')
   AND t.status = 'queued'
   AND t.lease_owner IS NULL

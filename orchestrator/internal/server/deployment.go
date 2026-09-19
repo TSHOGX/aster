@@ -53,6 +53,22 @@ func (s *Server) resolveModeDeployment(mode string) (deploymentResolution, *depl
 	if mode == "" {
 		mode = "agent"
 	}
+	if s.newSessionBackend == "khora" {
+		driver := agents.Pi
+		if mode == "shell" {
+			driver = agents.Shell
+		} else if mode != "agent" {
+			return deploymentResolution{}, capabilityError("unsupported_mode", "unsupported mode")
+		}
+		if !s.retainedDrivers[driver] {
+			return deploymentResolution{}, capabilityError("driver_disabled", "driver is not enabled in the retained release")
+		}
+		spec, ok := agents.DriverSpecFor(string(driver))
+		if !ok {
+			return deploymentResolution{}, capabilityError("driver_disabled", "driver unavailable")
+		}
+		return deploymentResolution{Mode: mode, DriverID: driver, DriverSpec: spec}, nil
+	}
 	switch mode {
 	case "agent":
 		defaultAgent := strings.TrimSpace(s.cfg.DefaultAgent)
