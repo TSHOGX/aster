@@ -13,6 +13,7 @@ import (
 	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/launchplan"
+	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/server"
 	"harness-platform/orchestrator/internal/sessionfiles"
 	"harness-platform/orchestrator/internal/store"
@@ -22,35 +23,37 @@ import (
 )
 
 type Backend interface {
+	sandbox.EventSource
 	execution.ControllerBackend
 	sessionfiles.Backend
 }
 type Options struct {
-	Backend                                                                 Backend
-	Plans                                                                   *launchplan.Source
-	Routes                                                                  execution.RouteRevoker
-	Grants                                                                  execution.GrantRevoker
-	BackendName, OwnerUUID, NewSessionBackend, PreparedRoot                 string
-	MaxActive, InventoryLimit                                               int
-	LeaseTTL, PollInterval, ActionTimeout, CaptureWindow, InventoryInterval time.Duration
-	OnError                                                                 func(string, error)
+	Backend                                                                                Backend
+	Plans                                                                                  *launchplan.Source
+	Routes                                                                                 execution.RouteRevoker
+	Grants                                                                                 execution.GrantRevoker
+	BackendName, OwnerUUID, NewSessionBackend, PreparedRoot                                string
+	MaxActive, InventoryLimit                                                              int
+	LeaseTTL, PollInterval, EventInterval, ActionTimeout, CaptureWindow, InventoryInterval time.Duration
+	OnError                                                                                func(string, error)
 }
 type Runtime struct {
-	Controller *execution.Controller
-	Writer     *sessionfiles.Writer
-	Inventory  sessionfiles.Scanner
-	Reconciler *execution.Reconciler
-	ctx        context.Context
-	cancel     context.CancelFunc
-	options    Options
-	mu         sync.Mutex
-	running    bool
+	Controller   *execution.Controller
+	Writer       *sessionfiles.Writer
+	Inventory    sessionfiles.Scanner
+	Reconciler   *execution.Reconciler
+	EngineEvents *execution.EventReconciler
+	ctx          context.Context
+	cancel       context.CancelFunc
+	options      Options
+	mu           sync.Mutex
+	running      bool
 }
 
 // Attach validates all ports before changing the server. Existing session
 // routing remains persisted; only future creations use NewSessionBackend.
 func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options) (*Runtime, error) {
-	if app == nil || st == nil || p.Backend == nil || p.Plans == nil || p.Routes == nil || p.Grants == nil || p.BackendName == "" || p.OwnerUUID == "" || p.MaxActive <= 0 || p.InventoryLimit <= 0 || p.LeaseTTL <= 0 || p.PollInterval <= 0 || p.ActionTimeout <= 0 || p.CaptureWindow <= 0 || p.InventoryInterval <= 0 || (p.NewSessionBackend != "khora" && p.NewSessionBackend != "legacy") {
+	if app == nil || st == nil || p.Backend == nil || p.Plans == nil || p.Routes == nil || p.Grants == nil || p.BackendName == "" || p.OwnerUUID == "" || p.MaxActive <= 0 || p.InventoryLimit <= 0 || p.LeaseTTL <= 0 || p.PollInterval <= 0 || p.EventInterval <= 0 || p.ActionTimeout <= 0 || p.CaptureWindow <= 0 || p.InventoryInterval <= 0 || (p.NewSessionBackend != "khora" && p.NewSessionBackend != "legacy") {
 		return nil, fmt.Errorf("retained application requires explicit release, gateway, owner and bounded service configuration")
 	}
 	drivers := p.Plans.Drivers()
@@ -99,7 +102,7 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	app.SetNativeStateValidator(func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), fmt.Sprintf("native-state-%s-%d", input.Evidence.GenerationID, turn), guest.Files{Backend: p.Backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	})
-	return &Runtime{Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
+	return &Runtime{EngineEvents: &execution.EventReconciler{StoreID: identity.StoreID, Owner: owner, Source: p.Backend, Repository: st}, Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
@@ -113,7 +116,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
-	results := make(chan error, 2)
+	results := make(chan error, 3)
 	go func() { results <- r.Reconciler.Run(r.ctx) }()
 	go func() {
 		results <- r.Inventory.Run(r.ctx, r.options.InventoryInterval, r.options.ActionTimeout, func(session string, err error) {
@@ -122,9 +125,16 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 		})
 	}()
+	go func() {
+		results <- r.EngineEvents.Run(r.ctx, r.options.EventInterval, r.options.ActionTimeout, func(err error) {
+			if r.options.OnError != nil {
+				r.options.OnError("engine-events", err)
+			}
+		})
+	}()
 	err := <-results
 	r.cancel()
-	other := <-results
-	return errors.Join(err, other)
+	second, third := <-results, <-results
+	return errors.Join(err, second, third)
 }
 func (r *Runtime) Close() error { r.cancel(); return r.Controller.Close() }

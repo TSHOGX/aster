@@ -223,7 +223,7 @@ func TestActiveAdoptionRejectsChangedPlacementAndExpiredReplayLease(t *testing.T
 	if _, err := st.BeginActiveExecutionAdoption(ctx, b.GenerationID, b.Owner, time.Minute); !errors.Is(err, execution.ErrStaleOperation) {
 		t.Fatalf("active retry crossed lifecycle fence: %v", err)
 	}
-	if _, err := st.CommitEngineEvents(ctx, b.StoreID, 0, []sandbox.Event{{ID: "paused", Sequence: 1, SandboxID: b.SandboxID, Kind: "paused", Epoch: b.Epoch}}); err != nil {
+	if _, err := st.CommitEngineEvents(ctx, b.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{ID: "paused", Sequence: 1, SandboxID: b.SandboxID, Kind: "paused", Epoch: b.Epoch}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AcceptExecutionBinding(ctx, execution.ObserveBindingParams{GenerationID: b.GenerationID, Owner: b.Owner, ProcessHandle: b.ProcessHandle, Epoch: b.Epoch, EnvironmentFence: b.EnvironmentFence, ReconciledEventSequence: &a.EventSequence}); err == nil {

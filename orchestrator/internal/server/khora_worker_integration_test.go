@@ -206,7 +206,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				var page sandbox.EventPage
 				page, err = backend.Events(ctx, cursor.After, 128)
 				if err == nil {
-					_, err = st.CommitEngineEvents(ctx, identity.StoreID, cursor.After, page.Events)
+					_, err = st.CommitEngineEvents(ctx, identity.StoreID, leaseOwner, cursor.After, page.Events)
 				}
 			}
 			invalidationResult <- err
@@ -296,7 +296,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := st.CommitEngineEvents(ctx, identity.StoreID, cursor.After, page.Events); err != nil {
+				if _, err := st.CommitEngineEvents(ctx, identity.StoreID, leaseOwner, cursor.After, page.Events); err != nil {
 					t.Fatal(err)
 				}
 				for _, event := range page.Events {
@@ -313,7 +313,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 				}
 			}
 			assertIntegrationCapacity(t, ctx, st, 1)
-			if _, err := execution.InspectEnvironment(ctx, st, backend, binding.EnvironmentID); err != nil {
+			if _, err := execution.InspectEnvironment(ctx, st, backend, binding.EnvironmentID, leaseOwner); err != nil {
 				t.Fatal(err)
 			}
 			assertIntegrationCapacity(t, ctx, st, 0)
@@ -825,7 +825,7 @@ func verifyKhoraActiveAdoption(t *testing.T, ctx context.Context, srv *Server, s
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := st.CommitEngineEvents(ctx, binding.StoreID, cursor.After, page.Events); err != nil {
+			if _, err := st.CommitEngineEvents(ctx, binding.StoreID, owner, cursor.After, page.Events); err != nil {
 				t.Fatal(err)
 			}
 			if sequence, err := st.EnvironmentInvalidationSequence(ctx, binding.EnvironmentID); err != nil || sequence < 0 {

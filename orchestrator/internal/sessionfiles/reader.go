@@ -49,7 +49,7 @@ func (r Reader) OpenSession(ctx context.Context, session, owner, path string) (i
 	if environment.ObservedState == "paused" {
 		return (volume.Files{Repository: r.Repository, Backend: r.Backend, SessionID: session, Owner: owner}).Open(ctx, path)
 	}
-	observed, err := execution.InspectEnvironment(ctx, r.Repository, r.Backend, environment.ID)
+	observed, err := execution.InspectEnvironment(ctx, r.Repository, r.Backend, environment.ID, owner)
 	if err != nil {
 		return nil, workspace.File{}, err
 	}

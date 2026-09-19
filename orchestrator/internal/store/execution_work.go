@@ -24,6 +24,8 @@ func (s *Store) PendingExecutionWork(ctx context.Context, kind execution.Reconci
 	query := ""
 	args := []any{after}
 	switch kind {
+	case execution.ReconcileEnvironment:
+		query = `SELECT e.environment_id,e.session_id,'','' FROM environment_reconcile_requests r JOIN sandbox_environments e ON e.environment_id=r.environment_id WHERE e.environment_id>? AND e.sandbox_id!='' AND NOT EXISTS(SELECT 1 FROM execution_bindings b WHERE b.environment_id=e.environment_id AND b.state!='retired') ORDER BY e.environment_id LIMIT ?`
 	case execution.ReconcileActive:
 		query = `SELECT b.generation_id,b.session_id,b.generation_id,'' FROM execution_bindings b JOIN runtime_generations g ON g.generation_id=b.generation_id JOIN sessions s ON s.active_generation_id=b.generation_id WHERE b.generation_id>? AND s.status NOT IN ('failed','destroyed') AND NOT EXISTS(SELECT 1 FROM execution_recoveries r WHERE r.generation_id=b.generation_id AND r.stage!='complete') AND ((b.state='accepted' AND g.status='active' AND EXISTS(SELECT 1 FROM turns t WHERE t.generation_id=b.generation_id AND t.status IN ('leased','running')) AND (b.owner!=? OR g.lease_expires_at<=? OR EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id))) OR (b.state='starting' AND EXISTS(SELECT 1 FROM active_execution_adoptions a WHERE a.generation_id=b.generation_id AND a.state='adopting'))) ORDER BY b.generation_id LIMIT ?`
 		args = append(args, owner, formatTime(time.Now().UTC()))

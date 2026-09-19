@@ -97,7 +97,7 @@ func TestIdleAdoptionRefusesInFlightTurnAndNewerInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{ID: "after-inspection", Sequence: 1, SandboxID: binding.SandboxID, Kind: "paused"}}); err != nil {
+	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{ID: "after-inspection", Sequence: 1, SandboxID: binding.SandboxID, Kind: "paused"}}); err != nil {
 		t.Fatal(err)
 	}
 	b := adoption.Binding

@@ -74,7 +74,7 @@ func TestWorkspaceInventoryRefusesMutationEventAndEpochRaces(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "event":
-				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{ID: "new-event", Sequence: 1, SandboxID: binding.SandboxID, Kind: "paused"}}); err != nil {
+				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{ID: "new-event", Sequence: 1, SandboxID: binding.SandboxID, Kind: "paused"}}); err != nil {
 					t.Fatal(err)
 				}
 			case "epoch":

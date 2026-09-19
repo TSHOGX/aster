@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -13,6 +14,7 @@ import (
 )
 
 type ControllerRepository interface {
+	InspectionRepository
 	AdoptionRepository
 	TurnCommandRepository
 	AssertExecutionOwner(context.Context, string) error
@@ -204,7 +206,35 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 		return Binding{}, fmt.Errorf("retained environment requires reconciled resume before a new execution")
 	}
 	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: []string{"--session-id", session.ID, "--generation-id", generation, "--driver-id", session.Driver}, Environment: plan.Environment, Directory: "/workspace"}
-	binding, connection, err := (Worker{Repository: c.Repository, Agents: c.Agents}).Start(lifetime, WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request})
+	start := WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request}
+	var binding Binding
+	var connection AgentConnection
+	var retryUntil time.Time
+	for {
+		binding, connection, err = (Worker{Repository: c.Repository, Agents: c.Agents}).Start(lifetime, start)
+		if !errors.Is(err, ErrReadinessInvalidated) {
+			break
+		}
+		// Engine events may arrive between the captured watermark and readiness.
+		// Retry only that fence with the original idempotent start operation;
+		// generic startup failures still require explicit reconciliation.
+		if retryUntil.IsZero() {
+			retryUntil = time.Now().Add(5 * time.Second)
+		}
+		if !time.Now().Before(retryUntil) {
+			return binding, err
+		}
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return binding, ctx.Err()
+		case <-lifetime.Done():
+			timer.Stop()
+			return binding, lifetime.Err()
+		case <-timer.C:
+		}
+	}
 	if err != nil {
 		return binding, err
 	}
@@ -423,4 +453,8 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 		}
 	}
 	return c.Repository.GetEnvironmentBinding(ctx, environment.ID)
+}
+
+func (c *Controller) InspectEnvironment(ctx context.Context, id, owner string) (sandbox.Observation, error) {
+	return InspectEnvironment(ctx, c.Repository, c.Backend, id, owner)
 }

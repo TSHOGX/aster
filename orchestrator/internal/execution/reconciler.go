@@ -7,12 +7,14 @@ import (
 	"sync"
 	"time"
 
+	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/workspace"
 )
 
 type ReconcileKind string
 
 const (
+	ReconcileEnvironment ReconcileKind = "environment"
 	ReconcileAbort       ReconcileKind = "abort"
 	ReconcileSteer       ReconcileKind = "steer"
 	ReconcileWorkspace   ReconcileKind = "workspace"
@@ -30,6 +32,7 @@ type ReconcileRepository interface {
 	PendingExecutionWork(context.Context, ReconcileKind, string, string, int) ([]ReconcileWork, error)
 }
 type ReconcileController interface {
+	InspectEnvironment(context.Context, string, string) (sandbox.Observation, error)
 	ReconnectActive(context.Context, string, string, string) (Binding, error)
 	ReconnectIdle(context.Context, string, string, string) (Binding, error)
 	DeliverTurnCommand(context.Context, TurnCommand) error
@@ -70,7 +73,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	var workers sync.WaitGroup
-	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle, ReconcileActive} {
+	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle, ReconcileActive, ReconcileEnvironment} {
 		workers.Add(1)
 		go func(kind ReconcileKind) {
 			defer workers.Done()
@@ -120,6 +123,9 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 func (r *Reconciler) apply(ctx context.Context, kind ReconcileKind, p ReconcileWork) error {
 	switch kind {
+	case ReconcileEnvironment:
+		_, err := r.Controller.InspectEnvironment(ctx, p.Key, r.Owner)
+		return err
 	case ReconcileActive:
 		_, err := r.Controller.ReconnectActive(ctx, p.SessionID, p.GenerationID, r.Owner)
 		if errors.Is(err, ErrActiveAttachmentLost) {

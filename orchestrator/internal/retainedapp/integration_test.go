@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
@@ -22,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -65,11 +67,32 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 	}
 	app := server.New(config.Config{MaxSessions: 2, MaxEditBytes: 1 << 20, MaxUploadBytes: 1 << 20, MaxUploadFiles: 8}, st, nil, nil, events.NewHub(), slog.Default())
 	flows := gateway.NewFlows()
-	runtime, err := Attach(ctx, app, st, Options{Backend: backend, Plans: plans, Routes: flows, Grants: flows, BackendName: "composition-engine", OwnerUUID: owner.UUID, NewSessionBackend: "khora", PreparedRoot: filepath.Join(root, "prepared"), MaxActive: 2, InventoryLimit: 10000, LeaseTTL: time.Minute, PollInterval: 50 * time.Millisecond, ActionTimeout: 5 * time.Second, CaptureWindow: time.Minute, InventoryInterval: 100 * time.Millisecond})
+	var reported sync.Map
+	report := func(scope string, err error) {
+		message := fmt.Sprintf("%s: %v", scope, err)
+		if _, loaded := reported.LoadOrStore(message, true); !loaded {
+			t.Log(message)
+		}
+	}
+	runtime, err := Attach(ctx, app, st, Options{Backend: backend, Plans: plans, Routes: flows, Grants: flows, BackendName: "composition-engine", OwnerUUID: owner.UUID, NewSessionBackend: "khora", PreparedRoot: filepath.Join(root, "prepared"), MaxActive: 2, InventoryLimit: 10000, LeaseTTL: time.Minute, PollInterval: 50 * time.Millisecond, EventInterval: 50 * time.Millisecond, ActionTimeout: 5 * time.Second, CaptureWindow: time.Minute, InventoryInterval: 100 * time.Millisecond, OnError: report})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer runtime.Close()
+	background, stop := context.WithCancel(ctx)
+	finished := make(chan error, 1)
+	go func() { finished <- runtime.Run(background) }()
+	defer func() {
+		stop()
+		select {
+		case err := <-finished:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Error(err)
+			}
+		case <-time.After(8 * time.Second):
+			t.Error("composed services did not stop")
+		}
+	}()
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
 		response := httptest.NewRecorder()
@@ -137,20 +160,6 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 	if renewed, err := st.RenewLiveGenerationLeases(ctx, store.RenewLiveGenerationsParams{Owner: store.GenerationLeaseOwner(owner.UUID), LeaseTTL: time.Minute, Now: time.Now()}); err != nil || renewed != 0 {
 		t.Fatalf("legacy lease service owns retained execution: %d %v", renewed, err)
 	}
-	background, stop := context.WithCancel(ctx)
-	finished := make(chan error, 1)
-	go func() { finished <- runtime.Run(background) }()
-	defer func() {
-		stop()
-		select {
-		case err := <-finished:
-			if err != nil && !errors.Is(err, context.Canceled) {
-				t.Error(err)
-			}
-		case <-time.After(8 * time.Second):
-			t.Error("composed services did not stop")
-		}
-	}()
 	for {
 		status, reason, err := st.TurnStatus(ctx, session.ID, turn.ID)
 		if err != nil {
@@ -172,6 +181,41 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 	body, _ := io.ReadAll(file.Result().Body)
 	if file.Code != http.StatusOK || string(body) != "composed-runtime-ok\n" {
 		t.Fatalf("composed workspace output: %d %q", file.Code, body)
+	}
+	binding, found, err := st.FindActiveExecutionBinding(ctx, session.ID)
+	if err != nil || !found {
+		t.Fatalf("composed execution binding: %+v %v", binding, err)
+	}
+	for st.AssertExecutionAccepted(ctx, binding.GenerationID, store.GenerationLeaseOwner(owner.UUID), time.Now()) != nil {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	cursor, err := st.EngineCursor(ctx, binding.StoreID)
+	if err != nil || cursor.After == 0 || cursor.Resync {
+		t.Fatalf("composed event feed did not catch up: %+v %v", cursor, err)
+	}
+	if err := runtime.Controller.ReleaseIdle(ctx, session.ID, binding.GenerationID, binding.Owner); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var observed int
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM engine_event_inbox i JOIN sandbox_environments e ON e.store_id=i.store_id AND e.sandbox_id=i.sandbox_id WHERE e.environment_id=? AND i.kind='paused' AND i.sequence>? AND e.observed_state='paused' AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=e.environment_id)`, binding.EnvironmentID, cursor.After).Scan(&observed); err != nil {
+			t.Fatal(err)
+		}
+		if observed > 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if occupied, err := st.CountSandboxOccupyingSessions(ctx); err != nil || occupied != 0 {
+		t.Fatalf("passive inspection did not settle paused capacity: %d %v", occupied, err)
 	}
 	for _, table := range []string{"network_profiles", "runtime_resource_instances", "session_driver_homes"} {
 		var count int

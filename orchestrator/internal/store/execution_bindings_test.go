@@ -113,7 +113,7 @@ func TestAcceptedExecutionCannotOutliveEpochFenceOrEngineInvalidation(t *testing
 					t.Fatal(err)
 				}
 			case "event":
-				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{Sequence: 1, ID: "changed", SandboxID: binding.SandboxID, Kind: "resumed", Epoch: 2}}); err != nil {
+				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{Sequence: 1, ID: "changed", SandboxID: binding.SandboxID, Kind: "resumed", Epoch: 2}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -133,7 +133,7 @@ func TestExecutionAcceptanceReconcilesOnlyEventsBeforeReadiness(t *testing.T) {
 				t.Fatal(err)
 			}
 			if change != "new-inventory" {
-				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{ID: "created", Sequence: 1, SandboxID: binding.SandboxID, Kind: "created", Epoch: binding.Epoch}}); err != nil {
+				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{ID: "created", Sequence: 1, SandboxID: binding.SandboxID, Kind: "created", Epoch: binding.Epoch}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -144,7 +144,7 @@ func TestExecutionAcceptanceReconcilesOnlyEventsBeforeReadiness(t *testing.T) {
 			observed.ReconciledEventSequence = &sequence
 			switch change {
 			case "newer":
-				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 1, []sandbox.Event{{ID: "paused", Sequence: 2, SandboxID: binding.SandboxID, Kind: "paused", Epoch: binding.Epoch}}); err != nil {
+				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 1, []sandbox.Event{{ID: "paused", Sequence: 2, SandboxID: binding.SandboxID, Kind: "paused", Epoch: binding.Epoch}}); err != nil {
 					t.Fatal(err)
 				}
 			case "wrong-epoch":
@@ -200,7 +200,7 @@ func TestOpaqueExecutionRuntimeProjectionTracksAcceptanceAndInvalidation(t *test
 	if err != nil || count != 1 {
 		t.Fatalf("opaque execution bypassed admission count: %d %v", count, err)
 	}
-	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{Sequence: 1, ID: "new-placement", SandboxID: binding.SandboxID, Kind: "resumed", Epoch: 2}}); err != nil {
+	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{Sequence: 1, ID: "new-placement", SandboxID: binding.SandboxID, Kind: "resumed", Epoch: 2}}); err != nil {
 		t.Fatal(err)
 	}
 	invalid, err := st.GetSessionRuntimeSnapshot(ctx, binding.SessionID)

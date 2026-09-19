@@ -94,7 +94,7 @@ func (r Reader) Inventory(ctx context.Context, session, owner string, limit int)
 		return nil, err
 	}
 	if environment.ObservedState != "paused" {
-		observed, err := execution.InspectEnvironment(ctx, r.Repository, r.Backend, environment.ID)
+		observed, err := execution.InspectEnvironment(ctx, r.Repository, r.Backend, environment.ID, owner)
 		if err != nil {
 			return nil, err
 		}

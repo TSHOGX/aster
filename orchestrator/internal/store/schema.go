@@ -441,6 +441,11 @@ CREATE TABLE IF NOT EXISTS egress_requests (
  PRIMARY KEY(backend_id,request_id)
 );
 
+CREATE TABLE IF NOT EXISTS engine_backend_blocks (
+ store_id TEXT PRIMARY KEY,
+ reason TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS engine_event_cursors (
   store_id TEXT PRIMARY KEY,
   after_sequence INTEGER NOT NULL,

@@ -10,6 +10,8 @@ import (
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
+var ErrReadinessInvalidated = errors.New("execution readiness invalidated by engine reconciliation")
+
 type AgentConnection interface {
 	Done() <-chan struct{}
 	// Ready follows journal recovery and the driver protocol hello/probe. The

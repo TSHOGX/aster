@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/workspace"
 	"sync"
 	"sync/atomic"
@@ -90,4 +91,8 @@ func TestReconciliationIsolatesBlockedWorkAndDoesNotRestartOnTimeout(t *testing.
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("shutdown result: %v", err)
 	}
+}
+
+func (a *workActions) InspectEnvironment(context.Context, string, string) (sandbox.Observation, error) {
+	return sandbox.Observation{}, nil
 }

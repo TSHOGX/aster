@@ -282,18 +282,33 @@ identity. Event ID and sequence deduplication, payload-digest checks, reconcilia
 requests and cursor progress commit together. A contradictory replay rolls back
 the whole page. Historical events never overwrite an environment's accepted
 placement epoch or mutation revision; they schedule current inspection instead.
-An identical inbox replay advances a rewound cursor without repeating the
-invalidation, so readiness obtained after the original event remains valid. A
-new event still invalidates readiness, and contradictory replay still fails.
+Identical inbox replay has no additional invalidation side effect. New events
+still invalidate readiness, and contradictory replay still fails.
 
-The Khora SDK discards typed bounds on a 410 response, so the adapter obtains a
-fresh typed window with `Events(after=0, limit=1)`. The reconciler persists that
-window before scanning known bindings, then replays from `earliest - 1`. A crash
-repeats the scan and replay; after reaching the captured watermark, another scan
-settles current state before resync completes. If retention overtakes recovery,
-the new 410 starts another persisted resync window. This service is independently
-tested and awaits wiring into the Khora execution worker; the existing local
-maintenance path remains active.
+The retained runtime continuously polls bounded event pages on its configured
+`EventInterval`. The Khora SDK discards typed bounds on a 410 response, so the
+adapter obtains a fresh typed window with `Events(after=0, limit=1)`. The
+reconciler commits that window and invalidation of every known environment in one
+transaction, including environments absent from retained history. Bootstrap
+`after=0` also detects a pruned window even when the engine returns HTTP 200.
+Replay starts at `earliest - 1`; acceptance and gateway authorization stay fenced
+until the captured watermark has been replayed and resync has finished. If
+retention overtakes recovery, another durable window replaces it.
+
+Environment recovery runs independently of event polling. Idle and active
+bindings require fresh process attachment; passive environments receive bounded
+current inspections. A failed environment cannot stop the cursor catching up,
+and finishing cursor resync does not itself accept any execution. Event and
+inspection commits recheck the product owner inside their transactions, rejecting
+late results from a replaced owner. A five-second startup retry window allows a
+new handshake under the original durable start identity when a later event
+invalidates readiness.
+
+A changed engine store identity or incompatible engine contract creates a durable
+`engine_backend_blocks` record, invalidates known environments and revokes their
+grants. Later event pages or handshakes do not clear that block or reinterpret
+old sandbox/process references. The default executable still uses its legacy
+composition; these services are owned by `retainedapp.Runtime`.
 
 ## Workspace mutation admission
 
@@ -436,7 +451,7 @@ authorize gateway service routes by itself.
 controller, native validator/restorer, shared workspace writer, inventory scanner
 and reconciliation workers for a server. Backend, gateway revocation ports,
 product owner, prepared-content root and service/capacity bounds are explicit
-inputs. Its background runtime runs inventory and reconciliation together and
+inputs. Its background runtime runs inventory, engine events and reconciliation together and
 cancels both on shutdown or a fatal worker exit. The server exposes application
 projection callbacks instead of constructing engine clients itself.
 
@@ -517,10 +532,10 @@ the original decision ledger, including a grant whose first send was partial.
 The turn attempt, process handle, placement epoch and native history are retained.
 
 The background adoption loops select owner changes, expired leases, unfinished
-markers and engine-event invalidations. They can revalidate an active same-epoch
-process once an event has been ingested. The event source is not yet continuously
-polled by the retained application runtime. Unexpected placement or backend
-identity changes remain fenced; inspection alone cannot accept them.
+markers and engine-event invalidations consumed by the retained runtime's event
+service. They can revalidate an active same-epoch process after an event is
+ingested. Unexpected placement or backend identity changes remain fenced;
+inspection alone cannot accept them.
 
 After exact placement inspection, a missing process or an attachment precondition
 failure enters interrupted recovery through the background reconciler for either
@@ -617,7 +632,7 @@ Default executable composition still needs to select that reconciler.
 
 The retained execution reconciler runs independent sequential loops for pending
 aborts, steering sends, workspace mutations, capture activations, idle and active
-adoption, and interrupted-recovery ledgers.
+adoption, passive environment inspections, and interrupted-recovery ledgers.
 Each loop uses bounded pages, per-action deadlines and a rotating key cursor so
 old failures do not hide newer obligations. A task that ignores cancellation
 continues to occupy its loop; it is never restarted merely because a deadline

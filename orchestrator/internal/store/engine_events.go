@@ -42,7 +42,7 @@ func ensureEngineCursorTx(ctx context.Context, tx *sql.Tx, identity string) erro
 	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO engine_event_cursors(store_id,after_sequence,resync_watermark,resync) VALUES(?,0,0,0)`, identity)
 	return err
 }
-func (s *Store) BeginEngineResync(ctx context.Context, identity string, expected, after, watermark int64) error {
+func (s *Store) BeginEngineResync(ctx context.Context, identity, owner string, expected, after, watermark int64) error {
 	if after < 0 || watermark <= after {
 		return fmt.Errorf("invalid engine resync window")
 	}
@@ -51,6 +51,9 @@ func (s *Store) BeginEngineResync(ctx context.Context, identity string, expected
 		return err
 	}
 	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return err
+	}
 	if err := ensureEngineCursorTx(ctx, tx, identity); err != nil {
 		return err
 	}
@@ -61,14 +64,20 @@ func (s *Store) BeginEngineResync(ctx context.Context, identity string, expected
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return execution.ErrStaleOperation
 	}
+	if err := invalidateKnownEnvironmentsTx(ctx, tx, identity, "event_window_expired", watermark); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
-func (s *Store) CommitEngineEvents(ctx context.Context, identity string, expected int64, events []sandbox.Event) (int64, error) {
+func (s *Store) CommitEngineEvents(ctx context.Context, identity, owner string, expected int64, events []sandbox.Event) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return 0, err
+	}
 	if err := ensureEngineCursorTx(ctx, tx, identity); err != nil {
 		return 0, err
 	}
@@ -142,6 +151,9 @@ func (s *Store) CommitEnvironmentInspection(ctx context.Context, p execution.Env
 		return err
 	}
 	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
+		return err
+	}
 	environment, err := environmentWith(ctx, tx, p.EnvironmentID)
 	if err != nil {
 		return err
@@ -187,8 +199,16 @@ func (s *Store) CommitEnvironmentInspection(ctx context.Context, p execution.Env
 	}
 	return tx.Commit()
 }
-func (s *Store) FinishEngineResync(ctx context.Context, identity string, expected int64) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE engine_event_cursors SET resync=0 WHERE store_id=? AND after_sequence=? AND after_sequence>=resync_watermark`, identity, expected)
+func (s *Store) FinishEngineResync(ctx context.Context, identity, owner string, expected int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE engine_event_cursors SET resync=0 WHERE store_id=? AND after_sequence=? AND after_sequence>=resync_watermark`, identity, expected)
 	if err != nil {
 		return err
 	}
@@ -199,7 +219,7 @@ func (s *Store) FinishEngineResync(ctx context.Context, identity string, expecte
 	if n != 1 {
 		return execution.ErrStaleOperation
 	}
-	return nil
+	return tx.Commit()
 }
 
 // A missing request has sequence -1 so a newly queued inventory request at
@@ -211,4 +231,35 @@ func (s *Store) EnvironmentInvalidationSequence(ctx context.Context, environment
 		return -1, nil
 	}
 	return sequence, err
+}
+
+func invalidateKnownEnvironmentsTx(ctx context.Context, tx *sql.Tx, identity, reason string, sequence int64) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO environment_reconcile_requests(environment_id,reason,event_sequence) SELECT environment_id,?,? FROM sandbox_environments WHERE store_id=? AND sandbox_id!='' ON CONFLICT(environment_id) DO UPDATE SET reason=excluded.reason,event_sequence=max(environment_reconcile_requests.event_sequence,excluded.event_sequence)`, reason, sequence, identity); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET observed_state='unknown' WHERE store_id=? AND sandbox_id!=''`, identity)
+	return err
+}
+func (s *Store) BlockEngineBackend(ctx context.Context, identity, owner string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return err
+	}
+	if err := ensureEngineCursorTx(ctx, tx, identity); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO engine_backend_blocks(store_id,reason) VALUES(?,'engine_identity_or_contract_changed')`, identity); err != nil {
+		return err
+	}
+	if err := invalidateKnownEnvironmentsTx(ctx, tx, identity, "engine_identity_or_contract_changed", 0); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE egress_grants SET state='revoked' WHERE generation_id IN (SELECT generation_id FROM execution_bindings WHERE store_id=?)`, identity); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

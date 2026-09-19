@@ -123,7 +123,7 @@ func TestControllerProvisionStartAndReuseRequireOneExecution(t *testing.T) {
 	if first.GenerationID != second.GenerationID || backend.volumeCalls != 2 || len(backend.createKeys) != 1 || len(launcher.requests) != 1 {
 		t.Fatalf("reused session reprovisioned: %+v %+v volumes=%d creates=%v starts=%d", first, second, backend.volumeCalls, backend.createKeys, len(launcher.requests))
 	}
-	if _, err := st.CommitEngineEvents(context.Background(), first.StoreID, 0, []sandbox.Event{{ID: "changed", Sequence: 1, SandboxID: first.SandboxID, Kind: "paused"}}); err != nil {
+	if _, err := st.CommitEngineEvents(context.Background(), first.StoreID, owner, 0, []sandbox.Event{{ID: "changed", Sequence: 1, SandboxID: first.SandboxID, Kind: "paused"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := controller.Ensure(context.Background(), session, owner); err == nil {

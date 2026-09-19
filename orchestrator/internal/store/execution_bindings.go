@@ -157,7 +157,14 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch AND e.store_id=execution_bindings.store_id AND e.sandbox_id=execution_bindings.sandbox_id) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
+	var invalidated int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b WHERE b.generation_id=? AND b.owner=? AND b.state='starting' AND (EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id) OR EXISTS(SELECT 1 FROM engine_event_cursors c WHERE c.store_id=b.store_id AND c.resync=1))`, p.GenerationID, p.Owner).Scan(&invalidated); err != nil {
+		return err
+	}
+	if invalidated != 0 {
+		return execution.ErrReadinessInvalidated
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch AND e.store_id=execution_bindings.store_id AND e.sandbox_id=execution_bindings.sandbox_id) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM engine_event_cursors c WHERE c.store_id=execution_bindings.store_id AND c.resync=1) AND NOT EXISTS(SELECT 1 FROM engine_backend_blocks k WHERE k.store_id=execution_bindings.store_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
 	if err != nil {
 		return err
 	}
@@ -207,7 +214,7 @@ func acceptedExecutionTx(ctx context.Context, tx *sql.Tx, session, generation, o
 		return err
 	}
 	var ready int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b WHERE b.generation_id=? AND b.state='accepted' AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id)`, generation).Scan(&ready); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b WHERE b.generation_id=? AND b.state='accepted' AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id) AND NOT EXISTS(SELECT 1 FROM engine_event_cursors c WHERE c.store_id=b.store_id AND c.resync=1) AND NOT EXISTS(SELECT 1 FROM engine_backend_blocks k WHERE k.store_id=b.store_id)`, generation).Scan(&ready); err != nil {
 		return err
 	}
 	if ready != 1 {

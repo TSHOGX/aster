@@ -13,7 +13,7 @@ import (
 
 func invalidateExecution(t *testing.T, st *Store, b execution.Binding) {
 	t.Helper()
-	if _, err := st.CommitEngineEvents(context.Background(), b.StoreID, 0, []sandbox.Event{{ID: "uninspected", Sequence: 1, SandboxID: b.SandboxID, Kind: "resumed", Epoch: b.Epoch + 1}}); err != nil {
+	if _, err := st.CommitEngineEvents(context.Background(), b.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{ID: "uninspected", Sequence: 1, SandboxID: b.SandboxID, Kind: "resumed", Epoch: b.Epoch + 1}}); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -88,7 +88,7 @@ func TestEgressAuthorizationRequiresAcceptedExecutionCurrentTurnAndTypedResource
 			}
 		})
 	}
-	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{Sequence: 1, ID: "replacement", SandboxID: binding.SandboxID, Kind: "resumed", Epoch: 2}}); err != nil {
+	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{Sequence: 1, ID: "replacement", SandboxID: binding.SandboxID, Kind: "resumed", Epoch: 2}}); err != nil {
 		t.Fatal(err)
 	}
 	request.RequestID = "after-event"

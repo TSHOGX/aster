@@ -81,17 +81,17 @@ func TestCapacityInspectionCannotPromoteExecutionOrOvertakeNewEvent(t *testing.T
 	if err := st.AcceptExecutionBinding(ctx, observed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{ID: "created", Sequence: 1, SandboxID: binding.SandboxID, Kind: "created"}}); err != nil {
+	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{ID: "created", Sequence: 1, SandboxID: binding.SandboxID, Kind: "created"}}); err != nil {
 		t.Fatal(err)
 	}
-	inspection := execution.EnvironmentInspection{EnvironmentID: binding.EnvironmentID, Fence: binding.EnvironmentFence, EventSequence: 1, Observed: sandbox.Observation{Reference: sandbox.Reference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, MutationRevision: "engine-revision"}, State: "running", PlacementState: "active"}}
+	inspection := execution.EnvironmentInspection{Owner: binding.Owner, EnvironmentID: binding.EnvironmentID, Fence: binding.EnvironmentFence, EventSequence: 1, Observed: sandbox.Observation{Reference: sandbox.Reference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, MutationRevision: "engine-revision"}, State: "running", PlacementState: "active"}}
 	if err := st.CommitEnvironmentInspection(ctx, inspection); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AssertExecutionAccepted(ctx, binding.GenerationID, binding.Owner, time.Now()); err == nil {
 		t.Fatal("control-plane inspect restored agent authority")
 	}
-	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 1, []sandbox.Event{{ID: "paused", Sequence: 2, SandboxID: binding.SandboxID, Kind: "paused"}}); err != nil {
+	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 1, []sandbox.Event{{ID: "paused", Sequence: 2, SandboxID: binding.SandboxID, Kind: "paused"}}); err != nil {
 		t.Fatal(err)
 	}
 	inspection.Observed.State = "paused"
@@ -105,7 +105,7 @@ func TestCapacityInspectionCannotPromoteExecutionOrOvertakeNewEvent(t *testing.T
 func TestUnexpectedEpochInspectionKeepsRecordedIdentityAndCapacity(t *testing.T) {
 	ctx := context.Background()
 	st, _, binding, _ := boundExecutionFixture(t)
-	inspection := execution.EnvironmentInspection{EnvironmentID: binding.EnvironmentID, Fence: binding.EnvironmentFence, EventSequence: -1, Observed: sandbox.Observation{Reference: sandbox.Reference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch + 1, MutationRevision: "replacement"}, State: "paused", PlacementState: "lost"}}
+	inspection := execution.EnvironmentInspection{Owner: binding.Owner, EnvironmentID: binding.EnvironmentID, Fence: binding.EnvironmentFence, EventSequence: -1, Observed: sandbox.Observation{Reference: sandbox.Reference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch + 1, MutationRevision: "replacement"}, State: "paused", PlacementState: "lost"}}
 	if err := st.CommitEnvironmentInspection(ctx, inspection); err == nil {
 		t.Fatal("unexpected epoch silently adopted")
 	}
@@ -127,11 +127,11 @@ func TestPausedInspectionSettlesHistoricalCapacityInvalidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCapacity(t, st, 0)
-	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{ID: "old-created", Sequence: 1, SandboxID: binding.SandboxID, Kind: "created"}}); err != nil {
+	if _, err := st.CommitEngineEvents(ctx, binding.StoreID, testEngineOwner(t, st), 0, []sandbox.Event{{ID: "old-created", Sequence: 1, SandboxID: binding.SandboxID, Kind: "created"}}); err != nil {
 		t.Fatal(err)
 	}
 	assertCapacity(t, st, 1)
-	if err := st.CommitEnvironmentInspection(ctx, execution.EnvironmentInspection{EnvironmentID: binding.EnvironmentID, Fence: op.Fence, EventSequence: 1, Observed: sandbox.Observation{Reference: sandbox.Reference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, MutationRevision: "paused"}, State: "paused", PlacementState: "lost"}}); err != nil {
+	if err := st.CommitEnvironmentInspection(ctx, execution.EnvironmentInspection{Owner: binding.Owner, EnvironmentID: binding.EnvironmentID, Fence: op.Fence, EventSequence: 1, Observed: sandbox.Observation{Reference: sandbox.Reference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, MutationRevision: "paused"}, State: "paused", PlacementState: "lost"}}); err != nil {
 		t.Fatal(err)
 	}
 	assertCapacity(t, st, 0)
