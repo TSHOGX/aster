@@ -131,8 +131,8 @@ built application template, run:
 ```bash
 KHORA_INTEGRATION_ENDPOINT=http://127.0.0.1:18191 \
 KHORA_INTEGRATION_TEMPLATE=battery \
-go -C orchestrator test -tags khoraintegration ./internal/sandbox/khora \
-  -run '^TestKhoraTemplateShellAndNativeHistory$' -count=1 -v
+go -C orchestrator test -tags khoraintegration ./internal/sandbox/khora ./internal/server \
+  -run '^TestKhora(TemplateShellAndNativeHistory|ExecutionWorkerCommitsTurnMessagesAndJournal)$' -count=1 -v
 ```
 
 This test creates synthetic volumes and a sandbox, runs the shell through the

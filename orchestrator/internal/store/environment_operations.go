@@ -126,6 +126,16 @@ func (s *Store) BeginEnvironmentOperation(ctx context.Context, p execution.Opera
 	if environment.Fence != p.ExpectedFence {
 		return execution.Operation{}, execution.ErrStaleOperation
 	}
+	if p.Kind == "start_process" {
+		var active int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings WHERE environment_id=? AND state!='retired'`, p.EnvironmentID).Scan(&active); err != nil {
+			return execution.Operation{}, err
+		}
+		if active != 0 {
+			return execution.Operation{}, execution.ErrBusy
+		}
+	}
+
 	var unresolved int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM environment_operations WHERE environment_id=? AND state IN ('pending','issued','uncertain')`, p.EnvironmentID).Scan(&unresolved); err != nil {
 		return execution.Operation{}, err

@@ -669,8 +669,10 @@ func (s *Server) handleBridgeCompletion(ctx context.Context, envelope bridge.Env
 	// Clients learn the queue advanced from this push; without it they would hold
 	// a projection showing the finished turn as active until their next reload.
 	s.publishSessionRuntimeFromStore(ctx, envelope.SessionID)
-	if err := s.watcher.ScanSession(ctx, envelope.SessionID); err != nil && !errors.Is(err, context.Canceled) {
-		s.log.Warn("failed to scan bridge-completed session artifacts", "session_id", envelope.SessionID, "error", err)
+	if s.watcher != nil {
+		if err := s.watcher.ScanSession(ctx, envelope.SessionID); err != nil && !errors.Is(err, context.Canceled) {
+			s.log.Warn("failed to scan bridge-completed session artifacts", "session_id", envelope.SessionID, "error", err)
+		}
 	}
 }
 

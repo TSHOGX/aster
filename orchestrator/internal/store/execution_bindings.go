@@ -145,3 +145,14 @@ func acceptedExecutionTx(ctx context.Context, tx *sql.Tx, session, generation, o
 	}
 	return nil
 }
+
+func (s *Store) RenewExecutionBindingLease(ctx context.Context, generation, owner string, ttl time.Duration, now time.Time) error {
+	binding, err := s.GetExecutionBinding(ctx, generation)
+	if err != nil {
+		return err
+	}
+	if binding.Owner != owner || binding.State == "retired" {
+		return execution.ErrStartLeaseLost
+	}
+	return s.RenewGenerationStartLease(ctx, RenewGenerationStartLeaseParams{SessionID: binding.SessionID, GenerationID: generation, Owner: owner, LeaseTTL: ttl, Now: now})
+}

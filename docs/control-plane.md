@@ -325,3 +325,18 @@ records the already-created volume without another remote create. Existing
 bindings are never provisioned again or silently reassigned, including after an
 engine store rebuild. Pi's native home is intentionally absent from this volume
 map because it belongs to the retained sandbox overlay.
+
+The execution worker records its process-start intent and generation binding
+before invoking the agent launcher. `internal/agentbridge` composes the scoped
+process carrier with the bound bridge store and pauses at the protocol readiness
+barrier. The worker settles the start operation, records the process observation
+and commits binding acceptance before opening dispatch. Failed readiness retains
+an uncertain start for reconciliation; detaching the carrier does not imply the
+process stopped. A second worker cannot reserve a start over an active binding.
+
+The Khora integration profile includes a real worker turn through this path:
+keyed volume/environment provisioning, process journal handshake, accepted binding,
+claim/start/output/completion, replayable message projection and durable receipt
+watermark. Its assertions require no legacy runtime, network or source-IP context
+rows. HTTP and scheduler selection still use the legacy entry path pending the
+controller cutover.
