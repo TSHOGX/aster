@@ -41,7 +41,7 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 		cancel()
 		return nil, err
 	}
-	connection := &connection{ready: make(chan error, 1), activate: make(chan struct{}), cancel: cancel, carrier: carrier}
+	connection := &connection{ready: make(chan error, 1), done: make(chan struct{}), activate: make(chan struct{}), cancel: cancel, carrier: carrier}
 	processor := &bridge.Processor{Store: l.Store, Owner: binding.Owner, LeaseTTL: l.LeaseTTL, AfterCommit: l.AfterCommit, BeforeComplete: l.BeforeComplete, AfterEventCommit: l.AfterEventCommit}
 	processor.ProbeHandler = func(ctx context.Context, _ bridge.Envelope) error {
 		connection.readyOnce.Do(func() { connection.ready <- nil })
@@ -55,6 +55,7 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 	go func() {
 		var failure error
 		defer func() {
+			close(connection.done)
 			connection.readyOnce.Do(func() { connection.ready <- failure })
 			carrier.Close()
 			if l.OnExit != nil {
@@ -76,6 +77,7 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 }
 
 type connection struct {
+	done                    chan struct{}
 	ready                   chan error
 	activate                chan struct{}
 	readyOnce, activateOnce sync.Once
@@ -88,3 +90,5 @@ func (c *connection) Activate()           { c.activateOnce.Do(func() { close(c.a
 func (c *connection) Close() error        { c.cancel(); return c.carrier.Close() }
 
 var _ execution.AgentLauncher = Launcher{}
+
+func (c *connection) Done() <-chan struct{} { return c.done }

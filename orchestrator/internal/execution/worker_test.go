@@ -20,7 +20,8 @@ type readyAgent struct {
 	onActivate     func()
 }
 
-func (a *readyAgent) Ready() <-chan error { return a.ready }
+func (a *readyAgent) Done() <-chan struct{} { return nil }
+func (a *readyAgent) Ready() <-chan error   { return a.ready }
 func (a *readyAgent) Activate() {
 	a.active = true
 	if a.onActivate != nil {

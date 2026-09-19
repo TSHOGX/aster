@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -35,6 +36,14 @@ func (s *Store) ReserveExecutionBinding(ctx context.Context, p execution.Reserve
 	}
 	if environment.SessionID != p.SessionID || environment.SandboxID == "" || environment.Epoch == 0 {
 		return execution.Binding{}, fmt.Errorf("observed environment binding required")
+	}
+	if existing, err := bindingWith(ctx, tx, p.GenerationID); err == nil {
+		if existing.SessionID != p.SessionID || existing.EnvironmentID != p.EnvironmentID || existing.Owner != p.Owner || existing.Driver != p.Driver || existing.SpecDigest != p.SpecDigest || existing.ManifestDigest != p.ManifestDigest || existing.EnvironmentFence != environment.Fence || existing.Epoch != environment.Epoch || existing.State != "starting" {
+			return execution.Binding{}, execution.ErrOperationConflict
+		}
+		return existing, tx.Commit()
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return execution.Binding{}, err
 	}
 	var driver string
 	var active sql.NullString
@@ -155,4 +164,20 @@ func (s *Store) RenewExecutionBindingLease(ctx context.Context, generation, owne
 		return execution.ErrStartLeaseLost
 	}
 	return s.RenewGenerationStartLease(ctx, RenewGenerationStartLeaseParams{SessionID: binding.SessionID, GenerationID: generation, Owner: owner, LeaseTTL: ttl, Now: now})
+}
+
+func (s *Store) AssertExecutionAccepted(ctx context.Context, generation, owner string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	binding, err := bindingWith(ctx, tx, generation)
+	if err != nil {
+		return err
+	}
+	if err := acceptedExecutionTx(ctx, tx, binding.SessionID, generation, owner, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

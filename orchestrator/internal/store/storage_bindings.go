@@ -47,3 +47,23 @@ func (s *Store) RecordStorageBinding(ctx context.Context, b execution.StorageBin
 	}
 	return tx.Commit()
 }
+
+func (s *Store) FindSessionEnvironment(ctx context.Context, session string) (execution.Environment, bool, error) {
+	environment, err := s.GetSessionEnvironment(ctx, session)
+	if errors.Is(err, sql.ErrNoRows) {
+		return environment, false, nil
+	}
+	return environment, err == nil, err
+}
+func (s *Store) FindActiveExecutionBinding(ctx context.Context, session string) (execution.Binding, bool, error) {
+	var generation string
+	err := s.db.QueryRowContext(ctx, `SELECT b.generation_id FROM execution_bindings b JOIN sessions s ON s.active_generation_id=b.generation_id WHERE b.session_id=? AND b.state!='retired'`, session).Scan(&generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return execution.Binding{}, false, nil
+	}
+	if err != nil {
+		return execution.Binding{}, false, err
+	}
+	binding, err := s.GetExecutionBinding(ctx, generation)
+	return binding, err == nil, err
+}

@@ -10,6 +10,7 @@ import (
 )
 
 type AgentConnection interface {
+	Done() <-chan struct{}
 	// Ready follows journal recovery and the driver protocol hello/probe. The
 	// bridge cannot answer the probe or admit work until Activate is called.
 	Ready() <-chan error
@@ -20,6 +21,7 @@ type AgentLauncher interface {
 	Start(context.Context, Binding, sandbox.StartProcessRequest) (AgentConnection, error)
 }
 type WorkerRepository interface {
+	FindEnvironmentOperation(context.Context, string) (Operation, bool, error)
 	RenewExecutionBindingLease(context.Context, string, string, time.Duration, time.Time) error
 	GetEnvironmentBinding(context.Context, string) (Environment, error)
 	BeginEnvironmentOperation(context.Context, OperationIntent) (Operation, error)
@@ -57,12 +59,21 @@ func (w Worker) Start(ctx context.Context, p WorkerRequest) (Binding, AgentConne
 	if err != nil {
 		return Binding{}, nil, err
 	}
-	operation, err := w.Repository.BeginEnvironmentOperation(ctx, OperationIntent{ID: "start:" + p.Reserve.GenerationID, EnvironmentID: environment.ID, Kind: "start_process", IdempotencyKey: p.Process.IdempotencyKey, ExpectedFence: environment.Fence, Request: raw})
+	intent := OperationIntent{ID: "start:" + p.Reserve.GenerationID, EnvironmentID: environment.ID, Kind: "start_process", IdempotencyKey: p.Process.IdempotencyKey, ExpectedFence: environment.Fence, Request: raw}
+	if previous, found, err := w.Repository.FindEnvironmentOperation(ctx, intent.ID); err != nil {
+		return Binding{}, nil, err
+	} else if found {
+		intent.ExpectedFence = previous.Fence - 1
+	}
+	operation, err := w.Repository.BeginEnvironmentOperation(ctx, intent)
 	if err != nil {
 		return Binding{}, nil, err
 	}
-	if operation.State != OperationPending {
-		return Binding{}, nil, fmt.Errorf("process start requires reconciliation of its existing operation")
+	if operation.State == OperationFailed {
+		return Binding{}, nil, fmt.Errorf("process start previously failed: %s", operation.Error)
+	}
+	if environment.Fence != operation.Fence && environment.Fence != operation.Fence-1 {
+		return Binding{}, nil, ErrStaleOperation
 	}
 	binding, err := w.Repository.ReserveExecutionBinding(ctx, p.Reserve)
 	if err != nil {
@@ -84,8 +95,10 @@ func (w Worker) Start(ctx context.Context, p WorkerRequest) (Binding, AgentConne
 			cancelAgent()
 		}
 	}()
-	if err := w.Repository.RecordEnvironmentOperationOutcome(ctx, OperationOutcome{ID: operation.ID, Fence: operation.Fence, State: OperationIssued}); err != nil {
-		return binding, nil, err
+	if operation.State == OperationPending {
+		if err := w.Repository.RecordEnvironmentOperationOutcome(ctx, OperationOutcome{ID: operation.ID, Fence: operation.Fence, State: OperationIssued}); err != nil {
+			return binding, nil, err
+		}
 	}
 	connection, err := w.Agents.Start(agentCtx, binding, p.Process)
 	if err != nil {
