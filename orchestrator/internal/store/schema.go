@@ -251,6 +251,14 @@ CREATE TABLE IF NOT EXISTS workspace_mutations (
 CREATE UNIQUE INDEX IF NOT EXISTS workspace_mutation_active_uq
  ON workspace_mutations(session_id) WHERE state IN ('active','uncertain');
 
+CREATE TABLE IF NOT EXISTS workspace_guest_mutations (
+ operation_id TEXT PRIMARY KEY REFERENCES workspace_mutations(operation_id),
+ reference TEXT NOT NULL,
+ content_digest TEXT NOT NULL,
+ content_size INTEGER NOT NULL CHECK(content_size>=0),
+ issued INTEGER NOT NULL DEFAULT 0 CHECK(issued IN (0,1))
+);
+
 CREATE TABLE IF NOT EXISTS bridge_streams (
   backend_id TEXT NOT NULL,
   session_id TEXT NOT NULL REFERENCES sessions(id),

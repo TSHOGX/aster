@@ -179,3 +179,7 @@ The shell case reads workspace files through the HTTP range-download path while
 live and while paused. It rejects symlink parents and missing files, verifies
 that a held offline read blocks resume, and checks that closing/error paths release
 the lease without activating compute.
+The live shell case also writes through the HTTP editor handler, injects a lost
+helper completion reply, and verifies recovery without a second replacement.
+A second fault case changes the destination independently before recovery and
+checks that the changed content survives and the original mutation becomes failed.

@@ -503,5 +503,18 @@ fail rather than masquerading as complete files. Closing a download releases its
 lease. Startup releases abandoned leases only after acquiring the product process
 lock and recording the replacement owner. Reader leases have no timer that could
 permit a writer to race a slow live download. The API reader adapter is injectable;
-default startup still awaits full Khora composition, and remote workspace uploads
-remain a separate integration step.
+default startup still awaits full Khora composition.
+
+Live workspace uploads and editor writes can use the injected retained writer.
+It streams bounded input into a durable, content-addressed preparation store,
+then reserves the workspace fence and records content size/digest and the exact
+guest placement before issuing a helper. Preparation is verified again before
+transmission. Turn admission and environment mutations cannot cross that fence.
+
+A lost reply leaves the write uncertain. Recovery under the current product
+owner observes the original helper's termination, removes only staging entries
+for that operation, then verifies and synchronizes the destination. Matching
+bytes settle success; a definitive mismatch settles failure without overwriting
+later content. Unavailable termination or durability evidence keeps the fence.
+An issued write never retransmits its input automatically. Prepared content is
+retained for recovery; reclamation and paused-write maintenance are not yet wired.

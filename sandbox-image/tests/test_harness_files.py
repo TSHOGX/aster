@@ -13,6 +13,19 @@ spec.loader.exec_module(files)
 
 
 class GuestFilesystemTests(unittest.TestCase):
+    def test_replacement_cleanup_keeps_other_operations_and_target(self):
+        with tempfile.TemporaryDirectory() as root:
+            descriptor = files.open_root(root)
+            try:
+                for name in ('target', '.harness-upload-current-partial', '.harness-upload-other-partial'):
+                    (Path(root) / name).write_text(name)
+                files.cleanup_replacement(descriptor, 'target', 'current')
+                self.assertFalse((Path(root) / '.harness-upload-current-partial').exists())
+                self.assertTrue((Path(root) / '.harness-upload-other-partial').exists())
+                self.assertEqual((Path(root) / 'target').read_text(), 'target')
+            finally:
+                os.close(descriptor)
+
     def test_native_restore_preserves_interrupted_bytes_and_retries(self):
         with tempfile.TemporaryDirectory() as root:
             descriptor = files.open_root(root)

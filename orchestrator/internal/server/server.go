@@ -64,6 +64,7 @@ const (
 )
 
 type Server struct {
+	workspaceWrites      sessionWorkspaceWriter
 	workspaceReads       sessionWorkspaceReader
 	executions           sessionExecutionController
 	newSessionBackend    string
@@ -139,6 +140,12 @@ type Server struct {
 type sessionWorkspaceReader interface {
 	OpenSession(context.Context, string, string, string) (io.ReadSeekCloser, workspace.File, error)
 }
+
+type sessionWorkspaceWriter interface {
+	WriteSession(context.Context, string, string, string, io.Reader, int64) (workspace.File, error)
+}
+
+func (s *Server) SetWorkspaceWriter(writer sessionWorkspaceWriter) { s.workspaceWrites = writer }
 
 func (s *Server) SetWorkspaceReader(reader sessionWorkspaceReader) { s.workspaceReads = reader }
 

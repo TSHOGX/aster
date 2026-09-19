@@ -276,6 +276,23 @@ def replace(root, name, source, size, expected_digest, operation, hook=None):
         os.close(parent)
 
 
+def cleanup_replacement(root, name, operation):
+    if not operation or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in operation):
+        raise ValueError('safe mutation identity required')
+    parent, _ = parent_fd(root, name)
+    try:
+        prefix = '.harness-upload-' + operation + '-'
+        for entry in os.listdir(parent):
+            if entry.startswith(prefix):
+                if not stat.S_ISREG(os.stat(entry, dir_fd=parent, follow_symlinks=False).st_mode):
+                    raise ValueError('replacement staging entry is not regular')
+                os.unlink(entry, dir_fd=parent)
+        os.fsync(parent)
+        return {'path': name}
+    finally:
+        os.close(parent)
+
+
 def read_range(root, name, destination, offset=0, length=None):
     if type(offset) is not int or offset < 0 or length is not None and (type(length) is not int or length < 0):
         raise ValueError('invalid file range')

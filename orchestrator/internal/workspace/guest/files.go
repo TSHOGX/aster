@@ -19,6 +19,38 @@ import (
 
 const maxReadChunk = 256 << 10
 
+// StopReplacement never equates detachment or a signal reply with termination.
+// An unknown handle leaves the mutation unresolved because Start may be delayed.
+func (f Files) StopReplacement(ctx context.Context, key string) error {
+	reference := sandbox.ProcessReference{StoreID: f.Reference.StoreID, SandboxID: f.Reference.SandboxID, Epoch: f.Reference.Epoch, Handle: "helper-" + key}
+	stream, err := f.Backend.ConnectProcess(ctx, reference, 0)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	err = f.Backend.SignalProcess(ctx, reference, 9)
+	if err != nil && !sandbox.Is(err, sandbox.NotFound) && !sandbox.Is(err, sandbox.Precondition) {
+		return err
+	}
+	for {
+		frame, err := stream.Next()
+		if err != nil {
+			return err
+		}
+		if frame.Kind == "end" {
+			return nil
+		}
+	}
+}
+
+func (f Files) CleanupReplacement(ctx context.Context, key, path string) error {
+	if err := f.validate(path); err != nil {
+		return err
+	}
+	_, err := f.call(ctx, "cleanup-"+uuid.NewString(), []string{"--operation", "cleanup-replacement", "--path", path, "--key", key}, nil, 4096)
+	return err
+}
+
 // Files is bound to one accepted placement. A paused environment is activated
 // through the environment operation lane before constructing this adapter.
 type Files struct {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,6 +38,7 @@ import (
 	"harness-platform/orchestrator/internal/trajectory"
 	"harness-platform/orchestrator/internal/workspace"
 	guestfiles "harness-platform/orchestrator/internal/workspace/guest"
+	"harness-platform/orchestrator/internal/workspace/prepared"
 )
 
 func TestKhoraExecutionWorkerCommitsTurnMessagesAndJournal(t *testing.T) { runKhoraWorker(t, "sh") }
@@ -144,7 +146,13 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		processEnvironment = []string{"PI_MODEL=synthetic-model", "ANTHROPIC_BASE_URL=" + modelURL}
 	}
 	srv := &Server{store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
+	srv.cfg.MaxEditBytes = 1 << 20
 	srv.SetWorkspaceReader(sessionfiles.Reader{Repository: st, Backend: backend})
+	preparedUploads, err := prepared.New(filepath.Join(directory, "prepared-uploads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Content: preparedUploads})
 	srv.nativeStateValidator = func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), "native-state-"+driver+"-"+fmt.Sprint(turn), guestfiles.Files{Backend: backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	}
@@ -363,6 +371,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		t.Logf("accepted execution=%s epoch=%d turn=%d messages=%d journal_watermark=%d", binding.GenerationID, binding.Epoch, enqueued.TurnID, len(messages), watermark)
 		if driver == "sh" && cycle == 0 {
 			verifyKhoraWorkspaceDownload(t, ctx, srv, st, controller, session.ID, leaseOwner, false)
+			verifyKhoraWorkspaceWrite(t, ctx, srv, st, backend, preparedUploads, session.ID, leaseOwner)
 		}
 	}
 	{
@@ -567,6 +576,115 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
 	}
 
+}
+
+type lostReplacementBackend struct {
+	sandbox.Processes
+	starts int
+	lose   bool
+}
+
+func (b *lostReplacementBackend) StartProcess(ctx context.Context, p sandbox.StartProcessRequest) (sandbox.ProcessStream, error) {
+	stream, err := b.Processes.StartProcess(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	for _, arg := range p.Arguments {
+		if arg == "replace" {
+			b.starts++
+			if b.lose {
+				b.lose = false
+				return lostReplacementStream{stream}, nil
+			}
+		}
+	}
+	return stream, nil
+}
+
+type lostReplacementStream struct{ sandbox.ProcessStream }
+
+func (s lostReplacementStream) Next() (sandbox.ProcessFrame, error) {
+	frame, err := s.ProcessStream.Next()
+	if err == nil && frame.Kind == "end" {
+		return sandbox.ProcessFrame{}, errors.New("injected lost completed replacement reply")
+	}
+	return frame, err
+}
+
+func verifyKhoraWorkspaceWrite(t *testing.T, ctx context.Context, srv *Server, st *store.Store, backend sandbox.Processes, content *prepared.Store, session, owner string) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPut, "/artifacts/"+session+"/nested/uploaded.txt", strings.NewReader("first upload")).WithContext(context.WithValue(ctx, userContextKey{}, "lab"))
+	response := httptest.NewRecorder()
+	srv.writeArtifact(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("Khora HTTP write: %d %s", response.Code, response.Body.String())
+	}
+	fault := &lostReplacementBackend{Processes: backend, lose: true}
+	writer := sessionfiles.Writer{Repository: st, Backend: fault, Content: content}
+	srv.SetWorkspaceWriter(writer)
+	if _, err := srv.writeWorkspaceFile(ctx, session, "nested/uploaded.txt", strings.NewReader("recovered upload"), 1024); !errors.Is(err, workspace.ErrUncertain) {
+		t.Fatalf("lost replacement reply hidden: %v", err)
+	}
+	mutations, err := st.ListUnresolvedWorkspaceMutations(ctx)
+	if err != nil || len(mutations) != 1 {
+		t.Fatalf("lost upload intent: %+v %v", mutations, err)
+	}
+	if _, err := st.EnqueueTurn(ctx, session, "must wait for upload", time.Now()); err == nil {
+		t.Fatal("turn crossed unresolved replacement")
+	}
+	file, err := writer.Recover(ctx, mutations[0].ID, owner)
+	if err != nil || file.Size != 16 {
+		t.Fatalf("replacement recovery: %+v %v", file, err)
+	}
+	if _, err := writer.Recover(ctx, mutations[0].ID, owner); err != nil {
+		t.Fatal(err)
+	}
+	if fault.starts != 1 {
+		t.Fatal("recovery blindly redispatched replacement")
+	}
+	reader, _, status, message := srv.openArtifactFile(ctx, session, "nested/uploaded.txt", accessOwner)
+	if status != 0 {
+		t.Fatalf("recovered upload read: %d %s", status, message)
+	}
+	raw, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(raw) != "recovered upload" {
+		t.Fatalf("recovered upload bytes: %q %v", raw, err)
+	}
+	fault.lose = true
+	if _, err := writer.WriteSession(ctx, session, owner, "nested/uploaded.txt", strings.NewReader("second upload"), 1024); !errors.Is(err, workspace.ErrUncertain) {
+		t.Fatalf("second lost reply: %v", err)
+	}
+	mutations, err = st.ListUnresolvedWorkspaceMutations(ctx)
+	if err != nil || len(mutations) != 1 {
+		t.Fatalf("second mutation intent: %+v %v", mutations, err)
+	}
+	environment, err := st.GetSessionEnvironment(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := guestfiles.Files{Backend: backend, Reference: sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID, Epoch: environment.Epoch}, Root: "/workspace"}
+	changed := "independent guest edit"
+	if _, err := files.ReplacePrepared(ctx, "independent-guest-edit", mutations[0].Path, int64(len(changed)), fmt.Sprintf("%x", sha256.Sum256([]byte(changed))), strings.NewReader(changed)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Recover(ctx, mutations[0].ID, owner); err == nil {
+		t.Fatal("mismatched destination was blindly accepted or overwritten")
+	}
+	remaining, err := st.ListUnresolvedWorkspaceMutations(ctx)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("verified failed replacement retained admission forever: %+v %v", remaining, err)
+	}
+	reader, _, status, message = srv.openArtifactFile(ctx, session, mutations[0].Path, accessOwner)
+	if status != 0 {
+		t.Fatalf("external edit read: %d %s", status, message)
+	}
+	raw, err = io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(raw) != changed || fault.starts != 2 {
+		t.Fatalf("failed recovery overwrote later content: %q starts=%d %v", raw, fault.starts, err)
+	}
+	srv.SetWorkspaceWriter(sessionfiles.Writer{Repository: st, Backend: backend, Content: content})
 }
 
 func verifyKhoraWorkspaceDownload(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, session, owner string, paused bool) {

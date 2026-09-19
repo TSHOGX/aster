@@ -56,6 +56,20 @@ func (s *Server) writeWorkspaceFile(ctx context.Context, sessionID, relPath stri
 	if _, err := workspace.CleanPath(relPath); err != nil {
 		return "", err
 	}
+	backend, err := s.store.SessionExecutionBackend(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	if backend == "khora" {
+		if s.workspaceWrites == nil {
+			return "", newWorkspaceWriteError(http.StatusServiceUnavailable, "workspace backend unavailable")
+		}
+		file, err := s.workspaceWrites.WriteSession(ctx, sessionID, store.GenerationLeaseOwner(s.ownerUUID), relPath, content, maxBytes)
+		return file.Path, err
+	}
+	if backend != "legacy" {
+		return "", newWorkspaceWriteError(http.StatusServiceUnavailable, "unsupported workspace backend")
+	}
 	volumeConfig, err := s.dataVolumeProvisionerConfig()
 	if err != nil {
 		return "", err

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -29,6 +30,12 @@ func (s *Store) BeginWorkspaceMutation(ctx context.Context, p workspace.Mutation
 		return err
 	}
 	defer tx.Rollback()
+	if err := beginWorkspaceMutationTx(ctx, tx, p); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func beginWorkspaceMutationTx(ctx context.Context, tx *sql.Tx, p workspace.Mutation) error {
 	var status string
 	if err := tx.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id=?`, p.SessionID).Scan(&status); err != nil {
 		return err
@@ -53,11 +60,11 @@ func (s *Store) BeginWorkspaceMutation(ctx context.Context, p workspace.Mutation
 	if busy != 0 {
 		return workspace.ErrMutationBusy
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO workspace_mutations(operation_id,session_id,owner,path,state,result,error,created_at,updated_at) VALUES(?,?,?,?,'active','{}','',?,?)`, p.ID, p.SessionID, p.Owner, p.Path, formatTime(p.CreatedAt), formatTime(p.CreatedAt))
+	_, err := tx.ExecContext(ctx, `INSERT INTO workspace_mutations(operation_id,session_id,owner,path,state,result,error,created_at,updated_at) VALUES(?,?,?,?,'active','{}','',?,?)`, p.ID, p.SessionID, p.Owner, p.Path, formatTime(p.CreatedAt), formatTime(p.CreatedAt))
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) FinishWorkspaceMutation(ctx context.Context, p workspace.Mutation) error {
@@ -85,6 +92,25 @@ func (s *Store) FinishWorkspaceMutation(ctx context.Context, p workspace.Mutatio
 			return fmt.Errorf("workspace mutation terminal outcome changed")
 		}
 		return tx.Commit()
+	}
+	var guest int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM workspace_guest_mutations WHERE operation_id=?`, p.ID).Scan(&guest); err != nil {
+		return err
+	}
+	if guest != 0 {
+		if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
+			return err
+		}
+		if p.State == "succeeded" {
+			var digest string
+			var size int64
+			if err := tx.QueryRowContext(ctx, `SELECT content_digest,content_size FROM workspace_guest_mutations WHERE operation_id=?`, p.ID).Scan(&digest, &size); err != nil {
+				return err
+			}
+			if p.File.Path != p.Path || p.File.Digest != digest || p.File.Size != size {
+				return fmt.Errorf("workspace result differs from prepared content")
+			}
+		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE workspace_mutations SET state=?,result=?,error=?,updated_at=? WHERE operation_id=? AND owner=?`, p.State, string(raw), p.Error, formatTime(time.Now().UTC()), p.ID, p.Owner)
 	if err != nil {

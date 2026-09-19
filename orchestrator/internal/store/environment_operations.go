@@ -148,6 +148,12 @@ func beginEnvironmentOperationTx(ctx context.Context, tx *sql.Tx, p execution.Op
 	if readers != 0 {
 		return execution.Operation{}, execution.ErrBusy
 	}
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM workspace_mutations WHERE session_id=? AND state IN ('active','uncertain')`, environment.SessionID).Scan(&readers); err != nil {
+		return execution.Operation{}, err
+	}
+	if readers != 0 {
+		return execution.Operation{}, execution.ErrBusy
+	}
 	var recovering int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_recoveries WHERE environment_id=? AND stage!='complete' AND operation_id!=?`, p.EnvironmentID, p.ID).Scan(&recovering); err != nil {
 		return execution.Operation{}, err

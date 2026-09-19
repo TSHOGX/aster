@@ -306,6 +306,11 @@ file separately, then uses atomic replacement with file/parent synchronization.
 A retry first checks whether the completed bytes are already restored. It neither
 overwrites the retained interrupted copy nor treats a changed snapshot as valid.
 
+`cleanup-replacement` removes only regular staging entries bearing the recorded
+upload operation key, then synchronizes their directory. The host invokes it
+only after observing the original helper's termination. It leaves the destination
+and other operations' staging entries intact.
+
 `harness-journal-replay` reads a retired partition under `/harness-bridge` during
 maintenance recovery. It refuses a live producer, missing files and symlinked
 path components. It copies the database and committed WAL into a private
