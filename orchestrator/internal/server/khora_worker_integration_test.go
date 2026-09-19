@@ -152,6 +152,33 @@ func runKhoraWorker(t *testing.T, driver string) {
 			if err := controller.ReleaseIdle(ctx, session.ID, binding.GenerationID, store.GenerationLeaseOwner(owner.UUID)); err != nil {
 				t.Fatal(err)
 			}
+			// Replay the actual historical pause before the replacement starts.
+			// Its invalidation must be settled by new epoch readiness, not ignored.
+			for paused := false; !paused; {
+				cursor, err := st.EngineCursor(ctx, identity.StoreID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				page, err := backend.Events(ctx, cursor.After, 128)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := st.CommitEngineEvents(ctx, identity.StoreID, cursor.After, page.Events); err != nil {
+					t.Fatal(err)
+				}
+				for _, event := range page.Events {
+					if event.SandboxID == binding.SandboxID && event.Kind == "paused" {
+						paused = true
+					}
+				}
+				if !paused {
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-time.After(20 * time.Millisecond):
+					}
+				}
+			}
 			binding, err = controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID))
 			if err != nil {
 				t.Fatal(err)

@@ -137,3 +137,14 @@ func (s *Store) FinishEngineResync(ctx context.Context, identity string, expecte
 	}
 	return nil
 }
+
+// A missing request has sequence -1 so a newly queued inventory request at
+// sequence zero cannot be mistaken for one covered by earlier evidence.
+func (s *Store) EnvironmentInvalidationSequence(ctx context.Context, environment string) (int64, error) {
+	var sequence int64
+	err := s.db.QueryRowContext(ctx, `SELECT event_sequence FROM environment_reconcile_requests WHERE environment_id=?`, environment).Scan(&sequence)
+	if errors.Is(err, sql.ErrNoRows) {
+		return -1, nil
+	}
+	return sequence, err
+}

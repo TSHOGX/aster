@@ -123,6 +123,57 @@ func TestAcceptedExecutionCannotOutliveEpochFenceOrEngineInvalidation(t *testing
 	}
 }
 
+func TestExecutionAcceptanceReconcilesOnlyEventsBeforeReadiness(t *testing.T) {
+	for _, change := range []string{"historical", "newer", "wrong-epoch", "new-inventory"} {
+		t.Run(change, func(t *testing.T) {
+			ctx := context.Background()
+			st, _, binding, observed := boundExecutionFixture(t)
+			if err := st.ObserveExecutionProcess(ctx, observed); err != nil {
+				t.Fatal(err)
+			}
+			if change != "new-inventory" {
+				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 0, []sandbox.Event{{ID: "created", Sequence: 1, SandboxID: binding.SandboxID, Kind: "created", Epoch: binding.Epoch}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sequence, err := st.EnvironmentInvalidationSequence(ctx, binding.EnvironmentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			observed.ReconciledEventSequence = &sequence
+			switch change {
+			case "newer":
+				if _, err := st.CommitEngineEvents(ctx, binding.StoreID, 1, []sandbox.Event{{ID: "paused", Sequence: 2, SandboxID: binding.SandboxID, Kind: "paused", Epoch: binding.Epoch}}); err != nil {
+					t.Fatal(err)
+				}
+			case "wrong-epoch":
+				observed.Epoch++
+			case "new-inventory":
+				if _, err := st.db.Exec(`INSERT INTO environment_reconcile_requests(environment_id,reason,event_sequence) VALUES(?,'inventory',0)`, binding.EnvironmentID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = st.AcceptExecutionBinding(ctx, observed)
+			if change == "historical" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := st.AssertExecutionAccepted(ctx, binding.GenerationID, binding.Owner, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("stale readiness cleared a later event or invalid binding")
+				}
+				pending, err := st.EnvironmentInvalidationSequence(ctx, binding.EnvironmentID)
+				if err != nil || pending < 0 {
+					t.Fatalf("failed acceptance lost invalidation: %d %v", pending, err)
+				}
+			}
+		})
+	}
+}
+
 func TestOpaqueExecutionRuntimeProjectionTracksAcceptanceAndInvalidation(t *testing.T) {
 	ctx := context.Background()
 	st, _, binding, observation := boundExecutionFixture(t)

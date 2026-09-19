@@ -82,4 +82,7 @@ type ObserveBindingParams struct {
 	EnvironmentFence                   int64
 	Epoch                              uint64
 	Now                                time.Time
+	// Captured before the current process handshake. Later engine events must
+	// not be cleared by evidence that predates them. Nil does not reconcile.
+	ReconciledEventSequence *int64
 }

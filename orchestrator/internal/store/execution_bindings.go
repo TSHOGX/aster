@@ -129,6 +129,14 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
 		return err
 	}
+	if p.ReconciledEventSequence != nil {
+		if *p.ReconciledEventSequence < -1 {
+			return fmt.Errorf("invalid reconciled event sequence")
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM environment_reconcile_requests WHERE event_sequence<=? AND environment_id=(SELECT environment_id FROM execution_bindings WHERE generation_id=?)`, *p.ReconciledEventSequence, p.GenerationID); err != nil {
+			return err
+		}
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
 	if err != nil {
 		return err

@@ -21,6 +21,7 @@ type AgentLauncher interface {
 	Start(context.Context, Binding, sandbox.StartProcessRequest) (AgentConnection, error)
 }
 type WorkerRepository interface {
+	EnvironmentInvalidationSequence(context.Context, string) (int64, error)
 	FindEnvironmentOperation(context.Context, string) (Operation, bool, error)
 	RenewExecutionBindingLease(context.Context, string, string, time.Duration, time.Time) error
 	GetEnvironmentBinding(context.Context, string) (Environment, error)
@@ -100,6 +101,10 @@ func (w Worker) Start(ctx context.Context, p WorkerRequest) (Binding, AgentConne
 			return binding, nil, err
 		}
 	}
+	sequence, err := w.Repository.EnvironmentInvalidationSequence(ctx, environment.ID)
+	if err != nil {
+		return binding, nil, err
+	}
 	connection, err := w.Agents.Start(agentCtx, binding, p.Process)
 	if err != nil {
 		return binding, nil, w.uncertain(ctx, operation, err)
@@ -130,7 +135,7 @@ func (w Worker) Start(ctx context.Context, p WorkerRequest) (Binding, AgentConne
 		connection.Close()
 		return binding, nil, err
 	}
-	observed := ObserveBindingParams{GenerationID: binding.GenerationID, Owner: binding.Owner, ProcessHandle: reference.Handle, EnvironmentFence: binding.EnvironmentFence, Epoch: reference.Epoch}
+	observed := ObserveBindingParams{GenerationID: binding.GenerationID, Owner: binding.Owner, ProcessHandle: reference.Handle, EnvironmentFence: binding.EnvironmentFence, Epoch: reference.Epoch, ReconciledEventSequence: &sequence}
 	if err := w.Repository.ObserveExecutionProcess(ctx, observed); err != nil {
 		connection.Close()
 		return binding, nil, err

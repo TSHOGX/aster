@@ -337,6 +337,10 @@ barrier. The worker settles the start operation, records the process observation
 and commits binding acceptance before opening dispatch. Failed readiness retains
 an uncertain start for reconciliation; detaching the carrier does not imply the
 process stopped. A second worker cannot reserve a start over an active binding.
+Before launch the worker captures the pending engine invalidation sequence.
+Successful process readiness clears only invalidations through that sequence in
+the acceptance transaction. A later event still blocks promotion, and a failed
+epoch/fence/lease check rolls back the invalidation removal with acceptance.
 
 The Khora integration profile includes a real worker turn through this path:
 keyed volume/environment provisioning, process journal handshake, accepted binding,
