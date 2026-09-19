@@ -10,24 +10,30 @@ var ErrDenied = errors.New("egress request is not authorized")
 var ErrRequestConflict = errors.New("egress request identity reused with different intent")
 
 type AuthorizationRequest struct {
-	// Destination is supplied by trusted ingress from the accepted socket's
-	// original destination, never from a guest header or source IP.
-	BackendID                          string
-	Destination                        netip.AddrPort
-	ServiceID, Operation, RequestID    string
-	Model, Database, Bucket, ObjectKey string
-	Now                                time.Time
+	// Destination comes from trusted ingress, never a guest header or source IP.
+	BackendID   string         `json:"backend_id"`
+	Destination netip.AddrPort `json:"destination"`
+	ServiceID   string         `json:"service_id"`
+	Operation   string         `json:"operation"`
+	RequestID   string         `json:"request_id"`
+	Model       string         `json:"model,omitempty"`
+	Database    string         `json:"database,omitempty"`
+	Bucket      string         `json:"bucket,omitempty"`
+	ObjectKey   string         `json:"object_key,omitempty"`
+	Now         time.Time      `json:"-"`
 }
 type Authorization struct {
 	RequestContext
-	PolicyDigest string
-	ExpiresAt    time.Time
-	Service      Service
+	PolicyDigest string    `json:"policy_digest"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	Service      Service   `json:"service"`
 }
 type RequestFinish struct {
-	RequestID, BackendID, Outcome string
-	Bytes                         int64
-	Now                           time.Time
+	RequestID string    `json:"request_id"`
+	BackendID string    `json:"backend_id"`
+	Outcome   string    `json:"outcome"`
+	Bytes     int64     `json:"bytes"`
+	Now       time.Time `json:"-"`
 }
 
 func AllowsResource(service Service, request AuthorizationRequest) bool {

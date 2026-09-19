@@ -89,10 +89,17 @@ type Grant struct {
 }
 
 type RequestContext struct {
-	SessionID, UserID                                                 string
-	RequestID, GrantID, BindingID, BackendID, GenerationID, ServiceID string
-	TurnID                                                            int64
-	Epoch, BindingRevision                                            uint64
+	SessionID       string `json:"session_id"`
+	UserID          string `json:"user_id"`
+	RequestID       string `json:"request_id"`
+	GrantID         string `json:"grant_id"`
+	BindingID       string `json:"binding_id"`
+	BackendID       string `json:"backend_id"`
+	GenerationID    string `json:"generation_id"`
+	ServiceID       string `json:"service_id"`
+	TurnID          int64  `json:"turn_id"`
+	Epoch           uint64 `json:"epoch"`
+	BindingRevision uint64 `json:"binding_revision"`
 }
 
 type Gateway struct {

@@ -21,6 +21,7 @@ ambiguities. Change the relevant reference when behavior changes.
 | [Runtime synchronization](runtime-state-synchronization.md) | Revisioned UI projection |
 | [Memory and knowledge](agents-kb.md) | Optional extraction subsystem, KB approval and external evaluation boundary |
 | [Notifications](notifications.md) | Persisted notifications and delivery |
+| [Gateway contract](gateway-contract.md) | Trusted ingress, Unix authorization and flow revocation primitives |
 | [Security](security.md) | Isolation, identity, network and credential boundaries |
 | [Database operations](database.md) | Explicit migrations, local catalogs and legacy split tooling |
 | [Verification](verification.md) | Source checks, release artifact tests and local acceptance |
