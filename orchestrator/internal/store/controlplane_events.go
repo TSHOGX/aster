@@ -247,5 +247,16 @@ func appendOneEventTx(ctx context.Context, tx *sql.Tx, p AppendEventParams) (int
 			return 0, err
 		}
 	}
+	var bound int
+	if p.OutputSequence != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings WHERE generation_id=?`, p.GenerationID).Scan(&bound); err != nil {
+			return 0, err
+		}
+		if bound != 0 {
+			if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
+				return 0, err
+			}
+		}
+	}
 	return appendEventTx(ctx, tx, p)
 }

@@ -63,3 +63,23 @@ type OperationOutcome struct {
 	Epoch                       uint64
 	Now                         time.Time
 }
+
+type Binding struct {
+	GenerationID, SessionID, EnvironmentID, StoreID, SandboxID, ProcessHandle, Owner, Driver string
+	Epoch                                                                                    uint64
+	EnvironmentFence                                                                         int64
+	State, SpecDigest, ManifestDigest                                                        string
+	ProtocolVersion                                                                          int
+	TurnInputSchema                                                                          string
+}
+type ReserveBindingParams struct {
+	GenerationID, SessionID, EnvironmentID, Owner, Driver, SpecDigest, ManifestDigest string
+	LeaseTTL                                                                          time.Duration
+	Now                                                                               time.Time
+}
+type ObserveBindingParams struct {
+	GenerationID, Owner, ProcessHandle string
+	EnvironmentFence                   int64
+	Epoch                              uint64
+	Now                                time.Time
+}

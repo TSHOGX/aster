@@ -949,6 +949,15 @@ func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, 
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var bound int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings WHERE generation_id=?`, p.GenerationID).Scan(&bound); err != nil {
+		return 0, err
+	}
+	if bound != 0 {
+		if err := acceptedExecutionTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
+			return 0, err
+		}
+	}
 	var pending int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM bridge_ingress i
       LEFT JOIN bridge_projections bp ON bp.generation_id=i.generation_id AND bp.turn_id=i.turn_id AND bp.attempt=i.attempt

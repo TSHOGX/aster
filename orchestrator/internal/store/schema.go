@@ -289,6 +289,25 @@ CREATE TABLE IF NOT EXISTS sandbox_environments (
   FOREIGN KEY(backend_name,store_id) REFERENCES sandbox_backends(name,store_id),
   UNIQUE(store_id,sandbox_id)
 );
+CREATE TABLE IF NOT EXISTS execution_bindings (
+  generation_id TEXT PRIMARY KEY REFERENCES runtime_generations(generation_id),
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
+  store_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  process_handle TEXT NOT NULL DEFAULT '',
+  epoch INTEGER NOT NULL CHECK(epoch>0),
+  environment_fence INTEGER NOT NULL,
+  owner TEXT NOT NULL,
+  driver_id TEXT NOT NULL CHECK(driver_id IN ('pi','sh')),
+  state TEXT NOT NULL CHECK(state IN ('starting','accepted','retired')),
+  spec_digest TEXT NOT NULL,
+  manifest_digest TEXT NOT NULL,
+  protocol_version INTEGER NOT NULL,
+  turn_input_schema TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS execution_binding_process_uq ON execution_bindings(store_id,process_handle) WHERE process_handle!='';
+
 CREATE TABLE IF NOT EXISTS engine_event_cursors (
   store_id TEXT PRIMARY KEY,
   after_sequence INTEGER NOT NULL,
@@ -680,6 +699,10 @@ CREATE TRIGGER IF NOT EXISTS workspace_fence_session_transition BEFORE UPDATE OF
 WHEN (NEW.status!=OLD.status OR NEW.active_generation_id IS NOT OLD.active_generation_id) AND EXISTS(
  SELECT 1 FROM workspace_mutations WHERE session_id=NEW.id AND state IN ('active','uncertain'))
 BEGIN SELECT RAISE(ABORT,'workspace mutation in progress'); END;
+
+CREATE TRIGGER IF NOT EXISTS retire_execution_binding AFTER UPDATE OF status ON runtime_generations
+WHEN NEW.status IN ('failed','destroyed')
+BEGIN UPDATE execution_bindings SET state='retired' WHERE generation_id=NEW.generation_id; END;
 
 CREATE TABLE IF NOT EXISTS events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT,

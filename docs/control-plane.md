@@ -278,3 +278,20 @@ creates a new archive reference; unchanged bytes reuse the existing verified
 archive. Older references remain readable. The local session enumerator is a
 source adapter during migration; memory/evolve schemas and algorithms are
 unchanged and require no engine client.
+
+## Opaque execution bindings
+
+The store can reserve a generation against an observed retained environment
+without creating legacy network profiles, runtime-resource proofs or source-IP
+contexts. The binding pins backend store identity, sandbox, environment fence,
+placement epoch, driver/configuration manifests and the observed process handle.
+Acceptance requires that the environment still matches, its operation lane is
+settled and no engine event has requested reconciliation.
+
+The bound bridge store uses that acceptance to claim, replay, resume and start
+turns with the existing public turn/message identities. A changed epoch, newer
+environment operation or pending reconciliation refuses claims and live output.
+Generation retirement revokes binding acceptance. Gateway authority is separate;
+this path does not create a model source-IP context. The legacy server lifecycle
+continues to run until the new worker is wired into HTTP and scheduler entry
+points.
