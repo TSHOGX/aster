@@ -456,7 +456,8 @@ class StdioBridgeClient(BridgeClient):
         self.last_output_sequence_by_turn = {}
         self.leased_turn_id = None
         self.journal = harness_stream.Journal(root, generation_id)
-        self.channel = harness_stream.StdioChannel(self.journal, sys.stdin.buffer, sys.stdout.buffer)
+        self.channel = harness_stream.StdioChannel(self.journal, sys.stdin.buffer, sys.stdout.buffer,
+                                                 {"protocol_version": 2, "driver_id": driver_id, "turn_input_schema": "RunTurn"})
 
     def acquire_producer_lock(self):
         pass  # Journal acquired the execution's producer lock before reading stdin.

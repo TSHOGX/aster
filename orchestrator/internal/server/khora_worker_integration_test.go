@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -132,8 +133,14 @@ func runKhoraWorker(t *testing.T, driver string) {
 	}
 	launcher := agentbridge.Launcher{Backend: backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, LeaseTTL: time.Minute, AfterCommit: srv.handleBridgeCommittedEnvelope, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	plan := execution.LaunchPlan{TemplateID: template, SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Mounts: mounts, Network: network, Environment: processEnvironment}
-	controller := &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
+	repository := &acceptanceFaultRepository{Store: st, fail: driver == "sh"}
+	controller := &execution.Controller{Repository: repository, Backend: backend, Agents: launcher, Plans: integrationLaunchPlan{plan}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
 	defer controller.Close()
+	if driver == "sh" {
+		if _, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID)); err == nil {
+			t.Fatal("injected acceptance failure ignored")
+		}
+	}
 	binding, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, store.GenerationLeaseOwner(owner.UUID))
 	if err != nil {
 		t.Fatal(err)
@@ -238,6 +245,19 @@ func runKhoraWorker(t *testing.T, driver string) {
 }
 
 type integrationLaunchPlan struct{ plan execution.LaunchPlan }
+
+type acceptanceFaultRepository struct {
+	*store.Store
+	fail bool
+}
+
+func (r *acceptanceFaultRepository) AcceptExecutionBinding(ctx context.Context, p execution.ObserveBindingParams) error {
+	if r.fail {
+		r.fail = false
+		return errors.New("injected failure after protocol readiness before acceptance")
+	}
+	return r.Store.AcceptExecutionBinding(ctx, p)
+}
 
 func (p integrationLaunchPlan) Plan(context.Context, execution.Session, string) (execution.LaunchPlan, error) {
 	return p.plan, nil

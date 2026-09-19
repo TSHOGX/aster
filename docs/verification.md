@@ -150,3 +150,6 @@ the execution controller to pause after the first turn and run a second turn in
 the same retained sandbox at the next epoch. The Pi case checks that its native
 session ID and path survive the transition. This is driver and
 control-plane acceptance, not production model gateway or entitlement acceptance.
+The shell case also injects a failure after protocol readiness but before binding
+acceptance, then retries the same process key and recovers readiness after its
+original hello has been acknowledged.

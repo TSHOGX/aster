@@ -4,6 +4,7 @@ package agentbridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -43,6 +44,9 @@ func (l Launcher) Start(ctx context.Context, binding execution.Binding, request 
 	}
 	connection := &connection{ready: make(chan error, 1), done: make(chan struct{}), activate: make(chan struct{}), cancel: cancel, carrier: carrier}
 	processor := &bridge.Processor{Store: l.Store, Owner: binding.Owner, LeaseTTL: l.LeaseTTL, AfterCommit: l.AfterCommit, BeforeComplete: l.BeforeComplete, AfterEventCommit: l.AfterEventCommit}
+	carrier.OnSynchronize = func(ctx context.Context, payload json.RawMessage) error {
+		return processor.AcceptAttachment(ctx, bridge.Scope{SessionID: binding.SessionID, GenerationID: binding.GenerationID}, payload)
+	}
 	processor.ProbeHandler = func(ctx context.Context, _ bridge.Envelope) error {
 		connection.readyOnce.Do(func() { connection.ready <- nil })
 		select {

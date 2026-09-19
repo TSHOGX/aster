@@ -21,18 +21,22 @@ type StreamReceipts interface {
 }
 
 type ProcessTransport struct {
-	backend   sandbox.Processes
-	stream    sandbox.ProcessStream
-	reference sandbox.ProcessReference
-	scope     Scope
-	receipts  StreamReceipts
-	decoder   StreamDecoder
-	frames    []StreamFrame
-	pending   *StreamFrame
-	watermark uint64
-	syncID    string
-	synced    bool
-	sendMu    sync.Mutex
+	// OnSynchronize validates fresh driver evidence before replay is delivered.
+	// It runs for every attachment/reset, even when the original hello has
+	// already been acknowledged and collected from the guest journal.
+	OnSynchronize func(context.Context, json.RawMessage) error
+	backend       sandbox.Processes
+	stream        sandbox.ProcessStream
+	reference     sandbox.ProcessReference
+	scope         Scope
+	receipts      StreamReceipts
+	decoder       StreamDecoder
+	frames        []StreamFrame
+	pending       *StreamFrame
+	watermark     uint64
+	syncID        string
+	synced        bool
+	sendMu        sync.Mutex
 }
 
 // NewProcessTransport always initiates a journal handshake. The process replay
@@ -112,6 +116,11 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 			}
 			if frame.After > t.watermark || frame.Head < t.watermark {
 				return nil, protocolErrorf("host watermark is outside retained guest journal")
+			}
+			if t.OnSynchronize != nil {
+				if err := t.OnSynchronize(ctx, frame.Payload); err != nil {
+					return nil, err
+				}
 			}
 			t.synced = true
 		case "record":

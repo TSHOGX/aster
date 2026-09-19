@@ -63,6 +63,19 @@ func (p *Processor) MarkReady(sessionID, generationID string) {
 	})
 }
 
+// AcceptAttachment restores only protocol negotiation. Journal replay and the
+// readiness probe still precede dispatch, including after a lost startup reply.
+func (p *Processor) AcceptAttachment(ctx context.Context, scope Scope, payload json.RawMessage) error {
+	if err := scope.validate(); err != nil {
+		return err
+	}
+	if _, _, err := p.validateHello(ctx, Envelope{SessionID: scope.SessionID, GenerationID: scope.GenerationID, Payload: payload}); err != nil {
+		return err
+	}
+	p.setState(stateKey(scope.SessionID, scope.GenerationID), func(state bridgeState) bridgeState { state.helloSeen = true; return state })
+	return nil
+}
+
 type grantPayload struct {
 	TurnID          int64             `json:"turn_id"`
 	Sequence        int64             `json:"sequence"`

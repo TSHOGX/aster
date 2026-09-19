@@ -193,6 +193,7 @@ class StdioControlContractTest(unittest.TestCase):
                 channel = stream.StdioChannel.__new__(stream.StdioChannel)
                 channel.journal = journal
                 channel.destination = io.BytesIO()
+                channel.protocol = {'protocol_version': 2, 'driver_id': 'sh', 'turn_input_schema': 'RunTurn'}
                 channel.output_lock = threading.RLock()
                 channel.condition = threading.Condition()
                 channel.commands = {}
@@ -202,6 +203,7 @@ class StdioControlContractTest(unittest.TestCase):
                 frames = stream.Decoder().feed(channel.destination.getvalue())
                 self.assertEqual([frame['kind'] for frame in frames], ['state', 'record'])
                 self.assertEqual(frames[0]['command_id'], 'sync-1')
+                self.assertEqual(frames[0]['payload'], channel.protocol)
                 self.assertEqual(len(frames[1]['envelope']['payload']['payload']['line']), 256 << 10)
                 command = {'version': 1, 'kind': 'command', 'execution': 'execution', 'command_id': 'steer-1',
                            'envelope': {'type': 'turn_control', 'turn_id': 3, 'payload': {'command': 'steer', 'message': 'synthetic'}}}

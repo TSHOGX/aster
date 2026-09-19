@@ -236,10 +236,11 @@ class StdioChannel:
     A sync response precedes replay under the same output lock. Records emitted
     while detached remain in the journal and are recovered on the next sync.
     """
-    def __init__(self, journal, source, destination):
+    def __init__(self, journal, source, destination, protocol):
         self.journal = journal
         self.source = source
         self.destination = destination
+        self.protocol = dict(protocol)
         self.output_lock = threading.RLock()
         self.condition = threading.Condition()
         self.error = None
@@ -270,7 +271,8 @@ class StdioChannel:
                 head, acknowledged = self.journal.positions()
                 self.journal.replay(after, 1)  # Validate even an empty window.
                 self._write({'version': VERSION, 'kind': 'state', 'execution': self.journal.execution,
-                             'command_id': frame.get('command_id', ''), 'after': acknowledged, 'head': head})
+                             'command_id': frame.get('command_id', ''), 'after': acknowledged, 'head': head,
+                             'payload': self.protocol})
                 while after < head:
                     records = self.journal.replay(after)
                     if not records:

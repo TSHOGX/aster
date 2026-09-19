@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"harness-platform/orchestrator/internal/sandbox"
@@ -18,6 +19,7 @@ type journalProcess struct {
 	failAck        bool
 	handshakeFirst bool
 	closed         bool
+	protocol       json.RawMessage
 }
 
 func (p *journalProcess) SendProcessInput(_ context.Context, _ sandbox.ProcessReference, data []byte) error {
@@ -30,7 +32,7 @@ func (p *journalProcess) SendProcessInput(_ context.Context, _ sandbox.ProcessRe
 		switch frame.Kind {
 		case "sync":
 			p.handshakeFirst = true
-			p.enqueue(StreamFrame{Version: 1, Kind: "state", Execution: frame.Execution, CommandID: frame.CommandID, After: 0, Head: uint64(len(p.records))})
+			p.enqueue(StreamFrame{Version: 1, Kind: "state", Execution: frame.Execution, CommandID: frame.CommandID, After: 0, Head: uint64(len(p.records)), Payload: p.protocol})
 			for _, record := range p.records {
 				if record.Sequence > frame.After {
 					p.enqueue(record)
@@ -58,6 +60,53 @@ func (p *journalProcess) Next() (sandbox.ProcessFrame, error) {
 	return frame, nil
 }
 func (p *journalProcess) Close() error { p.closed = true; return nil }
+
+func TestProcessCarrierAttachmentNegotiatesAfterHelloWasCollected(t *testing.T) {
+	for _, driver := range []string{"recorded", "wrong-driver"} {
+		t.Run(driver, func(t *testing.T) {
+			ctx := context.Background()
+			session := "attachment-retry"
+			st, allocation, owner, _ := setupBridgeRunningTurn(t, ctx, session)
+			scope := Scope{SessionID: session, GenerationID: allocation.GenerationID}
+			reference := sandbox.ProcessReference{StoreID: "backend", SandboxID: "sandbox", Handle: "process", Epoch: 3}
+			if err := st.BindBridgeStream(ctx, reference.StoreID, session, allocation.GenerationID, reference.Handle, reference.Epoch); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.CommitBridgeStreamReceipt(ctx, reference.StoreID, allocation.GenerationID, 1, strings.Repeat("a", 64)); err != nil {
+				t.Fatal(err)
+			}
+			evidence, err := st.BridgeProtocolEvidence(ctx, session, allocation.GenerationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := evidence.DriverID
+			if driver != "recorded" {
+				selected = driver
+			}
+			protocol, _ := json.Marshal(helloPayload{ProtocolVersion: 2, DriverID: selected, TurnInputSchema: "RunTurn"})
+			probe := Envelope{MessageID: "probe", RequestID: "probe", Type: TypeProbeNetwork, SessionID: session, GenerationID: allocation.GenerationID}
+			peer := &journalProcess{protocol: protocol, records: []StreamFrame{{Sequence: 1}, {Version: 1, Kind: "record", Execution: allocation.GenerationID, Sequence: 2, Envelope: &probe}}}
+			carrier, err := NewProcessTransport(ctx, peer, peer, reference, scope, st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			processor := &Processor{Store: st, Owner: owner}
+			probed := false
+			processor.ProbeHandler = func(context.Context, Envelope) error { probed = true; return nil }
+			carrier.OnSynchronize = func(ctx context.Context, payload json.RawMessage) error {
+				return processor.AcceptAttachment(ctx, scope, payload)
+			}
+			err = processor.Process(ctx, scope, carrier)
+			if driver == "recorded" {
+				if err != nil || !probed {
+					t.Fatalf("collected hello prevented resumed readiness: probed=%t err=%v", probed, err)
+				}
+			} else if err == nil || probed {
+				t.Fatalf("foreign driver reached replay/probe: %v", err)
+			}
+		})
+	}
+}
 
 func TestProcessCarrierHandshakeRecoversBeyondTransportTail(t *testing.T) {
 	ctx := context.Background()

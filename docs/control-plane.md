@@ -205,6 +205,10 @@ tests cover split boundaries, Unicode, control characters and integer precision.
 Stream positions belong to an execution journal independently of Khora's process
 cursor. The framing contract includes an unconditional sync/state exchange for
 every attachment; an engine gap flag cannot replace that exchange.
+The state response also carries the driver's protocol version, driver ID and
+input schema. The host validates them against the recorded execution before
+delivering replay. This allows readiness retries after the original `hello` was
+acknowledged and collected, without treating attachment itself as ready state.
 
 The guest journal uses SQLite WAL with FULL synchronization and one producer lock
 per execution. It commits records before returning them for publication, retains
