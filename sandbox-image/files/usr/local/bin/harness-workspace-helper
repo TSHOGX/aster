@@ -6,13 +6,13 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
-from harness_files import ALLOWED_ROOTS, open_root, replace, read_range, file_digest
+from harness_files import ALLOWED_ROOTS, open_root, replace, read_range, file_digest, metadata
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', choices=sorted(ALLOWED_ROOTS), required=True)
-    parser.add_argument('--operation', choices=('replace', 'read', 'sync'), required=True)
+    parser.add_argument('--operation', choices=('replace', 'read', 'sync', 'stat'), required=True)
     parser.add_argument('--path', required=True)
     parser.add_argument('--size', type=int)
     parser.add_argument('--sha256')
@@ -24,6 +24,8 @@ def main():
     try:
         if args.operation == 'replace':
             result = replace(root, args.path, sys.stdin.buffer, args.size, args.sha256, args.key)
+        elif args.operation == 'stat':
+            result = metadata(root, args.path)
         elif args.operation == 'sync':
             result = file_digest(root, args.path, sync=True)
         else:

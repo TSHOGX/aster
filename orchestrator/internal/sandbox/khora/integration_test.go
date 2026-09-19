@@ -4,6 +4,8 @@ package khora
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/sandbox"
+	guestfiles "harness-platform/orchestrator/internal/workspace/guest"
 )
 
 func TestKhoraTemplateShellAndNativeHistory(t *testing.T) {
@@ -172,6 +175,24 @@ finally:os.close(root)
 `)
 	if !strings.Contains(confined, "workspace-helper-ok") {
 		t.Fatalf("guest helper failed: %s", confined)
+	}
+	remote := guestfiles.Files{Backend: backend, Reference: observed.Reference, Root: "/workspace"}
+	content := "streamed remote replacement"
+	digest := sha256.Sum256([]byte(content))
+	if _, err := remote.ReplacePrepared(ctx, "remote-replace", "remote/file.txt", int64(len(content)), hex.EncodeToString(digest[:]), strings.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+	reader, metadata, err := remote.Open(ctx, "remote/file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.Seek(9, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	read, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(read) != content[9:] || metadata.Size != int64(len(content)) {
+		t.Fatalf("remote range: %s %+v %v", read, metadata, err)
 	}
 	// Exercise the real pinned Pi SessionManager and RPC selector without model
 	// traffic; gateway credential/protocol acceptance remains a separate gate.

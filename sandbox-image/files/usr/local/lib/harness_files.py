@@ -195,3 +195,16 @@ def native_state_barrier(path, root='/root/.pi/agent/sessions'):
         return file_digest(descriptor, relative, sync=True)
     finally:
         os.close(descriptor)
+
+
+def metadata(root, name):
+    parent, leaf = parent_fd(root, name)
+    try:
+        descriptor = regular_fd(parent, leaf)
+        try:
+            info = os.fstat(descriptor)
+            return {'path': name, 'size': info.st_size, 'modified_ns': info.st_mtime_ns}
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent)

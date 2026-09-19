@@ -184,3 +184,13 @@ frames. Reconnect preserves the transport cursor and gap/reset markers. Closing
 a subscription detaches it; interrupt, terminate and kill are separate explicit
 operations addressed to the durable handle. Inputs are sent once, leaving command
 identity and retry after partial delivery to the application bridge carrier.
+
+`internal/workspace/guest` invokes the confined helper through the sandbox process
+port. Prepared replacements carry the persisted operation key, byte count and
+SHA-256. The adapter never retries ambiguous input or output; it requests explicit
+helper termination and returns an uncertain outcome for the application to
+reconcile. Reads use bounded range processes and require the expected byte count,
+so a short replay tail or explicit output gap cannot be returned as complete file
+content. These operations require a live accepted placement; maintenance activation
+and durable mutation admission belong to the execution/workspace application
+services. The existing HTTP workspace path still selects the local adapter.
