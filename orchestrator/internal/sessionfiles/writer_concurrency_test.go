@@ -50,6 +50,8 @@ func (r *uploadRepository) FinishWorkspaceMutation(_ context.Context, p workspac
 
 type uploadContent struct{}
 
+func (uploadContent) Hold(context.Context) (func(), error) { return func() {}, nil }
+
 func (uploadContent) Prepare(context.Context, io.Reader, int64) (workspace.PreparedContent, error) {
 	return workspace.PreparedContent{Digest: strings.Repeat("a", 64), Size: 1}, nil
 }

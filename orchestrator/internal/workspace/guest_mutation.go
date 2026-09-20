@@ -11,6 +11,8 @@ type PreparedContent struct {
 	Size   int64
 }
 type PreparedStore interface {
+	// Hold fences reclamation until prepared content is durably referenced.
+	Hold(context.Context) (func(), error)
 	Prepare(context.Context, io.Reader, int64) (PreparedContent, error)
 	Open(context.Context, PreparedContent) (io.ReadCloser, error)
 }

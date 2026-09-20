@@ -57,6 +57,15 @@ func (c *Controller) EnsureWorkspace(ctx context.Context, sessionID, owner strin
 	if environment.ObservedState == "paused" {
 		return nil
 	}
+	if environment.ObservedState == "unknown" {
+		observed, err := InspectEnvironment(ctx, c.Repository, c.Backend, environment.ID, owner)
+		if err != nil {
+			return err
+		}
+		if observed.State == "paused" {
+			return nil
+		}
+	}
 	op, err := c.Repository.BeginWorkspaceProvisionPause(ctx, environment.ID, owner)
 	if err != nil {
 		return err

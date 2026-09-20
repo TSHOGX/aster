@@ -78,6 +78,11 @@ func (w *Writer) WriteSession(ctx context.Context, session, owner, path string, 
 	if _, err := workspace.CleanPath(path); err != nil {
 		return workspace.File{}, err
 	}
+	releaseContent, err := w.Content.Hold(ctx)
+	if err != nil {
+		return workspace.File{}, err
+	}
+	defer releaseContent()
 	content, err := w.Content.Prepare(ctx, source, limit)
 	if err != nil {
 		return workspace.File{}, err
@@ -96,6 +101,8 @@ func (w *Writer) WriteSession(ctx context.Context, session, owner, path string, 
 	if err != nil {
 		return workspace.File{}, err
 	}
+	// The committed mutation is now the durable reference protecting recovery.
+	releaseContent()
 	return w.recoverLocked(ctx, mutation.ID, owner)
 }
 func (w *Writer) Recover(ctx context.Context, id, owner string) (workspace.File, error) {

@@ -43,6 +43,7 @@ type Runtime struct {
 	Inventory    sessionfiles.Scanner
 	Reconciler   *execution.Reconciler
 	EngineEvents *execution.EventReconciler
+	Prepared     *prepared.Collector
 	ctx          context.Context
 	cancel       context.CancelFunc
 	options      Options
@@ -102,7 +103,7 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	app.SetNativeStateValidator(func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), fmt.Sprintf("native-state-%s-%d", input.Evidence.GenerationID, turn), guest.Files{Backend: p.Backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	})
-	return &Runtime{EngineEvents: &execution.EventReconciler{StoreID: identity.StoreID, Owner: owner, Source: p.Backend, Repository: st}, Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
+	return &Runtime{Prepared: &prepared.Collector{Store: content, Repository: st, Owner: owner}, EngineEvents: &execution.EventReconciler{StoreID: identity.StoreID, Owner: owner, Source: p.Backend, Repository: st}, Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
@@ -116,7 +117,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
-	results := make(chan error, 3)
+	results := make(chan error, 4)
 	go func() { results <- r.Reconciler.Run(r.ctx) }()
 	go func() {
 		results <- r.Inventory.Run(r.ctx, r.options.InventoryInterval, r.options.ActionTimeout, func(session string, err error) {
@@ -132,9 +133,16 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 		})
 	}()
+	go func() {
+		results <- r.Prepared.Run(r.ctx, r.options.InventoryInterval, r.options.ActionTimeout, func(err error) {
+			if r.options.OnError != nil {
+				r.options.OnError("prepared-content", err)
+			}
+		})
+	}()
 	err := <-results
 	r.cancel()
-	second, third := <-results, <-results
-	return errors.Join(err, second, third)
+	second, third, fourth := <-results, <-results, <-results
+	return errors.Join(err, second, third, fourth)
 }
 func (r *Runtime) Close() error { r.cancel(); return r.Controller.Close() }

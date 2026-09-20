@@ -458,7 +458,8 @@ authorize gateway service routes by itself.
 controller, native validator/restorer, shared workspace writer, inventory scanner
 and reconciliation workers for a server. Backend, gateway revocation ports,
 product owner, prepared-content root and service/capacity bounds are explicit
-inputs. Its background runtime runs inventory, engine events and reconciliation together and
+inputs. Its background runtime runs inventory, engine events, prepared-content collection
+and reconciliation together and
 cancels both on shutdown or a fatal worker exit. The server exposes application
 projection callbacks instead of constructing engine clients itself.
 
@@ -751,3 +752,28 @@ retries unfinished requests under the current product owner; the legacy deletion
 store entry point refuses Khora sessions. See
 [retirement semantics](session-lifecycle.md#retained-session-retirement) for HTTP
 responses, retry behavior and retained trace obligations.
+
+## Prepared upload reclamation
+
+The retained runtime collects prepared upload blobs independently of workspace
+files. Each upload holds a shared kernel lock on `.prepared.lock` from preparation
+until its mutation record commits (or preparation/admission fails). The collector
+requires the exclusive lock before checking references or deleting files. The
+lock spans store instances and processes and is released automatically on crash;
+a timeout never revokes a live preparation.
+
+The collector visits at most 128 directory entries per tick using the inventory
+interval and action timeout. Active or uncertain mutations and any unfinished
+workspace maintenance keep their content digest referenced. Terminal operations
+retain their historical digest/size records while unreferenced bytes can be
+removed. Orphaned `.upload-*` temporary files can be removed once the exclusive
+lock proves no preparation is in progress. The collector rechecks the product
+owner and durable reference for each candidate, unlinks relative to the opened
+prepared directory, and syncs that directory. Replaced roots, symlinks,
+directories and unrecognized names are not collected.
+
+Collection does not remove workspace content or engine volumes. Re-uploading the
+same bytes after collection creates the prepared blob again. A collector timeout
+or reference-query failure leaves the affected data in place for a later sweep.
+An unknown pre-turn environment is freshly inspected before another upload, so
+late maintenance events cannot cause replay of its obsolete provisioning pause.

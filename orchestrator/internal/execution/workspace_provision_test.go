@@ -60,6 +60,38 @@ func TestWorkspaceProvisioningRejectsStaleOwnerBeforeAllocatingStorage(t *testin
 	}
 }
 
+func TestWorkspaceProvisioningInspectsAfterLaterMaintenanceInvalidation(t *testing.T) {
+	ctx := context.Background()
+	controller, st, backend, launcher, owner := controllerFixture(t)
+	if err := controller.EnsureWorkspace(ctx, "session", owner, 2); err != nil {
+		t.Fatal(err)
+	}
+	e, err := st.GetSessionEnvironment(ctx, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A later completed maintenance activation advanced both the placement and
+	// product fence. The initial provision-pause intent must never be replayed.
+	backend.current.Epoch++
+	backend.current.MutationRevision = "later-paused-revision"
+	if _, err := st.DBForTest().Exec(`UPDATE sandbox_environments SET epoch=?,mutation_revision=?,fence=fence+2,observed_state='paused' WHERE environment_id=?`, backend.current.Epoch, backend.current.MutationRevision, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CommitEngineEvents(ctx, e.StoreID, owner, 0, []sandbox.Event{{ID: "late-maintenance", Sequence: 1, SandboxID: e.SandboxID, Epoch: backend.current.Epoch, Kind: "paused"}}); err != nil {
+		t.Fatal(err)
+	}
+	calls := backend.calls
+	if err := controller.EnsureWorkspace(ctx, "session", owner, 2); err != nil {
+		t.Fatal(err)
+	}
+	if backend.calls != calls || len(launcher.requests) != 0 {
+		t.Fatal("workspace revalidation mutated lifecycle or started an agent")
+	}
+	if current, err := st.GetSessionEnvironment(ctx, "session"); err != nil || current.ObservedState != "paused" || current.Epoch != backend.current.Epoch {
+		t.Fatalf("workspace inspection failed to settle current state: %+v %v", current, err)
+	}
+}
+
 func TestWorkspaceProvisioningHonorsActiveSessionLimit(t *testing.T) {
 	ctx := context.Background()
 	controller, st, _, _, owner := controllerFixture(t)

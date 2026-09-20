@@ -159,6 +159,8 @@ func TestPausedWorkspaceResumeFailurePausesBeforeReleasingMutation(t *testing.T)
 
 type unreadablePreparation struct{}
 
+func (unreadablePreparation) Hold(context.Context) (func(), error) { return func() {}, nil }
+
 func (unreadablePreparation) Prepare(context.Context, io.Reader, int64) (workspace.PreparedContent, error) {
 	return workspace.PreparedContent{Digest: strings.Repeat("a", 64), Size: 1}, nil
 }

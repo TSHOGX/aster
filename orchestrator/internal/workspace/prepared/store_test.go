@@ -65,7 +65,7 @@ func TestPreparedUploadRejectsSymlinkAndCanceledPreparation(t *testing.T) {
 		t.Fatalf("canceled preparation persisted: %v", err)
 	}
 	entries, err := os.ReadDir(root)
-	if err != nil || len(entries) != 0 {
+	if err != nil || (len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != lockName)) {
 		t.Fatalf("partial preparation retained: %v %v", entries, err)
 	}
 	content, err := st.Prepare(context.Background(), strings.NewReader("body"), 8)

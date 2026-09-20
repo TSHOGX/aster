@@ -4,8 +4,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -202,6 +204,33 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	code, body = request("PUT", "/artifacts/"+session.ID+"/daemon.txt", "daemon-retained-ok\n")
 	if code != 200 {
 		t.Fatalf("upload: %d %s", code, body)
+	}
+	preparedPath := filepath.Join(root, "prepared", fmt.Sprintf("%x", sha256.Sum256([]byte("daemon-retained-ok\n"))))
+	waitCollected := func() {
+		for {
+			_, err := os.Stat(preparedPath)
+			if errors.Is(err, os.ErrNotExist) {
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
+	waitCollected()
+	code, body = request("PUT", "/artifacts/"+session.ID+"/same-content.txt", "daemon-retained-ok\n")
+	if code != http.StatusOK {
+		t.Fatalf("re-upload collected content: %d %s", code, body)
+	}
+	waitCollected()
+	code, body = request("GET", "/artifacts/"+session.ID+"/same-content.txt", "")
+	if code != http.StatusOK || string(body) != "daemon-retained-ok\n" {
+		t.Fatalf("collection changed durable workspace: %d %s", code, body)
 	}
 	reader, err := store.OpenForMaintenance(ctx, dbPath)
 	if err != nil {

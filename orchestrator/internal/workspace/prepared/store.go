@@ -14,7 +14,10 @@ import (
 	"harness-platform/orchestrator/internal/workspace"
 )
 
-type Store struct{ root string }
+type Store struct {
+	root     string
+	identity os.FileInfo
+}
 
 func New(root string) (*Store, error) {
 	if !filepath.IsAbs(root) {
@@ -30,13 +33,18 @@ func New(root string) (*Store, error) {
 	if !info.IsDir() {
 		return nil, workspace.ErrForbidden
 	}
-	return &Store{root: root}, nil
+	return &Store{root: root, identity: info}, nil
 }
 func (s *Store) Prepare(ctx context.Context, source io.Reader, limit int64) (workspace.PreparedContent, error) {
 	var result workspace.PreparedContent
 	if s == nil || source == nil || limit < 0 || limit >= 1<<63-1 {
 		return result, fmt.Errorf("prepared store, content and bounded size required")
 	}
+	unlock, err := s.Hold(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer unlock()
 	file, err := os.CreateTemp(s.root, ".upload-*")
 	if err != nil {
 		return result, err

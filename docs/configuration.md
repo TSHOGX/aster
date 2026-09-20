@@ -159,7 +159,8 @@ Never point `manifest` at an engine-owned mutable template directory; use the
 exported release artifact.
 
 This mode runs retained execution, event reconciliation, workspace inventory,
-product maintenance, scheduler and idle pause services. It serves the new Unix
+product maintenance, prepared-content reclamation, scheduler and idle pause
+services. It serves the new Unix
 request-authorization contract and uses remote gateway drain acknowledgments. It
 does not construct the embedded runtime, local artifact watcher, checkpoint
 maintenance or source-IP proxy-correlation listener. Shutdown detaches application
