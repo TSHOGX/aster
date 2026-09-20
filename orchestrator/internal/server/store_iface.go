@@ -150,6 +150,7 @@ type serverStore interface {
 	DriverStateValidationInput(context.Context, store.CompleteTurnParams) (store.DriverStateValidationInput, error)
 	PendingBridgeTurnRecords(context.Context, string, string, int64, int) ([]store.BridgeRecord, error)
 	PendingBridgeRecords(context.Context, int) ([]store.BridgeRecord, error)
+	RecordBridgeProjectionFailure(context.Context, store.BridgeRecord, string, time.Time) error
 	PendingBridgeExecutionRecords(context.Context, string, int) ([]store.BridgeRecord, error)
 	LoadBridgeProjection(context.Context, store.BridgeRecord) (store.BridgeProjection, error)
 	CommitBridgeProjection(context.Context, store.BridgeRecord, int64, json.RawMessage, []store.ProjectedMessage) ([]store.ProjectedMessageResult, error)

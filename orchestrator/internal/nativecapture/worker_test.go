@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 type workerRepository struct {
@@ -16,8 +18,18 @@ type workerRepository struct {
 
 func (r *workerRepository) RequestNativeCaptureActivation(context.Context, Request) error { return nil }
 
-func (r *workerRepository) PendingNativeCaptures(context.Context, int) ([]Request, error) {
-	return r.requests, nil
+func (r *workerRepository) PendingNativeCaptures(_ context.Context, after string, limit int) ([]Request, error) {
+	var result []Request
+	for _, request := range r.requests {
+		if request.SessionID > after {
+			result = append(result, request)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].SessionID < result[j].SessionID })
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 func (r *workerRepository) CompleteNativeCapture(_ context.Context, p Request, _ Result) error {
 	if r.fail {
@@ -62,4 +74,31 @@ func TestWorkerLeavesFailedCapturePendingAndProgressesOtherSessions(t *testing.T
 	if n, err := worker.Step(context.Background(), 32); n != 1 || err != nil {
 		t.Fatalf("receipt retry failed: %d %v", n, err)
 	}
+}
+
+type timedSource struct{}
+
+func (timedSource) OpenNativeSnapshot(ctx context.Context, p Request) (io.ReadCloser, error) {
+	if p.SessionID != "z-ready" {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return io.NopCloser(strings.NewReader("native bytes")), nil
+}
+func TestCaptureRotatesPastFullFailedPageAndBoundsIndividualSource(t *testing.T) {
+	repository := &workerRepository{requests: []Request{{SessionID: "a-blocked"}, {SessionID: "b-blocked"}, {SessionID: "z-ready"}}}
+	worker := Worker{Repository: repository, Source: timedSource{}, Sink: &workerSink{}, ItemTimeout: 10 * time.Millisecond}
+	if count, err := worker.Step(context.Background(), 2); count != 0 || err == nil {
+		t.Fatalf("failed page: %d %v", count, err)
+	}
+	if count, err := worker.Step(context.Background(), 2); count != 1 || err != nil {
+		t.Fatalf("later session starved: %d %v", count, err)
+	}
+	if len(repository.completed) != 1 || repository.completed[0] != "z-ready" {
+		t.Fatalf("wrong capture progress: %v", repository.completed)
+	}
+}
+
+func (r *workerRepository) RecordNativeCaptureFailure(context.Context, Request, string, time.Time) error {
+	return nil
 }

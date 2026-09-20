@@ -36,7 +36,7 @@ func captureMaintenanceFixture(t *testing.T) (*execution.Controller, *store.Stor
 	if err := controller.ReleaseIdle(ctx, binding.SessionID, binding.GenerationID, owner); err != nil {
 		t.Fatal(err)
 	}
-	requests, err := st.PendingNativeCaptures(ctx, 32)
+	requests, err := st.PendingNativeCaptures(ctx, "", 32)
 	if err != nil || len(requests) != 1 {
 		t.Fatalf("capture fixture: %+v %v", requests, err)
 	}

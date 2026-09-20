@@ -4,9 +4,12 @@ package retainedapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -479,6 +482,9 @@ func runComposedGateway(t *testing.T, fullFaults bool) {
 	}
 
 	if !fullFaults {
+		followup := sendIntegrationTurn(t, ctx, app, session, "second native capture version")
+		awaitIntegrationTurn(t, ctx, st, session, followup)
+		verifyCaptureCommandRestart(t, ctx, root, deploymentPath, st, session)
 		return
 	}
 	// A gateway crash leaves a stale Unix socket. Its ordinary command must
@@ -853,4 +859,116 @@ print(json.dumps(result))
 		t.Fatalf("network authority bypass: %+v", observed)
 	}
 	t.Logf("real network boundary: %s", strings.TrimSpace(output.String()))
+}
+
+func verifyCaptureCommandRestart(t *testing.T, ctx context.Context, root, deployment string, st *store.Store, session string) {
+	t.Helper()
+	binary := filepath.Join(root, "native-capture")
+	if output, err := exec.CommandContext(ctx, "go", "build", "-o", binary, "../../cmd/native-capture").CombinedOutput(); err != nil {
+		t.Fatalf("build capture worker: %v %s", err, output)
+	}
+	log, err := os.Create(filepath.Join(root, "capture.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	start := func(interval string) (*exec.Cmd, chan error) {
+		command := exec.CommandContext(ctx, binary, "--control-db", filepath.Join(root, "control.db"), "--trajectory-root", filepath.Join(root, "archives"), "--deployment", deployment, "--interval", interval, "--item-timeout", "5s", "--batch-timeout", "15s")
+		command.Stdout, command.Stderr = log, log
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		return command, done
+	}
+	process, done := start("1s")
+	running := true
+	defer func() {
+		if running {
+			_ = process.Process.Kill()
+			<-done
+		}
+		if t.Failed() {
+			raw, _ := os.ReadFile(filepath.Join(root, "capture.log"))
+			t.Log(string(raw))
+		}
+	}()
+	for {
+		var count int
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM native_capture_receipts WHERE session_id=?`, session).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count > 0 {
+			break
+		}
+		select {
+		case err := <-done:
+			running = false
+			t.Fatalf("capture exited: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	// Kill the owner between versions, preserving archives and committed receipts.
+	_ = process.Process.Kill()
+	<-done
+	running = false
+	process, done = start("50ms")
+	running = true
+	for {
+		var pending int
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM native_capture_requests r WHERE session_id=? AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=r.session_id AND c.state_version=r.state_version)`, session).Scan(&pending); err != nil {
+			t.Fatal(err)
+		}
+		if pending == 0 {
+			break
+		}
+		select {
+		case err := <-done:
+			running = false
+			t.Fatalf("replacement capture exited: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	_ = process.Process.Signal(syscall.SIGTERM)
+	if err := <-done; err != nil {
+		t.Fatalf("capture shutdown: %v", err)
+	}
+	running = false
+	rows, err := st.DBForTest().Query(`SELECT r.native_digest,r.size,c.archive_path FROM native_capture_requests r JOIN native_capture_receipts c ON c.session_id=r.session_id AND c.state_version=r.state_version WHERE r.session_id=?`, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var digest, path string
+		var size int64
+		if err := rows.Scan(&digest, &size, &path); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.New()
+		bytes, copyErr := io.Copy(hash, file)
+		info, statErr := file.Stat()
+		_ = file.Close()
+		if copyErr != nil || statErr != nil || bytes != size || hex.EncodeToString(hash.Sum(nil)) != digest || info.Mode().Perm()&0222 != 0 {
+			t.Fatalf("archive/receipt mismatch for %s", path)
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if count < 2 {
+		t.Fatalf("capture restart did not retain multiple versions: %d", count)
+	}
+	t.Logf("capture process restart preserved %d exact immutable archives and receipts", count)
 }

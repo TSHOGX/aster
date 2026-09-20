@@ -108,14 +108,22 @@ func appendBridgeRecordPayloadTx(ctx context.Context, tx *sql.Tx, p AppendEventP
 			return false, fmt.Errorf("bridge output sequence gap: expected %d, received %d", last+1, *p.OutputSequence)
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO bridge_ingress(session_id,generation_id,turn_id,attempt,record_key,output_sequence,type,stream,payload,digest,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, p.SessionID, p.GenerationID, *p.TurnID, attempt, key, nullableInt64Ptr(p.OutputSequence), p.Type, p.Stream, string(payload), hash, formatEventTime(p.Now))
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO bridge_ingress(session_id,generation_id,turn_id,attempt,record_key,output_sequence,type,stream,payload,digest,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, p.SessionID, p.GenerationID, *p.TurnID, attempt, key, nullableInt64Ptr(p.OutputSequence), p.Type, p.Stream, string(payload), hash, formatEventTime(p.Now))
+	if err != nil {
+		return false, err
+	}
+	id, err := inserted.LastInsertId()
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO bridge_projections(generation_id,turn_id,attempt,last_record_id,last_source_record_id,state) VALUES(?,?,?,0,?,'') ON CONFLICT(generation_id,turn_id,attempt) DO UPDATE SET last_source_record_id=max(last_source_record_id,excluded.last_source_record_id)`, p.GenerationID, *p.TurnID, attempt, id)
 	return false, err
 }
 
 // PendingBridgeRecords is bounded and ordered across streams. A caller must
 // finish each record before advancing its stream's checkpoint.
 func (s *Store) PendingBridgeRecords(ctx context.Context, limit int) ([]BridgeRecord, error) {
-	return s.pendingBridgeRecords(ctx, limit, "", nil)
+	return s.pendingBridgeRecords(ctx, limit, " AND p.retry_after<=?", []any{formatTime(time.Now().UTC())})
 }
 
 func (s *Store) PendingBridgeTurnRecords(ctx context.Context, sessionID, generationID string, turnID int64, limit int) ([]BridgeRecord, error) {
@@ -134,8 +142,8 @@ func (s *Store) pendingBridgeRecords(ctx context.Context, limit int, filter stri
 		limit = 128
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.session_id,i.generation_id,i.turn_id,i.attempt,coalesce(i.output_sequence,0),i.type,i.stream,i.payload,i.created_at
- FROM bridge_ingress i LEFT JOIN bridge_projections p ON p.generation_id=i.generation_id AND p.turn_id=i.turn_id AND p.attempt=i.attempt
- WHERE i.id>coalesce(p.last_record_id,0)`+filter+` ORDER BY i.id LIMIT ?`, append(args, limit)...)
+ FROM bridge_projections p JOIN bridge_ingress i ON p.generation_id=i.generation_id AND p.turn_id=i.turn_id AND p.attempt=i.attempt
+ WHERE p.last_record_id<p.last_source_record_id AND i.id>p.last_record_id`+filter+` ORDER BY i.id LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +240,7 @@ func (s *Store) CommitBridgeProjection(ctx context.Context, r BridgeRecord, prev
 		}
 		result = append(result, ProjectedMessageResult{Message: message, EventID: eventID})
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE bridge_projections SET last_record_id=?,state=? WHERE generation_id=? AND turn_id=? AND attempt=?`, r.ID, string(state), r.GenerationID, r.TurnID, r.Attempt)
+	_, err = tx.ExecContext(ctx, `UPDATE bridge_projections SET last_record_id=?,state=?,retry_after='',last_error='',attempts=0 WHERE generation_id=? AND turn_id=? AND attempt=?`, r.ID, string(state), r.GenerationID, r.TurnID, r.Attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -301,4 +309,30 @@ func assertCompletionOutputTx(ctx context.Context, tx *sql.Tx, p CompleteTurnPar
 		return fmt.Errorf("completion output watermark unresolved: received %d contiguous records through %d, expected %d", count, maximum, *p.FinalOutputSequence)
 	}
 	return nil
+}
+
+// Backoff is per source stream: an invalid checkpoint cannot hide other streams
+// behind a full page of unprojectable records. The source remains immutable.
+func (s *Store) RecordBridgeProjectionFailure(ctx context.Context, r BridgeRecord, message string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var attempts int
+	if err := tx.QueryRowContext(ctx, `SELECT attempts FROM bridge_projections WHERE generation_id=? AND turn_id=? AND attempt=?`, r.GenerationID, r.TurnID, r.Attempt).Scan(&attempts); err != nil {
+		return err
+	}
+	delay := time.Second * time.Duration(1<<min(attempts, 6))
+	_, err = tx.ExecContext(ctx, `UPDATE bridge_projections SET attempts=min(attempts+1,1000000),retry_after=?,last_error=? WHERE generation_id=? AND turn_id=? AND attempt=? AND last_record_id<?`, formatTime(now.Add(delay)), message, r.GenerationID, r.TurnID, r.Attempt, r.ID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }

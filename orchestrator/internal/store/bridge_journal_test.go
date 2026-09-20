@@ -153,3 +153,53 @@ func TestCompletionWatermarkRefusesMissingDurableOutput(t *testing.T) {
 		t.Fatal("completion ignored pending projection")
 	}
 }
+
+func TestProjectionBackoffSkipsBlockedStreamWithoutSkippingItsRecords(t *testing.T) {
+	ctx := context.Background()
+	st, p := journalFixture(t)
+	p.Payload = map[string]string{"line": "small"}
+	for sequence := int64(1); sequence <= 4; sequence++ {
+		p.OutputSequence = &sequence
+		if _, err := st.AppendEvent(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked, err := st.PendingBridgeRecords(ctx, 4)
+	if err != nil || len(blocked) != 4 {
+		t.Fatalf("blocked page: %+v %v", blocked, err)
+	}
+	if _, err := st.db.Exec(`UPDATE execution_bindings SET process_handle='first-process'`); err != nil {
+		t.Fatal(err)
+	}
+	createStoreSession(t, ctx, st, "healthy")
+	createActiveGeneration(t, ctx, st, "healthy", "healthy-gen", "owner")
+	turn, err := st.EnqueueTurn(ctx, "healthy", "healthy", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`UPDATE turns SET status='running',generation_id='healthy-gen',lease_owner='owner',lease_expires_at=?,attempt=1 WHERE id=?`, formatTime(time.Now().Add(time.Minute)), turn); err != nil {
+		t.Fatal(err)
+	}
+	sequence := int64(1)
+	p.SessionID, p.GenerationID, p.TurnID, p.OutputSequence = "healthy", "healthy-gen", &turn, &sequence
+	if _, err := st.AppendEvent(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordBridgeProjectionFailure(ctx, blocked[0], "checkpoint unavailable", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.PendingBridgeRecords(ctx, 4)
+	if err != nil || len(pending) != 1 || pending[0].SessionID != "healthy" {
+		t.Fatalf("healthy stream starved: %+v %v", pending, err)
+	}
+	if _, err := st.CommitBridgeProjection(ctx, blocked[1], 0, json.RawMessage(`{}`), nil); !errors.Is(err, ErrProjectionConflict) {
+		t.Fatal("backoff allowed skipping the failed source record")
+	}
+	if _, err := st.CommitBridgeProjection(ctx, blocked[0], 0, json.RawMessage(`{}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = st.PendingBridgeTurnRecords(ctx, blocked[0].SessionID, blocked[0].GenerationID, blocked[0].TurnID, 4)
+	if err != nil || len(pending) != 3 || pending[0].ID != blocked[1].ID {
+		t.Fatalf("original sequence was not retained: %+v %v", pending, err)
+	}
+}

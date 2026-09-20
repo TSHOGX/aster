@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -111,6 +112,11 @@ func (s *Server) projectBridgeRecords(ctx context.Context, limit int) error {
 		}
 		if err := s.projectBridgeRecord(ctx, record); err != nil {
 			failed[key] = true
+			if ctx.Err() == nil {
+				if recordErr := s.store.RecordBridgeProjectionFailure(ctx, record, err.Error(), time.Now().UTC()); recordErr != nil {
+					err = errors.Join(err, recordErr)
+				}
+			}
 			if firstError == nil {
 				firstError = fmt.Errorf("project bridge record %d: %w", record.ID, err)
 			}

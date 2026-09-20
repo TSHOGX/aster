@@ -42,7 +42,7 @@ Upload/edit bounds use `HARNESS_MAX_UPLOAD_BYTES`, `HARNESS_MAX_UPLOAD_FILES` an
 `HARNESS_TITLE_LLM_PATH` (default `config/title-llm.yaml`).
 
 The separate native-capture command requires `--control-db`, `--trajectory-root`
-and `--engine-endpoint`, with optional bounded polling and batch timeout. It opens
+and `--deployment`, with optional bounded polling, per-item and batch timeouts. It opens
 an existing current product database and holds a canonical singleton capture lock.
 There are no Memory, Evolve, host workspace, checkpoint or legacy proxy settings.
 

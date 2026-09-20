@@ -93,9 +93,17 @@ CREATE TABLE bridge_projections (
   turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
   attempt INTEGER NOT NULL,
   last_record_id INTEGER NOT NULL,
+  last_source_record_id INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  retry_after TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL,
   PRIMARY KEY(generation_id,turn_id,attempt)
 );
+
+CREATE INDEX bridge_projections_pending_idx
+ ON bridge_projections(retry_after,generation_id,turn_id,attempt)
+ WHERE last_record_id<last_source_record_id;
 
 CREATE TABLE bridge_stream_receipts (
   backend_id TEXT NOT NULL,
@@ -192,7 +200,7 @@ AFTER UPDATE OF state ON egress_grants
 WHEN NEW.state='revoked' AND OLD.state!='revoked'
 BEGIN
  INSERT OR IGNORE INTO egress_grant_drains(grant_id,state,created_at)
- VALUES(NEW.grant_id,'pending',strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+ VALUES(NEW.grant_id,'pending',strftime('%Y-%m-%dT%H:%M:%f','now') || '000000Z');
 END;
 
 CREATE TABLE egress_requests (
@@ -469,6 +477,9 @@ CREATE TABLE native_capture_requests (
  native_digest TEXT NOT NULL,
  size INTEGER NOT NULL CHECK(size>0),
  created_at TEXT NOT NULL,
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
+ retry_after TEXT NOT NULL DEFAULT '',
+ last_error TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(session_id,state_version),
  UNIQUE(session_id,state_digest),
  UNIQUE(generation_id,turn_id)

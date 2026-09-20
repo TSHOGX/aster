@@ -2,14 +2,10 @@ package retainedapp
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +14,7 @@ import (
 
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/egress"
+	"harness-platform/orchestrator/internal/engineconfig"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/launchplan"
@@ -49,17 +46,11 @@ type AuthoredContent struct {
 	Revision content.Revision
 }
 type deploymentFile struct {
-	Version     int    `json:"version"`
-	BackendName string `json:"backend_name"`
-	Engine      struct {
-		Endpoint   string `json:"endpoint"`
-		StoreID    string `json:"store_id"`
-		CAFile     string `json:"ca_file"`
-		ClientCert string `json:"client_cert"`
-		ClientKey  string `json:"client_key"`
-	} `json:"engine"`
-	Manifest       string `json:"manifest"`
-	ManifestDigest string `json:"manifest_digest"`
+	Version        int                     `json:"version"`
+	BackendName    string                  `json:"backend_name"`
+	Engine         engineconfig.Connection `json:"engine"`
+	Manifest       string                  `json:"manifest"`
+	ManifestDigest string                  `json:"manifest_digest"`
 	Plans          map[string]struct {
 		Template       string `json:"template"`
 		CPUMillis      int64  `json:"cpu_millis"`
@@ -175,44 +166,11 @@ func LoadDeployment(path string) (*Deployment, error) {
 	if d.LeaseTTL < time.Minute {
 		return nil, fmt.Errorf("lease_ttl must be at least 1m to cover the retained guest heartbeat")
 	}
-	endpoint, err := url.Parse(wire.Engine.Endpoint)
-	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
-		return nil, fmt.Errorf("engine must be an origin without credentials, path, query or fragment")
+	d.Engine, err = wire.Engine.Build(filepath.Dir(absolute))
+	if err != nil {
+		return nil, err
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	switch endpoint.Scheme {
-	case "http":
-		address, err := netip.ParseAddr(endpoint.Hostname())
-		if err != nil || !address.IsLoopback() {
-			return nil, fmt.Errorf("plain HTTP engine must use a loopback IP literal")
-		}
-		if wire.Engine.CAFile != "" || wire.Engine.ClientCert != "" || wire.Engine.ClientKey != "" {
-			return nil, fmt.Errorf("TLS files require an HTTPS engine")
-		}
-	case "https":
-		if wire.Engine.CAFile == "" || wire.Engine.ClientCert == "" || wire.Engine.ClientKey == "" {
-			return nil, fmt.Errorf("HTTPS engine requires CA and client certificate/key")
-		}
-		ca, err := os.ReadFile(resolve(wire.Engine.CAFile))
-		if err != nil {
-			return nil, fmt.Errorf("read engine CA: %w", err)
-		}
-		roots := x509.NewCertPool()
-		if !roots.AppendCertsFromPEM(ca) {
-			return nil, fmt.Errorf("invalid engine CA")
-		}
-		cert, err := tls.LoadX509KeyPair(resolve(wire.Engine.ClientCert), resolve(wire.Engine.ClientKey))
-		if err != nil {
-			return nil, fmt.Errorf("load engine client certificate: %w", err)
-		}
-		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{cert}}
-	default:
-		return nil, fmt.Errorf("HTTP or authenticated HTTPS engine required")
-	}
-	// Process streams have their own lifetime contexts; a global HTTP timeout
-	// would detach healthy long turns. Startup and control operations are bounded.
-	d.Engine = khorabackend.Config{Endpoint: wire.Engine.Endpoint, StoreID: wire.Engine.StoreID, HTTPClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+
 	ids, sockets := map[string]bool{}, map[string]bool{d.AuthorizationSocket: true}
 	var listeners []egress.Gateway
 	for _, g := range wire.Gateways {

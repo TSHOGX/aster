@@ -184,9 +184,9 @@ type RowScanner interface {
 	Scan(dest ...any) error
 }
 
-// FormatTime renders a timestamp in the on-disk format both schemas use.
+// FormatTime is fixed-width so SQLite TEXT comparisons preserve time order.
 func FormatTime(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
 }
 
 // FormatOptionalTime is FormatTime for a nullable column; nil becomes SQL NULL.

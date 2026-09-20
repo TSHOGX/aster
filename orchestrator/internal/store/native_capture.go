@@ -30,15 +30,15 @@ func recordNativeCaptureRequestTx(ctx context.Context, tx *sql.Tx, p CompleteTur
 	return err
 }
 
-func (s *Store) PendingNativeCaptures(ctx context.Context, limit int) ([]nativecapture.Request, error) {
+func (s *Store) PendingNativeCaptures(ctx context.Context, after string, limit int) ([]nativecapture.Request, error) {
 	if limit <= 0 || limit > 128 {
 		limit = 32
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT r.session_id,s.user_id,s.status,r.state_version,r.state_digest,r.generation_id,r.turn_id,r.store_id,r.sandbox_id,r.epoch,r.native_id,r.snapshot_path,r.native_digest,r.size,r.created_at
  FROM native_capture_requests r JOIN sessions s ON s.id=r.session_id
- WHERE NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=r.session_id AND c.state_version=r.state_version)
- AND NOT EXISTS(SELECT 1 FROM native_capture_requests older WHERE older.session_id=r.session_id AND older.state_version<r.state_version AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=older.session_id AND c.state_version=older.state_version))
- ORDER BY r.created_at,r.session_id,r.state_version LIMIT ?`, limit)
+ WHERE r.session_id>? AND (r.retry_after='' OR r.retry_after<=?) AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=r.session_id AND c.state_version=r.state_version)
+ AND NOT EXISTS(SELECT 1 FROM native_capture_requests older WHERE older.session_id=r.session_id AND (older.retry_after='' OR older.retry_after<=?) AND (older.attempts<r.attempts OR (older.attempts=r.attempts AND older.state_version<r.state_version)) AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=older.session_id AND c.state_version=older.state_version))
+ ORDER BY r.session_id,r.state_version LIMIT ?`, after, formatTime(time.Now().UTC()), formatTime(time.Now().UTC()), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -83,12 +83,7 @@ func (s *Store) CompleteNativeCapture(ctx context.Context, p nativecapture.Reque
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM native_capture_requests r WHERE session_id=? AND state_version<? AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=r.session_id AND c.state_version=r.state_version)`, p.SessionID, p.StateVersion).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return fmt.Errorf("earlier native capture remains pending")
-	}
+
 	if _, err := tx.ExecContext(ctx, `INSERT INTO native_capture_receipts(session_id,state_version,native_digest,archive_path,completed_at) VALUES(?,?,?,?,?)`, p.SessionID, p.StateVersion, p.NativeDigest, result.ArchivePath, formatTime(time.Now().UTC())); err != nil {
 		return err
 	}
@@ -120,4 +115,30 @@ func nativeRestoreRequestTx(ctx context.Context, tx *sql.Tx, binding execution.B
 		return request, execution.ErrOperationConflict
 	}
 	return request, nil
+}
+
+// Full immutable snapshots are independent. Failure backoff leaves other versions
+// eligible and is durable across capture-worker replacement.
+func (s *Store) RecordNativeCaptureFailure(ctx context.Context, p nativecapture.Request, message string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var attempts int
+	if err := tx.QueryRowContext(ctx, `SELECT attempts FROM native_capture_requests WHERE session_id=? AND state_version=? AND state_digest=? AND native_digest=?`, p.SessionID, p.StateVersion, p.StateDigest, p.NativeDigest).Scan(&attempts); err != nil {
+		return err
+	}
+	delay := 30 * time.Second * time.Duration(1<<min(attempts, 4))
+	_, err = tx.ExecContext(ctx, `UPDATE native_capture_requests SET attempts=min(attempts+1,1000000),retry_after=?,last_error=? WHERE session_id=? AND state_version=? AND NOT EXISTS(SELECT 1 FROM native_capture_receipts c WHERE c.session_id=native_capture_requests.session_id AND c.state_version=native_capture_requests.state_version)`, formatTime(now.Add(delay)), message, p.SessionID, p.StateVersion)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }

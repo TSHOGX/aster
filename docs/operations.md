@@ -10,7 +10,7 @@ inspect a development run. Do not infer readiness from an open process stream al
 accepted execution bindings and engine identity/epoch checks remain authoritative.
 Pending operations and retirement must retain their durable evidence for reconciliation.
 
-`native-capture --control-db PATH --trajectory-root PATH --engine-endpoint URL` produces
+`native-capture --control-db PATH --trajectory-root PATH --deployment PATH` produces
 immutable native archives with product capture receipts. The product run directory,
 prepared uploads, share blobs and native archives are application-owned host data;
 session workspaces and Pi homes are accessible only through Khora.

@@ -27,7 +27,7 @@ func (c *Capturer) captureStream(ctx context.Context, identity CaptureIdentity, 
 		return nativecapture.Result{}, fmt.Errorf("safe capture session identity required")
 	}
 	directory := filepath.Join(c.archiveRoot, identity.SessionID)
-	if err := os.MkdirAll(directory, 0755); err != nil {
+	if err := makeArchiveDirectory(directory); err != nil {
 		return nativecapture.Result{}, err
 	}
 	if err := syncArchiveDirectory(c.archiveRoot); err != nil {
@@ -48,7 +48,7 @@ func (c *Capturer) captureStream(ctx context.Context, identity CaptureIdentity, 
 	if expectedDigest != "" && (digest != expectedDigest || size != expectedSize) {
 		return nativecapture.Result{}, fmt.Errorf("captured native snapshot does not match committed size/digest")
 	}
-	if err := staging.Chmod(0444); err != nil {
+	if err := staging.Chmod(0400); err != nil {
 		return nativecapture.Result{}, err
 	}
 	if err := staging.Sync(); err != nil {
@@ -69,6 +69,13 @@ func (c *Capturer) captureStream(ctx context.Context, identity CaptureIdentity, 
 	if err := os.Link(staging.Name(), archive); err != nil {
 		if !os.IsExist(err) {
 			return nativecapture.Result{}, err
+		}
+		info, statErr := os.Lstat(archive)
+		if statErr != nil {
+			return nativecapture.Result{}, statErr
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0222 != 0 {
+			return nativecapture.Result{}, fmt.Errorf("existing native archive must be an immutable regular file")
 		}
 		existing, err := os.Open(archive)
 		if err != nil {
@@ -112,4 +119,37 @@ func (r captureReader) Read(buffer []byte) (int, error) {
 		return 0, err
 	}
 	return r.source.Read(buffer)
+}
+
+// Sync every newly created parent entry before an archive receipt can commit.
+func makeArchiveDirectory(path string) error {
+	var missing []string
+	for current := path; ; current = filepath.Dir(current) {
+		info, err := os.Stat(current)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("archive parent is not a directory")
+			}
+			break
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		missing = append(missing, current)
+		if filepath.Dir(current) == current {
+			return err
+		}
+	}
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	for _, directory := range missing {
+		if err := syncArchiveDirectory(directory); err != nil {
+			return err
+		}
+		if err := syncArchiveDirectory(filepath.Dir(directory)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

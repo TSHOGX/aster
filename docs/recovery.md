@@ -53,3 +53,22 @@ Focused fault regressions live in `internal/execution/pending_operations_test.go
 store tests. Real integration exercises the composed HTTP/worker path, retained
 native history, repeated managed generations and daemon restart. See
 [verification](verification.md) for commands and explicit engine/template inputs.
+
+
+Capture reads the same pinned engine connection and mTLS files as the daemon via
+`native-capture --deployment PATH`. It does not require authored configuration trees
+or optional gateways to be available. A rotating session cursor, bounded per-item
+attempts and durable retry backoff prevent failed sources from starving other work.
+Each full immutable snapshot has an independent receipt; a failed older snapshot
+does not prevent archiving a later version. Receipts still match exact original
+session/version/digest/epoch evidence.
+
+Projection maintains an indexed pending-source frontier and backs off failures per
+stream. Other streams remain eligible, while checkpoint compare-and-swap prevents
+skipping a failed record within its stream. Their durable records retain the source frontier, timestamps and last failures
+for diagnosis. Archive files and newly created directories
+are private to the producer, and new parent directory entries are synced before
+receipts commit.
+
+Stored timestamps use fixed-width UTC nanoseconds so SQL ordering agrees with time
+ordering, including leases that expire on an exact second.
