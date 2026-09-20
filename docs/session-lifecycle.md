@@ -18,3 +18,6 @@ active work and recovery obligations, verify final pause, then commit the destro
 session event. Pending reconciliation returns 503 and retries in the background.
 The engine sandbox, overlay and volumes remain retained; retirement does not delete
 storage. There is no automatic session expiration or process checkpoint lifecycle.
+
+[Recovery](recovery.md) describes background discovery of incomplete provisioning,
+starting processes, idle pauses and the obligations that survive a restart.

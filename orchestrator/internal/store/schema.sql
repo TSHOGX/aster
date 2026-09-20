@@ -304,6 +304,15 @@ CREATE TABLE execution_bindings (
   turn_input_schema TEXT NOT NULL
 );
 
+-- Terminal process evidence for a launch that never accepted product work.
+CREATE TABLE execution_start_failures (
+ generation_id TEXT PRIMARY KEY REFERENCES execution_bindings(generation_id),
+ process_handle TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ reason TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+
 CREATE TABLE execution_recoveries (
  generation_id TEXT PRIMARY KEY REFERENCES execution_bindings(generation_id),
  environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),

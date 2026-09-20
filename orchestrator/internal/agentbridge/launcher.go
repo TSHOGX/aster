@@ -68,7 +68,7 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 	}
 	carrier, err := bridge.NewProcessTransport(runCtx, l.Backend, stream, request.ProcessReference, bridge.Scope{SessionID: binding.SessionID, GenerationID: binding.GenerationID}, l.Receipts)
 	if err != nil {
-		if reconnect && sandbox.Is(err, sandbox.Unavailable) {
+		if sandbox.Is(err, sandbox.Unavailable) {
 			// A dead process can reject the initial sync write with a generic
 			// transport failure. Its already-attached stream can still prove exit.
 			err = confirmProcessExit(runCtx, stream, err, time.Second)
@@ -186,7 +186,7 @@ func confirmProcessExit(ctx context.Context, stream sandbox.ProcessStream, origi
 			return original
 		}
 		if frame.Kind == "end" {
-			return &sandbox.Error{Class: sandbox.Precondition, Operation: "inspect retained process exit", Cause: fmt.Errorf("process exited with code %d after sync failed: %w", frame.ExitCode, original)}
+			return &sandbox.Error{Class: sandbox.Precondition, Operation: "inspect retained process exit", Cause: &sandbox.ProcessExitError{Code: frame.ExitCode, Diagnostic: original.Error()}}
 		}
 	}
 	return original

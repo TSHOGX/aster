@@ -1,6 +1,9 @@
 package sandbox
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type ProcessReference struct {
 	StoreID, SandboxID, Handle string
@@ -35,4 +38,15 @@ type Processes interface {
 	SendProcessInput(context.Context, ProcessReference, []byte) error
 	SignalProcess(context.Context, ProcessReference, int32) error
 	CloseProcessInput(context.Context, ProcessReference) error
+}
+
+// ProcessExitError is evidence from the process stream's terminal frame. A
+// transport outage or a missing connection alone must never manufacture it.
+type ProcessExitError struct {
+	Code       int32
+	Diagnostic string
+}
+
+func (e *ProcessExitError) Error() string {
+	return fmt.Sprintf("process exited with code %d: %s", e.Code, e.Diagnostic)
 }

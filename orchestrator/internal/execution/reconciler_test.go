@@ -98,3 +98,7 @@ func (a *workActions) InspectEnvironment(context.Context, string, string) (sandb
 }
 
 func (a *workActions) RetireSession(context.Context, string, string) (int64, error) { return 0, nil }
+
+func (a *workActions) ReconcileOperation(context.Context, string, string) error   { return nil }
+func (a *workActions) ReconcileStart(context.Context, string, string) error       { return nil }
+func (a *workActions) ReconcilePreparation(context.Context, string, string) error { return nil }

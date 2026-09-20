@@ -11,6 +11,7 @@ canonical; production deployment readiness is not claimed.
 | [Configuration](configuration.md) | Product settings and required Khora composition |
 | [Database](database.md) | Exact current schema; no migrations |
 | [Control plane](control-plane.md) | Authority, durable work and reconciliation |
+| [Recovery](recovery.md) | Durable operation discovery, startup and interruption recovery |
 | [Session lifecycle](session-lifecycle.md) | Retained storage and turn recovery |
 | [Sandbox runtime](sandbox-runtime.md) | Public Khora API boundary |
 | [Sandbox image](sandbox-image.md) | Template and manually maintained assets |

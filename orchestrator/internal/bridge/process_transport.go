@@ -100,7 +100,7 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 				}
 			}
 			if event.Kind == "end" {
-				return nil, &sandbox.Error{Class: sandbox.Precondition, Operation: "receive bridge journal", Cause: fmt.Errorf("bridge process exited before journal settlement: code %d; stderr: %s", event.ExitCode, strings.TrimSpace(string(t.stderrTail)))}
+				return nil, &sandbox.Error{Class: sandbox.Precondition, Operation: "receive bridge journal", Cause: &sandbox.ProcessExitError{Code: event.ExitCode, Diagnostic: strings.TrimSpace(string(t.stderrTail))}}
 			}
 			if event.Kind == "data" && event.Stream == "stderr" {
 				const tailBytes = 4096

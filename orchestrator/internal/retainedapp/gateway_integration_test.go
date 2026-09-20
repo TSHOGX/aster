@@ -27,8 +27,10 @@ import (
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/egress"
 	"harness-platform/orchestrator/internal/events"
+	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/launchplan"
+	"harness-platform/orchestrator/internal/sandbox"
 	khorabackend "harness-platform/orchestrator/internal/sandbox/khora"
 	"harness-platform/orchestrator/internal/server"
 	"harness-platform/orchestrator/internal/store"
@@ -304,7 +306,8 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := deployment.Options(backend, remotes, owner.UUID)
+	faults := &lostStartupReply{Backend: backend}
+	options := deployment.Options(faults, remotes, owner.UUID)
 	options.OnError = func(scope string, err error) { t.Logf("%s: %v", scope, err) }
 	runtime, err := Attach(ctx, app, st, options)
 	if err != nil {
@@ -351,6 +354,36 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 		}
 	}()
 
+	// Drop a successful remote start reply. No HTTP retry or explicit Ensure
+	// follows: background work must adopt it or finish verified cold recovery.
+	faults.armed.Store(true)
+	pending, err := runtime.Controller.Ensure(ctx, execution.Session{ID: session, Driver: "pi"}, store.GenerationLeaseOwner(owner.UUID))
+	if !sandbox.Is(err, sandbox.Unavailable) {
+		t.Fatalf("lost start reply: %v", err)
+	}
+	for {
+		current, err := st.GetExecutionBinding(ctx, pending.GenerationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.State == "accepted" {
+			break
+		}
+		if current.State == "retired" {
+			var stage string
+			if err := st.DBForTest().QueryRow(`SELECT stage FROM execution_recoveries WHERE generation_id=?`, current.GenerationID).Scan(&stage); err == nil && stage == "complete" {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("background startup did not converge")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if faults.starts.Load() < 2 {
+		t.Fatalf("startup retry count: %d", faults.starts.Load())
+	}
 	turn := sendIntegrationTurn(t, ctx, app, session, "say hello through the gateway")
 	awaitIntegrationTurn(t, ctx, st, session, turn)
 
@@ -424,6 +457,24 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_route_bindings WHERE state='revoked'`).Scan(&revoked); err != nil || revoked == 0 {
 		t.Fatalf("idle release did not revoke composed routes: %d %v", revoked, err)
 	}
+	// Every retained generation receives a distinct network declaration even when
+	// the authored Pi plan is unchanged. Native conversation survives each pause.
+	for iteration := 0; iteration < 2; iteration++ {
+		turn := sendIntegrationTurn(t, ctx, app, session, "continue retained conversation")
+		awaitIntegrationTurn(t, ctx, st, session, turn)
+		next, found, err := st.FindActiveExecutionBinding(ctx, session)
+		if err != nil || !found || next.GenerationID == binding.GenerationID {
+			t.Fatalf("retained generation: %+v %v", next, err)
+		}
+		if err := runtime.Controller.ReleaseIdle(ctx, session, next.GenerationID, store.GenerationLeaseOwner(owner.UUID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var destinations, generations int
+	if err := st.DBForTest().QueryRow(`SELECT count(DISTINCT destination),count(DISTINCT generation_id) FROM egress_route_bindings`).Scan(&destinations, &generations); err != nil || destinations < 3 || destinations != generations {
+		t.Fatalf("repeated generations did not retain destination identities: %d/%d %v", destinations, generations, err)
+	}
+
 }
 
 func testLogger() *slog.Logger { return slog.Default() }
@@ -544,4 +595,23 @@ func (d routeDiagnostics) ResolveEgressRoute(ctx context.Context, p egress.Route
 		}
 	}
 	return route, err
+}
+
+// The engine performs the start; only its reply is lost to the application.
+type lostStartupReply struct {
+	Backend
+	armed  atomic.Bool
+	starts atomic.Int64
+}
+
+func (b *lostStartupReply) StartProcess(ctx context.Context, p sandbox.StartProcessRequest) (sandbox.ProcessStream, error) {
+	stream, err := b.Backend.StartProcess(ctx, p)
+	if strings.HasPrefix(p.Handle, "bridge_gen_") {
+		b.starts.Add(1)
+		if err == nil && b.armed.CompareAndSwap(true, false) {
+			_ = stream.Close()
+			return nil, &sandbox.Error{Class: sandbox.Unavailable, Cause: errors.New("injected loss of successful process-start reply")}
+		}
+	}
+	return stream, err
 }

@@ -3,10 +3,12 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/canonicaljson"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sandbox"
 	"time"
@@ -137,7 +139,7 @@ func (s *Store) beginUnstartedEnvironmentTransition(ctx context.Context, id, own
 
 // BeginGenerationConfiguration reserves the intent to bring a retained paused
 // environment to one generation's declaration. The operation is keyed by the
-// configuration's own spec digest, so a retry replays the same immutable request
+// complete immutable declaration digest, so a retry replays the same immutable request
 // and a different declaration is a different operation rather than an overwrite.
 //
 // Reconfiguring is refused while any execution binding exists: the declaration a
@@ -168,7 +170,11 @@ func (s *Store) BeginGenerationConfiguration(ctx context.Context, id, owner stri
 	if active != 0 {
 		return execution.Operation{}, execution.ErrBusy
 	}
-	key := "configure:" + id + ":" + configuration.SpecDigest
+	declaration, err := canonicaljson.Marshal(configuration)
+	if err != nil {
+		return execution.Operation{}, err
+	}
+	key := fmt.Sprintf("configure:%s:%x", id, sha256.Sum256(declaration))
 	raw, err := json.Marshal(execution.EnvironmentRequest{
 		Reference:     sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID, Epoch: environment.Epoch, MutationRevision: environment.MutationRevision},
 		Network:       &configuration.Network,

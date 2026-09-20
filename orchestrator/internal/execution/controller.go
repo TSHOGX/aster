@@ -20,6 +20,8 @@ type ControllerRepository interface {
 	TurnCommandRepository
 	AssertExecutionOwner(context.Context, string) error
 	ExecutionSession(context.Context, string) (Session, error)
+	AdoptStartingExecution(context.Context, string, string, time.Duration) (Binding, error)
+	RecordStartingProcessExit(context.Context, string, string, sandbox.ProcessReference, string) error
 	BeginSessionProvisioning(context.Context, OperationIntent, string, int) (Operation, error)
 	BeginInitialExecutionResume(context.Context, string, string, int) (Operation, error)
 	BeginWorkspaceProvisionPause(context.Context, string, string) (Operation, error)
@@ -84,9 +86,10 @@ type desiredEnvironment struct {
 // re-derived per generation, recorded with its own digest, and applied to a
 // retained paused environment through a fenced configure operation.
 type GenerationConfiguration struct {
-	SpecDigest string          `json:"spec_digest"`
-	Network    sandbox.Network `json:"network"`
-	Mounts     []sandbox.Mount `json:"mounts"`
+	GenerationID string          `json:"generation_id,omitempty"`
+	SpecDigest   string          `json:"spec_digest"`
+	Network      sandbox.Network `json:"network"`
+	Mounts       []sandbox.Mount `json:"mounts"`
 	// Hosts, Routes and ConnectivityDigest describe the reserved service composition
 	// this declaration carries. They are recorded with the declaration so a
 	// restart can activate exactly the routes the engine is enforcing.
@@ -267,12 +270,12 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 		arguments = append(arguments, "--service-host", host.Name+"="+host.Address)
 	}
 	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: arguments, Directory: "/workspace"}
-	start := WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request}
+	start := WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: configuration.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request}
 	var binding Binding
 	var connection AgentConnection
 	var retryUntil time.Time
 	for {
-		binding, connection, err = (Worker{Repository: c.Repository, Agents: c.Agents}).Start(lifetime, start)
+		binding, connection, err = c.startAttempt(ctx, lifetime, start)
 		if !errors.Is(err, ErrReadinessInvalidated) {
 			break
 		}
@@ -508,7 +511,12 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 	if err != nil {
 		return Environment{}, GenerationConfiguration{}, err
 	}
-	configuration := GenerationConfiguration{SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts}
+	configuration := GenerationConfiguration{GenerationID: generation, SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts}
+	if current, applied, err := environment.AppliedConfiguration(); err != nil {
+		return Environment{}, GenerationConfiguration{}, err
+	} else if applied && generation != "" && current.GenerationID == generation {
+		return environment, current, nil
+	}
 	if c.Connectivity != nil && generation != "" {
 		epoch := environment.Epoch + 1
 		if environment.SandboxID == "" {
@@ -623,7 +631,7 @@ func (c *Controller) applyGenerationConfiguration(ctx context.Context, environme
 	if err != nil {
 		return err
 	}
-	if applied && current.SpecDigest == configuration.SpecDigest && sandbox.SameConfiguration(sandbox.Configuration{Network: current.Network, Mounts: current.Mounts}, configuration.Network, configuration.Mounts) {
+	if applied && current.GenerationID == configuration.GenerationID && current.ConnectivityDigest == configuration.ConnectivityDigest && current.SpecDigest == configuration.SpecDigest && sandbox.SameConfiguration(sandbox.Configuration{Network: current.Network, Mounts: current.Mounts}, configuration.Network, configuration.Mounts) {
 		return nil
 	}
 	// The engine refuses an egress edit on a running sandbox, so a retained

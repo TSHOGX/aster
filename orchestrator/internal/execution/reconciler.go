@@ -14,6 +14,9 @@ import (
 type ReconcileKind string
 
 const (
+	ReconcileOperation   ReconcileKind = "operation"
+	ReconcileStart       ReconcileKind = "start"
+	ReconcilePreparation ReconcileKind = "preparation"
 	ReconcileRetirement  ReconcileKind = "session_retirement"
 	ReconcileEnvironment ReconcileKind = "environment"
 	ReconcileAbort       ReconcileKind = "abort"
@@ -33,6 +36,9 @@ type ReconcileRepository interface {
 	PendingExecutionWork(context.Context, ReconcileKind, string, string, int) ([]ReconcileWork, error)
 }
 type ReconcileController interface {
+	ReconcileOperation(context.Context, string, string) error
+	ReconcileStart(context.Context, string, string) error
+	ReconcilePreparation(context.Context, string, string) error
 	RetireSession(context.Context, string, string) (int64, error)
 	InspectEnvironment(context.Context, string, string) (sandbox.Observation, error)
 	ReconnectActive(context.Context, string, string, string) (Binding, error)
@@ -76,7 +82,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	var workers sync.WaitGroup
-	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle, ReconcileActive, ReconcileEnvironment, ReconcileRetirement} {
+	for _, kind := range []ReconcileKind{ReconcileOperation, ReconcileStart, ReconcilePreparation, ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle, ReconcileActive, ReconcileEnvironment, ReconcileRetirement} {
 		workers.Add(1)
 		go func(kind ReconcileKind) {
 			defer workers.Done()
@@ -126,6 +132,12 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 func (r *Reconciler) apply(ctx context.Context, kind ReconcileKind, p ReconcileWork) error {
 	switch kind {
+	case ReconcileOperation:
+		return r.Controller.ReconcileOperation(ctx, p.Key, r.Owner)
+	case ReconcileStart:
+		return r.Controller.ReconcileStart(ctx, p.GenerationID, r.Owner)
+	case ReconcilePreparation:
+		return r.Controller.ReconcilePreparation(ctx, p.SessionID, r.Owner)
 	case ReconcileRetirement:
 		id, err := r.Controller.RetireSession(ctx, p.SessionID, r.Owner)
 		if err == nil && id != 0 && r.AfterRetirement != nil {

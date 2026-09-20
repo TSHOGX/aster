@@ -24,6 +24,37 @@ func (s *Store) PendingExecutionWork(ctx context.Context, kind execution.Reconci
 	query := ""
 	args := []any{after}
 	switch kind {
+
+	case execution.ReconcileOperation:
+		query = `SELECT o.operation_id,e.session_id,'',o.kind FROM environment_operations o JOIN sandbox_environments e ON e.environment_id=o.environment_id
+ WHERE o.operation_id>? AND o.fence=e.fence AND (
+  (o.state IN ('pending','issued','uncertain') AND o.kind IN ('create_volume','create','configure','pause','resume')) OR
+  (o.state='succeeded' AND o.kind='create_volume' AND NOT EXISTS(SELECT 1 FROM session_storage_bindings v WHERE v.environment_id=e.environment_id AND v.purpose=json_extract(o.request,'$.Purpose'))) OR
+  (o.state='succeeded' AND EXISTS(SELECT 1 FROM execution_bindings b WHERE o.operation_id='idle-pause:' || b.generation_id AND b.state!='retired')))
+ AND NOT EXISTS(SELECT 1 FROM workspace_write_maintenance w WHERE w.operation_id=o.operation_id AND w.stage!='complete')
+ AND NOT EXISTS(SELECT 1 FROM native_capture_activations c WHERE c.operation_id=o.operation_id AND c.stage!='complete')
+ AND NOT EXISTS(SELECT 1 FROM execution_recoveries r WHERE r.operation_id=o.operation_id AND r.stage!='complete')
+ AND o.operation_id!='retire-pause:' || e.session_id
+ ORDER BY o.operation_id LIMIT ?`
+	case execution.ReconcileStart:
+		query = `SELECT b.generation_id,b.session_id,b.generation_id,'' FROM execution_bindings b JOIN runtime_generations g ON g.generation_id=b.generation_id
+ WHERE b.generation_id>? AND b.state='starting' AND g.status='starting'
+ AND NOT EXISTS(SELECT 1 FROM session_retirements r WHERE r.session_id=b.session_id)
+ AND NOT EXISTS(SELECT 1 FROM execution_start_failures failed WHERE failed.generation_id=b.generation_id)
+ AND NOT EXISTS(SELECT 1 FROM idle_execution_adoptions a WHERE a.generation_id=b.generation_id)
+ AND NOT EXISTS(SELECT 1 FROM active_execution_adoptions a WHERE a.generation_id=b.generation_id)
+ AND NOT EXISTS(SELECT 1 FROM execution_recoveries r WHERE r.generation_id=b.generation_id AND r.stage!='complete')
+ ORDER BY b.generation_id LIMIT ?`
+	case execution.ReconcilePreparation:
+		query = `SELECT e.environment_id,e.session_id,'','' FROM sandbox_environments e JOIN sessions s ON s.id=e.session_id
+ WHERE e.environment_id>? AND s.status NOT IN ('failed','destroyed')
+ AND (e.sandbox_id IS NULL OR e.sandbox_id='' OR
+ (coalesce(json_extract(nullif(e.applied_configuration,''),'$.generation_id'),'')!='' AND NOT EXISTS(SELECT 1 FROM execution_bindings b WHERE b.generation_id=json_extract(e.applied_configuration,'$.generation_id'))) OR
+ (e.observed_state='running' AND coalesce(json_extract(nullif(e.applied_configuration,''),'$.generation_id'),'')=''))
+ AND NOT EXISTS(SELECT 1 FROM execution_bindings b WHERE b.environment_id=e.environment_id AND b.state!='retired')
+ AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=e.environment_id AND o.state IN ('pending','issued','uncertain','failed'))
+ AND NOT EXISTS(SELECT 1 FROM session_retirements r WHERE r.session_id=e.session_id)
+ ORDER BY e.environment_id LIMIT ?`
 	case execution.ReconcileRetirement:
 		query = `SELECT session_id,session_id,'','' FROM session_retirements WHERE session_id>? AND state='requested' ORDER BY session_id LIMIT ?`
 	case execution.ReconcileEnvironment:
@@ -45,7 +76,11 @@ func (s *Store) PendingExecutionWork(ctx context.Context, kind execution.Reconci
 	case execution.ReconcileCapture:
 		query = `SELECT session_id,session_id,'','' FROM native_capture_activations WHERE session_id>? AND stage!='complete' ORDER BY session_id LIMIT ?`
 	case execution.ReconcileInterrupted:
-		query = `SELECT r.generation_id,b.session_id,r.generation_id,r.reason FROM execution_recoveries r JOIN execution_bindings b ON b.generation_id=r.generation_id WHERE r.generation_id>? AND r.stage!='complete' ORDER BY r.generation_id LIMIT ?`
+		query = `SELECT generation_id,session_id,generation_id,reason FROM (
+ SELECT r.generation_id,b.session_id,r.reason FROM execution_recoveries r JOIN execution_bindings b ON b.generation_id=r.generation_id WHERE r.stage!='complete'
+ UNION ALL
+ SELECT f.generation_id,b.session_id,f.reason FROM execution_start_failures f JOIN execution_bindings b ON b.generation_id=f.generation_id WHERE b.state='starting' AND NOT EXISTS(SELECT 1 FROM execution_recoveries r WHERE r.generation_id=f.generation_id)
+ ) WHERE generation_id>? ORDER BY generation_id LIMIT ?`
 	default:
 		return nil, fmt.Errorf("unsupported reconciliation obligation")
 	}

@@ -102,7 +102,7 @@ func TestRetainedEnvironmentAdoptsNewContentRevision(t *testing.T) {
 	}
 }
 
-func TestUnchangedConfigurationCostsNoEngineMutation(t *testing.T) {
+func TestGenerationConfigurationPinsSuccessorAndDoesNotReapplyAcceptedGeneration(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, _, _, owner := configurationFixture(t)
 	session := execution.Session{ID: "session", Driver: "sh"}
@@ -117,8 +117,15 @@ func TestUnchangedConfigurationCostsNoEngineMutation(t *testing.T) {
 	if _, err := controller.Ensure(ctx, session, owner); err != nil {
 		t.Fatal(err)
 	}
+	if !backend.configured {
+		t.Fatal("successor declaration was not pinned while paused")
+	}
+	backend.configured = false
+	if _, err := controller.Ensure(ctx, session, owner); err != nil {
+		t.Fatal(err)
+	}
 	if backend.configured {
-		t.Fatal("an unchanged declaration was reapplied to the engine")
+		t.Fatal("accepted generation unnecessarily reconfigured")
 	}
 	environment, err := st.GetEnvironmentBinding(ctx, binding.EnvironmentID)
 	if err != nil {
