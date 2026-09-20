@@ -502,6 +502,13 @@ CREATE TABLE IF NOT EXISTS execution_recoveries (
 CREATE UNIQUE INDEX IF NOT EXISTS execution_recoveries_active_uq
  ON execution_recoveries(environment_id) WHERE stage!='complete';
 
+CREATE TABLE IF NOT EXISTS session_retirements (
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+ state TEXT NOT NULL CHECK(state IN ('requested','complete')),
+ event_id INTEGER REFERENCES events(event_id),
+ created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS session_execution_backends (
  session_id TEXT PRIMARY KEY REFERENCES sessions(id),
  backend TEXT NOT NULL CHECK(backend IN ('legacy','khora'))

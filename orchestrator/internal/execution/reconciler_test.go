@@ -96,3 +96,5 @@ func TestReconciliationIsolatesBlockedWorkAndDoesNotRestartOnTimeout(t *testing.
 func (a *workActions) InspectEnvironment(context.Context, string, string) (sandbox.Observation, error) {
 	return sandbox.Observation{}, nil
 }
+
+func (a *workActions) RetireSession(context.Context, string, string) (int64, error) { return 0, nil }

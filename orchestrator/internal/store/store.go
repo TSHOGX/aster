@@ -492,6 +492,13 @@ func (s *Store) DestroySession(ctx context.Context, id string, now time.Time) (D
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var backend string
+	if err := tx.QueryRowContext(ctx, `SELECT backend FROM session_execution_backends WHERE session_id=?`, id).Scan(&backend); err != nil {
+		return DestroySessionResult{}, err
+	}
+	if backend == "khora" {
+		return DestroySessionResult{}, fmt.Errorf("retained session requires execution retirement")
+	}
 	generationIDs, err := queryStringColumnTx(ctx, tx, `
 SELECT generation_id
 FROM runtime_generations
@@ -880,6 +887,9 @@ func (s *Store) EnqueueTurnMessage(ctx context.Context, p EnqueueTurnMessagePara
 		return EnqueueTurnMessageResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := assertSessionNotRetiringTx(ctx, tx, p.SessionID); err != nil {
+		return EnqueueTurnMessageResult{}, err
+	}
 	var existingStatus, activeGenerationID string
 	if err := tx.QueryRowContext(ctx, `SELECT status, COALESCE(active_generation_id, '') FROM sessions WHERE id = ?`, p.SessionID).Scan(&existingStatus, &activeGenerationID); err != nil {
 		return EnqueueTurnMessageResult{}, err

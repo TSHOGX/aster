@@ -639,7 +639,8 @@ The Khora daemon selects that reconciler through its deployment file.
 
 The retained execution reconciler runs independent sequential loops for pending
 aborts, steering sends, workspace mutations, capture activations, idle and active
-adoption, passive environment inspections, and interrupted-recovery ledgers.
+adoption, passive environment inspections, session retirement, and
+interrupted-recovery ledgers.
 Each loop uses bounded pages, per-action deadlines and a rotating key cursor so
 old failures do not hide newer obligations. A task that ignores cancellation
 continues to occupy its loop; it is never restarted merely because a deadline
@@ -739,3 +740,14 @@ Concurrent guest writes can require a subsequent scan, so the scanner also offer
 a bounded periodic backstop. Completion, uploads and artifact API refreshes call
 the injected scanner. Default startup still needs to run that periodic service.
 Legacy host watchers exclude sessions pinned to Khora.
+
+## Retained product deletion
+
+The HTTP DELETE route dispatches Khora sessions to durable execution retirement.
+Retirement fences new work before remote I/O, drains gateway routes, settles
+retained output/native history, and verifies pause before publishing the terminal
+product event. Sandboxes and volumes remain retained. The background service
+retries unfinished requests under the current product owner; the legacy deletion
+store entry point refuses Khora sessions. See
+[retirement semantics](session-lifecycle.md#retained-session-retirement) for HTTP
+responses, retry behavior and retained trace obligations.

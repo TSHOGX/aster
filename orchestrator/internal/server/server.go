@@ -2197,6 +2197,28 @@ func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionI
 	if !ok {
 		return
 	}
+	backend, err := s.store.SessionExecutionBackend(r.Context(), sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if backend == "khora" {
+		retirement, ok := s.executions.(interface {
+			BoundedRetireSession(context.Context, string, string) (int64, error)
+		})
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "session retirement unavailable")
+			return
+		}
+		id, err := retirement.BoundedRetireSession(r.Context(), sessionID, store.GenerationLeaseOwner(s.ownerUUID))
+		if err != nil {
+			writeErrorClass(w, http.StatusServiceUnavailable, "session_retirement_pending", "session retirement is awaiting reconciliation")
+			return
+		}
+		s.publishDurableEvent(r.Context(), id)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "destroyed"})
+		return
+	}
 	if session.ActiveGenerationID != "" && session.Status != string(sessionstate.Checkpointed) {
 		details, err := s.runtimeGenerationDetails(r.Context(), session.ID, session.ActiveGenerationID)
 		if err != nil {

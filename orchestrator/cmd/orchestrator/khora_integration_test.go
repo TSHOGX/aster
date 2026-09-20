@@ -288,6 +288,76 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	if err != nil || latest.SandboxID != first.SandboxID || latest.Epoch <= first.Epoch {
 		t.Fatalf("daemon restart lost retained environment: %+v -> %+v %v", first, latest, err)
 	}
+	code, body = request("POST", "/api/sessions/"+session.ID+"/messages", `{"content":"printf 'retirement-preserved-output\\n'; sleep 60"}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("retirement turn: %d %s", code, body)
+	}
+	var interrupted struct {
+		ID int64 `json:"turn_id"`
+	}
+	if err := json.Unmarshal(body, &interrupted); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var output int
+		if err := reader.DBForTest().QueryRow(`SELECT count(*) FROM bridge_ingress WHERE session_id=? AND turn_id=? AND type='emit_output'`, session.ID, interrupted.ID).Scan(&output); err != nil {
+			t.Fatal(err)
+		}
+		if output > 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	code, body = request("DELETE", "/api/sessions/"+session.ID, "")
+	if code != http.StatusOK && code != http.StatusServiceUnavailable {
+		t.Fatalf("retirement request: %d %s", code, body)
+	}
+	for {
+		sessionState, err := reader.GetSession(ctx, session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sessionState.Status == "destroyed" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	code, body = request("DELETE", "/api/sessions/"+session.ID, "")
+	if code != http.StatusOK {
+		t.Fatalf("idempotent retirement: %d %s", code, body)
+	}
+	retained, err := client.Get(ctx, latest.SandboxID)
+	if err != nil || string(retained.State) != "paused" || retained.PlacementState != "lost" {
+		t.Fatalf("product deletion lost retained storage or writers: %+v %v", retained, err)
+	}
+	var preserved int
+	if err := reader.DBForTest().QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='assistant' AND content LIKE '%retirement-preserved-output%'`, interrupted.ID).Scan(&preserved); err != nil || preserved != 1 {
+		t.Fatalf("retirement lost interrupted transcript: %d %v", preserved, err)
+	}
+	code, body = request("POST", "/api/sessions", `{"mode":"shell"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("unprovisioned retirement fixture: %d %s", code, body)
+	}
+	var empty struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &empty); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		code, body = request("DELETE", "/api/sessions/"+empty.ID, "")
+		if code != http.StatusOK {
+			t.Fatalf("unprovisioned retirement: %d %s", code, body)
+		}
+	}
 	for _, path := range []string{"unused-agent-homes", "unused-sessions", "unused-runsc", "missing-rootfs"} {
 		if _, err := os.Stat(filepath.Join(root, path)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("Khora daemon touched embedded runtime path %s: %v", path, err)

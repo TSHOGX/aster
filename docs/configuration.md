@@ -168,5 +168,5 @@ connections and keeps retained sandboxes available for adoption/resume.
 An actual daemon subprocess acceptance test covers HTTP upload/turns, automatic
 pause and restart/resume without creating host runtime directories. Existing
 config/asset volumes must already be published. Production model/Doris/OBS route
-allocation, gateway protocol integration, deletion parity and migration remain
+allocation, gateway protocol integration and migration remain
 separate work; selecting this mode does not claim those cutover gates are met.

@@ -51,3 +51,35 @@ The runtime projection includes session, active generation, resource and turn
 state. Its database revision retains the name `turn_revision`, but covers all
 these dependencies through triggers. See
 [runtime state synchronization](runtime-state-synchronization.md).
+
+## Retained session retirement
+
+For sessions pinned to Khora, `DELETE /api/sessions/{id}` records a durable
+retirement request. New turns, execution starts/adoptions, gateway requests,
+workspace mutations and workspace scans are fenced. Queued prompts are parked
+while journal replay resolves any pending steering result. Existing workspace
+writes or capture maintenance must settle before retirement proceeds.
+
+The controller drains every recorded route and recovers an active execution's
+journal through the existing interrupted-recovery protocol. An idle-pause
+operation already in progress finishes under its original fence. A fresh exact
+inspection can prove an environment is already paused; a running environment
+uses a conditional pause. The final product transaction requires lost-placement
+pause evidence, no unresolved lifecycle/writer/read obligations, and complete
+message projection. It cancels remaining queued inputs, retires execution
+bindings, clears the active generation, and writes one `session.destroyed` event.
+Original terminal turn outcomes and completed native state are preserved.
+
+Successful deletion returns `200` with `{"status":"destroyed"}`. If work remains,
+HTTP returns `503` with `error_class: session_retirement_pending`; once the request
+has been committed, the background retirement loop continues it across errors,
+cancellation and owner replacement. Retrying DELETE is idempotent. An
+unprovisioned session can retire without creating an environment.
+
+Product retirement retains the sandbox, overlay, workspace, bridge journal and
+completed native snapshots. It does not call engine destroy or delete volumes.
+Pending completed-history archival may later use bounded capture maintenance;
+new capture activations wait while retirement itself is pending. This follows
+the retained storage policy and preserves independent trace-consumer obligations.
+The legacy store deletion path rejects Khora sessions so they cannot accidentally
+enter host runtime/resource cleanup.

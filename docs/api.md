@@ -72,6 +72,13 @@ The orchestrator serves three trees:
 | GET | `/artifacts/{sessionID}/{path...}` | required | stream a workspace file |
 | PUT | `/artifacts/{sessionID}/{path...}` | required | online-edit a workspace text file |
 
+For Khora sessions, `DELETE /api/sessions/{id}` retires the product session after
+journal settlement and verified pause, retaining its sandbox and stored data.
+Success is `200` with `{"status":"destroyed"}`; unresolved retirement returns
+`503` with `error_class: session_retirement_pending`. A committed request continues
+in the background, and repeated DELETE is idempotent. See
+[session retirement](session-lifecycle.md#retained-session-retirement).
+
 ### Owner gate vs. read gate
 
 Every `/api/sessions/{id}/*` route is owner-gated except four, which run a

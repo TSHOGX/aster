@@ -90,6 +90,13 @@ func (s *Store) NextCaptureMaintenance(ctx context.Context, session, owner strin
 		return state, err
 	}
 	if state.Stage == "requested" {
+		var retiring int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM session_retirements WHERE session_id=? AND state='requested'`, session).Scan(&retiring); err != nil {
+			return state, err
+		}
+		if retiring != 0 {
+			return state, execution.ErrBusy
+		}
 		if pending == 0 {
 			if _, err := tx.ExecContext(ctx, `UPDATE native_capture_activations SET stage='complete',updated_at=? WHERE session_id=?`, formatTime(now), session); err != nil {
 				return state, err

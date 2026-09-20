@@ -14,6 +14,7 @@ import (
 type ReconcileKind string
 
 const (
+	ReconcileRetirement  ReconcileKind = "session_retirement"
 	ReconcileEnvironment ReconcileKind = "environment"
 	ReconcileAbort       ReconcileKind = "abort"
 	ReconcileSteer       ReconcileKind = "steer"
@@ -32,6 +33,7 @@ type ReconcileRepository interface {
 	PendingExecutionWork(context.Context, ReconcileKind, string, string, int) ([]ReconcileWork, error)
 }
 type ReconcileController interface {
+	RetireSession(context.Context, string, string) (int64, error)
 	InspectEnvironment(context.Context, string, string) (sandbox.Observation, error)
 	ReconnectActive(context.Context, string, string, string) (Binding, error)
 	ReconnectIdle(context.Context, string, string, string) (Binding, error)
@@ -55,6 +57,7 @@ type Reconciler struct {
 	MaxActive                              int
 	CaptureWindow, Interval, ActionTimeout time.Duration
 	AfterWorkspace                         func(context.Context, string) error
+	AfterRetirement                        func(context.Context, int64)
 	OnError                                func(ReconcileKind, string, error)
 	mu                                     sync.Mutex
 	running                                bool
@@ -73,7 +76,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	var workers sync.WaitGroup
-	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle, ReconcileActive, ReconcileEnvironment} {
+	for _, kind := range []ReconcileKind{ReconcileAbort, ReconcileSteer, ReconcileWorkspace, ReconcileCapture, ReconcileInterrupted, ReconcileIdle, ReconcileActive, ReconcileEnvironment, ReconcileRetirement} {
 		workers.Add(1)
 		go func(kind ReconcileKind) {
 			defer workers.Done()
@@ -123,6 +126,12 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 func (r *Reconciler) apply(ctx context.Context, kind ReconcileKind, p ReconcileWork) error {
 	switch kind {
+	case ReconcileRetirement:
+		id, err := r.Controller.RetireSession(ctx, p.SessionID, r.Owner)
+		if err == nil && id != 0 && r.AfterRetirement != nil {
+			r.AfterRetirement(ctx, id)
+		}
+		return err
 	case ReconcileEnvironment:
 		_, err := r.Controller.InspectEnvironment(ctx, p.Key, r.Owner)
 		return err

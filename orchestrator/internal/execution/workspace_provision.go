@@ -23,6 +23,9 @@ func (c *Controller) EnsureWorkspace(ctx context.Context, sessionID, owner strin
 	ctx = request
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
+	if err := c.Repository.AssertSessionNotRetiring(ctx, sessionID); err != nil {
+		return err
+	}
 	session, err := c.Repository.ExecutionSession(ctx, sessionID)
 	if err != nil {
 		return err

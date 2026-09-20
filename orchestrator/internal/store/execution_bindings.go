@@ -30,6 +30,9 @@ func (s *Store) ReserveExecutionBinding(ctx context.Context, p execution.Reserve
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
 		return execution.Binding{}, err
 	}
+	if err := assertSessionNotRetiringTx(ctx, tx, p.SessionID); err != nil {
+		return execution.Binding{}, err
+	}
 	environment, err := environmentWith(ctx, tx, p.EnvironmentID)
 	if err != nil {
 		return execution.Binding{}, err
@@ -149,6 +152,13 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
 		return err
 	}
+	var retiring int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM session_retirements r JOIN execution_bindings b ON b.session_id=r.session_id WHERE b.generation_id=?`, p.GenerationID).Scan(&retiring); err != nil {
+		return err
+	}
+	if retiring != 0 {
+		return execution.ErrBusy
+	}
 	if p.ReconciledEventSequence != nil {
 		if *p.ReconciledEventSequence < -1 {
 			return fmt.Errorf("invalid reconciled event sequence")
@@ -214,7 +224,7 @@ func acceptedExecutionTx(ctx context.Context, tx *sql.Tx, session, generation, o
 		return err
 	}
 	var ready int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b WHERE b.generation_id=? AND b.state='accepted' AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id) AND NOT EXISTS(SELECT 1 FROM engine_event_cursors c WHERE c.store_id=b.store_id AND c.resync=1) AND NOT EXISTS(SELECT 1 FROM engine_backend_blocks k WHERE k.store_id=b.store_id)`, generation).Scan(&ready); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b WHERE b.generation_id=? AND b.state='accepted' AND NOT EXISTS(SELECT 1 FROM session_retirements r WHERE r.session_id=b.session_id) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=b.environment_id) AND NOT EXISTS(SELECT 1 FROM engine_event_cursors c WHERE c.store_id=b.store_id AND c.resync=1) AND NOT EXISTS(SELECT 1 FROM engine_backend_blocks k WHERE k.store_id=b.store_id)`, generation).Scan(&ready); err != nil {
 		return err
 	}
 	if ready != 1 {

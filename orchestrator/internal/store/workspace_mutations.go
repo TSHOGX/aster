@@ -36,6 +36,9 @@ func (s *Store) BeginWorkspaceMutation(ctx context.Context, p workspace.Mutation
 	return tx.Commit()
 }
 func beginWorkspaceMutationTx(ctx context.Context, tx *sql.Tx, p workspace.Mutation) error {
+	if err := assertSessionNotRetiringTx(ctx, tx, p.SessionID); err != nil {
+		return workspace.ErrMutationBusy
+	}
 	var status string
 	if err := tx.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id=?`, p.SessionID).Scan(&status); err != nil {
 		return err

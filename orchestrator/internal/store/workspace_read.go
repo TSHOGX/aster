@@ -20,6 +20,9 @@ func (s *Store) BeginOfflineWorkspaceRead(ctx context.Context, session, owner, i
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
 		return lease, err
 	}
+	if err := assertSessionNotRetiringTx(ctx, tx, session); err != nil {
+		return lease, err
+	}
 	var environment, state string
 	if err := tx.QueryRowContext(ctx, `SELECT e.environment_id,e.observed_state,e.store_id,e.sandbox_id,e.epoch,e.mutation_revision,v.volume_id FROM sandbox_environments e JOIN session_storage_bindings v ON v.environment_id=e.environment_id AND v.session_id=e.session_id AND v.store_id=e.store_id AND v.purpose='workspace' WHERE e.session_id=?`, session).Scan(&environment, &state, &lease.Reference.StoreID, &lease.Reference.SandboxID, &lease.Reference.Epoch, &lease.Reference.MutationRevision, &lease.Volume.VolumeID); err != nil {
 		return lease, err

@@ -14,6 +14,7 @@ import (
 )
 
 type ControllerRepository interface {
+	SessionRetirementRepository
 	InspectionRepository
 	AdoptionRepository
 	TurnCommandRepository
@@ -109,6 +110,9 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	ctx = requestContext
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
+	if err := c.Repository.AssertSessionNotRetiring(ctx, session.ID); err != nil {
+		return Binding{}, err
+	}
 	selected, err := c.Repository.SessionExecutionBackend(ctx, session.ID)
 	if err != nil {
 		return Binding{}, err

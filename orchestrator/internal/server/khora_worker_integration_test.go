@@ -753,6 +753,101 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		}
 	}
 
+	if driver == "pi" {
+		controller.RecoveryReader = &recoveryFaultReader{Reader: agentbridge.RecoveryReader{Backend: backend, Records: st, AfterEventCommit: srv.publishDurableEvent}, fail: true}
+		controller.RecoveryProjector = srv
+		controller.NativeRestorer = driverstate.Restorer{Backend: backend}
+		if err := srv.SetExecutionController(controller, "khora"); err != nil {
+			t.Fatal(err)
+		}
+		live, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var nativeVersion int
+		if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, session.ID).Scan(&nativeVersion); err != nil {
+			t.Fatal(err)
+		}
+	retirementDrain:
+		for {
+			select {
+			case <-modelEntered:
+			default:
+				break retirementDrain
+			}
+		}
+		blockModel.Store(true)
+		turn, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: session.ID, Content: "interrupted by product retirement"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-modelEntered:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		for {
+			status, reason, err := st.TurnStatus(ctx, session.ID, turn.TurnID)
+			if err != nil || status == "failed" || status == "canceled" {
+				t.Fatalf("Pi retirement precondition: %s %s %v", status, reason, err)
+			}
+			if status == "running" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		request := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+session.ID, nil).WithContext(context.WithValue(ctx, userContextKey{}, session.UserID))
+		response := httptest.NewRecorder()
+		srv.destroySession(response, request, session.ID)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("lost Pi retirement replay receipt: %d %s", response.Code, response.Body.String())
+		}
+		if current, err := st.GetSession(ctx, session.ID); err != nil || current.Status == "destroyed" {
+			t.Fatalf("failed replay prematurely retired Pi: %+v %v", current, err)
+		}
+		writer, ok := srv.workspaceWrites.(execution.WorkspaceRecovery)
+		if !ok {
+			t.Fatal("retirement workspace recovery missing")
+		}
+		stopRetirement := startKhoraReconciler(t, ctx, srv, st, controller, writer, leaseOwner)
+		for {
+			current, err := st.GetSession(ctx, session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.Status == "destroyed" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		stopRetirement()
+		response = httptest.NewRecorder()
+		srv.destroySession(response, request, session.ID)
+		if response.Code != http.StatusOK {
+			t.Fatalf("Pi retirement retry: %d %s", response.Code, response.Body.String())
+		}
+		current, err := st.GetSessionEnvironment(ctx, session.ID)
+		if err != nil || current.SandboxID != live.SandboxID || current.ObservedState != "paused" {
+			t.Fatalf("Pi retirement lost native storage: %+v %v", current, err)
+		}
+		var finalVersion int
+		if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, session.ID).Scan(&finalVersion); err != nil || finalVersion != nativeVersion {
+			t.Fatalf("Pi retirement advanced interrupted native state: %d %v", finalVersion, err)
+		}
+		if status, _, err := st.TurnStatus(ctx, session.ID, turn.TurnID); err != nil || (status != "failed" && status != "canceled") {
+			t.Fatalf("Pi retirement turn outcome: %s %v", status, err)
+		}
+		assertIntegrationCapacity(t, ctx, st, 0)
+	}
+
 }
 
 func verifyKhoraActiveAdoption(t *testing.T, ctx context.Context, srv *Server, st *store.Store, controller *execution.Controller, backend *khorabackend.Backend, processes *partialAbortBackend, launcher agentbridge.Launcher, plans execution.PlanSource, binding execution.Binding, owner string, modelHold *atomic.Pointer[chan struct{}], modelEntered <-chan struct{}, inventory func(string)) (*execution.Controller, execution.Binding, string) {
@@ -1471,7 +1566,7 @@ func startKhoraReconciler(t *testing.T, ctx context.Context, srv *Server, st *st
 	t.Helper()
 	run, cancel := context.WithCancel(ctx)
 	finished := make(chan error, 1)
-	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: 2, CaptureWindow: time.Minute, Interval: 20 * time.Millisecond, ActionTimeout: 5 * time.Second}
+	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: 2, CaptureWindow: time.Minute, Interval: 20 * time.Millisecond, ActionTimeout: 5 * time.Second, AfterRetirement: srv.publishDurableEvent}
 	var reported sync.Map
 	reconciler.OnError = func(kind execution.ReconcileKind, key string, err error) {
 		message := fmt.Sprintf("%s %s: %v", kind, key, err)

@@ -47,7 +47,11 @@ func (s *Store) NextInterruptedRecovery(ctx context.Context, generation, owner, 
 			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM runtime_generations g WHERE g.generation_id=? AND g.lease_owner=? AND ((g.status='starting' AND EXISTS(SELECT 1 FROM idle_execution_adoptions a WHERE a.generation_id=g.generation_id AND a.owner=g.lease_owner) AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.session_id=? AND t.status IN ('leased','running'))) OR (g.status IN ('idle','active') AND EXISTS(SELECT 1 FROM active_execution_adoptions a WHERE a.generation_id=g.generation_id AND a.owner=g.lease_owner AND a.state='adopting')))`, generation, owner, binding.SessionID).Scan(&adopting); err != nil {
 				return recovery, err
 			}
-			if binding.State != "starting" || binding.Owner != owner || adopting != 1 {
+			var retiring int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM session_retirements WHERE session_id=? AND state='requested'`, binding.SessionID).Scan(&retiring); err != nil {
+				return recovery, err
+			}
+			if binding.State != "starting" || (retiring != 1 && (binding.Owner != owner || adopting != 1)) {
 				return recovery, execution.ErrBusy
 			}
 		}

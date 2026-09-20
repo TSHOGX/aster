@@ -15,7 +15,7 @@ func (s *Store) WorkspaceInventorySessions(ctx context.Context, after string, li
 	if limit <= 0 || limit > 128 {
 		limit = 32
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id FROM sessions s JOIN sandbox_environments e ON e.session_id=s.id WHERE s.id>? AND s.status!='destroyed' AND e.sandbox_id IS NOT NULL ORDER BY s.id LIMIT ?`, after, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT s.id FROM sessions s JOIN sandbox_environments e ON e.session_id=s.id WHERE s.id>? AND s.status!='destroyed' AND NOT EXISTS(SELECT 1 FROM session_retirements r WHERE r.session_id=s.id) AND e.sandbox_id IS NOT NULL ORDER BY s.id LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -42,6 +42,9 @@ func (s *Store) BeginWorkspaceInventory(ctx context.Context, session, owner, id 
 	}
 	defer tx.Rollback()
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return scan, err
+	}
+	if err := assertSessionNotRetiringTx(ctx, tx, session); err != nil {
 		return scan, err
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT e.environment_id,e.fence,e.store_id,e.sandbox_id,e.epoch,e.mutation_revision FROM sandbox_environments e JOIN session_execution_backends b ON b.session_id=e.session_id AND b.backend='khora' WHERE e.session_id=?`, session).Scan(&scan.EnvironmentID, &scan.Fence, &scan.Reference.StoreID, &scan.Reference.SandboxID, &scan.Reference.Epoch, &scan.Reference.MutationRevision); err != nil {

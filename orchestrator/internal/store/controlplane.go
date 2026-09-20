@@ -201,6 +201,9 @@ func (s *Store) EnqueueTurn(ctx context.Context, sessionID, content string, now 
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := assertSessionNotRetiringTx(ctx, tx, sessionID); err != nil {
+		return 0, err
+	}
 	next, err := nextTurnSequence(ctx, tx, sessionID)
 	if err != nil {
 		return 0, err

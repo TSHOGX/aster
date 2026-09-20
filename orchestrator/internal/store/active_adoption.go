@@ -28,6 +28,9 @@ func (s *Store) BeginActiveExecutionAdoption(ctx context.Context, generation, ow
 	if err != nil {
 		return result, err
 	}
+	if err := assertSessionNotRetiringTx(ctx, tx, b.SessionID); err != nil {
+		return result, err
+	}
 	e, err := environmentWith(ctx, tx, b.EnvironmentID)
 	if err != nil {
 		return result, err

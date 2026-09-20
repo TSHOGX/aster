@@ -82,7 +82,7 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	reader := sessionfiles.Reader{Repository: st, Backend: p.Backend}
 	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: content, MaxActive: p.MaxActive, Provisioner: controller}
 	inventory := sessionfiles.Scanner{Repository: st, Source: reader, Owner: owner, Limit: p.InventoryLimit, AfterCommit: hooks.AfterEventCommit}
-	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: p.MaxActive, CaptureWindow: p.CaptureWindow, Interval: p.PollInterval, ActionTimeout: p.ActionTimeout, AfterWorkspace: inventory.ScanSession, OnError: func(kind execution.ReconcileKind, id string, err error) {
+	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: p.MaxActive, CaptureWindow: p.CaptureWindow, Interval: p.PollInterval, ActionTimeout: p.ActionTimeout, AfterWorkspace: inventory.ScanSession, AfterRetirement: hooks.AfterEventCommit, OnError: func(kind execution.ReconcileKind, id string, err error) {
 		if p.OnError != nil {
 			p.OnError(string(kind)+":"+id, err)
 		}
