@@ -104,7 +104,6 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	var adoptionModelHold atomic.Pointer[chan struct{}]
 	adoptionModelEntered := make(chan struct{}, 1)
 	modelEntered := make(chan struct{}, 1)
-	var processEnvironment []string
 	if driver == "pi" {
 		listener, err := net.Listen("tcp4", "192.0.2.1:0")
 		if err != nil {
@@ -168,7 +167,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		if err := os.MkdirAll(filepath.Join(configRoot, "pi"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		for name, body := range map[string][]byte{"pi/models.json": encoded, "pi/settings.json": []byte(`{"compaction":{"enabled":false}}`)} {
+		for name, body := range map[string][]byte{"pi/models.json": encoded, "pi/settings.json": []byte(`{"defaultProvider":"harness_anthropic_proxy","defaultModel":"synthetic-model","compaction":{"enabled":false}}`)} {
 			if err := os.WriteFile(filepath.Join(configRoot, name), body, 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -196,7 +195,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			t.Fatal("authored configuration was not published")
 		}
 		requirements = append(requirements, execution.ContentRequirement{Purpose: "config", Destination: "/harness-config", RevisionDigest: revision.Digest})
-		processEnvironment = []string{"PI_MODEL=synthetic-model", "ANTHROPIC_BASE_URL=" + modelURL}
+
 	}
 	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
 	srv.cfg.MaxEditBytes = 1 << 20
@@ -253,7 +252,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := launchplan.Load(strings.NewReader(string(manifest)), manifestDigest, map[string]execution.LaunchPlan{driver: {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: requirements, Network: network, Environment: processEnvironment}})
+	loaded, err := launchplan.Load(strings.NewReader(string(manifest)), manifestDigest, map[string]execution.LaunchPlan{driver: {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: requirements, Network: network}})
 	if err != nil {
 		t.Fatal(err)
 	}

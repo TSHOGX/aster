@@ -116,13 +116,13 @@ def prepare_pi(home=Path('/root'), source=Path('/harness-config/pi'), assets=Pat
         configs[name] = raw
         if name == 'models.json':
             providers = parsed.get('providers')
-            if not isinstance(providers, dict) or set(providers) != {'harness_anthropic_proxy'}:
-                raise ValueError('Pi config must select the external model gateway provider')
-            provider = providers['harness_anthropic_proxy']
-            if provider.get('apiKey') != 'harness-placeholder':
-                raise ValueError('Pi config must contain only the non-secret gateway placeholder')
-            if not isinstance(provider.get('models'), list) or not provider['models']:
-                raise ValueError('Pi model catalog is required')
+            if not isinstance(providers, dict) or not providers:
+                raise ValueError('Pi config must declare external gateway providers')
+            for provider in providers.values():
+                if not isinstance(provider, dict) or provider.get('apiKey') != 'harness-placeholder':
+                    raise ValueError('Pi config must contain only the non-secret gateway placeholder')
+                if not isinstance(provider.get('models'), list) or not provider['models']:
+                    raise ValueError('Pi model catalog is required')
     for name, raw in configs.items():
         _replace_config(agent / name, raw)
     auth = agent / 'auth.json'
@@ -198,8 +198,4 @@ def launch_environment(driver):
         'PI_CODING_AGENT_SESSION_DIR': '/root/.pi/agent/sessions',
         'PI_OFFLINE': '1', 'PI_SKIP_VERSION_CHECK': '1', 'PI_TELEMETRY': '0',
     }
-    # Launch identity is not guest secrecy or upstream authorization.
-    for name in ('PI_MODEL', 'ANTHROPIC_BASE_URL'):
-        if os.environ.get(name):
-            environment[name] = os.environ[name]
     return environment

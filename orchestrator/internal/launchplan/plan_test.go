@@ -115,7 +115,7 @@ func TestSpecDigestCoversRevisionsNotVolumeIdentities(t *testing.T) {
 	}
 }
 func TestReleasePlansRejectLegacyTemplatesAndUnpinnedConfiguration(t *testing.T) {
-	for _, fault := range []string{"manifest", "home", "engine", "component", "capability", "unlimited", "mount", "destination", "revision", "secret", "spec"} {
+	for _, fault := range []string{"manifest", "home", "engine", "component", "capability", "unlimited", "mount", "destination", "revision", "spec"} {
 		t.Run(fault, func(t *testing.T) {
 			metadata := manifestFixture()
 			plan := basePlan()
@@ -137,8 +137,6 @@ func TestReleasePlansRejectLegacyTemplatesAndUnpinnedConfiguration(t *testing.T)
 				plan.Content[0].Destination = "/elsewhere"
 			case "revision":
 				plan.Content[0].RevisionDigest = "not-a-digest"
-			case "secret":
-				plan.Environment = []string{"API_KEY=secret"}
 			case "spec":
 				plan.SpecDigest = "sha256:" + strings.Repeat("c", 64)
 			}

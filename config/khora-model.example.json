@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "backend_name": "development",
+  "engine": {
+    "endpoint": "http://127.0.0.1:18191",
+    "store_id": "REPLACE_WITH_ENGINE_STORE_ID"
+  },
+  "manifest": "../sandbox-image/out/battery.manifest.json",
+  "manifest_digest": "sha256:REPLACE_WITH_EXPORTED_MANIFEST_DIGEST",
+  "plans": {
+    "sh": {
+      "template": "battery",
+      "cpu_millis": 1000,
+      "memory_bytes": 1073741824,
+      "disk_bytes": 268435456,
+      "workspace_bytes": 67108864,
+      "journal_bytes": 67108864,
+      "assets": "shared-assets"
+    },
+    "pi": {
+      "template": "battery",
+      "cpu_millis": 1000,
+      "memory_bytes": 1073741824,
+      "disk_bytes": 268435456,
+      "workspace_bytes": 67108864,
+      "journal_bytes": 67108864,
+      "assets": "shared-assets",
+      "config": "agent-config.example"
+    }
+  },
+  "content_bytes": 8388608,
+  "prepared_root": "../.harness-local/development/prepared",
+  "max_active": 2,
+  "inventory_limit": 1000,
+  "lease_ttl": "1m",
+  "poll_interval": "100ms",
+  "event_interval": "1s",
+  "action_timeout": "15s",
+  "capture_window": "1m",
+  "inventory_interval": "1s",
+  "idle_interval": "10s",
+  "idle_threshold": "5m",
+  "authorization": {
+    "socket": "../.harness-local/development/authorization.sock",
+    "peer_uid": 1001,
+    "group": 1001
+  },
+  "gateways": [
+    {
+      "id": "model-proxy",
+      "socket": "../.harness-local/development/model-control.sock",
+      "peer_uid": 1001,
+      "listener": "192.0.2.1:18080"
+    }
+  ],
+  "connectivity": {
+    "revision": "network-v1",
+    "synthetic_range": "10.80.0.0/16",
+    "protected": [
+      "10.200.0.0/16"
+    ],
+    "catalog": [
+      {
+        "id": "inference",
+        "hostname": "model.service.internal",
+        "port": 443,
+        "transport": "tcp",
+        "next_hop": "model-proxy"
+      }
+    ],
+    "policies": {
+      "pi": {
+        "endpoints": [
+          {
+            "endpoint_id": "inference"
+          }
+        ]
+      },
+      "sh": {}
+    }
+  }
+}

@@ -32,3 +32,16 @@ type RequestFinish struct {
 	Bytes     int64     `json:"bytes"`
 	Now       time.Time `json:"-"`
 }
+
+// RouteRequest resolves an immutable destination for local readiness only.
+// It carries no grant and cannot authorize forwarded traffic.
+type RouteRequest struct {
+	BackendID   string         `json:"backend_id"`
+	Destination netip.AddrPort `json:"destination"`
+	Now         time.Time      `json:"-"`
+}
+type RouteIdentity struct {
+	BindingID       string `json:"binding_id"`
+	BindingRevision uint64 `json:"binding_revision"`
+	EndpointID      string `json:"endpoint_id"`
+}

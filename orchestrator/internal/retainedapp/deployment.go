@@ -61,15 +61,14 @@ type deploymentFile struct {
 	Manifest       string `json:"manifest"`
 	ManifestDigest string `json:"manifest_digest"`
 	Plans          map[string]struct {
-		Template       string   `json:"template"`
-		CPUMillis      int64    `json:"cpu_millis"`
-		MemoryBytes    int64    `json:"memory_bytes"`
-		DiskBytes      int64    `json:"disk_bytes"`
-		WorkspaceBytes int64    `json:"workspace_bytes"`
-		JournalBytes   int64    `json:"journal_bytes"`
-		Config         string   `json:"config"`
-		Assets         string   `json:"assets"`
-		Environment    []string `json:"environment"`
+		Template       string `json:"template"`
+		CPUMillis      int64  `json:"cpu_millis"`
+		MemoryBytes    int64  `json:"memory_bytes"`
+		DiskBytes      int64  `json:"disk_bytes"`
+		WorkspaceBytes int64  `json:"workspace_bytes"`
+		JournalBytes   int64  `json:"journal_bytes"`
+		Config         string `json:"config"`
+		Assets         string `json:"assets"`
 	} `json:"plans"`
 	ContentBytes int64 `json:"content_bytes"`
 	Gateways     []struct {
@@ -243,7 +242,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 	plans := map[string]execution.LaunchPlan{}
 	revisions := map[string]content.Revision{}
 	for driver, p := range wire.Plans {
-		plan := execution.LaunchPlan{TemplateID: p.Template, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, WorkspaceBytes: p.WorkspaceBytes, JournalBytes: p.JournalBytes, Environment: p.Environment}
+		plan := execution.LaunchPlan{TemplateID: p.Template, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, WorkspaceBytes: p.WorkspaceBytes, JournalBytes: p.JournalBytes}
 		for _, authored := range []struct{ purpose, root, destination string }{{"config", p.Config, "/harness-config"}, {"assets", p.Assets, "/root/.agents"}} {
 			if authored.root == "" {
 				continue

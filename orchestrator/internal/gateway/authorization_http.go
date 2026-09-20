@@ -18,6 +18,7 @@ import (
 )
 
 type Authorizer interface {
+	ResolveEgressRoute(context.Context, egress.RouteRequest) (egress.RouteIdentity, error)
 	AuthorizeEgressRequest(context.Context, egress.AuthorizationRequest) (egress.Authorization, error)
 	FinishEgressRequest(context.Context, egress.RequestFinish) error
 }
@@ -42,6 +43,20 @@ func AuthorizationHandler(authorizer Authorizer, allowedUID uint32) http.Handler
 		decoder.DisallowUnknownFields()
 		w.Header().Set("Cache-Control", "no-store")
 		switch r.URL.Path {
+		case "/v1/route":
+			var request egress.RouteRequest
+			if err := decodeControlRequest(decoder, &request); err != nil {
+				http.Error(w, "invalid route request", 400)
+				return
+			}
+			request.Now = time.Now().UTC()
+			route, err := authorizer.ResolveEgressRoute(r.Context(), request)
+			if err != nil {
+				writeAuthorizationFailure(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(route)
 		case "/v1/authorize":
 			var request egress.AuthorizationRequest
 			if err := decodeControlRequest(decoder, &request); err != nil {

@@ -293,3 +293,18 @@ func (a *authorizationClient) post(ctx context.Context, path string, payload any
 	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	return response.StatusCode, body, err
 }
+
+func (a *authorizationClient) Resolve(ctx context.Context, request egress.RouteRequest) (egress.RouteIdentity, error) {
+	var result egress.RouteIdentity
+	status, body, err := a.post(ctx, "/v1/route", request)
+	if err != nil {
+		return result, err
+	}
+	if status == http.StatusForbidden {
+		return result, egress.ErrDenied
+	}
+	if status != http.StatusOK {
+		return result, fmt.Errorf("route observation unavailable: HTTP %d", status)
+	}
+	return result, json.Unmarshal(body, &result)
+}

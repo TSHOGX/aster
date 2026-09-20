@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -30,6 +31,7 @@ type ProcessTransport struct {
 	OnCommandAcknowledged func(context.Context, string) error
 	OnCommandPrepared     func(context.Context, Envelope) error
 	OnRecovered           func(context.Context) error
+	stderrTail            []byte
 	recoveryHead          uint64
 	recoveryNotified      bool
 	backend               sandbox.Processes
@@ -98,8 +100,20 @@ func (t *ProcessTransport) Receive(ctx context.Context) ([]Delivery, error) {
 				}
 			}
 			if event.Kind == "end" {
-				return nil, &sandbox.Error{Class: sandbox.Precondition, Operation: "receive bridge journal", Cause: fmt.Errorf("bridge process exited before journal settlement: code %d", event.ExitCode)}
+				return nil, &sandbox.Error{Class: sandbox.Precondition, Operation: "receive bridge journal", Cause: fmt.Errorf("bridge process exited before journal settlement: code %d; stderr: %s", event.ExitCode, strings.TrimSpace(string(t.stderrTail)))}
 			}
+			if event.Kind == "data" && event.Stream == "stderr" {
+				const tailBytes = 4096
+				data := event.Data
+				if len(data) > tailBytes {
+					data = data[len(data)-tailBytes:]
+				}
+				t.stderrTail = append(t.stderrTail, data...)
+				if len(t.stderrTail) > tailBytes {
+					t.stderrTail = append([]byte(nil), t.stderrTail[len(t.stderrTail)-tailBytes:]...)
+				}
+			}
+
 			if event.Kind != "data" || event.Stream != "stdout" {
 				continue
 			}

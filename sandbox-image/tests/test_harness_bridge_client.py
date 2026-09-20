@@ -330,7 +330,7 @@ class BridgeClientTest(unittest.TestCase):
                         "PI_OFFLINE": "1",
                         "PI_SKIP_VERSION_CHECK": "1",
                         "PI_TELEMETRY": "0",
-                        "PI_MODEL": "sonnet",
+
                         "HARNESS_AGENT_UID": str(os.geteuid()),
                         "HARNESS_AGENT_GID": str(os.getegid()),
                     },
@@ -359,7 +359,7 @@ class BridgeClientTest(unittest.TestCase):
                 status, error_class, error, update = runner.run_turn("hello", lambda stream, line: emitted.append((stream, line)))
 
             self.assertEqual((status, error_class, error), ("completed", "", ""))
-            self.assertEqual(captured["command"][:7], ["/usr/local/bin/pi", "--mode", "rpc", "--provider", "harness_anthropic_proxy", "--model", "sonnet"])
+            self.assertEqual(captured["command"][:3], ["/usr/local/bin/pi", "--mode", "rpc"])
             self.assertIn("--session-dir", captured["command"])
             self.assertEqual(captured["command"][captured["command"].index("--session-dir") + 1], str(session_dir))
             self.assertNotIn("--no-session", captured["command"])
@@ -462,7 +462,7 @@ class BridgeClientTest(unittest.TestCase):
                         "PI_OFFLINE": "1",
                         "PI_SKIP_VERSION_CHECK": "1",
                         "PI_TELEMETRY": "0",
-                        "PI_MODEL": "sonnet",
+
                         "HARNESS_AGENT_UID": str(os.geteuid()),
                         "HARNESS_AGENT_GID": str(os.getegid()),
                     },
@@ -570,7 +570,7 @@ class BridgeClientTest(unittest.TestCase):
                         "PI_OFFLINE": "1",
                         "PI_SKIP_VERSION_CHECK": "1",
                         "PI_TELEMETRY": "0",
-                        "PI_MODEL": "sonnet",
+
                         "HARNESS_AGENT_UID": str(os.geteuid()),
                         "HARNESS_AGENT_GID": str(os.getegid()),
                     },
@@ -645,7 +645,7 @@ class BridgeClientTest(unittest.TestCase):
                         "PI_OFFLINE": "1",
                         "PI_SKIP_VERSION_CHECK": "1",
                         "PI_TELEMETRY": "0",
-                        "PI_MODEL": "sonnet",
+
                         "HARNESS_AGENT_UID": str(os.geteuid()),
                         "HARNESS_AGENT_GID": str(os.getegid()),
                     },
@@ -761,7 +761,7 @@ class BridgeClientTest(unittest.TestCase):
                         "PI_OFFLINE": "1",
                         "PI_SKIP_VERSION_CHECK": "1",
                         "PI_TELEMETRY": "0",
-                        "PI_MODEL": "sonnet",
+
                         "HARNESS_AGENT_UID": str(os.geteuid()),
                         "HARNESS_AGENT_GID": str(os.getegid()),
                     },
@@ -865,7 +865,7 @@ class BridgeClientTest(unittest.TestCase):
                         "PI_OFFLINE": "1",
                         "PI_SKIP_VERSION_CHECK": "1",
                         "PI_TELEMETRY": "0",
-                        "PI_MODEL": "sonnet",
+
                         "HARNESS_AGENT_UID": str(os.geteuid()),
                         "HARNESS_AGENT_GID": str(os.getegid()),
                     },
@@ -1317,6 +1317,34 @@ class EntrypointStaticTest(unittest.TestCase):
     pass
 
     pass
+
+
+    def test_probe_uses_native_provider_selection_and_rejects_unknown_model(self):
+        with tempfile.TemporaryDirectory() as root:
+            models = Path(root) / "models.json"
+            settings = Path(root) / "settings.json"
+            models.write_text(json.dumps({"providers": {"site_proxy": {
+                "baseUrl": "http://site.internal:443", "models": [{"id": "site-model"}]
+            }}}))
+            settings.write_text(json.dumps({"defaultProvider": "site_proxy", "defaultModel": "site-model"}))
+            for path in (models, settings):
+                path.chmod(0o444)
+            with mock.patch.object(bridge, "PI_MODELS_SANDBOX_PATH", str(models)), mock.patch.object(bridge, "PI_SETTINGS_SANDBOX_PATH", str(settings)), mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "http://wrong.internal", "PI_MODEL": "wrong"}):
+                self.assertEqual(bridge.pi_provider_origin(), "http://site.internal:443")
+                settings.chmod(0o600)
+                settings.write_text(json.dumps({"defaultProvider": "site_proxy", "defaultModel": "unknown"}))
+                settings.chmod(0o444)
+                with self.assertRaisesRegex(RuntimeError, "declared provider and model"):
+                    bridge.pi_provider_origin()
+
+
+    def test_native_error_stop_reason_is_a_failed_turn(self):
+        runner = bridge.PiRPCTurnRunner()
+        runner.set_turn_context({"turn_id": 1})
+        event = {"type": "turn_end", "message": {"stopReason": "error", "errorMessage": "401 controlled rejection"}}
+        with mock.patch.object(bridge, "validate_pi_config_materialization"), mock.patch.object(runner, "_start"), mock.patch.object(runner, "_restore_session_if_needed"), mock.patch.object(runner, "_write_rpc"), mock.patch.object(runner, "_read_rpc", return_value=(json.dumps(event), event)), mock.patch.object(runner, "_barrier_request", return_value={"success": True}):
+            result = runner.run_turn("test", lambda *_: None)
+        self.assertEqual(result[:3], ("failed", "agent_execution_failed", "401 controlled rejection"))
 
 
 def argparse_namespace(**kwargs):

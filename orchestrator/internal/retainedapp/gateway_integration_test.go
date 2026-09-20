@@ -25,10 +25,8 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/config"
-	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/egress"
 	"harness-platform/orchestrator/internal/events"
-	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/launchplan"
 	khorabackend "harness-platform/orchestrator/internal/sandbox/khora"
@@ -66,6 +64,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	// The upstream model. Its address is deliberately outside anything the
 	// compiled policy allows the guest to reach directly.
 	var upstreamRequests atomic.Int64
+	var rejectAuthentication atomic.Bool
 	var credentials sync.Map
 	upstreamListener, err := net.Listen("tcp4", "198.18.0.1:0")
 	if err != nil {
@@ -78,6 +77,12 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	}
 	upstream := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamRequests.Add(1)
+		if rejectAuthentication.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"controlled rejection"}}`))
+			return
+		}
 		credentials.Store(r.Header.Get("X-Api-Key"), true)
 		if r.Header.Get("Authorization") != "" {
 			t.Error("guest authorization header reached the upstream")
@@ -133,14 +138,10 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	}
 	models := map[string]any{"providers": map[string]any{"harness_anthropic_proxy": map[string]any{"baseUrl": origin, "api": "anthropic-messages", "apiKey": "harness-placeholder", "models": []map[string]any{{"id": model, "name": model, "reasoning": false, "input": []string{"text"}, "contextWindow": 8192, "maxTokens": 256, "cost": map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}}}}}
 	encoded, _ := json.Marshal(models)
-	for name, body := range map[string][]byte{"pi/models.json": encoded, "pi/settings.json": []byte(`{"compaction":{"enabled":false}}`)} {
+	for name, body := range map[string][]byte{"pi/models.json": encoded, "pi/settings.json": []byte(`{"defaultProvider":"harness_anthropic_proxy","defaultModel":"approved-model","compaction":{"enabled":false}}`)} {
 		if err := os.WriteFile(filepath.Join(configRoot, name), body, 0o600); err != nil {
 			t.Fatal(err)
 		}
-	}
-	revision, err := content.Read(configRoot)
-	if err != nil {
-		t.Fatal(err)
 	}
 
 	raw, err := os.ReadFile(manifestPath)
@@ -148,14 +149,6 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest, err := launchplan.Digest(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plans, err := launchplan.Load(strings.NewReader(string(raw)), digest, map[string]execution.LaunchPlan{"pi": {
-		TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20,
-		Content:     []execution.ContentRequirement{{Purpose: "config", Destination: "/harness-config", RevisionDigest: revision.Digest}},
-		Environment: []string{"ANTHROPIC_BASE_URL=" + origin, "PI_MODEL=" + model},
-	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +210,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 		"listen": gatewayEndpoint.String(), "reserved": reserved.String(),
 		"control": gatewayControl, "application_uid": os.Getuid(), "control_group": viaGID,
 		"authorization": authorizationSocket, "request_timeout": "30s",
-		"upstreams": []any{map[string]any{"reference": "models", "base_url": "http://" + upstreamListener.Addr().String(), "api_key_header": "X-Api-Key", "api_key_file": credentialPath}},
+		"upstreams": []any{map[string]any{"endpoint_id": "model", "models": []string{"approved-model"}, "base_url": "http://" + upstreamListener.Addr().String(), "api_key_header": "X-Api-Key", "api_key_file": credentialPath}},
 	}
 	encodedGateway, _ := json.Marshal(gatewayFile)
 	if err := os.WriteFile(gatewayConfig, encodedGateway, 0o644); err != nil {
@@ -229,7 +222,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorizationServer := &http.Server{Handler: gateway.AuthorizationHandler(st, uint32(viaUID)), ConnContext: gateway.PeerContext}
+	authorizationServer := &http.Server{Handler: gateway.AuthorizationHandler(routeDiagnostics{Store: st, t: t}, uint32(viaUID)), ConnContext: gateway.PeerContext}
 	authorizationDone := make(chan error, 1)
 	go func() { authorizationDone <- authorizationServer.Serve(authorizationListener) }()
 	defer func() { _ = authorizationServer.Close(); <-authorizationDone }()
@@ -292,16 +285,28 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	defer remotes.Close()
 
 	app := server.New(config.Config{MaxSessions: 2, MaxEditBytes: 1 << 20, MaxUploadBytes: 1 << 20, MaxUploadFiles: 8}, st, events.NewHub(), testLogger())
-	runtime, err := Attach(ctx, app, st, Options{
-		Backend: backend, Plans: plans, Connectivity: catalog,
-		Content: []AuthoredContent{{Purpose: "config", Root: configRoot, Revision: revision}}, ContentBytes: 8 << 20,
-		Routes: remotes, Activator: remotes, Grants: remotes,
-		BackendName: "gateway-engine", OwnerUUID: owner.UUID, PreparedRoot: filepath.Join(root, "prepared"),
-		MaxActive: 2, InventoryLimit: 10000, LeaseTTL: time.Minute,
-		PollInterval: 50 * time.Millisecond, EventInterval: 50 * time.Millisecond, ActionTimeout: 10 * time.Second,
-		CaptureWindow: time.Minute, InventoryInterval: 200 * time.Millisecond,
-		OnError: func(scope string, err error) { t.Logf("%s: %v", scope, err) },
-	})
+
+	deploymentPath := filepath.Join(root, "deployment.json")
+	document := map[string]any{
+		"version": 1, "backend_name": "gateway-engine", "engine": map[string]any{"endpoint": endpoint, "store_id": identity.StoreID},
+		"manifest": manifestPath, "manifest_digest": digest,
+		"plans":         map[string]any{"pi": map[string]any{"template": template, "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "config": configRoot}},
+		"content_bytes": 8 << 20, "prepared_root": filepath.Join(root, "prepared"),
+		"authorization": map[string]any{"socket": authorizationSocket, "peer_uid": viaUID, "group": viaGID},
+		"gateways":      []any{map[string]any{"id": "model", "socket": gatewayControl, "peer_uid": viaUID, "listener": gatewayEndpoint.String()}},
+		"connectivity":  map[string]any{"revision": catalog.Revision, "synthetic_range": reserved.String(), "catalog": catalog.Endpoints, "policies": map[string]egress.EndpointList{"pi": {Endpoints: catalog.Policies["pi"].Endpoints}}},
+		"max_active":    2, "inventory_limit": 10000, "lease_ttl": "1m", "poll_interval": "50ms", "event_interval": "50ms", "action_timeout": "10s", "capture_window": "1m", "inventory_interval": "200ms", "idle_interval": "1s", "idle_threshold": "1m",
+	}
+	if err := os.WriteFile(deploymentPath, mustJSON(document), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := LoadDeployment(deploymentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := deployment.Options(backend, remotes, owner.UUID)
+	options.OnError = func(scope string, err error) { t.Logf("%s: %v", scope, err) }
+	runtime, err := Attach(ctx, app, st, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,13 +369,41 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	}
 	// Authority was recorded per request, attributed to this turn.
 	var authorized int
-	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_requests WHERE turn_id=? AND endpoint_id='model' AND operation='generate' AND outcome IS NOT NULL`, turn).Scan(&authorized); err != nil || authorized == 0 {
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_requests WHERE turn_id=? AND endpoint_id='model' AND outcome IS NOT NULL`, turn).Scan(&authorized); err != nil || authorized == 0 {
 		t.Fatalf("model requests were not authorized and settled: %d %v", authorized, err)
 	}
 	var active int
 	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_route_bindings WHERE state='active' AND endpoint_id='model'`).Scan(&active); err != nil || active != 1 {
 		t.Fatalf("composed route was not activated: %d %v", active, err)
 	}
+
+	// Upstream authentication is a request failure, never network authority.
+	rejectAuthentication.Store(true)
+	rejected := sendIntegrationTurn(t, ctx, app, session, "exercise upstream rejection")
+	for {
+		status, reason, err := st.TurnStatus(ctx, session, rejected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status == "failed" {
+			break
+		}
+		if status == "completed" || status == "canceled" {
+			t.Fatalf("authentication rejection status %s: %s", status, reason)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	var rejectedRequests int
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_requests WHERE turn_id=? AND outcome='upstream_401'`, rejected).Scan(&rejectedRequests); err != nil || rejectedRequests == 0 {
+		t.Fatalf("authentication failure not settled: %d %v", rejectedRequests, err)
+	}
+	rejectAuthentication.Store(false)
+	recovered := sendIntegrationTurn(t, ctx, app, session, "continue after authentication failure")
+	awaitIntegrationTurn(t, ctx, st, session, recovered)
 
 	// Releasing the execution revokes that authority: a later request on the same
 	// destination must be denied even though the route once worked.
@@ -486,4 +519,29 @@ func lookupViaIdentity(t *testing.T) (int, int) {
 		t.Fatal(err)
 	}
 	return uid, gid
+}
+
+// Include the durable fence facts when real ingress cannot resolve readiness.
+type routeDiagnostics struct {
+	*store.Store
+	t *testing.T
+}
+
+func (d routeDiagnostics) ResolveEgressRoute(ctx context.Context, p egress.RouteRequest) (egress.RouteIdentity, error) {
+	route, err := d.Store.ResolveEgressRoute(ctx, p)
+	if err != nil {
+		rows, queryErr := d.DBForTest().QueryContext(ctx, `SELECT json_object('route',r.binding_id,'route_state',r.state,'route_epoch',r.epoch,'route_generation',r.generation_id,'binding_state',b.state,'binding_epoch',b.epoch,'binding_fence',b.environment_fence,'environment_epoch',e.epoch,'environment_fence',e.fence,'generation_status',g.status,'lease',g.lease_expires_at,'active_generation',s.active_generation_id,'session_status',s.status,'pending_ops',(SELECT count(*) FROM environment_operations o WHERE o.environment_id=e.environment_id AND o.state IN ('pending','issued','uncertain'))) FROM egress_route_bindings r LEFT JOIN execution_bindings b ON b.generation_id=r.generation_id LEFT JOIN sandbox_environments e ON e.environment_id=b.environment_id LEFT JOIN runtime_generations g ON g.generation_id=b.generation_id LEFT JOIN sessions s ON s.id=b.session_id`)
+		if queryErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var facts string
+				if rows.Scan(&facts) == nil {
+					d.t.Logf("readiness facts: %s", facts)
+				}
+			}
+		} else {
+			d.t.Log(queryErr)
+		}
+	}
+	return route, err
 }

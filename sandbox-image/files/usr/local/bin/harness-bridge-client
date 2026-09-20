@@ -17,7 +17,6 @@ PI_CODING_AGENT_DIR = "/root/.pi/agent"
 PI_SESSION_DIR = f"{PI_CODING_AGENT_DIR}/sessions"
 PI_MODELS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/models.json"
 PI_SETTINGS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/settings.json"
-PI_HARNESS_PROXY_PROVIDER = "harness_anthropic_proxy"
 PI_SYSTEM_PROMPT_PATH = "/usr/local/share/harness/pi-system-prompt.md"
 DRIVER_STATE_DIGEST_PREFIX = b"driver_state_digest_v1\n"
 # Consecutive claim failures before the claim loop gives up. With the 1s-per-
@@ -408,15 +407,10 @@ class PiRPCTurnRunner:
         validate_pi_config_materialization()
         if self.proc is not None and self.proc.poll() is None:
             return
-        model = os.environ.get("PI_MODEL") or "sonnet"
         pi_command = [
             os.environ.get("PI_BIN", "/usr/local/bin/pi"),
             "--mode",
             "rpc",
-            "--provider",
-            PI_HARNESS_PROXY_PROVIDER,
-            "--model",
-            model,
             "--session-dir",
             pi_runtime_env["PI_CODING_AGENT_SESSION_DIR"],
         ]
@@ -428,7 +422,6 @@ class PiRPCTurnRunner:
             "HOME": "/root",
             "USER": "root",
             "LOGNAME": "root",
-            "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", ""),
         }
         env.update(pi_runtime_env)
         for optional_name in ("LANG", "TMPDIR"):
@@ -645,6 +638,12 @@ class PiRPCTurnRunner:
                         error_class = "user_interrupted"
                         error = "interrupted by user"
                         break
+                    if pi_event_stop_reason(event) == "error":
+                        status = "failed"
+                        error_class = "agent_execution_failed"
+                        message = event.get("message") or {}
+                        error = (message.get("errorMessage") if isinstance(message, dict) else str(message)) or event.get("errorMessage") or "pi model request failed"
+                        break
                     terminal_status = str(event.get("status") or "completed")
                     if terminal_status not in {"completed", "success", "ok"}:
                         status = "failed"
@@ -819,9 +818,28 @@ def http_status(url, method="GET", headers=None, body=None, timeout=3.0):
         return err.code
 
 
+def pi_provider_origin():
+    """Read endpoint selection from Pi's authored native configuration."""
+    validate_pi_config_materialization()
+    with open(PI_SETTINGS_SANDBOX_PATH, encoding="utf-8") as source:
+        settings = json.load(source)
+    with open(PI_MODELS_SANDBOX_PATH, encoding="utf-8") as source:
+        models = json.load(source)
+    provider = models.get("providers", {}).get(settings.get("defaultProvider"), {})
+    if not settings.get("defaultModel") or not any(
+        model.get("id") == settings["defaultModel"] for model in provider.get("models", [])
+    ):
+        raise RuntimeError("native Pi settings must select a declared provider and model")
+    origin = provider.get("baseUrl", "")
+    parsed = urllib.parse.urlsplit(origin)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise RuntimeError("native Pi provider requires an HTTP origin without credentials")
+    return origin
+
+
 def run_network_probe(base_url, healthz_statuses, timeout):
     if not base_url:
-        raise RuntimeError("ANTHROPIC_BASE_URL is required for probe")
+        raise RuntimeError("native Pi provider baseUrl is required for probe")
     base_url = base_url.rstrip("/")
     healthz_status = http_status(f"{base_url}/healthz", timeout=timeout)
     if healthz_status not in healthz_statuses:
@@ -910,7 +928,7 @@ def run_claim_loop(args, runner=None):
         client.hello(timeout=args.timeout)
         if driver_id == "pi":
             run_network_probe(
-                args.base_url,
+                pi_provider_origin(),
                 parse_statuses(args.healthz_statuses, {200}),
                 args.http_timeout,
             )
@@ -978,7 +996,6 @@ def main(argv=None):
     # timeout here is retried by the claim loop, so this bounds latency of one
     # attempt rather than deciding whether the sandbox lives.
     parser.add_argument("--timeout", type=float, default=float(os.environ.get("HARNESS_BRIDGE_TIMEOUT", "30")))
-    parser.add_argument("--base-url", default=os.environ.get("ANTHROPIC_BASE_URL", ""))
     parser.add_argument("--healthz-statuses", default=os.environ.get("HARNESS_PROBE_HEALTHZ_STATUSES", "200"))
     parser.add_argument("--http-timeout", type=float, default=float(os.environ.get("HARNESS_PROBE_HTTP_TIMEOUT", "3")))
     subcommands = parser.add_subparsers(dest="command", required=True)

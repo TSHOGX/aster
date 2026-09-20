@@ -147,3 +147,56 @@ func TestEgressLateFinishRetainsOriginalTurnAndRevocationLeavesTupleTombstone(t 
 		t.Fatal("mutated compilation reused tuple")
 	}
 }
+
+func TestRouteReadinessObservesCurrentIdentityWithoutIssuingAuthority(t *testing.T) {
+	for _, starting := range []bool{false, true} {
+		st, _, binding, _ := grantFixture(t)
+		ctx := context.Background()
+		if starting {
+			if _, err := st.db.Exec(`UPDATE execution_bindings SET state='starting' WHERE generation_id=?`, binding.GenerationID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.db.Exec(`UPDATE runtime_generations SET status='starting' WHERE generation_id=?`, binding.GenerationID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.db.Exec(`UPDATE sandbox_environments SET fence=fence+1; UPDATE execution_bindings SET environment_fence=environment_fence+1`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.db.Exec(`INSERT INTO environment_operations(operation_id,environment_id,kind,idempotency_key,fence,mutation_revision,state,request,request_digest,result,error,created_at,updated_at) SELECT 'start:' || generation_id,environment_id,'start_process','probe-start',environment_fence,'observed','issued','{}','digest','{}','','now','now' FROM execution_bindings WHERE generation_id=?`, binding.GenerationID); err != nil {
+				t.Fatal(err)
+			}
+
+		}
+		request := egress.RouteRequest{BackendID: binding.StoreID, Destination: netip.MustParseAddrPort("10.80.0.1:9030")}
+		route, err := st.ResolveEgressRoute(ctx, request)
+		if err != nil || route.BindingID != "route" || route.EndpointID != "analytics" || route.BindingRevision != 1 {
+			t.Fatalf("route: %+v %v", route, err)
+		}
+		var count int
+		if err := st.db.QueryRow(`SELECT (SELECT count(*) FROM egress_grants)+(SELECT count(*) FROM egress_requests)`).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("probe issued authority: %d %v", count, err)
+		}
+		if _, err := st.AuthorizeEgressRequest(ctx, queryRequest(binding)); !errors.Is(err, egress.ErrDenied) {
+			t.Fatalf("probe authorized workload: %v", err)
+		}
+	}
+	for name, sql := range map[string]string{
+		"revoked": "UPDATE egress_route_bindings SET state='revoked'",
+		"expired": "UPDATE runtime_generations SET lease_expires_at='2000-01-01T00:00:00Z'",
+		"epoch":   "UPDATE sandbox_environments SET epoch=epoch+1",
+		"fence":   "UPDATE sandbox_environments SET fence=fence+1",
+		"retired": "UPDATE execution_bindings SET state='retired'",
+		"owner":   "UPDATE orchestrator_owner SET uuid='replacement'",
+	} {
+		t.Run(name, func(t *testing.T) {
+			st, _, binding, _ := grantFixture(t)
+			if _, err := st.db.Exec(sql); err != nil {
+				t.Fatal(err)
+			}
+			_, err := st.ResolveEgressRoute(context.Background(), egress.RouteRequest{BackendID: binding.StoreID, Destination: netip.MustParseAddrPort("10.80.0.1:9030")})
+			if !errors.Is(err, egress.ErrDenied) {
+				t.Fatalf("stale route readiness: %v", err)
+			}
+		})
+	}
+}

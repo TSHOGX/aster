@@ -14,7 +14,6 @@ import (
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sandbox"
 	"io"
-	"net/url"
 	"sort"
 	"strings"
 )
@@ -192,20 +191,7 @@ func Load(manifest io.Reader, expected string, plans map[string]execution.Launch
 		if driver == "pi" && !destinations["/harness-config"] {
 			return nil, fmt.Errorf("Pi plan requires a pinned configuration revision")
 		}
-		env := map[string]bool{}
-		for _, entry := range p.Environment {
-			name, value, ok := strings.Cut(entry, "=")
-			if !ok || value == "" || strings.ContainsAny(value, "\x00\r\n") || env[name] || driver != "pi" || (name != "PI_MODEL" && name != "ANTHROPIC_BASE_URL") {
-				return nil, fmt.Errorf("driver plan contains unsupported guest environment")
-			}
-			env[name] = true
-			if name == "ANTHROPIC_BASE_URL" {
-				endpoint, err := url.Parse(value)
-				if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
-					return nil, fmt.Errorf("model gateway URL must contain no credentials, query or fragment")
-				}
-			}
-		}
+
 		encoded, err := canonicaljson.Marshal(p)
 		if err != nil {
 			return nil, err

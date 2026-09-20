@@ -177,3 +177,11 @@ func (f *Flows) Close(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Ready observes activation without creating a flow or authorizing upstream I/O.
+func (f *Flows) Ready(route egress.RouteIdentity) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	binding := f.bindings[route.BindingID]
+	return !f.closed && binding != nil && !binding.revoked && binding.revision == route.BindingRevision
+}

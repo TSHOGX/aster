@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -59,6 +60,7 @@ type ModelOptions struct {
 // over the protected Unix socket. Every request is authorized, including one
 // reusing an established connection.
 type ModelAuthorizer interface {
+	Resolve(context.Context, egress.RouteRequest) (egress.RouteIdentity, error)
 	Authorize(context.Context, egress.AuthorizationRequest) (egress.Authorization, error)
 	Finish(context.Context, egress.RequestFinish) error
 }
@@ -120,6 +122,24 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "connection did not arrive through an assigned service route", http.StatusForbidden)
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/healthz" && r.URL.RawQuery == "" {
+		ctx, cancel := context.WithTimeout(r.Context(), min(g.options.RequestTimeout, 5*time.Second))
+		defer cancel()
+		route, err := g.options.Authorizer.Resolve(ctx, egress.RouteRequest{BackendID: g.options.BackendID, Destination: destination})
+		if err != nil {
+			slog.Warn("route readiness denied", "destination", destination.String(), "error", err)
+			writeAuthorizationFailure(w, err)
+			return
+		}
+		if _, exists := g.upstreams[route.EndpointID]; !exists || !g.options.Flows.Ready(route) {
+			http.Error(w, "route is not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ready":true}`)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "only generation requests are supported", http.StatusMethodNotAllowed)
 		return
@@ -153,6 +173,7 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !known {
 		// A service the product authorized but this gateway holds no credentials
 		// for is a deployment mismatch, not something to improvise around.
+		g.finish(r.Context(), request.RequestID, "upstream_unconfigured", 0)
 		http.Error(w, "no upstream is configured for the authorized service", http.StatusServiceUnavailable)
 		return
 	}
@@ -164,6 +185,7 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	flowCtx, flow, err := g.options.Flows.Begin(r.Context(), authorization)
 	if err != nil {
+		g.finish(r.Context(), request.RequestID, "admission_revoked", 0)
 		writeAuthorizationFailure(w, err)
 		return
 	}
@@ -286,6 +308,7 @@ func DestinationContext(reserved netip.Prefix) func(context.Context, net.Conn) c
 		}
 		destination, err := AcceptDestination(tcp, reserved)
 		if err != nil {
+			slog.Warn("gateway ingress refused", "local", connection.LocalAddr(), "error", err)
 			return ctx
 		}
 		return context.WithValue(ctx, originalDestinationKey{}, destination)

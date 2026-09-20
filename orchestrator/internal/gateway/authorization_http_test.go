@@ -78,3 +78,7 @@ func TestAuthorizationHeadersCannotForgeKernelPeer(t *testing.T) {
 	default:
 	}
 }
+
+func (a *authorizerFixture) ResolveEgressRoute(context.Context, egress.RouteRequest) (egress.RouteIdentity, error) {
+	return egress.RouteIdentity{}, egress.ErrDenied
+}

@@ -242,3 +242,45 @@ func (s *Store) RevokeExecutionRoutes(ctx context.Context, generation string) er
 	}
 	return tx.Commit()
 }
+
+// ResolveEgressRoute observes a current starting/accepted route without granting
+// upstream access. A proxy must also verify local activation before readiness.
+func (s *Store) ResolveEgressRoute(ctx context.Context, p egress.RouteRequest) (egress.RouteIdentity, error) {
+	var result egress.RouteIdentity
+	if p.BackendID == "" || !p.Destination.IsValid() {
+		return result, egress.ErrDenied
+	}
+	if p.Now.IsZero() {
+		p.Now = time.Now().UTC()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	var owner string
+	err = tx.QueryRowContext(ctx, `SELECT r.binding_id,r.revision,r.endpoint_id,b.owner
+ FROM egress_route_bindings r
+ JOIN execution_bindings b ON b.generation_id=r.generation_id
+ JOIN sandbox_environments e ON e.environment_id=b.environment_id
+ JOIN runtime_generations g ON g.generation_id=b.generation_id
+ JOIN sessions s ON s.id=b.session_id
+ WHERE r.backend_id=? AND r.destination=? AND r.state IN ('dormant','active')
+ AND b.state IN ('starting','accepted') AND b.store_id=r.backend_id AND b.epoch=r.epoch
+ AND e.store_id=b.store_id AND e.sandbox_id=b.sandbox_id AND e.epoch=b.epoch AND e.fence=b.environment_fence
+ AND g.lease_owner=b.owner AND g.lease_expires_at>? AND g.status IN ('starting','idle','active')
+ AND s.active_generation_id=b.generation_id AND s.status NOT IN ('failed','destroyed')
+ AND NOT EXISTS(SELECT 1 FROM session_retirements retired WHERE retired.session_id=s.id)
+ AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=e.environment_id AND o.state IN ('pending','issued','uncertain') AND NOT (b.state='starting' AND o.kind='start_process' AND o.operation_id='start:' || b.generation_id AND o.fence=b.environment_fence))
+ AND NOT EXISTS(SELECT 1 FROM engine_backend_blocks x WHERE x.store_id=b.store_id)`, p.BackendID, p.Destination.String(), formatTime(p.Now)).Scan(&result.BindingID, &result.BindingRevision, &result.EndpointID, &owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, egress.ErrDenied
+	}
+	if err != nil {
+		return result, err
+	}
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return result, egress.ErrDenied
+	}
+	return result, tx.Commit()
+}

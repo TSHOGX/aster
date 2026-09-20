@@ -386,3 +386,46 @@ func TestModelAllowlistBelongsToProxyAfterGenericRouteAdmission(t *testing.T) {
 		t.Fatal("denied model forwarded")
 	}
 }
+
+func (a *scriptedAuthorizer) Resolve(_ context.Context, request egress.RouteRequest) (egress.RouteIdentity, error) {
+	if a.fail != nil {
+		return egress.RouteIdentity{}, a.fail
+	}
+	if request.Destination != netip.MustParseAddrPort("10.80.0.1:443") {
+		return egress.RouteIdentity{}, egress.ErrDenied
+	}
+	binding := a.bindingID
+	if binding == "" {
+		binding = "route_model"
+	}
+	return egress.RouteIdentity{BindingID: binding, BindingRevision: 1, EndpointID: a.service.ID}, nil
+}
+func TestReadinessUsesActivatedBindingWithoutTurnGrantOrUpstream(t *testing.T) {
+	proxy, authorizer, flows, upstream := modelFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("health probe forwarded") })
+	authorizer.deny = true // No turn grant exists during startup.
+	probe := func(path string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request = request.WithContext(context.WithValue(request.Context(), originalDestinationKey{}, netip.MustParseAddrPort("10.80.0.1:443")))
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, request)
+		return response
+	}
+	if response := probe("/healthz"); response.Code != http.StatusOK || response.Body.String() != `{"ready":true}` {
+		t.Fatalf("readiness: %d %s", response.Code, response.Body)
+	}
+	if response := probe("/healthz?forward=1"); response.Code == http.StatusOK {
+		t.Fatal("query bypass accepted")
+	}
+	if response := steered(t, proxy, `{"model":"approved-model"}`, nil); response.Code != http.StatusForbidden {
+		t.Fatal("readiness granted workload access")
+	}
+	if err := flows.Revoke(context.Background(), "route_model"); err != nil {
+		t.Fatal(err)
+	}
+	if response := probe("/healthz"); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("revoked route readiness: %d", response.Code)
+	}
+	if headers, _ := upstream.seen(); len(headers) != 0 {
+		t.Fatal("readiness made an upstream request")
+	}
+}

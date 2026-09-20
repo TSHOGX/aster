@@ -1,5 +1,9 @@
 {
+  "defaultProvider": "harness_anthropic_proxy",
+  "defaultModel": "example-model",
   "steeringMode": "all",
   "followUpMode": "all",
-  "compaction": {"enabled": false}
+  "compaction": {
+    "enabled": false
+  }
 }

@@ -53,3 +53,18 @@ next-hop fields. An empty policy runs locally with zero gateways. Model proxy
 credentials and resource allowlists live in the proxy's separate configuration.
 The current database schema stores only generic route/grant authority; earlier
 schemas are rejected before writable access.
+
+
+Versioned examples:
+
+- [Local shell deployment](../config/khora-local.example.json): no gateways or network access.
+- [Pi and shell deployment](../config/khora-model.example.json): managed model endpoint, local shell.
+- [Separate model proxy](../config/model-gateway.example.json): upstream URL, model allowlist and credential file.
+
+Copy examples to private files and replace engine store ID, exported manifest path
+and digest, template name, network addresses and peer UID/group IDs. Paths resolve
+beside each document. The examples use application UID 1000 and gateway UID/group
+1001 as placeholders. The engine's second-hop UID must match the actual gateway
+process; create shared socket directories with matching access. Start the proxy
+before the application (its control listener does not require application
+readiness). Keep its credential file mode 0600 and owned by the gateway UID.

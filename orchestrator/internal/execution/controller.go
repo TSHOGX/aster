@@ -61,7 +61,6 @@ type LaunchPlan struct {
 	Network                                                         sandbox.Network
 	Content                                                         []ContentRequirement
 	Mounts                                                          []sandbox.Mount
-	Environment                                                     []string
 }
 type PlanSource interface {
 	Plan(context.Context, Session, string) (LaunchPlan, error)
@@ -85,10 +84,9 @@ type desiredEnvironment struct {
 // re-derived per generation, recorded with its own digest, and applied to a
 // retained paused environment through a fenced configure operation.
 type GenerationConfiguration struct {
-	SpecDigest  string          `json:"spec_digest"`
-	Network     sandbox.Network `json:"network"`
-	Mounts      []sandbox.Mount `json:"mounts"`
-	Environment []string        `json:"environment"`
+	SpecDigest string          `json:"spec_digest"`
+	Network    sandbox.Network `json:"network"`
+	Mounts     []sandbox.Mount `json:"mounts"`
 	// Hosts, Routes and ConnectivityDigest describe the reserved service composition
 	// this declaration carries. They are recorded with the declaration so a
 	// restart can activate exactly the routes the engine is enforcing.
@@ -261,10 +259,6 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 			}
 		}
 	}
-	launchEnvironment := plan.Environment
-	if present {
-		launchEnvironment = applied.Environment
-	}
 	// Service hostnames are passed as launcher arguments rather than guest-writable
 	// files or environment: the engine projects no /etc/hosts, and the names must
 	// describe the same destinations the confirmed declaration steers.
@@ -272,7 +266,7 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	for _, host := range applied.Hosts {
 		arguments = append(arguments, "--service-host", host.Name+"="+host.Address)
 	}
-	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: arguments, Environment: launchEnvironment, Directory: "/workspace"}
+	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: arguments, Directory: "/workspace"}
 	start := WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request}
 	var binding Binding
 	var connection AgentConnection
@@ -514,7 +508,7 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 	if err != nil {
 		return Environment{}, GenerationConfiguration{}, err
 	}
-	configuration := GenerationConfiguration{SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts, Environment: plan.Environment}
+	configuration := GenerationConfiguration{SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts}
 	if c.Connectivity != nil && generation != "" {
 		epoch := environment.Epoch + 1
 		if environment.SandboxID == "" {
@@ -629,7 +623,7 @@ func (c *Controller) applyGenerationConfiguration(ctx context.Context, environme
 	if err != nil {
 		return err
 	}
-	if applied && current.SpecDigest == configuration.SpecDigest && sandbox.SameConfiguration(sandbox.Configuration{Network: current.Network, Mounts: current.Mounts}, configuration.Network, configuration.Mounts) && equalStrings(current.Environment, configuration.Environment) {
+	if applied && current.SpecDigest == configuration.SpecDigest && sandbox.SameConfiguration(sandbox.Configuration{Network: current.Network, Mounts: current.Mounts}, configuration.Network, configuration.Mounts) {
 		return nil
 	}
 	// The engine refuses an egress edit on a running sandbox, so a retained
@@ -644,18 +638,6 @@ func (c *Controller) applyGenerationConfiguration(ctx context.Context, environme
 	}
 	_, err = (EnvironmentService{Repository: c.Repository, Backend: c.Backend}).Run(ctx, OperationIntent{ID: operation.ID, EnvironmentID: operation.EnvironmentID, Kind: operation.Kind, IdempotencyKey: operation.IdempotencyKey, ExpectedFence: operation.Fence - 1, Request: operation.Request})
 	return err
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func (c *Controller) InspectEnvironment(ctx context.Context, id, owner string) (sandbox.Observation, error) {

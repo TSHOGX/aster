@@ -244,3 +244,18 @@ func TestProcessCarrierRetainsUnacknowledgedDeliveryAndStableResponseIdentity(t 
 		t.Fatal("response retry changed command identity")
 	}
 }
+
+func TestProcessExitReportsBoundedGuestDiagnostics(t *testing.T) {
+	ctx := context.Background()
+	st, allocation, _, _ := setupBridgeRunningTurn(t, ctx, "diagnostics")
+	peer := &journalProcess{}
+	carrier, err := NewProcessTransport(ctx, peer, peer, sandbox.ProcessReference{StoreID: "backend", SandboxID: "sandbox", Handle: "process", Epoch: 3}, Scope{SessionID: "diagnostics", GenerationID: allocation.GenerationID}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.queue = append(peer.queue, sandbox.ProcessFrame{Kind: "data", Stream: "stderr", Data: []byte(strings.Repeat("x", 8192) + "missing native config")}, sandbox.ProcessFrame{Kind: "end", ExitCode: 1})
+	_, err = carrier.Receive(ctx)
+	if err == nil || !strings.Contains(err.Error(), "missing native config") || len(err.Error()) > 4300 || !sandbox.Is(err, sandbox.Precondition) {
+		t.Fatalf("bounded exit diagnostics: %v", err)
+	}
+}

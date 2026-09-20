@@ -102,9 +102,13 @@ Guest authorization and cookie headers are discarded. Upstream statuses are
 forwarded and recorded as outcomes. Pi endpoint/model selection belongs to authored
 native configuration, independently of network policy.
 
-Ordinary Pi startup additionally requires local pre-turn readiness on an activated
-binding. The full readiness and real-engine gateway journey remains under active
-integration; unit/control tests alone do not establish that evidence.
+Pi selects its provider/model from authored `settings.json` (`defaultProvider` and
+`defaultModel`) and resolves the origin from native `models.json`. The bridge's
+`GET /healthz` returns a bounded local response only after `POST /v1/route` resolves
+a current destination and the gateway confirms its activated binding revision.
+This lookup permits the generation's exact pending start operation and issues no
+grant. All other pending lifecycle changes fence it out. Health never contacts
+an upstream; workload forwarding still requires an accepted turn grant.
 
 ## Durable destination allocation
 
