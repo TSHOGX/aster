@@ -1,107 +1,22 @@
 # Development
 
-Use a dedicated Linux host or VM for runtime development. The orchestrator uses
-Linux-only syscalls and invokes runsc, ip and nft. The frontend can be developed
-separately, but a full runtime/model smoke needs the Linux service and an external
-model proxy.
+Use a private data directory and fresh current-schema database. The application has
+no embedded runtime and cannot open a legacy or earlier-branch database. Start the
+HTTP daemon only with explicit product YAML and a validated Khora deployment JSON.
+The existing integration tests contain synthetic deployment documents.
 
-## Private configuration
+Khora is pinned in `orchestrator/go.mod`; private module access is needed for a cold
+module cache. `scripts/fetch-go-dependencies.sh` handles the CI credential handoff.
+No sibling-directory replacement is required.
 
-Create an ignored `private/development/` directory, copy `config/harness.yaml` as
-a starting point and set all data/run/network roots for your environment. The
-checked-in configuration is a generic example, not a production deployment.
-Do not share a live DB, runsc root, network pool or service port with another
-installation. Keep authentication, title/memory LLM files and gateway secrets in
-the same private configuration directory or explicit external paths.
+Build/test commands are in [verification](verification.md). Pure Go tests run without
+an engine. Real integration tests use the `khoraintegration` build tag and require an
+isolated engine, a freshly finalized template and disposable storage/network namespaces.
+Keep the engine store, volumes, cgroups and network namespace isolated from other work.
 
-`--config PATH` / `HARNESS_CONFIG_PATH` select the application YAML; environment
-variables override the supported runtime fields. Explicit missing files fail.
-See [configuration](configuration.md).
+The frontend uses Node and npm; `npm ci`, then `npm run dev`. Set its orchestrator
+origin for the local daemon. Authentication and same-origin proxy checks remain active.
 
-## Build and run
-
-```bash
-go -C orchestrator build -o bin/orchestrator ./cmd/orchestrator
-# Use the target's required privileges and explicit environment settings.
-orchestrator/bin/orchestrator --config /absolute/private/development/harness.yaml
-
-cd frontend
-npm ci
-HARNESS_API_BASE_URL=http://127.0.0.1:8090 PORT=8000 npm run dev
-```
-
-Ports are examples. Use only an isolated loopback setup for unmanaged open auth;
-configure credentials and TLS for shared access. `HARNESS_DEV_ORIGINS` is a
-comma-separated list of development browser origins and should be locally set.
-
-To build a rootfs on a Linux builder with root privileges and debootstrap:
-
-```bash
-sudo SANDBOX_AGENT_DRIVERS=pi,sh ./sandbox-image/build-rootfs.sh
-```
-
-An existing rootfs is reused by default and receives overlay/manifest updates;
-`FORCE=1` rebuilds it and removes that destination. Never point the build script at
-a live rootfs. Host-specific build mirrors and DNS hooks belong in an ignored
-build environment file. See [sandbox image](sandbox-image.md).
-
-## Model proxy adapter
-
-`dev/model-proxy/proxy.py` is a development forwarding adapter. Copy its
-`.env.example` into private configuration, provide your own upstream settings and
-point correlation at this deployment's Unix socket. The adapter authorizes model
-requests before forwarding with its host-only key. Do not pass real upstream keys
-into sandbox environment variables.
-
-The adapter and `dev/build-dns-pin.sh` are optional tools, not instructions for a
-specific VM, resolver or cloud. This repository installs no machine-specific
-startup/shutdown service. Stop the processes you started through your own service
-manager and use the runtime cleanup contract for sandboxes; avoid kill-by-port or
-blanket network cleanup on a shared host.
-
-## Working on changes
-
-Branch from current main and keep changes independently reviewable. Git worktrees
-are useful for unrelated work. Run relevant checks before opening a PR and include
-the trigger, resulting behavior and validation. Keep plans in Issues and update
-current reference docs with implementation, not proposal histories.
-
-[Verification](verification.md) lists the test commands and release checks.
-
-## Private engine dependency
-
-The Go module pins the private `TSHOGX/khora` repository at an immutable commit.
-Source builds need Git read access and `GOPRIVATE=github.com/TSHOGX/khora`.
-Developers can use their existing Git authentication. CI and reusable release
-verification require a `KHORA_READ_TOKEN` secret scoped to read that repository;
-`scripts/fetch-go-dependencies.sh` uses it only for the dependency download and
-removes its temporary credential helper afterward. The script never writes the
-credential into Git configuration or the source tree. Go dependency caches are
-not uploaded by these jobs.
-
-Root-owned fixture tests can reuse dependencies already fetched by the development
-user, for example `sudo env "GOPATH=$(go env GOPATH)" GOPROXY=off go -C orchestrator
-test ./...`. This avoids introducing another Git
-credential into the root account. The engine binary used by the Khora adapter
-must report build version `e8cd021a9c7c` and enable `--manual-cold-recovery`.
-
-Build the independent native capture worker with
-`go -C orchestrator build -o ../native-capture ./cmd/native-capture`. Against
-already-migrated managed databases, run:
-
-```bash
-./native-capture \
-  --control-db /srv/batterygpt/control.db \
-  --memory-db /srv/batterygpt/memory.db \
-  --trajectory-root /srv/batterygpt/trajectories \
-  --engine-endpoint http://127.0.0.1:8090
-```
-
-`--once` processes one batch. Continuous mode polls every five seconds and bounds
-each batch to two minutes by default. Run one publisher per control database;
-the command enforces this through a canonical lock next to that database. Stop
-the capture process along with the application for schema migration or database
-restore. This worker opens managed schemas without migrating them. Paused
-snapshots request activation through the control ledger; the application-owned
-capture-maintenance service must poll those requests. The worker does not call
-engine lifecycle mutations itself.
+Scope is [Khora-only branch development](development-scope.md). The private plan names
+remaining publication, gateway composition and recovery work. Preparation ends with
+validation and a handoff; it does not implicitly start those workstreams.

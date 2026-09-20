@@ -19,11 +19,9 @@ served by the application. Alternatively use `.harness-local/` or
 `*.local.json` / `*.local.yaml` / `*.local.md`, which are ignored. Ignore rules do
 not protect already tracked files: inspect the staged diff before committing.
 
-Only reviewed synthetic `.example.json` templates are shipped. The release
-builder copies an explicit file allowlist, never an entire deployment/docs folder.
-Hosted smoke tests use synthetic data; only schema-validated, allowlisted
-technical results tied to the release manifest can be published. Real deployment
-reports and business acceptance remain private to the target environment.
+Synthetic fixtures may be versioned. Real deployment reports, raw integration
+logs and machine-specific plans remain private. No production release pipeline
+is provided by this development branch.
 
 Deleting a file in a new commit does not remove previous Git objects, remote
 refs, pull-request caches, artifacts or other clones. Before changing repository

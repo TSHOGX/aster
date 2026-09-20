@@ -19,9 +19,7 @@ duplicated per user:
 | `notification_reads` | `(notification_id, user_id)` PK, `read_at` — per-user read marker, `INSERT OR IGNORE` for idempotent "mark read" |
 
 `notifications.user_id` is the **audience**: `NULL` means broadcast (release
-notes, system status), non-null means only that user sees it. Rows written before
-the column existed read back `NULL`, so the migration needs no backfill and a
-rollback keeps working.
+notes, system status), non-null means only that user sees it. The audience is recorded when the notification is created.
 
 **Both** reads of the table must carry the audience predicate
 `(user_id IS NULL OR user_id = ?)`. There are exactly two —

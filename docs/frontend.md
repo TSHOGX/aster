@@ -74,11 +74,11 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
 - `types.ts` — domain model: `SessionStatus`, `SessionMode`, `ApiSession`,
   `DeploymentCapabilities`, `ApiArtifact`, `ApiMessage` (incl. `stop_reason`, `trace`,
   `feedback`), `ApiNotification`, `HarnessEvent`, `ConnectionStatus`. (Deliberately no
-  `agent_home_path`/`restore_id` — a static check asserts these stay hidden.)
+  execution internals — a static check asserts these stay hidden.)
 - `session-events.ts` — a **pure reducer** `reduceSessionEvent` that folds SSE events
   into session/conversation slices. Framework-agnostic and unit-tested, so live SSE
   and replay reduce identically. It handles status events, terminal-vs-non-terminal
-  errors, checkpoint/restore retirement, and turn outcomes.
+  errors, retained lifecycle transitions, and turn outcomes.
 - `harness-events.ts` — event-type constants and typing for the SSE stream.
 - `trace.ts` — parses persisted execution-trace JSON into thinking/tool nodes for the
   trace UI. `message-grouping.ts`, `message-jump.ts` — conversation layout + scroll
@@ -311,15 +311,6 @@ cursor and reconnects. `logout()` posts `/api/logout` then wipes local state bac
 the login screen. A `401` from any authed call routes through the same
 unauthorized handler. Auth is entirely cookie/session-based and enforced by the
 orchestrator; the browser never talks to it directly.
-
-## Optional external evolution UI
-
-The `/evolution` routes are an integration surface for a separately maintained
-runner. Explicit `EVOLUTION_*` configuration and a viewer allowlist are required.
-The UI renders actual configured report data; it does not embed domain SQL,
-production table names or fabricated successful-run fallbacks. Core user schedules,
-internal memory extraction and this external process have distinct lifecycles.
-See [memory and knowledge](agents-kb.md).
 
 ## Bounded transcript and workspace rendering
 

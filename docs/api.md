@@ -188,10 +188,7 @@ waits for the user, who sends it with the endpoint below or withdraws it with
 projection, because the client cannot read it reliably at click time:
 
 - a turn is executing → **steer**: the text is injected into that turn, so the
-  work already done survives. Legacy delivery returns `status: "steered"`. The prompt becomes a
-  transcript message immediately — the agent has been told, so the user has to
-  see what was said — and the queue row retires, carrying
-  `steered_into_turn_id`.
+  work already done survives.
 
   Khora delivery returns `status: "steering"` and a stable `command_id` after
   the guest acknowledges receipt. The source row stays parked with
@@ -203,7 +200,7 @@ projection, because the client cannot read it reliably at click time:
 - nothing is executing → **release**: the parked turn is handed to the worker to
   run as a turn of its own (`status: "released"`). A parked queue does not hold a
   sandbox open — that is the point of excluding it from the pending-turn
-  predicate — so the session may have been checkpointed or idle-released
+  predicate — so the session may have been paused or idle-released
   underneath those rows. Release therefore wakes it exactly as a new prompt
   would, cold start and all, rather than answering "session is not running" and
   leaving the row unsendable.
@@ -216,8 +213,7 @@ turn_not_releasable` is the release-side counterpart: the row is queued but not
 parked, so it is already on its way to the worker and "send it" would be a no-op
 the user could not tell from success.
 
-Legacy shell sessions answer `409` outright: their input goes straight to a pty, so there
-is no queue to park, release, or steer into.
+Shell commands may be queued and released; steering a running shell command returns `409`.
 
 **Cron Agent (R2/R4).** `POST /api/schedules` accepts `name`, `prompt`, optional
 `cron_expr` (five-field standard cron), `timezone` (IANA name), `enabled`,
@@ -368,14 +364,14 @@ page is a snapshot with an explicit refresh rather than a live view.
 ## Session DTO (`session_dto.go`)
 
 `apiSession` fields: `id`, `user_id`, `title`, `status`, `mode`, `mode_label`
-("Agent" / "Shell"), `restore_ms`, `created_at`, `updated_at`, `expires_at`,
-`ended_at`, `last_activity_at`, `auto_checkpoint_enabled`, `failure_reason`,
+("Agent" / "Shell"), `created_at`, `updated_at`,
+`ended_at`, `last_activity_at`, `failure_reason`,
 `error_class`. `title` is the session's display name (empty until named); the
 frontend falls back to the `id` when it is empty. The `title_custom` flag
 (whether the user renamed it) is internal and not exposed.
 
 The internal `driver_id`/`agent` are **deliberately not exposed** — the browser only
-sees the product mode. Internal `workspace`, `agent_home_path`, `restore_id` are
+sees the product mode. Internal `workspace` and execution identifiers are
 omitted from the DTO.
 
 **Non-owner readers get a trimmed DTO** (`sharedSession()` in `share_dto.go`):
@@ -434,11 +430,11 @@ Event types:
 | Type | Meaning |
 |---|---|
 | `session.created` | new session |
-| `session.running_active` / `.running_idle` / `.checkpointing` / `.checkpointed` / `.destroyed` | status transitions |
+| `session.running_active` / `.running_idle` / `.pausing` / `.paused` / `.destroyed` | status transitions |
 | `session.updated` | session metadata changed (currently `title`); carries the full `apiSession` |
 | `session.runtime` | the runtime projection changed (turn queued/claimed/ended, or a phase transition); payload is identical to `GET .../runtime`. Live-only — `turns` is the replay source, so a reconnecting client re-reads the endpoint |
 | `session.error` | terminal only when `payload.terminal === true` |
-| `generation.error`, `session.checkpoint_retired`, `session.restore_fallback_retired` | non-terminal runtime events |
+| `generation.error` | non-terminal runtime failure |
 | `ack_turn_completed` | turn outcome (may carry a committed idle transition) |
 | `message.created`, `agent.message` | committed assistant/user messages |
 | `agent.delta` | streamed token text (`delta_type: text_delta`) |
@@ -446,7 +442,6 @@ Event types:
 | `system.status` | informational status (toast) |
 | `artifact.updated` / `artifact.deleted` | workspace file metadata changes |
 | `notification.created` | new broadcast notification; payload is `{notification_id}` only, a "go refetch" signal (not durable, not replayed) |
-| `proxy.request.started` / `.completed` / `.failed` | model-proxy correlation |
 
 Payloads are scrubbed of internal identifiers and host paths (`event_dto.go`):
 `generation_id`, `driver_id`, `driver_state`, `data_volumes`, `netns_path`, any
@@ -468,51 +463,12 @@ other types are served inert. See [security.md](./security.md).
   [sandbox-runtime.md](./sandbox-runtime.md)).
 - Generic validation/not-found: `{"error":"..."}`.
 
-## Proxy-correlation routes (Unix socket only)
+## Gateway authorization
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/internal/proxy/requests/start` | model proxy reports a request started → returns session/turn/generation/sequence if authorized |
-| POST | `/internal/proxy/requests/finish` | reports completion (latencies, http_status, error_class) |
-
-Authenticated by SO_PEERCRED against `harness.proxy_service_identity`. This is how
-the sandbox gets model access only during its own active turn — see
-[security.md](./security.md).
-
-`start` returns **503 `active_context_unavailable`** when the turn's proxy context
-cannot be resolved. 503 rather than a 4xx is load-bearing: this is a transient
-internal bookkeeping condition, and the proxy maps a 4xx to a hard error that pi
-treats as unretryable, which ends the whole turn. It previously surfaced to users
-as "the model service is unavailable" when the provider was healthy.
-
-A running turn's lease may be honored for `harness.bridge.proxy_lease_grace` past
-its expiry (default 60s). Turn leases are renewed only by the bridge heartbeat,
-which competes for the single writer connection, so a heartbeat delayed by write
-pressure would otherwise reject every model call the turn makes. Identity is
-unaffected — the generation must still be live and the lease owner must match —
-and the grace must stay below `sandbox_heartbeat_stall_grace` (enforced at config
-validation) so a sandbox already judged stalled cannot keep model access. Requests
-admitted this way are logged as a warning; a nonzero rate means writer contention
-is building. See
-[runtime synchronization](./runtime-state-synchronization.md).
-
-## Optional knowledge and external evolution
-
-`GET /api/kb-review` and `POST /api/kb-review/decisions` are orchestrator routes for
-staged KB review. They use the normal authenticated API boundary and the configured
-KB/memory stores. They are distinct from `/api/admin/*`; do not assume an admin
-feature flag controls them.
-
-`/api/evolution/*` is a Next.js integration route, not an orchestrator endpoint.
-It requires explicit external project/state/database configuration and the local
-`EVOLUTION_VIEWERS` allowlist. Absent configuration returns 503; unauthorized
-callers are refused. It reads external reports and can start that runner; it does
-not fabricate a default report or ship organization-specific SQL. See
-[memory boundaries](agents-kb.md) for lifecycle and ownership.
-
-`GET /healthz` reports version/commit and deployment drain/background-hold status.
-These identify the running build but do not prove business acceptance of a
-particular database, model or external integration.
+Trusted gateways use the peer-authenticated authorization interface described in
+[gateway contract](gateway-contract.md). Authority is derived from accepted execution
+bindings and scoped grants. There are no source-IP proxy-correlation routes or
+Memory/Evolve APIs. `GET /healthz` reports the running version and commit.
 
 ## Bounded workbench reads
 
@@ -558,4 +514,4 @@ durable event records and internal full-transcript consumers are unchanged.
 SSE is not a completeness guarantee; clients reconcile against HTTP windows.
 
 Message pages report database and encoding durations through `Server-Timing`.
-The new routes require no schema migration or additional index.
+The routes use the current product schema.

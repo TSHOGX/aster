@@ -2,13 +2,13 @@
 
 The browser treats `session.runtime` and GET `/sessions/:id/runtime` as the
 same versioned projection. `revision` must cover **all** of its dependencies:
-turns, session status, active generation, generation status and resource state.
+turns, session status, active generation, generation status and execution binding state.
 The database column retains its historical name `turn_revision`; it is now the
 revision of the entire runtime projection. SQLite triggers enforce this for
-normal writers, recovery, checkpointing and idle release alike. No-op lifecycle
+normal writers, recovery, pause and idle release alike. No-op lifecycle
 updates do not advance it, and unrelated generations do not invalidate a session.
-Existing databases receive the triggers through the explicit migration path in
-managed deployments; development store opens can apply schema updates.
+These triggers are part of the single current development schema; mismatched
+databases are rejected without migration.
 
 Previously only turn changes advanced the revision. Idle release could change
 `live` to `released` without changing any turn, so the frontend correctly rejected
@@ -35,7 +35,7 @@ cannot overwrite a runtime push delivered during that request. Transient full
 refresh failures preserve the last successful list.
 
 Regression coverage includes sandbox-only revision changes, idle release,
-no-op revision stability, runtime migration tests and stale session-list merges.
+no-op revision stability, engine fence/invalidation tests and stale session-list merges.
 This protocol does not give message/artifact lists a revision or make shared
 reader conversations fully live; those still rely on their existing event/access
 contracts and detail refreshes.
