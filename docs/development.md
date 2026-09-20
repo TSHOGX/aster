@@ -83,7 +83,7 @@ Root-owned fixture tests can reuse dependencies already fetched by the developme
 user, for example `sudo env "GOPATH=$(go env GOPATH)" GOPROXY=off go -C orchestrator
 test ./...`. This avoids introducing another Git
 credential into the root account. The engine binary used by the Khora adapter
-must report build version `14174318159f` and enable `--manual-cold-recovery`.
+must report build version `e8cd021a9c7c` and enable `--manual-cold-recovery`.
 
 Build the independent native capture worker with
 `go -C orchestrator build -o ../native-capture ./cmd/native-capture`. Against

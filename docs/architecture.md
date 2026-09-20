@@ -161,9 +161,9 @@ source workspace after capture.
 
 `internal/sandbox` defines opaque sandbox references and lifecycle observations.
 Its Khora adapter uses the public Go HTTP client pinned to
-`14174318159f` (`v0.0.2-0.20260919064819-14174318159f`). It requires that build
+`e8cd021a9c7c` (`v0.0.2-0.20260920024301-e8cd021a9c7c`). It requires that build
 identity and manual cold recovery, pins the engine's durable store identity,
-uses conditional mutations, and inspects create results before accepting a
+uses conditional mutations and complete binding observations, and inspects create results before accepting a
 binding. Pause succeeds only with a lost placement at the expected epoch;
 resume requires a newer active epoch. CPU and memory measurements remain absent
 when unavailable. Product-created environments explicitly disable engine idle

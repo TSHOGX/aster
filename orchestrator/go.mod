@@ -6,7 +6,7 @@ toolchain go1.23.4
 
 require (
 	connectrpc.com/connect v1.17.0
-	github.com/TSHOGX/khora v0.0.2-0.20260919064819-14174318159f
+	github.com/TSHOGX/khora v0.0.2-0.20260920024301-e8cd021a9c7c
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3

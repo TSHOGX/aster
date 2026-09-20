@@ -13,7 +13,7 @@ khora_repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 }
 khora_module_dir=$(go -C "$khora_repo/orchestrator" list -m -f '{{.Dir}}' github.com/TSHOGX/khora)
 khora_module_version=$(go -C "$khora_repo/orchestrator" list -m -f '{{.Version}}' github.com/TSHOGX/khora)
-[[ "$khora_module_version" == v0.0.2-0.20260919064819-14174318159f ]] || { echo 'unsupported engine module pin' >&2; exit 1; }
+[[ "$khora_module_version" == v0.0.2-0.20260920024301-e8cd021a9c7c ]] || { echo 'unsupported engine module pin' >&2; exit 1; }
 ROOTFS_DIR="$khora_template" FORCE=1 SANDBOX_BUILD_ENV=/dev/null \
 SANDBOX_AGENT_DRIVERS=pi,sh HARNESS_GENERIC_ROOTFS=1 \
   "$khora_repo/sandbox-image/build-rootfs.sh"

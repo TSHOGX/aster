@@ -124,7 +124,7 @@ changes; deployments still use the explicit offline migration command.
 
 ## Khora application template acceptance
 
-On an isolated engine built at `14174318159f`, with manual cold recovery enabled,
+On an isolated engine built at `e8cd021a9c7c`, with manual cold recovery enabled,
 a positive memory admission budget, dedicated quota-capable btrfs storage and a
 built application template, run:
 

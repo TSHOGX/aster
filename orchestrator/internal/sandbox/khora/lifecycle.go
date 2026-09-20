@@ -14,7 +14,7 @@ import (
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
-const EngineRevision = "14174318159f"
+const EngineRevision = "e8cd021a9c7c"
 
 type Config struct {
 	Endpoint, StoreID, Version string
@@ -180,17 +180,25 @@ func (b *Backend) Configure(ctx context.Context, reference sandbox.Reference, ne
 		return sandbox.Observation{}, err
 	}
 	zero := "0s"
-	if _, err := b.client.PatchIfMatch(ctx, reference.SandboxID, reference.MutationRevision, sdk.PatchRequest{Network: &declaration, Volumes: &bindings, IdleTimeout: &zero, Retention: &zero}); err != nil {
-		return sandbox.Observation{}, mapError("configure", err)
+	_, patchErr := b.client.PatchIfMatch(ctx, reference.SandboxID, reference.MutationRevision, sdk.PatchRequest{Network: &declaration, Volumes: &bindings, IdleTimeout: &zero, Retention: &zero})
+	mapped := mapError("configure", patchErr)
+	if patchErr != nil && !sandbox.Is(mapped, sandbox.Precondition) {
+		return sandbox.Observation{}, mapped
 	}
-	observed, err := b.Inspect(ctx, reference)
+	observed, err := b.InspectConfiguration(ctx, reference)
 	if err != nil {
-		return observed, err
+		return sandbox.Observation{}, err
 	}
-	if observed.State != "paused" || observed.PlacementState != "lost" || observed.Epoch != reference.Epoch {
-		return observed, failure("configure", sandbox.Uncertain, fmt.Errorf("configuration did not remain on the terminated placement"))
+	if observed.State != "paused" || observed.PlacementState != "lost" || observed.Epoch != reference.Epoch || !sandbox.SameConfiguration(observed, network, mounts) {
+		if patchErr != nil {
+			return observed.Observation, mapped
+		}
+		return observed.Observation, failure("configure", sandbox.Uncertain, fmt.Errorf("observed binding differs from requested paused configuration"))
 	}
-	return observed, nil
+	// A 412 retry may follow a lost successful PATCH response. Only the exact
+	// complete declaration at the original epoch settles it; never refresh the
+	// validator and redispatch a stale replacement.
+	return observed.Observation, nil
 }
 
 func (b *Backend) CreateVolume(ctx context.Context, key string, capacity int64) (sandbox.Volume, error) {

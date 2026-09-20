@@ -209,7 +209,38 @@ finally:os.close(root)
 	if err != nil || string(retained) != "retained-workspace\n" {
 		t.Fatalf("offline workspace: %s %v", retained, err)
 	}
-	resumed, err := backend.Resume(ctx, paused.Reference)
+	// Observe all mounts at the same revision, then detach assets. Retry the
+	// original conditional configure as if its successful response were lost.
+	binding, err := backend.InspectConfiguration(ctx, paused.Reference)
+	if err != nil || !sandbox.SameConfiguration(binding, sandbox.Network{}, mounts) {
+		t.Fatalf("paused configuration observation: %+v %v", binding, err)
+	}
+	var withoutAssets []sandbox.Mount
+	for _, mount := range mounts {
+		if mount.Destination != "/root/.agents" {
+			withoutAssets = append(withoutAssets, mount)
+		}
+	}
+	configured, err := backend.Configure(ctx, paused.Reference, sandbox.Network{}, withoutAssets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := backend.Configure(ctx, paused.Reference, sandbox.Network{}, withoutAssets)
+	if err != nil || replayed.Reference != configured.Reference {
+		t.Fatalf("lost configure reply not reconciled: %+v %v", replayed, err)
+	}
+	if _, err := backend.Configure(ctx, paused.Reference, sandbox.Network{}, mounts); !sandbox.Is(err, sandbox.Precondition) {
+		t.Fatalf("stale configure replaced detached binding: %v", err)
+	}
+	detached, err := backend.InspectConfiguration(ctx, configured.Reference)
+	if err != nil || !sandbox.SameConfiguration(detached, sandbox.Network{}, withoutAssets) {
+		t.Fatalf("detach not observed: %+v %v", detached, err)
+	}
+	restored, err := backend.Configure(ctx, configured.Reference, sandbox.Network{}, mounts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := backend.Resume(ctx, restored.Reference)
 	if err != nil {
 		t.Fatal(err)
 	}

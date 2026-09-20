@@ -6,8 +6,8 @@ import pathlib
 import shutil
 import sys
 
-ENGINE_MODULE = 'v0.0.2-0.20260919064819-14174318159f'
-ENGINE_REVISION = '14174318159f'
+ENGINE_MODULE = 'v0.0.2-0.20260920024301-e8cd021a9c7c'
+ENGINE_REVISION = 'e8cd021a9c7c'
 
 
 def finalize(root, engine_module):

@@ -1,7 +1,7 @@
 connectrpc.com/connect v1.17.0 h1:W0ZqMhtVzn9Zhn2yATuUokDLO5N+gIuBWMOnsQrfmZk=
 connectrpc.com/connect v1.17.0/go.mod h1:0292hj1rnx8oFrStN7cB4jjVBeqs+Yx5yDIC2prWDO8=
-github.com/TSHOGX/khora v0.0.2-0.20260919064819-14174318159f h1:pY2gOxQm+kupDt00cNgPNI8q1gmVd5TMblYHbRt/r84=
-github.com/TSHOGX/khora v0.0.2-0.20260919064819-14174318159f/go.mod h1:5X82ku20xqW+2YXtjb9zEnAr8mbyI8V9tA60rCIKQJE=
+github.com/TSHOGX/khora v0.0.2-0.20260920024301-e8cd021a9c7c h1:RGgG8xUFQZFGCXNUCQtrYNIwodPNB4wxEH6WBh5mR3o=
+github.com/TSHOGX/khora v0.0.2-0.20260920024301-e8cd021a9c7c/go.mod h1:5X82ku20xqW+2YXtjb9zEnAr8mbyI8V9tA60rCIKQJE=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/fsnotify/fsnotify v1.8.0 h1:dAwr6QBTBZIkG8roQaJjGof0pp0EeF+tNV7YBP3F/8M=

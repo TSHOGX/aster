@@ -17,8 +17,8 @@ import (
 	"strings"
 )
 
-const EngineRevision = "14174318159f"
-const EngineModule = "v0.0.2-0.20260919064819-14174318159f"
+const EngineRevision = "e8cd021a9c7c"
+const EngineModule = "v0.0.2-0.20260920024301-e8cd021a9c7c"
 
 type Source struct {
 	plans map[string]execution.LaunchPlan

@@ -22,8 +22,8 @@ class KhoraLauncherTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b'component')
                 files[name] = 'sha256:' + hashlib.sha256(b'component').hexdigest()
-            metadata = {'schema_version': 1, 'runtime': {'backend': 'khora', 'engine_revision': '14174318159f',
-                                    'engine_module': 'v0.0.2-0.20260919064819-14174318159f',
+            metadata = {'schema_version': 1, 'runtime': {'backend': 'khora', 'engine_revision': 'e8cd021a9c7c',
+                                    'engine_module': 'v0.0.2-0.20260920024301-e8cd021a9c7c',
                                     'bridge_stream_version': 1, 'home': '/root', 'retained_overlay': True, 'files': files},
                         'drivers': [{'driver_id': 'sh', 'bridge_protocol_version': 2, 'turn_input_schema': 'RunTurn',
                                      'binary_path': '/usr/local/bin/harness-khora-launcher',

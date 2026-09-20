@@ -13,9 +13,9 @@ def template_protocol(driver, manifest=Path('/etc/harness-image/agents.json'), c
     if metadata.get('schema_version') != 1:
         raise ValueError('guest template manifest schema is incompatible')
     runtime = metadata.get('runtime') or {}
-    if (runtime.get('backend'), runtime.get('engine_revision'), runtime.get('bridge_stream_version'), runtime.get('home'), runtime.get('retained_overlay')) != ('khora', '14174318159f', 1, '/root', True):
+    if (runtime.get('backend'), runtime.get('engine_revision'), runtime.get('bridge_stream_version'), runtime.get('home'), runtime.get('retained_overlay')) != ('khora', 'e8cd021a9c7c', 1, '/root', True):
         raise ValueError('guest template runtime is incompatible')
-    if runtime.get('engine_module') != 'v0.0.2-0.20260919064819-14174318159f':
+    if runtime.get('engine_module') != 'v0.0.2-0.20260920024301-e8cd021a9c7c':
         raise ValueError('guest template engine module is incompatible')
     selected = [entry for entry in metadata.get('drivers', []) if entry.get('driver_id') == driver]
     if len(selected) != 1 or selected[0].get('bridge_protocol_version') != 2 or selected[0].get('turn_input_schema') != 'RunTurn':

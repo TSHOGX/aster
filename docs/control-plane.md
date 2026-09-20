@@ -777,3 +777,24 @@ same bytes after collection creates the prepared blob again. A collector timeout
 or reference-query failure leaves the affected data in place for a later sweep.
 An unknown pre-turn environment is freshly inspected before another upload, so
 late maintenance events cannot cause replay of its obsolete provisioning pause.
+
+## Configuration outcome reconciliation
+
+The Khora adapter reads `/v1/sandboxes/{id}/binding` to obtain network and volume
+bindings with a mutation revision from one engine-serialized observation. The
+application projection accepts only the restricted default-deny network model,
+no published ingress, explicit valid volume access modes and disabled engine
+idle/retention timers.
+
+Configuration applies the complete network and mount set with the original
+conditional revision, then compares the observed declaration and paused/lost
+placement at the original epoch. If a retry returns 412 after a lost successful
+reply, only that exact postcondition settles the operation. Different mounts,
+network rules, retention, engine identity or placement remain unresolved. The
+adapter never refreshes the revision and resends the stale replacement. Mount
+and rule ordering are irrelevant; missing or additional entries are not.
+
+The pinned engine exposes this observation through its public SDK. Application
+code does not read engine databases or host mount paths. Immutable config/asset
+publication can use this boundary to prove a stopped builder has released its
+volume binding before a revision is shared.
