@@ -46,7 +46,9 @@ import (
 // directly, so a generation that produced a completion necessarily went through
 // the gateway. The gateway holds the only credential and the application
 // authorizes every request.
-func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
+func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) { runComposedGateway(t, true) }
+func TestKhoraNetworkBoundaryUsesDeclaredTCPAndUDP(t *testing.T)   { runComposedGateway(t, false) }
+func runComposedGateway(t *testing.T, fullFaults bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 	endpoint, template, manifestPath := os.Getenv("KHORA_INTEGRATION_ENDPOINT"), os.Getenv("KHORA_INTEGRATION_TEMPLATE"), os.Getenv("KHORA_INTEGRATION_MANIFEST")
@@ -67,6 +69,8 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	// compiled policy allows the guest to reach directly.
 	var upstreamRequests atomic.Int64
 	var rejectAuthentication atomic.Bool
+	var holdModel atomic.Bool
+	modelStarted, modelClosed := make(chan struct{}, 1), make(chan struct{}, 1)
 	var credentials sync.Map
 	upstreamListener, err := net.Listen("tcp4", "198.18.0.1:0")
 	if err != nil {
@@ -104,11 +108,54 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 			_ = json.Unmarshal([]byte(frame), &event)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, frame)
 			w.(http.Flusher).Flush()
+			if event.Type == "message_start" && holdModel.Load() {
+				modelStarted <- struct{}{}
+				<-r.Context().Done()
+				modelClosed <- struct{}{}
+				return
+			}
 		}
 	})}
 	upstreamDone := make(chan error, 1)
 	go func() { upstreamDone <- upstream.Serve(upstreamListener) }()
 	defer func() { _ = upstream.Close(); <-upstreamDone }()
+
+	allowedTCP, err := net.Listen("tcp4", "198.18.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpDone := make(chan struct{})
+	go func() {
+		defer close(tcpDone)
+		for {
+			connection, err := allowedTCP.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = connection.Write([]byte("direct-ok"))
+			_ = connection.Close()
+		}
+	}()
+	defer func() { _ = allowedTCP.Close(); <-tcpDone }()
+	allowedUDP, err := net.ListenPacket("udp4", "198.18.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpDone := make(chan struct{})
+	go func() {
+		defer close(udpDone)
+		data := make([]byte, 512)
+		for {
+			n, peer, err := allowedUDP.ReadFrom(data)
+			if err != nil {
+				return
+			}
+			_, _ = allowedUDP.WriteTo(data[:n], peer)
+		}
+	}()
+	defer func() { _ = allowedUDP.Close(); <-udpDone }()
+	tcpAddress := netip.MustParseAddrPort(allowedTCP.Addr().String())
+	udpAddress := netip.MustParseAddrPort(allowedUDP.LocalAddr().String())
 
 	// The gateway listens where the compiled route steers guest traffic.
 	gatewayListener, err := net.Listen("tcp4", "192.0.2.1:0")
@@ -121,7 +168,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	catalog := egress.Catalog{
 		Revision:  "integration-v1",
 		Endpoints: []egress.Endpoint{{ID: "model", NextHop: "model", Transport: "tcp", Hostname: "model.internal", Port: 443}},
-		Policies:  map[string]egress.Policy{"pi": {Revision: "integration-v1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "model"}}}},
+		Policies:  map[string]egress.Policy{"pi": {Revision: "integration-v1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "model"}}, Direct: []egress.Tuple{{CIDR: netip.PrefixFrom(tcpAddress.Addr(), 32), Port: tcpAddress.Port(), Protocol: "tcp"}, {CIDR: netip.PrefixFrom(udpAddress.Addr(), 32), Port: udpAddress.Port(), Protocol: "udp"}}}},
 		Deployment: egress.Deployment{
 			BackendID: identity.StoreID, SyntheticRange: reserved,
 			Gateways: []egress.Gateway{{Endpoint: gatewayEndpoint, ID: "model"}},
@@ -211,7 +258,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 		"version": 1, "id": "model", "backend_id": identity.StoreID,
 		"listen": gatewayEndpoint.String(), "reserved": reserved.String(),
 		"control": gatewayControl, "application_uid": os.Getuid(), "control_group": viaGID,
-		"authorization": authorizationSocket, "request_timeout": "30s",
+		"authorization": authorizationSocket, "request_timeout": "90s",
 		"upstreams": []any{map[string]any{"endpoint_id": "model", "models": []string{"approved-model"}, "base_url": "http://" + upstreamListener.Addr().String(), "api_key_header": "X-Api-Key", "api_key_file": credentialPath}},
 	}
 	encodedGateway, _ := json.Marshal(gatewayFile)
@@ -220,14 +267,24 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	}
 	_ = gatewayListener.Close()
 
-	authorizationListener, err := gateway.ListenAuthorization(authorizationSocket, viaGID)
-	if err != nil {
-		t.Fatal(err)
+	startAuthorization := func() (*http.Server, chan error) {
+		listener, err := gateway.ListenAuthorization(authorizationSocket, viaGID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := &http.Server{Handler: gateway.AuthorizationHandler(routeDiagnostics{Store: st, t: t}, uint32(viaUID)), ConnContext: gateway.PeerContext}
+		done := make(chan error, 1)
+		go func() { done <- server.Serve(listener) }()
+		return server, done
 	}
-	authorizationServer := &http.Server{Handler: gateway.AuthorizationHandler(routeDiagnostics{Store: st, t: t}, uint32(viaUID)), ConnContext: gateway.PeerContext}
-	authorizationDone := make(chan error, 1)
-	go func() { authorizationDone <- authorizationServer.Serve(authorizationListener) }()
-	defer func() { _ = authorizationServer.Close(); <-authorizationDone }()
+	authorizationServer, authorizationDone := startAuthorization()
+	authorizationRunning := true
+	defer func() {
+		if authorizationRunning {
+			_ = authorizationServer.Close()
+			<-authorizationDone
+		}
+	}()
 
 	gatewayBinary := filepath.Join(gatewayRoot, "model-gateway")
 	if output, err := exec.CommandContext(ctx, "go", "build", "-o", gatewayBinary, "../../cmd/model-gateway").CombinedOutput(); err != nil {
@@ -242,14 +299,18 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer logFile.Close()
-	gatewayProcess := exec.CommandContext(ctx, gatewayBinary, "--config", gatewayConfig)
-	gatewayProcess.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(viaUID), Gid: uint32(viaGID)}}
-	gatewayProcess.Stdout, gatewayProcess.Stderr = logFile, logFile
-	if err := gatewayProcess.Start(); err != nil {
-		t.Fatal(err)
+	startGateway := func() (*exec.Cmd, chan error) {
+		process := exec.CommandContext(ctx, gatewayBinary, "--config", gatewayConfig)
+		process.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(viaUID), Gid: uint32(viaGID)}}
+		process.Stdout, process.Stderr = logFile, logFile
+		if err := process.Start(); err != nil {
+			t.Fatal(err)
+		}
+		exited := make(chan error, 1)
+		go func() { exited <- process.Wait() }()
+		return process, exited
 	}
-	gatewayExited := make(chan error, 1)
-	go func() { gatewayExited <- gatewayProcess.Wait() }()
+	gatewayProcess, gatewayExited := startGateway()
 	defer func() {
 		_ = gatewayProcess.Process.Signal(syscall.SIGTERM)
 		select {
@@ -266,23 +327,27 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	}()
 	// The application controls this gateway over its Unix socket, which also
 	// confirms the process is up before any session is admitted.
-	var remotes *gateway.Remotes
+	remoteConfig := gateway.RemoteConfig{ID: "model", Socket: gatewayControl, PeerUID: uint32(viaUID), Timeout: 10 * time.Second}
 	for attempt := 0; ; attempt++ {
 		handshake, cancelHandshake := context.WithTimeout(ctx, 2*time.Second)
-		remotes, err = gateway.NewRemotes(handshake, []gateway.RemoteConfig{{ID: "model", Socket: gatewayControl, PeerUID: uint32(viaUID), Timeout: 10 * time.Second}})
+		peer, err := gateway.NewRemote(handshake, remoteConfig)
 		cancelHandshake()
 		if err == nil {
+			peer.Close()
 			break
 		}
 		if attempt > 100 {
-			t.Fatalf("gateway control never answered: %v", err)
+			t.Fatalf("gateway did not start: %v", err)
 		}
 		select {
-		case exitErr := <-gatewayExited:
-			output, _ := os.ReadFile(gatewayLog)
-			t.Fatalf("gateway exited before serving: %v\n%s", exitErr, output)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+	remotes, err := gateway.NewRemotes(ctx, []gateway.RemoteConfig{remoteConfig}, st)
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer remotes.Close()
 
@@ -296,7 +361,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 		"content_bytes": 8 << 20, "prepared_root": filepath.Join(root, "prepared"),
 		"authorization": map[string]any{"socket": authorizationSocket, "peer_uid": viaUID, "group": viaGID},
 		"gateways":      []any{map[string]any{"id": "model", "socket": gatewayControl, "peer_uid": viaUID, "listener": gatewayEndpoint.String()}},
-		"connectivity":  map[string]any{"revision": catalog.Revision, "synthetic_range": reserved.String(), "catalog": catalog.Endpoints, "policies": map[string]egress.EndpointList{"pi": {Endpoints: catalog.Policies["pi"].Endpoints}}},
+		"connectivity":  map[string]any{"revision": catalog.Revision, "synthetic_range": reserved.String(), "catalog": catalog.Endpoints, "policies": map[string]egress.EndpointList{"pi": {Endpoints: catalog.Policies["pi"].Endpoints, Direct: catalog.Policies["pi"].Direct}}},
 		"max_active":    2, "inventory_limit": 10000, "lease_ttl": "1m", "poll_interval": "50ms", "event_interval": "50ms", "action_timeout": "10s", "capture_window": "1m", "inventory_interval": "200ms", "idle_interval": "1s", "idle_threshold": "1m",
 	}
 	if err := os.WriteFile(deploymentPath, mustJSON(document), 0600); err != nil {
@@ -354,35 +419,37 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 		}
 	}()
 
-	// Drop a successful remote start reply. No HTTP retry or explicit Ensure
-	// follows: background work must adopt it or finish verified cold recovery.
-	faults.armed.Store(true)
-	pending, err := runtime.Controller.Ensure(ctx, execution.Session{ID: session, Driver: "pi"}, store.GenerationLeaseOwner(owner.UUID))
-	if !sandbox.Is(err, sandbox.Unavailable) {
-		t.Fatalf("lost start reply: %v", err)
-	}
-	for {
-		current, err := st.GetExecutionBinding(ctx, pending.GenerationID)
-		if err != nil {
-			t.Fatal(err)
+	if fullFaults {
+		// Drop a successful remote start reply. No HTTP retry or explicit Ensure
+		// follows: background work must adopt it or finish verified cold recovery.
+		faults.armed.Store(true)
+		pending, err := runtime.Controller.Ensure(ctx, execution.Session{ID: session, Driver: "pi"}, store.GenerationLeaseOwner(owner.UUID))
+		if !sandbox.Is(err, sandbox.Unavailable) {
+			t.Fatalf("lost start reply: %v", err)
 		}
-		if current.State == "accepted" {
-			break
-		}
-		if current.State == "retired" {
-			var stage string
-			if err := st.DBForTest().QueryRow(`SELECT stage FROM execution_recoveries WHERE generation_id=?`, current.GenerationID).Scan(&stage); err == nil && stage == "complete" {
+		for {
+			current, err := st.GetExecutionBinding(ctx, pending.GenerationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.State == "accepted" {
 				break
 			}
+			if current.State == "retired" {
+				var stage string
+				if err := st.DBForTest().QueryRow(`SELECT stage FROM execution_recoveries WHERE generation_id=?`, current.GenerationID).Scan(&stage); err == nil && stage == "complete" {
+					break
+				}
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal("background startup did not converge")
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("background startup did not converge")
-		case <-time.After(100 * time.Millisecond):
+		if faults.starts.Load() < 2 {
+			t.Fatalf("startup retry count: %d", faults.starts.Load())
 		}
-	}
-	if faults.starts.Load() < 2 {
-		t.Fatalf("startup retry count: %d", faults.starts.Load())
 	}
 	turn := sendIntegrationTurn(t, ctx, app, session, "say hello through the gateway")
 	awaitIntegrationTurn(t, ctx, st, session, turn)
@@ -400,6 +467,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='assistant' AND content LIKE '%gateway-carried-ok%'`, turn).Scan(&completions); err != nil || completions == 0 {
 		t.Fatalf("gateway-carried completion was not committed: %d %v", completions, err)
 	}
+	verifyManagedNetworkBoundary(t, ctx, backend, st, session, origin, upstreamListener.Addr().String(), gatewayEndpoint.String(), allowedTCP.Addr().String(), allowedUDP.LocalAddr().String())
 	// Authority was recorded per request, attributed to this turn.
 	var authorized int
 	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_requests WHERE turn_id=? AND endpoint_id='model' AND outcome IS NOT NULL`, turn).Scan(&authorized); err != nil || authorized == 0 {
@@ -409,6 +477,97 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_route_bindings WHERE state='active' AND endpoint_id='model'`).Scan(&active); err != nil || active != 1 {
 		t.Fatalf("composed route was not activated: %d %v", active, err)
 	}
+
+	if !fullFaults {
+		return
+	}
+	// A gateway crash leaves a stale Unix socket. Its ordinary command must
+	// reclaim it, and background activation must restore the retained binding.
+	previousGateway := remotes.Status()[0].Instance
+	if previousGateway == "" {
+		t.Fatal("gateway process was not pinned")
+	}
+	if err := gatewayProcess.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	<-gatewayExited
+	gatewayProcess, gatewayExited = startGateway()
+	for {
+		status := remotes.Status()[0]
+		if status.Ready && status.Instance != "" && status.Instance != previousGateway {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("gateway restart did not converge: %+v", status)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	restarted := sendIntegrationTurn(t, ctx, app, session, "continue after gateway restart")
+	awaitIntegrationTurn(t, ctx, st, session, restarted)
+
+	holdModel.Store(true)
+	interrupted := sendIntegrationTurn(t, ctx, app, session, "hold until interrupted")
+	select {
+	case <-modelStarted:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	stopRequest := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session+"/interrupt", nil).WithContext(ctx)
+	stopResponse := httptest.NewRecorder()
+	app.Routes().ServeHTTP(stopResponse, stopRequest)
+	if stopResponse.Code != http.StatusAccepted && !(stopResponse.Code == http.StatusServiceUnavailable && strings.Contains(stopResponse.Body.String(), "control_delivery_pending")) {
+		t.Fatalf("managed interrupt: %d %s", stopResponse.Code, stopResponse.Body)
+	}
+	select {
+	case <-modelClosed:
+	case <-ctx.Done():
+		t.Fatal("interrupt did not close upstream transport")
+	}
+	holdModel.Store(false)
+	awaitIntegrationTurnStatus(t, ctx, st, session, interrupted, "canceled")
+
+	// Active streams keep their original grant deadline when the application
+	// authorization service disappears; the proxy's own timeout is longer.
+	holdModel.Store(true)
+	expiredTurn := sendIntegrationTurn(t, ctx, app, session, "hold until original grant expires")
+	select {
+	case <-modelStarted:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var deadlineText string
+	if err := st.DBForTest().QueryRow(`SELECT authorized_until FROM egress_requests WHERE turn_id=? ORDER BY started_at DESC LIMIT 1`, expiredTurn).Scan(&deadlineText); err != nil {
+		t.Fatal(err)
+	}
+	expires, err := time.Parse(time.RFC3339Nano, deadlineText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = authorizationServer.Close()
+	<-authorizationDone
+	authorizationRunning = false
+	timer := time.NewTimer(time.Until(expires) + 5*time.Second)
+	select {
+	case <-modelClosed:
+		if time.Now().Before(expires.Add(-time.Second)) {
+			t.Fatal("stream closed before grant expiry was exercised")
+		}
+	case <-timer.C:
+		t.Fatal("active stream outlived its grant during authorization outage")
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	timer.Stop()
+	holdModel.Store(false)
+	authorizationServer, authorizationDone = startAuthorization()
+	authorizationRunning = true
+	awaitIntegrationTurnStatus(t, ctx, st, session, expiredTurn, "failed")
+	var unfinished int
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_requests WHERE turn_id=? AND outcome IS NULL`, expiredTurn).Scan(&unfinished); err != nil || unfinished != 0 {
+		t.Fatalf("lost finish report did not settle through transport drain: %d %v", unfinished, err)
+	}
+	t.Logf("grant expiry closed real steered transport during authorization outage at %s", expires.Format(time.RFC3339))
 
 	// Upstream authentication is a request failure, never network authority.
 	rejectAuthentication.Store(true)
@@ -524,16 +683,19 @@ func sendIntegrationTurn(t *testing.T, ctx context.Context, app *server.Server, 
 }
 
 func awaitIntegrationTurn(t *testing.T, ctx context.Context, st *store.Store, session string, turn int64) {
+	awaitIntegrationTurnStatus(t, ctx, st, session, turn, "completed")
+}
+func awaitIntegrationTurnStatus(t *testing.T, ctx context.Context, st *store.Store, session string, turn int64, want string) {
 	t.Helper()
 	for {
 		status, reason, err := st.TurnStatus(ctx, session, turn)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status == "completed" {
+		if status == want {
 			return
 		}
-		if status == "failed" || status == "canceled" {
+		if status == "completed" || status == "failed" || status == "canceled" {
 			t.Fatalf("turn %d: %s %s", turn, status, reason)
 		}
 		select {
@@ -614,4 +776,81 @@ func (b *lostStartupReply) StartProcess(ctx context.Context, p sandbox.StartProc
 		}
 	}
 	return stream, err
+}
+
+func verifyManagedNetworkBoundary(t *testing.T, ctx context.Context, backend Backend, st *store.Store, session, origin, upstream, nextHop, allowedTCP, allowedUDP string) {
+	t.Helper()
+	binding, found, err := st.FindActiveExecutionBinding(ctx, session)
+	if err != nil || !found {
+		t.Fatalf("network probe binding: %v", err)
+	}
+	script := `import json,socket,urllib.request,urllib.error
+origin,upstream,next_hop,allowed_tcp,allowed_udp=json.loads(` + string(mustJSON(string(mustJSON([]string{origin, upstream, nextHop, allowedTCP, allowedUDP})))) + `)
+result={}
+host,port=allowed_tcp.rsplit(':',1)
+with socket.create_connection((host,int(port)),timeout=2) as connection:
+ result['allowed_tcp']='allowed' if connection.recv(64)==b'direct-ok' else 'invalid'
+host,port=allowed_udp.rsplit(':',1)
+with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as connection:
+ connection.settimeout(2)
+ connection.sendto(b'udp-ok',(host,int(port)))
+ result['allowed_udp']='allowed' if connection.recvfrom(64)[0]==b'udp-ok' else 'invalid'
+for key,address in [('direct_upstream',upstream),('direct_gateway',next_hop),('undeclared','1.1.1.1:443')]:
+ host,port=address.rsplit(':',1)
+ try:
+  connection=socket.create_connection((host,int(port)),timeout=1)
+  connection.close()
+  result[key]='connected'
+ except OSError:
+  result[key]='denied'
+with urllib.request.urlopen(origin+'/healthz',timeout=3) as response:
+ result['health']=response.status
+request=urllib.request.Request(origin+'/v1/messages',data=b'{"model":"approved-model","messages":[]}',headers={'Content-Type':'application/json'})
+try:
+ with urllib.request.urlopen(request,timeout=3) as response: result['without_grant']=response.status
+except urllib.error.HTTPError as error: result['without_grant']=error.code
+print(json.dumps(result))
+`
+	action, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	stream, err := backend.StartProcess(action, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: binding.StoreID, SandboxID: binding.SandboxID, Epoch: binding.Epoch, Handle: "network-boundary-" + binding.GenerationID}, IdempotencyKey: "network-boundary-" + binding.GenerationID, Command: "/usr/bin/python3", Arguments: []string{"-c", script}, Directory: "/workspace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var output strings.Builder
+	for {
+		frame, err := stream.Next()
+		if err != nil {
+			t.Fatalf("network boundary probe: %v %s", err, output.String())
+		}
+		if frame.Kind == "data" {
+			if output.Len()+len(frame.Data) > 8192 {
+				t.Fatal("network probe output exceeded bound")
+			}
+			output.Write(frame.Data)
+		}
+		if frame.Kind == "end" {
+			if frame.ExitCode != 0 {
+				t.Fatalf("network probe exit %d: %s", frame.ExitCode, output.String())
+			}
+			break
+		}
+	}
+	var observed struct {
+		AllowedTCP     string `json:"allowed_tcp"`
+		AllowedUDP     string `json:"allowed_udp"`
+		Health         int
+		WithoutGrant   int    `json:"without_grant"`
+		DirectUpstream string `json:"direct_upstream"`
+		DirectGateway  string `json:"direct_gateway"`
+		Undeclared     string
+	}
+	if err := json.Unmarshal([]byte(output.String()), &observed); err != nil {
+		t.Fatal(err)
+	}
+	if observed.AllowedTCP != "allowed" || observed.AllowedUDP != "allowed" || observed.Health != 200 || observed.WithoutGrant != 403 || observed.DirectUpstream != "denied" || observed.DirectGateway != "denied" || observed.Undeclared != "denied" {
+		t.Fatalf("network authority bypass: %+v", observed)
+	}
+	t.Logf("real network boundary: %s", strings.TrimSpace(output.String()))
 }

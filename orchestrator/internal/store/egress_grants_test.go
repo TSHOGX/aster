@@ -106,7 +106,7 @@ func TestEgressLateFinishRetainsOriginalTurnAndRevocationLeavesTupleTombstone(t 
 	if _, err := st.AuthorizeEgressRequest(ctx, request); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bridge.CompleteTurn(ctx, CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: first.TurnID, TerminalStatus: "completed"}); err != nil {
+	if _, err := completeDrainedTurn(ctx, bridge, CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: first.TurnID, TerminalStatus: "completed"}); err != nil {
 		t.Fatal(err)
 	}
 	second := claimGrantTurn(t, st, bridge, binding, "claim-second")

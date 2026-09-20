@@ -33,7 +33,7 @@ func constructKhoraApplication(ctx context.Context, cfg config.Config, db *store
 	if deployment == nil {
 		return nil, fmt.Errorf("Khora startup requires deployment and indefinite session retention")
 	}
-	backend, gateways, err := deployment.Connect(ctx)
+	backend, gateways, err := deployment.Connect(ctx, db)
 	if err != nil {
 		return nil, err
 	}

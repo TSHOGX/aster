@@ -101,7 +101,7 @@ func (s *Store) BeginActiveExecutionAdoption(ctx context.Context, generation, ow
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET lease_owner=?,lease_expires_at=? WHERE id=? AND generation_id=? AND attempt=? AND status IN ('leased','running')`, owner, formatTime(now.Add(ttl)), turn, generation, attempt); err != nil {
 		return result, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT grant_id FROM egress_grants WHERE generation_id=? ORDER BY grant_id`, generation)
+	rows, err := tx.QueryContext(ctx, `SELECT grant_id FROM egress_grants g WHERE generation_id=? AND NOT EXISTS(SELECT 1 FROM egress_grant_drains d WHERE d.grant_id=g.grant_id AND d.state='drained') ORDER BY grant_id`, generation)
 	if err != nil {
 		return result, err
 	}

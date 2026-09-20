@@ -199,3 +199,14 @@ def launch_environment(driver):
         'PI_OFFLINE': '1', 'PI_SKIP_VERSION_CHECK': '1', 'PI_TELEMETRY': '0',
     }
     return environment
+
+
+def project_resolvers(resolvers, path=Path('/etc/resolv.conf')):
+    """Match the guest resolver configuration to this generation's DNS rules."""
+    import ipaddress
+    addresses = sorted({str(ipaddress.IPv4Address(value)) for value in resolvers})
+    if path.is_symlink():
+        raise ValueError('resolver file must not be a symlink')
+    body = ''.join(f'nameserver {address}\n' for address in addresses)
+    _replace_config(path, body.encode('ascii'), mode=0o444)
+    return addresses

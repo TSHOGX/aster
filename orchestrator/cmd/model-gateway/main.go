@@ -56,6 +56,8 @@ type gatewayFile struct {
 	// Authorization is the application's trusted authorization socket.
 	Authorization  string `json:"authorization"`
 	RequestTimeout string `json:"request_timeout"`
+	MaxRequests    int    `json:"max_requests"`
+	MaxConnections int    `json:"max_connections"`
 	Upstreams      []struct {
 		EndpointID   string            `json:"endpoint_id"`
 		Models       []string          `json:"models"`
@@ -102,13 +104,13 @@ func run(ctx context.Context, args []string) error {
 		upstreams = append(upstreams, resolved)
 	}
 	flows := gateway.NewFlows()
-	authorizer, err := newAuthorizationClient(resolve(base, wire.Authorization), timeout)
+	authorizer, err := newAuthorizationClient(resolve(base, wire.Authorization), timeout, *wire.ApplicationUID)
 	if err != nil {
 		return err
 	}
 	handler, err := gateway.NewModelGateway(gateway.ModelOptions{
 		BackendID: wire.BackendID, Reserved: reserved, Upstreams: upstreams,
-		Flows: flows, Authorizer: authorizer, RequestTimeout: timeout,
+		Flows: flows, Authorizer: authorizer, RequestTimeout: timeout, MaxRequests: wire.MaxRequests,
 	})
 	if err != nil {
 		return err
@@ -126,13 +128,14 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	trafficListener = gateway.LimitTCPConnections(trafficListener, wire.MaxConnections)
 	defer trafficListener.Close()
 	// The traffic server has no write timeout: a streaming generation holds one
 	// response open for as long as the upstream is producing tokens, and the grant
 	// deadline is the authority clock. Read bounds still defend against slow sends.
 	traffic := &http.Server{
 		Handler: handler, ConnContext: gateway.DestinationContext(reserved),
-		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: timeout, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: timeout, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10,
 	}
 	controlServer := &http.Server{
 		Handler: control, ConnContext: gateway.PeerContext,
@@ -142,7 +145,12 @@ func run(ctx context.Context, args []string) error {
 	results := make(chan error, 2)
 	go func() { results <- traffic.Serve(trafficListener) }()
 	go func() { results <- controlServer.Serve(controlListener) }()
-	<-ctx.Done()
+	var serverResults []error
+	select {
+	case <-ctx.Done():
+	case err := <-results:
+		serverResults = append(serverResults, err)
+	}
 	// Drain before closing the listeners: shutdown must mean upstream work has
 	// stopped, not merely that no new connection is accepted.
 	drain, cancel := context.WithTimeout(context.Background(), timeout)
@@ -151,8 +159,10 @@ func run(ctx context.Context, args []string) error {
 	shutdown, stopShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopShutdown()
 	closeErr := errors.Join(traffic.Shutdown(shutdown), controlServer.Shutdown(shutdown))
-	first, second := <-results, <-results
-	for _, err := range []error{first, second} {
+	for len(serverResults) < 2 {
+		serverResults = append(serverResults, <-results)
+	}
+	for _, err := range serverResults {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			closeErr = errors.Join(closeErr, err)
 		}
@@ -185,6 +195,15 @@ func loadGatewayFile(path string) (gatewayFile, string, error) {
 	}
 	if wire.Version != 1 || wire.ID == "" || wire.BackendID == "" || wire.Listen == "" || wire.Control == "" || wire.Authorization == "" || wire.ApplicationUID == nil || wire.ControlGroup == nil || *wire.ControlGroup < 0 || len(wire.Upstreams) == 0 {
 		return wire, "", fmt.Errorf("version 1, identities, listeners, application peer UID and upstreams required")
+	}
+	if wire.MaxRequests == 0 {
+		wire.MaxRequests = 16
+	}
+	if wire.MaxConnections == 0 {
+		wire.MaxConnections = 64
+	}
+	if wire.MaxRequests < 1 || wire.MaxRequests > 1024 || wire.MaxConnections < wire.MaxRequests || wire.MaxConnections > 65536 {
+		return wire, "", fmt.Errorf("bounded max_requests and max_connections >= max_requests required")
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -230,7 +249,7 @@ type authorizationClient struct {
 	client *http.Client
 }
 
-func newAuthorizationClient(socket string, timeout time.Duration) (*authorizationClient, error) {
+func newAuthorizationClient(socket string, timeout time.Duration, applicationUID uint32) (*authorizationClient, error) {
 	if !filepath.IsAbs(socket) {
 		return nil, fmt.Errorf("absolute application authorization socket required")
 	}
@@ -238,7 +257,7 @@ func newAuthorizationClient(socket string, timeout time.Duration) (*authorizatio
 		MaxIdleConns: 4, MaxIdleConnsPerHost: 4, IdleConnTimeout: 30 * time.Second,
 		ResponseHeaderTimeout: timeout,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+			return gateway.DialControl(ctx, socket, applicationUID)
 		},
 	}
 	return &authorizationClient{client: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil

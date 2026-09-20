@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
-from harness_launch import launch_environment, prepare_pi, project_service_hosts
+from harness_launch import launch_environment, prepare_pi, project_service_hosts, project_resolvers
 
 
 def main():
@@ -16,9 +16,11 @@ def main():
     parser.add_argument('--max-turns', type=int, default=0)
     parser.add_argument('--service-host', action='append', default=[],
                         help='name=address for one entitled service destination')
+    parser.add_argument('--resolver', action='append', default=[])
     args = parser.parse_args()
     environment = launch_environment(args.driver_id)
     project_service_hosts(args.service_host)
+    project_resolvers(args.resolver)
     if args.driver_id == 'pi':
         prepare_pi()
     command = ['/usr/local/bin/harness-bridge-client',

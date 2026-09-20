@@ -135,7 +135,7 @@ func TestActiveControllerWaitsForRemoteGatewayDrain(t *testing.T) {
 	finished := make(chan error, 1)
 	go func() { finished <- server.Serve(listener) }()
 	defer func() { _ = server.Close(); <-finished }()
-	remote, err := gateway.NewRemotes(ctx, []gateway.RemoteConfig{{ID: "data", Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second}})
+	remote, err := gateway.NewRemotes(ctx, []gateway.RemoteConfig{{ID: "data", Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second}}, activeDrainRepository{st})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,4 +156,11 @@ func TestActiveControllerWaitsForRemoteGatewayDrain(t *testing.T) {
 	if attacher.calls != 1 || len(launcher.requests) != 1 {
 		t.Fatal("settled remote drain did not preserve original process")
 	}
+}
+
+func (r activeDrainRepository) GrantNextHop(ctx context.Context, id string) (string, error) {
+	if id == "old-established-flow" {
+		return "data", nil
+	}
+	return r.Store.GrantNextHop(ctx, id)
 }

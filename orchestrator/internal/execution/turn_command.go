@@ -57,6 +57,11 @@ func (c *Controller) DeliverTurnCommand(ctx context.Context, p TurnCommand) erro
 	if err != nil {
 		return err
 	}
+	if !command.Acknowledged {
+		if err := sender.SendTurnCommand(ctx, command); err != nil {
+			return err
+		}
+	}
 	if command.Kind == "abort" {
 		grants, err := c.Repository.TurnCommandGrantIDs(ctx, command)
 		if err != nil {
@@ -74,9 +79,6 @@ func (c *Controller) DeliverTurnCommand(ctx context.Context, p TurnCommand) erro
 	if command.Acknowledged {
 		return nil
 	}
-	if err := sender.SendTurnCommand(ctx, command); err != nil {
-		return err
-	} // Keep the original ID after a partial send.
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {

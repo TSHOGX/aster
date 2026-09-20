@@ -139,7 +139,7 @@ func TestActiveReplayCanCompleteBeforeAcceptanceWithoutRedispatch(t *testing.T) 
 	if _, err := st.AppendEvent(ctx, AppendEventParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: &turn.TurnID, OutputSequence: &sequence, Type: "emit_output", Stream: "stdout", Payload: map[string]string{"line": "finished while detached"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bridge.CompleteTurn(ctx, CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, TerminalStatus: "completed", FinalOutputSequence: &sequence}); err != nil {
+	if _, err := completeDrainedTurn(ctx, bridge, CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, TerminalStatus: "completed", FinalOutputSequence: &sequence}); err != nil {
 		t.Fatal(err)
 	}
 	if handled, err := st.VerifyActiveExecutionReplay(ctx, a.Binding, "emit_output", &turn.TurnID, payload); err != nil || !handled {

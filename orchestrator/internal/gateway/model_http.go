@@ -15,7 +15,6 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"harness-platform/orchestrator/internal/egress"
@@ -53,7 +52,8 @@ type ModelOptions struct {
 	RequestTimeout time.Duration
 	// Client reaches the upstream. A deployment supplies one bound to the gateway
 	// UID's egress path; the adapter never uses proxy environment variables.
-	Client *http.Client
+	Client      *http.Client
+	MaxRequests int
 }
 
 // ModelAuthorizer is the application's trusted authorization contract, reached
@@ -69,7 +69,7 @@ type ModelAuthorizer interface {
 type ModelGateway struct {
 	options   ModelOptions
 	upstreams map[string]ModelUpstream
-	mu        sync.Mutex
+	slots     chan struct{}
 }
 
 func NewModelGateway(p ModelOptions) (*ModelGateway, error) {
@@ -104,7 +104,13 @@ func NewModelGateway(p ModelOptions) (*ModelGateway, error) {
 		transport.Proxy = nil
 		p.Client = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	return &ModelGateway{options: p, upstreams: upstreams}, nil
+	if p.MaxRequests == 0 {
+		p.MaxRequests = 16
+	}
+	if p.MaxRequests < 1 || p.MaxRequests > 1024 {
+		return nil, fmt.Errorf("model request capacity must be between 1 and 1024")
+	}
+	return &ModelGateway{options: p, upstreams: upstreams, slots: make(chan struct{}, p.MaxRequests)}, nil
 }
 
 // maxModelRequestBytes bounds one generation request body. The adapter must read
@@ -119,7 +125,7 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	destination, ok := r.Context().Value(originalDestinationKey{}).(netip.AddrPort)
 	if !ok || !g.options.Reserved.Contains(destination.Addr()) {
-		http.Error(w, "connection did not arrive through an assigned service route", http.StatusForbidden)
+		http.Error(w, "connection did not arrive through an assigned route", http.StatusForbidden)
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/healthz" && r.URL.RawQuery == "" {
@@ -131,7 +137,7 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeAuthorizationFailure(w, err)
 			return
 		}
-		if _, exists := g.upstreams[route.EndpointID]; !exists || !g.options.Flows.Ready(route) {
+		if _, known := g.upstreams[route.EndpointID]; !known || !g.options.Flows.Ready(route) {
 			http.Error(w, "route is not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -139,42 +145,73 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"ready":true}`)
 		return
 	}
-
 	if r.Method != http.MethodPost {
 		http.Error(w, "only generation requests are supported", http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxModelRequestBytes))
-	if err != nil {
-		http.Error(w, "generation request exceeds bound", http.StatusRequestEntityTooLarge)
+	if r.URL.Path != "/v1/messages" || r.URL.RawPath != "" || (r.URL.RawQuery != "" && r.URL.RawQuery != "beta=true") {
+		http.NotFound(w, r)
 		return
 	}
-	// Resource restrictions belong to this adapter; the application only sees
-	// the destination and request identity.
-	var payload struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.Model) == "" {
-		http.Error(w, "generation request must name a model", http.StatusBadRequest)
+	select {
+	case g.slots <- struct{}{}:
+		defer func() { <-g.slots }()
+	default:
+		http.Error(w, "model request capacity exhausted", http.StatusTooManyRequests)
 		return
 	}
-	// The kernel destination selects immutable application route authority.
-	request := egress.AuthorizationRequest{
-		BackendID: g.options.BackendID, Destination: destination,
-		RequestID: "model-" + uuid.NewString(),
-	}
+	// Route admission precedes body parsing. A slow request cannot cross a turn
+	// boundary and silently acquire the next turn's authority.
+	request := egress.AuthorizationRequest{BackendID: g.options.BackendID, Destination: destination, RequestID: "model-" + uuid.NewString()}
 	authorization, err := g.authorize(r.Context(), request)
 	if err != nil {
 		writeAuthorizationFailure(w, err)
 		return
 	}
+	flowCtx, flow, err := g.options.Flows.Begin(r.Context(), authorization)
+	if err != nil {
+		g.finish(r.Context(), request.RequestID, "admission_revoked", 0)
+		writeAuthorizationFailure(w, err)
+		return
+	}
+	defer flow.Finish()
+	responseControl := http.NewResponseController(w)
+	_ = responseControl.SetWriteDeadline(authorization.ExpiresAt)
+	readDeadline := minTime(authorization.ExpiresAt, time.Now().Add(g.options.RequestTimeout))
+	_ = responseControl.SetReadDeadline(readDeadline)
+	canceled := make(chan struct{})
+	stopIO := context.AfterFunc(flowCtx, func() {
+		defer close(canceled)
+		_ = responseControl.SetReadDeadline(time.Now())
+		_ = responseControl.SetWriteDeadline(time.Now())
+	})
+	defer func() {
+		if !stopIO() {
+			<-canceled
+		}
+		if flowCtx.Err() == nil {
+			_ = responseControl.SetReadDeadline(time.Time{})
+			_ = responseControl.SetWriteDeadline(time.Time{})
+		}
+	}()
 	upstream, known := g.upstreams[authorization.EndpointID]
 	if !known {
-		// A service the product authorized but this gateway holds no credentials
-		// for is a deployment mismatch, not something to improvise around.
 		g.finish(r.Context(), request.RequestID, "upstream_unconfigured", 0)
-		http.Error(w, "no upstream is configured for the authorized service", http.StatusServiceUnavailable)
+		http.Error(w, "no upstream is configured for the authorized endpoint", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxModelRequestBytes))
+	if err != nil {
+		g.finish(r.Context(), request.RequestID, "body_rejected", 0)
+		http.Error(w, "generation request body unavailable or exceeds bound", http.StatusRequestEntityTooLarge)
+		return
+	}
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.Model) == "" {
+		g.finish(r.Context(), request.RequestID, "invalid_request", 0)
+		http.Error(w, "generation request must name a model", http.StatusBadRequest)
 		return
 	}
 	if !modelAllowed(upstream.Models, payload.Model) {
@@ -182,21 +219,18 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "model is not allowed by this proxy", http.StatusForbidden)
 		return
 	}
-
-	flowCtx, flow, err := g.options.Flows.Begin(r.Context(), authorization)
-	if err != nil {
-		g.finish(r.Context(), request.RequestID, "admission_revoked", 0)
-		writeAuthorizationFailure(w, err)
-		return
-	}
-	// Finish runs after upstream activity has stopped, which is what makes a
-	// revocation acknowledgment mean something.
-	defer flow.Finish()
 	forwarded, outcome, err := g.forward(flowCtx, upstream, r, body, w)
 	g.finish(r.Context(), request.RequestID, outcome, forwarded)
 	if err != nil && forwarded == 0 {
 		writeUpstreamFailure(w, err)
 	}
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 func (g *ModelGateway) authorize(ctx context.Context, request egress.AuthorizationRequest) (egress.Authorization, error) {
@@ -212,6 +246,9 @@ func (g *ModelGateway) forward(ctx context.Context, upstream ModelUpstream, orig
 	ctx, cancel := context.WithTimeout(ctx, g.options.RequestTimeout)
 	defer cancel()
 	target := strings.TrimRight(upstream.BaseURL, "/") + original.URL.Path
+	if original.URL.RawQuery != "" {
+		target += "?" + original.URL.RawQuery
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return 0, "invalid_upstream_request", err
@@ -303,6 +340,9 @@ type originalDestinationKey struct{}
 func DestinationContext(reserved netip.Prefix) func(context.Context, net.Conn) context.Context {
 	return func(ctx context.Context, connection net.Conn) context.Context {
 		tcp, ok := connection.(*net.TCPConn)
+		if wrapped, limited := connection.(*limitedTCPConn); limited {
+			tcp, ok = wrapped.TCPConn, true
+		}
 		if !ok {
 			return ctx
 		}

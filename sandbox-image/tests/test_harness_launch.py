@@ -152,3 +152,16 @@ class ServiceHostProjectionTests(unittest.TestCase):
         link.symlink_to(target)
         with self.assertRaises(ValueError):
             launch.project_service_hosts(['model.internal=10.80.0.1'], path=link)
+
+
+class ResolverProjectionTest(unittest.TestCase):
+    def test_generation_replaces_and_clears_resolver_configuration(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'resolv.conf'
+            launch.project_resolvers(['192.0.2.53', '192.0.2.54', '192.0.2.53'], path)
+            self.assertEqual(path.read_text(), 'nameserver 192.0.2.53\nnameserver 192.0.2.54\n')
+            self.assertEqual(path.stat().st_mode & 0o777, 0o444)
+            launch.project_resolvers([], path)
+            self.assertEqual(path.read_text(), '')
+            with self.assertRaises(ValueError):
+                launch.project_resolvers(['192.0.2.53\nsearch forbidden'], path)

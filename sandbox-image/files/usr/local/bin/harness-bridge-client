@@ -665,6 +665,8 @@ class PiRPCTurnRunner:
             # is the boundary barrier for completed turns (reuses that response),
             # and for failed/abort turns (which need no stats) it drains residue.
             stats_event = self._barrier_request(barrier_id, f"turn {turn_id} boundary", timeout=12.0)
+        if self.aborted_turn_id == turn_id:
+            status, error_class, error = 'canceled', 'user_interrupted', 'interrupted by user'
         if status == 'canceled' and self.aborted_turn_id == turn_id:
             if not stats_event or not stats_event.get('success'):
                 raise RuntimeError('pi abort native selector unavailable')

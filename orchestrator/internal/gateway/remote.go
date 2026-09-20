@@ -6,10 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
+	"harness-platform/orchestrator/internal/egress"
 	"io"
 	"net"
 	"net/http"
 	"path/filepath"
+	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,29 +34,38 @@ type Remote struct {
 	info      ControlInfo
 	client    *http.Client
 	transport *http.Transport
+	peerMu    sync.Mutex
+	peerPID   int32
+	pidFD     int
+	closed    bool
 }
 
 func NewRemote(ctx context.Context, p RemoteConfig) (*Remote, error) {
 	if !validControlID(p.ID) || !filepath.IsAbs(p.Socket) || filepath.Clean(p.Socket) != p.Socket || p.Timeout <= 0 {
-		return nil, fmt.Errorf("gateway ID, protocol, absolute Unix socket and positive timeout required")
+		return nil, fmt.Errorf("gateway ID, absolute Unix socket and positive timeout required")
 	}
+	r := &Remote{config: p, pidFD: -1}
 	transport := &http.Transport{
 		MaxIdleConns: 2, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second,
 		ResponseHeaderTimeout: p.Timeout,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			connection, err := (&net.Dialer{}).DialContext(ctx, "unix", p.Socket)
+			connection, err := DialControl(ctx, p.Socket, p.PeerUID)
 			if err != nil {
 				return nil, err
 			}
-			uid, err := peerUID(connection)
-			if err != nil || uid != p.PeerUID {
-				connection.Close()
-				return nil, fmt.Errorf("gateway Unix peer does not match configured UID")
+			credential, err := peerCredentials(connection)
+			if err == nil {
+				err = r.pinPeer(connection, credential.Pid)
 			}
+			if err != nil {
+				_ = connection.Close()
+				return nil, err
+			}
+
 			return connection, nil
 		},
 	}
-	r := &Remote{config: p, transport: transport}
+	r.transport = transport
 	r.client = &http.Client{Transport: transport, Timeout: p.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://gateway/v1/info", nil)
 	if err != nil {
@@ -59,7 +73,7 @@ func NewRemote(ctx context.Context, p RemoteConfig) (*Remote, error) {
 	}
 	response, err := r.client.Do(request)
 	if err != nil {
-		transport.CloseIdleConnections()
+		r.Close()
 		return nil, fmt.Errorf("gateway %s handshake: %w", p.ID, err)
 	}
 	defer response.Body.Close()
@@ -67,7 +81,7 @@ func NewRemote(ctx context.Context, p RemoteConfig) (*Remote, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if readErr != nil || len(raw) > 4096 || response.StatusCode != http.StatusOK || decodeControlRequest(decoder, &r.info) != nil || r.info.Version != ControlVersion || r.info.ID != p.ID || !validControlID(r.info.Instance) || response.Header.Get(gatewayInstanceHeader) != r.info.Instance {
-		transport.CloseIdleConnections()
+		r.Close()
 		return nil, fmt.Errorf("gateway %s control identity or version mismatch", p.ID)
 	}
 	return r, nil
@@ -77,7 +91,16 @@ func (r *Remote) Info() ControlInfo { return r.info }
 
 // Close only releases the application's client connections. It does not drain
 // the external gateway or terminate upstream work; Drain is explicit.
-func (r *Remote) Close() { r.transport.CloseIdleConnections() }
+func (r *Remote) Close() {
+	r.peerMu.Lock()
+	defer r.peerMu.Unlock()
+	r.closed = true
+	r.transport.CloseIdleConnections()
+	if r.pidFD >= 0 {
+		_ = unix.Close(r.pidFD)
+		r.pidFD = -1
+	}
+}
 
 func (r *Remote) Activate(ctx context.Context, binding string, revision uint64) error {
 	if !validControlID(binding) || revision == 0 {
@@ -128,66 +151,263 @@ func (r *Remote) call(ctx context.Context, path string, p controlRequest) error 
 	return nil
 }
 
-// Remotes drains every configured gateway. One failed drain does not
-// suppress attempts at the other gateways, but the composite result succeeds
-// only when all have acknowledged actual upstream termination.
-type Remotes struct{ gateways []*Remote }
+func (r *Remote) pinPeer(connection net.Conn, pid int32) error {
+	r.peerMu.Lock()
+	defer r.peerMu.Unlock()
+	if r.closed {
+		return fmt.Errorf("gateway client closed")
+	}
+	if r.peerPID != 0 {
+		if pid != r.peerPID || pidfdExited(r.pidFD) {
+			return ErrGatewayRestarted
+		}
+		return nil
+	}
+	socket := connection.(*net.UnixConn)
+	raw, err := socket.SyscallConn()
+	if err != nil {
+		return err
+	}
+	fd := -1
+	var pinErr error
+	if err := raw.Control(func(socketFD uintptr) {
+		fd, pinErr = unix.GetsockoptInt(int(socketFD), unix.SOL_SOCKET, unix.SO_PEERPIDFD)
+	}); err != nil {
+		return err
+	}
+	if pinErr != nil {
+		return fmt.Errorf("pin gateway process lifetime (SO_PEERPIDFD required): %w", pinErr)
+	}
+	unix.CloseOnExec(fd)
+	r.peerPID, r.pidFD = pid, fd
+	return nil
+}
+func (r *Remote) processExited() bool {
+	r.peerMu.Lock()
+	defer r.peerMu.Unlock()
+	return pidfdExited(r.pidFD)
+}
 
-func NewRemotes(ctx context.Context, configs []RemoteConfig) (*Remotes, error) {
-	if len(configs) > 16 {
-		return nil, fmt.Errorf("at most sixteen gateway controls required")
+type RouteDirectory interface {
+	PendingGatewayGrantDrains(context.Context, string, string, int) ([]string, error)
+	ConfirmGatewayGrantDrained(context.Context, string) error
+	ConfirmGatewayBindingDrained(context.Context, string) error
+	BindingNextHop(context.Context, string) (string, error)
+	GrantNextHop(context.Context, string) (string, error)
+	ActiveGatewayBindings(context.Context, string, string, int) ([]egress.BindingAuthority, error)
+}
+
+type managedRemote struct {
+	mu        sync.Mutex
+	config    RemoteConfig
+	remote    *Remote
+	observed  time.Time
+	lastError string
+}
+
+// Remotes connects only when a destination needs its next hop. A down optional
+// gateway therefore cannot prevent startup or unrelated local work.
+type Remotes struct {
+	closed    atomic.Bool
+	gateways  map[string]*managedRemote
+	directory RouteDirectory
+}
+
+func NewRemotes(_ context.Context, configs []RemoteConfig, directory RouteDirectory) (*Remotes, error) {
+	if len(configs) > 16 || (len(configs) > 0 && directory == nil) {
+		return nil, fmt.Errorf("at most sixteen gateways and a route directory required")
 	}
-	ids, sockets := map[string]bool{}, map[string]bool{}
+	r := &Remotes{gateways: map[string]*managedRemote{}, directory: directory}
+	sockets := map[string]bool{}
 	for _, p := range configs {
-		if ids[p.ID] || sockets[p.Socket] {
-			return nil, fmt.Errorf("duplicate gateway identity or control socket")
+		if !validControlID(p.ID) || !filepath.IsAbs(p.Socket) || filepath.Clean(p.Socket) != p.Socket || p.Timeout <= 0 || r.gateways[p.ID] != nil || sockets[p.Socket] {
+			return nil, fmt.Errorf("unique gateway identities, absolute sockets and positive bounds required")
 		}
-		ids[p.ID], sockets[p.Socket] = true, true
-	}
-	r := &Remotes{}
-	for _, p := range configs {
-		gateway, err := NewRemote(ctx, p)
-		if err != nil {
-			r.Close()
-			return nil, err
-		}
-		r.gateways = append(r.gateways, gateway)
+		r.gateways[p.ID] = &managedRemote{config: p}
+		sockets[p.Socket] = true
 	}
 	return r, nil
 }
 func (r *Remotes) Close() {
-	for _, gateway := range r.gateways {
-		gateway.Close()
+	r.closed.Store(true)
+	for _, g := range r.gateways {
+		g.mu.Lock()
+		if g.remote != nil {
+			g.remote.Close()
+			g.remote = nil
+		}
+		g.mu.Unlock()
 	}
 }
-
-// Activate publishes a binding to every configured gateway. A gateway that does
-// not serve this binding's endpoint still records the revision, so activation is
-// broadcast rather than routed: the application holds one authority record and a
-// gateway that never sees traffic for it is simply idle.
-//
-// It succeeds only when every gateway acknowledged, because a partially
-// activated route would answer at some listeners and fail at others.
 func (r *Remotes) Activate(ctx context.Context, binding string, revision uint64) error {
-	return r.each(func(gateway *Remote) error { return gateway.Activate(ctx, binding, revision) })
+	if r.directory == nil {
+		return fmt.Errorf("gateway route directory required")
+	}
+	id, err := r.directory.BindingNextHop(ctx, binding)
+	if err != nil {
+		return err
+	}
+	return r.call(ctx, id, func(remote *Remote) error { return remote.Activate(ctx, binding, revision) })
 }
 func (r *Remotes) Revoke(ctx context.Context, binding string) error {
-	return r.each(func(gateway *Remote) error { return gateway.Revoke(ctx, binding) })
+	if r.directory == nil {
+		return fmt.Errorf("gateway route directory required")
+	}
+	id, err := r.directory.BindingNextHop(ctx, binding)
+	if err != nil {
+		return err
+	}
+	if err := r.call(ctx, id, func(remote *Remote) error { return remote.Revoke(ctx, binding) }); err != nil {
+		return err
+	}
+	return r.directory.ConfirmGatewayBindingDrained(ctx, binding)
 }
 func (r *Remotes) RevokeGrant(ctx context.Context, grant string) error {
-	return r.each(func(gateway *Remote) error { return gateway.RevokeGrant(ctx, grant) })
+	if r.directory == nil {
+		return fmt.Errorf("gateway route directory required")
+	}
+	id, err := r.directory.GrantNextHop(ctx, grant)
+	if err != nil {
+		return err
+	}
+	if err := r.call(ctx, id, func(remote *Remote) error { return remote.RevokeGrant(ctx, grant) }); err != nil {
+		return err
+	}
+	return r.directory.ConfirmGatewayGrantDrained(ctx, grant)
 }
-func (r *Remotes) each(operation func(*Remote) error) error {
-	if len(r.gateways) == 0 {
-		return fmt.Errorf("gateway controls are not configured")
+func (r *Remotes) call(ctx context.Context, id string, operation func(*Remote) error) (result error) {
+	g := r.gateways[id]
+	if g == nil {
+		return fmt.Errorf("next hop %q is not configured", id)
 	}
-	results := make(chan error, len(r.gateways))
-	for _, gateway := range r.gateways {
-		go func(gateway *Remote) { results <- operation(gateway) }(gateway)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	defer func() {
+		g.observed = time.Now().UTC()
+		g.lastError = ""
+		if result != nil {
+			g.lastError = result.Error()
+		}
+	}()
+	if r.closed.Load() {
+		return fmt.Errorf("gateway clients closed")
 	}
-	var failures []error
-	for range r.gateways {
-		failures = append(failures, <-results)
+	// Authenticate the current socket path even when an old keep-alive remains
+	// open. Replacing a socket does not prove that the old process stopped.
+	fresh, err := NewRemote(ctx, g.config)
+	if err != nil {
+		return err
 	}
-	return errors.Join(failures...)
+	if g.remote == nil {
+		g.remote = fresh
+	} else if fresh.info.Instance == g.remote.info.Instance {
+		fresh.Close()
+	} else {
+		if !g.remote.processExited() {
+			fresh.Close()
+			return fmt.Errorf("next hop %s previous process is still alive: %w", id, ErrGatewayRestarted)
+		}
+		g.remote.Close()
+		g.remote = fresh
+	}
+	return operation(g.remote)
+}
+
+// Run restores only currently authoritative bindings after a verified process
+// replacement. Each next hop has its own bounded loop and keyset cursor.
+func (r *Remotes) Run(ctx context.Context, interval, timeout time.Duration, onError func(string, error)) error {
+	if interval <= 0 || timeout <= 0 {
+		return fmt.Errorf("positive gateway reconciliation bounds required")
+	}
+	var workers sync.WaitGroup
+	for id := range r.gateways {
+		workers.Add(1)
+		go func(id string) {
+			defer workers.Done()
+			after := ""
+			drainAfter := ""
+			for ctx.Err() == nil {
+				action, cancel := context.WithTimeout(ctx, timeout)
+				bindings, err := r.directory.ActiveGatewayBindings(action, id, after, 16)
+				cancel()
+				if err != nil && onError != nil {
+					onError(id, err)
+				}
+				if len(bindings) == 0 {
+					after = ""
+				}
+				for _, binding := range bindings {
+					after = binding.ID
+					action, cancel := context.WithTimeout(ctx, timeout)
+					err := r.call(action, id, func(remote *Remote) error { return remote.Activate(action, binding.ID, binding.Revision) })
+					cancel()
+					if err != nil && onError != nil && ctx.Err() == nil {
+						onError(id, err)
+					}
+				}
+				action, cancel = context.WithTimeout(ctx, timeout)
+				drains, err := r.directory.PendingGatewayGrantDrains(action, id, drainAfter, 16)
+				cancel()
+				if err != nil && onError != nil {
+					onError(id, err)
+				}
+				if len(drains) == 0 {
+					drainAfter = ""
+				}
+				for _, grant := range drains {
+					drainAfter = grant
+					action, cancel := context.WithTimeout(ctx, timeout)
+					err := r.RevokeGrant(action, grant)
+					cancel()
+					if err != nil && onError != nil && ctx.Err() == nil {
+						onError(id, err)
+					}
+				}
+				timer := time.NewTimer(interval)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+		}(id)
+	}
+	<-ctx.Done()
+	workers.Wait()
+	return ctx.Err()
+}
+
+// GatewayStatus reports control readiness without exposing routes or secrets.
+type GatewayStatus struct {
+	ID         string    `json:"id"`
+	Instance   string    `json:"instance,omitempty"`
+	Ready      bool      `json:"ready"`
+	ObservedAt time.Time `json:"observed_at"`
+	Error      string    `json:"error,omitempty"`
+}
+
+func (r *Remotes) Status() []GatewayStatus {
+	result := make([]GatewayStatus, 0, len(r.gateways))
+	for id, g := range r.gateways {
+		g.mu.Lock()
+		status := GatewayStatus{ID: id, ObservedAt: g.observed, Error: g.lastError}
+		if g.remote != nil {
+			status.Instance = g.remote.Info().Instance
+			status.Ready = !r.closed.Load() && status.Error == "" && !g.remote.processExited()
+		}
+		g.mu.Unlock()
+		result = append(result, status)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
+}
+
+func pidfdExited(fd int) bool {
+	if fd < 0 {
+		return false
+	}
+	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	n, err := unix.Poll(fds, 0)
+	return err == nil && n > 0 && fds[0].Revents&unix.POLLIN != 0
 }

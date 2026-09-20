@@ -93,6 +93,7 @@ type GenerationConfiguration struct {
 	// Hosts, Routes and ConnectivityDigest describe the reserved service composition
 	// this declaration carries. They are recorded with the declaration so a
 	// restart can activate exactly the routes the engine is enforcing.
+	Resolvers          []string      `json:"resolvers,omitempty"`
 	Hosts              []NetworkHost `json:"hosts,omitempty"`
 	Routes             []string      `json:"routes,omitempty"`
 	ConnectivityDigest string        `json:"connectivity_digest,omitempty"`
@@ -268,6 +269,9 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	arguments := []string{"--session-id", session.ID, "--generation-id", generation, "--driver-id", session.Driver}
 	for _, host := range applied.Hosts {
 		arguments = append(arguments, "--service-host", host.Name+"="+host.Address)
+	}
+	for _, resolver := range applied.Resolvers {
+		arguments = append(arguments, "--resolver", resolver)
 	}
 	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: arguments, Directory: "/workspace"}
 	start := WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: configuration.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request}
@@ -482,10 +486,11 @@ type NetworkRequest struct {
 // enforce; Hosts is what the guest resolves; Routes are the dormant binding
 // identities that execution acceptance later activates.
 type NetworkComposition struct {
-	Network sandbox.Network
-	Hosts   []NetworkHost
-	Routes  []string
-	Digest  string
+	Network   sandbox.Network
+	Resolvers []string
+	Hosts     []NetworkHost
+	Routes    []string
+	Digest    string
 }
 
 // NetworkHost maps one guest-visible service hostname to its reserved address.
@@ -530,6 +535,7 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 		// merge on an allow-list is how a rule is dropped without anyone deciding to.
 		configuration.Network = composition.Network
 		configuration.Hosts = composition.Hosts
+		configuration.Resolvers = composition.Resolvers
 		configuration.Routes = composition.Routes
 		configuration.ConnectivityDigest = composition.Digest
 	}

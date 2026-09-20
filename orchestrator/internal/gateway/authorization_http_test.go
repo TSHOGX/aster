@@ -82,3 +82,30 @@ func TestAuthorizationHeadersCannotForgeKernelPeer(t *testing.T) {
 func (a *authorizerFixture) ResolveEgressRoute(context.Context, egress.RouteRequest) (egress.RouteIdentity, error) {
 	return egress.RouteIdentity{}, egress.ErrDenied
 }
+
+func TestControlSocketReclamationPreservesNonSocketPaths(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		root := t.TempDir()
+		path := filepath.Join(root, "control.sock")
+		target := path
+		if symlink {
+			target = filepath.Join(root, "target")
+		}
+		if err := os.WriteFile(target, []byte("retained"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if symlink {
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if listener, err := ListenControl(path, os.Getgid()); err == nil {
+			listener.Close()
+			t.Fatal("non-socket path replaced")
+		}
+		raw, err := os.ReadFile(target)
+		if err != nil || string(raw) != "retained" {
+			t.Fatalf("retained path changed: %q %v", raw, err)
+		}
+	}
+}

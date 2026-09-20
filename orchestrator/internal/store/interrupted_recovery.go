@@ -201,15 +201,19 @@ func (s *Store) NextInterruptedRecovery(ctx context.Context, generation, owner, 
 // retained head is committed, a host failure boundary flushes partial parser
 // state without pretending the guest completed successfully.
 func appendInterruptedBoundariesTx(ctx context.Context, tx *sql.Tx, binding execution.Binding, reason string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT t.id,coalesce((SELECT max(output_sequence) FROM bridge_ingress i WHERE i.generation_id=t.generation_id AND i.turn_id=t.id AND i.attempt=t.attempt),0) FROM turns t WHERE t.generation_id=? AND t.status IN ('leased','running','failed','canceled') AND NOT EXISTS(SELECT 1 FROM bridge_ingress i WHERE i.generation_id=t.generation_id AND i.turn_id=t.id AND i.attempt=t.attempt AND i.record_key='completion')`, binding.GenerationID)
+	rows, err := tx.QueryContext(ctx, `SELECT t.id,coalesce((SELECT max(output_sequence) FROM bridge_ingress i WHERE i.generation_id=t.generation_id AND i.turn_id=t.id AND i.attempt=t.attempt),0),t.status,coalesce(t.error_class,''),coalesce(t.error,''),EXISTS(SELECT 1 FROM execution_turn_commands c WHERE c.turn_id=t.id AND c.generation_id=t.generation_id AND c.kind='abort') FROM turns t WHERE t.generation_id=? AND t.status IN ('leased','running','failed','canceled') AND NOT EXISTS(SELECT 1 FROM bridge_ingress i WHERE i.generation_id=t.generation_id AND i.turn_id=t.id AND i.attempt=t.attempt AND i.record_key='completion')`, binding.GenerationID)
 	if err != nil {
 		return err
 	}
-	type boundary struct{ turn, head int64 }
+	type boundary struct {
+		turn, head             int64
+		status, class, message string
+		aborted                bool
+	}
 	var boundaries []boundary
 	for rows.Next() {
 		var b boundary
-		if err := rows.Scan(&b.turn, &b.head); err != nil {
+		if err := rows.Scan(&b.turn, &b.head, &b.status, &b.class, &b.message, &b.aborted); err != nil {
 			rows.Close()
 			return err
 		}
@@ -221,7 +225,13 @@ func appendInterruptedBoundariesTx(ctx context.Context, tx *sql.Tx, binding exec
 		return err
 	}
 	for _, b := range boundaries {
-		raw, err := json.Marshal(map[string]any{"status": "failed", "error_class": "execution_interrupted", "error": reason, "final_output_sequence": b.head})
+		if b.status == "leased" || b.status == "running" {
+			b.status, b.class, b.message = "failed", "execution_interrupted", reason
+			if b.aborted {
+				b.status, b.class, b.message = "canceled", "user_interrupted", "interrupted by user"
+			}
+		}
+		raw, err := json.Marshal(map[string]any{"status": b.status, "error_class": b.class, "error": b.message, "final_output_sequence": b.head})
 		if err != nil {
 			return err
 		}
@@ -307,7 +317,7 @@ func finishInterruptedRecoveryTx(ctx context.Context, tx *sql.Tx, binding execut
 	}
 	// A leased command may have reached the guest before its ACK was lost. Do
 	// not requeue either leased or running work and promise exactly-once effects.
-	if _, err := tx.ExecContext(ctx, `UPDATE turns SET status='failed',completed_at=?,completed_by_generation=?,error_class='execution_interrupted',error=?,lease_owner=NULL,lease_expires_at=NULL WHERE session_id=? AND generation_id=? AND status IN ('leased','running')`, formatTime(now), binding.GenerationID, reason, binding.SessionID, binding.GenerationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET status=CASE WHEN EXISTS(SELECT 1 FROM execution_turn_commands c WHERE c.turn_id=turns.id AND c.generation_id=turns.generation_id AND c.kind='abort') THEN 'canceled' ELSE 'failed' END,completed_at=?,completed_by_generation=?,error_class=CASE WHEN EXISTS(SELECT 1 FROM execution_turn_commands c WHERE c.turn_id=turns.id AND c.generation_id=turns.generation_id AND c.kind='abort') THEN 'user_interrupted' ELSE 'execution_interrupted' END,error=CASE WHEN EXISTS(SELECT 1 FROM execution_turn_commands c WHERE c.turn_id=turns.id AND c.generation_id=turns.generation_id AND c.kind='abort') THEN 'interrupted by user' ELSE ? END,lease_owner=NULL,lease_expires_at=NULL WHERE session_id=? AND generation_id=? AND status IN ('leased','running')`, formatTime(now), binding.GenerationID, reason, binding.SessionID, binding.GenerationID); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE sessions SET active_generation_id=NULL,status=CASE WHEN status IN ('failed','destroyed') THEN status WHEN EXISTS(SELECT 1 FROM turns WHERE session_id=sessions.id AND `+pendingTurnPredicate+`) THEN 'running_active' ELSE 'running_idle' END,updated_at=? WHERE id=? AND active_generation_id=?`, formatTime(now), binding.SessionID, binding.GenerationID)

@@ -21,8 +21,12 @@ Set `KHORA_INTEGRATION_ENDPOINT`, `KHORA_INTEGRATION_TEMPLATE` and
 `KHORA_INTEGRATION_MANIFEST` to isolated test inputs, then run:
 
 ```bash
-go -C orchestrator test -tags khoraintegration ./internal/sandbox/khora ./internal/server ./internal/retainedapp ./cmd/orchestrator -run '^TestKhora' -v -count=1 -timeout=180s
+go -C orchestrator test -p 1 -tags khoraintegration ./internal/sandbox/khora ./internal/server ./internal/retainedapp ./cmd/orchestrator -run '^TestKhora' -v -count=1 -timeout=180s
 ```
+
+The packages share one disposable engine budget and run serially (`-p 1`).
+Concurrency is exercised explicitly inside the workload tests, rather than by
+unrelated application fixtures competing for engine capacity.
 
 Without those inputs the tagged tests may skip. A skip is not real-engine evidence.
 Record the exact test names, engine/template pins and results. Exercise shell and Pi

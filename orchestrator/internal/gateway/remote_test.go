@@ -32,15 +32,18 @@ func serveControl(t *testing.T, path string, handler http.Handler) func() {
 }
 
 func controlFixture(t *testing.T, timeout time.Duration) (*Flows, *Remote, func()) {
+	return namedControlFixture(t, "model", timeout)
+}
+func namedControlFixture(t *testing.T, id string, timeout time.Duration) (*Flows, *Remote, func()) {
 	t.Helper()
 	flows := NewFlows()
-	handler, err := ControlHandler(flows, ControlOptions{ID: "model", ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: timeout})
+	handler, err := ControlHandler(flows, ControlOptions{ID: id, ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: timeout})
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "control.sock")
 	stop := serveControl(t, path, handler)
-	remote, err := NewRemote(context.Background(), RemoteConfig{ID: "model", Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second})
+	remote, err := NewRemote(context.Background(), RemoteConfig{ID: id, Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +135,7 @@ func TestRemoteGatewayRestartCannotAcknowledgeOldInstanceWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	serveControl(t, remote.config.Socket, handler)
-	remote.Close() // Force a new Unix connection; keep the original instance pin.
+	remote.transport.CloseIdleConnections() // Force a new Unix connection; keep the original instance pin.
 	if err := remote.Revoke(context.Background(), "old-route"); !errors.Is(err, ErrGatewayRestarted) {
 		t.Fatalf("new process acknowledged old upstream termination: %v", err)
 	}
@@ -186,7 +189,7 @@ func TestRemoteControlDoesNotFollowRedirectOrAcceptUnexpectedSuccess(t *testing.
 		w.Header().Set("Location", "http://127.0.0.1:1/forbidden")
 		w.WriteHeader(int(status.Load()))
 	}))
-	remote.Close()
+	remote.transport.CloseIdleConnections()
 	if err := remote.Revoke(context.Background(), "route"); err == nil || requests.Load() != 1 {
 		t.Fatalf("redirect followed or considered teardown: %d %v", requests.Load(), err)
 	}
@@ -196,33 +199,37 @@ func TestRemoteControlDoesNotFollowRedirectOrAcceptUnexpectedSuccess(t *testing.
 	}
 }
 
-func TestRemoteFanoutAttemptsAllGatewaysAndRequiresEveryDrain(t *testing.T) {
-	firstFlows, first, _ := controlFixture(t, 100*time.Millisecond)
-	secondFlows, second, _ := controlFixture(t, time.Second)
+func TestRemoteControlsOnlyDeclaredNextHop(t *testing.T) {
+	firstFlows, first, _ := namedControlFixture(t, "first", 100*time.Millisecond)
+	secondFlows, second, _ := namedControlFixture(t, "second", time.Second)
 	ctx := context.Background()
-	for _, remote := range []*Remote{first, second} {
-		if err := remote.Activate(ctx, "route", 1); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, blocked := beginRemoteFlow(t, firstFlows, "route", "grant", "blocked")
-	secondContext, finished := beginRemoteFlow(t, secondFlows, "route", "grant", "finished")
-	go func() { <-secondContext.Done(); finished.Finish() }()
-	remotes := &Remotes{gateways: []*Remote{first, second}}
-	if err := remotes.Revoke(ctx, "route"); err == nil {
-		t.Fatal("one unresolved gateway counted as all drained")
-	}
-	select {
-	case <-secondContext.Done():
-	default:
-		t.Fatal("failed first gateway prevented second drain")
-	}
-	blocked.Finish()
-	if err := remotes.Revoke(ctx, "route"); err != nil {
+	directory := mapDirectory{"route-first": "first", "route-second": "second"}
+	remotes, err := NewRemotes(ctx, []RemoteConfig{first.config, second.config}, directory)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Remotes{}).Revoke(ctx, "route"); err == nil {
-		t.Fatal("unconfigured gateway set silently acknowledged teardown")
+	defer remotes.Close()
+	if err := remotes.Activate(ctx, "route-first", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := remotes.Activate(ctx, "route-second", 1); err != nil {
+		t.Fatal(err)
+	}
+	_, blocked := beginRemoteFlow(t, firstFlows, "route-first", "grant-first", "blocked")
+	secondContext, finished := beginRemoteFlow(t, secondFlows, "route-second", "grant-second", "finished")
+	defer finished.Finish()
+	if err := remotes.Revoke(ctx, "route-first"); err == nil {
+		t.Fatal("unresolved flow counted as drained")
+	}
+	if secondContext.Err() != nil {
+		t.Fatal("unrelated next hop was revoked")
+	}
+	blocked.Finish()
+	if err := remotes.Revoke(ctx, "route-first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := remotes.Revoke(ctx, "unknown"); err == nil {
+		t.Fatal("unknown binding drained without authority")
 	}
 }
 
@@ -274,7 +281,7 @@ func TestRemoteDrainClosesRegistryAndClientCloseOnlyDetaches(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream, flow := beginRemoteFlow(t, flows, "route", "grant", "request")
-	remote.Close()
+	remote.transport.CloseIdleConnections()
 	select {
 	case <-upstream.Done():
 		t.Fatal("client detachment canceled upstream work")
@@ -293,12 +300,12 @@ func TestRemoteSetRequiresExplicitUniqueGatewayConfiguration(t *testing.T) {
 	_, remote, _ := controlFixture(t, time.Second)
 	ctx := context.Background()
 	for _, configs := range [][]RemoteConfig{{remote.config, remote.config}, {{ID: "bad", Socket: "relative", Timeout: time.Second}}} {
-		if controls, err := NewRemotes(ctx, configs); err == nil {
+		if controls, err := NewRemotes(ctx, configs, mapDirectory{"unissued-grant": "model"}); err == nil {
 			controls.Close()
 			t.Fatal("invalid remote set accepted")
 		}
 	}
-	controls, err := NewRemotes(ctx, []RemoteConfig{remote.config})
+	controls, err := NewRemotes(ctx, []RemoteConfig{remote.config}, mapDirectory{"unissued-grant": "model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,3 +314,43 @@ func TestRemoteSetRequiresExplicitUniqueGatewayConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type mapDirectory map[string]string
+
+func (d mapDirectory) BindingNextHop(_ context.Context, id string) (string, error) {
+	if hop := d[id]; hop != "" {
+		return hop, nil
+	}
+	return "", egress.ErrDenied
+}
+func (d mapDirectory) GrantNextHop(ctx context.Context, id string) (string, error) {
+	return d.BindingNextHop(ctx, id)
+}
+func (d mapDirectory) ActiveGatewayBindings(context.Context, string, string, int) ([]egress.BindingAuthority, error) {
+	return nil, nil
+}
+
+func TestUnavailableOptionalGatewayDoesNotBlockOtherDestinations(t *testing.T) {
+	_, remote, _ := controlFixture(t, time.Second)
+	broken := RemoteConfig{ID: "offline", Socket: filepath.Join(t.TempDir(), "offline.sock"), PeerUID: uint32(os.Getuid()), Timeout: time.Second}
+	controls, err := NewRemotes(context.Background(), []RemoteConfig{remote.config, broken}, mapDirectory{"healthy": "model", "unavailable": "offline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controls.Close()
+	if err := controls.Activate(context.Background(), "healthy", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := controls.Activate(context.Background(), "unavailable", 1); err == nil {
+		t.Fatal("offline destination became ready")
+	}
+	if err := controls.Revoke(context.Background(), "healthy"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (d mapDirectory) PendingGatewayGrantDrains(context.Context, string, string, int) ([]string, error) {
+	return nil, nil
+}
+func (d mapDirectory) ConfirmGatewayGrantDrained(context.Context, string) error   { return nil }
+func (d mapDirectory) ConfirmGatewayBindingDrained(context.Context, string) error { return nil }

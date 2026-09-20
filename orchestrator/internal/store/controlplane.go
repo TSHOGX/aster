@@ -366,6 +366,7 @@ func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, 
 	if p.Now.IsZero() {
 		p.Now = time.Now().UTC()
 	}
+	producerCompletion := p
 	switch p.TerminalStatus {
 	case "completed", "failed", "canceled":
 	default:
@@ -378,6 +379,27 @@ func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, 
 	defer func() { _ = tx.Rollback() }()
 	if err := executionIngressTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
 		return 0, err
+	}
+	var undrained int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM egress_grants g LEFT JOIN egress_grant_drains d ON d.grant_id=g.grant_id WHERE g.generation_id=? AND g.turn_id=? AND (g.state!='revoked' OR coalesce(d.state,'pending')!='drained')`, p.GenerationID, p.TurnID).Scan(&undrained); err != nil {
+		return 0, err
+	}
+	if undrained != 0 {
+		return 0, fmt.Errorf("turn completion awaits gateway flow teardown")
+	}
+	// An accepted abort closes network admission before the guest necessarily
+	// observes it. A resulting native stream error is interruption, not an
+	// unrelated upstream failure. Natural successful completion still wins.
+	if p.TerminalStatus == "failed" {
+		var aborted int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_turn_commands WHERE generation_id=? AND turn_id=? AND kind='abort'`, p.GenerationID, p.TurnID).Scan(&aborted); err != nil {
+			return 0, err
+		}
+		if aborted != 0 {
+			p.TerminalStatus = "canceled"
+			p.ErrorClass = "user_interrupted"
+			p.Error = "interrupted by user"
+		}
 	}
 	if p.TerminalStatus == "completed" && p.DriverStateUpdate == nil {
 		binding, err := bindingWith(ctx, tx, p.GenerationID)
@@ -453,7 +475,14 @@ WHERE id = ?
 		if err != nil {
 			return 0, err
 		}
-		eventID, err = appendEventTx(ctx, tx, AppendEventParams{
+		eventPayload["status"] = p.TerminalStatus
+		if p.ErrorClass != "" {
+			eventPayload["error_class"] = p.ErrorClass
+		}
+		if p.Error != "" {
+			eventPayload["error"] = p.Error
+		}
+		event := AppendEventParams{
 			SessionID:    p.SessionID,
 			TurnID:       &p.TurnID,
 			GenerationID: p.GenerationID,
@@ -461,7 +490,23 @@ WHERE id = ?
 			Type:         p.EventType,
 			Payload:      eventPayload,
 			Now:          p.Now,
-		})
+		}
+		source, err := completeTurnEventPayload(producerCompletion.EventPayload, producerCompletion, sessionMarkedIdle)
+		if err != nil {
+			return 0, err
+		}
+		sourceJSON, err := json.Marshal(source)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := appendBridgeRecordTx(ctx, tx, event, sourceJSON); err != nil {
+			return 0, err
+		}
+		projectedJSON, err := json.Marshal(eventPayload)
+		if err != nil {
+			return 0, err
+		}
+		eventID, err = appendEventRowTx(ctx, tx, event, projectedJSON)
 		if err != nil {
 			return 0, err
 		}

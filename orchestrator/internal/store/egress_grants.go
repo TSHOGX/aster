@@ -178,19 +178,27 @@ func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.Authorizati
 	}
 	hash := sha256.Sum256(raw)
 	digest := hex.EncodeToString(hash[:])
-	var previous, bindingID, grantID string
+	var previous, bindingID, grantID, authorizedUntil string
+	var priorOutcome sql.NullString
 	var priorTurn int64
-	err = tx.QueryRowContext(ctx, `SELECT request_digest,binding_id,grant_id,turn_id FROM egress_requests WHERE backend_id=? AND request_id=?`, p.BackendID, p.RequestID).Scan(&previous, &bindingID, &grantID, &priorTurn)
+	err = tx.QueryRowContext(ctx, `SELECT request_digest,binding_id,grant_id,turn_id,authorized_until,outcome FROM egress_requests WHERE backend_id=? AND request_id=?`, p.BackendID, p.RequestID).Scan(&previous, &bindingID, &grantID, &priorTurn, &authorizedUntil, &priorOutcome)
 	if err == nil {
 		if previous != digest || bindingID != result.BindingID || grantID != result.GrantID || priorTurn != result.TurnID {
 			return result, egress.ErrRequestConflict
+		}
+		if priorOutcome.Valid {
+			return result, egress.ErrRequestConflict
+		}
+		result.ExpiresAt = parseTime(authorizedUntil)
+		if !result.ExpiresAt.After(p.Now) {
+			return result, egress.ErrDenied
 		}
 		return result, tx.Commit()
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO egress_requests(backend_id,request_id,request_digest,binding_id,grant_id,generation_id,turn_id,epoch,endpoint_id,started_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, p.BackendID, p.RequestID, digest, result.BindingID, result.GrantID, result.GenerationID, result.TurnID, result.Epoch, result.EndpointID, formatTime(p.Now))
+	_, err = tx.ExecContext(ctx, `INSERT INTO egress_requests(backend_id,request_id,request_digest,authorized_until,binding_id,grant_id,generation_id,turn_id,epoch,endpoint_id,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, p.BackendID, p.RequestID, digest, formatTime(result.ExpiresAt), result.BindingID, result.GrantID, result.GenerationID, result.TurnID, result.Epoch, result.EndpointID, formatTime(p.Now))
 	if err != nil {
 		return result, err
 	}
@@ -215,7 +223,7 @@ func (s *Store) FinishEgressRequest(ctx context.Context, p egress.RequestFinish)
 	if err != nil {
 		return err
 	}
-	if outcome.Valid {
+	if outcome.Valid && bytes.Valid {
 		if outcome.String != p.Outcome || bytes.Int64 != p.Bytes {
 			return egress.ErrRequestConflict
 		}

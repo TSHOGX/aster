@@ -16,7 +16,8 @@ contains objects with `endpoint_id`; `direct` contains `cidr`, `port` and `proto
 (`tcp` or `udp`); `resolvers` explicitly names approved IPv4 DNS servers.
 
 Compilation emits a complete default-deny declaration and matching hostname
-projection. It rejects protected/synthetic overlap, direct gateway access, wildcard
+projection, including the generation's `/etc/resolv.conf`. Empty resolver lists
+clear previous nameservers. It rejects protected/synthetic overlap, direct gateway access, wildcard
 ports, undeclared next hops and unsupported steering transports. Names do not
 establish authority: enforcement uses exact addresses and ports. Shell and Pi may
 receive any explicitly declared endpoint. An absent connectivity block means no
@@ -38,7 +39,10 @@ must originate from the isolated next-hop process under that UID.
 
 `AuthorizationHandler` uses a protected Unix listener with `PeerContext`, which
 checks `SO_PEERCRED` against the configured gateway UID. Socket mode is `0660`
-with an explicit group. An existing socket is never replaced implicitly.
+with an explicit group. A process lock protects each listener. Startup refuses a
+live owner, a live endpoint, symlinks and non-socket paths; after a crash it can
+reclaim its own stale socket under that lock. Gateways must drain before releasing
+their listener lock and must own their upstream sockets in the tracked process.
 
 `POST /v1/authorize` accepts only generic route identity:
 
@@ -54,7 +58,9 @@ with an explicit group. An existing socket is never replaced implicitly.
 `endpoint_id` is an optional cross-check, never a way to choose another destination.
 Authorization requires an accepted, current execution and a leased/running turn
 with a live matching grant. The response supplies session/user/generation/turn,
-binding revision, grant ID, policy digest and expiry. There are no model, database,
+binding revision, grant ID, policy digest and expiry. `authorized_until` preserves
+the original request deadline across lost-reply retries; a finished request ID
+cannot open another flow. There are no model, database,
 bucket or operation fields. Every new flow or proxy request obtains current
 admission, including requests over reused connections.
 
@@ -62,7 +68,9 @@ Denial is 403, conflicting request identity is 409 and unavailable authorization
 503. Unknown fields and trailing JSON are rejected; the application owns the clock.
 `POST /v1/finish` accepts `backend_id`, `request_id`, `outcome` and nonnegative
 `bytes`. It preserves original attribution across turn changes. Identical retries
-succeed; contradictory finishes return 409.
+succeed; contradictory finishes return 409. If a finish report is lost, confirmed
+control-plane teardown records `transport_closed` with unknown bytes. A later
+gateway report may enrich that provisional record without changing attribution.
 
 ## Gateway control and flow lifetime
 
@@ -85,12 +93,25 @@ stops. A timeout is unresolved teardown; cancellation alone is insufficient.
 Revoked identities cannot reactivate. Deadline enforcement remains local to the
 gateway when the application is unavailable.
 
-`NewRemote` pins the socket's UID, control version, ID and instance, disables
-redirects/proxy environment variables and bounds control requests. Lost replies
-retry against the same instance. `ErrGatewayRestarted` requires reconciliation;
-a new handshake alone cannot prove the prior process's flows stopped.
-`NewRemotes` accepts zero to sixteen unique controls. Client `Close` releases idle
-control connections; explicit `Drain` stops gateway work.
+`NewRemote` pins the socket's UID, control version, ID, instance and kernel peer
+pidfd (`SO_PEERPIDFD`, Linux 6.5 or newer). It disables redirects and proxy
+environment variables and bounds requests. A new handshake alone cannot prove
+previous-process teardown. Instance replacement requires the previous pidfd to
+report exit; a replaced socket while that process lives remains fenced.
+
+`NewRemotes` accepts zero to sixteen unique controls and connects on demand.
+Bindings and grants resolve to their original next hop in the product database;
+control is never broadcast to unrelated gateways. Each gateway has an independent
+bounded reconciliation loop that restores current bindings after verified process
+replacement and completes pending grant drains. An unavailable optional gateway
+does not prevent daemon startup or control on another next hop.
+
+Every grant revocation creates a durable drain obligation. Completion closes
+admission, drains the turn's flows and commits only after the drain receipts exist.
+Interrupt, adoption, pause and retirement use the same acknowledgments. Successful
+old drains are excluded from adoption work, so large histories do not force every
+past grant through the control socket again. Client `Close` releases connections
+and process handles; explicit `Drain` stops the gateway's work.
 
 ## Separate model proxy
 
@@ -98,7 +119,8 @@ control connections; explicit `Drain` stops gateway work.
 map `endpoint_id` to `base_url`, `models`, fixed headers and an optional credential
 file. Credentials never enter product configuration, state or the guest. Model
 restrictions are enforced inside the proxy after generic application admission.
-Guest authorization and cookie headers are discarded. Upstream statuses are
+Only native `POST /v1/messages` (including `beta=true`) is forwarded.
+Other paths are refused before credential use. Guest authorization and cookie headers are discarded. Upstream statuses are
 forwarded and recorded as outcomes. Pi endpoint/model selection belongs to authored
 native configuration, independently of network policy.
 
@@ -127,3 +149,9 @@ Retries preserve original bindings and intent. A changed fence, epoch, policy,
 next hop or range fails. The compiler's complete network declaration replaces the
 plan's network before launch. Configuration observation precedes activation;
 bridge readiness and execution acceptance precede turn grants.
+
+The model process also bounds traffic independently of control: `max_connections`
+(default 64) includes idle TCP connections, and `max_requests` (default 16) bounds
+concurrent body parsing and forwarding. Request bodies are limited to 8 MiB.
+Grant cancellation sets the guest response write deadline as well as canceling
+upstream I/O, so a guest that stops reading cannot prevent flow teardown.

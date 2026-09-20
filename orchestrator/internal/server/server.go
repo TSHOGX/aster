@@ -1258,6 +1258,7 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 	s.publishSessionRuntime(sessionID, snapshot)
 	if command != nil {
 		if err := commands.DeliverTurnCommand(r.Context(), *command); err != nil {
+			s.log.Warn("turn interrupt pending", "session_id", sessionID, "turn_id", command.TurnID, "command_id", command.ID, "error", err)
 			writeErrorClass(w, http.StatusServiceUnavailable, "control_delivery_pending", "interrupt delivery is pending reconciliation")
 			return
 		}

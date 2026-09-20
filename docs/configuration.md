@@ -68,3 +68,10 @@ beside each document. The examples use application UID 1000 and gateway UID/grou
 process; create shared socket directories with matching access. Start the proxy
 before the application (its control listener does not require application
 readiness). Keep its credential file mode 0600 and owned by the gateway UID.
+
+Gateway hosts require Linux `SO_PEERPIDFD` support (6.5 or newer). Deployment
+`lease_ttl` is at least one minute to cover the pinned guest's 30-second heartbeat.
+Existing flows retain the deadline observed at admission; heartbeat renewal applies
+to new admissions. Size the lease above the longest proxy request plus a heartbeat
+interval and control margin. The model examples use a three-minute lease and a
+two-minute proxy timeout.

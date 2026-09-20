@@ -118,7 +118,7 @@ func TestDeploymentRefusesUnreadableAuthoredContent(t *testing.T) {
 	}
 }
 func TestDeploymentRejectsImplicitCredentialsAndIncompleteBounds(t *testing.T) {
-	for _, fault := range []string{"remote-http", "https-no-client", "engine-credentials", "missing-store", "unknown", "lease", "zero-cpu", "manifest", "gateway-uid", "authorization-uid", "same-socket", "unsupported-protocol", "trailing", "oversized"} {
+	for _, fault := range []string{"remote-http", "https-no-client", "engine-credentials", "missing-store", "unknown", "lease", "short-lease", "zero-cpu", "manifest", "gateway-uid", "authorization-uid", "same-socket", "unsupported-protocol", "trailing", "oversized"} {
 		t.Run(fault, func(t *testing.T) {
 			path, value := deploymentFixture(t)
 			engine := value["engine"].(map[string]any)
@@ -134,6 +134,8 @@ func TestDeploymentRejectsImplicitCredentialsAndIncompleteBounds(t *testing.T) {
 				delete(engine, "store_id")
 			case "unknown":
 				value["legacy_runsc_root"] = "/host"
+			case "short-lease":
+				value["lease_ttl"] = "30s"
 			case "lease":
 				value["lease_ttl"] = "0s"
 			case "zero-cpu":

@@ -30,9 +30,14 @@ type Backend interface {
 	sessionfiles.Backend
 	content.Backend
 }
+type GatewayMaintenance interface {
+	Run(context.Context, time.Duration, time.Duration, func(string, error)) error
+}
+
 type Options struct {
-	Backend Backend
-	Plans   *launchplan.Source
+	GatewayMaintenance GatewayMaintenance
+	Backend            Backend
+	Plans              *launchplan.Source
 	// Content is every authored revision a launch may mount. It is published and
 	// verified before the server accepts work, so no session can reach a plan whose
 	// content this engine store has not established.
@@ -112,7 +117,28 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	hooks := app.ExecutionHooks()
-	launcher := agentbridge.Launcher{Backend: p.Backend, Store: st, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: hooks.BeforeComplete, AfterEventCommit: hooks.AfterEventCommit}
+	beforeComplete := func(ctx context.Context, completion *store.CompleteTurnParams) error {
+		if err := hooks.BeforeComplete(ctx, completion); err != nil {
+			return err
+		}
+		grants, err := st.PrepareTurnEgressDrain(ctx, *completion)
+		if err != nil {
+			return err
+		}
+		for _, grant := range grants {
+			if p.Grants == nil {
+				return fmt.Errorf("turn completion requires gateway flow drain")
+			}
+			if err := p.Grants.RevokeGrant(ctx, grant); err != nil {
+				return err
+			}
+			if err := st.ConfirmGatewayGrantDrained(ctx, grant); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	launcher := agentbridge.Launcher{Backend: p.Backend, Store: st, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: beforeComplete, AfterEventCommit: hooks.AfterEventCommit}
 	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, Activator: p.Activator, Connectivity: composer, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
 	reader := sessionfiles.Reader{Repository: st, Backend: p.Backend}
 	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: uploads, MaxActive: p.MaxActive, Provisioner: controller}
@@ -151,7 +177,18 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
-	results := make(chan error, 4)
+	results := make(chan error, 5)
+	workers := 4
+	if r.options.GatewayMaintenance != nil {
+		workers++
+		go func() {
+			results <- r.options.GatewayMaintenance.Run(r.ctx, r.options.EventInterval, r.options.ActionTimeout, func(id string, err error) {
+				if r.options.OnError != nil {
+					r.options.OnError("gateway:"+id, err)
+				}
+			})
+		}()
+	}
 	go func() { results <- r.Reconciler.Run(r.ctx) }()
 	go func() {
 		results <- r.Inventory.Run(r.ctx, r.options.InventoryInterval, r.options.ActionTimeout, func(session string, err error) {
@@ -176,7 +213,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}()
 	err := <-results
 	r.cancel()
-	second, third, fourth := <-results, <-results, <-results
-	return errors.Join(err, second, third, fourth)
+	for range workers - 1 {
+		err = errors.Join(err, <-results)
+	}
+	return err
 }
 func (r *Runtime) Close() error { r.cancel(); return r.Controller.Close() }

@@ -45,3 +45,9 @@ type RouteIdentity struct {
 	BindingRevision uint64 `json:"binding_revision"`
 	EndpointID      string `json:"endpoint_id"`
 }
+
+// BindingAuthority names one live immutable binding for gateway reconciliation.
+type BindingAuthority struct {
+	ID       string
+	Revision uint64
+}

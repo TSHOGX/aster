@@ -58,6 +58,12 @@ func appendEventTx(ctx context.Context, tx *sql.Tx, p AppendEventParams) (int64,
 	if duplicate && p.Type == "emit_output" {
 		return 0, nil
 	}
+	return appendEventRowTx(ctx, tx, p, payload)
+}
+
+// appendEventRowTx publishes application state without reinterpreting producer
+// input. Callers handling bridge input commit that immutable source separately.
+func appendEventRowTx(ctx context.Context, tx *sql.Tx, p AppendEventParams, payload []byte) (int64, error) {
 	res, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO events (
   session_id, turn_id, generation_id, output_sequence, dedupe_key,

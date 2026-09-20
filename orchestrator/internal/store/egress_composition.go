@@ -62,6 +62,9 @@ func (c NetworkComposer) ComposeGenerationNetwork(ctx context.Context, p executi
 		}
 		result.Hosts = append(result.Hosts, execution.NetworkHost{Name: host.Name, Address: host.Address.String()})
 	}
+	for _, resolver := range compilation.Resolvers {
+		result.Resolvers = append(result.Resolvers, resolver.String())
+	}
 	for _, service := range compilation.Endpoints {
 		result.Routes = append(result.Routes, service.Binding.ID)
 	}

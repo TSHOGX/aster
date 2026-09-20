@@ -8,7 +8,7 @@
   "application_uid": 1000,
   "control_group": 1001,
   "authorization": "../.harness-local/development/authorization.sock",
-  "request_timeout": "50s",
+  "request_timeout": "2m",
   "upstreams": [
     {
       "endpoint_id": "inference",
@@ -22,5 +22,7 @@
         "Anthropic-Version": "2023-06-01"
       }
     }
-  ]
+  ],
+  "max_connections": 64,
+  "max_requests": 16
 }

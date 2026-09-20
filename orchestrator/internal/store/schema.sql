@@ -180,10 +180,26 @@ CREATE TABLE egress_grants (
  state TEXT NOT NULL CHECK(state IN ('active','revoked'))
 );
 
+CREATE TABLE egress_grant_drains (
+ grant_id TEXT PRIMARY KEY REFERENCES egress_grants(grant_id),
+ state TEXT NOT NULL CHECK(state IN ('pending','drained')),
+ created_at TEXT NOT NULL,
+ confirmed_at TEXT
+);
+
+CREATE TRIGGER egress_grant_revocation_drain
+AFTER UPDATE OF state ON egress_grants
+WHEN NEW.state='revoked' AND OLD.state!='revoked'
+BEGIN
+ INSERT OR IGNORE INTO egress_grant_drains(grant_id,state,created_at)
+ VALUES(NEW.grant_id,'pending',strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+END;
+
 CREATE TABLE egress_requests (
  backend_id TEXT NOT NULL,
  request_id TEXT NOT NULL,
  request_digest TEXT NOT NULL,
+ authorized_until TEXT NOT NULL,
  binding_id TEXT NOT NULL,
  grant_id TEXT NOT NULL,
  generation_id TEXT NOT NULL,
@@ -212,6 +228,15 @@ CREATE TABLE egress_route_bindings (
  state TEXT NOT NULL CHECK(state IN ('dormant','active','revoked')),
  UNIQUE(backend_id,destination)
 );
+
+-- Admission and teardown scale with live authority, not retained request history.
+CREATE INDEX egress_grants_active_binding_idx
+ ON egress_grants(binding_id,binding_revision,policy_digest,expires_at) WHERE state='active';
+CREATE INDEX egress_grants_generation_turn_idx ON egress_grants(generation_id,turn_id);
+CREATE INDEX egress_grant_drains_pending_idx ON egress_grant_drains(grant_id) WHERE state='pending';
+CREATE INDEX egress_routes_active_gateway_idx
+ ON egress_route_bindings(json_extract(endpoint,'$.next_hop'),binding_id) WHERE state='active';
+CREATE INDEX egress_requests_unfinished_grant_idx ON egress_requests(grant_id) WHERE outcome IS NULL;
 
 CREATE TABLE egress_tuple_pools (
  store_id TEXT PRIMARY KEY,

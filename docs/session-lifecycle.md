@@ -21,3 +21,8 @@ storage. There is no automatic session expiration or process checkpoint lifecycl
 
 [Recovery](recovery.md) describes background discovery of incomplete provisioning,
 starting processes, idle pauses and the obligations that survive a restart.
+
+Completion waits for durable gateway drain receipts. If an accepted abort races
+with a native stream failure, the product reports `canceled` / `user_interrupted`;
+a natural successful completion remains completed. The original producer completion
+is retained unchanged, and public events report the effective product outcome.

@@ -166,12 +166,27 @@ func (c *Controller) reconnect(ctx context.Context, session, generation, owner s
 	if err := lease.EnsureOwned(); err != nil {
 		return Binding{}, err
 	}
+	applied, present, err := environment.AppliedConfiguration()
+	if err != nil {
+		return Binding{}, err
+	}
+	if present {
+		for _, route := range applied.Routes {
+			if c.Activator == nil {
+				return Binding{}, fmt.Errorf("adoption requires gateway activation")
+			}
+			if err := c.Activator.Activate(ctx, route, 1); err != nil {
+				return Binding{}, err
+			}
+		}
+	}
 	if err := c.Repository.AcceptExecutionBinding(ctx, ObserveBindingParams{GenerationID: generation, Owner: owner, ProcessHandle: binding.ProcessHandle, Epoch: binding.Epoch, EnvironmentFence: binding.EnvironmentFence, ReconciledEventSequence: &adoption.EventSequence}); err != nil {
 		return Binding{}, err
 	}
 	if !stopLease() {
 		return Binding{}, ErrStartLeaseLost
 	}
+
 	connection.Activate()
 	accepted = true
 	binding.State = "accepted"

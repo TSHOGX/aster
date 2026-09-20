@@ -87,7 +87,7 @@ func (s *Store) BeginIdleExecutionAdoption(ctx context.Context, generation, owne
 	if _, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET status='starting',lease_owner=?,lease_expires_at=?,last_seen_at=? WHERE generation_id=?`, owner, formatTime(now.Add(ttl)), formatTime(now), generation); err != nil {
 		return result, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT grant_id FROM egress_grants WHERE generation_id=?`, generation)
+	rows, err := tx.QueryContext(ctx, `SELECT grant_id FROM egress_grants g WHERE generation_id=? AND NOT EXISTS(SELECT 1 FROM egress_grant_drains d WHERE d.grant_id=g.grant_id AND d.state='drained')`, generation)
 	if err != nil {
 		return result, err
 	}

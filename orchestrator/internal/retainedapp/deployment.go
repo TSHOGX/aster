@@ -172,6 +172,9 @@ func LoadDeployment(path string) (*Deployment, error) {
 		}
 		*p.target = duration
 	}
+	if d.LeaseTTL < time.Minute {
+		return nil, fmt.Errorf("lease_ttl must be at least 1m to cover the retained guest heartbeat")
+	}
 	endpoint, err := url.Parse(wire.Engine.Endpoint)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
 		return nil, fmt.Errorf("engine must be an origin without credentials, path, query or fragment")
@@ -284,18 +287,18 @@ func LoadDeployment(path string) (*Deployment, error) {
 }
 
 func (d *Deployment) Options(backend Backend, gateways *gateway.Remotes, owner string) Options {
-	return Options{Backend: backend, Plans: d.Plans, Content: d.Content, ContentBytes: d.ContentBytes, Connectivity: d.Connectivity, Routes: gateways, Activator: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
+	return Options{Backend: backend, Plans: d.Plans, Content: d.Content, ContentBytes: d.ContentBytes, Connectivity: d.Connectivity, Routes: gateways, Activator: gateways, Grants: gateways, GatewayMaintenance: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
 }
 
-// Connect validates the pinned engine and every gateway before server mutation.
-func (d *Deployment) Connect(ctx context.Context) (Backend, *gateway.Remotes, error) {
+// Connect validates the engine and configures lazy, destination-scoped gateway clients.
+func (d *Deployment) Connect(ctx context.Context, directory gateway.RouteDirectory) (Backend, *gateway.Remotes, error) {
 	action, cancel := context.WithTimeout(ctx, d.ActionTimeout)
 	defer cancel()
 	backend, err := khorabackend.New(action, d.Engine)
 	if err != nil {
 		return nil, nil, err
 	}
-	gateways, err := gateway.NewRemotes(action, d.Gateways)
+	gateways, err := gateway.NewRemotes(action, d.Gateways, directory)
 	if err != nil {
 		return nil, nil, err
 	}

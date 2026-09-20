@@ -50,7 +50,7 @@ func TestEngineInvalidationAllowsOriginalTurnSettlementWithoutNewAuthority(t *te
 	}
 	completion := CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, TerminalStatus: "completed", FinalOutputSequence: &sequence}
 	for range 2 {
-		if _, err := bridge.CompleteTurn(ctx, completion); err != nil {
+		if _, err := completeDrainedTurn(ctx, bridge, completion); err != nil {
 			t.Fatalf("original completion/replay rejected: %v", err)
 		}
 	}
@@ -100,7 +100,7 @@ func TestInvalidatedIngressStillRequiresOriginalExecutionFences(t *testing.T) {
 			if _, err := st.AppendEvent(ctx, AppendEventParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: &turn.TurnID, OutputSequence: &sequence, Type: "emit_output", Stream: "stdout", Payload: map[string]any{"text": "stale"}}); err == nil {
 				t.Fatal("stale execution output accepted")
 			}
-			if _, err := bridge.CompleteTurn(ctx, CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, TerminalStatus: "completed"}); err == nil {
+			if _, err := completeDrainedTurn(ctx, bridge, CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, TerminalStatus: "completed"}); err == nil {
 				t.Fatal("stale execution completion accepted")
 			}
 		})

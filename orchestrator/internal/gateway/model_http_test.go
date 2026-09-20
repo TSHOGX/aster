@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -427,5 +429,110 @@ func TestReadinessUsesActivatedBindingWithoutTurnGrantOrUpstream(t *testing.T) {
 	}
 	if headers, _ := upstream.seen(); len(headers) != 0 {
 		t.Fatal("readiness made an upstream request")
+	}
+}
+
+func TestModelGrantDrainUnblocksGuestThatDoesNotReadResponse(t *testing.T) {
+	entered := make(chan struct{})
+	proxy, _, flows, _ := modelFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		block := []byte(strings.Repeat("x", 64<<10))
+		for {
+			if _, err := w.Write(block); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			if r.Context().Err() != nil {
+				return
+			}
+		}
+	})
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: proxy, ConnContext: func(ctx context.Context, _ net.Conn) context.Context {
+		return context.WithValue(ctx, originalDestinationKey{}, netip.MustParseAddrPort("10.80.0.1:443"))
+	}}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(LimitTCPConnections(listener, 2)) }()
+	defer func() { _ = server.Close(); <-done }()
+	client, err := net.Dial("tcp4", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	body := `{"model":"approved-model"}`
+	if _, err := fmt.Fprintf(client, "POST /v1/messages HTTP/1.1\r\nHost: model.internal\r\nContent-Length: %d\r\nContent-Type: application/json\r\n\r\n%s", len(body), body); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	// Fill socket buffers while the guest deliberately never reads its response.
+	time.Sleep(100 * time.Millisecond)
+	drain, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := flows.RevokeGrant(drain, "grant"); err != nil {
+		t.Fatalf("slow guest prevented transport teardown: %v", err)
+	}
+}
+
+func TestSlowRequestBodyIsBoundToAdmissionDeadlineBeforeParsing(t *testing.T) {
+	proxy, authorizer, _, _ := modelFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("unfinished request reached upstream") })
+	authorizer.expires = 50 * time.Millisecond
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: proxy, ConnContext: func(ctx context.Context, _ net.Conn) context.Context {
+		return context.WithValue(ctx, originalDestinationKey{}, netip.MustParseAddrPort("10.80.0.1:443"))
+	}}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	defer func() { _ = server.Close(); <-done }()
+	client, err := net.Dial("tcp4", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := io.WriteString(client, "POST /v1/messages HTTP/1.1\r\nHost: model.internal\r\nContent-Length: 1000\r\nContent-Type: application/json\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadAll(client); err != nil {
+		if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+			t.Fatal("body reader outlived original grant")
+		}
+	}
+	requests, finishes := authorizer.observed()
+	if len(requests) != 1 || len(finishes) != 1 || finishes[0].RequestID != requests[0].RequestID {
+		t.Fatalf("request was not bound before its body: %+v %+v", requests, finishes)
+	}
+}
+
+func TestModelProxyRejectsNonGenerationPathsBeforeCredentialUse(t *testing.T) {
+	proxy, authorizer, _, upstream := modelFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected upstream path") })
+	for _, path := range []string{"/v1/admin", "/v1/messages/../../admin", "/v1/messages?other=1"} {
+		response := steered(t, proxy, `{"model":"approved-model"}`, func(r *http.Request) { r.URL, _ = url.Parse(path) })
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("unsupported generation path %q: %d", path, response.Code)
+		}
+	}
+	if requests, _ := authorizer.observed(); len(requests) != 0 {
+		t.Fatal("non-generation path received route authority")
+	}
+	if headers, _ := upstream.seen(); len(headers) != 0 {
+		t.Fatal("credentials sent to non-generation endpoint")
+	}
+}
+func TestModelProxyPreservesNativeBetaQuery(t *testing.T) {
+	proxy, _, _, _ := modelFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "beta=true" {
+			t.Error("native beta query lost")
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	})
+	response := steered(t, proxy, `{"model":"approved-model"}`, func(r *http.Request) { r.URL.RawQuery = "beta=true" })
+	if response.Code != http.StatusOK {
+		t.Fatalf("native beta request: %d", response.Code)
 	}
 }

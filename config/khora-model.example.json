@@ -32,7 +32,7 @@
   "prepared_root": "../.harness-local/development/prepared",
   "max_active": 2,
   "inventory_limit": 1000,
-  "lease_ttl": "1m",
+  "lease_ttl": "3m",
   "poll_interval": "100ms",
   "event_interval": "1s",
   "action_timeout": "15s",

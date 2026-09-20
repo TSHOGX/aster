@@ -136,7 +136,7 @@ func TestAuthorizationClientMapsContractStatuses(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	defer func() { _ = server.Close(); <-done }()
-	client, err := newAuthorizationClient(socket, 2*time.Second)
+	client, err := newAuthorizationClient(socket, 2*time.Second, uint32(os.Getuid()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,26 @@ func TestAuthorizationClientMapsContractStatuses(t *testing.T) {
 	if err := client.Finish(ctx, egress.RequestFinish{RequestID: "one", Outcome: "other"}); !errors.Is(err, egress.ErrRequestConflict) {
 		t.Fatalf("contradictory finish: %v", err)
 	}
-	if _, err := newAuthorizationClient("relative.sock", time.Second); err == nil {
+	if _, err := newAuthorizationClient("relative.sock", time.Second, uint32(os.Getuid())); err == nil {
 		t.Fatal("relative authorization socket accepted")
+	}
+}
+
+func TestAuthorizationClientRefusesWrongApplicationKernelPeer(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "authorization.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("request crossed a mismatched peer boundary") })}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	defer func() { _ = server.Close(); <-done }()
+	client, err := newAuthorizationClient(socket, time.Second, uint32(os.Getuid()+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Authorize(context.Background(), egress.AuthorizationRequest{RequestID: "wrong-peer"}); err == nil {
+		t.Fatal("wrong application UID trusted")
 	}
 }
