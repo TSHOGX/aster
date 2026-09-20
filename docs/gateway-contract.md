@@ -72,3 +72,51 @@ These behaviors have contract/race tests, including real Unix peer credentials
 and direct TCP listener refusal. Full real-Khora routing, external adapter
 stream/query/signing behavior, upstream DNS/redirect policy and deployment UID
 checks remain separate integration acceptance requirements.
+
+## Application-to-gateway control
+
+`ControlHandler` provides the reverse control direction inside a protocol gateway.
+Serve it on a protected `ListenControl` Unix listener with `PeerContext`; configure
+the application UID, gateway ID, protocol (`model_http`, `doris_mysql`, or
+`obs_http`) and a positive maximum operation timeout. It uses the gateway's
+actual flow registry. A separate registry that does not track upstream work
+cannot acknowledge teardown for that work.
+
+`GET /v1/info` returns version `1`, gateway `id`, `protocol` and a random process
+`instance`. Every response includes `X-Harness-Gateway-Instance`. Mutations require
+that same header from the caller and reject a different or missing instance with
+412 before modifying the registry.
+
+| POST endpoint | JSON body | Successful result |
+|---|---|---|
+| `/v1/bindings/activate` | `{"binding_id":"binding","revision":1}` | Binding revision registered |
+| `/v1/bindings/revoke` | `{"binding_id":"binding"}` | Binding tombstoned and all its upstream work stopped |
+| `/v1/grants/revoke` | `{"grant_id":"grant"}` | Grant tombstoned and all its upstream work stopped |
+| `/v1/drain` | `{}` | Registry closed to admission and all upstream work stopped |
+
+Success is exactly 204. Requests are bounded to 4 KiB; unknown fields, trailing
+JSON, irrelevant fields and query parameters are rejected. Failed operations
+return 503, expired drain deadlines return 504, and activation of a revoked
+binding returns 409. Cancellation alone never proves that upstream work stopped.
+
+`NewRemote` connects only to its configured absolute Unix socket, verifies the
+server's kernel peer UID, and pins the handshake ID, protocol, version and process
+instance. The server independently verifies the application's kernel UID. HTTP
+proxy environment variables and redirects are not used. Timeouts, lost replies,
+unexpected status codes or instance mismatches leave the operation unresolved.
+Identical revocation retries can settle a lost successful reply against the same
+instance. A restarted gateway cannot acknowledge that the previous process's
+work stopped; the client returns `ErrGatewayRestarted` and requires explicit
+reconciliation. Constructing a new client only establishes the new instance's
+identity; it does not prove termination of the old one.
+
+`NewRemotes` requires an explicit set of up to sixteen unique gateway controls.
+Its route and grant revokers attempt every gateway concurrently and succeed only
+after every gateway acknowledges. An empty set is an error. Client `Close`
+releases idle control connections; gateway shutdown uses explicit `Drain`.
+
+These control adapters have real Unix socket and race tests for peer rejection,
+instance replacement, timed-out drains, lost replies and multi-gateway teardown.
+They are available for daemon and protocol-gateway composition; the executable
+does not yet select them, and upstream model/Doris/OBS compatibility is not
+established by these control tests.

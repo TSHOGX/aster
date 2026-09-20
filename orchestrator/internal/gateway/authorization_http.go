@@ -87,28 +87,48 @@ func AuthorizationHandler(authorizer Authorizer, allowedUID uint32) http.Handler
 // PeerContext obtains identity from the kernel on the accepted Unix connection.
 // An HTTP header cannot manufacture this context value.
 func PeerContext(ctx context.Context, connection net.Conn) context.Context {
+	uid, err := peerUID(connection)
+	if err != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, peerUIDKey{}, uid)
+}
+
+func peerUID(connection net.Conn) (uint32, error) {
 	socket, ok := connection.(*net.UnixConn)
 	if !ok {
-		return ctx
+		return 0, fmt.Errorf("control connection is not a Unix socket")
 	}
 	raw, err := socket.SyscallConn()
 	if err != nil {
-		return ctx
+		return 0, err
 	}
 	var credential *unix.Ucred
 	var credentialErr error
 	if err := raw.Control(func(fd uintptr) {
 		credential, credentialErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
-	}); err != nil || credentialErr != nil || credential == nil {
-		return ctx
+	}); err != nil {
+		return 0, err
 	}
-	return context.WithValue(ctx, peerUIDKey{}, credential.Uid)
+	if credentialErr != nil {
+		return 0, credentialErr
+	}
+	if credential == nil {
+		return 0, fmt.Errorf("kernel omitted control peer credentials")
+	}
+	return credential.Uid, nil
 }
 
 // ListenAuthorization creates a new socket without removing an existing one.
 // Startup reconciliation owns stale-socket cleanup; blindly unlinking could
 // disconnect a still-serving control plane.
 func ListenAuthorization(path string, group int) (*net.UnixListener, error) {
+	return ListenControl(path, group)
+}
+
+// ListenControl creates either direction of the protected gateway control
+// contract. An existing endpoint is never unlinked or taken over implicitly.
+func ListenControl(path string, group int) (*net.UnixListener, error) {
 	if !filepath.IsAbs(path) || group < 0 {
 		return nil, fmt.Errorf("absolute authorization socket and gateway group required")
 	}
