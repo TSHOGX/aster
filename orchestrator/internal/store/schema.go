@@ -397,6 +397,23 @@ CREATE TABLE IF NOT EXISTS execution_bindings (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS execution_binding_process_uq ON execution_bindings(store_id,process_handle) WHERE process_handle!='';
 
+CREATE TABLE IF NOT EXISTS egress_tuple_pools (
+ store_id TEXT PRIMARY KEY,
+ synthetic_range TEXT NOT NULL,
+ next_offset INTEGER NOT NULL CHECK(next_offset>0)
+);
+CREATE TABLE IF NOT EXISTS egress_allocations (
+ generation_id TEXT PRIMARY KEY,
+ session_id TEXT NOT NULL REFERENCES sessions(id),
+ environment_id TEXT NOT NULL REFERENCES sandbox_environments(environment_id),
+ store_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL CHECK(epoch>0),
+ environment_fence INTEGER NOT NULL,
+ intent TEXT NOT NULL,
+ bindings TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS egress_route_bindings (
  binding_id TEXT PRIMARY KEY,
  backend_id TEXT NOT NULL,

@@ -121,3 +121,36 @@ instance replacement, timed-out drains, lost replies and multi-gateway teardown.
 The executable selects these clients through `HARNESS_KHORA_DEPLOYMENT`.
 Upstream model/Doris/OBS compatibility is not established by these control tests;
 the external protocol gateways must implement the documented contract.
+
+## Durable synthetic destination allocation
+
+`ReserveEgressCompilation` implements the `egress.Allocator` port for planned
+executions. It requires the current product owner, session/environment identity,
+expected environment fence, target epoch, typed policy/catalog, explicit gateway
+selection for every service, and the deployment's synthetic/protected ranges.
+Initial environments plan epoch 1; retained environments must be paused and plan
+the next epoch. Running placements, unresolved lifecycle/recovery work, retired
+sessions and blocked engine identities cannot receive fresh allocations.
+
+The store pins one canonical private IPv4 range (`/8` through `/30`) to each
+engine store identity. It reserves one address per service, excluding the range's
+network and broadcast addresses. All ports on an allocated address remain
+consumed. Preexisting route rows, including revoked ones, are skipped. The pool
+cursor, immutable execution allocation and dormant compiled route rows commit in
+one transaction. Failed compilation, route persistence or range exhaustion rolls
+back the entire allocation. Exhaustion is `egress.ErrTupleExhausted`; it never
+recycles old destinations or expands the range implicitly.
+
+Retries with the same intent return the same bindings and compilation. A changed
+session, environment fence, target epoch, policy, gateway or range fails. Binding
+IDs are stable for the engine/execution/service identity. Revocation leaves the
+allocation and route tombstones intact. After a store adopts managed allocation,
+new direct route registrations must match its recorded reservations; exact
+replays of historical registered rows remain valid without reviving authority.
+
+Allocation is dormant: it does not configure Khora, activate gateway listeners,
+start a process or issue a turn grant. Tests cover its transactional connection to
+execution readiness and typed per-turn authorization. The daemon still needs to
+compose allocation with paused network replacement, config-volume publication,
+remote route activation and native restart before production service access is
+complete.

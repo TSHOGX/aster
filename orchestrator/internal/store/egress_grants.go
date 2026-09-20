@@ -28,6 +28,12 @@ func (s *Store) RegisterEgressCompilation(ctx context.Context, compilation egres
 		return err
 	}
 	defer tx.Rollback()
+	if err := registerEgressCompilationTx(ctx, tx, compilation); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func registerEgressCompilationTx(ctx context.Context, tx *sql.Tx, compilation egress.Compilation) error {
 	for _, selected := range compilation.Services {
 		binding := selected.Binding
 		if binding.ID == "" || binding.BackendID == "" || binding.GenerationID == "" || binding.Epoch == 0 || binding.Revision == 0 || binding.ServiceID != selected.Service.ID {
@@ -42,9 +48,11 @@ func (s *Store) RegisterEgressCompilation(ctx context.Context, compilation egres
 			return err
 		}
 		var prior, policy, priorService, priorOperations string
-		err = tx.QueryRowContext(ctx, `SELECT network_digest,policy_digest,service,operations FROM egress_route_bindings WHERE binding_id=?`, binding.ID).Scan(&prior, &policy, &priorService, &priorOperations)
+		var backend, generation, serviceID, destination, gateway string
+		var epoch, revision uint64
+		err = tx.QueryRowContext(ctx, `SELECT network_digest,policy_digest,service,operations,backend_id,generation_id,epoch,revision,service_id,destination,gateway FROM egress_route_bindings WHERE binding_id=?`, binding.ID).Scan(&prior, &policy, &priorService, &priorOperations, &backend, &generation, &epoch, &revision, &serviceID, &destination, &gateway)
 		if err == nil {
-			if prior != compilation.NetworkDigest || policy != compilation.PolicyDigest || priorService != string(service) || priorOperations != string(operations) {
+			if prior != compilation.NetworkDigest || policy != compilation.PolicyDigest || priorService != string(service) || priorOperations != string(operations) || backend != binding.BackendID || generation != binding.GenerationID || epoch != binding.Epoch || revision != binding.Revision || serviceID != binding.ServiceID || destination != binding.Destination.String() || gateway != binding.Gateway.String() {
 				return fmt.Errorf("egress binding identity changed")
 			}
 			continue
@@ -52,12 +60,36 @@ func (s *Store) RegisterEgressCompilation(ctx context.Context, compilation egres
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		var managed int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM egress_tuple_pools WHERE store_id=?`, binding.BackendID).Scan(&managed); err != nil {
+			return err
+		}
+		if managed != 0 {
+			var raw string
+			if err := tx.QueryRowContext(ctx, `SELECT bindings FROM egress_allocations WHERE generation_id=? AND store_id=?`, binding.GenerationID, binding.BackendID).Scan(&raw); err != nil {
+				return fmt.Errorf("compiled route lacks managed tuple reservation: %w", err)
+			}
+			var reserved []egress.RuntimeBinding
+			if err := json.Unmarshal([]byte(raw), &reserved); err != nil {
+				return err
+			}
+			matched := false
+			for _, candidate := range reserved {
+				if candidate == binding {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf("compiled route differs from managed tuple reservation")
+			}
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO egress_route_bindings(binding_id,backend_id,generation_id,epoch,revision,service_id,destination,gateway,policy_digest,network_digest,service,operations,state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'dormant')`, binding.ID, binding.BackendID, binding.GenerationID, binding.Epoch, binding.Revision, binding.ServiceID, binding.Destination.String(), binding.Gateway.String(), compilation.PolicyDigest, compilation.NetworkDigest, string(service), string(operations))
 		if err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) ActivateExecutionRoutes(ctx context.Context, session, generation, owner string, now time.Time) error {
