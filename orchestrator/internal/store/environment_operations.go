@@ -84,8 +84,12 @@ func (s *Store) GetEnvironmentBinding(ctx context.Context, id string) (execution
 func environmentWith(ctx context.Context, db dbRunner, id string) (execution.Environment, error) {
 	var p execution.Environment
 	var desired string
-	err := db.QueryRowContext(ctx, `SELECT environment_id,session_id,backend_name,store_id,coalesce(sandbox_id,''),desired,fence,mutation_revision,epoch,observed_state FROM sandbox_environments WHERE environment_id=?`, id).Scan(&p.ID, &p.SessionID, &p.BackendName, &p.StoreID, &p.SandboxID, &desired, &p.Fence, &p.MutationRevision, &p.Epoch, &p.ObservedState)
+	var applied string
+	err := db.QueryRowContext(ctx, `SELECT environment_id,session_id,backend_name,store_id,coalesce(sandbox_id,''),desired,applied_configuration,fence,mutation_revision,epoch,observed_state FROM sandbox_environments WHERE environment_id=?`, id).Scan(&p.ID, &p.SessionID, &p.BackendName, &p.StoreID, &p.SandboxID, &desired, &applied, &p.Fence, &p.MutationRevision, &p.Epoch, &p.ObservedState)
 	p.Desired = json.RawMessage(desired)
+	if applied != "" {
+		p.Applied = json.RawMessage(applied)
+	}
 	return p, err
 }
 
@@ -338,12 +342,46 @@ func (s *Store) RecordEnvironmentOperationOutcome(ctx context.Context, p executi
 		if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET sandbox_id=?,mutation_revision=?,epoch=?,observed_state=? WHERE environment_id=? AND fence=?`, p.SandboxID, p.MutationRevision, p.Epoch, observedState, environment.ID, p.Fence); err != nil {
 			return err
 		}
+		// A create or configure additionally establishes which declaration is live.
+		// Pause and resume replace a placement without changing the declaration, so
+		// they must never clear or rewrite it.
+		if len(p.Configuration) != 0 {
+			if operation.Kind != "create" && operation.Kind != "configure" {
+				return fmt.Errorf("only create or configure can record an applied configuration")
+			}
+			applied, err := normalizedOperationJSON(p.Configuration)
+			if err != nil {
+				return err
+			}
+			var request execution.EnvironmentRequest
+			if err := json.Unmarshal(operation.Request, &request); err != nil {
+				return err
+			}
+			declared, err := normalizedOperationJSON(mustMarshal(request.Configuration))
+			if err != nil {
+				return err
+			}
+			if request.Configuration == nil || !bytes.Equal(applied, declared) {
+				return execution.ErrOperationConflict
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET applied_configuration=? WHERE environment_id=? AND fence=?`, string(applied), environment.ID, p.Fence); err != nil {
+				return err
+			}
+		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE environment_operations SET state=?,result=?,error=?,updated_at=? WHERE operation_id=? AND fence=?`, p.State, string(result), p.Error, formatTime(p.Now), p.ID, p.Fence)
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func mustMarshal(value any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func normalizedOperationJSON(raw json.RawMessage) ([]byte, error) {

@@ -22,7 +22,7 @@ type dbRunner interface {
 //go:embed schema.sql
 var currentSchema string
 
-const schemaFingerprint = "dc97e393fafb207cd4b1bddc12a8a645fb9f452d860213ef8ecfdf9b22a18c71"
+const schemaFingerprint = "124bed6fc04ed1e6da4f21079e26c2684d1655077e365148d378e030a7e270b4"
 
 // Existing databases must match exactly. There is no branch migration path.
 func verifySchema(ctx context.Context, db *sql.DB) error {

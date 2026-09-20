@@ -500,6 +500,16 @@ CREATE TABLE sandbox_environments (
   mutation_revision TEXT NOT NULL DEFAULT '',
   epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),
   observed_state TEXT NOT NULL DEFAULT 'unknown' CHECK(observed_state IN ('unknown','running','paused')),
+  -- desired is the environment IDENTITY: driver, template, release pin and the
+  -- resource and storage caps. It is compared exactly and cannot change for the
+  -- life of a retained environment.
+  --
+  -- applied_configuration is the last network and mount declaration the engine
+  -- confirmed, which is generation-scoped: a newly published content revision or
+  -- a freshly reserved service destination changes it without making the
+  -- environment a different environment. It is written only from a successful
+  -- create or configure operation's own immutable request.
+  applied_configuration TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(backend_name,store_id) REFERENCES sandbox_backends(name,store_id),
   UNIQUE(store_id,sandbox_id)
 );

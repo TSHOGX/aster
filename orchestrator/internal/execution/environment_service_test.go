@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,7 +99,9 @@ func intent(t *testing.T, id, kind string, fence int64, request execution.Enviro
 	return execution.OperationIntent{ID: id, EnvironmentID: "environment", Kind: kind, IdempotencyKey: id, ExpectedFence: fence, Request: raw}
 }
 func createIntent(t *testing.T) execution.OperationIntent {
-	return intent(t, "create", "create", 0, execution.EnvironmentRequest{Reference: sandbox.Reference{StoreID: "store"}, Create: &sandbox.CreateRequest{IdempotencyKey: "create", TemplateID: "template", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30}})
+	create := &sandbox.CreateRequest{IdempotencyKey: "create", TemplateID: "template", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30}
+	configuration := &execution.GenerationConfiguration{SpecDigest: "sha256:" + strings.Repeat("d", 64), Network: create.Network, Mounts: create.Mounts}
+	return intent(t, "create", "create", 0, execution.EnvironmentRequest{Reference: sandbox.Reference{StoreID: "store"}, Create: create, Configuration: configuration})
 }
 
 func TestEnvironmentServiceReconcilesLostPauseWithoutRefreshingIntent(t *testing.T) {

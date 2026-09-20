@@ -241,13 +241,21 @@ func (s *Store) BeginRetainedExecutionResume(ctx context.Context, generation, ow
 		return execution.Operation{}, err
 	}
 	if pause.Fence != environment.Fence {
-		var maintenancePause string
-		if err := tx.QueryRowContext(ctx, `SELECT o.operation_id FROM environment_operations o WHERE o.environment_id=? AND o.fence=? AND o.kind='pause' AND o.state='succeeded' AND (
- EXISTS(SELECT 1 FROM native_capture_activations c WHERE c.environment_id=o.environment_id AND c.stage IN ('complete','requested') AND c.last_pause_operation_id=o.operation_id) OR
- EXISTS(SELECT 1 FROM workspace_write_maintenance w WHERE w.environment_id=o.environment_id AND w.stage='complete' AND w.operation_id=o.operation_id))`, environment.ID, environment.Fence).Scan(&maintenancePause); err != nil {
+		// Another obligation may have taken the lane since the idle pause. Workspace
+		// maintenance and native capture pause again; a generation configuration
+		// change applies a configure, which the engine only accepts while paused and
+		// which leaves the same placement. Each carries its own current evidence of
+		// writer termination, so the successor is admitted on that rather than on a
+		// superseded pause result.
+		var current string
+		if err := tx.QueryRowContext(ctx, `SELECT o.operation_id FROM environment_operations o WHERE o.environment_id=? AND o.fence=? AND o.state='succeeded' AND (
+ (o.kind='configure' AND NOT EXISTS(SELECT 1 FROM execution_bindings b WHERE b.environment_id=o.environment_id AND b.state!='retired')) OR
+ (o.kind='pause' AND (
+  EXISTS(SELECT 1 FROM native_capture_activations c WHERE c.environment_id=o.environment_id AND c.stage IN ('complete','requested') AND c.last_pause_operation_id=o.operation_id) OR
+  EXISTS(SELECT 1 FROM workspace_write_maintenance w WHERE w.environment_id=o.environment_id AND w.stage='complete' AND w.operation_id=o.operation_id))))`, environment.ID, environment.Fence).Scan(&current); err != nil {
 			return execution.Operation{}, err
 		}
-		pause, err = operationWith(ctx, tx, maintenancePause)
+		pause, err = operationWith(ctx, tx, current)
 		if err != nil {
 			return execution.Operation{}, err
 		}
@@ -256,7 +264,7 @@ func (s *Store) BeginRetainedExecutionResume(ctx context.Context, generation, ow
 	if err := json.Unmarshal(pause.Result, &observed); err != nil {
 		return execution.Operation{}, err
 	}
-	if pause.State != execution.OperationSucceeded || pause.Kind != "pause" || pause.EnvironmentID != environment.ID || pause.Fence != environment.Fence || observed.State != "paused" || observed.PlacementState != "lost" || observed.StoreID != environment.StoreID || observed.SandboxID != environment.SandboxID || observed.Epoch != environment.Epoch || observed.MutationRevision != environment.MutationRevision {
+	if pause.State != execution.OperationSucceeded || (pause.Kind != "pause" && pause.Kind != "configure") || pause.EnvironmentID != environment.ID || pause.Fence != environment.Fence || observed.State != "paused" || observed.PlacementState != "lost" || observed.StoreID != environment.StoreID || observed.SandboxID != environment.SandboxID || observed.Epoch != environment.Epoch || observed.MutationRevision != environment.MutationRevision {
 		return execution.Operation{}, execution.ErrStaleOperation
 	}
 	raw, err := json.Marshal(execution.EnvironmentRequest{Reference: observed.Reference})

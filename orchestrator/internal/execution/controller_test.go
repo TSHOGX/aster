@@ -19,7 +19,13 @@ type controllerBackend struct {
 	volumeCalls int
 	loseCreate  bool
 	loseResume  bool
+	configured  bool
 	createKeys  []string
+}
+
+func (b *controllerBackend) Configure(ctx context.Context, reference sandbox.Reference, network sandbox.Network, mounts []sandbox.Mount) (sandbox.Observation, error) {
+	b.configured = true
+	return b.lifecycleBackend.Configure(ctx, reference, network, mounts)
 }
 
 func (b *controllerBackend) Resume(ctx context.Context, p sandbox.Reference) (sandbox.Observation, error) {

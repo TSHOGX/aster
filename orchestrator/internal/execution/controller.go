@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
 
@@ -33,6 +32,7 @@ type ControllerRepository interface {
 	InterruptedRecoveryRepository
 	CaptureMaintenanceRepository
 	PinBackendIdentity(context.Context, BackendIdentity) error
+	BeginGenerationConfiguration(context.Context, string, string, GenerationConfiguration) (Operation, error)
 	CreateEnvironmentBinding(context.Context, Environment) error
 	FindSessionEnvironment(context.Context, string) (Environment, bool, error)
 	FindActiveExecutionBinding(context.Context, string) (Binding, bool, error)
@@ -55,12 +55,28 @@ type PlanSource interface {
 	Plan(context.Context, Session, string) (LaunchPlan, error)
 }
 
+// desiredEnvironment is the environment's IDENTITY. It holds only what cannot
+// change while a retained environment keeps its overlay and volumes: the driver,
+// the pinned template release, and the resource and storage caps. It is compared
+// exactly, so a mismatch means a different environment rather than a change.
+//
+// Network, content mounts and launch environment are deliberately absent. Those
+// are generation configuration: publishing a new asset revision or reserving a
+// new service destination must be adoptable by an existing session, and folding
+// them into identity would make every retained environment conflict forever.
 type desiredEnvironment struct {
-	Driver, Template, SpecDigest, ManifestDigest string
-	CPU, Memory, Disk, Workspace, Journal        int64
-	Network                                      sandbox.Network
-	Mounts                                       []sandbox.Mount
-	Environment                                  []string
+	Driver, Template, ManifestDigest      string
+	CPU, Memory, Disk, Workspace, Journal int64
+}
+
+// GenerationConfiguration is the declaration one execution runs under. It is
+// re-derived per generation, recorded with its own digest, and applied to a
+// retained paused environment through a fenced configure operation.
+type GenerationConfiguration struct {
+	SpecDigest  string          `json:"spec_digest"`
+	Network     sandbox.Network `json:"network"`
+	Mounts      []sandbox.Mount `json:"mounts"`
+	Environment []string        `json:"environment"`
 }
 
 type Controller struct {
@@ -395,6 +411,15 @@ func (c *Controller) Close() error {
 	return nil
 }
 
+// provisionEnvironment reconciles a session's retained environment against one
+// generation's plan. Identity must match exactly; configuration is applied.
+//
+// A fresh environment is created with the generation's configuration directly. A
+// retained one already holds its storage, so a changed configuration is applied
+// through a fenced configure operation while it is paused, which is the only
+// state the engine accepts an egress edit in. The applied declaration is recorded
+// from the operation's own immutable request, never from the plan, so a lost
+// reply cannot make the product believe an unapplied configuration is live.
 func (c *Controller) provisionEnvironment(ctx context.Context, session Session, identity sandbox.Identity, plan LaunchPlan, owner string, maximum int) (Environment, error) {
 	if plan.TemplateID == "" || plan.SpecDigest == "" || plan.ManifestDigest == "" || plan.CPUMillis <= 0 || plan.MemoryBytes <= 0 || plan.DiskBytes <= 0 || plan.WorkspaceBytes <= 0 || plan.JournalBytes <= 0 {
 		return Environment{}, fmt.Errorf("driver plan requires pinned release and positive resource caps")
@@ -403,8 +428,11 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 	if err != nil {
 		return Environment{}, err
 	}
-	desiredSpec := desiredEnvironment{Driver: session.Driver, Template: plan.TemplateID, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, CPU: plan.CPUMillis, Memory: plan.MemoryBytes, Disk: plan.DiskBytes, Workspace: plan.WorkspaceBytes, Journal: plan.JournalBytes, Network: plan.Network, Mounts: plan.Mounts, Environment: plan.Environment}
-	desired, _ := json.Marshal(desiredSpec)
+	desiredSpec := desiredEnvironment{Driver: session.Driver, Template: plan.TemplateID, ManifestDigest: plan.ManifestDigest, CPU: plan.CPUMillis, Memory: plan.MemoryBytes, Disk: plan.DiskBytes, Workspace: plan.WorkspaceBytes, Journal: plan.JournalBytes}
+	desired, err := json.Marshal(desiredSpec)
+	if err != nil {
+		return Environment{}, err
+	}
 	if !found {
 		environment = Environment{ID: "env_" + session.ID, SessionID: session.ID, BackendName: c.BackendName, StoreID: identity.StoreID, Desired: desired}
 		if err := c.Repository.CreateEnvironmentBinding(ctx, environment); err != nil {
@@ -412,7 +440,7 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 		}
 	} else {
 		var persisted desiredEnvironment
-		if err := json.Unmarshal(environment.Desired, &persisted); err != nil || environment.StoreID != identity.StoreID || environment.BackendName != c.BackendName || !reflect.DeepEqual(persisted, desiredSpec) {
+		if err := json.Unmarshal(environment.Desired, &persisted); err != nil || environment.StoreID != identity.StoreID || environment.BackendName != c.BackendName || persisted != desiredSpec {
 			return Environment{}, ErrOperationConflict
 		}
 	}
@@ -432,10 +460,14 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 	if err != nil {
 		return Environment{}, err
 	}
+	configuration := GenerationConfiguration{SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts, Environment: plan.Environment}
 	lifecycle := EnvironmentService{Repository: c.Repository, Backend: c.Backend}
 	if environment.SandboxID == "" {
 		request := sandbox.CreateRequest{IdempotencyKey: "create:" + environment.ID, TemplateID: plan.TemplateID, CPUMillis: plan.CPUMillis, MemoryBytes: plan.MemoryBytes, DiskBytes: plan.DiskBytes, Mounts: mounts, Network: plan.Network}
-		raw, _ := json.Marshal(EnvironmentRequest{Reference: sandbox.Reference{StoreID: identity.StoreID}, Create: &request})
+		raw, err := json.Marshal(EnvironmentRequest{Reference: sandbox.Reference{StoreID: identity.StoreID}, Create: &request, Configuration: &configuration})
+		if err != nil {
+			return Environment{}, err
+		}
 		intent := OperationIntent{ID: "create:" + environment.ID, EnvironmentID: environment.ID, Kind: "create", IdempotencyKey: request.IdempotencyKey, ExpectedFence: environment.Fence, Request: raw}
 		if previous, found, err := c.Repository.FindEnvironmentOperation(ctx, intent.ID); err != nil {
 			return Environment{}, err
@@ -445,12 +477,55 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 		if _, err := c.Repository.BeginSessionProvisioning(ctx, intent, owner, maximum); err != nil {
 			return Environment{}, err
 		}
-		_, err = lifecycle.Run(ctx, intent)
-		if err != nil {
+		if _, err := lifecycle.Run(ctx, intent); err != nil {
 			return Environment{}, err
 		}
+		return c.Repository.GetEnvironmentBinding(ctx, environment.ID)
+	}
+	if err := c.applyGenerationConfiguration(ctx, environment, configuration, owner); err != nil {
+		return Environment{}, err
 	}
 	return c.Repository.GetEnvironmentBinding(ctx, environment.ID)
+}
+
+// applyGenerationConfiguration brings a retained environment to one generation's
+// declaration. An already-applied declaration is a no-op, so an unchanged plan
+// costs no engine mutation and a resumed session is not forced through a pause.
+func (c *Controller) applyGenerationConfiguration(ctx context.Context, environment Environment, configuration GenerationConfiguration, owner string) error {
+	if environment.SandboxID == "" {
+		return ErrOperationConflict
+	}
+	current, applied, err := environment.AppliedConfiguration()
+	if err != nil {
+		return err
+	}
+	if applied && current.SpecDigest == configuration.SpecDigest && sandbox.SameConfiguration(sandbox.Configuration{Network: current.Network, Mounts: current.Mounts}, configuration.Network, configuration.Mounts) && equalStrings(current.Environment, configuration.Environment) {
+		return nil
+	}
+	// The engine refuses an egress edit on a running sandbox, so a retained
+	// environment must be observed paused before its declaration changes. This is
+	// a pending fence for the caller to retry after idle release, not a failure.
+	if environment.ObservedState != "paused" {
+		return ErrBusy
+	}
+	operation, err := c.Repository.BeginGenerationConfiguration(ctx, environment.ID, owner, configuration)
+	if err != nil {
+		return err
+	}
+	_, err = (EnvironmentService{Repository: c.Repository, Backend: c.Backend}).Run(ctx, OperationIntent{ID: operation.ID, EnvironmentID: operation.EnvironmentID, Kind: operation.Kind, IdempotencyKey: operation.IdempotencyKey, ExpectedFence: operation.Fence - 1, Request: operation.Request})
+	return err
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Controller) InspectEnvironment(ctx context.Context, id, owner string) (sandbox.Observation, error) {

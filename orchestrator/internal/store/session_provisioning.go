@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -128,6 +129,74 @@ func (s *Store) beginUnstartedEnvironmentTransition(ctx context.Context, id, own
 		return execution.Operation{}, err
 	}
 	op, err := beginEnvironmentOperationTx(ctx, tx, execution.OperationIntent{ID: key, EnvironmentID: id, Kind: kind, IdempotencyKey: key, ExpectedFence: environment.Fence, Request: raw, Now: time.Now().UTC()}, raw)
+	if err != nil {
+		return op, err
+	}
+	return op, tx.Commit()
+}
+
+// BeginGenerationConfiguration reserves the intent to bring a retained paused
+// environment to one generation's declaration. The operation is keyed by the
+// configuration's own spec digest, so a retry replays the same immutable request
+// and a different declaration is a different operation rather than an overwrite.
+//
+// Reconfiguring is refused while any execution binding exists: the declaration a
+// running process was accepted under cannot change underneath it.
+func (s *Store) BeginGenerationConfiguration(ctx context.Context, id, owner string, configuration execution.GenerationConfiguration) (execution.Operation, error) {
+	if configuration.SpecDigest == "" {
+		return execution.Operation{}, fmt.Errorf("generation configuration spec digest required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return execution.Operation{}, err
+	}
+	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
+		return execution.Operation{}, err
+	}
+	environment, err := environmentWith(ctx, tx, id)
+	if err != nil {
+		return execution.Operation{}, err
+	}
+	if environment.SandboxID == "" || environment.ObservedState != "paused" {
+		return execution.Operation{}, execution.ErrOperationConflict
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings WHERE environment_id=? AND state!='retired'`, id).Scan(&active); err != nil {
+		return execution.Operation{}, err
+	}
+	if active != 0 {
+		return execution.Operation{}, execution.ErrBusy
+	}
+	key := "configure:" + id + ":" + configuration.SpecDigest
+	raw, err := json.Marshal(execution.EnvironmentRequest{
+		Reference:     sandbox.Reference{StoreID: environment.StoreID, SandboxID: environment.SandboxID, Epoch: environment.Epoch, MutationRevision: environment.MutationRevision},
+		Network:       &configuration.Network,
+		Mounts:        configuration.Mounts,
+		Configuration: &configuration,
+	})
+	if err != nil {
+		return execution.Operation{}, err
+	}
+	raw, err = normalizedOperationJSON(raw)
+	if err != nil {
+		return execution.Operation{}, err
+	}
+	if previous, err := operationWith(ctx, tx, key); err == nil {
+		// A replay must reuse the original request: the reference it pinned is the
+		// revision the engine will validate, and refreshing it would dispatch a new
+		// mutation under an old operation identity.
+		if !bytes.Equal(previous.Request, raw) && previous.Fence == environment.Fence {
+			return execution.Operation{}, execution.ErrOperationConflict
+		}
+		if previous.Fence != environment.Fence && previous.State != execution.OperationSucceeded {
+			return execution.Operation{}, execution.ErrStaleOperation
+		}
+		return previous, tx.Commit()
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return execution.Operation{}, err
+	}
+	op, err := beginEnvironmentOperationTx(ctx, tx, execution.OperationIntent{ID: key, EnvironmentID: id, Kind: "configure", IdempotencyKey: key, ExpectedFence: environment.Fence, Request: raw, Now: time.Now().UTC()}, raw)
 	if err != nil {
 		return op, err
 	}

@@ -16,13 +16,31 @@ type BackendIdentity struct{ Name, StoreID, Version string }
 
 // Environment outlives an execution. Its sandbox identity and storage remain
 // bound while processes and accepted placement epochs are replaced.
+//
+// Desired is identity and never changes. Applied is the declaration the engine
+// last confirmed for this environment, which each generation may replace.
 type Environment struct {
 	ID, SessionID, BackendName, StoreID, SandboxID string
 	Desired                                        json.RawMessage
+	Applied                                        json.RawMessage
 	Fence                                          int64
 	MutationRevision                               string
 	Epoch                                          uint64
 	ObservedState                                  string
+}
+
+// AppliedConfiguration decodes the confirmed declaration. An environment with no
+// recorded configuration reports absent rather than an empty declaration, so a
+// caller cannot mistake "never configured" for "configured with nothing".
+func (e Environment) AppliedConfiguration() (GenerationConfiguration, bool, error) {
+	if len(e.Applied) == 0 || string(e.Applied) == "" {
+		return GenerationConfiguration{}, false, nil
+	}
+	var result GenerationConfiguration
+	if err := json.Unmarshal(e.Applied, &result); err != nil {
+		return GenerationConfiguration{}, false, err
+	}
+	return result, true, nil
 }
 
 type OperationState string
@@ -62,7 +80,10 @@ type OperationOutcome struct {
 	Error                       string
 	SandboxID, MutationRevision string
 	Epoch                       uint64
-	Now                         time.Time
+	// Configuration is the declaration the engine confirmed for this environment.
+	// It is only ever the succeeding operation's own immutable request.
+	Configuration json.RawMessage
+	Now           time.Time
 }
 
 type Binding struct {

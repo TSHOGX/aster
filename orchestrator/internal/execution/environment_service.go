@@ -25,11 +25,15 @@ type EnvironmentService struct {
 	Now        func() time.Time
 }
 
+// EnvironmentRequest is the immutable remote intent. Configuration accompanies a
+// create or configure so the settled outcome records exactly the declaration that
+// was dispatched, rather than re-deriving one that may have moved on since.
 type EnvironmentRequest struct {
-	Reference sandbox.Reference      `json:"reference"`
-	Create    *sandbox.CreateRequest `json:"create,omitempty"`
-	Network   *sandbox.Network       `json:"network,omitempty"`
-	Mounts    []sandbox.Mount        `json:"mounts,omitempty"`
+	Reference     sandbox.Reference        `json:"reference"`
+	Create        *sandbox.CreateRequest   `json:"create,omitempty"`
+	Network       *sandbox.Network         `json:"network,omitempty"`
+	Mounts        []sandbox.Mount          `json:"mounts,omitempty"`
+	Configuration *GenerationConfiguration `json:"configuration,omitempty"`
 }
 
 func (s EnvironmentService) Run(ctx context.Context, intent OperationIntent) (sandbox.Observation, error) {
@@ -123,7 +127,17 @@ func (s EnvironmentService) Run(ctx context.Context, intent OperationIntent) (sa
 		if encodeErr != nil {
 			return observed, s.recordUncertain(ctx, operation, encodeErr)
 		}
-		commitErr := s.Repository.RecordEnvironmentOperationOutcome(ctx, OperationOutcome{ID: operation.ID, Fence: operation.Fence, State: OperationSucceeded, Result: result, SandboxID: observed.SandboxID, MutationRevision: observed.MutationRevision, Epoch: observed.Epoch, Now: s.now()})
+		outcome := OperationOutcome{ID: operation.ID, Fence: operation.Fence, State: OperationSucceeded, Result: result, SandboxID: observed.SandboxID, MutationRevision: observed.MutationRevision, Epoch: observed.Epoch, Now: s.now()}
+		// Only the dispatched request may become the applied declaration, and only
+		// after the engine confirmed the transition it belongs to.
+		if request.Configuration != nil && (operation.Kind == "create" || operation.Kind == "configure") {
+			applied, encodeErr := json.Marshal(request.Configuration)
+			if encodeErr != nil {
+				return observed, s.recordUncertain(ctx, operation, encodeErr)
+			}
+			outcome.Configuration = applied
+		}
+		commitErr := s.Repository.RecordEnvironmentOperationOutcome(ctx, outcome)
 		return observed, commitErr
 	}
 	if sandbox.Is(err, sandbox.Invalid) || sandbox.Is(err, sandbox.Capacity) {
@@ -149,6 +163,9 @@ func validateEnvironmentRequest(environment Environment, intent OperationIntent,
 		if request.Reference.StoreID != environment.StoreID {
 			return ErrBackendIdentityChanged
 		}
+		if request.Configuration == nil || !sandbox.SameConfiguration(sandbox.Configuration{Network: request.Configuration.Network, Mounts: request.Configuration.Mounts}, request.Create.Network, request.Create.Mounts) {
+			return fmt.Errorf("create intent must declare the generation configuration it applies")
+		}
 	case "pause", "resume", "configure":
 		if request.Reference.StoreID != environment.StoreID {
 			return ErrBackendIdentityChanged
@@ -161,8 +178,13 @@ func validateEnvironmentRequest(environment Environment, intent OperationIntent,
 		if environment.Fence == intent.ExpectedFence && request.Reference.MutationRevision != environment.MutationRevision {
 			return ErrOperationConflict
 		}
-		if intent.Kind == "configure" && request.Network == nil {
-			return fmt.Errorf("configuration intent requires a complete network declaration")
+		if intent.Kind == "configure" {
+			if request.Network == nil {
+				return fmt.Errorf("configuration intent requires a complete network declaration")
+			}
+			if request.Configuration == nil || !sandbox.SameConfiguration(sandbox.Configuration{Network: request.Configuration.Network, Mounts: request.Configuration.Mounts}, *request.Network, request.Mounts) {
+				return fmt.Errorf("configuration intent must declare the generation configuration it applies")
+			}
 		}
 	default:
 		return fmt.Errorf("unsupported lifecycle intent %q", intent.Kind)
