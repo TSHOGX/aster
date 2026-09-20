@@ -26,8 +26,8 @@ export type SessionEventReduction<TConversation extends SessionEventConversation
 const SESSION_EVENT_STATUSES = new Set<SessionStatus>([
   "running_active",
   "running_idle",
-  "checkpointing",
-  "checkpointed",
+  "pausing",
+  "paused",
   "failed",
   "destroyed"
 ]);
@@ -184,27 +184,6 @@ export function reduceSessionEvent<TConversation extends SessionEventConversatio
         conversations: clearStreaming(slice.conversations, sessionId, options.emptyConversation),
         handled: true,
         notifications: userInitiated ? [] : [{ level: "error", message, errorClass }]
-      };
-    }
-    case "session.checkpoint_retired":
-    case "session.restore_fallback_retired": {
-      if (!sessionId || !isRecord(event.payload)) return emptyReduction(slice, true);
-      const sessionStatus = readSessionStatus(event.payload.session_status) ?? "running_idle";
-      const updatedAt =
-        typeof event.payload.session_updated_at === "string" ? event.payload.session_updated_at : time;
-      const lastActivityAt =
-        typeof event.payload.session_last_activity_at === "string" ? event.payload.session_last_activity_at : null;
-      return {
-        sessions: updateSession(slice.sessions, sessionId, (session) => ({
-          ...session,
-          status: sessionStatus,
-          updated_at: updatedAt,
-          last_activity_at: lastActivityAt,
-          restore_ms: null
-        })),
-        conversations: slice.conversations,
-        handled: true,
-        notifications: []
       };
     }
     case "ack_turn_completed": {

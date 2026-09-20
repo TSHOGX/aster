@@ -2,9 +2,9 @@ import type { UploadEntry } from "./api";
 import type { SessionStatus } from "./types";
 
 // A session accepts uploads/edits only when no turn is mutating the workspace.
-// running_active/checkpointing mean a turn is busy; failed/destroyed are gone.
+// running_active/pausing mean a turn is busy; failed/destroyed are gone.
 // The backend enforces this too (409); this gate is UX-only.
-const WRITABLE_STATUSES = new Set<SessionStatus>(["created", "running_idle", "checkpointed"]);
+const WRITABLE_STATUSES = new Set<SessionStatus>(["created", "running_idle", "paused"]);
 
 export function isSessionWritable(status: SessionStatus | undefined | null): boolean {
   return status ? WRITABLE_STATUSES.has(status) : false;

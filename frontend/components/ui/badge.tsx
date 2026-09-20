@@ -87,10 +87,10 @@ export function StatusPill({
 export function statusTone(status: string, sandbox?: string): DotProps["tone"] {
   switch (status) {
     case "running_active":
-    case "checkpointing":
+    case "pausing":
       return "running";
     case "running_idle":
-    case "checkpointed":
+    case "paused":
       if (sandbox === "starting") return "running";
       return sandbox === "live" ? "idle" : "sleeping";
     case "created":

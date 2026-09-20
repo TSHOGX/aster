@@ -606,8 +606,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         }
         case "session.running_active":
         case "session.running_idle":
-        case "session.checkpointing":
-        case "session.checkpointed":
+        case "session.pausing":
+        case "session.paused":
         case "session.failed":
         case "session.destroyed": {
           // Some status transitions carry no projection with them: cold fallback
@@ -780,12 +780,6 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         case "generation.error": {
           // A failure retires the generation and requeues/fails turns in the
           // store directly, without routing a snapshot out — re-read it.
-          applySessionEvent(true);
-          return;
-        }
-        case "session.checkpoint_retired":
-        case "session.restore_fallback_retired": {
-          // Retirement paths change turn state without publishing a projection.
           applySessionEvent(true);
           return;
         }
@@ -1121,7 +1115,6 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
               status: res.data.status,
               updated_at: now,
               ended_at: s.ended_at ?? now,
-              restore_ms: null
             }
           : s
       )

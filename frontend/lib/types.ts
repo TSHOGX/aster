@@ -2,8 +2,8 @@ export type SessionStatus =
   | "created"
   | "running_active"
   | "running_idle"
-  | "checkpointing"
-  | "checkpointed"
+  | "pausing"
+  | "paused"
   | "failed"
   | "destroyed";
 
@@ -24,13 +24,10 @@ export type ApiSession = {
   status: SessionStatus;
   mode: SessionMode;
   mode_label: string;
-  restore_ms?: number | null;
   created_at: string;
   updated_at: string;
-  expires_at?: string | null;
   ended_at?: string | null;
   last_activity_at?: string | null;
-  auto_checkpoint_enabled?: boolean;
   failure_reason?: string;
   error_class?: string;
   /**

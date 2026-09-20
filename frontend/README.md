@@ -20,7 +20,7 @@ Core UI areas are conversations, queue/runtime state, files, sharing, schedules
 and notifications. Optional evolution routes integrate a separate external runner;
 they require explicit private configuration and contain no business-schema demo
 fallback. See [frontend architecture](../docs/frontend.md),
-[memory boundaries](../docs/agents-kb.md), and [development](../docs/development.md).
+[shared assets](../docs/sandbox-image.md), and [development](../docs/development.md).
 
 Product localization dictionaries are application content; English is the
 repository documentation language, not a requirement to remove supported UI locales.

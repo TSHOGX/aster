@@ -11,10 +11,9 @@ function session(patch: Partial<ApiSession> = {}): ApiSession {
   return {
     id: "sess_1",
     user_id: "lab",
-    status: "checkpointed",
+    status: "paused",
     mode: "agent",
     mode_label: "Agent",
-    restore_ms: 42,
     created_at: "2026-05-26T00:00:00Z",
     updated_at: "2026-05-26T00:00:00Z",
     last_activity_at: "2026-05-26T00:00:00Z",
@@ -74,41 +73,6 @@ describe("reduceSessionEvent", () => {
         errorClass: "sandbox_exited"
       }
     ]);
-  });
-
-  it("clears restore metadata for checkpoint retirement", () => {
-    const next = reduce(slice(), {
-      type: "session.checkpoint_retired",
-      session_id: "sess_1",
-      payload: {
-        session_status: "running_idle",
-        session_updated_at: "2026-05-26T01:02:00Z",
-        session_last_activity_at: "2026-05-26T00:30:00Z",
-        restore_ms: null
-      }
-    });
-
-    expect(next.sessions[0]).toMatchObject({
-      status: "running_idle",
-      updated_at: "2026-05-26T01:02:00Z",
-      last_activity_at: "2026-05-26T00:30:00Z",
-      restore_ms: null
-    });
-  });
-
-  it("clears restore metadata for restore fallback retirement", () => {
-    const next = reduce(slice(), {
-      type: "session.restore_fallback_retired",
-      session_id: "sess_1",
-      payload: {
-        session_status: "running_idle",
-        session_updated_at: "2026-05-26T01:03:00Z",
-        restore_ms: null
-      }
-    });
-
-    expect(next.sessions[0].status).toBe("running_idle");
-    expect(next.sessions[0].restore_ms).toBeNull();
   });
 
   it("marks terminal session events failed", () => {

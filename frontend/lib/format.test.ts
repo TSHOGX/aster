@@ -58,9 +58,9 @@ describe("statusLabel", () => {
     expect(statusLabel("running_idle", "live")).toBe("Idle");
     expect(statusLabel("running_idle", "released")).toBe("Sleeping");
     expect(statusLabel("running_idle", "starting")).toBe("Waking");
-    // A released ("checkpointed") session is the same thing as far as the user
+    // A released ("paused") session is the same thing as far as the user
     // is concerned: asleep, wakes on the next message.
-    expect(statusLabel("checkpointed", "released")).toBe("Sleeping");
+    expect(statusLabel("paused", "released")).toBe("Sleeping");
   });
 
   it("does not claim a sandbox it cannot see", () => {

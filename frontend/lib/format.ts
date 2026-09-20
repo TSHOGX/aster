@@ -110,14 +110,14 @@ export function statusLabel(status: string, sandbox?: string) {
     case "running_active":
       return "Running";
     case "running_idle":
-    case "checkpointed":
+    case "paused":
       if (sandbox === "starting") return "Waking";
       if (sandbox === "live") return "Idle";
       // No sandbox behind the session. The previous labels here ("Idle" and
-      // "Checkpointed") both hid that, so every old session looked warm.
+      // "Paused") both hid that, so every old session looked warm.
       return "Sleeping";
-    case "checkpointing":
-      return "Checkpointing";
+    case "pausing":
+      return "Pausing";
     case "failed":
       return "Failed";
     case "destroyed":
@@ -128,7 +128,7 @@ export function statusLabel(status: string, sandbox?: string) {
 }
 
 export function isAcceptingInput(status: string) {
-  return status === "created" || status === "running_idle" || status === "checkpointed";
+  return status === "created" || status === "running_idle" || status === "paused";
 }
 
 export function isTerminal(status: string) {

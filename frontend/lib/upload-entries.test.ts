@@ -4,8 +4,8 @@ import { entriesFromFileList, isSessionWritable } from "./upload-entries";
 import type { SessionStatus } from "./types";
 
 describe("isSessionWritable", () => {
-  it("allows uploads for idle/created/checkpointed sessions", () => {
-    for (const status of ["created", "running_idle", "checkpointed"] as SessionStatus[]) {
+  it("allows uploads for idle/created/paused sessions", () => {
+    for (const status of ["created", "running_idle", "paused"] as SessionStatus[]) {
       expect(isSessionWritable(status)).toBe(true);
     }
   });
@@ -13,7 +13,7 @@ describe("isSessionWritable", () => {
   it("blocks uploads while a turn is busy or the session is gone", () => {
     for (const status of [
       "running_active",
-      "checkpointing",
+      "pausing",
       "failed",
       "destroyed"
     ] as SessionStatus[]) {
