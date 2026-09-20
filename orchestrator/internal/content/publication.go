@@ -207,7 +207,7 @@ func (p Publisher) read(entry Entry) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(data)) != entry.Size || contentDigest(data) != entry.Digest {
-		return nil, fmt.Errorf("authored content %q changed after its revision was computed", entry.Path)
+		return nil, fmt.Errorf("%w: authored content %q changed after its revision was computed", ErrContentRefused, entry.Path)
 	}
 	return data, nil
 }
@@ -220,7 +220,7 @@ func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference
 		return err
 	}
 	if actual := Digest(observed); actual != expected {
-		return fmt.Errorf("published content digest %s does not match revision %s", actual, expected)
+		return fmt.Errorf("%w: published content digest %s does not match revision %s", ErrContentRefused, actual, expected)
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, 
 		}
 		name := item.Name
 		if strings.ContainsAny(name, "/\x00") || name == "" || name == "." || name == ".." {
-			return nil, fmt.Errorf("published content entry %q is not addressable", name)
+			return nil, fmt.Errorf("%w: published content entry %q is not addressable", ErrContentRefused, name)
 		}
 		full := path.Join(directory, name)
 		switch item.Type {
@@ -258,7 +258,7 @@ func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, 
 			}
 			result = append(result, Entry{Path: full, Size: item.Size, Digest: digest})
 		default:
-			return nil, fmt.Errorf("published content entry %q has unsupported type %q", full, item.Type)
+			return nil, fmt.Errorf("%w: published content entry %q has unsupported type %q", ErrContentRefused, full, item.Type)
 		}
 		if len(result) > MaxEntries {
 			return nil, fmt.Errorf("published content exceeds %d entries", MaxEntries)
@@ -269,7 +269,7 @@ func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, 
 
 func (p Publisher) readVolumeDigest(ctx context.Context, reference sandbox.VolumeReference, name string, size int64) (string, error) {
 	if size < 0 || size > MaxFileBytes {
-		return "", fmt.Errorf("published content file %q has unsupported size %d", name, size)
+		return "", fmt.Errorf("%w: published content file %q has unsupported size %d", ErrContentRefused, name, size)
 	}
 	const chunk = 256 << 10
 	data := make([]byte, 0, size)
@@ -297,20 +297,18 @@ func publishKey(p Publication) string {
 	return "content-publish:" + p.Purpose + ":" + p.RevisionDigest
 }
 
-// terminal reports whether a publication failure is a contradiction that retrying
-// cannot resolve. An unavailable engine, a canceled request or an unknown remote
-// outcome must leave the claim resumable; only refused content is recorded failed.
-func terminal(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	for _, class := range []sandbox.ErrorClass{sandbox.Unavailable, sandbox.Uncertain, sandbox.Backpressure, sandbox.Capacity, sandbox.IdentityChanged, sandbox.CursorExpired} {
-		if sandbox.Is(err, class) {
-			return false
-		}
-	}
-	return true
-}
+// ErrContentRefused marks the one failure that retrying cannot resolve: the
+// content itself contradicts the revision being published.
+//
+// Terminal-ness is asserted explicitly rather than inferred by excluding known
+// transient classes. Anything else — an unavailable engine, a canceled request,
+// an unknown remote outcome, a durable write that did not land — says nothing
+// about content, so the claim stays resumable and a later attempt settles it.
+// Recording such a failure as terminal would strand a correct revision behind a
+// failed row that only an operator could clear.
+var ErrContentRefused = errors.New("authored content contradicts the revision being published")
+
+func terminal(err error) bool { return errors.Is(err, ErrContentRefused) }
 
 func contextWithoutCancelTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

@@ -12,9 +12,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/egress"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
@@ -28,12 +30,23 @@ type Deployment struct {
 	Engine                                                                                 khorabackend.Config
 	Gateways                                                                               []gateway.RemoteConfig
 	Plans                                                                                  *launchplan.Source
+	Content                                                                                []AuthoredContent
+	ContentBytes                                                                           int64
 	PreparedRoot, AuthorizationSocket                                                      string
 	AuthorizationUID                                                                       uint32
 	AuthorizationGroup                                                                     int
 	MaxActive, InventoryLimit                                                              int
 	LeaseTTL, PollInterval, EventInterval, ActionTimeout, CaptureWindow, InventoryInterval time.Duration
 	IdleInterval, IdleThreshold                                                            time.Duration
+}
+
+// AuthoredContent is one reviewed source tree the deployment publishes before it
+// admits a launch. Its revision is read from the tree, never declared, so the
+// document cannot claim an identity its bytes do not have.
+type AuthoredContent struct {
+	Purpose  string
+	Root     string
+	Revision content.Revision
 }
 type deploymentFile struct {
 	Version     int    `json:"version"`
@@ -54,12 +67,13 @@ type deploymentFile struct {
 		DiskBytes      int64           `json:"disk_bytes"`
 		WorkspaceBytes int64           `json:"workspace_bytes"`
 		JournalBytes   int64           `json:"journal_bytes"`
-		ConfigVolume   string          `json:"config_volume"`
-		AssetsVolume   string          `json:"assets_volume"`
+		Config         string          `json:"config"`
+		Assets         string          `json:"assets"`
 		Network        sandbox.Network `json:"network"`
 		Environment    []string        `json:"environment"`
 	} `json:"plans"`
-	Gateways []struct {
+	ContentBytes int64 `json:"content_bytes"`
+	Gateways     []struct {
 		ID       string  `json:"id"`
 		Protocol string  `json:"protocol"`
 		Socket   string  `json:"socket"`
@@ -194,17 +208,42 @@ func LoadDeployment(path string) (*Deployment, error) {
 		ids[g.ID], sockets[socket] = true, true
 		d.Gateways = append(d.Gateways, gateway.RemoteConfig{ID: g.ID, Socket: socket, PeerUID: *g.PeerUID, Protocol: egress.Protocol(g.Protocol), Timeout: d.ActionTimeout})
 	}
+	if wire.ContentBytes <= 0 || wire.ContentBytes > 1<<30 {
+		return nil, fmt.Errorf("positive bounded content volume capacity required")
+	}
+	d.ContentBytes = wire.ContentBytes
 	plans := map[string]execution.LaunchPlan{}
+	revisions := map[string]content.Revision{}
 	for driver, p := range wire.Plans {
 		plan := execution.LaunchPlan{TemplateID: p.Template, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, WorkspaceBytes: p.WorkspaceBytes, JournalBytes: p.JournalBytes, Network: p.Network, Environment: p.Environment}
-		if p.ConfigVolume != "" {
-			plan.Mounts = append(plan.Mounts, sandbox.Mount{VolumeID: p.ConfigVolume, Destination: "/harness-config", Access: "shared-ro"})
-		}
-		if p.AssetsVolume != "" {
-			plan.Mounts = append(plan.Mounts, sandbox.Mount{VolumeID: p.AssetsVolume, Destination: "/root/.agents", Access: "shared-ro"})
+		for _, authored := range []struct{ purpose, root, destination string }{{"config", p.Config, "/harness-config"}, {"assets", p.Assets, "/root/.agents"}} {
+			if authored.root == "" {
+				continue
+			}
+			root := resolve(authored.root)
+			revision, known := revisions[authored.purpose+"\x00"+root]
+			if !known {
+				// The revision is read from the reviewed tree. Two plans naming one root
+				// share its identity, and a document cannot assert a digest it lacks.
+				revision, err = content.Read(root)
+				if err != nil {
+					return nil, fmt.Errorf("read authored %s content: %w", authored.purpose, err)
+				}
+				revisions[authored.purpose+"\x00"+root] = revision
+				d.Content = append(d.Content, AuthoredContent{Purpose: authored.purpose, Root: root, Revision: revision})
+			}
+			plan.Content = append(plan.Content, execution.ContentRequirement{Purpose: authored.purpose, Destination: authored.destination, RevisionDigest: revision.Digest})
 		}
 		plans[driver] = plan
 	}
+	// Publication order must not depend on map iteration: startup publishes this
+	// list, and a deterministic order keeps a failure reproducible.
+	sort.Slice(d.Content, func(i, j int) bool {
+		if d.Content[i].Purpose != d.Content[j].Purpose {
+			return d.Content[i].Purpose < d.Content[j].Purpose
+		}
+		return d.Content[i].Root < d.Content[j].Root
+	})
 	manifest, err := os.Open(resolve(wire.Manifest))
 	if err != nil {
 		return nil, fmt.Errorf("open exported template manifest: %w", err)
@@ -218,7 +257,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 }
 
 func (d *Deployment) Options(backend Backend, gateways *gateway.Remotes, owner string) Options {
-	return Options{Backend: backend, Plans: d.Plans, Routes: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
+	return Options{Backend: backend, Plans: d.Plans, Content: d.Content, ContentBytes: d.ContentBytes, Routes: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
 }
 
 // Connect validates the pinned engine and every gateway before server mutation.

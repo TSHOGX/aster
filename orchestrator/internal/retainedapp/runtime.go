@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/agentbridge"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/launchplan"
@@ -26,10 +27,16 @@ type Backend interface {
 	sandbox.EventSource
 	execution.ControllerBackend
 	sessionfiles.Backend
+	content.Backend
 }
 type Options struct {
-	Backend                                                                                Backend
-	Plans                                                                                  *launchplan.Source
+	Backend Backend
+	Plans   *launchplan.Source
+	// Content is every authored revision a launch may mount. It is published and
+	// verified before the server accepts work, so no session can reach a plan whose
+	// content this engine store has not established.
+	Content                                                                                []AuthoredContent
+	ContentBytes                                                                           int64
 	Routes                                                                                 execution.RouteRevoker
 	Grants                                                                                 execution.GrantRevoker
 	BackendName, OwnerUUID, PreparedRoot                                                   string
@@ -56,6 +63,9 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	if app == nil || st == nil || p.Backend == nil || p.Plans == nil || p.Routes == nil || p.Grants == nil || p.BackendName == "" || p.OwnerUUID == "" || p.MaxActive <= 0 || p.InventoryLimit <= 0 || p.LeaseTTL <= 0 || p.PollInterval <= 0 || p.EventInterval <= 0 || p.ActionTimeout <= 0 || p.CaptureWindow <= 0 || p.InventoryInterval <= 0 {
 		return nil, fmt.Errorf("retained application requires explicit release, gateway, owner and bounded service configuration")
 	}
+	if p.ContentBytes <= 0 {
+		return nil, fmt.Errorf("positive content volume capacity required")
+	}
 	drivers := p.Plans.Drivers()
 	if len(drivers) == 0 || p.InventoryLimit > 10000 {
 		return nil, fmt.Errorf("enabled release drivers and bounded inventory required")
@@ -71,16 +81,29 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	if err := st.PinBackendIdentity(ctx, execution.BackendIdentity{Name: p.BackendName, StoreID: identity.StoreID, Version: identity.Version}); err != nil {
 		return nil, err
 	}
-	content, err := prepared.New(p.PreparedRoot)
+	// Publication runs before any product port is installed. A revision that
+	// cannot be published and verified must stop startup rather than leave a
+	// daemon that accepts sessions and then refuses every launch.
+	publisher := content.Publisher{Repository: st, Backend: p.Backend}
+	for _, authored := range p.Content {
+		if _, err := publisher.Publish(ctx, authored.Purpose, authored.Revision, p.ContentBytes); err != nil {
+			return nil, fmt.Errorf("publish authored %s content %s: %w", authored.Purpose, authored.Revision.Digest, err)
+		}
+	}
+	plans, err := p.Plans.WithPublishedContent(identity.StoreID, st)
+	if err != nil {
+		return nil, err
+	}
+	uploads, err := prepared.New(p.PreparedRoot)
 	if err != nil {
 		return nil, err
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	hooks := app.ExecutionHooks()
 	launcher := agentbridge.Launcher{Backend: p.Backend, Store: st, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: hooks.BeforeComplete, AfterEventCommit: hooks.AfterEventCommit}
-	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: p.Plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
+	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
 	reader := sessionfiles.Reader{Repository: st, Backend: p.Backend}
-	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: content, MaxActive: p.MaxActive, Provisioner: controller}
+	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: uploads, MaxActive: p.MaxActive, Provisioner: controller}
 	inventory := sessionfiles.Scanner{Repository: st, Source: reader, Owner: owner, Limit: p.InventoryLimit, AfterCommit: hooks.AfterEventCommit}
 	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: p.MaxActive, CaptureWindow: p.CaptureWindow, Interval: p.PollInterval, ActionTimeout: p.ActionTimeout, AfterWorkspace: inventory.ScanSession, AfterRetirement: hooks.AfterEventCommit, OnError: func(kind execution.ReconcileKind, id string, err error) {
 		if p.OnError != nil {
@@ -102,7 +125,7 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	app.SetNativeStateValidator(func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), fmt.Sprintf("native-state-%s-%d", input.Evidence.GenerationID, turn), guest.Files{Backend: p.Backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	})
-	return &Runtime{Prepared: &prepared.Collector{Store: content, Repository: st, Owner: owner}, EngineEvents: &execution.EventReconciler{StoreID: identity.StoreID, Owner: owner, Source: p.Backend, Repository: st}, Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
+	return &Runtime{Prepared: &prepared.Collector{Store: uploads, Repository: st, Owner: owner}, EngineEvents: &execution.EventReconciler{StoreID: identity.StoreID, Owner: owner, Source: p.Backend, Repository: st}, Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
 }
 
 func (r *Runtime) Run(ctx context.Context) error {

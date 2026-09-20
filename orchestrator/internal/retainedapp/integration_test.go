@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/config"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
@@ -48,11 +49,24 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := launchplan.Load(strings.NewReader(string(raw)), digest, map[string]execution.LaunchPlan{"sh": {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20}})
+	root := t.TempDir()
+	assetRoot := filepath.Join(root, "assets")
+	if err := os.MkdirAll(filepath.Join(assetRoot, "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"AGENTS.md": "composed shared context\n", "skills/probe.md": "composed skill\n"} {
+		if err := os.WriteFile(filepath.Join(assetRoot, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revision, err := content.Read(assetRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	plans, err := launchplan.Load(strings.NewReader(string(raw)), digest, map[string]execution.LaunchPlan{"sh": {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: []execution.ContentRequirement{{Purpose: "assets", Destination: "/root/.agents", RevisionDigest: revision.Digest}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	st, err := store.Open(ctx, filepath.Join(root, "control.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +89,7 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 			t.Log(message)
 		}
 	}
-	runtime, err := Attach(ctx, app, st, Options{Backend: backend, Plans: plans, Routes: flows, Grants: flows, BackendName: "composition-engine", OwnerUUID: owner.UUID, PreparedRoot: filepath.Join(root, "prepared"), MaxActive: 2, InventoryLimit: 10000, LeaseTTL: time.Minute, PollInterval: 50 * time.Millisecond, EventInterval: 50 * time.Millisecond, ActionTimeout: 5 * time.Second, CaptureWindow: time.Minute, InventoryInterval: 100 * time.Millisecond, OnError: report})
+	runtime, err := Attach(ctx, app, st, Options{Backend: backend, Plans: plans, Content: []AuthoredContent{{Purpose: "assets", Root: assetRoot, Revision: revision}}, ContentBytes: 8 << 20, Routes: flows, Grants: flows, BackendName: "composition-engine", OwnerUUID: owner.UUID, PreparedRoot: filepath.Join(root, "prepared"), MaxActive: 2, InventoryLimit: 10000, LeaseTTL: time.Minute, PollInterval: 50 * time.Millisecond, EventInterval: 50 * time.Millisecond, ActionTimeout: 5 * time.Second, CaptureWindow: time.Minute, InventoryInterval: 100 * time.Millisecond, OnError: report})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +135,18 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 		for _, purpose := range []string{"workspace", "bridge"} {
 			if binding, found, err := st.GetStorageBinding(cleanup, session.ID, purpose); err == nil && found {
 				_ = client.DeleteVolume(cleanup, binding.VolumeID)
+			}
+		}
+		if identity, err := backend.Identity(cleanup); err == nil {
+			// A published volume pins its staging parent, so delete the derived one first.
+			if rows, err := st.ListContentPublications(cleanup, identity.StoreID); err == nil {
+				for _, row := range rows {
+					for _, volume := range []string{row.PublishedVolumeID, row.StagingVolumeID} {
+						if volume != "" {
+							_ = client.DeleteVolume(cleanup, volume)
+						}
+					}
+				}
 			}
 		}
 	}()

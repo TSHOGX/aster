@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/launchplan"
 )
@@ -41,7 +42,15 @@ func deploymentFixture(t *testing.T) (string, map[string]any) {
 	if err := os.WriteFile(filepath.Join(root, "manifest.json"), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	value := map[string]any{"version": 1, "backend_name": "engine", "engine": map[string]any{"endpoint": "http://127.0.0.1:18191", "store_id": "pinned-store"}, "manifest": "manifest.json", "manifest_digest": pin, "prepared_root": "prepared", "authorization": map[string]any{"socket": "authorization.sock", "peer_uid": os.Getuid(), "group": os.Getgid()}, "gateways": []any{map[string]any{"id": "data", "protocol": "doris_mysql", "socket": "data.sock", "peer_uid": os.Getuid()}}, "plans": map[string]any{"sh": map[string]any{"template": "battery", "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets_volume": "assets-v1"}}, "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "100ms", "event_interval": "1s", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "1s", "idle_interval": "1m", "idle_threshold": "30m"}
+	if err := os.MkdirAll(filepath.Join(root, "assets", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"assets/AGENTS.md": "shared context\n", "assets/skills/one.md": "step\n"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	value := map[string]any{"version": 1, "backend_name": "engine", "engine": map[string]any{"endpoint": "http://127.0.0.1:18191", "store_id": "pinned-store"}, "manifest": "manifest.json", "manifest_digest": pin, "prepared_root": "prepared", "authorization": map[string]any{"socket": "authorization.sock", "peer_uid": os.Getuid(), "group": os.Getgid()}, "gateways": []any{map[string]any{"id": "data", "protocol": "doris_mysql", "socket": "data.sock", "peer_uid": os.Getuid()}}, "plans": map[string]any{"sh": map[string]any{"template": "battery", "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": "assets"}}, "content_bytes": 8 << 20, "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "100ms", "event_interval": "1s", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "1s", "idle_interval": "1m", "idle_threshold": "30m"}
 	return filepath.Join(root, "deployment.json"), value
 }
 func writeDeployment(t *testing.T, path string, value map[string]any) {
@@ -64,12 +73,48 @@ func TestDeploymentPinsReleaseAndResolvesPathsBesideFile(t *testing.T) {
 	if deployment.PreparedRoot != filepath.Join(filepath.Dir(path), "prepared") || deployment.Gateways[0].Socket != filepath.Join(filepath.Dir(path), "data.sock") || deployment.Engine.StoreID != "pinned-store" {
 		t.Fatalf("deployment identity/path mismatch: %+v", deployment)
 	}
-	plan, err := deployment.Plans.Plan(context.Background(), execution.Session{Driver: "sh"}, "generation")
+	if len(deployment.Content) != 1 || deployment.Content[0].Purpose != "assets" || !content.ValidDigest(deployment.Content[0].Revision.Digest) {
+		t.Fatalf("authored content was not read from its reviewed tree: %+v", deployment.Content)
+	}
+	published := publishedContent{"pinned-store|assets|" + deployment.Content[0].Revision.Digest: "vol_assets"}
+	bound, err := deployment.Plans.WithPublishedContent("pinned-store", published)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Mounts) != 1 || plan.Mounts[0].Destination != "/root/.agents" || !strings.HasPrefix(plan.SpecDigest, "sha256:") {
+	plan, err := bound.Plan(context.Background(), execution.Session{Driver: "sh"}, "generation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Mounts) != 1 || plan.Mounts[0].Destination != "/root/.agents" || plan.Mounts[0].VolumeID != "vol_assets" || !strings.HasPrefix(plan.SpecDigest, "sha256:") {
 		t.Fatalf("unpinned assets/plan: %+v", plan)
+	}
+	// The declared revision must be the authored tree's, not something the
+	// deployment document could assert independently of the bytes.
+	if plan.Content[0].RevisionDigest != deployment.Content[0].Revision.Digest {
+		t.Fatalf("plan revision differs from authored content: %+v", plan.Content)
+	}
+}
+
+type publishedContent map[string]string
+
+func (p publishedContent) FindPublishedContent(_ context.Context, store, purpose, revision string) (string, bool, error) {
+	volume, ok := p[store+"|"+purpose+"|"+revision]
+	return volume, ok, nil
+}
+
+func TestDeploymentRefusesUnreadableAuthoredContent(t *testing.T) {
+	path, value := deploymentFixture(t)
+	plans := value["plans"].(map[string]any)["sh"].(map[string]any)
+	plans["assets"] = "absent-assets"
+	writeDeployment(t, path, value)
+	if _, err := LoadDeployment(path); err == nil {
+		t.Fatal("a missing authored content root was accepted")
+	}
+	path, value = deploymentFixture(t)
+	value["content_bytes"] = 0
+	writeDeployment(t, path, value)
+	if _, err := LoadDeployment(path); err == nil {
+		t.Fatal("a deployment without content capacity was accepted")
 	}
 }
 func TestDeploymentRejectsImplicitCredentialsAndIncompleteBounds(t *testing.T) {

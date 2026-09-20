@@ -1,0 +1,20 @@
+{
+  "providers": {
+    "harness_anthropic_proxy": {
+      "baseUrl": "http://model.service.internal:443",
+      "api": "anthropic-messages",
+      "apiKey": "harness-placeholder",
+      "models": [
+        {
+          "id": "example-model",
+          "name": "example-model",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 200000,
+          "maxTokens": 8192,
+          "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+        }
+      ]
+    }
+  }
+}

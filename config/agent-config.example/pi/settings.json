@@ -1,0 +1,5 @@
+{
+  "steeringMode": "all",
+  "followUpMode": "all",
+  "compaction": {"enabled": false}
+}

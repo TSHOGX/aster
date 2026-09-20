@@ -69,7 +69,18 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	gatewayDone := make(chan error, 1)
 	go func() { gatewayDone <- gatewayServer.Serve(listener) }()
 	defer func() { _ = gatewayServer.Close(); <-gatewayDone }()
-	deployment := map[string]any{"version": 1, "backend_name": "daemon-engine", "engine": map[string]any{"endpoint": endpoint, "store_id": info.StoreID}, "manifest": manifest, "manifest_digest": digest, "plans": map[string]any{"sh": map[string]any{"template": template, "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20}}, "gateways": []any{map[string]any{"id": "test-data", "protocol": "doris_mysql", "socket": gatewayPath, "peer_uid": os.Getuid()}}, "authorization": map[string]any{"socket": filepath.Join(root, "authorization.sock"), "peer_uid": os.Getuid(), "group": os.Getgid()}, "prepared_root": filepath.Join(root, "prepared"), "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "50ms", "event_interval": "50ms", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "100ms", "idle_interval": "50ms", "idle_threshold": "2s"}
+	// Authored shared assets are published and verified by the daemon itself, so
+	// this exercises real content publication rather than a hand-built volume.
+	assetRoot := filepath.Join(root, "assets")
+	if err := os.MkdirAll(filepath.Join(assetRoot, "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"AGENTS.md": "Synthetic shared context\n", "skills/probe.md": "probe skill\n"} {
+		if err := os.WriteFile(filepath.Join(assetRoot, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deployment := map[string]any{"version": 1, "backend_name": "daemon-engine", "engine": map[string]any{"endpoint": endpoint, "store_id": info.StoreID}, "manifest": manifest, "manifest_digest": digest, "plans": map[string]any{"sh": map[string]any{"template": template, "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": assetRoot}}, "content_bytes": 8 << 20, "gateways": []any{map[string]any{"id": "test-data", "protocol": "doris_mysql", "socket": gatewayPath, "peer_uid": os.Getuid()}}, "authorization": map[string]any{"socket": filepath.Join(root, "authorization.sock"), "peer_uid": os.Getuid(), "group": os.Getgid()}, "prepared_root": filepath.Join(root, "prepared"), "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "50ms", "event_interval": "50ms", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "100ms", "idle_interval": "50ms", "idle_threshold": "2s"}
 	raw, _ = json.Marshal(deployment)
 	deploymentPath := filepath.Join(root, "khora.json")
 	if err := os.WriteFile(deploymentPath, raw, 0600); err != nil {
@@ -250,8 +261,21 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 				_ = client.DeleteVolume(cleanup, volume.VolumeID)
 			}
 		}
+		// A published volume pins its staging parent, so the derived volume must go
+		// first. Both are disposable preparation for this disposable engine store.
+		if rows, err := reader.ListContentPublications(cleanup, info.StoreID); err == nil {
+			for _, row := range rows {
+				for _, volume := range []string{row.PublishedVolumeID, row.StagingVolumeID} {
+					if volume != "" {
+						_ = client.DeleteVolume(cleanup, volume)
+					}
+				}
+			}
+		}
 	}()
+	submitted := 0
 	send := func() {
+		submitted++
 		code, body := request("POST", "/api/sessions/"+session.ID+"/messages", `{"content":"cat /workspace/daemon.txt"}`)
 		for code == http.StatusConflict {
 			select {
@@ -289,6 +313,55 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 		}
 	}
 	send()
+	// The daemon published these bytes itself, so a guest read of the mounted
+	// revision is evidence that publication reached a real cold launch.
+	assertGuestReads := func(path, want string) {
+		submitted++
+		code, body := request("POST", "/api/sessions/"+session.ID+"/messages", `{"content":"cat `+path+`"}`)
+		for code == http.StatusConflict {
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(50 * time.Millisecond):
+			}
+			code, body = request("POST", "/api/sessions/"+session.ID+"/messages", `{"content":"cat `+path+`"}`)
+		}
+		if code != http.StatusAccepted {
+			t.Fatalf("read published content: %d %s", code, body)
+		}
+		var turn struct {
+			ID int64 `json:"turn_id"`
+		}
+		if err := json.Unmarshal(body, &turn); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			status, reason, err := reader.TurnStatus(ctx, session.ID, turn.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status == "completed" {
+				break
+			}
+			if status == "failed" || status == "canceled" {
+				t.Fatalf("published content turn: %s %s", status, reason)
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		var seen int
+		if err := reader.DBForTest().QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='assistant' AND content LIKE ?`, turn.ID, "%"+want+"%").Scan(&seen); err != nil {
+			t.Fatal(err)
+		}
+		if seen == 0 {
+			t.Fatalf("guest did not read published content at %s", path)
+		}
+	}
+	assertGuestReads("/root/.agents/AGENTS.md", "Synthetic shared context")
+	assertGuestReads("/root/.agents/skills/probe.md", "probe skill")
 	first, err := reader.GetSessionEnvironment(ctx, session.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -310,9 +383,11 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	stop()
 	start()
 	send()
+	// A 409 retry must re-submit the same prompt, never enqueue a second turn, so
+	// the durable count has to equal exactly what this test submitted.
 	var turns int
-	if err := reader.DBForTest().QueryRow(`SELECT count(*) FROM turns WHERE session_id=?`, session.ID).Scan(&turns); err != nil || turns != 2 {
-		t.Fatalf("busy retries duplicated input: %d %v", turns, err)
+	if err := reader.DBForTest().QueryRow(`SELECT count(*) FROM turns WHERE session_id=?`, session.ID).Scan(&turns); err != nil || turns != submitted {
+		t.Fatalf("busy retries duplicated input: %d durable turns for %d submissions %v", turns, submitted, err)
 	}
 	latest, err := reader.GetSessionEnvironment(ctx, session.ID)
 	if err != nil || latest.SandboxID != first.SandboxID || latest.Epoch <= first.Epoch {

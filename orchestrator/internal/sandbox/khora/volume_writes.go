@@ -14,12 +14,31 @@ import (
 // on that volume for as long as the transfer takes.
 const maxWriteChunk = 1 << 20
 
+// MkdirVolume creates one directory, tolerating an existing one.
+//
+// The engine answers 409 for a path that already exists, which makes the raw verb
+// non-idempotent. A resumed preparation replays the whole tree onto the same
+// keyed staging volume, so the caller would otherwise be unable to retry at all.
+// An existing entry of the wrong type is still a conflict, since the directory
+// this call promised does not exist.
 func (b *Backend) MkdirVolume(ctx context.Context, reference sandbox.VolumeReference, name string) error {
 	if err := b.validateVolumeRead(ctx, reference, name); err != nil {
 		return err
 	}
-	if _, err := b.client.MkdirVolume(ctx, reference.VolumeID, name, 0o755); err != nil {
-		return mapError("volume mkdir", err)
+	_, err := b.client.MkdirVolume(ctx, reference.VolumeID, name, 0o755)
+	if err == nil {
+		return nil
+	}
+	mapped := mapError("volume mkdir", err)
+	if !sandbox.Is(mapped, sandbox.Conflict) {
+		return mapped
+	}
+	existing, statErr := b.client.LstatVolume(ctx, reference.VolumeID, name)
+	if statErr != nil {
+		return mapped
+	}
+	if existing.Type != "directory" {
+		return failure("volume mkdir", sandbox.Conflict, fmt.Errorf("%q already exists as %s", name, existing.Type))
 	}
 	return nil
 }

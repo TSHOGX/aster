@@ -44,10 +44,22 @@ type ControllerBackend interface {
 	VolumeBackend
 }
 
+// ContentRequirement names an authored revision a launch must mount read-only.
+// The plan declares content identity; the volume holding it is resolved from the
+// publication record, so the spec digest stays stable across engine stores while
+// the mount still points at bytes this engine has verified.
+type ContentRequirement struct {
+	Purpose, Destination, RevisionDigest string
+}
+
+// LaunchPlan is one generation's complete declaration. Mounts carries resolved
+// content volumes and the session's own storage; Content records which authored
+// revisions those read-only mounts must correspond to.
 type LaunchPlan struct {
 	TemplateID, SpecDigest, ManifestDigest                          string
 	CPUMillis, MemoryBytes, DiskBytes, WorkspaceBytes, JournalBytes int64
 	Network                                                         sandbox.Network
+	Content                                                         []ContentRequirement
 	Mounts                                                          []sandbox.Mount
 	Environment                                                     []string
 }

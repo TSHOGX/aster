@@ -12,6 +12,18 @@ launch plans, authorization socket, gateway peers, prepared-content root and bou
 service intervals. Engine and gateway credentials remain outside guest configuration.
 No environment variable enables an embedded runtime or a second backend.
 
+A plan names authored content by directory, not by engine volume: `assets` is a
+shared context/skills tree mounted read-only at `/root/.agents`, and `config` is the
+immutable agent configuration mounted read-only at `/harness-config`, which Pi
+requires. `content_bytes` caps each published content volume. The loader reads each
+tree and computes its revision digest, so a document cannot assert an identity its
+bytes do not have. Startup publishes and verifies every revision before the server
+accepts work, and a launch mounts only a revision this engine store has published.
+
+Publishing newer content is a new revision with its own volume; a published volume
+is never rewritten. A retained session adopts it at its next generation through a
+fenced configure while the environment is paused.
+
 The product database defaults to `.harness-local/development/control.db` beneath the
 repository. `HARNESS_DB_PATH` selects another isolated development file. Parent
 paths must be writable. `HARNESS_RUN_DIR` selects the owner-lock/heartbeat directory.

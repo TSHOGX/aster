@@ -25,6 +25,19 @@ The only database schema is the current development schema. Native capture recei
 belong to that product database; archives live in an immutable product-owned directory.
 There is no Memory/Evolve database, pipeline, review API or automated asset writer.
 
-Launch plans currently consume explicitly supplied immutable config/asset volume
-references. Durable publication and complete external protocol gateway composition
-remain unimplemented. See [development scope](development-scope.md).
+Authored content — shared assets and agent configuration — is identified by a digest
+over its reviewed source tree. `internal/content` transports a revision into an
+immutable engine volume: it prepares a keyed staging volume, writes the tree, derives
+a keyed snapshot, then verifies by reading the published volume's own bytes back
+before committing the pointer. Every stage is recorded before its remote effect, so
+an interrupted publication resumes onto the same engine objects. A published volume
+is never rewritten, and a launch mounts only a revision this engine store published.
+
+An environment's identity — driver, template, release pin and resource/storage caps —
+is compared exactly and cannot change while its storage is retained. Mounts, network
+and launch environment are generation configuration, applied to a retained paused
+environment through a fenced configure operation, which is how a session adopts a
+newly published revision without becoming a different environment.
+
+Complete external protocol gateway composition remains unimplemented. See
+[development scope](development-scope.md).

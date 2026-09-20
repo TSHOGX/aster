@@ -25,10 +25,13 @@ type fakeEngine struct {
 	next     int
 	failCall map[string]error
 	calls    map[string]int
+	// corrupt makes the engine hold bytes that differ from what was written, which
+	// is what verification exists to catch.
+	corrupt map[string][]byte
 }
 
 func newEngine() *fakeEngine {
-	return &fakeEngine{store: "store_a", volumes: map[string]map[string][]byte{}, dirs: map[string]map[string]bool{}, keys: map[string]string{}, failCall: map[string]error{}, calls: map[string]int{}}
+	return &fakeEngine{store: "store_a", volumes: map[string]map[string][]byte{}, dirs: map[string]map[string]bool{}, keys: map[string]string{}, failCall: map[string]error{}, calls: map[string]int{}, corrupt: map[string][]byte{}}
 }
 
 func (e *fakeEngine) fail(name string) error {
@@ -66,6 +69,12 @@ func (e *fakeEngine) MkdirVolume(_ context.Context, reference sandbox.VolumeRefe
 	if e.dirs[reference.VolumeID] == nil {
 		return fmt.Errorf("unknown volume")
 	}
+	// The port contract is idempotent even though the engine verb answers 409 for
+	// an existing path; the Khora adapter absorbs that, and its own tests pin it.
+	// An existing entry of the wrong type is still a conflict.
+	if _, file := e.volumes[reference.VolumeID][name]; file {
+		return &sandbox.Error{Class: sandbox.Conflict, Operation: "volume mkdir", Cause: fmt.Errorf("%q already exists as a file", name)}
+	}
 	e.dirs[reference.VolumeID][name] = true
 	return nil
 }
@@ -77,6 +86,10 @@ func (e *fakeEngine) WriteVolume(_ context.Context, reference sandbox.VolumeRefe
 	files := e.volumes[reference.VolumeID]
 	if files == nil {
 		return fmt.Errorf("unknown volume")
+	}
+	if replacement, ok := e.corrupt[name]; ok {
+		files[name] = append([]byte(nil), replacement...)
+		return nil
 	}
 	files[name] = append([]byte(nil), data...)
 	return nil
@@ -347,21 +360,13 @@ func TestPublishResumesAfterLostEngineReplies(t *testing.T) {
 func TestPublishRefusesContradictoryContent(t *testing.T) {
 	publisher, engine, repository, revision := fixture(t)
 	ctx := context.Background()
-	// The engine holds bytes that disagree with the claimed revision: verification
-	// must refuse before a pointer is committed, and record a diagnosable failure.
-	staged, err := publisher.Backend.CreateVolume(ctx, "content-staging:assets:"+revision.Digest, 8<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := engine.WriteVolume(ctx, staged.VolumeReference, "AGENTS.md", []byte("tampered\n")); err != nil {
-		t.Fatal(err)
-	}
-	// Publication will stage onto this same keyed volume and rewrite the file, so
-	// force the tamper to survive by refusing the publisher's own write.
-	engine.failCall["write:AGENTS.md"] = &sandbox.Error{Class: sandbox.Invalid, Operation: "volume write", Cause: errors.New("refused")}
-	_, err = publisher.Publish(ctx, "assets", revision, 8<<20)
-	if err == nil {
-		t.Fatal("publication of contradictory content succeeded")
+	// The engine ends up holding bytes that disagree with the claimed revision.
+	// Verification must refuse before any pointer is committed, and record a
+	// terminal, diagnosable failure rather than retrying the contradiction.
+	engine.corrupt["AGENTS.md"] = []byte("not the reviewed bytes\n")
+	_, err := publisher.Publish(ctx, "assets", revision, 8<<20)
+	if !errors.Is(err, ErrContentRefused) {
+		t.Fatalf("contradictory content was not refused as terminal: %v", err)
 	}
 	row := repository.rows[engine.store+"|assets|"+revision.Digest]
 	if row.Stage != "failed" || row.Error == "" {
@@ -369,6 +374,27 @@ func TestPublishRefusesContradictoryContent(t *testing.T) {
 	}
 	if row.PublishedVolumeID != "" {
 		t.Fatal("failed publication committed a published volume")
+	}
+	// A failed revision resolves to nothing a launch could mount.
+	if volume, found, err := repository.FindPublishedContent(ctx, engine.store, "assets", revision.Digest); err != nil || found || volume != "" {
+		t.Fatalf("failed revision resolved to a volume: %s %v %v", volume, found, err)
+	}
+}
+
+// A durable write that does not land says nothing about content, so it must leave
+// the claim resumable. Recording it terminal would strand a correct revision.
+func TestPublishKeepsDurableWriteFailuresResumable(t *testing.T) {
+	publisher, engine, repository, revision := fixture(t)
+	ctx := context.Background()
+	repository.fail["staging"] = errors.New("durable write did not land")
+	if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err == nil {
+		t.Fatal("interrupted publication reported success")
+	}
+	if row := repository.rows[engine.store+"|assets|"+revision.Digest]; row.Stage == "failed" {
+		t.Fatalf("a durable write failure was recorded as a content refusal: %+v", row)
+	}
+	if _, err := publisher.Publish(ctx, "assets", revision, 8<<20); err != nil {
+		t.Fatalf("resume after a durable write failure: %v", err)
 	}
 }
 

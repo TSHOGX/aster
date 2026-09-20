@@ -26,6 +26,7 @@ import (
 
 	"harness-platform/orchestrator/internal/agentbridge"
 	"harness-platform/orchestrator/internal/bridge"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
@@ -81,7 +82,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	if err := st.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
-	var mounts []sandbox.Mount
+	var requirements []execution.ContentRequirement
 	var volumes []string
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -159,22 +160,42 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		address := listener.Addr().(*net.TCPAddr).AddrPort()
 		modelURL := "http://" + address.String()
 		network.Allow = []sandbox.Tuple{{CIDR: netip.PrefixFrom(address.Addr(), 32), Port: address.Port(), Protocol: "tcp"}}
-		configVolume, err := backend.CreateVolume(ctx, "worker-pi-config", 64<<20)
-		if err != nil {
-			t.Fatal(err)
-		}
-		volumes = append(volumes, configVolume.VolumeID)
-		if _, err := client.MkdirVolume(ctx, configVolume.VolumeID, "pi", 0755); err != nil {
-			t.Fatal(err)
-		}
+		// Pi configuration is authored, then published and verified through the
+		// product's own publication path rather than hand-built as a volume.
 		models := map[string]any{"providers": map[string]any{"harness_anthropic_proxy": map[string]any{"baseUrl": modelURL, "api": "anthropic-messages", "apiKey": "harness-placeholder", "models": []map[string]any{{"id": "synthetic-model", "name": "synthetic-model", "reasoning": false, "input": []string{"text"}, "contextWindow": 8192, "maxTokens": 256, "cost": map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}}}}}
 		encoded, _ := json.Marshal(models)
+		configRoot := filepath.Join(directory, "authored-config")
+		if err := os.MkdirAll(filepath.Join(configRoot, "pi"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		for name, body := range map[string][]byte{"pi/models.json": encoded, "pi/settings.json": []byte(`{"compaction":{"enabled":false}}`)} {
-			if _, err := client.WriteVolume(ctx, configVolume.VolumeID, name, 0, body); err != nil {
+			if err := os.WriteFile(filepath.Join(configRoot, name), body, 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
-		mounts = append(mounts, sandbox.Mount{VolumeID: configVolume.VolumeID, Destination: "/harness-config", Access: "shared-ro"})
+		revision, err := content.Read(configRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		published, err := (content.Publisher{Repository: st, Backend: backend}).Publish(ctx, "config", revision, 8<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows, err := st.ListContentPublications(ctx, identity.StoreID); err == nil {
+			for _, row := range rows {
+				// A published volume pins its staging parent, so cleanup deletes the
+				// derived object first.
+				for _, volume := range []string{row.PublishedVolumeID, row.StagingVolumeID} {
+					if volume != "" {
+						volumes = append(volumes, volume)
+					}
+				}
+			}
+		}
+		if published == "" {
+			t.Fatal("authored configuration was not published")
+		}
+		requirements = append(requirements, execution.ContentRequirement{Purpose: "config", Destination: "/harness-config", RevisionDigest: revision.Digest})
 		processEnvironment = []string{"PI_MODEL=synthetic-model", "ANTHROPIC_BASE_URL=" + modelURL}
 	}
 	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
@@ -232,7 +253,11 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := launchplan.Load(strings.NewReader(string(manifest)), manifestDigest, map[string]execution.LaunchPlan{driver: {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Mounts: mounts, Network: network, Environment: processEnvironment}})
+	loaded, err := launchplan.Load(strings.NewReader(string(manifest)), manifestDigest, map[string]execution.LaunchPlan{driver: {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: requirements, Network: network, Environment: processEnvironment}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans, err := loaded.WithPublishedContent(identity.StoreID, st)
 	if err != nil {
 		t.Fatal(err)
 	}

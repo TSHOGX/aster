@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/canonicaljson"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/execution"
+	"harness-platform/orchestrator/internal/sandbox"
 	"io"
 	"net/url"
 	"sort"
@@ -20,9 +22,37 @@ import (
 const EngineRevision = "e8cd021a9c7c"
 const EngineModule = "v0.0.2-0.20260920024301-e8cd021a9c7c"
 
+// Source freezes driver plans and resolves their declared content revisions to
+// the volumes this engine has published. Resolution happens per plan request
+// rather than at load, so publishing a new revision reaches the next generation
+// without a restart and an unpublished revision refuses the launch instead of
+// mounting stale or absent content.
 type Source struct {
-	plans map[string]execution.LaunchPlan
+	plans   map[string]execution.LaunchPlan
+	content ContentResolver
+	storeID string
 }
+
+// ContentResolver reports the volume holding one published authored revision.
+type ContentResolver interface {
+	FindPublishedContent(context.Context, string, string, string) (string, bool, error)
+}
+
+// WithPublishedContent binds a source to the engine store whose publication
+// records resolve its content requirements.
+func (s *Source) WithPublishedContent(storeID string, resolver ContentResolver) (*Source, error) {
+	if s == nil || storeID == "" || resolver == nil {
+		return nil, fmt.Errorf("engine store identity and content resolver required")
+	}
+	bound := &Source{plans: s.plans, content: resolver, storeID: storeID}
+	for driver, plan := range s.plans {
+		if len(plan.Content) == 0 && driver == "pi" {
+			return nil, fmt.Errorf("Pi plan requires an authored configuration revision")
+		}
+	}
+	return bound, nil
+}
+
 type templateManifest struct {
 	SchemaVersion int `json:"schema_version"`
 	Drivers       []struct {
@@ -148,15 +178,19 @@ func Load(manifest io.Reader, expected string, plans map[string]execution.Launch
 		if p.SpecDigest != "" {
 			return nil, fmt.Errorf("launch spec digest is computed, not caller supplied")
 		}
+		if len(p.Mounts) != 0 {
+			return nil, fmt.Errorf("content mounts are resolved from published revisions, not caller supplied")
+		}
 		destinations := map[string]bool{}
-		for _, m := range p.Mounts {
-			if m.VolumeID == "" || m.Access != "shared-ro" || (m.Destination != "/harness-config" && m.Destination != "/root/.agents") || destinations[m.Destination] {
-				return nil, fmt.Errorf("driver plan requires distinct immutable config/asset mounts")
+		for _, requirement := range p.Content {
+			expected := map[string]string{"config": "/harness-config", "assets": "/root/.agents"}[requirement.Purpose]
+			if expected == "" || requirement.Destination != expected || destinations[requirement.Destination] || !content.ValidDigest(requirement.RevisionDigest) {
+				return nil, fmt.Errorf("driver plan requires distinct config/asset revisions at their pinned destinations")
 			}
-			destinations[m.Destination] = true
+			destinations[requirement.Destination] = true
 		}
 		if driver == "pi" && !destinations["/harness-config"] {
-			return nil, fmt.Errorf("Pi plan requires pinned configuration volume")
+			return nil, fmt.Errorf("Pi plan requires a pinned configuration revision")
 		}
 		env := map[string]bool{}
 		for _, entry := range p.Environment {
@@ -185,9 +219,19 @@ func Load(manifest io.Reader, expected string, plans map[string]execution.Launch
 	}
 	return result, nil
 }
+
+// Plan returns one generation's frozen declaration with its content resolved.
+//
+// The spec digest covers the authored revisions, not the volume identities: the
+// same reviewed content must produce the same declaration, and a volume ID is an
+// engine-local name for it. Resolution then attaches the volumes this engine
+// verified, so a plan can never mount content this store has not published.
 func (s *Source) Plan(ctx context.Context, session execution.Session, _ string) (execution.LaunchPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return execution.LaunchPlan{}, err
+	}
+	if s.content == nil || s.storeID == "" {
+		return execution.LaunchPlan{}, fmt.Errorf("launch plans are not bound to published content")
 	}
 	p, ok := s.plans[session.Driver]
 	if !ok {
@@ -197,7 +241,20 @@ func (s *Source) Plan(ctx context.Context, session execution.Session, _ string) 
 	if err != nil {
 		return p, err
 	}
-	var copy execution.LaunchPlan
-	err = json.Unmarshal(raw, &copy)
-	return copy, err
+	var frozen execution.LaunchPlan
+	if err := json.Unmarshal(raw, &frozen); err != nil {
+		return execution.LaunchPlan{}, err
+	}
+	frozen.Mounts = nil
+	for _, requirement := range frozen.Content {
+		volume, published, err := s.content.FindPublishedContent(ctx, s.storeID, requirement.Purpose, requirement.RevisionDigest)
+		if err != nil {
+			return execution.LaunchPlan{}, err
+		}
+		if !published || volume == "" {
+			return execution.LaunchPlan{}, fmt.Errorf("%s revision %s is not published in this engine store", requirement.Purpose, requirement.RevisionDigest)
+		}
+		frozen.Mounts = append(frozen.Mounts, sandbox.Mount{VolumeID: volume, Destination: requirement.Destination, Access: "shared-ro"})
+	}
+	return frozen, nil
 }

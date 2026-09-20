@@ -10,10 +10,13 @@ HOME is `/root`; writable Pi state stays in `/root/.pi` in the retained overlay.
 mount read-only at `/root/.agents`. The process bridge uses framed stdio and a durable
 journal. No file queue, checkpoint-ready marker or legacy init entrypoint is installed.
 
-Shared assets are maintained manually in [shared-assets](../sandbox-image/files/usr/local/share/shared-assets).
-They are versioned source inputs, not automatically distilled or evolved. Deployment
-specific datasets and credentials are private. Launch plans currently require supplied
-immutable volume references; automated durable publication is not yet implemented.
+Shared assets and agent configuration are authored source trees outside the rootfs:
+[shared-assets](../config/shared-assets) and a copy of
+[agent-config.example](../config/agent-config.example). They are versioned source
+inputs, never automatically distilled or evolved. The daemon reads each tree,
+computes its revision digest and publishes it to an immutable engine volume before
+accepting work; a launch mounts only a revision this engine store has published.
+Deployment-specific datasets and credentials stay private.
 
 Builders may configure package mirrors and DNS through the private build environment.
 Templates and build outputs must contain no host-specific credentials or production data.
