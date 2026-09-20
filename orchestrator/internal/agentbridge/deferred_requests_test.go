@@ -27,7 +27,7 @@ type replayLedger struct {
 }
 
 func (*replayLedger) BridgeProtocolEvidence(context.Context, string, string) (store.BridgeProtocolEvidence, error) {
-	return store.BridgeProtocolEvidence{DriverID: "sh", ProtocolVersion: 2, TurnInputSchema: "RunTurn"}, nil
+	return store.BridgeProtocolEvidence{DriverID: "sh", ProtocolVersion: 2, TurnInputSchema: "RunTurn", AgentManifestDigest: "sha256:fixture"}, nil
 }
 func (r *replayLedger) ClaimNextTurn(context.Context, store.ClaimNextTurnParams) (store.TurnGrant, bool, error) {
 	r.mu.Lock()
@@ -125,7 +125,7 @@ func (p *replayRequestPeer) SendProcessInput(_ context.Context, _ sandbox.Proces
 	for _, frame := range frames {
 		switch frame.Kind {
 		case "sync":
-			p.enqueue(bridge.StreamFrame{Version: 1, Kind: "state", Execution: "generation", CommandID: frame.CommandID, Head: 1, Payload: json.RawMessage(`{"protocol_version":2,"driver_id":"sh","turn_input_schema":"RunTurn"}`)})
+			p.enqueue(bridge.StreamFrame{Version: 1, Kind: "state", Execution: "generation", CommandID: frame.CommandID, Head: 1, Payload: json.RawMessage(`{"protocol_version":2,"driver_id":"sh","turn_input_schema":"RunTurn","manifest_digest":"sha256:fixture"}`)})
 			if frame.After == 0 {
 				p.enqueue(bridge.StreamFrame{Version: 1, Kind: "record", Execution: "generation", Sequence: 1, Envelope: &bridge.Envelope{MessageID: "claim", RequestID: "claim", Type: bridge.TypeClaimNextTurn, SessionID: "session", GenerationID: "generation"}})
 			}

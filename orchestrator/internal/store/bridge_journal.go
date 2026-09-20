@@ -100,19 +100,8 @@ func appendBridgeRecordPayloadTx(ctx context.Context, tx *sql.Tx, p AppendEventP
 		if *p.OutputSequence <= 0 {
 			return false, fmt.Errorf("positive bridge output sequence required")
 		}
-		// A drained schema upgrade preserves old projections. A retransmitted
-		// pre-upgrade event must not be interpreted as new producer input.
-		var legacy int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE generation_id=? AND turn_id=? AND output_sequence=?`, p.GenerationID, *p.TurnID, *p.OutputSequence).Scan(&legacy); err != nil {
-			return false, err
-		}
-		if legacy != 0 {
-			return true, assertDuplicateEventMatches(ctx, tx, p, string(payload))
-		}
 		var last int64
-		if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(output_sequence),0) FROM (
-          SELECT output_sequence FROM bridge_ingress WHERE generation_id=? AND turn_id=? AND attempt=?
-          UNION ALL SELECT output_sequence FROM events WHERE generation_id=? AND turn_id=?)`, p.GenerationID, *p.TurnID, attempt, p.GenerationID, *p.TurnID).Scan(&last); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(output_sequence),0) FROM bridge_ingress WHERE generation_id=? AND turn_id=? AND attempt=?`, p.GenerationID, *p.TurnID, attempt).Scan(&last); err != nil {
 			return false, err
 		}
 		if *p.OutputSequence != last+1 {

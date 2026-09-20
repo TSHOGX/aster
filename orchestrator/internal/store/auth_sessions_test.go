@@ -118,7 +118,7 @@ func TestListSessionsByUser(t *testing.T) {
 	mk := func(id, user string) Session {
 		return Session{
 			ID: id, UserID: user, Status: string(sessionstate.Created),
-			Agent: "pi", Mode: "agent", Workspace: dir, RestoreID: "r-" + id,
+			Agent: "pi", Mode: "agent", Workspace: dir,
 			CreatedAt: now, UpdatedAt: now,
 		}
 	}

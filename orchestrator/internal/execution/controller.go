@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/sandbox"
+
+	"github.com/google/uuid"
 )
 
 type ControllerRepository interface {
@@ -23,7 +24,6 @@ type ControllerRepository interface {
 	BeginSessionProvisioning(context.Context, OperationIntent, string, int) (Operation, error)
 	BeginInitialExecutionResume(context.Context, string, string, int) (Operation, error)
 	BeginWorkspaceProvisionPause(context.Context, string, string) (Operation, error)
-	SessionExecutionBackend(context.Context, string) (string, error)
 	AssertExecutionAccepted(context.Context, string, string, time.Time) error
 	EnvironmentRepository
 	StorageRepository
@@ -113,13 +113,7 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	if err := c.Repository.AssertSessionNotRetiring(ctx, session.ID); err != nil {
 		return Binding{}, err
 	}
-	selected, err := c.Repository.SessionExecutionBackend(ctx, session.ID)
-	if err != nil {
-		return Binding{}, err
-	}
-	if selected != "khora" {
-		return Binding{}, ErrOperationConflict
-	}
+
 	if err := c.Repository.AssertExecutionOwner(ctx, owner); err != nil {
 		return Binding{}, err
 	}

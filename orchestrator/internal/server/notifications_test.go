@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -20,7 +22,7 @@ func withNotificationTestUser(r *http.Request, user string) *http.Request {
 
 func newNotificationsTestServer(t *testing.T, st *store.Store) *Server {
 	t.Helper()
-	return &Server{store: st, hub: events.NewHub(), log: slog.Default()}
+	return &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
 }
 
 func TestListNotificationsScopedPerUser(t *testing.T) {

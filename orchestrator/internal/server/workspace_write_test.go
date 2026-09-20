@@ -1,9 +1,10 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"bytes"
 	"context"
-	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -11,14 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
-	"harness-platform/orchestrator/internal/workspace"
-	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // newWorkspaceWriteServer builds a server with a provisioned workspace, matching
@@ -40,20 +38,16 @@ func newWorkspaceWriteServer(t *testing.T, sessionID string) (*Server, *store.St
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	createServerTestSession(t, ctx, st, dir, sessionID, string(sessionstate.Created), time.Now().UTC(), nil)
-	srv := &Server{cfg: cfg, store: st}
-	volumeConfig, err := srv.dataVolumeProvisionerConfig()
-	if err != nil {
-		t.Fatalf("data volume config: %v", err)
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: cfg, store: st}
+	root := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
 	}
-	workspace, err := (localworkspace.Volumes{Records: st}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
-		SessionID: sessionID,
-		Config:    volumeConfig,
-		Now:       time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatalf("provision workspace: %v", err)
-	}
-	return srv, st, workspace.HostPath
+	files := fixtureFiles{root: root, store: st}
+	srv.workspaceWrites = files
+	srv.workspaceReads = files
+	return srv, st, root
+
 }
 
 func multipartUpload(t *testing.T, files map[string]string) (*bytes.Buffer, string) {
@@ -345,40 +339,6 @@ func TestWriteArtifactTurnInProgressReturns409(t *testing.T) {
 	}
 }
 
-func TestWriteWorkspaceFileChownWhenRoot(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("chown assertions require root")
-	}
-	srv, _, workspace := newWorkspaceWriteServer(t, "sess_1")
-	if _, err := srv.writeWorkspaceFile(context.Background(), "sess_1", "owned/file.txt",
-		strings.NewReader("data"), srv.cfg.MaxUploadBytes); err != nil {
-		t.Fatalf("write workspace file: %v", err)
-	}
-	assertOwnedBySandbox(t, srv, filepath.Join(workspace, "owned"))
-	assertOwnedBySandbox(t, srv, filepath.Join(workspace, "owned", "file.txt"))
-}
-
-func assertOwnedBySandbox(t *testing.T, srv *Server, path string) {
-	t.Helper()
-	volumeConfig, err := srv.dataVolumeProvisionerConfig()
-	if err != nil {
-		t.Fatalf("volume config: %v", err)
-	}
-	wantUID := volumeConfig.RuntimeIdentity.UID
-	wantGID := volumeConfig.RuntimeIdentity.GID
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat %s: %v", path, err)
-	}
-	sysStat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Fatalf("stat_t unavailable for %s", path)
-	}
-	if int(sysStat.Uid) != wantUID || int(sysStat.Gid) != wantGID {
-		t.Fatalf("%s owned by %d:%d, want %d:%d", path, sysStat.Uid, sysStat.Gid, wantUID, wantGID)
-	}
-}
-
 type heldUploadReader struct {
 	entered, release chan struct{}
 	reader           *strings.Reader
@@ -388,36 +348,4 @@ type heldUploadReader struct {
 func (r *heldUploadReader) Read(buffer []byte) (int, error) {
 	r.once.Do(func() { close(r.entered); <-r.release })
 	return r.reader.Read(buffer)
-}
-
-func TestUploadMutationAndTurnAdmissionCannotCross(t *testing.T) {
-	srv, st, root := newWorkspaceWriteServer(t, "sess_1")
-	reader := &heldUploadReader{entered: make(chan struct{}), release: make(chan struct{}), reader: strings.NewReader("new workspace content")}
-	result := make(chan error, 1)
-	go func() {
-		_, err := srv.writeWorkspaceFile(context.Background(), "sess_1", "file.txt", reader, 1024)
-		result <- err
-	}()
-	select {
-	case <-reader.entered:
-	case <-time.After(time.Second):
-		t.Fatal("upload did not reach stream copy")
-	}
-	if _, err := st.EnqueueTurn(context.Background(), "sess_1", "concurrent prompt", time.Now().UTC()); !store.IsWorkspaceMutationBusy(err) {
-		close(reader.release)
-		t.Fatalf("turn admitted while upload writes: %v", err)
-	}
-	close(reader.release)
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
-	if got, err := os.ReadFile(filepath.Join(root, "file.txt")); err != nil || string(got) != "new workspace content" {
-		t.Fatalf("file: %s %v", got, err)
-	}
-	if _, err := st.EnqueueTurn(context.Background(), "sess_1", "after upload", time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := srv.writeWorkspaceFile(context.Background(), "sess_1", "other.txt", strings.NewReader("racing"), 1024); !errors.Is(err, workspace.ErrMutationBusy) {
-		t.Fatalf("upload passed queued turn: %v", err)
-	}
 }

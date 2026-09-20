@@ -39,7 +39,7 @@ func (s *Store) BeginGuestWorkspaceMutation(ctx context.Context, p workspace.Mut
 	}
 	var reference sandbox.Reference
 	var state, environmentID string
-	if err := tx.QueryRowContext(ctx, `SELECT e.store_id,e.sandbox_id,e.epoch,e.mutation_revision,e.observed_state,e.environment_id FROM sandbox_environments e JOIN session_execution_backends b ON b.session_id=e.session_id AND b.backend='khora' WHERE e.session_id=?`, p.SessionID).Scan(&reference.StoreID, &reference.SandboxID, &reference.Epoch, &reference.MutationRevision, &state, &environmentID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT e.store_id,e.sandbox_id,e.epoch,e.mutation_revision,e.observed_state,e.environment_id FROM sandbox_environments e WHERE e.session_id=?`, p.SessionID).Scan(&reference.StoreID, &reference.SandboxID, &reference.Epoch, &reference.MutationRevision, &state, &environmentID); err != nil {
 		return result, err
 	}
 	if state != "running" && state != "paused" {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/bridge"
-	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/store"
 )
@@ -186,24 +185,17 @@ func (s *Server) projectBeforeBridgeCompletion(ctx context.Context, p *store.Com
 		if err != nil {
 			return err
 		}
-		if input.Reference.StoreID != "" {
-			if s.nativeStateValidator == nil {
-				return fmt.Errorf("retained native state validator unavailable")
-			}
-			file, err := s.nativeStateValidator(ctx, input, p.TurnID)
-			if err != nil {
-				return err
-			}
-			input.Evidence.NativeDigest = file.Digest
-			input.Evidence.NativeSnapshotPath = file.Path
-			input.Evidence.NativeSize = file.Size
-		} else {
-			digest, err := driverstate.ValidateLocal(ctx, "pi", input.CanonicalPayload, input.AgentHomePath, fmt.Sprint(p.TurnID))
-			if err != nil {
-				return err
-			}
-			input.Evidence.NativeDigest = digest
+
+		if s.nativeStateValidator == nil {
+			return fmt.Errorf("retained native state validator unavailable")
 		}
+		file, err := s.nativeStateValidator(ctx, input, p.TurnID)
+		if err != nil {
+			return err
+		}
+		input.Evidence.NativeDigest = file.Digest
+		input.Evidence.NativeSnapshotPath = file.Path
+		input.Evidence.NativeSize = file.Size
 		p.DriverStateEvidence = &input.Evidence
 	}
 	p.Now = time.Now().UTC()

@@ -12,7 +12,7 @@ import (
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
-func grantFixture(t *testing.T) (*Store, BoundBridgeStore, execution.Binding, egress.Compilation) {
+func grantFixture(t *testing.T) (*Store, *Store, execution.Binding, egress.Compilation) {
 	t.Helper()
 	st, bridge, binding, observed := boundExecutionFixture(t)
 	ctx := context.Background()
@@ -37,7 +37,7 @@ func grantFixture(t *testing.T) (*Store, BoundBridgeStore, execution.Binding, eg
 func queryRequest(binding execution.Binding) egress.AuthorizationRequest {
 	return egress.AuthorizationRequest{BackendID: binding.StoreID, Destination: netip.MustParseAddrPort("10.80.0.1:9030"), ServiceID: "analytics", Operation: "query", RequestID: "request", Database: "approved"}
 }
-func claimGrantTurn(t *testing.T, st *Store, bridge BoundBridgeStore, binding execution.Binding, request string) TurnGrant {
+func claimGrantTurn(t *testing.T, st *Store, bridge *Store, binding execution.Binding, request string) TurnGrant {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := st.EnqueueTurn(ctx, binding.SessionID, "synthetic", time.Now().UTC()); err != nil {

@@ -47,7 +47,7 @@ func (s *Store) BeginWorkspaceInventory(ctx context.Context, session, owner, id 
 	if err := assertSessionNotRetiringTx(ctx, tx, session); err != nil {
 		return scan, err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT e.environment_id,e.fence,e.store_id,e.sandbox_id,e.epoch,e.mutation_revision FROM sandbox_environments e JOIN session_execution_backends b ON b.session_id=e.session_id AND b.backend='khora' WHERE e.session_id=?`, session).Scan(&scan.EnvironmentID, &scan.Fence, &scan.Reference.StoreID, &scan.Reference.SandboxID, &scan.Reference.Epoch, &scan.Reference.MutationRevision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT e.environment_id,e.fence,e.store_id,e.sandbox_id,e.epoch,e.mutation_revision FROM sandbox_environments e WHERE e.session_id=?`, session).Scan(&scan.EnvironmentID, &scan.Fence, &scan.Reference.StoreID, &scan.Reference.SandboxID, &scan.Reference.Epoch, &scan.Reference.MutationRevision); err != nil {
 		return scan, err
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(sequence),0) FROM engine_event_inbox WHERE store_id=? AND sandbox_id=?`, scan.Reference.StoreID, scan.Reference.SandboxID).Scan(&scan.EventSequence); err != nil {

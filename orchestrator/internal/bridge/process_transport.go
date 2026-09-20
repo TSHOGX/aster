@@ -11,8 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/sandbox"
+
+	"github.com/google/uuid"
 )
 
 type StreamReceipts interface {

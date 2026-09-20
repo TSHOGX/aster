@@ -240,7 +240,7 @@ func TestUserRemoveRevokesSharesAndPasswdDoesNot(t *testing.T) {
 	now := time.Now().UTC()
 	session := store.Session{
 		ID: "sess_1", UserID: "alice", Status: "created", Agent: "pi", Mode: "agent",
-		Workspace: filepath.Join(dir, "sess_1"), RestoreID: "r1", CreatedAt: now, UpdatedAt: now,
+		Workspace: filepath.Join(dir, "sess_1"), CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.CreateSession(ctx, session); err != nil {
 		t.Fatalf("create session: %v", err)

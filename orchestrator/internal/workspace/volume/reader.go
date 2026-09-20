@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/workspace"
 	"io"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Backend interface {

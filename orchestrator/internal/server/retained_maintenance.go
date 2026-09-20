@@ -12,16 +12,13 @@ import (
 // RunRetainedMaintenance owns product housekeeping and durable projection only.
 // Environment/agent/volume mechanics belong to the retained runtime services.
 func (s *Server) RunRetainedMaintenance(ctx context.Context, interval, timeout time.Duration) error {
-	if s.ownerUUID == "" || s.executions == nil || interval <= 0 || timeout <= 0 || s.cfg.SessionRetention != 0 {
+	if s.ownerUUID == "" || s.executions == nil || interval <= 0 || timeout <= 0 {
 		return fmt.Errorf("retained maintenance requires owner, controller, bounds and indefinite retention")
 	}
 	tasks := map[string]func(context.Context) error{
 		"projection": func(ctx context.Context) error { return s.projectBridgeRecords(ctx, 128) },
 		"product_cleanup": func(ctx context.Context) error {
 			now := time.Now().UTC()
-			if _, err := s.store.ClearActiveSessionExpiry(ctx, now); err != nil {
-				return err
-			}
 			if _, err := s.store.SweepExpiredAuthSessions(ctx, now); err != nil {
 				return err
 			}

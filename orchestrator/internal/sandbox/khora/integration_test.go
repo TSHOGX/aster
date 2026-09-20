@@ -14,10 +14,11 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/sandbox"
 	guestfiles "harness-platform/orchestrator/internal/workspace/guest"
+
+	sdk "github.com/TSHOGX/khora/pkg/khora"
 )
 
 func TestKhoraTemplateShellAndNativeHistory(t *testing.T) {

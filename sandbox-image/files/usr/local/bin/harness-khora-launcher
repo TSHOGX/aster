@@ -18,7 +18,7 @@ def main():
     environment = launch_environment(args.driver_id)
     if args.driver_id == 'pi':
         prepare_pi()
-    command = ['/usr/local/bin/harness-bridge-client', '--transport', 'stdio',
+    command = ['/usr/local/bin/harness-bridge-client',
                '--bridge-dir', '/harness-bridge', '--session-id', args.session_id,
                '--generation-id', args.generation_id, '--driver-id', args.driver_id,
                'claim-loop', '--max-turns', str(args.max_turns)]

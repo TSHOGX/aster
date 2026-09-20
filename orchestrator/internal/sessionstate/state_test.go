@@ -13,8 +13,8 @@ func TestSessionStatusSemantics(t *testing.T) {
 		{Created, true, false, true, false},
 		{RunningActive, false, true, true, false},
 		{RunningIdle, true, false, true, false},
-		{Checkpointing, false, true, true, false},
-		{Checkpointed, true, false, true, false},
+		{Pausing, false, true, true, false},
+		{Paused, true, false, true, false},
 		{Failed, false, false, false, true},
 		{Destroyed, false, false, false, true},
 	}

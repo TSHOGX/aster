@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/workspace"
@@ -13,6 +12,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Writer struct {

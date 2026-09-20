@@ -16,7 +16,7 @@ class KhoraTemplateTests(unittest.TestCase):
             root = Path(directory)
             for component in ('usr/sbin/sandboxd', 'usr/local/bin/harness-khora-launcher', 'usr/local/bin/harness-bridge-client',
                               'usr/local/bin/harness-shell-agent', 'usr/local/lib/harness_stream.py', 'usr/local/lib/harness_launch.py',
-                              'usr/local/bin/harness-agent-entrypoint', 'usr/local/lib/harness_files.py', 'usr/local/bin/harness-workspace-helper',
+                              'usr/local/lib/harness_files.py', 'usr/local/bin/harness-workspace-helper',
                               'usr/local/lib/harness_recovery.py', 'usr/local/bin/harness-journal-replay'):
                 path = root / component
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -24,7 +24,6 @@ class KhoraTemplateTests(unittest.TestCase):
             manifest = root / 'etc/harness-image/agents.json'
             manifest.parent.mkdir(parents=True)
             manifest.write_text(json.dumps({'schema_version': 1, 'drivers': [{'driver_id': 'pi'}, {'driver_id': 'sh'}]}))
-            (root / 'agent-home').mkdir()
             (root / 'root/.pi').mkdir(parents=True)
             (root / 'root/.pi/native.jsonl').write_text('build-only residue')
             result = template.finalize(root, template.ENGINE_MODULE)

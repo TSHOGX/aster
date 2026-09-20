@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -14,7 +16,6 @@ import (
 	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
-	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 )
@@ -22,20 +23,18 @@ import (
 func newAuthTestServer(t *testing.T, dir string, st *store.Store, users []config.AuthUser) *Server {
 	t.Helper()
 	cfg := config.Config{
-		SessionsRoot:     dir,
-		SessionRetention: time.Hour,
-		MaxSessions:      10,
-		DefaultAgent:     "pi",
-		CookieName:       "harness_auth",
-		AuthUsers:        users,
-		AuthSessionTTL:   time.Hour,
-		MaxShareLinkTTL:  30 * 24 * time.Hour,
+
+		MaxSessions:     10,
+		DefaultAgent:    "pi",
+		CookieName:      "harness_auth",
+		AuthUsers:       users,
+		AuthSessionTTL:  time.Hour,
+		MaxShareLinkTTL: 30 * 24 * time.Hour,
 	}
-	return &Server{
-		cfg:               cfg,
-		store:             st,
-		runtime:           runtime.New(runtime.Config{}),
-		watcher:           newServerTestWatcher(t, dir, st, events.NewHub()),
+	return &Server{workspaceInventory: fixtureInventory{}, retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+		cfg:   cfg,
+		store: st,
+
 		hub:               events.NewHub(),
 		log:               slog.Default(),
 		creds:             newAuthRegistry(cfg, slog.Default()),
@@ -149,7 +148,7 @@ func TestSessionIsolationAcrossUsers(t *testing.T) {
 	now := time.Now().UTC()
 	aliceSession := store.Session{
 		ID: "sess_alice", UserID: "alice", Status: string(sessionstate.Created),
-		Agent: "pi", Mode: "agent", Workspace: dir, RestoreID: "r1",
+		Agent: "pi", Mode: "agent", Workspace: dir,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := st.CreateSession(ctx, aliceSession); err != nil {

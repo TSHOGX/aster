@@ -3,8 +3,6 @@ package trajectory
 import (
 	"strings"
 	"testing"
-
-	"harness-platform/orchestrator/internal/memorystore"
 )
 
 // A compact but representative native pi session: head, model_change, a user
@@ -91,9 +89,6 @@ func TestParsePiSessionGolden(t *testing.T) {
 	if meta.RecordCount != 8 {
 		t.Fatalf("RecordCount = %d, want 8", meta.RecordCount)
 	}
-	if meta.IsTest {
-		t.Fatalf("clean session flagged as test")
-	}
 	// fingerprint = "<records>:<lastEpoch>"; last record ts 2026-07-14T03:33:39Z.
 	if !strings.HasPrefix(meta.Fingerprint, "8:") {
 		t.Fatalf("fingerprint = %q, want prefix 8:", meta.Fingerprint)
@@ -106,20 +101,7 @@ func TestParsePiSessionGolden(t *testing.T) {
 	}
 }
 
-func TestParsePiSessionFauxIsTest(t *testing.T) {
-	faux := `{"type":"session","version":3,"id":"s","timestamp":"2026-07-14T03:33:33.071Z","cwd":"/tmp"}
-{"type":"model_change","id":"m","parentId":"s","timestamp":"2026-07-14T03:33:33.100Z","provider":"faux","modelId":"test"}
-`
-	_, meta, err := ParsePiSession(strings.NewReader(faux))
-	if err != nil {
-		t.Fatalf("ParsePiSession: %v", err)
-	}
-	if !meta.IsTest {
-		t.Fatalf("faux-provider session should be flagged IsTest")
-	}
-}
-
-func kindsOf(events []memorystore.TrajectoryEvent) []string {
+func kindsOf(events []TrajectoryEvent) []string {
 	out := make([]string, len(events))
 	for i, e := range events {
 		out[i] = e.Kind

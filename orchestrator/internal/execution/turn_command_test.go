@@ -55,7 +55,7 @@ func TestControllerRetriesAmbiguousControlWithSameCommandIdentity(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := (store.BoundBridgeStore{Store: st}).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, RequestID: "claim", LeaseTTL: time.Minute}); err != nil || !ok {
+	if _, ok, err := (st).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, RequestID: "claim", LeaseTTL: time.Minute}); err != nil || !ok {
 		t.Fatal(err)
 	}
 	command := execution.TurnCommand{ID: "control_abort", SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, Kind: "abort", TurnID: turn.TurnID}

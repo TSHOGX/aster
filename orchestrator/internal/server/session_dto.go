@@ -10,20 +10,17 @@ type apiSession struct {
 	ID string `json:"id"`
 	// UserID is omitted for non-owner readers (see sharedSession). An owner's
 	// payload is unchanged: their user_id is never empty.
-	UserID                string     `json:"user_id,omitempty"`
-	Status                string     `json:"status"`
-	Mode                  string     `json:"mode"`
-	ModeLabel             string     `json:"mode_label"`
-	RestoreMS             *int64     `json:"restore_ms,omitempty"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
-	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
-	EndedAt               *time.Time `json:"ended_at,omitempty"`
-	LastActivityAt        *time.Time `json:"last_activity_at,omitempty"`
-	AutoCheckpointEnabled bool       `json:"auto_checkpoint_enabled"`
-	FailureReason         string     `json:"failure_reason,omitempty"`
-	ErrorClass            string     `json:"error_class,omitempty"`
-	Title                 string     `json:"title"`
+	UserID         string     `json:"user_id,omitempty"`
+	Status         string     `json:"status"`
+	Mode           string     `json:"mode"`
+	ModeLabel      string     `json:"mode_label"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
+	FailureReason  string     `json:"failure_reason,omitempty"`
+	ErrorClass     string     `json:"error_class,omitempty"`
+	Title          string     `json:"title"`
 	// Sandbox is store.SandboxState; omitted on payloads that did not look it
 	// up (rename, create), which clients must treat as "unchanged".
 	Sandbox string `json:"sandbox,omitempty"`
@@ -35,21 +32,18 @@ func publicSession(session store.Session) apiSession {
 		mode = store.ModeForDriver(session.Agent)
 	}
 	return apiSession{
-		ID:                    session.ID,
-		UserID:                session.UserID,
-		Status:                session.Status,
-		Mode:                  mode,
-		ModeLabel:             modeLabel(mode),
-		RestoreMS:             session.RestoreMS,
-		CreatedAt:             session.CreatedAt,
-		UpdatedAt:             session.UpdatedAt,
-		ExpiresAt:             session.ExpiresAt,
-		EndedAt:               session.EndedAt,
-		LastActivityAt:        session.LastActivityAt,
-		AutoCheckpointEnabled: session.AutoCheckpointEnabled,
-		FailureReason:         session.FailureReason,
-		ErrorClass:            session.ErrorClass,
-		Title:                 session.Title,
+		ID:             session.ID,
+		UserID:         session.UserID,
+		Status:         session.Status,
+		Mode:           mode,
+		ModeLabel:      modeLabel(mode),
+		CreatedAt:      session.CreatedAt,
+		UpdatedAt:      session.UpdatedAt,
+		EndedAt:        session.EndedAt,
+		LastActivityAt: session.LastActivityAt,
+		FailureReason:  session.FailureReason,
+		ErrorClass:     session.ErrorClass,
+		Title:          session.Title,
 	}
 }
 

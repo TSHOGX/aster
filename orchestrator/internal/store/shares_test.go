@@ -29,7 +29,7 @@ func seedShareSession(t *testing.T, st *Store, id, owner string) Session {
 		Agent:     "pi",
 		Mode:      "agent",
 		Workspace: "/tmp/" + id,
-		RestoreID: "unused-" + id,
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

@@ -85,7 +85,7 @@ func (s *Store) ReserveExecutionBinding(ctx context.Context, p execution.Reserve
 			return execution.Binding{}, execution.ErrBusy
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO runtime_generations(generation_id,session_id,status,runsc_platform,lease_owner,lease_expires_at,started_at,last_seen_at) VALUES(?,?,'starting',NULL,?,?,?,?)`, p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now.Add(p.LeaseTTL)), formatTime(p.Now), formatTime(p.Now))
+	_, err = tx.ExecContext(ctx, `INSERT INTO runtime_generations(generation_id,session_id,status,lease_owner,lease_expires_at,started_at,last_seen_at) VALUES(?,?,'starting',?,?,?,?)`, p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now.Add(p.LeaseTTL)), formatTime(p.Now), formatTime(p.Now))
 	if err != nil {
 		return execution.Binding{}, err
 	}

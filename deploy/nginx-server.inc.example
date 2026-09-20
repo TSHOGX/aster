@@ -1,7 +1,0 @@
-# Include INSIDE the deployment's existing TLS server block. Replace target and
-# upstream port explicitly; preserve existing TLS, headers and proxy settings.
-# The directory must be searchable by nginx and the maintenance file readable.
-if (-f /run/harness-deploy/example/maintenance) {
-    return 503;
-}
-# Existing location / keeps proxy_pass http://127.0.0.1:9001;

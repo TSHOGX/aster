@@ -1,17 +1,4 @@
-// Package sqlitex holds the low-level SQLite plumbing shared by every database
-// this orchestrator owns: DSN construction, per-connection pragma verification,
-// writer/reader pool setup, and the small scan/format helpers that the row
-// mapping in each store is written against.
-//
-// It exists because the control plane (internal/store, control.db) and the
-// memory/distillation pipeline (internal/memorystore, memory.db) are separate
-// physical databases with separate pools but identical connection semantics.
-// Duplicating buildDSN/verifyPragmas per store is exactly the kind of drift that
-// silently disables FK enforcement on one of them, so the plumbing lives here
-// once and both stores call it.
-//
-// This package knows nothing about either schema. It must never grow a
-// domain-specific helper.
+// Package sqlitex owns SQLite connection, pool and row conversion helpers.
 package sqlitex
 
 import (
@@ -104,8 +91,8 @@ func escapeDSNPath(path string) string {
 // the writer pool: exactly one connection, _txlock=immediate.
 //
 // Pragmas are NOT verified here. The writer owns schema creation, and a caller
-// must be able to migrate before any reader can observe a half-built schema, so
-// the sequence is OpenWriter -> migrate -> VerifyPragmas -> OpenReader.
+// must initialize its schema before any reader can observe a half-built schema, so
+// the sequence is OpenWriter -> initialize -> VerifyPragmas -> OpenReader.
 func OpenWriter(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -212,7 +199,7 @@ func FormatOptionalTime(t *time.Time) any {
 
 // ParseTime is the inverse of FormatTime. An unparseable value yields the zero
 // time rather than an error: stored timestamps are written by this package, so a
-// parse failure means pre-migration data, not a caller mistake.
+// invalid timestamps yield the zero value.
 func ParseTime(value string) time.Time {
 	t, _ := time.Parse(time.RFC3339Nano, value)
 	return t

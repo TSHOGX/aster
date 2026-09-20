@@ -101,6 +101,9 @@ class StdioShellIntegrationTest(unittest.TestCase):
             # installed binary path differs outside a built guest filesystem.
             launcher = """import runpy,subprocess,sys
 script=sys.argv.pop(1)
+sys.path.insert(0,str(__import__('pathlib').Path(script).parents[1]/'lib'))
+import harness_launch
+harness_launch.template_protocol=lambda driver:dict(protocol_version=2,driver_id=driver,turn_input_schema='RunTurn')
 original=subprocess.Popen
 def launch(args,*a,**kw):
     if args[0]=='/usr/local/bin/harness-shell-agent':
@@ -110,7 +113,7 @@ subprocess.Popen=launch
 sys.argv[0]=script
 runpy.run_path(script,run_name='__main__')
 """
-            process = subprocess.Popen([sys.executable, '-c', launcher, str(script), '--transport', 'stdio', '--bridge-dir', root,
+            process = subprocess.Popen([sys.executable, '-c', launcher, str(script), '--bridge-dir', root,
                                         '--session-id', 'session', '--generation-id', 'execution', '--driver-id', 'sh',
                                         '--timeout', '5', 'claim-loop', '--max-turns', '1'],
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root)

@@ -105,7 +105,7 @@ func TestInterruptedRecoveryResumesEachDurableStageWithoutRedispatch(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			bridge := store.BoundBridgeStore{Store: st}
+			bridge := st
 			if _, ok, err := bridge.ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: owner, RequestID: "claim", LeaseTTL: time.Minute}); err != nil || !ok {
 				t.Fatalf("claim: %t %v", ok, err)
 			}
@@ -229,7 +229,7 @@ func TestPiInterruptedRecoveryPinsCompletedSnapshotAndBlocksUntilRepair(t *testi
 	if err := st.BindBridgeStream(ctx, binding.StoreID, binding.SessionID, binding.GenerationID, binding.ProcessHandle, binding.Epoch); err != nil {
 		t.Fatal(err)
 	}
-	bridge := store.BoundBridgeStore{Store: st}
+	bridge := st
 	first, err := st.EnqueueTurnMessage(ctx, store.EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "completed history"})
 	if err != nil {
 		t.Fatal(err)

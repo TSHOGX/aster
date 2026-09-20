@@ -22,7 +22,7 @@ func TestEnvironmentCapacitySurvivesExecutionFailureUntilVerifiedPause(t *testin
 		t.Fatal(err)
 	}
 	assertCapacity(t, st, 1)
-	if err := st.UpdateSessionStatus(ctx, binding.SessionID, "failed", nil); err != nil {
+	if err := st.UpdateSessionStatus(ctx, binding.SessionID, "failed"); err != nil {
 		t.Fatal(err)
 	}
 	assertCapacity(t, st, 1)

@@ -222,7 +222,7 @@ func TestShareLinkForcesFullOnShellSessions(t *testing.T) {
 	now := time.Now().UTC()
 	shell := store.Session{
 		ID: "sess_shell", UserID: "alice", Status: "created", Agent: "sh", Mode: "shell",
-		Workspace: f.dir, RestoreID: "r2", CreatedAt: now, UpdatedAt: now,
+		Workspace: f.dir, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := f.store.CreateSession(ctx, shell); err != nil {
 		t.Fatalf("create shell session: %v", err)

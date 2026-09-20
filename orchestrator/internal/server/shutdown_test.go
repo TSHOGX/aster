@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +13,7 @@ import (
 )
 
 func TestEventsStreamReturnsWhenApplicationShutdownBegins(t *testing.T) {
-	srv := &Server{
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
 		hub:        events.NewHub(),
 		shutdownCh: make(chan struct{}),
 	}

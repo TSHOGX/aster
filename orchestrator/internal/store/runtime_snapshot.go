@@ -165,10 +165,9 @@ func getSessionRuntimeSnapshot(ctx context.Context, db queryer, sessionID string
 	var out SessionRuntimeSnapshot
 	var generationStatus, resourceState string
 	if err := db.QueryRowContext(ctx, `
-SELECT s.status, s.turn_revision, COALESCE(g.status, ''), COALESCE(CASE WHEN b.state='accepted' AND b.environment_fence=e.fence AND b.epoch=e.epoch AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests q WHERE q.environment_id=b.environment_id) THEN 'live' WHEN b.state='starting' THEN 'allocating' WHEN b.generation_id IS NOT NULL THEN 'destroyed' END,r.resource_state,'')
+SELECT s.status, s.turn_revision, COALESCE(g.status, ''), COALESCE(CASE WHEN b.state='accepted' AND b.environment_fence=e.fence AND b.epoch=e.epoch AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests q WHERE q.environment_id=b.environment_id) THEN 'live' WHEN b.state='starting' THEN 'allocating' WHEN b.generation_id IS NOT NULL THEN 'destroyed' END,'')
 FROM sessions s
 LEFT JOIN runtime_generations g ON g.generation_id = s.active_generation_id
-LEFT JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
 LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 LEFT JOIN sandbox_environments e ON e.environment_id=b.environment_id
 WHERE s.id = ?`, sessionID).Scan(&out.SessionStatus, &out.Revision, &generationStatus, &resourceState); err != nil {
@@ -402,10 +401,9 @@ WHERE id = ?
 // released.
 func (s *Store) SessionSandboxStates(ctx context.Context) (map[string]SandboxState, error) {
 	rows, err := s.reader().QueryContext(ctx, `
-SELECT s.id, COALESCE(g.status, ''), COALESCE(CASE WHEN b.state='accepted' AND b.environment_fence=e.fence AND b.epoch=e.epoch AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests q WHERE q.environment_id=b.environment_id) THEN 'live' WHEN b.state='starting' THEN 'allocating' WHEN b.generation_id IS NOT NULL THEN 'destroyed' END,r.resource_state,'')
+SELECT s.id, COALESCE(g.status, ''), COALESCE(CASE WHEN b.state='accepted' AND b.environment_fence=e.fence AND b.epoch=e.epoch AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests q WHERE q.environment_id=b.environment_id) THEN 'live' WHEN b.state='starting' THEN 'allocating' WHEN b.generation_id IS NOT NULL THEN 'destroyed' END,'')
 FROM sessions s
 LEFT JOIN runtime_generations g ON g.generation_id = s.active_generation_id
-LEFT JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
 LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 LEFT JOIN sandbox_environments e ON e.environment_id=b.environment_id`)
 	if err != nil {

@@ -32,7 +32,7 @@ type Options struct {
 	Plans                                                                                  *launchplan.Source
 	Routes                                                                                 execution.RouteRevoker
 	Grants                                                                                 execution.GrantRevoker
-	BackendName, OwnerUUID, NewSessionBackend, PreparedRoot                                string
+	BackendName, OwnerUUID, PreparedRoot                                                   string
 	MaxActive, InventoryLimit                                                              int
 	LeaseTTL, PollInterval, EventInterval, ActionTimeout, CaptureWindow, InventoryInterval time.Duration
 	OnError                                                                                func(string, error)
@@ -51,10 +51,9 @@ type Runtime struct {
 	running      bool
 }
 
-// Attach validates all ports before changing the server. Existing session
-// routing remains persisted; only future creations use NewSessionBackend.
+// Attach validates all Khora application ports before changing the server.
 func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options) (*Runtime, error) {
-	if app == nil || st == nil || p.Backend == nil || p.Plans == nil || p.Routes == nil || p.Grants == nil || p.BackendName == "" || p.OwnerUUID == "" || p.MaxActive <= 0 || p.InventoryLimit <= 0 || p.LeaseTTL <= 0 || p.PollInterval <= 0 || p.EventInterval <= 0 || p.ActionTimeout <= 0 || p.CaptureWindow <= 0 || p.InventoryInterval <= 0 || (p.NewSessionBackend != "khora" && p.NewSessionBackend != "legacy") {
+	if app == nil || st == nil || p.Backend == nil || p.Plans == nil || p.Routes == nil || p.Grants == nil || p.BackendName == "" || p.OwnerUUID == "" || p.MaxActive <= 0 || p.InventoryLimit <= 0 || p.LeaseTTL <= 0 || p.PollInterval <= 0 || p.EventInterval <= 0 || p.ActionTimeout <= 0 || p.CaptureWindow <= 0 || p.InventoryInterval <= 0 {
 		return nil, fmt.Errorf("retained application requires explicit release, gateway, owner and bounded service configuration")
 	}
 	drivers := p.Plans.Drivers()
@@ -78,7 +77,7 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	hooks := app.ExecutionHooks()
-	launcher := agentbridge.Launcher{Backend: p.Backend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: hooks.BeforeComplete, AfterEventCommit: hooks.AfterEventCommit}
+	launcher := agentbridge.Launcher{Backend: p.Backend, Store: st, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: hooks.BeforeComplete, AfterEventCommit: hooks.AfterEventCommit}
 	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: p.Plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
 	reader := sessionfiles.Reader{Repository: st, Backend: p.Backend}
 	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: content, MaxActive: p.MaxActive, Provisioner: controller}
@@ -88,7 +87,7 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 			p.OnError(string(kind)+":"+id, err)
 		}
 	}}
-	if err := app.SetExecutionController(controller, p.NewSessionBackend); err != nil {
+	if err := app.SetExecutionController(controller); err != nil {
 		cancel()
 		return nil, err
 	}

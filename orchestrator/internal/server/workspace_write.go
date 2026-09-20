@@ -2,17 +2,13 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/store"
 	"io"
 	"net/http"
-	"time"
 
 	"harness-platform/orchestrator/internal/workspace"
-	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // workspaceWriteError carries an HTTP status alongside a message so the caller
@@ -59,51 +55,9 @@ func (s *Server) writeWorkspaceFile(ctx context.Context, sessionID, relPath stri
 	if _, err := workspace.CleanPath(relPath); err != nil {
 		return "", err
 	}
-	backend, err := s.store.SessionExecutionBackend(ctx, sessionID)
-	if err != nil {
-		return "", err
+	if s.workspaceWrites == nil {
+		return "", newWorkspaceWriteError(http.StatusServiceUnavailable, "workspace backend unavailable")
 	}
-	if backend == "khora" {
-		if s.workspaceWrites == nil {
-			return "", newWorkspaceWriteError(http.StatusServiceUnavailable, "workspace backend unavailable")
-		}
-		file, err := s.workspaceWrites.WriteSession(ctx, sessionID, store.GenerationLeaseOwner(s.ownerUUID), relPath, content, maxBytes)
-		return file.Path, err
-	}
-	if backend != "legacy" {
-		return "", newWorkspaceWriteError(http.StatusServiceUnavailable, "unsupported workspace backend")
-	}
-	volumeConfig, err := s.dataVolumeProvisionerConfig()
-	if err != nil {
-		return "", err
-	}
-	volume, err := (localworkspace.Volumes{Records: s.store}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{SessionID: sessionID, Config: volumeConfig})
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", newWorkspaceWriteError(http.StatusNotFound, "session not found")
-	}
-	if err != nil {
-		return "", newWorkspaceWriteError(http.StatusForbidden, "workspace evidence invalid")
-	}
-	owner := s.ownerUUID
-	if owner == "" {
-		owner = "local-" + uuid.NewString()
-	}
-	mutation := workspace.Mutation{ID: uuid.NewString(), SessionID: sessionID, Owner: owner, Path: relPath}
-	if err := s.store.BeginWorkspaceMutation(ctx, mutation); err != nil {
-		return "", err
-	}
-	file, err := workspace.Write(ctx, localworkspace.Directory{Path: volume.HostPath, UID: volume.SandboxUID, GID: volume.SandboxGID}, relPath, content, maxBytes)
-	mutation.File = file
-	mutation.State = "succeeded"
-	if err != nil {
-		mutation.State = "failed"
-		mutation.Error = err.Error()
-		if errors.Is(err, workspace.ErrUncertain) {
-			mutation.State = "uncertain"
-		}
-	}
-	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	finishErr := s.store.FinishWorkspaceMutation(finishCtx, mutation)
-	return file.Path, errors.Join(err, finishErr)
+	file, err := s.workspaceWrites.WriteSession(ctx, sessionID, store.GenerationLeaseOwner(s.ownerUUID), relPath, content, maxBytes)
+	return file.Path, err
 }

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"bufio"
 	"context"
 	"encoding/json"
@@ -13,15 +15,14 @@ import (
 
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/events"
-	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 )
 
-// handle wraps a raw runtime.Output line into the bridge payload envelope and
+// handle wraps a raw agentOutput line into the bridge payload envelope and
 // feeds it through handleBridgeOutput, matching how production ingests stdout.
 // It exists only for tests that drive the parser with plain output lines.
-func (p *streamParser) handle(output runtime.Output) {
+func (p *streamParser) handle(output agentOutput) {
 	payload, _ := json.Marshal(lineBridgePayload{Line: output.Line})
 	p.handleBridgeOutput(normalizerBridgeOutput{Stream: output.Stream, Payload: payload})
 }
@@ -43,14 +44,14 @@ func newParserTestServer(t *testing.T) (*Server, *store.Store) {
 		Status:    string(sessionstate.RunningActive),
 		Agent:     "pi",
 		Workspace: t.TempDir(),
-		RestoreID: "phase3-sess_1",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
-	return &Server{
+	return &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
 		store: st,
 		hub:   events.NewHub(),
 		log:   slog.Default(),
@@ -121,8 +122,8 @@ func TestStreamParserPersistsShellOutputAndCompletesOnTurnDone(t *testing.T) {
 	srv, st := newParserTestServer(t)
 	parser := newStreamParser(srv, "sess_1", "sh")
 
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"harness.shell_output","stream":"stdout","text":"hello from shell\n"}`})
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"harness.turn_done","exit_code":0}`})
+	parser.handle(agentOutput{Stream: "stdout", Line: `{"type":"harness.shell_output","stream":"stdout","text":"hello from shell\n"}`})
+	parser.handle(agentOutput{Stream: "stdout", Line: `{"type":"harness.turn_done","exit_code":0}`})
 
 	select {
 	case <-parser.Done():
@@ -153,7 +154,7 @@ func TestPiOutputNormalizerConsumesPinnedCorpus(t *testing.T) {
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		parser.handle(runtime.Output{Stream: "stdout", Line: scanner.Text()})
+		parser.handle(agentOutput{Stream: "stdout", Line: scanner.Text()})
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan pi corpus: %v", err)
@@ -190,7 +191,7 @@ func TestPiOutputNormalizerIgnoresUserMessageEndAndPersistsAssistantOnly(t *test
 		`{"type":"agent_end"}`,
 	}
 	for _, line := range lines {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	messages, err := st.ListMessages(context.Background(), "sess_1")
@@ -215,7 +216,7 @@ func TestPiOutputNormalizerAcceptsRetryLifecycleEvents(t *testing.T) {
 		`{"type":"auto_retry_start","attempt":1}`,
 		`{"type":"auto_retry_end","attempt":1}`,
 	} {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	for _, wantType := range []string{"auto_retry_start", "auto_retry_end"} {
@@ -249,7 +250,7 @@ func TestPiOutputNormalizerDoesNotCompleteOnToolUseTurnEnd(t *testing.T) {
 		`{"type":"turn_end","status":"completed"}`,
 	}
 	for _, line := range lines {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	select {
@@ -283,7 +284,7 @@ func TestPiOutputNormalizerToleratesUnknownType(t *testing.T) {
 		`{"type":"turn_end","status":"completed"}`,
 	}
 	for _, line := range lines {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	select {
@@ -310,7 +311,7 @@ func TestPiOutputNormalizerRejectsMissingType(t *testing.T) {
 
 	// A well-formed pi event always carries a type; an empty/missing type is
 	// malformed input and stays fatal.
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"foo":"bar"}`})
+	parser.handle(agentOutput{Stream: "stdout", Line: `{"foo":"bar"}`})
 
 	select {
 	case <-parser.Done():
@@ -326,7 +327,7 @@ func TestPiOutputNormalizerRejectsUnknownAssistantEventType(t *testing.T) {
 	srv, _ := newParserTestServer(t)
 	parser := newStreamParser(srv, "sess_1", "pi")
 
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"message_update","assistantMessageEvent":{"type":"future_delta"}}`})
+	parser.handle(agentOutput{Stream: "stdout", Line: `{"type":"message_update","assistantMessageEvent":{"type":"future_delta"}}`})
 
 	select {
 	case <-parser.Done():
@@ -352,7 +353,7 @@ func TestPiOutputNormalizerFlushPreservesInsertionOrder(t *testing.T) {
 		`{"type":"turn_end","status":"completed"}`,
 	}
 	for _, line := range lines {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	select {
@@ -384,7 +385,7 @@ func TestPiOutputNormalizerDrainsFallbackKeyAtMessageEnd(t *testing.T) {
 		`{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[]}}`,
 	}
 	for _, line := range lines {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	messages, err := st.ListMessages(context.Background(), "sess_1")
@@ -396,7 +397,7 @@ func TestPiOutputNormalizerDrainsFallbackKeyAtMessageEnd(t *testing.T) {
 	}
 
 	// A following turn_end must not re-emit the already-drained fallback text.
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"turn_end","status":"completed"}`})
+	parser.handle(agentOutput{Stream: "stdout", Line: `{"type":"turn_end","status":"completed"}`})
 	messages, err = st.ListMessages(context.Background(), "sess_1")
 	if err != nil {
 		t.Fatalf("list messages: %v", err)
@@ -459,7 +460,7 @@ func TestPiOutputNormalizerPersistsModelCallFailure(t *testing.T) {
 
 	rateLimit := `{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[{"type":"text","text":""}],` +
 		`"stopReason":"error","errorMessage":"Error code: 429 - Too many requests, the rate limit is 1000000 tokens per minute."}}`
-	parser.handle(runtime.Output{Stream: "stdout", Line: rateLimit})
+	parser.handle(agentOutput{Stream: "stdout", Line: rateLimit})
 
 	messages, err := st.ListMessages(context.Background(), "sess_1")
 	if err != nil {
@@ -486,7 +487,7 @@ func TestPiOutputNormalizerKeepsPartialTextOnFailure(t *testing.T) {
 		`{"type":"message_update","messageId":"msg_1","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"partial answer"}}`,
 		`{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"429 rate limit"}}`,
 	} {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	messages, err := st.ListMessages(context.Background(), "sess_1")
@@ -509,8 +510,8 @@ func TestPiOutputNormalizerRecordsRepeatedFailures(t *testing.T) {
 	parser := newStreamParser(srv, "sess_1", "pi")
 
 	line := `{"type":"message_end","messageId":"msg_1","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"429 rate limit"}}`
-	parser.handle(runtime.Output{Stream: "stdout", Line: line})
-	parser.handle(runtime.Output{Stream: "stdout", Line: line})
+	parser.handle(agentOutput{Stream: "stdout", Line: line})
+	parser.handle(agentOutput{Stream: "stdout", Line: line})
 
 	messages, err := st.ListMessages(context.Background(), "sess_1")
 	if err != nil {
@@ -596,7 +597,7 @@ func TestStreamParserDoesNotWritePhasePerToken(t *testing.T) {
 		)
 	}
 	for _, line := range lines {
-		parser.handle(runtime.Output{Stream: "stdout", Line: line})
+		parser.handle(agentOutput{Stream: "stdout", Line: line})
 	}
 
 	// phase_at advances on every accepted phase write, so counting distinct
@@ -644,7 +645,7 @@ func TestStreamParserRecordsToolPhaseBoundaries(t *testing.T) {
 
 	parser := newStreamParser(srv, "sess_1", "pi")
 	parser.turnID = turnID
-	parser.handle(runtime.Output{Stream: "stdout", Line: `{"type":"tool_execution_start","toolCallId":"c1","toolName":"read","args":{"path":"/etc/hosts"}}`})
+	parser.handle(agentOutput{Stream: "stdout", Line: `{"type":"tool_execution_start","toolCallId":"c1","toolName":"read","args":{"path":"/etc/hosts"}}`})
 
 	var phase, tool, detail string
 	if err := st.DBForTest().QueryRowContext(ctx, `

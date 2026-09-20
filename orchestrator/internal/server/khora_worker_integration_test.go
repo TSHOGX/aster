@@ -3,6 +3,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -22,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/agentbridge"
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/driverstate"
@@ -30,7 +31,9 @@ import (
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/launchplan"
-	"harness-platform/orchestrator/internal/memorystore"
+
+	sdk "github.com/TSHOGX/khora/pkg/khora"
+
 	"harness-platform/orchestrator/internal/nativecapture"
 	capturesource "harness-platform/orchestrator/internal/nativecapture/guest"
 	"harness-platform/orchestrator/internal/sandbox"
@@ -71,7 +74,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	st, owner := openServerOwnedStore(t, ctx, directory)
 	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
 	now := time.Now().UTC()
-	session := store.Session{ExecutionBackend: "khora", ID: "khora-worker-" + driver + "-session", UserID: "lab", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque-workspace", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}
+	session := store.Session{ID: "khora-worker-" + driver + "-session", UserID: "lab", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque-workspace", CreatedAt: now, UpdatedAt: now}
 	if len(truncated) > 0 && truncated[0] {
 		session.ID += "-truncated"
 	}
@@ -174,7 +177,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		mounts = append(mounts, sandbox.Mount{VolumeID: configVolume.VolumeID, Destination: "/harness-config", Access: "shared-ro"})
 		processEnvironment = []string{"PI_MODEL=synthetic-model", "ANTHROPIC_BASE_URL=" + modelURL}
 	}
-	srv := &Server{store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
 	srv.cfg.MaxEditBytes = 1 << 20
 	srv.SetWorkspaceReader(sessionfiles.Reader{Repository: st, Backend: backend})
 	configureInventory := func(owner string) {
@@ -195,7 +198,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 	invalidationResult := make(chan error, 1)
 	interrupted, detached := make(chan struct{}, 1), make(chan struct{}, 1)
 	controlBackend := &partialAbortBackend{Processes: backend}
-	launcher := agentbridge.Launcher{Backend: controlBackend, Store: store.BoundBridgeStore{Store: st}, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
+	launcher := agentbridge.Launcher{Backend: controlBackend, Store: st, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: time.Minute, BeforeComplete: srv.projectBeforeBridgeCompletion, AfterEventCommit: srv.publishDurableEvent}
 	launcher.AfterCommit = func(ctx context.Context, envelope bridge.Envelope, event int64) {
 		srv.handleBridgeCommittedEnvelope(ctx, envelope, event)
 		if envelope.Type == bridge.TypeAckTurnStarted && invalidateFirstTurn.CompareAndSwap(true, false) {
@@ -256,17 +259,14 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 			t.Fatal("injected acceptance failure ignored")
 		}
 	}
-	if err := srv.SetExecutionController(controller, "khora"); err != nil {
+	if err := srv.SetExecutionController(controller); err != nil {
 		t.Fatal(err)
 	}
 	ensured, err := srv.ensureActiveGeneration(ctx, session, leaseOwner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.startEnsuredGeneration(ctx, session, ensured, startFailureInputAcceptable); err != nil {
-		t.Fatal(err)
-	}
-	binding, err := st.GetExecutionBinding(ctx, ensured.Allocation.GenerationID)
+	binding, err := st.GetExecutionBinding(ctx, ensured.GenerationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ else:raise RuntimeError('detached guest did not journal its next claim')
 				content = "cat /workspace/retained-controller-proof"
 			}
 		}
-		if err := srv.SetExecutionController(controller, "khora"); err != nil {
+		if err := srv.SetExecutionController(controller); err != nil {
 			t.Fatal(err)
 		}
 		srv.ownerUUID, _, _ = strings.Cut(leaseOwner, ":")
@@ -452,7 +452,7 @@ else:raise RuntimeError('detached guest did not journal its next claim')
 		}
 		for _, table := range []string{"network_profiles", "runtime_resource_instances", "active_model_request_contexts"} {
 			var count int
-			if err := st.DBForTest().QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+			if err := st.DBForTest().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("legacy %s populated: %d %v", table, count, err)
 			}
 		}
@@ -681,13 +681,8 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 			if err := st.DBForTest().QueryRow(`SELECT state_version FROM session_driver_states WHERE session_id=?`, session.ID).Scan(&advanced); err != nil || advanced != completedNativeVersion+1 {
 				t.Fatalf("successor native state advancement: %d %v", advanced, err)
 			}
-			mem, err := memorystore.Open(ctx, filepath.Join(directory, "capture-memory.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer mem.Close()
 			captureStore := &captureFaultRepository{Store: st, fail: true}
-			capture := nativecapture.Worker{Repository: captureStore, Source: capturesource.Source{Backend: backend}, Sink: trajectory.NewCapturer(mem, nil, filepath.Join(directory, "trajectory"), nil)}
+			capture := nativecapture.Worker{Repository: captureStore, Source: capturesource.Source{Backend: backend}, Sink: trajectory.NewCapturer(filepath.Join(directory, "trajectory"))}
 			if err := controller.ReleaseIdle(ctx, session.ID, successor.GenerationID, leaseOwner); err != nil {
 				t.Fatal(err)
 			}
@@ -737,10 +732,11 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 				t.Fatal(err)
 			}
 			rows.Close()
-			var archives int
-			if err := mem.DBForTest().QueryRow(`SELECT count(*) FROM raw_sources WHERE session_id=?`, session.ID).Scan(&archives); err != nil || archives != completedNativeVersion {
-				t.Fatalf("capture retry changed consumer archive count: %d %v", archives, err)
+			archives, err := filepath.Glob(filepath.Join(directory, "trajectory", "raw", session.ID, "*.jsonl"))
+			if err != nil || len(archives) != completedNativeVersion {
+				t.Fatalf("capture archive count: %d %v", len(archives), err)
 			}
+
 		}
 		t.Logf("historical recovery origin=%s epoch=%d head=%d preserved failed turn=%d", binding.GenerationID, binding.Epoch, head, turn.TurnID)
 		if driver == "sh" {
@@ -757,7 +753,7 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 		controller.RecoveryReader = &recoveryFaultReader{Reader: agentbridge.RecoveryReader{Backend: backend, Records: st, AfterEventCommit: srv.publishDurableEvent}, fail: true}
 		controller.RecoveryProjector = srv
 		controller.NativeRestorer = driverstate.Restorer{Backend: backend}
-		if err := srv.SetExecutionController(controller, "khora"); err != nil {
+		if err := srv.SetExecutionController(controller); err != nil {
 			t.Fatal(err)
 		}
 		live, err := controller.Ensure(ctx, execution.Session{ID: session.ID, Driver: driver}, leaseOwner)
@@ -940,7 +936,7 @@ func verifyKhoraActiveAdoption(t *testing.T, ctx context.Context, srv *Server, s
 		}
 		inventory(owner)
 		controller = &execution.Controller{Repository: &acceptanceFaultRepository{Store: st, fail: true}, Backend: backend, Agents: launcher, Plans: plans, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: ctx, Routes: gateway.NewFlows()}
-		if err := srv.SetExecutionController(controller, "khora"); err != nil {
+		if err := srv.SetExecutionController(controller); err != nil {
 			t.Fatal(err)
 		}
 		starts, connects := processes.starts.Load(), processes.connects.Load()

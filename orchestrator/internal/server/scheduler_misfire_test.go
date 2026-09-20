@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"context"
 	"path/filepath"
 	"testing"
@@ -118,7 +120,7 @@ func TestRecoverStaleScheduleCursorsReanchorsInOnePass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := &Server{store: st}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st}
 	srv.cfg.Harness.Scheduler.Enabled = true
 	srv.cfg.Harness.Scheduler.MisfireGrace = config.Duration{Duration: 90 * time.Second}
 

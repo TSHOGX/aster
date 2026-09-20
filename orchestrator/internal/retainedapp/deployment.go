@@ -218,7 +218,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 }
 
 func (d *Deployment) Options(backend Backend, gateways *gateway.Remotes, owner string) Options {
-	return Options{Backend: backend, Plans: d.Plans, Routes: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, NewSessionBackend: "khora", PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
+	return Options{Backend: backend, Plans: d.Plans, Routes: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
 }
 
 // Connect validates the pinned engine and every gateway before server mutation.

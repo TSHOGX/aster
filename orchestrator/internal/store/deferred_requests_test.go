@@ -10,7 +10,7 @@ import (
 	"harness-platform/orchestrator/internal/execution"
 )
 
-func deferredFixture(t *testing.T) (*Store, BoundBridgeStore, execution.Binding, execution.ObserveBindingParams) {
+func deferredFixture(t *testing.T) (*Store, *Store, execution.Binding, execution.ObserveBindingParams) {
 	t.Helper()
 	ctx := context.Background()
 	st, bridge, b, observed := boundExecutionFixture(t)
@@ -70,7 +70,7 @@ func TestDeferredRequestWaitsForAcceptanceAndGuestCommandReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	bridge = BoundBridgeStore{st}
+	bridge = st
 	changed := append([]byte(nil), raw...)
 	var value map[string]any
 	_ = json.Unmarshal(changed, &value)

@@ -148,7 +148,7 @@ def launch_environment(driver):
     environment = {
         'PATH': '/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin',
         'HOME': '/root', 'USER': 'root', 'LOGNAME': 'root',
-        'LANG': 'C.UTF-8', 'HARNESS_BACKEND': 'khora',
+        'LANG': 'C.UTF-8',
         'PI_CODING_AGENT_DIR': '/root/.pi/agent',
         'PI_CODING_AGENT_SESSION_DIR': '/root/.pi/agent/sessions',
         'PI_OFFLINE': '1', 'PI_SKIP_VERSION_CHECK': '1', 'PI_TELEMETRY': '0',

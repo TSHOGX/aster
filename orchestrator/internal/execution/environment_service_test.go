@@ -77,7 +77,7 @@ func serviceFixture(t *testing.T) (execution.EnvironmentService, *store.Store, *
 	}
 	t.Cleanup(func() { st.Close() })
 	now := time.Now().UTC()
-	if err := st.CreateSession(ctx, store.Session{ExecutionBackend: "khora", ID: "session", UserID: "synthetic", Agent: "pi", Status: "created", Workspace: t.TempDir(), RestoreID: "synthetic", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := st.CreateSession(ctx, store.Session{ID: "session", UserID: "synthetic", Agent: "pi", Status: "created", Workspace: t.TempDir(), CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PinBackendIdentity(ctx, execution.BackendIdentity{Name: "engine", StoreID: "store", Version: "pinned"}); err != nil {

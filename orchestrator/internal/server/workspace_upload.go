@@ -15,7 +15,7 @@ import (
 
 // sessionAcceptsWorkspaceWrite reports whether a session is in a state where the
 // orchestrator may safely mutate its workspace from underneath the agent. It is
-// false when the session status cannot accept input (busy/checkpointing/etc.)
+// false when the session status cannot accept input (busy/pausing/etc.)
 // or when any turn is queued/leased/running. Handlers translate a false result
 // into a 409 with error_class "turn_in_progress".
 func (s *Server) sessionAcceptsWorkspaceWrite(ctx context.Context, session store.Session) (bool, error) {
@@ -111,7 +111,7 @@ func (s *Server) uploadArtifacts(w http.ResponseWriter, r *http.Request, session
 	// Belt-and-suspenders: the fsnotify watcher normally records new files
 	// automatically, but a synchronous scan guarantees the artifact list and SSE
 	// broadcasts are up to date by the time the client re-fetches.
-	if s.watcher != nil || s.workspaceInventory != nil {
+	if s.workspaceInventory != nil {
 		if err := s.scanSessionArtifacts(r.Context(), sessionID); err != nil {
 			s.log.Warn("scan session after upload failed", "session_id", sessionID, "error", err)
 		}
@@ -194,7 +194,7 @@ func (s *Server) writeArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.watcher != nil || s.workspaceInventory != nil {
+	if s.workspaceInventory != nil {
 		if err := s.scanSessionArtifacts(r.Context(), sessionID); err != nil {
 			s.log.Warn("scan session after edit failed", "session_id", sessionID, "error", err)
 		}

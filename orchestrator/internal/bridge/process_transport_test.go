@@ -117,7 +117,7 @@ func TestProcessCarrierAttachmentNegotiatesAfterHelloWasCollected(t *testing.T) 
 			if driver != "recorded" {
 				selected = driver
 			}
-			protocol, _ := json.Marshal(helloPayload{ProtocolVersion: 2, DriverID: selected, TurnInputSchema: "RunTurn"})
+			protocol, _ := json.Marshal(helloPayload{ProtocolVersion: 2, DriverID: selected, TurnInputSchema: "RunTurn", ManifestDigest: evidence.AgentManifestDigest})
 			probe := Envelope{MessageID: "probe", RequestID: "probe", Type: TypeProbeNetwork, SessionID: session, GenerationID: allocation.GenerationID}
 			peer := &journalProcess{protocol: protocol, records: []StreamFrame{{Sequence: 1}, {Version: 1, Kind: "record", Execution: allocation.GenerationID, Sequence: 2, Envelope: &probe}}}
 			carrier, err := NewProcessTransport(ctx, peer, peer, reference, scope, st)

@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/sandbox"
+
+	sdk "github.com/TSHOGX/khora/pkg/khora"
 )
 
 func (b *Backend) Events(ctx context.Context, after int64, limit int) (sandbox.EventPage, error) {

@@ -11,57 +11,34 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
 	"harness-platform/orchestrator/internal/agents"
-	"harness-platform/orchestrator/internal/artifacts"
 	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/bridge"
 	"harness-platform/orchestrator/internal/config"
-	"harness-platform/orchestrator/internal/deploymentgate"
-	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
-	"harness-platform/orchestrator/internal/memory"
-	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/shareblob"
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/titler"
 	"harness-platform/orchestrator/internal/workspace"
-	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 const labUserID = "lab"
 
-const (
-	idleCheckpointInterval  = 5 * time.Minute
-	idleCheckpointThreshold = 30 * time.Minute
-	checkpointTimeout       = 2 * time.Minute
-	proxyCorrelationSocket  = "proxy-correlation.sock"
-)
-
 var ()
-
-type generationStartFailureMode int
-
-const (
-	startFailureInputAcceptable generationStartFailureMode = iota
-	startFailureInputBlocking
-)
 
 type Server struct {
 	retainedDrivers      map[agents.ID]bool
@@ -70,12 +47,9 @@ type Server struct {
 	workspaceWrites      sessionWorkspaceWriter
 	workspaceReads       sessionWorkspaceReader
 	executions           sessionExecutionController
-	newSessionBackend    string
 	nativeStateValidator func(context.Context, store.DriverStateValidationInput, int64) (workspace.File, error)
 	cfg                  config.Config
 	store                serverStore
-	runtime              runtimeDriver
-	watcher              *artifacts.Watcher
 	hub                  *events.Hub
 	log                  *slog.Logger
 	titler               *titler.Client
@@ -92,11 +66,6 @@ type Server struct {
 	// sharing: links still work for conversation text, and the whitelist endpoints
 	// report an empty set rather than falling back to the live workspace.
 	shareBlobs *shareblob.Store
-
-	// kb/kbMemories back the per-entry KB review endpoints. Nil kb means the
-	// deployment has no knowledge base configured and those routes report 503.
-	kb         *memory.KB
-	kbMemories kbReviewStore
 
 	sessionOwnerMu    sync.Mutex
 	sessionOwnerCache map[string]sessionOwnerEntry
@@ -118,19 +87,9 @@ type Server struct {
 	shareLinkCache   map[string]sharedLinkResolution
 	shareAccess      shareLinkAccessBuffer
 
-	// cleanupFailures counts consecutive teardown failures per generation, so a
-	// generation that can never be reclaimed escalates instead of retrying in
-	// silence. The 2026-08-19 outage logged 1343 identical WARNs over 22h and
-	// nothing ever raised the severity; see runtimeCleanupFailureAlertThreshold.
-	cleanupFailureMu sync.Mutex
-	cleanupFailures  map[string]int
-
-	// memoryPressureWarned rate-limits the per-generation memory-pressure notice.
-	memoryPressureMu     sync.Mutex
-	memoryPressureWarned map[string]time.Time
-	schedulerWake        chan struct{}
-	schedulerRunsMu      sync.Mutex
-	schedulerRunsActive  map[string]struct{}
+	schedulerWake       chan struct{}
+	schedulerRunsMu     sync.Mutex
+	schedulerRunsActive map[string]struct{}
 
 	// shutdownCh is closed before the HTTP servers begin graceful shutdown. Long
 	// lived streams (SSE/WebSocket) select on it because net/http.Server.Shutdown
@@ -152,41 +111,6 @@ func (s *Server) SetWorkspaceInventory(scanner sessionInventoryScanner) {
 	s.workspaceInventory = scanner
 }
 
-func (s *Server) scanSessionArtifacts(ctx context.Context, session string) error {
-	backend, err := s.store.SessionExecutionBackend(ctx, session)
-	if err != nil {
-		return err
-	}
-	if backend == "khora" {
-		if s.workspaceInventory == nil {
-			return fmt.Errorf("workspace inventory unavailable")
-		}
-		return s.workspaceInventory.ScanSession(ctx, session)
-	}
-	if backend != "legacy" {
-		return fmt.Errorf("unsupported workspace backend")
-	}
-	if s.watcher != nil {
-		return s.watcher.ScanSession(ctx, session)
-	}
-	return nil
-}
-
-func (s *Server) refreshRetainedArtifacts(w http.ResponseWriter, r *http.Request, session string) bool {
-	backend, err := s.store.SessionExecutionBackend(r.Context(), session)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return false
-	}
-	if backend == "khora" {
-		if err := s.scanSessionArtifacts(r.Context(), session); err != nil {
-			writeErrorClass(w, http.StatusServiceUnavailable, "artifact_scan_pending", "workspace inventory is reconciling")
-			return false
-		}
-	}
-	return true
-}
-
 type sessionWorkspaceReader interface {
 	OpenSession(context.Context, string, string, string) (io.ReadSeekCloser, workspace.File, error)
 }
@@ -206,17 +130,6 @@ type sessionExecutionController interface {
 
 // SetExecutionController configures the Khora execution port during startup.
 // Creation policy affects new rows only; dispatch reads each persisted backend.
-func (s *Server) SetExecutionController(controller sessionExecutionController, newSessionBackend string) error {
-	if newSessionBackend != "legacy" && newSessionBackend != "khora" {
-		return fmt.Errorf("explicit new-session backend required")
-	}
-	if newSessionBackend == "khora" && controller == nil {
-		return fmt.Errorf("Khora creation requires an execution controller")
-	}
-	s.executions = controller
-	s.newSessionBackend = newSessionBackend
-	return nil
-}
 
 type sessionOwnerEntry struct {
 	userID    string
@@ -225,38 +138,7 @@ type sessionOwnerEntry struct {
 
 type userContextKey struct{}
 
-type runtimeDriver interface {
-	Start(context.Context, runtime.StartRequest, func(runtime.Output)) runtime.Result
-	PrepareGeneration(context.Context, runtime.StartRequest) (runtime.GenerationArtifacts, error)
-	Destroy(context.Context, string) error
-	DestroyGenerationResources(context.Context, store.RuntimeGenerationDetails) (runtime.GenerationResourceCleanup, error)
-	Interrupt(string) error
-	// SandboxRemnantsGone reports whether every host process for a container is
-	// gone, gating release of a generation whose teardown failed.
-	SandboxRemnantsGone(context.Context, string) (bool, error)
-	// SandboxOOMKilled reports whether the sandbox's memcg recorded an OOM kill.
-	// ok=false means unknown, not "no".
-	SandboxOOMKilled(context.Context, string) (killed bool, ok bool)
-	// SandboxMemoryUsage reports current memcg usage and ceiling, for warning an
-	// agent before the kernel kills it. ok=false means unavailable.
-	SandboxMemoryUsage(context.Context, string) (used int64, limit int64, ok bool)
-}
-
-// bridgeStore is the bridge-facing slice of the store. It is kept as a named
-// role (rather than folded into serverStore's body) because maintenance.go and
-// bridge_startup.go hand exactly this subset to internal/bridge. The role
-// interfaces live in store_iface.go; serverStore embeds this one.
-type bridgeStore interface {
-	bridge.Store
-	ListBridgePollGenerations(context.Context, string, time.Time, time.Duration) ([]store.BridgePollGeneration, error)
-}
-
-type ensuredGeneration struct {
-	Backend               string
-	Allocation            store.GenerationAllocation
-	IsNew                 bool
-	RestoreFromCheckpoint bool
-}
+type bridgeStore interface{ bridge.Store }
 
 type bridgeStreamParserKey struct {
 	SessionID    string
@@ -264,34 +146,17 @@ type bridgeStreamParserKey struct {
 	TurnID       int64
 }
 
-type proxyPeerCredentials struct {
-	UID int
-	GID int
-	PID int
-}
-
-type proxyPeerCredentialsResult struct {
-	Credentials proxyPeerCredentials
-	Err         error
-}
-
-type proxyPeerCredentialsContextKey struct{}
-
 func New(
 	cfg config.Config,
 	store serverStore,
-	runtime runtimeDriver,
-	watcher *artifacts.Watcher,
 	hub *events.Hub,
 	log *slog.Logger,
 ) *Server {
 	return &Server{
-		cfg:     cfg,
-		store:   store,
-		runtime: runtime,
-		watcher: watcher,
-		hub:     hub,
-		log:     log,
+		cfg:   cfg,
+		store: store,
+		hub:   hub,
+		log:   log,
 		titler: titler.New(titler.Config{
 			BaseURL: cfg.TitleLLM.BaseURL,
 			APIKey:  cfg.TitleLLM.APIKey,
@@ -376,10 +241,6 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/admin/", s.requireAdmin(http.HandlerFunc(s.adminAPI)))
 	mux.Handle("/artifacts/", s.requireAuth(http.HandlerFunc(s.artifactFile)))
 	return s.rateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if deploymentgate.Draining() && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			writeError(w, http.StatusServiceUnavailable, "deployment draining; retry after maintenance")
-			return
-		}
 		mux.ServeHTTP(w, r)
 	}))
 }
@@ -506,18 +367,6 @@ func (s *Server) OperatorRoutes() http.Handler {
 	return mux
 }
 
-func (s *Server) ProxyCorrelationRoutes() http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("POST /internal/proxy/requests/start", s.requireProxyPeerCredentials(http.HandlerFunc(s.internalProxyRequestStart)))
-	mux.Handle("POST /internal/proxy/requests/finish", s.requireProxyPeerCredentials(http.HandlerFunc(s.internalProxyRequestFinish)))
-	// Data-plane gateways (Doris, OBS) authorize here. Same SO_PEERCRED gate as
-	// the model-proxy routes: only a process running as the proxy service
-	// identity may ask, so a sandbox cannot reach this even though it can reach
-	// the gateway.
-	mux.Handle("POST /internal/dataplane/requests/authorize", s.requireProxyPeerCredentials(http.HandlerFunc(s.internalDataProxyAuthorize)))
-	return mux
-}
-
 func (s *Server) operatorAgentsCatalog(w http.ResponseWriter, r *http.Request) {
 	drivers := []driverDTO{}
 	for _, spec := range agents.AllDriverSpecs() {
@@ -539,72 +388,8 @@ func (s *Server) operatorAgentsCatalog(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) ProxyCorrelationServer() *http.Server {
-	return &http.Server{
-		Handler:           s.ProxyCorrelationRoutes(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
-			credentials, err := unixPeerCredentials(conn)
-			return context.WithValue(ctx, proxyPeerCredentialsContextKey{}, proxyPeerCredentialsResult{
-				Credentials: credentials,
-				Err:         err,
-			})
-		},
-	}
-}
-
-func (s *Server) ListenProxyCorrelation() (net.Listener, string, error) {
-	roots, err := config.ValidateIsolationRoots(s.cfg.IsolationRoots())
-	if err != nil {
-		return nil, "", err
-	}
-	socketPath := filepath.Join(roots.ProxyInternalRoot, proxyCorrelationSocket)
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o750); err != nil {
-		return nil, "", fmt.Errorf("create proxy correlation socket root: %w", err)
-	}
-	if err := chownProxyCorrelationPath(filepath.Dir(socketPath), s.cfg.Harness.ProxyServiceIdentity.GID); err != nil {
-		return nil, "", fmt.Errorf("chown proxy correlation socket root: %w", err)
-	}
-	if err := os.Chmod(filepath.Dir(socketPath), 0o750); err != nil {
-		return nil, "", fmt.Errorf("chmod proxy correlation socket root: %w", err)
-	}
-	if info, err := os.Lstat(socketPath); err == nil {
-		if info.Mode().Type()&os.ModeSocket == 0 {
-			return nil, "", fmt.Errorf("proxy correlation socket path %q exists and is not a socket", socketPath)
-		}
-		if err := os.Remove(socketPath); err != nil {
-			return nil, "", fmt.Errorf("remove stale proxy correlation socket: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, "", fmt.Errorf("stat proxy correlation socket: %w", err)
-	}
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, "", fmt.Errorf("listen proxy correlation socket: %w", err)
-	}
-	if err := os.Chmod(socketPath, 0o660); err != nil {
-		_ = listener.Close()
-		return nil, "", fmt.Errorf("chmod proxy correlation socket: %w", err)
-	}
-	if err := chownProxyCorrelationPath(socketPath, s.cfg.Harness.ProxyServiceIdentity.GID); err != nil {
-		_ = listener.Close()
-		return nil, "", fmt.Errorf("chown proxy correlation socket: %w", err)
-	}
-	return listener, socketPath, nil
-}
-
-func chownProxyCorrelationPath(path string, proxyServiceGID int) error {
-	if os.Geteuid() != 0 {
-		return nil
-	}
-	if proxyServiceGID < 0 {
-		return fmt.Errorf("proxy service gid must be >= 0")
-	}
-	return os.Chown(path, 0, proxyServiceGID)
-}
-
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.version, "commit": s.buildCommit, "draining": deploymentgate.Draining(), "background_held": deploymentgate.BackgroundHeld(), "background_active": deploymentgate.Active()})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.version, "commit": s.buildCommit})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -695,7 +480,6 @@ func (s *Server) issueAuthSession(w http.ResponseWriter, r *http.Request, userID
 		TokenHash: hashAuthToken(token),
 		UserID:    userID,
 		CreatedAt: now,
-		ExpiresAt: expiresAt,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -760,8 +544,6 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.listNotifications(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/notifications/") && strings.HasSuffix(r.URL.Path, "/read") && r.Method == http.MethodPost:
 		s.markNotificationRead(w, r)
-	case strings.HasPrefix(r.URL.Path, "/api/kb-review"):
-		s.kbReviewRoute(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/sessions/"):
 		s.sessionRoute(w, r)
 	case r.URL.Path == "/api/schedules" && r.Method == http.MethodGet:
@@ -953,33 +735,6 @@ func (s *Server) createNotification(ctx context.Context, userID, title, body str
 	return id, nil
 }
 
-func (s *Server) getQuota(w http.ResponseWriter, r *http.Request) {
-	// Report the same count the create-gate enforces: sessions holding a live
-	// sandbox, not every non-terminal session.
-	activeSessions, err := s.store.CountSandboxOccupyingSessions(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	resourceQuota, err := s.store.GetResourceQuota(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	poolCeiling := cidrPool30Capacity(s.cfg.Harness.Network.CIDRPool.Prefix)
-	remainingPoolSlots := poolCeiling - resourceQuota.AllocatedPoolSlots
-	if remainingPoolSlots < 0 {
-		remainingPoolSlots = 0
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"soft_session_ceiling": s.cfg.MaxSessions,
-		"active_sessions":      activeSessions,
-		"live_pool_ceiling":    poolCeiling,
-		"allocated_pool_slots": resourceQuota.AllocatedPoolSlots,
-		"remaining_pool_slots": remainingPoolSlots,
-	})
-}
-
 func (s *Server) deploymentCapabilities(w http.ResponseWriter, r *http.Request) {
 	disabled := func(reason string) *string { return &reason }
 	agentReason := (*string)(nil)
@@ -1032,10 +787,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// The ceiling limits concurrent sandboxes, not total sessions. Idle and
-	// checkpointed sessions have released their sandbox compute (their
-	// resources are reclaimed or reserved_checkpointed) and must not count,
-	// otherwise auto-checkpoint frees a sandbox but never frees a slot.
+	// Capacity follows retained placements and unresolved provisioning intent.
 	count, err := s.store.CountSandboxOccupyingSessions(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1048,28 +800,15 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 
 	id := newID("sess")
 	now := time.Now().UTC()
-	var expiresAt *time.Time
-	if s.cfg.SessionRetention > 0 {
-		value := now.Add(s.cfg.SessionRetention)
-		expiresAt = &value
-	}
 	session := store.Session{
-		ExecutionBackend:      s.newSessionBackend,
-		ID:                    id,
-		UserID:                userIDFromContext(r.Context()),
-		Status:                string(sessionstate.Created),
-		Agent:                 string(driverID),
-		Mode:                  mode,
-		Workspace:             filepath.Join(s.cfg.SessionsRoot, id),
-		RestoreID:             "unused-" + id,
-		AutoCheckpointEnabled: s.cfg.Harness.Checkpoint.AutoEnabled,
-		CreatedAt:             now,
-		UpdatedAt:             now,
-		ExpiresAt:             expiresAt,
-	}
-	if s.newSessionBackend == "khora" {
-		session.Workspace = "workspace:" + id
-		session.AutoCheckpointEnabled = false
+		ID:        id,
+		UserID:    userIDFromContext(r.Context()),
+		Status:    string(sessionstate.Created),
+		Agent:     string(driverID),
+		Mode:      mode,
+		Workspace: "workspace:" + id,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	// Domain admission check, moved out of store.CreateSession: a bad status or
 	// an unsupported driver is a bad request, not a persistence failure.
@@ -1177,10 +916,6 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, sessionID s
 	limitBody(w, r, maxMessageBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
-		return
-	}
-	if _, err := s.store.SweepExpiredSessions(r.Context(), time.Now().UTC()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	session, ok := s.authorizeSession(w, r, sessionID)
@@ -1322,55 +1057,6 @@ func placeholderTitleFromContent(content string) string {
 	}
 	runes := []rune(collapsed)
 	return strings.TrimRight(string(runes[:placeholderTitleRunes]), " ") + "…"
-}
-
-func (s *Server) resourceAllocatorConfig(agent string) store.ResourceAllocatorConfig {
-	if driverID, err := agents.CanonicalDriverID(agent); err == nil {
-		agent = string(driverID)
-	}
-	driverSpec, ok := agents.DriverSpecFor(agent)
-	if !ok {
-		driverSpec = agents.DriverSpec{ID: agents.ID(agent), OutputFormat: "stream-json"}
-	}
-	model := "sonnet"
-	disableNonessentialTraffic := true
-	if _, agentCfg, ok := s.enabledAgentConfigForDriver(agents.ID(agent)); ok {
-		if agentCfg.DisableNonessentialTraffic != nil {
-			disableNonessentialTraffic = *agentCfg.DisableNonessentialTraffic
-		}
-		if strings.TrimSpace(agentCfg.ModelProfile) != "" {
-			if profile, ok := s.cfg.DeploymentModelProfiles()[agentCfg.ModelProfile]; ok && strings.TrimSpace(profile.Model) != "" {
-				model = strings.TrimSpace(profile.Model)
-			}
-		}
-	}
-	return store.ResourceAllocatorConfig{
-		RunDir:                      s.cfg.Harness.RunDir,
-		CIDRPool:                    s.cfg.Harness.Network.CIDRPool.Prefix,
-		EgressDorisFEHosts:          s.cfg.Harness.Network.Egress.DorisFEHosts,
-		EgressDorisBEHosts:          s.cfg.Harness.Network.Egress.DorisBEHosts,
-		EgressDorisPorts:            s.cfg.Harness.Network.Egress.DorisPorts,
-		EgressDNSPolicy:             string(s.cfg.Harness.Network.Egress.DNSPolicy),
-		EgressAllowAll:              s.cfg.Harness.Network.Egress.AllowAll,
-		HostProxyBindURL:            s.cfg.ModelProxy.BindURL,
-		ProxyPort:                   s.cfg.ModelProxy.BindPort,
-		Agent:                       agent,
-		AgentModel:                  model,
-		AgentOutputFormat:           driverSpec.OutputFormat,
-		DisableNonessentialTraffic:  disableNonessentialTraffic,
-		SandboxUID:                  s.cfg.Harness.SandboxIdentity.UID,
-		SandboxGID:                  s.cfg.Harness.SandboxIdentity.GID,
-		SandboxSupplementalGIDs:     s.cfg.Harness.SandboxIdentity.SupplementalGIDs,
-		ProviderCredentialsHostOnly: driverSpec.ModelAccess,
-		SandboxModelProxyBaseURL:    s.cfg.ModelProxy.SandboxBaseURL,
-	}
-}
-
-func cidrPool30Capacity(prefix netip.Prefix) int {
-	if !prefix.IsValid() || !prefix.Addr().Is4() || prefix.Bits() > 30 {
-		return 0
-	}
-	return 1 << uint(30-prefix.Bits())
 }
 
 // The session runtime projection is served two ways — this endpoint and the
@@ -1543,532 +1229,6 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type sessionRuntimeDataVolumes struct {
-	Workspace  store.SessionWorkspaceVolume
-	DriverHome store.SessionDriverHomeVolume
-}
-
-func (s *Server) runtimeStartRequest(session store.Session, generationID string, details store.RuntimeGenerationDetails, artifacts runtime.GenerationArtifacts, volumes sessionRuntimeDataVolumes) runtime.StartRequest {
-	return runtime.StartRequest{
-		SessionID:         session.ID,
-		GenerationID:      generationID,
-		Agent:             session.Agent,
-		WaitForTurn:       false,
-		Generation:        details,
-		PreparedArtifacts: artifacts,
-		WorkspaceHostPath: volumes.Workspace.HostPath,
-		AgentHomeHostPath: volumes.DriverHome.HostPath,
-	}
-}
-
-func validateDriverStateForRuntimeLaunch(details store.RuntimeGenerationDetails, volumes sessionRuntimeDataVolumes) error {
-	_, err := driverstate.ValidateLocal(context.Background(), details.Agent, details.DriverStatePayload, volumes.DriverHome.HostPath, "")
-	return err
-}
-
-func (s *Server) ensureSessionRuntimeDataVolumes(ctx context.Context, session store.Session) (sessionRuntimeDataVolumes, error) {
-	volumeConfig, err := s.dataVolumeProvisionerConfig()
-	if err != nil {
-		return sessionRuntimeDataVolumes{}, err
-	}
-	now := time.Now().UTC()
-	workspace, err := (localworkspace.Volumes{Records: s.store}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
-		SessionID: session.ID,
-		Config:    volumeConfig,
-		Now:       now,
-	})
-	if err != nil {
-		return sessionRuntimeDataVolumes{}, fmt.Errorf("provision session workspace volume: %w", err)
-	}
-	driverHome, err := (localworkspace.Volumes{Records: s.store}).ProvisionSessionDriverHome(ctx, localworkspace.ProvisionSessionDriverHomeParams{
-		SessionID: session.ID,
-		Driver:    session.Agent,
-		Config:    volumeConfig,
-		Now:       now,
-	})
-	if err != nil {
-		return sessionRuntimeDataVolumes{}, fmt.Errorf("provision session driver home volume: %w", err)
-	}
-	return sessionRuntimeDataVolumes{Workspace: workspace, DriverHome: driverHome}, nil
-}
-
-func (s *Server) destroyGenerationRuntime(ctx context.Context, details store.RuntimeGenerationDetails) error {
-	runtimeID := strings.TrimSpace(details.RunscContainerID)
-	if runtimeID == "" {
-		return fmt.Errorf("generation %s has no runsc container id", details.GenerationID)
-	}
-	return s.runtime.Destroy(ctx, runtimeID)
-}
-
-func sandboxContractID(generationID string) string {
-	return "contract_" + strings.TrimSpace(generationID)
-}
-
-func driverConfigMaterializationPayload(driverID string, entries []runtime.DriverConfigMaterialization) (map[string]any, map[string]any, error) {
-	driverID = strings.TrimSpace(driverID)
-	specs := agents.DriverConfigMaterializationSpecsFor(agents.ID(driverID))
-	if len(specs) == 0 {
-		if len(entries) != 0 {
-			return nil, nil, fmt.Errorf("driver %s does not support driver config materialization", driverID)
-		}
-		return map[string]any{}, nil, nil
-	}
-	if len(entries) != len(specs) {
-		return nil, nil, fmt.Errorf("driver %s config materialization requires %d projections", driverID, len(specs))
-	}
-	runtimePayload := map[string]any{}
-	mountPayload := map[string]any{}
-	expected := map[string]agents.DriverConfigMaterializationSpec{}
-	for _, spec := range specs {
-		expected[spec.Name] = spec
-	}
-	seen := map[string]struct{}{}
-	for _, entry := range entries {
-		name := strings.TrimSpace(entry.Name)
-		want, ok := expected[name]
-		if !ok {
-			return nil, nil, fmt.Errorf("unsupported %s driver config materialization %q", driverID, entry.Name)
-		}
-		if _, ok := seen[name]; ok {
-			return nil, nil, fmt.Errorf("duplicate %s driver config materialization %q", driverID, name)
-		}
-		seen[name] = struct{}{}
-		if entry.SourceProjectionPath != want.SourceProjectionPath || entry.SandboxDestination != want.SandboxDestination {
-			return nil, nil, fmt.Errorf("%s driver config materialization %s path mismatch", driverID, name)
-		}
-		if !strings.HasPrefix(strings.TrimSpace(entry.SourceDigest), "sha256:") {
-			return nil, nil, fmt.Errorf("%s driver config materialization %s digest is required", driverID, name)
-		}
-		if entry.DestinationMutableBySandbox != want.DestinationMutableBySandbox {
-			return nil, nil, fmt.Errorf("%s driver config materialization %s mutability mismatch", driverID, name)
-		}
-		runtimePayload[name] = map[string]any{
-			"source_projection_path":         entry.SourceProjectionPath,
-			"source_digest":                  entry.SourceDigest,
-			"sandbox_destination":            entry.SandboxDestination,
-			"destination_mutable_by_sandbox": entry.DestinationMutableBySandbox,
-		}
-		mountPayload[name] = map[string]any{
-			"type":                           want.MountType,
-			"mode":                           want.MountMode,
-			"exact":                          want.MountExact,
-			"source_projection_path":         entry.SourceProjectionPath,
-			"sandbox_destination":            entry.SandboxDestination,
-			"destination_mutable_by_sandbox": entry.DestinationMutableBySandbox,
-		}
-	}
-	if len(seen) != len(expected) {
-		return nil, nil, fmt.Errorf("%s driver config materialization missing required projections", driverID)
-	}
-	return runtimePayload, mountPayload, nil
-}
-
-func runtimeResourcePostStartProof(instance store.RuntimeResourceInstance, result runtime.Result, bridgeStartupEvidence string) (store.RuntimeResourcePostStartProof, error) {
-	if result.PostStartProof == nil {
-		return store.RuntimeResourcePostStartProof{}, fmt.Errorf("runtime start did not return post-start proof for generation %s", instance.GenerationID)
-	}
-	proof := *result.PostStartProof
-	proof.HostID = instance.HostID
-	proof.ContractID = instance.ContractID
-	proof.SandboxContractVersion = instance.SandboxContractVersion
-	proof.BridgeStartup = strings.TrimSpace(bridgeStartupEvidence)
-	if strings.TrimSpace(proof.GenerationID) == "" {
-		proof.GenerationID = instance.GenerationID
-	}
-	if strings.TrimSpace(proof.RunscContainerID) == "" {
-		proof.RunscContainerID = instance.RunscContainerID
-	}
-	return proof, nil
-}
-
-func runtimeResourceCleanupEvidence(instance store.RuntimeResourceInstance, cleanup runtime.GenerationResourceCleanup) store.ResourceReconciliationEvidence {
-	filesystem := make(map[string]string, len(cleanup.FilesystemLstat))
-	for path, value := range cleanup.FilesystemLstat {
-		filesystem[path] = value
-	}
-	return store.ResourceReconciliationEvidence{
-		HostID:          instance.HostID,
-		RunscState:      cleanup.RunscState,
-		IPNetns:         cleanup.IPNetns,
-		IPLink:          cleanup.IPLink,
-		NFT:             cleanup.NFT,
-		FilesystemLstat: filesystem,
-	}
-}
-
-func runtimeResourceWorkerID(ownerUUID, leaseOwner string) string {
-	workerID := strings.TrimSpace(ownerUUID)
-	if workerID != "" {
-		return workerID
-	}
-	leaseOwner = strings.TrimSpace(leaseOwner)
-	suffix := ":" + store.RuntimeManagerRoleTag
-	if strings.HasSuffix(leaseOwner, suffix) {
-		workerID = strings.TrimSpace(strings.TrimSuffix(leaseOwner, suffix))
-	}
-	if workerID == "" {
-		workerID = leaseOwner
-	}
-	return workerID
-}
-
-func runtimeResourceHostID() string {
-	host, err := os.Hostname()
-	if err == nil && strings.TrimSpace(host) != "" {
-		return strings.TrimSpace(host)
-	}
-	return "unknown-host"
-}
-
-func runtimeResourceSandboxIP(cidr string) (string, error) {
-	cidr = strings.TrimSpace(cidr)
-	prefix, err := netip.ParsePrefix(cidr)
-	if err == nil {
-		return prefix.Addr().String(), nil
-	}
-	if before, _, ok := strings.Cut(cidr, "/"); ok && strings.TrimSpace(before) != "" {
-		return strings.TrimSpace(before), nil
-	}
-	return "", fmt.Errorf("runtime resource sandbox ip cidr %q is invalid: %w", cidr, err)
-}
-
-func runtimeResourceNftTableName(generationID string) string {
-	return "harness_gen_" + runtimeResourceIdentifier(generationID)
-}
-
-func runtimeResourceIdentifier(value string) string {
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		return "unknown"
-	}
-	return out
-}
-
-func (s *Server) runtimeResourceRootPrefixes() map[string]string {
-	roots := s.cfg.IsolationRoots()
-	if strings.TrimSpace(s.cfg.DBPath) == "" {
-		roots.DataVolumeEvidenceRoot = ""
-	}
-	if strings.TrimSpace(s.cfg.Harness.RunDir) == "" {
-		roots.ProxyInternalRoot = ""
-	}
-	values := map[string]string{
-		"sessions_root":             roots.SessionsRoot,
-		"agent_homes_root":          roots.AgentHomesRoot,
-		"run_dir":                   roots.RunDir,
-		"checkpoints_root":          roots.CheckpointsRoot,
-		"prepared_bundle_root":      roots.PreparedBundleRoot,
-		"rootfs_path":               roots.RootFSPath,
-		"db_path":                   roots.DBPath,
-		"data_volume_evidence_root": roots.DataVolumeEvidenceRoot,
-		"proxy_internal_root":       roots.ProxyInternalRoot,
-		"provider_credential_root":  roots.ProviderCredentialRoot,
-	}
-	out := make(map[string]string, len(values))
-	for key, value := range values {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		out[key] = cleanRuntimeResourceRoot(value)
-	}
-	return out
-}
-
-func cleanRuntimeResourceRoot(path string) string {
-	path = strings.TrimSpace(path)
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return filepath.Clean(path)
-	}
-	return filepath.Clean(absolute)
-}
-
-func runtimeFailureClass(message string) string {
-	if strings.Contains(message, "sandbox_secret_disallowed") {
-		return "sandbox_secret_disallowed"
-	}
-	if strings.Contains(message, "shell_secret_disallowed") {
-		return "shell_secret_disallowed"
-	}
-	if strings.Contains(message, "control manifest digest mismatch") ||
-		strings.Contains(message, "expected manifest_") ||
-		strings.Contains(message, "expected session_id") ||
-		strings.Contains(message, "expected generation_id") ||
-		strings.Contains(message, "expected network_profile_id") ||
-		strings.Contains(message, "expected agent_runtime_profile_id") ||
-		strings.Contains(message, "expected anthropic_api_key_secret_id") ||
-		strings.Contains(message, "expected anthropic_auth_token_secret_id") ||
-		strings.Contains(message, "expected secret_version") ||
-		strings.Contains(message, "secret mount") {
-		return "manifest_digest_mismatch"
-	}
-	if strings.Contains(message, "pre-start sandbox network probe") {
-		return "probe_failed_pre_start"
-	}
-	if strings.Contains(message, "harness-bridge-client probe") ||
-		strings.Contains(message, "bridge probe") ||
-		strings.Contains(message, "bridge startup probe") ||
-		strings.Contains(message, "probe GET /healthz") ||
-		strings.Contains(message, "probe POST /v1/messages") {
-		return "probe_failed_post_start"
-	}
-	if strings.Contains(message, "configure sandbox network") {
-		return "network_setup_failed"
-	}
-	return "runtime_failed"
-}
-
-func runtimeFailureMessage(errorClass, reason string) string {
-	switch errorClass {
-	case "probe_failed_pre_start":
-		return "sandbox network probe failed before start"
-	case "probe_failed_post_start":
-		return "sandbox network probe failed after start"
-	case "manifest_digest_mismatch":
-		return "runtime manifest validation failed"
-	case "network_setup_failed":
-		return "sandbox network setup failed"
-	case "sandbox_secret_disallowed":
-		return "sandbox generation cannot mount model secrets"
-	case "shell_secret_disallowed":
-		return "shell agent cannot mount model secrets"
-	default:
-		if strings.TrimSpace(reason) != "" {
-			return reason
-		}
-		return "runtime failed"
-	}
-}
-
-func writeRuntimeStartError(w http.ResponseWriter, err error) {
-	if store.IsWorkspaceMutationBusy(err) {
-		writeError(w, http.StatusConflict, "workspace mutation in progress")
-		return
-	}
-	reason := ""
-	if err != nil {
-		reason = err.Error()
-	}
-	errorClass := runtimeFailureClass(reason)
-	writeErrorClass(w, http.StatusInternalServerError, errorClass, runtimeFailureMessage(errorClass, reason))
-}
-
-func (s *Server) runtimeGenerationDetails(ctx context.Context, sessionID, generationID string) (store.RuntimeGenerationDetails, error) {
-	if strings.TrimSpace(generationID) == "" {
-		return store.RuntimeGenerationDetails{}, fmt.Errorf("generation id is required")
-	}
-	details, err := s.store.GetRuntimeGenerationDetails(ctx, sessionID, generationID)
-	if err != nil {
-		return store.RuntimeGenerationDetails{}, err
-	}
-	return details, nil
-}
-
-func (s *Server) startColdFallbackSessions(ctx context.Context, owner string) {
-	fallbacks, err := s.store.ListColdFallbackSessions(ctx)
-	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			s.log.Warn("cold fallback session list failed", "error", err)
-		}
-		return
-	}
-	for _, fallback := range fallbacks {
-		ensured, err := s.ensureActiveGeneration(ctx, fallback.Session, owner)
-		if err != nil {
-			if errors.Is(err, store.ErrPoolExhausted) {
-				s.log.Warn("cold fallback pool exhausted", "session_id", fallback.Session.ID, "old_generation_id", fallback.OldGeneration, "queued_turns", fallback.QueuedTurns)
-				return
-			}
-			if !errors.Is(err, context.Canceled) {
-				s.log.Warn("cold fallback allocation failed", "session_id", fallback.Session.ID, "old_generation_id", fallback.OldGeneration, "error", err)
-			}
-			continue
-		}
-		if !ensured.IsNew {
-			continue
-		}
-		if err := s.startEnsuredGeneration(ctx, fallback.Session, ensured, startFailureInputBlocking); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				s.log.Warn("cold fallback start failed", "session_id", fallback.Session.ID, "old_generation_id", fallback.OldGeneration, "new_generation_id", ensured.Allocation.GenerationID, "error", err)
-			}
-			continue
-		}
-		if err := s.store.UpdateSessionStatusAndActivity(ctx, fallback.Session.ID, string(sessionstate.RunningActive), nil, time.Now().UTC()); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				s.log.Warn("cold fallback status update failed", "session_id", fallback.Session.ID, "new_generation_id", ensured.Allocation.GenerationID, "error", err)
-			}
-			continue
-		}
-		s.hub.Publish(events.Event{Type: "session." + string(sessionstate.RunningActive), SessionID: fallback.Session.ID})
-	}
-}
-
-func (s *Server) internalProxyRequestStart(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		SandboxSourceIP string `json:"sandbox_source_ip"`
-		ProxyRequestID  string `json:"proxy_request_id"`
-		UpstreamModel   string `json:"upstream_model"`
-		UpstreamBaseURL string `json:"upstream_base_url"`
-	}
-	if !decodeJSONBody(w, r, maxControlBodyBytes, &req) {
-		return
-	}
-	result, err := s.store.StartProxyRequest(r.Context(), store.StartProxyRequestParams{
-		SandboxSourceIP: req.SandboxSourceIP,
-		ProxyRequestID:  req.ProxyRequestID,
-		UpstreamModel:   req.UpstreamModel,
-		UpstreamBaseURL: req.UpstreamBaseURL,
-		Now:             time.Now().UTC(),
-		TurnLeaseGrace:  s.cfg.Harness.Bridge.ProxyLeaseGrace.Duration,
-	})
-	if errors.Is(err, store.ErrProxyContextUnavailable) {
-		// 503, not 404. This is an internal bookkeeping race — the turn's proxy
-		// context was momentarily unresolvable — not a statement that the model or
-		// the turn is gone. The distinction decides whether a turn survives: the
-		// proxy maps a 4xx to a hard error, and pi's retry classifier only retries
-		// on transient-looking failures, so a 404 here ended the turn outright and
-		// surfaced to the user as "the model service is unavailable" when nothing
-		// was wrong with the model.
-		//
-		// A retryable status is also the honest description: the condition clears
-		// on its own, usually within one heartbeat.
-		writeErrorClass(w, http.StatusServiceUnavailable, "active_context_unavailable", "proxy active context unavailable")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if result.LeaseWithinGrace {
-		// The request was legitimate but its turn lease had already lapsed, so only
-		// the grace window admitted it. Worth a warning rather than silence: this is
-		// the leading indicator of heartbeats losing the race for the writer
-		// connection, which is what made these requests fail outright before.
-		s.log.Warn("proxy request admitted on an expired turn lease",
-			"session_id", result.SessionID,
-			"turn_id", result.TurnID,
-			"grace", s.cfg.Harness.Bridge.ProxyLeaseGrace.Duration)
-	}
-	if !result.Replayed {
-		s.publishDurableEvent(r.Context(), result.EventID)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"session_id":       result.SessionID,
-		"turn_id":          result.TurnID,
-		"generation_id":    result.GenerationID,
-		"request_sequence": result.RequestSequence,
-		"event_id":         result.EventID,
-		"replayed":         result.Replayed,
-	})
-}
-
-func (s *Server) internalProxyRequestFinish(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ProxyRequestID             string `json:"proxy_request_id"`
-		ProxyConnectLatencyMS      *int64 `json:"proxy_connect_latency_ms"`
-		UpstreamFirstByteLatencyMS *int64 `json:"upstream_first_byte_latency_ms"`
-		UpstreamTotalLatencyMS     *int64 `json:"upstream_total_latency_ms"`
-		RetryCount                 *int64 `json:"retry_count"`
-		TimeoutKind                string `json:"timeout_kind"`
-		HTTPStatus                 *int64 `json:"http_status"`
-		ErrorClass                 string `json:"error_class"`
-		Error                      string `json:"error"`
-	}
-	if !decodeJSONBody(w, r, maxControlBodyBytes, &req) {
-		return
-	}
-	result, err := s.store.FinishProxyRequest(r.Context(), store.FinishProxyRequestParams{
-		ProxyRequestID:             req.ProxyRequestID,
-		ProxyConnectLatencyMS:      req.ProxyConnectLatencyMS,
-		UpstreamFirstByteLatencyMS: req.UpstreamFirstByteLatencyMS,
-		UpstreamTotalLatencyMS:     req.UpstreamTotalLatencyMS,
-		RetryCount:                 req.RetryCount,
-		TimeoutKind:                req.TimeoutKind,
-		HTTPStatus:                 req.HTTPStatus,
-		ErrorClass:                 req.ErrorClass,
-		Error:                      req.Error,
-		Now:                        time.Now().UTC(),
-	})
-	if errors.Is(err, store.ErrProxyRequestUnknown) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "stale_unknown_request"})
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if !result.Replayed {
-		s.publishDurableEvent(r.Context(), result.EventID)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":        "accepted",
-		"event_id":      result.EventID,
-		"event_type":    result.EventType,
-		"session_id":    result.SessionID,
-		"turn_id":       result.TurnID,
-		"generation_id": result.GenerationID,
-		"replayed":      result.Replayed,
-	})
-}
-
-func (s *Server) requireProxyPeerCredentials(next http.Handler) http.Handler {
-	expected := s.cfg.Harness.ProxyServiceIdentity
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		result, ok := r.Context().Value(proxyPeerCredentialsContextKey{}).(proxyPeerCredentialsResult)
-		if !ok {
-			writeError(w, http.StatusForbidden, "proxy correlation peer credentials unavailable")
-			return
-		}
-		if result.Err != nil {
-			writeError(w, http.StatusForbidden, "proxy correlation peer credentials invalid")
-			return
-		}
-		if result.Credentials.UID != expected.UID || result.Credentials.GID != expected.GID {
-			writeError(w, http.StatusForbidden, "proxy correlation peer credentials rejected")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func unixPeerCredentials(conn net.Conn) (proxyPeerCredentials, error) {
-	unixConn, ok := conn.(*net.UnixConn)
-	if !ok {
-		return proxyPeerCredentials{}, fmt.Errorf("proxy correlation connection is not unix")
-	}
-	raw, err := unixConn.SyscallConn()
-	if err != nil {
-		return proxyPeerCredentials{}, err
-	}
-	var credentials *syscall.Ucred
-	var controlErr error
-	if err := raw.Control(func(fd uintptr) {
-		credentials, controlErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	}); err != nil {
-		return proxyPeerCredentials{}, err
-	}
-	if controlErr != nil {
-		return proxyPeerCredentials{}, controlErr
-	}
-	if credentials == nil {
-		return proxyPeerCredentials{}, fmt.Errorf("proxy correlation peer credentials missing")
-	}
-	return proxyPeerCredentials{
-		UID: int(credentials.Uid),
-		GID: int(credentials.Gid),
-		PID: int(credentials.Pid),
-	}, nil
-}
-
 func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessionID string) {
 	session, ok := s.authorizeSession(w, r, sessionID)
 	if !ok {
@@ -2082,169 +1242,51 @@ func (s *Server) interruptSession(w http.ResponseWriter, r *http.Request, sessio
 		writeError(w, http.StatusConflict, "session is not running")
 		return
 	}
-	backend, err := s.store.SessionExecutionBackend(r.Context(), sessionID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if backend == "khora" {
-		commands, ok := s.executions.(interface {
-			DeliverTurnCommand(context.Context, execution.TurnCommand) error
-		})
-		if !ok {
-			writeError(w, http.StatusServiceUnavailable, "execution control unavailable")
-			return
-		}
-		command, snapshot, err := s.store.RequestBoundInterrupt(r.Context(), sessionID, session.ActiveGenerationID, store.GenerationLeaseOwner(s.ownerUUID))
-		if err != nil {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
-		s.publishSessionRuntime(sessionID, snapshot)
-		if command != nil {
-			if err := commands.DeliverTurnCommand(r.Context(), *command); err != nil {
-				writeErrorClass(w, http.StatusServiceUnavailable, "control_delivery_pending", "interrupt delivery is pending reconciliation")
-				return
-			}
-		}
-		writeJSON(w, http.StatusAccepted, map[string]any{"status": "interrupting", "runtime": snapshot})
-		return
-	}
-	if session.Agent == string(agents.Shell) {
-		if err := s.runtime.Interrupt(sessionID); err != nil {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "interrupting"})
-		return
-	}
 
-	// Stop is a turn-level operation for pi sessions: the abort travels to the
-	// sandbox as a turn-control command, the agent ends the turn, and its process,
-	// its session and the workspace all survive. This used to destroy the
-	// generation instead — the code asserted there was no portable interrupt
-	// primitive — which charged every Stop a full cold start and discarded the
-	// workspace state the agent had built up.
-	generationID := strings.TrimSpace(session.ActiveGenerationID)
-	if generationID == "" {
-		writeError(w, http.StatusConflict, "session has no active generation")
-		return
-	}
-	generationStatus, err := s.store.GetRuntimeGenerationStatus(r.Context(), sessionID, generationID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Which turn to abort has to be read before the interrupt: the transaction
-	// retires it, so afterwards there is nothing left to name. The command carries
-	// the turn id so a slow delivery cannot abort whatever turn came next.
-	snapshot, err := s.store.GetSessionRuntimeSnapshot(r.Context(), sessionID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// A failed or destroyed generation has no sandbox to deliver to, and no turn is
-	// really executing inside one. Skipping delivery keeps Stop working as the
-	// escape hatch for a stale running_active left by a crash.
-	sandboxLive := generationStatus != "failed" && generationStatus != "destroyed"
-	if sandboxLive && snapshot.ActiveTurn != nil {
-		details, detailsErr := s.runtimeGenerationDetails(r.Context(), sessionID, generationID)
-		if detailsErr != nil {
-			writeError(w, http.StatusInternalServerError, detailsErr.Error())
-			return
-		}
-		// Deliver before committing, as InterruptSession documents. The reverse
-		// order would mark the turn canceled while the agent kept working, and the
-		// completion ack for an already-retired turn is discarded — so the user
-		// would watch a "stopped" turn keep streaming.
-		if _, err := bridge.AppendTurnControl(details.BridgeDirPath, bridge.TurnControlCommand{
-			TurnID:  snapshot.ActiveTurn.ID,
-			Command: bridge.TurnControlAbort,
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("deliver interrupt to sandbox: %v", err))
-			return
-		}
-	}
-	result, err := s.store.InterruptSession(r.Context(), store.InterruptSessionParams{
-		SessionID:    sessionID,
-		GenerationID: generationID,
-		OwnerUUID:    s.ownerUUID,
-		ErrorClass:   "user_interrupted",
-		Reason:       "interrupted by user",
-		Now:          time.Now().UTC(),
+	commands, ok := s.executions.(interface {
+		DeliverTurnCommand(context.Context, execution.TurnCommand) error
 	})
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "execution control unavailable")
+		return
+	}
+	command, snapshot, err := s.store.RequestBoundInterrupt(r.Context(), sessionID, session.ActiveGenerationID, store.GenerationLeaseOwner(s.ownerUUID))
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	for _, eventID := range result.EventIDs {
-		s.publishDurableEvent(r.Context(), eventID)
+	s.publishSessionRuntime(sessionID, snapshot)
+	if command != nil {
+		if err := commands.DeliverTurnCommand(r.Context(), *command); err != nil {
+			writeErrorClass(w, http.StatusServiceUnavailable, "control_delivery_pending", "interrupt delivery is pending reconciliation")
+			return
+		}
 	}
-	s.publishSessionRuntime(sessionID, result.Runtime)
-	// pending_queued counts the turns Stop parked. They survive and stay visible,
-	// but nothing dispatches them until the user releases each one — a queued
-	// prompt behind a Stop is usually stale, and running it a moment later is the
-	// same surprise the user pressed Stop to prevent.
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status":         result.SessionStatus,
-		"pending_queued": result.PendingQueued,
-		"runtime":        result.Runtime,
-	})
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "interrupting", "runtime": snapshot})
+	return
 }
 
 func (s *Server) destroySession(w http.ResponseWriter, r *http.Request, sessionID string) {
-	session, ok := s.authorizeSession(w, r, sessionID)
+	_, ok := s.authorizeSession(w, r, sessionID)
 	if !ok {
 		return
 	}
-	backend, err := s.store.SessionExecutionBackend(r.Context(), sessionID)
+
+	retirement, ok := s.executions.(interface {
+		BoundedRetireSession(context.Context, string, string) (int64, error)
+	})
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "session retirement unavailable")
+		return
+	}
+	id, err := retirement.BoundedRetireSession(r.Context(), sessionID, store.GenerationLeaseOwner(s.ownerUUID))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeErrorClass(w, http.StatusServiceUnavailable, "session_retirement_pending", "session retirement is awaiting reconciliation")
 		return
 	}
-	if backend == "khora" {
-		retirement, ok := s.executions.(interface {
-			BoundedRetireSession(context.Context, string, string) (int64, error)
-		})
-		if !ok {
-			writeError(w, http.StatusServiceUnavailable, "session retirement unavailable")
-			return
-		}
-		id, err := retirement.BoundedRetireSession(r.Context(), sessionID, store.GenerationLeaseOwner(s.ownerUUID))
-		if err != nil {
-			writeErrorClass(w, http.StatusServiceUnavailable, "session_retirement_pending", "session retirement is awaiting reconciliation")
-			return
-		}
-		s.publishDurableEvent(r.Context(), id)
-		writeJSON(w, http.StatusOK, map[string]string{"status": "destroyed"})
-		return
-	}
-	if session.ActiveGenerationID != "" && session.Status != string(sessionstate.Checkpointed) {
-		details, err := s.runtimeGenerationDetails(r.Context(), session.ID, session.ActiveGenerationID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if err := s.destroyGenerationRuntime(r.Context(), details); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	now := time.Now().UTC()
-	result, err := s.store.DestroySession(r.Context(), sessionID, now)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	for _, generationID := range result.GenerationIDs {
-		if err := s.cleanupGenerationResources(r.Context(), sessionID, generationID, now); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	status := string(sessionstate.Destroyed)
-	s.publishDurableEvent(r.Context(), result.EventID)
-	writeJSON(w, http.StatusOK, map[string]string{"status": status})
+	s.publishDurableEvent(r.Context(), id)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "destroyed"})
+	return
 }
 
 // listArtifacts lists the whole verified workspace. An identity share exposes
@@ -2398,37 +1440,11 @@ func (s *Server) openArtifactFile(ctx context.Context, sessionID, artifactPath s
 	} else if err != nil {
 		return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
 	}
-	backend, err := s.store.SessionExecutionBackend(ctx, sessionID)
-	if err != nil {
-		return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
-	}
-	if backend == "khora" {
-		if s.workspaceReads == nil {
-			return nil, workspace.File{}, http.StatusServiceUnavailable, "workspace backend unavailable"
-		}
-		file, info, err := s.workspaceReads.OpenSession(ctx, sessionID, store.GenerationLeaseOwner(s.ownerUUID), cleanPath)
-		return artifactFileResult(file, info, err)
-	}
-	if backend != "legacy" {
-		return nil, workspace.File{}, http.StatusServiceUnavailable, "unsupported workspace backend"
-	}
 
-	volumeConfig, err := s.dataVolumeProvisionerConfig()
-	if err != nil {
-		return nil, workspace.File{}, http.StatusInternalServerError, err.Error()
+	if s.workspaceReads == nil {
+		return nil, workspace.File{}, http.StatusServiceUnavailable, "workspace backend unavailable"
 	}
-	volume, err := (localworkspace.Volumes{Records: s.store}).VerifySessionWorkspaceVolume(ctx, localworkspace.VerifySessionWorkspaceVolumeParams{
-		SessionID: sessionID,
-		Config:    volumeConfig,
-	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, workspace.File{}, http.StatusNotFound, "artifact not found"
-	}
-	if err != nil {
-		return nil, workspace.File{}, http.StatusForbidden, "workspace evidence invalid"
-	}
-
-	file, info, err := workspace.Open(ctx, localworkspace.Directory{Path: volume.HostPath, UID: volume.SandboxUID, GID: volume.SandboxGID}, cleanPath)
+	file, info, err := s.workspaceReads.OpenSession(ctx, sessionID, store.GenerationLeaseOwner(s.ownerUUID), cleanPath)
 	return artifactFileResult(file, info, err)
 }
 
@@ -2448,25 +1464,6 @@ func artifactFileResult(file io.ReadSeekCloser, info workspace.File, err error) 
 		}
 	}
 	return file, info, 0, ""
-}
-
-func (s *Server) dataVolumeProvisionerConfig() (localworkspace.DataVolumeProvisionerConfig, error) {
-	roots, err := config.ValidateIsolationRoots(s.cfg.IsolationRoots())
-	if err != nil {
-		return localworkspace.DataVolumeProvisionerConfig{}, err
-	}
-	identity := s.cfg.Harness.SandboxIdentity
-	return localworkspace.DataVolumeProvisionerConfig{
-		SessionsRoot:   roots.SessionsRoot,
-		AgentHomesRoot: roots.AgentHomesRoot,
-		EvidenceRoot:   roots.DataVolumeEvidenceRoot,
-		LayoutVersion:  localworkspace.DataVolumeLayoutVersion,
-		RuntimeIdentity: store.RuntimeIdentity{
-			UID:              identity.UID,
-			GID:              identity.GID,
-			SupplementalGIDs: identity.SupplementalGIDs,
-		},
-	}, nil
 }
 
 func safePathSegment(segment string) bool {
@@ -2522,120 +1519,31 @@ func writeErrorClass(w http.ResponseWriter, status int, class, message string) {
 	writeJSON(w, status, map[string]string{"error_class": class, "error": message})
 }
 
-func (s *Server) MonitorIdleSessions(ctx context.Context) error {
-	if strings.EqualFold(strings.TrimSpace(s.cfg.RunscNetwork), "host") {
-		s.log.Info("idle checkpoint monitor disabled because runsc host network is not checkpointable")
-		return nil
+func (s *Server) SetExecutionController(controller sessionExecutionController) error {
+	if controller == nil {
+		return fmt.Errorf("Khora execution controller required")
 	}
-	if !s.cfg.Harness.Checkpoint.AutoEnabled {
-		s.log.Info("idle checkpoint monitor disabled by policy")
-		return nil
-	}
-	if strings.TrimSpace(s.ownerUUID) == "" {
-		return fmt.Errorf("idle checkpoint monitor requires owner uuid")
-	}
-
-	owner := store.GenerationLeaseOwner(s.ownerUUID)
-	interval := s.cfg.Harness.Checkpoint.MonitorInterval.Duration
-	if interval <= 0 {
-		interval = idleCheckpointInterval
-	}
-	idleThreshold := s.cfg.Harness.Checkpoint.IdleThreshold.Duration
-	if idleThreshold < 0 {
-		idleThreshold = idleCheckpointThreshold
-	}
-	tick := func(now time.Time) {
-		candidates, err := s.store.ListIdleReleaseCandidates(ctx, owner, now, idleThreshold)
-		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				s.log.Warn("failed to list idle release candidates", "error", err)
-			}
-			return
-		}
-		for _, candidate := range candidates {
-			if err := s.releaseIdleGeneration(ctx, candidate, owner, now); err != nil && !errors.Is(err, context.Canceled) {
-				s.log.Warn("idle sandbox release failed", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "error", err)
-			}
-		}
-	}
-
-	tick(time.Now().UTC())
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case now := <-ticker.C:
-			tick(now.UTC())
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
-
-// releaseIdleGeneration tears down an idle session's sandbox to free compute,
-// without taking a runsc checkpoint. The session moves to 'checkpointed' (its
-// logical "released, wake me later" state with no hot-restore image) and the
-// generation's compute/network slots are reclaimed and destroyed. Waking the
-// session (next message) allocates a fresh generation and cold-starts against
-// the retained workspace/agent-home.
-func (s *Server) releaseIdleGeneration(ctx context.Context, candidate store.CheckpointCandidate, owner string, now time.Time) error {
-	if err := s.store.ReleaseIdleGeneration(ctx, candidate.SessionID, candidate.GenerationID, owner, now); err != nil {
-		return err
-	}
-	// The generation is now failed with reclaimable resources; tear down the
-	// sandbox and mark resources destroyed via the shared cleanup path.
-	if err := s.cleanupGenerationResources(ctx, candidate.SessionID, candidate.GenerationID, time.Now().UTC()); err != nil {
-		// The DB transition already succeeded and resources are reclaimable, so
-		// the reaper will finish teardown; surface the error but do not roll back.
-		s.log.Warn("idle release sandbox teardown deferred to reaper", "session_id", candidate.SessionID, "generation_id", candidate.GenerationID, "error", err)
-	}
-	s.hub.Publish(events.Event{Type: "session." + string(sessionstate.Checkpointed), SessionID: candidate.SessionID, GenerationID: candidate.GenerationID})
+	s.executions = controller
 	return nil
 }
-
-// internalDataProxyAuthorize answers a data-plane gateway's per-connection and
-// per-query authorization question.
-//
-// It is a pure decision: no events, no counters, nothing written. In particular it
-// does not touch next_request_sequence, which belongs to the model proxy — see the
-// note on store.AuthorizeDataProxyRequest.
-//
-// A denial is 403 with a short, agent-readable reason, because the gateway puts
-// that reason into an ERR packet the agent actually reads. Anything unexpected is
-// an error rather than a grant: the gateway must fail closed.
-func (s *Server) internalDataProxyAuthorize(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Domain          string `json:"domain"`
-		SandboxSourceIP string `json:"sandbox_source_ip"`
+func (s *Server) scanSessionArtifacts(ctx context.Context, session string) error {
+	if s.workspaceInventory == nil {
+		return fmt.Errorf("workspace inventory unavailable")
 	}
-	if !decodeJSONBody(w, r, maxControlBodyBytes, &req) {
-		return
+	return s.workspaceInventory.ScanSession(ctx, session)
+}
+func (s *Server) refreshRetainedArtifacts(w http.ResponseWriter, r *http.Request, session string) bool {
+	if err := s.scanSessionArtifacts(r.Context(), session); err != nil {
+		writeErrorClass(w, http.StatusServiceUnavailable, "artifact_scan_pending", "workspace inventory is reconciling")
+		return false
 	}
-	if strings.TrimSpace(req.SandboxSourceIP) == "" {
-		writeError(w, http.StatusBadRequest, "sandbox_source_ip is required")
-		return
-	}
-
-	auth, err := s.store.AuthorizeDataProxyRequest(r.Context(), store.AuthorizeDataProxyRequestParams{
-		Domain:          store.DataProxyDomain(req.Domain),
-		SandboxSourceIP: req.SandboxSourceIP,
-		Now:             time.Now().UTC(),
-	})
-	if errors.Is(err, store.ErrDataProxyContextUnavailable) {
-		writeJSON(w, http.StatusForbidden, map[string]any{
-			"authorized": false,
-			"reason":     s.store.DataProxyDenialReason(r.Context(), req.SandboxSourceIP),
-		})
-		return
-	}
+	return true
+}
+func (s *Server) getQuota(w http.ResponseWriter, r *http.Request) {
+	count, err := s.store.CountSandboxOccupyingSessions(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"authorized":    true,
-		"session_id":    auth.SessionID,
-		"generation_id": auth.GenerationID,
-		"turn_id":       auth.TurnID,
-	})
+	writeJSON(w, 200, map[string]any{"soft_session_ceiling": s.cfg.MaxSessions, "active_sessions": count})
 }

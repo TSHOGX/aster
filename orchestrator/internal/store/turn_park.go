@@ -31,7 +31,7 @@ import (
 // Every site that used to read `status IN ('queued','leased','running')` reads
 // this instead. A parked turn is deliberately NOT pending: nothing will dispatch
 // it until the user acts, so counting it would keep the generation active, hold a
-// sandbox warm indefinitely, and block checkpointing forever — for a prompt that
+// sandbox warm indefinitely, and block pausing forever — for a prompt that
 // may never be released. Releasing a parked turn costs a cold start, exactly as
 // retyping it would.
 //
@@ -126,12 +126,12 @@ WHERE id = ?
 		return SessionRuntimeSnapshot{}, ErrTurnNotReleasable
 	}
 	// The same accepting states EnqueueTurnMessage uses, and for the same reason:
-	// releasing a parked turn is putting work in front of the agent. `checkpointed`
+	// releasing a parked turn is putting work in front of the agent. `paused`
 	// belongs here because parked turns are excluded from the pending-turn
-	// predicate, so auto-checkpoint and idle-release are free to reclaim the sandbox
+	// predicate, so idle release are free to reclaim the sandbox
 	// while parked rows are still on screen — the caller wakes the session first,
 	// and this is the transition that records it. A transitional state
-	// (checkpointing/restoring) affects no row and reports not-releasable, so the
+	// (pausing/restoring) affects no row and reports not-releasable, so the
 	// turn is never left released against a session that cannot run it.
 	upd, err := tx.ExecContext(ctx, `
 UPDATE sessions
@@ -142,7 +142,7 @@ WHERE id = ?
   AND status IN (?, ?, ?, ?)`,
 		string(sessionstate.RunningActive), formatTime(p.Now), formatTime(p.Now), p.SessionID,
 		string(sessionstate.Created), string(sessionstate.RunningIdle),
-		string(sessionstate.Checkpointed), string(sessionstate.RunningActive))
+		string(sessionstate.Paused), string(sessionstate.RunningActive))
 	if err != nil {
 		return SessionRuntimeSnapshot{}, err
 	}
@@ -158,156 +158,4 @@ WHERE id = ?
 		return SessionRuntimeSnapshot{}, err
 	}
 	return snapshot, tx.Commit()
-}
-
-// RecordSteeredTurnParams describes a queued turn whose content was injected
-// into a turn that was already running.
-type RecordSteeredTurnParams struct {
-	SessionID string
-	// TurnID is the queued row the user released. It will never execute as a turn
-	// of its own.
-	TurnID int64
-	// IntoTurnID is the running turn the content was injected into.
-	IntoTurnID int64
-	Now        time.Time
-}
-
-// RecordSteeredTurnResult carries the transcript entry the steer produced.
-type RecordSteeredTurnResult struct {
-	Message Message
-	Runtime SessionRuntimeSnapshot
-}
-
-// RecordSteeredTurn retires a queued turn whose content reached the agent by
-// being steered into the running turn.
-//
-// pi's steer injects into the live turn and produces no turn of its own, so this
-// row can never be dispatched — but its content was genuinely delivered and
-// executed, just inside another turn. Retiring it as 'completed' says exactly
-// that; a 'canceled' row would claim the prompt never ran.
-//
-// The transcript entry is written here rather than left to
-// materializeTurnMessageTx, which only runs when a turn is dispatched — and this
-// turn never will be. It carries its own turn_id: messages.turn_id is a bare
-// nullable column with no uniqueness against turns, so this cannot collide with
-// the message the running turn already materialized.
-//
-// Ordering note: the steered message lands after the running turn's own prompt
-// and after whatever it has streamed so far, which is the truth — the user said
-// this mid-answer.
-func (s *Store) RecordSteeredTurn(ctx context.Context, p RecordSteeredTurnParams) (RecordSteeredTurnResult, error) {
-	if strings.TrimSpace(p.SessionID) == "" {
-		return RecordSteeredTurnResult{}, fmt.Errorf("session id is required")
-	}
-	if p.TurnID <= 0 || p.IntoTurnID <= 0 {
-		return RecordSteeredTurnResult{}, fmt.Errorf("turn id and target turn id are required")
-	}
-	if p.TurnID == p.IntoTurnID {
-		return RecordSteeredTurnResult{}, fmt.Errorf("a turn cannot be steered into itself")
-	}
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// The target must still be executing. Checked inside the transaction because
-	// the turn can end between the host writing the control command and this
-	// commit; in that race the queued row must stay queued (the caller reports the
-	// conflict) rather than being retired against a turn that already finished.
-	var targetActive int
-	if err := tx.QueryRowContext(ctx, `
-SELECT COUNT(*)
-FROM turns
-WHERE id = ?
-  AND session_id = ?
-  AND status IN ('leased', 'running')`, p.IntoTurnID, p.SessionID).Scan(&targetActive); err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	if targetActive != 1 {
-		return RecordSteeredTurnResult{}, ErrTurnNotSteerable
-	}
-	var bound int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings b JOIN turns t ON t.generation_id=b.generation_id WHERE t.id=? AND t.session_id=?`, p.IntoTurnID, p.SessionID).Scan(&bound); err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	if bound != 0 {
-		// Process-stream steering commits only from a journaled delivery result.
-		return RecordSteeredTurnResult{}, ErrTurnNotSteerable
-	}
-
-	var content string
-	if err := tx.QueryRowContext(ctx, `
-SELECT content
-FROM turns
-WHERE id = ?
-  AND session_id = ?
-  AND status = 'queued'`, p.TurnID, p.SessionID).Scan(&content); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return RecordSteeredTurnResult{}, ErrTurnNotSteerable
-		}
-		return RecordSteeredTurnResult{}, err
-	}
-
-	res, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET status = 'completed',
-    auto_dispatch = 1,
-    steered_into_turn_id = ?,
-    completed_at = ?,
-    completed_by_generation = COALESCE(
-      completed_by_generation,
-      (SELECT generation_id FROM turns WHERE id = ?)
-    ),
-    lease_owner = NULL,
-    lease_expires_at = NULL
-WHERE id = ?
-  AND session_id = ?
-  AND status = 'queued'`, p.IntoTurnID, formatTime(p.Now), p.IntoTurnID, p.TurnID, p.SessionID)
-	if err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	if affected != 1 {
-		return RecordSteeredTurnResult{}, ErrTurnNotSteerable
-	}
-
-	// materializes_message is not consulted: only a user-typed turn can be
-	// steered (the UI offers it on queue rows, and automatic continuations never
-	// appear there), and the transcript must show what the user said mid-answer.
-	messageRes, err := tx.ExecContext(ctx, `
-INSERT INTO messages (session_id, role, content, created_at, turn_id)
-VALUES (?, 'user', ?, ?, ?)`, p.SessionID, content, formatTime(p.Now), p.TurnID)
-	if err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	messageID, err := messageRes.LastInsertId()
-	if err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	snapshot, err := getSessionRuntimeSnapshot(ctx, tx, p.SessionID)
-	if err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return RecordSteeredTurnResult{}, err
-	}
-	turnID := p.TurnID
-	return RecordSteeredTurnResult{
-		Message: Message{
-			ID:        messageID,
-			SessionID: p.SessionID,
-			TurnID:    &turnID,
-			Role:      "user",
-			Content:   content,
-			CreatedAt: p.Now,
-		},
-		Runtime: snapshot,
-	}, nil
 }

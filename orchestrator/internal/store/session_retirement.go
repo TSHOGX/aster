@@ -42,13 +42,7 @@ func (s *Store) BeginSessionRetirement(ctx context.Context, session, owner strin
 	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
 		return result, err
 	}
-	var backend string
-	if err := tx.QueryRowContext(ctx, `SELECT backend FROM session_execution_backends WHERE session_id=?`, session).Scan(&backend); err != nil {
-		return result, err
-	}
-	if backend != "khora" {
-		return result, execution.ErrOperationConflict
-	}
+
 	now := formatTime(time.Now().UTC())
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO session_retirements(session_id,state,created_at) VALUES(?,'requested',?)`, session, now); err != nil {
 		return result, err

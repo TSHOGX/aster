@@ -214,7 +214,7 @@ func TestResumeFailedTurnRequiresFailedTurn(t *testing.T) {
 	}
 	if _, err := st.CompleteTurn(ctx, CompleteTurnParams{
 		SessionID: "sess_r", GenerationID: "gen_r", TurnID: turnID, Owner: "owner",
-		TerminalStatus: "completed", Now: now.Add(time.Second),
+		TerminalStatus: "canceled", Now: now.Add(time.Second),
 	}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestResumeFailedTurnRequiresFailedTurn(t *testing.T) {
 	if _, err := st.ResumeFailedTurn(ctx, ResumeFailedTurnParams{
 		SessionID: "sess_r", TurnID: turnID, Content: "carry on", MaxAttempts: 2,
 	}); !errors.Is(err, ErrTurnNotResumable) {
-		t.Fatalf("expected ErrTurnNotResumable for a completed turn, got %v", err)
+		t.Fatalf("expected ErrTurnNotResumable for a canceled turn, got %v", err)
 	}
 }
 

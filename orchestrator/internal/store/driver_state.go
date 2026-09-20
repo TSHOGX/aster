@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -16,9 +15,8 @@ import (
 )
 
 const (
-	driverStateDigestPrefix            = "driver_state_digest_v1\n"
-	checkpointDriverStatesDigestPrefix = "checkpoint_driver_states_digest_v1\n"
-	emptyDriverStateKind               = "empty"
+	driverStateDigestPrefix = "driver_state_digest_v1\n"
+	emptyDriverStateKind    = "empty"
 )
 
 type DriverStateToken struct {
@@ -86,49 +84,6 @@ func DriverStateDigest(canonicalPayload []byte) string {
 	return "sha256:" + fmt.Sprintf("%x", sum[:])
 }
 
-func CheckpointDriverStatesDigest(generationID string, states []DriverStateToken) (string, error) {
-	if strings.TrimSpace(generationID) == "" {
-		return "", fmt.Errorf("generation id is required")
-	}
-	if len(states) == 0 {
-		return "", fmt.Errorf("checkpoint driver state set is required")
-	}
-	type driver struct {
-		DriverID     string `json:"driver_id"`
-		StateDigest  string `json:"state_digest"`
-		StateVersion int    `json:"state_version"`
-	}
-	drivers := make([]driver, 0, len(states))
-	for _, state := range states {
-		if _, ok := agents.Lookup(state.DriverID); !ok {
-			return "", fmt.Errorf("unsupported driver %q", state.DriverID)
-		}
-		if !strings.HasPrefix(strings.TrimSpace(state.StateDigest), "sha256:") {
-			return "", fmt.Errorf("driver state digest is required")
-		}
-		if state.StateVersion <= 0 {
-			return "", fmt.Errorf("driver state version must be positive")
-		}
-		drivers = append(drivers, driver{
-			DriverID:     strings.TrimSpace(state.DriverID),
-			StateDigest:  strings.TrimSpace(state.StateDigest),
-			StateVersion: state.StateVersion,
-		})
-	}
-	sort.Slice(drivers, func(i, j int) bool { return drivers[i].DriverID < drivers[j].DriverID })
-	payload := map[string]any{
-		"schema_version": 1,
-		"generation_id":  strings.TrimSpace(generationID),
-		"drivers":        drivers,
-	}
-	canonical, err := canonicaljson.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(append([]byte(checkpointDriverStatesDigestPrefix), canonical...))
-	return "sha256:" + fmt.Sprintf("%x", sum[:]), nil
-}
-
 func canonicalBootstrapDriverState(driverID string) ([]byte, string, error) {
 	codec, ok := driverStateCodecFor(driverID)
 	if !ok {
@@ -162,7 +117,7 @@ func canonicalDriverStatePayload(value any, driverID string) ([]byte, string, er
 }
 
 func validateDriverStatePayload(canonicalPayload []byte, driverID string) error {
-	object, err := decodeSandboxContractObject(canonicalPayload)
+	object, err := decodeDriverStateObject(canonicalPayload)
 	if err != nil {
 		return err
 	}
@@ -209,10 +164,9 @@ func ensureAllocationDriverStateTx(ctx context.Context, tx *sql.Tx, sessionID, g
 	if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(*)
 FROM runtime_generations g
-LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
 LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
-  AND a.driver_id = ?
+  AND b.driver_id = ?
   AND g.generation_id <> ?`, sessionID, driverID, generationID).Scan(&priorGenerations); err != nil {
 		return DriverStateToken{}, err
 	}
@@ -284,9 +238,8 @@ func validateDriverStateRow(state driverStateRow) error {
 func currentDriverStateTokenTx(ctx context.Context, tx *sql.Tx, sessionID, generationID string) (DriverStateToken, error) {
 	var driverID string
 	if err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(b.driver_id,a.driver_id)
+SELECT b.driver_id
 FROM runtime_generations g
-LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
 LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
   AND g.generation_id = ?`, sessionID, generationID).Scan(&driverID); err != nil {
@@ -297,14 +250,6 @@ WHERE g.session_id = ?
 		return DriverStateToken{}, err
 	}
 	return DriverStateToken{DriverID: driverID, StateDigest: state.StateDigest, StateVersion: state.StateVersion}, nil
-}
-
-func checkpointDriverStatesDigestTx(ctx context.Context, tx *sql.Tx, sessionID, generationID string) (string, error) {
-	token, err := currentDriverStateTokenTx(ctx, tx, sessionID, generationID)
-	if err != nil {
-		return "", err
-	}
-	return CheckpointDriverStatesDigest(generationID, []DriverStateToken{token})
 }
 
 func applyDriverStateUpdateTx(ctx context.Context, tx *sql.Tx, p CompleteTurnParams) error {
@@ -329,10 +274,9 @@ func applyDriverStateUpdateTx(ctx context.Context, tx *sql.Tx, p CompleteTurnPar
 
 	var generationDriver string
 	if err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(b.driver_id,a.driver_id)
+SELECT b.driver_id
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
-LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
 LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
   AND g.generation_id = ?
@@ -406,10 +350,9 @@ func synthesizeCompletedDriverStateUpdateTx(ctx context.Context, tx *sql.Tx, p C
 	}
 	var driverID string
 	if err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(b.driver_id,a.driver_id)
+SELECT b.driver_id
 FROM runtime_generations g
 JOIN sessions s ON s.id = g.session_id
-LEFT JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
 LEFT JOIN execution_bindings b ON b.generation_id=g.generation_id
 WHERE g.session_id = ?
   AND g.generation_id = ?
@@ -462,4 +405,18 @@ WHERE id = ?
 // CanonicalDriverStatePayload validates portable state metadata without I/O.
 func CanonicalDriverStatePayload(value any, driverID string) ([]byte, string, error) {
 	return canonicalDriverStatePayload(value, driverID)
+}
+
+func decodeDriverStateObject(raw []byte) (map[string]any, error) {
+	var obj map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	err := decoder.Decode(&obj)
+	if err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, fmt.Errorf("driver state object required")
+	}
+	return obj, nil
 }

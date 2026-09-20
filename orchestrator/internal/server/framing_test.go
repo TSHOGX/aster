@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -13,7 +15,7 @@ import (
 // blank the preview iframe inside a third-party embed, and any X-Frame-Options at
 // all would disagree with the CSP and make browsers block the frame outright.
 func TestPreviewFramingAllowsAnyAncestorAndOmitsXFrameOptions(t *testing.T) {
-	s := &Server{cfg: config.Config{}}
+	s := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: config.Config{}}
 	rec := httptest.NewRecorder()
 	s.setPreviewFraming(rec, []string{"default-src 'none'"})
 
@@ -34,7 +36,7 @@ func TestPreviewFramingAllowsAnyAncestorAndOmitsXFrameOptions(t *testing.T) {
 // exfiltration blocks are the whole defense: connect-src 'none' is what stops a
 // shared page phoning home once a hostile parent has framed it.
 func TestSharedHTMLKeepsExfiltrationBlocksWhenFramingIsOpen(t *testing.T) {
-	s := &Server{cfg: config.Config{}}
+	s := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: config.Config{}}
 	rec := httptest.NewRecorder()
 	s.applySharedFileContentHeaders(rec, "report.html")
 
@@ -52,7 +54,7 @@ func TestSharedHTMLKeepsExfiltrationBlocksWhenFramingIsOpen(t *testing.T) {
 // Only HTML and PDF are framed by the UI. Everything else stays hard-denied:
 // opening framing for previews is not a reason to make a CSV framable.
 func TestNonPreviewableStaysDenied(t *testing.T) {
-	s := &Server{cfg: config.Config{}}
+	s := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: config.Config{}}
 	rec := httptest.NewRecorder()
 	s.applySharedFileContentHeaders(rec, "data.csv")
 

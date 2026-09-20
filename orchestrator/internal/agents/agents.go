@@ -1,11 +1,7 @@
 package agents
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-	"io/fs"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -18,20 +14,14 @@ const (
 )
 
 const (
-	PiCodingAgentDir       = "/agent-home/.pi/agent"
-	PiSessionDir           = PiCodingAgentDir + "/sessions"
-	PiControlConfigDir     = "/harness-control/driver/pi"
-	PiModelsConfigPath     = PiControlConfigDir + "/models.json"
-	PiSettingsConfigPath   = PiControlConfigDir + "/settings.json"
-	PiModelsSandboxPath    = PiCodingAgentDir + "/models.json"
-	PiSettingsSandboxPath  = PiCodingAgentDir + "/settings.json"
-	PiHarnessProxyProvider = "harness_anthropic_proxy"
-	PiPackageName          = "@earendil-works/pi-coding-agent"
-	PiPackageVersion       = "0.77.0"
-	PiPackageShasum        = "627664c042507babf8a134a3770285272ccae5d8"
-	PiPackageIntegrity     = "sha512-huS+k+dhQRR9PlTK7crLfeSRUw3a96V6JYfP0ZH3Zkko/m10gsYk8dKQmwScSy5Dll516pXorz19BURfD6S2qQ=="
-	PiEventSchemaVersion   = "pi_rpc_events_v1.0"
-	PiBinaryPath           = "/usr/local/bin/pi"
+	PiCodingAgentDir     = "/root/.pi/agent"
+	PiSessionDir         = PiCodingAgentDir + "/sessions"
+	PiPackageName        = "@earendil-works/pi-coding-agent"
+	PiPackageVersion     = "0.77.0"
+	PiPackageShasum      = "627664c042507babf8a134a3770285272ccae5d8"
+	PiPackageIntegrity   = "sha512-huS+k+dhQRR9PlTK7crLfeSRUw3a96V6JYfP0ZH3Zkko/m10gsYk8dKQmwScSy5Dll516pXorz19BURfD6S2qQ=="
+	PiEventSchemaVersion = "pi_rpc_events_v1.0"
+	PiBinaryPath         = "/usr/local/bin/pi"
 
 	ShellBinaryPath = "/usr/local/bin/harness-shell-agent"
 )
@@ -68,314 +58,30 @@ type DriverPackageFacts struct {
 	EventSchemaVersion string
 }
 
-type DriverConfigMaterializationSpec struct {
-	Name                        string
-	MountName                   string
-	ControlRelativePath         string
-	SourceProjectionPath        string
-	SandboxDestination          string
-	DestinationMutableBySandbox bool
-	MountType                   string
-	MountMode                   string
-	MountExact                  bool
-}
-
-type DriverRuntimeEnvVarSpec struct {
-	Name  string
-	Value string
-}
-
-type DriverRuntimeHomeDirSpec struct {
-	Label                 string
-	AgentHomeRelativePath string
-	Mode                  fs.FileMode
-}
-
-type DriverRuntimeControlManifestSpec struct {
-	Fields map[string]any
-}
-
-type DriverRuntimeLayoutSpec struct {
-	Env             []DriverRuntimeEnvVarSpec
-	HomeDirs        []DriverRuntimeHomeDirSpec
-	ControlManifest DriverRuntimeControlManifestSpec
-}
-
-func (s DriverConfigMaterializationSpec) HostSourcePath(controlDir string) string {
-	return filepath.Join(strings.TrimSpace(controlDir), filepath.FromSlash(s.ControlRelativePath))
-}
-
 type DriverSpec struct {
-	ID                          ID
-	Label                       string
-	Kind                        DriverKind
-	BridgeProtocol              string
-	BridgeProtocolVersion       int
-	TurnInputSchema             string
-	OutputSchema                string
-	RequiredRuntimeCapabilities []string
-	ModelAccess                 bool
-	OutputFormat                string
-	SupportsInterrupt           bool
-	SupportsCompaction          bool
-	Phase10Support              []string
-	BinaryPath                  string
-	PackageFacts                DriverPackageFacts
-	ConfigMaterializationSpecs  []DriverConfigMaterializationSpec
-	RuntimeLayoutSpec           *DriverRuntimeLayoutSpec
-}
-
-func DriverConfigMaterializationSpecsFor(driver ID) []DriverConfigMaterializationSpec {
-	spec, ok := driverSpecs[ID(strings.TrimSpace(string(driver)))]
-	if !ok || len(spec.ConfigMaterializationSpecs) == 0 {
-		return nil
-	}
-	return cloneDriverConfigMaterializationSpecs(spec.ConfigMaterializationSpecs)
-}
-
-func AllDriverConfigMaterializationSpecs() []DriverConfigMaterializationSpec {
-	var out []DriverConfigMaterializationSpec
-	drivers := make([]string, 0, len(driverSpecs))
-	for driver, spec := range driverSpecs {
-		if len(spec.ConfigMaterializationSpecs) == 0 {
-			continue
-		}
-		drivers = append(drivers, string(driver))
-	}
-	sort.Strings(drivers)
-	for _, driver := range drivers {
-		out = append(out, DriverConfigMaterializationSpecsFor(ID(driver))...)
-	}
-	return out
-}
-
-func DriverRuntimeLayoutSpecFor(driver ID) (DriverRuntimeLayoutSpec, bool) {
-	spec, ok := driverSpecs[ID(strings.TrimSpace(string(driver)))]
-	if !ok || spec.RuntimeLayoutSpec == nil {
-		return DriverRuntimeLayoutSpec{}, false
-	}
-	return cloneDriverRuntimeLayoutSpec(*spec.RuntimeLayoutSpec), true
-}
-
-type SnapshotPolicySpec struct {
-	ProviderSupportsSnapshotDisk   bool
-	ProviderSupportsSnapshotMemory bool
-	ProviderSupportsBranch         bool
-	BranchCountLimit               int
-	MustQuiesceProcesses           bool
-	StreamDisconnectsOnSnapshot    bool
-	SnapshotSemantic               string
-}
-
-type RuntimeProviderSpec struct {
-	ID                   string
-	Label                string
-	IsolationKind        string
-	ProviderProfileID    string
-	TemplateRef          string
-	CapabilityVocabulary string
-	Capabilities         []string
-	SnapshotPolicy       SnapshotPolicySpec
-}
-
-type SecretGrantSpec struct {
-	Domain        string
-	GrantID       string
-	Scope         string
-	ExposureMode  string
-	TTLMaxSeconds int64
+	ID                                    ID
+	Label                                 string
+	Kind                                  DriverKind
+	BridgeProtocol                        string
+	BridgeProtocolVersion                 int
+	TurnInputSchema, OutputSchema         string
+	RequiredRuntimeCapabilities           []string
+	ModelAccess                           bool
+	OutputFormat                          string
+	SupportsInterrupt, SupportsCompaction bool
+	BinaryPath                            string
+	PackageFacts                          DriverPackageFacts
 }
 
 var driverSpecs = map[ID]DriverSpec{
-	Pi: normalizeDriverSpec(DriverSpec{
-		ID:                    Pi,
-		Label:                 "Pi",
-		Kind:                  DriverKindAgent,
-		BridgeProtocol:        "harness_bridge_v2",
-		BridgeProtocolVersion: 2,
-		TurnInputSchema:       "RunTurn",
-		OutputSchema:          PiEventSchemaVersion,
-		RequiredRuntimeCapabilities: []string{
-			"exec_stream",
-			"filesystem_rw",
-			"kill",
-			"logs",
-			"network_policy",
-			"snapshot_disk",
-			"stdin",
-		},
-		ModelAccess:  true,
-		OutputFormat: PiEventSchemaVersion,
-		// pi's RPC protocol carries `abort`, so a turn is stopped in place: the turn
-		// ends with stopReason "aborted" and the pi process, its session history and
-		// the sandbox all survive. This said false while Stop was implemented as
-		// generation teardown, which read as a property of pi rather than of our
-		// bridge client — the real gap was ours, and it is closed.
-		SupportsInterrupt:  true,
-		SupportsCompaction: false,
-		Phase10Support: []string{
-			"single_driver_turns",
-			"system_prompt:unsupported",
-			"compaction:unsupported",
-			"skills:unsupported",
-			"hooks_mcp:unsupported",
-			"interrupt:supported",
-		},
-		BinaryPath: PiBinaryPath,
-		PackageFacts: DriverPackageFacts{
-			Name:               PiPackageName,
-			Version:            PiPackageVersion,
-			Shasum:             PiPackageShasum,
-			Integrity:          PiPackageIntegrity,
-			EventSchemaVersion: PiEventSchemaVersion,
-		},
-		ConfigMaterializationSpecs: []DriverConfigMaterializationSpec{
-			{
-				Name:                        "models",
-				MountName:                   "pi_models_config",
-				ControlRelativePath:         "driver/pi/models.json",
-				SourceProjectionPath:        PiModelsConfigPath,
-				SandboxDestination:          PiModelsSandboxPath,
-				DestinationMutableBySandbox: false,
-				MountType:                   "bind",
-				MountMode:                   "ro",
-				MountExact:                  true,
-			},
-			{
-				Name:                        "settings",
-				MountName:                   "pi_settings_config",
-				ControlRelativePath:         "driver/pi/settings.json",
-				SourceProjectionPath:        PiSettingsConfigPath,
-				SandboxDestination:          PiSettingsSandboxPath,
-				DestinationMutableBySandbox: false,
-				MountType:                   "bind",
-				MountMode:                   "ro",
-				MountExact:                  true,
-			},
-		},
-		RuntimeLayoutSpec: &DriverRuntimeLayoutSpec{
-			Env: []DriverRuntimeEnvVarSpec{
-				{Name: "PI_CODING_AGENT_DIR", Value: PiCodingAgentDir},
-				{Name: "PI_CODING_AGENT_SESSION_DIR", Value: PiSessionDir},
-				{Name: "PI_OFFLINE", Value: "1"},
-				{Name: "PI_SKIP_VERSION_CHECK", Value: "1"},
-				{Name: "PI_TELEMETRY", Value: "0"},
-			},
-			HomeDirs: []DriverRuntimeHomeDirSpec{
-				{Label: "pi root dir", AgentHomeRelativePath: ".pi", Mode: 0o750},
-				{Label: "pi agent dir", AgentHomeRelativePath: ".pi/agent", Mode: 0o750},
-				{Label: "pi session dir", AgentHomeRelativePath: ".pi/agent/sessions", Mode: 0o750},
-			},
-			ControlManifest: DriverRuntimeControlManifestSpec{
-				Fields: map[string]any{
-					"pi_coding_agent_dir":         PiCodingAgentDir,
-					"pi_coding_agent_session_dir": PiSessionDir,
-					"pi_offline":                  true,
-					"pi_skip_version_check":       true,
-					"pi_telemetry_disabled":       true,
-				},
-			},
-		},
-	}),
-	Shell: normalizeDriverSpec(DriverSpec{
-		ID:                    Shell,
-		Label:                 "Shell",
-		Kind:                  DriverKindShell,
-		BridgeProtocol:        "harness_bridge_v2",
-		BridgeProtocolVersion: 2,
-		TurnInputSchema:       "RunTurn",
-		OutputSchema:          "shell_pty_v1",
-		RequiredRuntimeCapabilities: []string{
-			"exec_stream",
-			"filesystem_rw",
-			"kill",
-			"logs",
-			"network_policy",
-			"snapshot_disk",
-			"stdin",
-		},
-		ModelAccess:        false,
-		OutputFormat:       "shell_pty",
-		SupportsInterrupt:  true,
-		SupportsCompaction: false,
-		Phase10Support:     []string{"single_driver_turns"},
-		BinaryPath:         ShellBinaryPath,
-	}),
+	Pi:    {ID: Pi, Label: "Pi", Kind: DriverKindAgent, BridgeProtocol: "harness_bridge_v2", BridgeProtocolVersion: 2, TurnInputSchema: "RunTurn", OutputSchema: PiEventSchemaVersion, RequiredRuntimeCapabilities: []string{"exec_stream", "filesystem_rw", "kill", "logs", "network_policy", "stdin"}, ModelAccess: true, OutputFormat: PiEventSchemaVersion, SupportsInterrupt: true, BinaryPath: PiBinaryPath, PackageFacts: DriverPackageFacts{Name: PiPackageName, Version: PiPackageVersion, Shasum: PiPackageShasum, Integrity: PiPackageIntegrity, EventSchemaVersion: PiEventSchemaVersion}},
+	Shell: {ID: Shell, Label: "Shell", Kind: DriverKindShell, BridgeProtocol: "harness_bridge_v2", BridgeProtocolVersion: 2, TurnInputSchema: "RunTurn", OutputSchema: "shell_pty_v1", RequiredRuntimeCapabilities: []string{"exec_stream", "filesystem_rw", "kill", "logs", "network_policy", "stdin"}, OutputFormat: "shell_pty", SupportsInterrupt: true, BinaryPath: ShellBinaryPath},
 }
 
-var runtimeProviderSpecs = map[string]RuntimeProviderSpec{
-	"local_runsc": normalizeRuntimeProviderSpec(RuntimeProviderSpec{
-		ID:                   "local_runsc",
-		Label:                "Local runsc",
-		IsolationKind:        "gvisor",
-		ProviderProfileID:    "local_runsc_default",
-		TemplateRef:          "default",
-		CapabilityVocabulary: "1",
-		Capabilities: []string{
-			"exec_stream",
-			"filesystem_rw",
-			"kill",
-			"logs",
-			"network_policy",
-			"snapshot_disk",
-			"stdin",
-		},
-		SnapshotPolicy: SnapshotPolicySpec{
-			ProviderSupportsSnapshotDisk:   true,
-			ProviderSupportsSnapshotMemory: false,
-			ProviderSupportsBranch:         false,
-			BranchCountLimit:               0,
-			MustQuiesceProcesses:           true,
-			StreamDisconnectsOnSnapshot:    true,
-			SnapshotSemantic:               "generation_checkpoint_restore",
-		},
-	}),
+func cloneDriverSpec(s DriverSpec) DriverSpec {
+	s.RequiredRuntimeCapabilities = append([]string(nil), s.RequiredRuntimeCapabilities...)
+	return s
 }
-
-var secretGrantSpecs = map[string]SecretGrantSpec{
-	secretGrantSpecKey("model_provider", "anthropic_messages"): {
-		Domain:        "model_provider",
-		GrantID:       "model_provider:anthropic_proxy",
-		Scope:         "anthropic_messages",
-		ExposureMode:  "proxy_only",
-		TTLMaxSeconds: 86400,
-	},
-	// data_provider covers host-side data-store gateways. As with the model
-	// proxy, the real credential stays on the host and the sandbox holds only a
-	// fake one — hence exposure gateway_only: there is nothing to drop into the
-	// sandbox, and a grant asking for anything else is a misconfiguration.
-	//
-	// Registering a domain here does NOT change the credential-policy digest.
-	// That test's input is a hardcoded model-provider-only policy, and it guards
-	// normalizeCredentialPolicy's field set and ordering rather than this
-	// registry. Do not regenerate the digest literal on account of this entry.
-	secretGrantSpecKey("data_provider", "doris_mysql"): {
-		Domain:       "data_provider",
-		GrantID:      "data_provider:doris_gateway",
-		Scope:        "doris_mysql",
-		ExposureMode: "gateway_only",
-		// Access is bounded by the sandbox's own active turn, re-checked per
-		// query by source IP, so this TTL is not the limiting factor.
-		TTLMaxSeconds: 86400,
-	},
-	// The OBS gateway is the same shape as the Doris one: the real AK/SK stay on
-	// the host and the sandbox holds a per-generation fake pair, so the exposure
-	// mode is gateway_only for the same reason — there is nothing to drop into
-	// the sandbox, and a grant asking for anything else is a misconfiguration.
-	//
-	// Reuses the data_provider domain deliberately. The grant-semantics switch
-	// already treats every data_provider grant identically, so a separate
-	// object_store domain would only add a case that behaves the same.
-	secretGrantSpecKey("data_provider", "obs_s3_readonly"): {
-		Domain:       "data_provider",
-		GrantID:      "data_provider:obs_gateway",
-		Scope:        "obs_s3_readonly",
-		ExposureMode: "gateway_only",
-		// Bounded per request by the sandbox's active turn, same as Doris.
-		TTLMaxSeconds: 86400,
-	},
-}
-
 func Lookup(value string) (Definition, bool) {
 	spec, ok := DriverSpecFor(value)
 	if !ok {
@@ -388,7 +94,6 @@ func Lookup(value string) (Definition, bool) {
 	}
 	return Definition{ID: spec.ID, Label: spec.Label, Protocol: protocol}, true
 }
-
 func DriverSpecFor(value string) (DriverSpec, bool) {
 	spec, ok := driverSpecs[ID(strings.TrimSpace(value))]
 	if !ok {
@@ -396,7 +101,6 @@ func DriverSpecFor(value string) (DriverSpec, bool) {
 	}
 	return cloneDriverSpec(spec), true
 }
-
 func AllDriverSpecs() []DriverSpec {
 	ids := make([]string, 0, len(driverSpecs))
 	for id := range driverSpecs {
@@ -409,55 +113,6 @@ func AllDriverSpecs() []DriverSpec {
 	}
 	return specs
 }
-
-func RuntimeProviderSpecFor(value string) (RuntimeProviderSpec, bool) {
-	spec, ok := runtimeProviderSpecs[strings.TrimSpace(value)]
-	if !ok {
-		return RuntimeProviderSpec{}, false
-	}
-	return cloneRuntimeProviderSpec(spec), true
-}
-
-func SecretGrantSpecFor(domain, scope string) (SecretGrantSpec, bool) {
-	spec, ok := secretGrantSpecs[secretGrantSpecKey(domain, scope)]
-	if !ok {
-		return SecretGrantSpec{}, false
-	}
-	return spec, true
-}
-
-func EnsureDriverSupportedByProvider(driverID, providerID string) error {
-	driver, ok := DriverSpecFor(driverID)
-	if !ok {
-		return fmt.Errorf("unsupported driver %q", driverID)
-	}
-	provider, ok := RuntimeProviderSpecFor(providerID)
-	if !ok {
-		return fmt.Errorf("unsupported runtime provider %q", providerID)
-	}
-	capabilities := map[string]struct{}{}
-	for _, capability := range provider.Capabilities {
-		capabilities[capability] = struct{}{}
-	}
-	for _, required := range driver.RequiredRuntimeCapabilities {
-		if _, ok := capabilities[required]; !ok {
-			return fmt.Errorf("runtime provider %s missing capability %s for driver %s", provider.ID, required, driver.ID)
-		}
-	}
-	return nil
-}
-
-func CapabilityDigest(provider RuntimeProviderSpec) string {
-	payload := map[string]any{
-		"provider_id":        provider.ID,
-		"capabilities":       append([]string(nil), provider.Capabilities...),
-		"vocabulary_version": provider.CapabilityVocabulary,
-	}
-	data, _ := json.Marshal(payload)
-	sum := sha256.Sum256(data)
-	return "sha256:" + fmt.Sprintf("%x", sum[:])
-}
-
 func CanonicalDriverID(value string) (ID, error) {
 	trimmed := strings.TrimSpace(value)
 	switch ID(trimmed) {
@@ -466,86 +121,4 @@ func CanonicalDriverID(value string) (ID, error) {
 	default:
 		return "", fmt.Errorf("unsupported driver %q", value)
 	}
-}
-
-func PublicAgentForDriver(value string) (string, bool) {
-	switch ID(strings.TrimSpace(value)) {
-	case Pi, Shell:
-		return strings.TrimSpace(value), true
-	default:
-		return "", false
-	}
-}
-
-func normalizeDriverSpec(spec DriverSpec) DriverSpec {
-	sort.Strings(spec.RequiredRuntimeCapabilities)
-	sort.Strings(spec.Phase10Support)
-	return spec
-}
-
-func normalizeRuntimeProviderSpec(spec RuntimeProviderSpec) RuntimeProviderSpec {
-	sort.Strings(spec.Capabilities)
-	return spec
-}
-
-func secretGrantSpecKey(domain, scope string) string {
-	return strings.TrimSpace(domain) + "\x00" + strings.TrimSpace(scope)
-}
-
-func cloneDriverSpec(spec DriverSpec) DriverSpec {
-	spec.RequiredRuntimeCapabilities = append([]string(nil), spec.RequiredRuntimeCapabilities...)
-	spec.Phase10Support = append([]string(nil), spec.Phase10Support...)
-	spec.ConfigMaterializationSpecs = cloneDriverConfigMaterializationSpecs(spec.ConfigMaterializationSpecs)
-	if spec.RuntimeLayoutSpec != nil {
-		layout := cloneDriverRuntimeLayoutSpec(*spec.RuntimeLayoutSpec)
-		spec.RuntimeLayoutSpec = &layout
-	}
-	return spec
-}
-
-func cloneDriverConfigMaterializationSpecs(specs []DriverConfigMaterializationSpec) []DriverConfigMaterializationSpec {
-	if len(specs) == 0 {
-		return nil
-	}
-	out := make([]DriverConfigMaterializationSpec, len(specs))
-	copy(out, specs)
-	return out
-}
-
-func cloneDriverRuntimeLayoutSpec(spec DriverRuntimeLayoutSpec) DriverRuntimeLayoutSpec {
-	spec.Env = append([]DriverRuntimeEnvVarSpec(nil), spec.Env...)
-	spec.HomeDirs = append([]DriverRuntimeHomeDirSpec(nil), spec.HomeDirs...)
-	spec.ControlManifest.Fields = cloneDriverRuntimeControlManifestFields(spec.ControlManifest.Fields)
-	return spec
-}
-
-func cloneDriverRuntimeControlManifestFields(fields map[string]any) map[string]any {
-	if len(fields) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(fields))
-	for key, value := range fields {
-		out[key] = cloneDriverRuntimeControlManifestValue(value)
-	}
-	return out
-}
-
-func cloneDriverRuntimeControlManifestValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return cloneDriverRuntimeControlManifestFields(typed)
-	case []any:
-		out := make([]any, len(typed))
-		for i, item := range typed {
-			out[i] = cloneDriverRuntimeControlManifestValue(item)
-		}
-		return out
-	default:
-		return value
-	}
-}
-
-func cloneRuntimeProviderSpec(spec RuntimeProviderSpec) RuntimeProviderSpec {
-	spec.Capabilities = append([]string(nil), spec.Capabilities...)
-	return spec
 }

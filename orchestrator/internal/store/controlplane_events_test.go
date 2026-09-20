@@ -16,7 +16,7 @@ func TestAppendEventsBatchAppendsInOrder(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	now := time.Now().UTC()
-	allocation, turnID, _ := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_batch_order", now)
+	allocation, turnID, _ := createRunningTurn(t, ctx, st, owner.UUID, "sess_batch_order", now)
 
 	events := make([]AppendEventParams, 0, 5)
 	for i := int64(1); i <= 5; i++ {
@@ -88,7 +88,7 @@ func TestAppendEventsBatchIsolatesAFailingEvent(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	now := time.Now().UTC()
-	allocation, turnID, _ := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_batch_isolate", now)
+	allocation, turnID, _ := createRunningTurn(t, ctx, st, owner.UUID, "sess_batch_isolate", now)
 
 	first := int64(1)
 	conflicting := int64(1)
@@ -156,7 +156,7 @@ func TestAppendEventsBatchIdenticalReplayIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	now := time.Now().UTC()
-	allocation, turnID, _ := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_batch_replay", now)
+	allocation, turnID, _ := createRunningTurn(t, ctx, st, owner.UUID, "sess_batch_replay", now)
 
 	sequence := int64(1)
 	event := AppendEventParams{
@@ -194,7 +194,7 @@ func TestAppendEventsBatchEnforcesTurnCAS(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	now := time.Now().UTC()
-	allocation, turnID, _ := createRunningProxyTurn(t, ctx, st, owner.UUID, "sess_batch_cas", now)
+	allocation, turnID, _ := createRunningTurn(t, ctx, st, owner.UUID, "sess_batch_cas", now)
 
 	sequence := int64(1)
 	results, err := st.AppendEventsBatch(ctx, []AppendEventParams{{

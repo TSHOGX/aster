@@ -16,7 +16,6 @@ type Repository interface {
 	execution.InspectionRepository
 	workspace.ReadLeaseRepository
 	GetSessionEnvironment(context.Context, string) (execution.Environment, error)
-	SessionExecutionBackend(context.Context, string) (string, error)
 }
 type Backend interface {
 	sandbox.Lifecycle
@@ -35,13 +34,7 @@ func (r Reader) OpenSession(ctx context.Context, session, owner, path string) (i
 	if _, err := workspace.CleanPath(path); err != nil {
 		return nil, workspace.File{}, err
 	}
-	selected, err := r.Repository.SessionExecutionBackend(ctx, session)
-	if err != nil {
-		return nil, workspace.File{}, err
-	}
-	if selected != "khora" {
-		return nil, workspace.File{}, execution.ErrOperationConflict
-	}
+
 	environment, err := r.Repository.GetSessionEnvironment(ctx, session)
 	if err != nil {
 		return nil, workspace.File{}, err

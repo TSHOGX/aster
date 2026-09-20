@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/execution"
@@ -26,6 +25,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	sdk "github.com/TSHOGX/khora/pkg/khora"
 )
 
 func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.T) {
@@ -65,7 +66,7 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 	if err := st.WriteOwner(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
-	app := server.New(config.Config{MaxSessions: 2, MaxEditBytes: 1 << 20, MaxUploadBytes: 1 << 20, MaxUploadFiles: 8}, st, nil, nil, events.NewHub(), slog.Default())
+	app := server.New(config.Config{MaxSessions: 2, MaxEditBytes: 1 << 20, MaxUploadBytes: 1 << 20, MaxUploadFiles: 8}, st, events.NewHub(), slog.Default())
 	flows := gateway.NewFlows()
 	var reported sync.Map
 	report := func(scope string, err error) {
@@ -74,7 +75,7 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 			t.Log(message)
 		}
 	}
-	runtime, err := Attach(ctx, app, st, Options{Backend: backend, Plans: plans, Routes: flows, Grants: flows, BackendName: "composition-engine", OwnerUUID: owner.UUID, NewSessionBackend: "khora", PreparedRoot: filepath.Join(root, "prepared"), MaxActive: 2, InventoryLimit: 10000, LeaseTTL: time.Minute, PollInterval: 50 * time.Millisecond, EventInterval: 50 * time.Millisecond, ActionTimeout: 5 * time.Second, CaptureWindow: time.Minute, InventoryInterval: 100 * time.Millisecond, OnError: report})
+	runtime, err := Attach(ctx, app, st, Options{Backend: backend, Plans: plans, Routes: flows, Grants: flows, BackendName: "composition-engine", OwnerUUID: owner.UUID, PreparedRoot: filepath.Join(root, "prepared"), MaxActive: 2, InventoryLimit: 10000, LeaseTTL: time.Minute, PollInterval: 50 * time.Millisecond, EventInterval: 50 * time.Millisecond, ActionTimeout: 5 * time.Second, CaptureWindow: time.Minute, InventoryInterval: 100 * time.Millisecond, OnError: report})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +129,15 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 		t.Fatalf("pre-turn upload: %d %s", upload.Code, upload.Body.String())
 	}
 	sent := request(http.MethodPost, "/api/sessions/"+session.ID+"/messages", `{"content":"cat /workspace/input.txt; sleep 1; cp /workspace/input.txt /workspace/result.txt"}`)
+	// Inventory may hold the session admission fence immediately after upload.
+	for deadline := time.Now().Add(5 * time.Second); sent.Code == http.StatusConflict && time.Now().Before(deadline); {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+		sent = request(http.MethodPost, "/api/sessions/"+session.ID+"/messages", `{"content":"cat /workspace/input.txt; sleep 1; cp /workspace/input.txt /workspace/result.txt"}`)
+	}
 	if sent.Code != http.StatusAccepted {
 		t.Fatalf("HTTP turn: %d %s", sent.Code, sent.Body.String())
 	}
@@ -153,12 +163,6 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 			t.Fatal(ctx.Err())
 		case <-time.After(10 * time.Millisecond):
 		}
-	}
-	if repaired, err := st.ReconcileStaleSessionStates(ctx, store.SessionRuntimeReconciliationParams{OwnerUUID: owner.UUID, Now: time.Now()}); err != nil || len(repaired) != 0 {
-		t.Fatalf("legacy repair touched retained execution: %+v %v", repaired, err)
-	}
-	if renewed, err := st.RenewLiveGenerationLeases(ctx, store.RenewLiveGenerationsParams{Owner: store.GenerationLeaseOwner(owner.UUID), LeaseTTL: time.Minute, Now: time.Now()}); err != nil || renewed != 0 {
-		t.Fatalf("legacy lease service owns retained execution: %d %v", renewed, err)
 	}
 	for {
 		status, reason, err := st.TurnStatus(ctx, session.ID, turn.ID)
@@ -219,7 +223,7 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 	}
 	for _, table := range []string{"network_profiles", "runtime_resource_instances", "session_driver_homes"} {
 		var count int
-		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+		if err := st.DBForTest().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("composition created legacy %s: %d %v", table, count, err)
 		}
 	}

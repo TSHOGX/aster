@@ -25,12 +25,32 @@ func TestExplicitConfigIndependentOfCWD(t *testing.T) {
 		t.Fatalf("auth path %s", cfg.AuthUsersPath)
 	}
 }
-func TestManagedRequiresCredentials(t *testing.T) {
-	t.Setenv("HARNESS_MANAGED", "1")
-	t.Setenv("HARNESS_AUTH_USERS_PATH", filepath.Join(t.TempDir(), "missing-auth.yaml"))
-	p := filepath.Join(t.TempDir(), "harness.yaml")
-	os.WriteFile(p, []byte("harness:\n  run_dir: /var/lib/test-harness/run\n"), 0600)
-	if _, e := LoadFile(p); e == nil {
-		t.Fatal("managed open mode accepted")
+
+func TestRemovedConfigurationIsRejected(t *testing.T) {
+	for _, key := range []string{"network", "checkpoint", "runtime", "sandbox_identity", "model_proxy", "data_proxies", "runtime_providers"} {
+		t.Run(key, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "harness.yaml")
+			if err := os.WriteFile(path, []byte("harness:\n  "+key+": {}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadFile(path); err == nil {
+				t.Fatalf("removed setting %s accepted", key)
+			}
+		})
+	}
+}
+
+func TestProductWorkerBoundsRemainValidated(t *testing.T) {
+	for _, body := range []string{
+		"scheduler:\n    worker_count: 0", "scheduler:\n    lease_ttl: 0s", "scheduler:\n    max_retries: -1", "scheduler:\n    max_pending_runs_per_schedule: 0",
+		"bridge:\n    turn_resume:\n      enabled: true\n      max_attempts: 0", "bridge:\n    turn_resume:\n      backoff: -1s",
+	} {
+		p := filepath.Join(t.TempDir(), "harness.yaml")
+		if err := os.WriteFile(p, []byte("harness:\n  "+body+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadFile(p); err == nil {
+			t.Fatalf("invalid worker configuration accepted: %s", body)
+		}
 	}
 }

@@ -296,7 +296,7 @@ func TestAllocatedServiceRoutesOnlyAuthorizeAfterExecutionAndTurnAcceptance(t *t
 	if _, err := st.AuthorizeEgressRequest(ctx, request); !errors.Is(err, egress.ErrDenied) {
 		t.Fatalf("route readiness alone granted a request: %v", err)
 	}
-	turn := claimGrantTurn(t, st, BoundBridgeStore{st}, b, "claim")
+	turn := claimGrantTurn(t, st, st, b, "claim")
 	grant, err := st.AuthorizeEgressRequest(ctx, request)
 	if err != nil {
 		t.Fatal(err)

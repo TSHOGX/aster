@@ -19,11 +19,12 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/egress"
 	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/launchplan"
 	"harness-platform/orchestrator/internal/store"
+
+	sdk "github.com/TSHOGX/khora/pkg/khora"
 )
 
 func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
@@ -75,7 +76,7 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	harnessPath := filepath.Join(root, "harness.yaml")
-	if err := os.WriteFile(harnessPath, []byte("harness:\n  session_retention: 0s\n  max_sessions: 2\n"), 0600); err != nil {
+	if err := os.WriteFile(harnessPath, []byte("harness:\n  max_sessions: 2\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(root, "orchestrator")
@@ -96,7 +97,7 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 		}
 	}
 	dbPath := filepath.Join(root, "state", "control.db")
-	environment = append(environment, "HARNESS_CONFIG_PATH="+harnessPath, "HARNESS_KHORA_DEPLOYMENT="+deploymentPath, "HARNESS_ORCHESTRATOR_ADDR="+address, "HARNESS_DB_PATH="+dbPath, "HARNESS_RUN_DIR="+filepath.Join(root, "run"), "HARNESS_AGENT_HOMES_ROOT="+filepath.Join(root, "unused-agent-homes"), "HARNESS_AGENTS_KB_PATH="+filepath.Join(root, "kb"), "HARNESS_TRAJECTORY_ROOT="+filepath.Join(root, "trajectories"), "HARNESS_SESSIONS_ROOT="+filepath.Join(root, "unused-sessions"), "HARNESS_ROOTFS_PATH="+filepath.Join(root, "missing-rootfs"), "RUNSC_ROOT="+filepath.Join(root, "unused-runsc"))
+	environment = append(environment, "HARNESS_CONFIG_PATH="+harnessPath, "HARNESS_KHORA_DEPLOYMENT="+deploymentPath, "HARNESS_ORCHESTRATOR_ADDR="+address, "HARNESS_DB_PATH="+dbPath, "HARNESS_RUN_DIR="+filepath.Join(root, "run"))
 	httpClient := &http.Client{Timeout: 8 * time.Second}
 	var process *exec.Cmd
 	var processDone chan error
@@ -387,14 +388,9 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 			t.Fatalf("unprovisioned retirement: %d %s", code, body)
 		}
 	}
-	for _, path := range []string{"unused-agent-homes", "unused-sessions", "unused-runsc", "missing-rootfs"} {
-		if _, err := os.Stat(filepath.Join(root, path)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("Khora daemon touched embedded runtime path %s: %v", path, err)
-		}
-	}
 	for _, table := range []string{"network_profiles", "runtime_resource_instances", "session_driver_homes"} {
 		var count int
-		if err := reader.DBForTest().QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+		if err := reader.DBForTest().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("daemon populated legacy %s: %d %v", table, count, err)
 		}
 	}

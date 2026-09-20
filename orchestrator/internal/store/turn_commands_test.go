@@ -84,12 +84,8 @@ func TestBoundSteeringRequiresMatchingAcknowledgedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params := RecordSteeredTurnParams{SessionID: binding.SessionID, TurnID: queued, IntoTurnID: turn.TurnID}
 	if err := st.AcknowledgeTurnCommand(ctx, binding, command.ID); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := st.RecordSteeredTurn(ctx, params); !errors.Is(err, ErrTurnNotSteerable) {
-		t.Fatalf("receipt alone retired source prompt: %v", err)
 	}
 	if _, err := st.ReleaseParkedTurn(ctx, ReleaseParkedTurnParams{SessionID: binding.SessionID, TurnID: queued}); err == nil {
 		t.Fatal("unsettled steering allowed redispatch")

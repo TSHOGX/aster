@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
-	"strings"
 	"time"
 )
 
@@ -66,14 +64,10 @@ type ClaimNextTurnParams struct {
 }
 
 type BridgeProtocolEvidence struct {
-	RequireManifestDigest bool
-	DriverID              string
-	ProtocolVersion       int
-	TurnInputSchema       string
-	AgentManifestDigest   string
-	RuntimeConfigDigest   string
-	ContractGateVersion   string
-	SandboxContractDigest string
+	DriverID            string
+	ProtocolVersion     int
+	TurnInputSchema     string
+	AgentManifestDigest string
 }
 
 type ResumeTurnParams struct {
@@ -157,14 +151,6 @@ type RenewHeartbeatParams struct {
 	Now          time.Time
 }
 
-type RenewGenerationStartLeaseParams struct {
-	SessionID    string
-	GenerationID string
-	Owner        string
-	LeaseTTL     time.Duration
-	Now          time.Time
-}
-
 type FailGenerationParams struct {
 	SessionID    string
 	GenerationID string
@@ -181,18 +167,6 @@ type FailGenerationParams struct {
 type FailGenerationResult struct {
 	EventID       int64
 	SessionStatus string
-}
-
-type FailGenerationStartParams struct {
-	SessionID      string
-	GenerationID   string
-	Owner          string
-	SessionStatus  string
-	ErrorClass     string
-	Reason         string
-	EventType      string
-	EventDedupeKey string
-	Now            time.Time
 }
 
 func (s *Store) EnqueueTurn(ctx context.Context, sessionID, content string, now time.Time) (int64, error) {
@@ -354,377 +328,6 @@ ORDER BY t.id`, sessionID, generationID)
 	return ack, tx.Commit()
 }
 
-func (s *Store) BridgeProtocolEvidence(ctx context.Context, sessionID, generationID string) (BridgeProtocolEvidence, error) {
-	record, err := getSandboxContractForGenerationWithMirrors(ctx, s.db, sessionID, generationID)
-	if err != nil {
-		return BridgeProtocolEvidence{}, err
-	}
-	if record.ContractGateVersion != SandboxContractGateDriverManifest {
-		return BridgeProtocolEvidence{}, fmt.Errorf("bridge protocol v2 requires driver manifest evidence, got %s", record.ContractGateVersion)
-	}
-	object, err := decodeSandboxContractObject(record.CanonicalPayload)
-	if err != nil {
-		return BridgeProtocolEvidence{}, err
-	}
-	driver, ok := object["driver"].(map[string]any)
-	if !ok {
-		return BridgeProtocolEvidence{}, fmt.Errorf("sandbox contract missing driver object")
-	}
-	driverID := strings.TrimSpace(stringValue(driver["driver_id"]))
-	if driverID == "" {
-		return BridgeProtocolEvidence{}, fmt.Errorf("sandbox contract missing driver_id")
-	}
-	protocolVersion := 0
-	switch value := driver["bridge_protocol_version"].(type) {
-	case json.Number:
-		parsed, err := value.Int64()
-		if err == nil {
-			protocolVersion = int(parsed)
-		}
-	case float64:
-		protocolVersion = int(value)
-	}
-	turnInputSchema := strings.TrimSpace(stringValue(driver["turn_input_schema"]))
-	inputDigests, ok := object["input_digests"].(map[string]any)
-	if !ok {
-		return BridgeProtocolEvidence{}, fmt.Errorf("sandbox contract missing input_digests")
-	}
-	agentManifestDigest := strings.TrimSpace(stringValue(inputDigests["agent_manifest_digest"]))
-	runtimeConfigDigest := strings.TrimSpace(stringValue(inputDigests["runtime_config_digest"]))
-	if !strings.HasPrefix(agentManifestDigest, "sha256:") || !strings.HasPrefix(runtimeConfigDigest, "sha256:") {
-		return BridgeProtocolEvidence{}, fmt.Errorf("bridge protocol v2 requires manifest-backed input digests")
-	}
-	return BridgeProtocolEvidence{
-		DriverID:              driverID,
-		ProtocolVersion:       protocolVersion,
-		TurnInputSchema:       turnInputSchema,
-		AgentManifestDigest:   agentManifestDigest,
-		RuntimeConfigDigest:   runtimeConfigDigest,
-		ContractGateVersion:   record.ContractGateVersion,
-		SandboxContractDigest: record.SandboxContractDigest,
-	}, nil
-}
-
-func (s *Store) ClaimNextTurn(ctx context.Context, p ClaimNextTurnParams) (TurnGrant, bool, error) {
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	replay, ok, err := claimReplay(ctx, tx, p)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	if ok {
-		replay.Replayed = true
-		return replay, true, tx.Commit()
-	}
-
-	// auto_dispatch = 1 is what makes parking real: a turn the user parked with Stop
-	// stays queued and visible but is never a claim candidate, so the worker cannot
-	// start it on its own. Releasing one flips this back (ReleaseParkedTurn), and
-	// because only the released turn is eligible, `sequence ASC` then selects it
-	// without needing any notion of priority.
-	var grant TurnGrant
-	err = tx.QueryRowContext(ctx, `
-SELECT id, sequence, content, attempt
-FROM turns
-WHERE session_id = ?
-  AND status = 'queued'
-  AND auto_dispatch = 1
-  AND lease_owner IS NULL
-ORDER BY sequence ASC
-LIMIT 1`, p.SessionID).Scan(&grant.TurnID, &grant.Sequence, &grant.Content, &grant.Attempt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return TurnGrant{}, false, tx.Commit()
-	}
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	expiresAt := p.Now.Add(p.LeaseTTL)
-
-	res, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET status = 'leased',
-    generation_id = ?,
-    lease_owner = ?,
-    lease_expires_at = ?,
-    claim_request_id = ?,
-    claim_granted_at = ?
-WHERE id = ?
-  AND session_id = ?
-  AND status = 'queued'
-  AND auto_dispatch = 1
-  AND lease_owner IS NULL
-  AND NOT EXISTS (
-    SELECT 1 FROM turns
-    WHERE generation_id = ?
-      AND status IN ('leased', 'running')
-  )
-  AND EXISTS (
-    SELECT 1 FROM runtime_generations g
-    JOIN sessions s ON s.id = g.session_id
-    JOIN runtime_resource_instances ri ON ri.generation_id = g.generation_id
-    WHERE g.generation_id = ?
-      AND g.session_id = ?
-      AND g.sandbox_contract_version = 'sandbox-isolation-v1'
-      AND g.status IN ('idle', 'active')
-      AND g.lease_owner = ?
-      AND g.lease_expires_at > ?
-      AND s.active_generation_id = ?
-      AND ri.state = 'live'
-      AND ri.sandbox_contract_version = 'sandbox-isolation-v1'
-      AND ri.contract_id = g.sandbox_contract_id
-	)`,
-		p.GenerationID, p.Owner, formatTime(expiresAt), p.RequestID, formatTime(p.Now), grant.TurnID,
-		p.SessionID, p.GenerationID, p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.GenerationID)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	if affected != 1 {
-		return TurnGrant{}, false, tx.Commit()
-	}
-	if _, err := getSandboxContractForGenerationWithMirrors(ctx, tx, p.SessionID, p.GenerationID); err != nil {
-		return TurnGrant{}, false, err
-	}
-
-	res, err = tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'active'
-WHERE generation_id = ?
-  AND session_id = ?
-  AND status IN ('idle', 'active')
-  AND lease_owner = ?
-  AND lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE id = ?
-      AND active_generation_id = ?
-  )`, p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	affected, err = res.RowsAffected()
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	if affected != 1 {
-		return TurnGrant{}, false, fmt.Errorf("generation CAS failed after turn claim")
-	}
-
-	// Register the sandbox's model-request context now, not on ack. The agent
-	// receives this grant and issues its first model call over HTTP, while its ack
-	// travels back through the bridge file queue — so the call routinely arrives
-	// first, and before this it found no context and was refused. See
-	// upsertActiveModelRequestContextTx.
-	sandboxSourceIP, err := sandboxSourceIPForGenerationTx(ctx, tx, p.SessionID, p.GenerationID)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	var modelAccessAllowed int
-	if err := tx.QueryRowContext(ctx, `
-SELECT a.model_access_allowed
-FROM runtime_generations g
-JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
-WHERE g.session_id = ?
-  AND g.generation_id = ?`, p.SessionID, p.GenerationID).Scan(&modelAccessAllowed); err != nil {
-		return TurnGrant{}, false, err
-	}
-	if err := upsertActiveModelRequestContextTx(ctx, tx, activeModelRequestContextParams{
-		SandboxSourceIP:    sandboxSourceIP,
-		SessionID:          p.SessionID,
-		GenerationID:       p.GenerationID,
-		TurnID:             grant.TurnID,
-		Owner:              p.Owner,
-		ExpiresAt:          expiresAt,
-		ModelAccessAllowed: modelAccessAllowed,
-		Now:                p.Now,
-	}); err != nil {
-		return TurnGrant{}, false, err
-	}
-
-	grant, err = turnGrantByID(ctx, tx, p.SessionID, p.GenerationID, grant.TurnID, p.Owner, p.Now)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	grant.ExpiresAt = expiresAt
-	return grant, true, tx.Commit()
-}
-
-func (s *Store) ResumeTurn(ctx context.Context, p ResumeTurnParams) (TurnGrant, bool, error) {
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	expiresAt := p.Now.Add(p.LeaseTTL)
-	res, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET lease_expires_at = ?
-WHERE id = ?
-  AND session_id = ?
-  AND generation_id = ?
-  AND status IN ('leased', 'running')
-  AND lease_owner = ?
-  AND EXISTS (
-    SELECT 1 FROM runtime_generations g
-    JOIN sessions s ON s.id = g.session_id
-    WHERE g.generation_id = ?
-      AND g.session_id = ?
-      AND g.status IN ('active', 'idle')
-      AND g.lease_owner = ?
-      AND g.lease_expires_at > ?
-      AND s.active_generation_id = ?
-  )`, formatTime(expiresAt), p.TurnID, p.SessionID, p.GenerationID, p.Owner,
-		p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.GenerationID)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	recoveringExpired := false
-	if affected != 1 {
-		if p.AckStartedGrace <= 0 {
-			return TurnGrant{}, false, tx.Commit()
-		}
-		if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(p.Owner)); err != nil {
-			return TurnGrant{}, false, err
-		}
-		cutoff := p.Now.Add(-p.AckStartedGrace)
-		res, err = tx.ExecContext(ctx, `
-UPDATE turns
-SET lease_owner = ?,
-    lease_expires_at = ?
-WHERE id = ?
-  AND session_id = ?
-  AND generation_id = ?
-  AND status = 'running'
-  AND ack_started_at IS NOT NULL
-  AND lease_expires_at IS NOT NULL
-  AND lease_expires_at <= ?
-  AND lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM runtime_generations g
-    JOIN sessions s ON s.id = g.session_id
-    WHERE g.generation_id = ?
-      AND g.session_id = ?
-      AND g.status IN ('active', 'idle')
-      AND g.lease_expires_at IS NOT NULL
-      AND g.lease_expires_at <= ?
-      AND g.lease_expires_at > ?
-      AND s.active_generation_id = ?
-      AND s.status NOT IN ('failed', 'destroyed')
-  )`, p.Owner, formatTime(expiresAt), p.TurnID, p.SessionID, p.GenerationID,
-			formatTime(p.Now), formatTime(cutoff), p.GenerationID, p.SessionID,
-			formatTime(p.Now), formatTime(cutoff), p.GenerationID)
-		if err != nil {
-			return TurnGrant{}, false, err
-		}
-		affected, err = res.RowsAffected()
-		if err != nil {
-			return TurnGrant{}, false, err
-		}
-		if affected != 1 {
-			return TurnGrant{}, false, tx.Commit()
-		}
-		recoveringExpired = true
-	}
-	var generationUpdate string
-	var generationArgs []any
-	if recoveringExpired {
-		cutoff := p.Now.Add(-p.AckStartedGrace)
-		generationUpdate = `
-UPDATE runtime_generations
-SET status = 'active',
-    lease_owner = ?,
-    lease_expires_at = ?,
-    last_seen_at = ?
-WHERE generation_id = ?
-  AND session_id = ?
-  AND status IN ('active', 'idle')
-  AND lease_expires_at IS NOT NULL
-  AND lease_expires_at <= ?
-  AND lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE id = ?
-      AND active_generation_id = ?
-      AND status NOT IN ('failed', 'destroyed')
-  )`
-		generationArgs = []any{
-			p.Owner, formatTime(expiresAt), formatTime(p.Now), p.GenerationID, p.SessionID,
-			formatTime(p.Now), formatTime(cutoff), p.SessionID, p.GenerationID,
-		}
-	} else {
-		generationUpdate = `
-UPDATE runtime_generations
-SET status = 'active',
-    lease_expires_at = ?,
-    last_seen_at = ?
-WHERE generation_id = ?
-  AND session_id = ?
-  AND status IN ('active', 'idle')
-  AND lease_owner = ?
-  AND lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE id = ?
-      AND active_generation_id = ?
-  )`
-		generationArgs = []any{
-			formatTime(expiresAt), formatTime(p.Now), p.GenerationID, p.SessionID,
-			p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID,
-		}
-	}
-	res, err = tx.ExecContext(ctx, generationUpdate, generationArgs...)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	affected, err = res.RowsAffected()
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	if affected != 1 {
-		return TurnGrant{}, false, fmt.Errorf("generation CAS failed after turn resume")
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE active_model_request_contexts
-SET expires_at = ?,
-    lease_owner = ?,
-    updated_at = ?
-WHERE session_id = ?
-  AND generation_id = ?
-  AND turn_id = ?
-  AND turn_id IN (
-    SELECT id FROM turns
-    WHERE session_id = ?
-      AND generation_id = ?
-      AND lease_owner = ?
-      AND status = 'running'
-  )`, formatTime(expiresAt), p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID, p.TurnID, p.SessionID, p.GenerationID, p.Owner); err != nil {
-		return TurnGrant{}, false, err
-	}
-	grant, err := turnGrantByID(ctx, tx, p.SessionID, p.GenerationID, p.TurnID, p.Owner, p.Now)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	grant.ExpiresAt = expiresAt
-	return grant, true, tx.Commit()
-}
-
 // activeModelRequestContextParams registers a sandbox's right to make model
 // requests for one turn.
 type activeModelRequestContextParams struct {
@@ -758,187 +361,6 @@ type activeModelRequestContextParams struct {
 // turn. The ack arrives after the agent has usually issued requests, and resetting
 // the counter there would restart sequences mid-turn and collide with the
 // proxy.request.started events already recorded for it.
-func upsertActiveModelRequestContextTx(ctx context.Context, tx *sql.Tx, p activeModelRequestContextParams) error {
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO active_model_request_contexts (
-  sandbox_source_ip, session_id, generation_id, turn_id,
-  lease_owner, expires_at, model_access_allowed, next_request_sequence, registered_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT(sandbox_source_ip) DO UPDATE SET
-  session_id = excluded.session_id,
-  generation_id = excluded.generation_id,
-  turn_id = excluded.turn_id,
-  lease_owner = excluded.lease_owner,
-  expires_at = excluded.expires_at,
-  model_access_allowed = excluded.model_access_allowed,
-  next_request_sequence = CASE
-    WHEN active_model_request_contexts.turn_id = excluded.turn_id
-      AND active_model_request_contexts.generation_id = excluded.generation_id
-    THEN active_model_request_contexts.next_request_sequence
-    ELSE excluded.next_request_sequence
-  END,
-  registered_at = CASE
-    WHEN active_model_request_contexts.turn_id = excluded.turn_id
-      AND active_model_request_contexts.generation_id = excluded.generation_id
-    THEN active_model_request_contexts.registered_at
-    ELSE excluded.registered_at
-  END,
-  updated_at = excluded.updated_at`,
-		p.SandboxSourceIP, p.SessionID, p.GenerationID, p.TurnID, p.Owner,
-		formatTime(p.ExpiresAt), p.ModelAccessAllowed, formatTime(p.Now), formatTime(p.Now))
-	return err
-}
-
-func (s *Store) AckTurnStarted(ctx context.Context, p AckStartedParams) (int64, error) {
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := getSandboxContractForGenerationWithMirrors(ctx, tx, p.SessionID, p.GenerationID); err != nil {
-		return 0, err
-	}
-	expiresAt := p.Now.Add(p.LeaseTTL)
-	var alreadyRunning int
-	if err := tx.QueryRowContext(ctx, `
-SELECT COUNT(*)
-FROM turns
-WHERE id = ?
-  AND status = 'running'
-  AND ack_started_at IS NOT NULL
-  AND session_id = ?
-  AND generation_id = ?
-  AND lease_owner = ?
-  AND lease_expires_at > ?`,
-		p.TurnID, p.SessionID, p.GenerationID, p.Owner, formatTime(p.Now)).Scan(&alreadyRunning); err != nil {
-		return 0, err
-	}
-	res, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET status = 'running',
-    started_at = ?,
-    ack_started_at = ?
-WHERE id = ?
-  AND status = 'leased'
-  AND session_id = ?
-  AND generation_id = ?
-  AND lease_owner = ?
-  AND lease_expires_at > ?`,
-		formatTime(p.Now), formatTime(p.Now), p.TurnID, p.SessionID, p.GenerationID, p.Owner, formatTime(p.Now))
-	if err != nil {
-		return 0, err
-	}
-	if affected, err := res.RowsAffected(); err != nil {
-		return 0, err
-	} else if affected != 1 && alreadyRunning != 1 {
-		return 0, fmt.Errorf("turn ack_started CAS failed")
-	}
-	startedNow := alreadyRunning != 1
-	res, err = tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET last_seen_at = ?
-WHERE generation_id = ?
-  AND session_id = ?
-  AND sandbox_contract_version = 'sandbox-isolation-v1'
-  AND status = 'active'
-  AND lease_owner = ?
-  AND lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE id = ?
-      AND active_generation_id = ?
-  )
-  AND EXISTS (
-    SELECT 1 FROM runtime_resource_instances ri
-    WHERE ri.generation_id = ?
-      AND ri.state = 'live'
-      AND ri.sandbox_contract_version = 'sandbox-isolation-v1'
-      AND ri.contract_id = runtime_generations.sandbox_contract_id
-  )`, formatTime(p.Now), p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID, p.GenerationID)
-	if err != nil {
-		return 0, err
-	}
-	if err := requireOneRow(res, "generation ack_started CAS failed"); err != nil {
-		return 0, err
-	}
-	sandboxSourceIP, err := sandboxSourceIPForGenerationTx(ctx, tx, p.SessionID, p.GenerationID)
-	if err != nil {
-		return 0, err
-	}
-	var modelAccessAllowed int
-	if err := tx.QueryRowContext(ctx, `
-SELECT a.model_access_allowed
-FROM runtime_generations g
-JOIN agent_runtime_profiles a ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
-WHERE g.session_id = ?
-  AND g.generation_id = ?`, p.SessionID, p.GenerationID).Scan(&modelAccessAllowed); err != nil {
-		return 0, err
-	}
-	if startedNow {
-		if err := upsertActiveModelRequestContextTx(ctx, tx, activeModelRequestContextParams{
-			SandboxSourceIP:    sandboxSourceIP,
-			SessionID:          p.SessionID,
-			GenerationID:       p.GenerationID,
-			TurnID:             p.TurnID,
-			Owner:              p.Owner,
-			ExpiresAt:          expiresAt,
-			ModelAccessAllowed: modelAccessAllowed,
-			Now:                p.Now,
-		}); err != nil {
-			return 0, err
-		}
-	}
-	// The agent has the turn and is about to build its first model request for it,
-	// so this is the moment the user's prompt becomes a transcript entry. Writing
-	// it here rather than at enqueue makes `created_at` the time the prompt actually
-	// reached the model, and means a queued turn has no message row to leak into
-	// the transcript. Inside this transaction, so the row and the running status
-	// commit together. Idempotent for a replayed ack.
-	if startedNow {
-		if _, _, err := materializeTurnMessageTx(ctx, tx, p.SessionID, p.TurnID, p.Now); err != nil {
-			return 0, err
-		}
-	}
-	var eventID int64
-	if p.EventType != "" {
-		eventID, err = appendEventTx(ctx, tx, AppendEventParams{
-			SessionID:    p.SessionID,
-			TurnID:       &p.TurnID,
-			GenerationID: p.GenerationID,
-			DedupeKey:    p.EventDedupeKey,
-			Type:         p.EventType,
-			Payload:      p.EventPayload,
-			Now:          p.Now,
-		})
-		if err != nil {
-			return 0, err
-		}
-	}
-	return eventID, tx.Commit()
-}
-
-func sandboxSourceIPForGenerationTx(ctx context.Context, tx *sql.Tx, sessionID, generationID string) (string, error) {
-	var sandboxIP string
-	if err := tx.QueryRowContext(ctx, `
-SELECT ri.sandbox_ip
-FROM runtime_resource_instances ri
-JOIN runtime_generations g ON g.generation_id = ri.generation_id
-WHERE g.session_id = ?
-  AND g.generation_id = ?
-  AND g.sandbox_contract_version = 'sandbox-isolation-v1'
-  AND ri.state = 'live'
-  AND ri.sandbox_contract_version = 'sandbox-isolation-v1'
-  AND ri.contract_id = g.sandbox_contract_id`, sessionID, generationID).Scan(&sandboxIP); err != nil {
-		return "", err
-	}
-	addr, err := netip.ParseAddr(sandboxIP)
-	if err != nil {
-		return "", fmt.Errorf("invalid runtime resource sandbox_ip %q: %w", sandboxIP, err)
-	}
-	return addr.String(), nil
-}
 
 func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, error) {
 	if p.Now.IsZero() {
@@ -954,16 +376,10 @@ func (s *Store) CompleteTurn(ctx context.Context, p CompleteTurnParams) (int64, 
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var bound int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_bindings WHERE generation_id=?`, p.GenerationID).Scan(&bound); err != nil {
+	if err := executionIngressTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
 		return 0, err
 	}
-	if bound != 0 {
-		if err := executionIngressTx(ctx, tx, p.SessionID, p.GenerationID, p.Owner, p.Now); err != nil {
-			return 0, err
-		}
-	}
-	if bound != 0 && p.TerminalStatus == "completed" && p.DriverStateUpdate == nil {
+	if p.TerminalStatus == "completed" && p.DriverStateUpdate == nil {
 		binding, err := bindingWith(ctx, tx, p.GenerationID)
 		if err != nil {
 			return 0, err
@@ -1031,13 +447,6 @@ WHERE id = ?
 			return 0, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-DELETE FROM active_model_request_contexts
-WHERE session_id = ?
-  AND generation_id = ?
-  AND turn_id = ?`, p.SessionID, p.GenerationID, p.TurnID); err != nil {
-		return 0, err
-	}
 	var eventID int64
 	if p.EventType != "" {
 		eventPayload, err := completeTurnEventPayload(p.EventPayload, p, sessionMarkedIdle)
@@ -1102,7 +511,7 @@ SET lease_expires_at = ?,
     sandbox_last_seen_at = ?
 WHERE generation_id = ?
   AND session_id = ?
-  AND status IN ('starting','probing','active','idle','checkpointing','restoring')
+  AND status IN ('starting','probing','active','idle','pausing','restoring')
   AND lease_owner = ?
   AND lease_expires_at > ?
   AND EXISTS (
@@ -1126,60 +535,10 @@ WHERE session_id = ?
   AND lease_expires_at > ?`, formatTime(expiresAt), p.SessionID, p.GenerationID, p.Owner, formatTime(p.Now)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE active_model_request_contexts
-SET expires_at = ?,
-    lease_owner = ?,
-    updated_at = ?
-WHERE session_id = ?
-  AND generation_id = ?
-  AND turn_id IN (
-    SELECT id FROM turns
-    WHERE session_id = ?
-      AND generation_id = ?
-      -- 'leased' too: the context is registered at claim now, so a turn whose
-      -- ack has not landed yet still has one and must have it renewed. Omitting
-      -- it would let the context lapse underneath a turn that is starting.
-      AND status IN ('leased', 'running')
-  )`, formatTime(expiresAt), p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID, p.SessionID, p.GenerationID); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `UPDATE egress_grants SET expires_at=? WHERE generation_id=? AND state='active' AND turn_id IN (SELECT id FROM turns WHERE generation_id=? AND lease_owner=? AND status IN ('leased','running'))`, formatTime(expiresAt), p.GenerationID, p.GenerationID, p.Owner); err != nil {
 		return err
 	}
 	return tx.Commit()
-}
-
-func (s *Store) RenewGenerationStartLease(ctx context.Context, p RenewGenerationStartLeaseParams) error {
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	if p.LeaseTTL <= 0 {
-		return fmt.Errorf("lease ttl must be > 0")
-	}
-	expiresAt := p.Now.Add(p.LeaseTTL)
-	res, err := s.db.ExecContext(ctx, `
-UPDATE runtime_generations
-SET lease_expires_at = ?,
-    last_seen_at = ?
-WHERE generation_id = ?
-  AND session_id = ?
-  AND status IN ('allocating','starting','probing','idle','active','restoring')
-  AND lease_owner = ?
-  AND lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE id = ?
-      AND active_generation_id = ?
-      AND status NOT IN ('failed', 'destroyed')
-  )`, formatTime(expiresAt), formatTime(p.Now), p.GenerationID, p.SessionID, p.Owner, formatTime(p.Now), p.SessionID, p.GenerationID)
-	if err != nil {
-		return err
-	}
-	if err := requireOneRow(res, "generation start lease renewal CAS failed"); err != nil {
-		return err
-	}
-	return nil
 }
 
 // FailGeneration keeps the historical error-only API for callers that do not
@@ -1234,7 +593,7 @@ SET status = 'failed',
     lease_owner = NULL
 WHERE generation_id = ?
   AND session_id = ?
-  AND status IN ('allocating','starting','probing','active','idle','checkpointing','restoring')
+  AND status IN ('allocating','starting','probing','active','idle','pausing','restoring')
   AND lease_owner = ?
   AND lease_expires_at > ?
   AND EXISTS (
@@ -1248,27 +607,6 @@ WHERE generation_id = ?
 		return FailGenerationResult{}, err
 	}
 	if err := requireOneRow(res, "generation failure CAS failed"); err != nil {
-		return FailGenerationResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE network_profiles
-SET allocation_state = 'reclaimable'
-WHERE generation_id = ?
-		AND session_id = ?
-		AND allocation_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID, p.SessionID); err != nil {
-		return FailGenerationResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generation_resources
-SET resource_state = 'reclaimable'
-WHERE generation_id = ?
-		AND resource_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID); err != nil {
-		return FailGenerationResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-DELETE FROM active_model_request_contexts
-		WHERE session_id = ?
-		  AND generation_id = ?`, p.SessionID, p.GenerationID); err != nil {
 		return FailGenerationResult{}, err
 	}
 
@@ -1288,7 +626,6 @@ SET status = CASE
       ELSE 'running_idle'
     END,
     updated_at = ?,
-    restore_ms = NULL,
     error_class = NULL,
     failure_reason = NULL
 WHERE id = ?
@@ -1330,192 +667,6 @@ SELECT status FROM sessions WHERE id = ? AND active_generation_id = ?`, p.Sessio
 		return FailGenerationResult{}, err
 	}
 	return FailGenerationResult{EventID: eventID, SessionStatus: sessionStatus}, nil
-}
-
-func (s *Store) FailGenerationStart(ctx context.Context, p FailGenerationStartParams) (int64, error) {
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	if p.SessionStatus == "" {
-		p.SessionStatus = "running_idle"
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	res, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'failed',
-    error_class = ?,
-    failure_reason = ?,
-    ended_at = ?,
-    lease_owner = NULL
-WHERE generation_id = ?
-  AND session_id = ?
-  AND status IN ('allocating','starting','probing','idle','restoring')
-  AND lease_owner = ?
-  AND EXISTS (
-    SELECT 1 FROM sessions
-    WHERE id = ?
-      AND active_generation_id = ?
-      AND status NOT IN ('failed', 'destroyed')
-  )`,
-		nullableString(p.ErrorClass), nullableString(p.Reason), formatTime(p.Now), p.GenerationID, p.SessionID,
-		p.Owner, p.SessionID, p.GenerationID)
-	if err != nil {
-		return 0, err
-	}
-	if err := requireOneRow(res, "generation start failure CAS failed"); err != nil {
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE network_profiles
-SET allocation_state = 'reclaimable'
-WHERE generation_id = ?
-  AND session_id = ?
-  AND allocation_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID, p.SessionID); err != nil {
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generation_resources
-SET resource_state = 'reclaimable'
-WHERE generation_id = ?
-  AND resource_state IN ('allocating','ready','live','reserved_checkpointed','recreating')`, p.GenerationID); err != nil {
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-DELETE FROM active_model_request_contexts
-WHERE session_id = ?
-  AND generation_id = ?`, p.SessionID, p.GenerationID); err != nil {
-		return 0, err
-	}
-	res, err = tx.ExecContext(ctx, `
-UPDATE sessions
-SET status = ?,
-    updated_at = ?,
-    restore_ms = NULL,
-    error_class = NULL,
-    failure_reason = NULL
-WHERE id = ?
-  AND active_generation_id = ?
-  AND status NOT IN ('failed', 'destroyed')`,
-		p.SessionStatus, formatTime(p.Now), p.SessionID, p.GenerationID)
-	if err != nil {
-		return 0, err
-	}
-	if err := requireOneRow(res, "session start failure CAS failed"); err != nil {
-		return 0, err
-	}
-	var eventID int64
-	if p.EventType != "" {
-		eventID, err = appendEventTx(ctx, tx, AppendEventParams{
-			SessionID:    p.SessionID,
-			GenerationID: p.GenerationID,
-			DedupeKey:    p.EventDedupeKey,
-			Type:         p.EventType,
-			Payload: map[string]any{
-				"terminal":             false,
-				"error_class":          p.ErrorClass,
-				"error":                p.Reason,
-				"generation_id":        p.GenerationID,
-				"session_status":       p.SessionStatus,
-				"session_updated_at":   formatTime(p.Now),
-				"active_generation_id": p.GenerationID,
-			},
-			Now: p.Now,
-		})
-		if err != nil {
-			return 0, err
-		}
-	}
-	return eventID, tx.Commit()
-}
-
-func claimReplay(ctx context.Context, tx *sql.Tx, p ClaimNextTurnParams) (TurnGrant, bool, error) {
-	row := tx.QueryRowContext(ctx, `
-SELECT id
-FROM turns
-WHERE session_id = ?
-  AND generation_id = ?
-  AND claim_request_id = ?
-  AND status IN ('leased', 'running')
-  AND lease_owner = ?
-  AND lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM runtime_resource_instances ri
-    JOIN runtime_generations g ON g.generation_id = ri.generation_id
-    WHERE ri.generation_id = ?
-      AND ri.state = 'live'
-      AND ri.sandbox_contract_version = 'sandbox-isolation-v1'
-      AND g.sandbox_contract_version = 'sandbox-isolation-v1'
-      AND ri.contract_id = g.sandbox_contract_id
-  )`,
-		p.SessionID, p.GenerationID, p.RequestID, p.Owner, formatTime(p.Now), p.GenerationID)
-	var turnID int64
-	err := row.Scan(&turnID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return TurnGrant{}, false, nil
-	}
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	if _, err := getSandboxContractForGenerationWithMirrors(ctx, tx, p.SessionID, p.GenerationID); err != nil {
-		return TurnGrant{}, false, err
-	}
-	grant, err := turnGrantByID(ctx, tx, p.SessionID, p.GenerationID, turnID, p.Owner, p.Now)
-	if err != nil {
-		return TurnGrant{}, false, err
-	}
-	return grant, true, nil
-}
-
-func turnGrantByID(ctx context.Context, tx *sql.Tx, sessionID, generationID string, turnID int64, owner string, now time.Time) (TurnGrant, error) {
-	row := tx.QueryRowContext(ctx, `
-SELECT t.id, t.sequence, t.content, t.attempt, t.lease_expires_at,
-       ds.driver_id, ds.state_digest, ds.state_version, ds.state_payload
-FROM turns t
-JOIN runtime_generations g
-  ON g.session_id = t.session_id
- AND g.generation_id = t.generation_id
-JOIN agent_runtime_profiles a
-  ON a.agent_runtime_profile_id = g.agent_runtime_profile_id
-JOIN session_driver_states ds
-  ON ds.session_id = t.session_id
- AND ds.driver_id = a.driver_id
-WHERE t.id = ?
-  AND t.session_id = ?
-  AND t.generation_id = ?
-  AND t.status IN ('leased', 'running')
-  AND t.lease_owner = ?
-  AND t.lease_expires_at > ?
-  AND EXISTS (
-    SELECT 1 FROM runtime_resource_instances ri
-    WHERE ri.generation_id = ?
-      AND ri.state = 'live'
-      AND ri.sandbox_contract_version = 'sandbox-isolation-v1'
-      AND g.sandbox_contract_version = 'sandbox-isolation-v1'
-      AND ri.contract_id = g.sandbox_contract_id
-  )`,
-		turnID, sessionID, generationID, owner, formatTime(now), generationID)
-	var grant TurnGrant
-	var leaseExpires string
-	err := row.Scan(
-		&grant.TurnID,
-		&grant.Sequence,
-		&grant.Content,
-		&grant.Attempt,
-		&leaseExpires,
-		&grant.DriverState.DriverID,
-		&grant.DriverState.StateDigest,
-		&grant.DriverState.StateVersion,
-		&grant.DriverStatePayload,
-	)
-	if err != nil {
-		return TurnGrant{}, err
-	}
-	grant.ExpiresAt = parseTime(leaseExpires)
-	return grant, nil
 }
 
 func nullableInt64Ptr(value *int64) any {

@@ -190,7 +190,7 @@ func TestControllerColdRecoversAbandonedIdleOwnerWithoutRedispatch(t *testing.T)
 				t.Fatal(err)
 			}
 			if inflight {
-				if _, ok, err := (store.BoundBridgeStore{Store: st}).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: first.SessionID, GenerationID: first.GenerationID, Owner: owner, RequestID: "before-restart", LeaseTTL: time.Minute}); err != nil || !ok {
+				if _, ok, err := (st).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: first.SessionID, GenerationID: first.GenerationID, Owner: owner, RequestID: "before-restart", LeaseTTL: time.Minute}); err != nil || !ok {
 					t.Fatalf("claim: %t %v", ok, err)
 				}
 			}

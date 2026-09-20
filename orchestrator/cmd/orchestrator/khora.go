@@ -30,17 +30,14 @@ type khoraApplication struct {
 }
 
 func constructKhoraApplication(ctx context.Context, cfg config.Config, db *store.Store, owner string, deployment *retainedapp.Deployment, log *slog.Logger) (*khoraApplication, error) {
-	if deployment == nil || cfg.SessionRetention != 0 {
+	if deployment == nil {
 		return nil, fmt.Errorf("Khora startup requires deployment and indefinite session retention")
-	}
-	if err := db.RequireRetainedDeployment(ctx, store.GenerationLeaseOwner(owner)); err != nil {
-		return nil, err
 	}
 	backend, gateways, err := deployment.Connect(ctx)
 	if err != nil {
 		return nil, err
 	}
-	app := server.New(cfg, db, nil, nil, events.NewHub(), log)
+	app := server.New(cfg, db, events.NewHub(), log)
 	options := deployment.Options(backend, gateways, owner)
 	options.OnError = func(scope string, err error) {
 		log.Warn("retained reconciliation failed", "scope", scope, "error", err)

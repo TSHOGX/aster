@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,7 +50,7 @@ func TestCreateSessionStillRejectsBadStatusAndDriver(t *testing.T) {
 			Status:    string(sessionstate.Created),
 			Agent:     "pi",
 			Workspace: t.TempDir(),
-			RestoreID: "phase3-sess_reject",
+
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
@@ -102,7 +101,7 @@ func TestListMessagesAndUUID(t *testing.T) {
 		Status:    string(sessionstate.Created),
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_1",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -151,7 +150,7 @@ func TestMessageTraceAndFeedback(t *testing.T) {
 	now := time.Now().UTC()
 	sess := Session{
 		ID: "sess_t", UserID: "lab", Status: string(sessionstate.Created),
-		Agent: "pi", Workspace: dir, RestoreID: "r", CreatedAt: now, UpdatedAt: now,
+		Agent: "pi", Workspace: dir, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := st.CreateSession(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -249,7 +248,7 @@ func TestUpdateSessionTitle(t *testing.T) {
 		Status:    string(sessionstate.Created),
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_title",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -297,39 +296,6 @@ func TestUpdateSessionTitle(t *testing.T) {
 // TestEnsureSessionColumnsIdempotent simulates an older database whose sessions
 // table predates the title columns, and verifies ensureSchema adds them without
 // error and that a second run is a no-op.
-func TestEnsureSessionColumnsIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "legacy.db")
-
-	ctx := context.Background()
-	st, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-
-	// Drop the columns to emulate a legacy schema, then re-run the migration.
-	for _, col := range []string{"title", "title_custom"} {
-		if _, err := st.db.ExecContext(ctx, `ALTER TABLE sessions DROP COLUMN `+col); err != nil {
-			t.Fatalf("drop column %s: %v", col, err)
-		}
-	}
-	if exists, err := st.columnExists(ctx, "sessions", "title"); err != nil || exists {
-		t.Fatalf("expected title column absent after drop (err=%v exists=%v)", err, exists)
-	}
-
-	// First migration adds the columns.
-	if err := st.ensureSessionColumns(ctx); err != nil {
-		t.Fatalf("ensureSessionColumns (add): %v", err)
-	}
-	if exists, err := st.columnExists(ctx, "sessions", "title"); err != nil || !exists {
-		t.Fatalf("expected title column present after migration (err=%v exists=%v)", err, exists)
-	}
-	// Second run is idempotent.
-	if err := st.ensureSessionColumns(ctx); err != nil {
-		t.Fatalf("ensureSessionColumns (idempotent): %v", err)
-	}
-}
 
 func TestUpdateSessionStatusAndActivity(t *testing.T) {
 	dir := t.TempDir()
@@ -349,7 +315,7 @@ func TestUpdateSessionStatusAndActivity(t *testing.T) {
 		Status:    string(sessionstate.Created),
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_test",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -359,8 +325,7 @@ func TestUpdateSessionStatusAndActivity(t *testing.T) {
 
 	// Update status and activity
 	activityTime := now.Add(5 * time.Minute)
-	restoreMS := int64(250)
-	if err := st.UpdateSessionStatusAndActivity(ctx, session.ID, string(sessionstate.RunningIdle), &restoreMS, activityTime); err != nil {
+	if err := st.UpdateSessionStatusAndActivity(ctx, session.ID, string(sessionstate.RunningIdle), activityTime); err != nil {
 		t.Fatalf("update status and activity: %v", err)
 	}
 
@@ -371,9 +336,6 @@ func TestUpdateSessionStatusAndActivity(t *testing.T) {
 	}
 	if got.Status != string(sessionstate.RunningIdle) {
 		t.Errorf("status: want %s, got %s", sessionstate.RunningIdle, got.Status)
-	}
-	if got.RestoreMS == nil || *got.RestoreMS != 250 {
-		t.Errorf("restore_ms: want 250, got %v", got.RestoreMS)
 	}
 	if got.LastActivityAt == nil {
 		t.Fatalf("last_activity_at should not be nil")
@@ -401,7 +363,7 @@ func TestFailSessionStoresTypedFailure(t *testing.T) {
 		Status:    string(sessionstate.Created),
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_fail",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -452,7 +414,7 @@ func TestEnqueueTurnMessageCreatesQueuedTurnAndActivatesSession(t *testing.T) {
 		Status:    string(sessionstate.Created),
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_enqueue",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -529,7 +491,7 @@ func TestEnqueueTurnMessageRejectsBusySessionWithoutWrites(t *testing.T) {
 		Status:    string(sessionstate.RunningActive),
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_busy_enqueue",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -570,7 +532,7 @@ func TestEnqueueTurnMessageReturnsRuntimeProjection(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	now := time.Now().UTC()
-	session := Session{ID: "sess_queue_flag", UserID: "lab", Status: string(sessionstate.RunningIdle), Agent: "pi", Workspace: dir, RestoreID: "restore-queue-flag", CreatedAt: now, UpdatedAt: now}
+	session := Session{ID: "sess_queue_flag", UserID: "lab", Status: string(sessionstate.RunningIdle), Agent: "pi", Workspace: dir, CreatedAt: now, UpdatedAt: now}
 	if err := st.CreateSession(ctx, session); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -615,7 +577,7 @@ func TestTranscriptContainsOnlyDispatchedTurns(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	session := Session{
 		ID: "sess_queue_visibility", UserID: "lab", Status: string(sessionstate.RunningIdle),
-		Agent: "pi", Workspace: t.TempDir(), RestoreID: "restore_queue_visibility",
+		Agent: "pi", Workspace: t.TempDir(),
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := st.CreateSession(ctx, session); err != nil {
@@ -732,7 +694,7 @@ func TestListSessionsByStatus(t *testing.T) {
 			Status:    string(sessionstate.RunningIdle),
 			Agent:     "pi",
 			Workspace: dir,
-			RestoreID: "phase3-sess_1",
+
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
@@ -742,7 +704,7 @@ func TestListSessionsByStatus(t *testing.T) {
 			Status:    string(sessionstate.RunningActive),
 			Agent:     "pi",
 			Workspace: dir,
-			RestoreID: "phase3-sess_2",
+
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
@@ -752,7 +714,7 @@ func TestListSessionsByStatus(t *testing.T) {
 			Status:    string(sessionstate.RunningIdle),
 			Agent:     "pi",
 			Workspace: dir,
-			RestoreID: "phase3-sess_3",
+
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
@@ -767,10 +729,10 @@ func TestListSessionsByStatus(t *testing.T) {
 	// Update activity times
 	activity1 := now.Add(-10 * time.Minute)
 	activity3 := now.Add(-35 * time.Minute)
-	if err := st.UpdateSessionStatusAndActivity(ctx, "sess_1", string(sessionstate.RunningIdle), nil, activity1); err != nil {
+	if err := st.UpdateSessionStatusAndActivity(ctx, "sess_1", string(sessionstate.RunningIdle), activity1); err != nil {
 		t.Fatalf("update sess_1: %v", err)
 	}
-	if err := st.UpdateSessionStatusAndActivity(ctx, "sess_3", string(sessionstate.RunningIdle), nil, activity3); err != nil {
+	if err := st.UpdateSessionStatusAndActivity(ctx, "sess_3", string(sessionstate.RunningIdle), activity3); err != nil {
 		t.Fatalf("update sess_3: %v", err)
 	}
 
@@ -811,14 +773,14 @@ func TestRejectsLegacyStatuses(t *testing.T) {
 		Status:    "idle",
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_legacy",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 	if err := st.CreateSession(ctx, session); err == nil {
 		t.Fatalf("create session with legacy status should fail")
 	}
-	if err := st.UpdateSessionStatus(ctx, "sess_legacy", "completed", nil); err == nil {
+	if err := st.UpdateSessionStatus(ctx, "sess_legacy", "completed"); err == nil {
 		t.Fatalf("update to legacy status should fail")
 	}
 	if _, err := st.ListSessionsByStatus(ctx, "running"); err == nil {
@@ -842,8 +804,8 @@ func TestCountActiveSessionsUsesCanonicalStatuses(t *testing.T) {
 		sessionstate.Created,
 		sessionstate.RunningActive,
 		sessionstate.RunningIdle,
-		sessionstate.Checkpointing,
-		sessionstate.Checkpointed,
+		sessionstate.Pausing,
+		sessionstate.Paused,
 		sessionstate.Failed,
 		sessionstate.Destroyed,
 	}
@@ -855,7 +817,7 @@ func TestCountActiveSessionsUsesCanonicalStatuses(t *testing.T) {
 			Status:    string(status),
 			Agent:     "pi",
 			Workspace: dir,
-			RestoreID: "phase3-" + id,
+
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
@@ -870,68 +832,6 @@ func TestCountActiveSessionsUsesCanonicalStatuses(t *testing.T) {
 	}
 	if count != 5 {
 		t.Fatalf("want 5 active sessions, got %d", count)
-	}
-}
-
-func TestCountSandboxOccupyingSessionsExcludesReleasedSandboxes(t *testing.T) {
-	ctx := context.Background()
-	st, owner := openOwnedStore(t, ctx)
-	cfg := testAllocatorConfig(t)
-	// Widen the pool: several generations are allocated concurrently below and
-	// checkpointed/reclaimable ones keep holding their network slot.
-	cfg.CIDRPool = netip.MustParsePrefix("10.240.0.0/24")
-
-	// Each resource_state maps to whether the session still occupies a sandbox.
-	// allocating/ready/live/recreating hold compute; reserved_checkpointed and
-	// reclaimable have released it; a session with no generation holds nothing.
-	cases := []struct {
-		id            string
-		resourceState string // "" means no generation allocated
-		occupies      bool
-	}{
-		{"sess_allocating", "allocating", true},
-		{"sess_ready", "ready", true},
-		{"sess_live", "live", true},
-		{"sess_recreating", "recreating", true},
-		{"sess_reserved", "reserved_checkpointed", false},
-		{"sess_reclaimable", "reclaimable", false},
-		{"sess_no_gen", "", false},
-	}
-
-	wantCount := 0
-	for _, tc := range cases {
-		createStoreSession(t, ctx, st, tc.id)
-		if tc.occupies {
-			wantCount++
-		}
-		if tc.resourceState == "" {
-			continue
-		}
-		alloc, err := st.AllocateGeneration(ctx, AllocateGenerationParams{
-			SessionID: tc.id,
-			Owner:     GenerationLeaseOwner(owner.UUID),
-			LeaseTTL:  time.Minute,
-			Now:       time.Now().UTC(),
-			Config:    cfg,
-		})
-		if err != nil {
-			t.Fatalf("allocate %s: %v", tc.id, err)
-		}
-		// AllocateGeneration links active_generation_id itself; just move the
-		// resource into the state under test.
-		if _, err := st.db.ExecContext(ctx,
-			`UPDATE runtime_generation_resources SET resource_state = ? WHERE generation_id = ?`,
-			tc.resourceState, alloc.GenerationID); err != nil {
-			t.Fatalf("set resource state %s: %v", tc.id, err)
-		}
-	}
-
-	count, err := st.CountSandboxOccupyingSessions(ctx)
-	if err != nil {
-		t.Fatalf("count sandbox occupying sessions: %v", err)
-	}
-	if count != wantCount {
-		t.Fatalf("want %d sandbox-occupying sessions, got %d", wantCount, count)
 	}
 }
 
@@ -953,7 +853,7 @@ func TestDeleteArtifactPathDeletesFileAndDescendants(t *testing.T) {
 		Status:    string(sessionstate.Created),
 		Agent:     "pi",
 		Workspace: dir,
-		RestoreID: "phase3-sess_artifacts",
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

@@ -13,11 +13,11 @@ import (
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
-func boundExecutionFixture(t *testing.T) (*Store, BoundBridgeStore, execution.Binding, execution.ObserveBindingParams) {
+func boundExecutionFixture(t *testing.T) (*Store, *Store, execution.Binding, execution.ObserveBindingParams) {
 	return boundExecutionFixtureForDriver(t, "sh")
 }
 
-func boundExecutionFixtureForDriver(t *testing.T, driver string) (*Store, BoundBridgeStore, execution.Binding, execution.ObserveBindingParams) {
+func boundExecutionFixtureForDriver(t *testing.T, driver string) (*Store, *Store, execution.Binding, execution.ObserveBindingParams) {
 	t.Helper()
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
@@ -40,7 +40,7 @@ func boundExecutionFixtureForDriver(t *testing.T, driver string) (*Store, BoundB
 		t.Fatal(err)
 	}
 	observation := execution.ObserveBindingParams{GenerationID: binding.GenerationID, Owner: binding.Owner, ProcessHandle: "opaque-process", EnvironmentFence: binding.EnvironmentFence, Epoch: binding.Epoch}
-	return st, BoundBridgeStore{st}, binding, observation
+	return st, st, binding, observation
 }
 
 func TestOpaqueExecutionDrivesTurnWithoutLegacyRuntimeOrIPAuthority(t *testing.T) {
@@ -79,7 +79,7 @@ func TestOpaqueExecutionDrivesTurnWithoutLegacyRuntimeOrIPAuthority(t *testing.T
 	}
 	for _, table := range []string{"network_profiles", "runtime_generation_resources", "runtime_resource_instances", "active_model_request_contexts", "agent_runtime_profiles", "sandbox_contracts"} {
 		var count int
-		if err := st.db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+		if err := st.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("opaque execution created legacy %s rows: %d %v", table, count, err)
 		}
 	}
@@ -241,7 +241,7 @@ func TestOpaquePiCompletionRequiresRetainedNativeStateEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if input.AgentHomePath != "" || input.Reference.StoreID != binding.StoreID || input.Reference.Epoch != binding.Epoch {
+	if input.Reference.StoreID != binding.StoreID || input.Reference.Epoch != binding.Epoch {
 		t.Fatalf("remote source used host path: %+v", input)
 	}
 	input.Evidence.NativeDigest = strings.Repeat("c", 64)

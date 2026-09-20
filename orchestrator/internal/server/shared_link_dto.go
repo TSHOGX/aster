@@ -56,7 +56,7 @@ func sharedLinkSession(session store.Session, link store.ShareLink) apiSharedLin
 
 // sharedLinkStatus collapses the internal session state machine to what a public
 // viewer needs: whether the conversation is still going. Publishing
-// "checkpointing" or "running_idle" would leak infrastructure detail and mean
+// "pausing" or "running_idle" would leak infrastructure detail and mean
 // nothing to a reader.
 func sharedLinkStatus(status string) string {
 	switch status {

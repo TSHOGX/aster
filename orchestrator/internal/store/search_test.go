@@ -33,7 +33,7 @@ func seedSession(t *testing.T, st *Store, ctx context.Context, id, userID, title
 		Agent:     "pi",
 		Mode:      "agent",
 		Workspace: t.TempDir(),
-		RestoreID: "r-" + id,
+
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -191,54 +191,6 @@ func TestSearchMessagesEmptyQuery(t *testing.T) {
 	}
 	if len(hits) != 0 {
 		t.Fatalf("empty query should return no hits, got %d", len(hits))
-	}
-}
-
-func TestSearchMessagesBackfillPreExistingRows(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	ctx := context.Background()
-
-	// First store instance: create the schema (with FTS + triggers) and rows,
-	// then simulate a pre-FTS history by clearing the index. Re-opening must
-	// rebuild it from the messages table.
-	st, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	seedSession(t, st, ctx, "sess_a", "alice", "")
-	if _, err := st.AddMessage(ctx, "sess_a", "user", "historical watermelon message"); err != nil {
-		t.Fatalf("add msg: %v", err)
-	}
-	// Wipe the index to mimic data that predates the FTS vtable.
-	if _, err := st.DBForTest().ExecContext(ctx, `INSERT INTO messages_fts(messages_fts) VALUES('delete-all')`); err != nil {
-		t.Fatalf("clear index: %v", err)
-	}
-	// Confirm the index really is empty now (via the docsize shadow table:
-	// count() on the vtable itself reads through to the content table).
-	var cnt int
-	if err := st.DBForTest().QueryRowContext(ctx, `SELECT count(*) FROM messages_fts_docsize`).Scan(&cnt); err != nil {
-		t.Fatalf("count fts: %v", err)
-	}
-	if cnt != 0 {
-		t.Fatalf("index should be empty after delete-all, got %d", cnt)
-	}
-	_ = st.Close()
-
-	// Re-open: migrate() should detect the empty index over non-empty messages
-	// and rebuild.
-	st2, err := Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	t.Cleanup(func() { _ = st2.Close() })
-
-	hits, err := st2.SearchMessages(ctx, "alice", "watermelon", 50)
-	if err != nil {
-		t.Fatalf("search after backfill: %v", err)
-	}
-	if len(hits) != 1 {
-		t.Fatalf("backfill should index pre-existing rows, got %d hits", len(hits))
 	}
 }
 

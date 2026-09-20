@@ -5,15 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"harness-platform/orchestrator/internal/deploymentgate"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
+
+	"github.com/robfig/cron/v3"
 )
 
 func parseScheduleSpec(expr string) (cron.Schedule, error) {
@@ -145,9 +144,6 @@ func (s *Server) runScheduler(ctx context.Context) {
 		}
 	}
 	dispatch := func() {
-		if deploymentgate.BackgroundHeld() {
-			return
-		}
 		// A process restart can happen after StartScheduleRun but before the
 		// worker records the terminal state. Re-queue those rows first so a
 		// completed turn is reconciled instead of remaining "running" forever.
@@ -172,7 +168,7 @@ func (s *Server) runScheduler(ctx context.Context) {
 		// an admin UI capability gate and must not silently disable already
 		// persisted user schedules (manual runs and cron runs share the same
 		// durable schedule state).
-		if deploymentgate.Draining() || !s.cfg.Harness.Scheduler.Enabled {
+		if !s.cfg.Harness.Scheduler.Enabled {
 			return
 		}
 		due, err := s.store.ListDueSchedules(ctx, time.Now().UTC(), workers*2)
@@ -352,9 +348,6 @@ func (s *Server) startScheduleRunFromQueue(ctx context.Context, runID string) {
 		release()
 		return
 	}
-	if deploymentgate.BackgroundHeld() {
-		return
-	}
 	s.executeScheduleRun(ctx, run)
 }
 
@@ -412,16 +405,7 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 		}
 	} else {
 		id := newID("sess")
-		session = store.Session{ID: id, UserID: run.UserID, Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: filepath.Join(s.cfg.SessionsRoot, id), RestoreID: "unused-" + id, AutoCheckpointEnabled: true, CreatedAt: now, UpdatedAt: now}
-		session.ExecutionBackend = s.newSessionBackend
-		if s.newSessionBackend == "khora" {
-			session.Workspace = "workspace:" + id
-			session.AutoCheckpointEnabled = false
-		}
-		if s.cfg.SessionRetention > 0 {
-			expires := now.Add(s.cfg.SessionRetention)
-			session.ExpiresAt = &expires
-		}
+		session = store.Session{ID: id, UserID: run.UserID, Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: "workspace:" + id, CreatedAt: now, UpdatedAt: now}
 		if err := s.store.CreateSession(ctx, session); err != nil {
 			if s.log != nil {
 				s.log.Error("schedule run session creation failed", "run_id", run.ID, "error", err)
@@ -436,10 +420,7 @@ func (s *Server) executeScheduleRun(parent context.Context, run store.ScheduleRu
 	}
 	id := session.ID
 	owner := store.GenerationLeaseOwner(s.ownerUUID)
-	ensured, err := s.ensureActiveGeneration(ctx, session, owner)
-	if err == nil {
-		err = s.startEnsuredGeneration(ctx, session, ensured, startFailureInputAcceptable)
-	}
+	_, err = s.ensureActiveGeneration(ctx, session, owner)
 	if err != nil {
 		if s.log != nil {
 			s.log.Error("schedule run generation start failed", "run_id", run.ID, "error", err)
@@ -654,7 +635,7 @@ func (s *Server) finishScheduleFailureStatus(ctx context.Context, run store.Sche
 	if status == "skipped_busy" {
 		return
 	}
-	if deploymentgate.Paused() || run.Attempt >= sched.MaxRetries {
+	if run.Attempt >= sched.MaxRetries {
 		return
 	}
 	backoff := time.Duration(sched.RetryBackoffSeconds) * time.Second

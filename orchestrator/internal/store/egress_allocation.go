@@ -69,11 +69,11 @@ func (s *Store) ReserveEgressCompilation(ctx context.Context, owner string, p eg
 	if e.SessionID != p.SessionID || e.StoreID != p.Deployment.BackendID || e.Fence != p.EnvironmentFence {
 		return empty, execution.ErrStaleOperation
 	}
-	var driver, backend string
-	if err := tx.QueryRowContext(ctx, `SELECT s.driver_id,b.backend FROM sessions s JOIN session_execution_backends b ON b.session_id=s.id WHERE s.id=? AND s.status NOT IN ('failed','destroyed')`, p.SessionID).Scan(&driver, &backend); err != nil {
+	var driver string
+	if err := tx.QueryRowContext(ctx, `SELECT s.driver_id FROM sessions s WHERE s.id=? AND s.status NOT IN ('failed','destroyed')`, p.SessionID).Scan(&driver); err != nil {
 		return empty, err
 	}
-	if driver != p.Policy.Driver || backend != "khora" {
+	if driver != p.Policy.Driver {
 		return empty, execution.ErrOperationConflict
 	}
 	var blocked int

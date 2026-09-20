@@ -67,7 +67,7 @@ func TestActiveControllerDrainsBeforeAttachmentAndRetriesSameAttempt(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := (store.BoundBridgeStore{Store: st}).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: owner, RequestID: "claim", LeaseTTL: time.Minute}); err != nil || !ok {
+	if _, ok, err := (st).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: owner, RequestID: "claim", LeaseTTL: time.Minute}); err != nil || !ok {
 		t.Fatalf("initial claim: %t %v", ok, err)
 	}
 	if err := original.Close(); err != nil {
@@ -107,7 +107,7 @@ func TestActiveControllerWaitsForRemoteGatewayDrain(t *testing.T) {
 	if _, err := st.EnqueueTurn(ctx, b.SessionID, "original prompt", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := (store.BoundBridgeStore{Store: st}).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: owner, RequestID: "claim", LeaseTTL: time.Minute}); err != nil || !ok {
+	if _, ok, err := (st).ClaimNextTurn(ctx, store.ClaimNextTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: owner, RequestID: "claim", LeaseTTL: time.Minute}); err != nil || !ok {
 		t.Fatalf("initial claim: %t %v", ok, err)
 	}
 	if err := original.Close(); err != nil {

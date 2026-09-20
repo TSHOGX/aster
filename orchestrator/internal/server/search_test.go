@@ -30,8 +30,8 @@ func TestSearchEndpointScopingAndContract(t *testing.T) {
 
 	now := time.Now().UTC()
 	for _, s := range []store.Session{
-		{ID: "sess_alice", UserID: "alice", Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: dir, RestoreID: "r1", CreatedAt: now, UpdatedAt: now},
-		{ID: "sess_bob", UserID: "bob", Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: dir, RestoreID: "r2", CreatedAt: now, UpdatedAt: now},
+		{ID: "sess_alice", UserID: "alice", Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: dir, CreatedAt: now, UpdatedAt: now},
+		{ID: "sess_bob", UserID: "bob", Status: string(sessionstate.Created), Agent: "pi", Mode: "agent", Workspace: dir, CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := st.CreateSession(ctx, s); err != nil {
 			t.Fatalf("create session %q: %v", s.ID, err)

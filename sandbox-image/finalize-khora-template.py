@@ -14,7 +14,7 @@ def finalize(root, engine_module):
     root = root.resolve()
     if engine_module != ENGINE_MODULE or root == pathlib.Path('/'):
         raise ValueError('unsupported engine module or template root')
-    for relative in ('agent-home', 'agent-homes', 'sessions', 'harness-secrets', 'harness-control', 'root/.pi', 'root/.agents'):
+    for relative in ('root/.pi', 'root/.agents'):
         target = root / relative
         if target.is_symlink() or target.is_file():
             target.unlink()
@@ -22,8 +22,6 @@ def finalize(root, engine_module):
             shutil.rmtree(target)
     for relative in ('workspace', 'harness-bridge', 'harness-config', 'root'):
         (root / relative).mkdir(parents=True, exist_ok=True)
-    # Application launch is an ordinary process; the old init wrapper is absent.
-    (root / 'usr/local/bin/harness-agent-entrypoint').unlink(missing_ok=True)
     files = {}
     for relative in ('usr/sbin/sandboxd', 'usr/local/bin/harness-khora-launcher',
                      'usr/local/bin/harness-bridge-client', 'usr/local/bin/harness-shell-agent',

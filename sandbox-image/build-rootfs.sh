@@ -192,6 +192,7 @@ require_root() {
 copy_overlay_files() {
   log "installing harness files into ${ROOTFS_DIR}"
   rsync -a --chmod=F755,D755 "${SCRIPT_DIR}/files/" "${ROOTFS_DIR}/"
+  chmod 0444 "${ROOTFS_DIR}/usr/local/share/harness/pi-system-prompt.md"
 }
 
 # DuckDB's httpfs extension is needed to read Parquet straight off Huawei OBS
@@ -452,14 +453,14 @@ for driver in drivers:
             "event_schema_version": pi_event_schema,
             "node_version": "v" + pi_node_version,
             "installed_config_paths": [
-                "/harness-control/driver/pi/models.json",
-                "/harness-control/driver/pi/settings.json",
-                "/agent-home/.pi/agent/models.json",
-                "/agent-home/.pi/agent/settings.json",
+                "/harness-config/pi/models.json",
+                "/harness-config/pi/settings.json",
+                "/root/.pi/agent/models.json",
+                "/root/.pi/agent/settings.json",
             ],
             "writable_state_paths": [
-                "/agent-home/.pi/agent",
-                "/agent-home/.pi/agent/sessions",
+                "/root/.pi/agent",
+                "/root/.pi/agent/sessions",
             ],
         })
     elif driver == "sh":
@@ -541,15 +542,13 @@ render_sandbox_resolv_conf() {
 }
 
 sanitize_isolated_rootfs() {
-  log "sanitizing rootfs for sandbox-isolation-v1"
+  log "sanitizing rootfs for Khora"
   rm -rf --one-file-system \
     "${ROOTFS_DIR}/workspace" \
-    "${ROOTFS_DIR}/agent-home" \
-    "${ROOTFS_DIR}/sessions" \
-    "${ROOTFS_DIR}/agent-homes" \
-    "${ROOTFS_DIR}/harness-secrets" \
+        "${ROOTFS_DIR}/sessions" \
+        "${ROOTFS_DIR}/harness-secrets" \
     "${ROOTFS_DIR}/root/.cache"
-  install -d -m 0755 "${ROOTFS_DIR}/workspace" "${ROOTFS_DIR}/agent-home"
+  install -d -m 0755 "${ROOTFS_DIR}/workspace" "${ROOTFS_DIR}/harness-bridge" "${ROOTFS_DIR}/harness-config"
   find "${ROOTFS_DIR}" -maxdepth 1 -type f -name '.gvisor.filestore.*' -delete
   # Drop whatever the build host resolved into /etc/hosts, so the image carries
   # no trace of the machine it was built on. Reset rather than delete: the

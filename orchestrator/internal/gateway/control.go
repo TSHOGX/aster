@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/egress"
+
+	"github.com/google/uuid"
 )
 
 const ControlVersion = 1

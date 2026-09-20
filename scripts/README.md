@@ -1,18 +1,9 @@
-# Repository scripts
+# Repository checks
 
-| Script | Purpose |
-|---|---|
-| `check-lockfile-registry.sh` | Verify portable frontend dependency registry URLs |
-| `check-public-docs.py` | Check English documentation, local links and public-file boundaries |
-| `harness-kb-nightly.sh` | Optional explicit-config wrapper for memory capture/replay jobs |
-| `release/` | Hosted build, manifest, artifact smoke and publication tooling |
+- `check-lockfile-registry.sh`: portable frontend dependency URLs.
+- `check-public-docs.py`: English reference docs, local links and private boundaries.
+- `fetch-go-dependencies.sh`: pinned private Go module access for CI.
 
-Production installation and upgrades use the shipped `harness-deploy` binary;
-see [deployment](../docs/delivery/operations.md). User/KB operations use the
-orchestrator CLI. Per-host service wrappers and command aliases are private
-operations files and are not a supported public release interface.
-
-The memory wrapper is independent of the core user scheduler. It requires an
-explicit binary, application YAML, environment file and lock path; it does not
-install cron, choose a timezone or discover production paths. See
-[memory and knowledge](../docs/agents-kb.md).
+See [development verification](../docs/verification.md). Production release,
+migration and deployment tooling is deferred to the separate future production
+project. No Memory/Evolve jobs are shipped.

@@ -12,9 +12,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/workspace"
+
+	"github.com/google/uuid"
 )
 
 const maxReadChunk = 256 << 10

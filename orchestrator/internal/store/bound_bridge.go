@@ -11,9 +11,8 @@ import (
 // BoundBridgeStore serves executions whose authority is an accepted opaque
 // binding. It never allocates addresses, reads runtime proofs or registers a
 // source-IP model context. Gateways use separately scoped service grants.
-type BoundBridgeStore struct{ *Store }
 
-func (s BoundBridgeStore) BridgeProtocolEvidence(ctx context.Context, session, generation string) (BridgeProtocolEvidence, error) {
+func (s *Store) BridgeProtocolEvidence(ctx context.Context, session, generation string) (BridgeProtocolEvidence, error) {
 	binding, err := s.GetExecutionBinding(ctx, generation)
 	if err != nil {
 		return BridgeProtocolEvidence{}, err
@@ -21,10 +20,10 @@ func (s BoundBridgeStore) BridgeProtocolEvidence(ctx context.Context, session, g
 	if binding.SessionID != session || binding.State == "retired" {
 		return BridgeProtocolEvidence{}, fmt.Errorf("bridge execution binding unavailable")
 	}
-	return BridgeProtocolEvidence{RequireManifestDigest: true, DriverID: binding.Driver, ProtocolVersion: binding.ProtocolVersion, TurnInputSchema: binding.TurnInputSchema, AgentManifestDigest: binding.ManifestDigest, RuntimeConfigDigest: binding.SpecDigest, SandboxContractDigest: binding.SpecDigest, ContractGateVersion: SandboxContractGateDriverManifest}, nil
+	return BridgeProtocolEvidence{DriverID: binding.Driver, ProtocolVersion: binding.ProtocolVersion, TurnInputSchema: binding.TurnInputSchema, AgentManifestDigest: binding.ManifestDigest}, nil
 }
 
-func (s BoundBridgeStore) ClaimNextTurn(ctx context.Context, p ClaimNextTurnParams) (TurnGrant, bool, error) {
+func (s *Store) ClaimNextTurn(ctx context.Context, p ClaimNextTurnParams) (TurnGrant, bool, error) {
 	if p.Now.IsZero() {
 		p.Now = time.Now().UTC()
 	}
@@ -91,7 +90,7 @@ func (s BoundBridgeStore) ClaimNextTurn(ctx context.Context, p ClaimNextTurnPara
 	return finish(grant, true)
 }
 
-func (s BoundBridgeStore) ResumeTurn(ctx context.Context, p ResumeTurnParams) (TurnGrant, bool, error) {
+func (s *Store) ResumeTurn(ctx context.Context, p ResumeTurnParams) (TurnGrant, bool, error) {
 	if p.Now.IsZero() {
 		p.Now = time.Now().UTC()
 	}
@@ -140,7 +139,7 @@ func (s BoundBridgeStore) ResumeTurn(ctx context.Context, p ResumeTurnParams) (T
 	return finish(grant, true)
 }
 
-func (s BoundBridgeStore) AckTurnStarted(ctx context.Context, p AckStartedParams) (int64, error) {
+func (s *Store) AckTurnStarted(ctx context.Context, p AckStartedParams) (int64, error) {
 	if p.Now.IsZero() {
 		p.Now = time.Now().UTC()
 	}

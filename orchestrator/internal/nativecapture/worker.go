@@ -21,8 +21,6 @@ type Request struct {
 }
 type Result struct {
 	ArchivePath string
-	Skipped     bool
-	Reason      string
 }
 type Repository interface {
 	PendingNativeCaptures(context.Context, int) ([]Request, error)

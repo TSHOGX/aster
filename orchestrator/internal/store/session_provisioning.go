@@ -25,7 +25,7 @@ func (s *Store) AssertExecutionOwner(ctx context.Context, owner string) error {
 
 func (s *Store) ExecutionSession(ctx context.Context, id string) (execution.Session, error) {
 	var p execution.Session
-	err := s.db.QueryRowContext(ctx, `SELECT s.id,s.driver_id,coalesce(s.active_generation_id,'') FROM sessions s JOIN session_execution_backends b ON b.session_id=s.id AND b.backend='khora' WHERE s.id=? AND s.status NOT IN ('failed','destroyed')`, id).Scan(&p.ID, &p.Driver, &p.ActiveGenerationID)
+	err := s.db.QueryRowContext(ctx, `SELECT s.id,s.driver_id,coalesce(s.active_generation_id,'') FROM sessions s WHERE s.id=? AND s.status NOT IN ('failed','destroyed')`, id).Scan(&p.ID, &p.Driver, &p.ActiveGenerationID)
 	return p, err
 }
 

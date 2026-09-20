@@ -21,9 +21,6 @@ func TestUnprovisionedSessionRetirementIsAtomicAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.DestroySession(ctx, "unstarted", time.Now()); err == nil {
-		t.Fatal("retained session entered legacy destruction")
-	}
 	if _, err := st.BeginSessionRetirement(ctx, "unstarted", leaseOwner); err != nil {
 		t.Fatal(err)
 	}

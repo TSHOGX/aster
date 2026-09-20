@@ -57,8 +57,8 @@ func (s *Store) PendingNativeCaptures(ctx context.Context, limit int) ([]nativec
 }
 
 func (s *Store) CompleteNativeCapture(ctx context.Context, p nativecapture.Request, result nativecapture.Result) error {
-	if (result.Skipped && (result.Reason == "" || result.ArchivePath != "")) || (!result.Skipped && result.ArchivePath == "") {
-		return fmt.Errorf("durable archive or explicit capture skip required")
+	if result.ArchivePath == "" {
+		return fmt.Errorf("durable native archive required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -74,7 +74,7 @@ func (s *Store) CompleteNativeCapture(ctx context.Context, p nativecapture.Reque
 	}
 	var previous nativecapture.Result
 	var digest string
-	err = tx.QueryRowContext(ctx, `SELECT archive_path,skipped,reason,native_digest FROM native_capture_receipts WHERE session_id=? AND state_version=?`, p.SessionID, p.StateVersion).Scan(&previous.ArchivePath, &previous.Skipped, &previous.Reason, &digest)
+	err = tx.QueryRowContext(ctx, `SELECT archive_path,native_digest FROM native_capture_receipts WHERE session_id=? AND state_version=?`, p.SessionID, p.StateVersion).Scan(&previous.ArchivePath, &digest)
 	if err == nil {
 		if previous != result || digest != p.NativeDigest {
 			return fmt.Errorf("native capture receipt changed")
@@ -89,7 +89,7 @@ func (s *Store) CompleteNativeCapture(ctx context.Context, p nativecapture.Reque
 	if count != 0 {
 		return fmt.Errorf("earlier native capture remains pending")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO native_capture_receipts(session_id,state_version,native_digest,archive_path,skipped,reason,completed_at) VALUES(?,?,?,?,?,?,?)`, p.SessionID, p.StateVersion, p.NativeDigest, result.ArchivePath, result.Skipped, result.Reason, formatTime(time.Now().UTC())); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO native_capture_receipts(session_id,state_version,native_digest,archive_path,completed_at) VALUES(?,?,?,?,?)`, p.SessionID, p.StateVersion, p.NativeDigest, result.ArchivePath, formatTime(time.Now().UTC())); err != nil {
 		return err
 	}
 	return tx.Commit()

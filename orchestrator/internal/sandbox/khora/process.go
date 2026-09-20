@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io"
 
+	"harness-platform/orchestrator/internal/sandbox"
+
 	"connectrpc.com/connect"
 	v1 "github.com/TSHOGX/khora/pkg/transport/gen/khora/transport/v1"
 	transport "github.com/TSHOGX/khora/pkg/transport/gen/khora/transport/v1/transportv1connect"
-	"harness-platform/orchestrator/internal/sandbox"
 )
 
 const sandboxHeader = "Engine-Sandbox-Id"

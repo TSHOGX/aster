@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"context"
 	"encoding/json"
 	"io"
@@ -138,7 +140,7 @@ func (r *resumeRecorder) firstCall() (store.ResumeFailedTurnParams, bool) {
 func resumeTestServer(t *testing.T, resume config.TurnResumeConfig) (*Server, *resumeRecorder) {
 	t.Helper()
 	recorder := &resumeRecorder{result: store.ResumeFailedTurnResult{TurnID: 99, Attempt: 1}}
-	srv := &Server{
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
 		store: recorder,
 		hub:   events.NewHub(),
 		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),

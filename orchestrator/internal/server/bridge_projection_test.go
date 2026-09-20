@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +17,8 @@ import (
 	"harness-platform/orchestrator/internal/store"
 )
 
+// Projection is exercised on an interrupted Pi turn; completed native advancement
+// is covered by driver-state and real Pi integration tests.
 func projectionFixture(t *testing.T) (*Server, *store.Store, store.CompleteTurnParams) {
 	t.Helper()
 	ctx := context.Background()
@@ -31,12 +35,12 @@ func projectionFixture(t *testing.T) (*Server, *store.Store, store.CompleteTurnP
 	if err != nil || !ok || grant.TurnID != turn {
 		t.Fatalf("claim: %+v %v", grant, err)
 	}
-	_, err = st.AckTurnStarted(ctx, store.AckStartedParams{SessionID: session.ID, GenerationID: allocation.GenerationID, TurnID: turn, Owner: allocation.Owner, SandboxSourceIP: serverSandboxSourceIPForGeneration(t, ctx, st, allocation.GenerationID), LeaseTTL: time.Minute, Now: time.Now().UTC()})
+	_, err = st.AckTurnStarted(ctx, store.AckStartedParams{SessionID: session.ID, GenerationID: allocation.GenerationID, TurnID: turn, Owner: allocation.Owner, LeaseTTL: time.Minute, Now: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{store: st, hub: events.NewHub(), log: slog.Default()}
-	return srv, st, store.CompleteTurnParams{SessionID: session.ID, GenerationID: allocation.GenerationID, TurnID: turn, Owner: allocation.Owner, TerminalStatus: "completed", EventType: bridge.TypeAckTurnCompleted, EventDedupeKey: "projection-complete", EventPayload: map[string]string{"status": "completed"}, Now: time.Now().UTC()}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
+	return srv, st, store.CompleteTurnParams{SessionID: session.ID, GenerationID: allocation.GenerationID, TurnID: turn, Owner: allocation.Owner, TerminalStatus: "failed", EventType: bridge.TypeAckTurnCompleted, EventDedupeKey: "projection-complete", EventPayload: map[string]string{"status": "failed"}, Now: time.Now().UTC()}
 }
 
 func appendProjectionLine(t *testing.T, st *store.Store, p store.CompleteTurnParams, sequence int64, line string) {
@@ -62,7 +66,7 @@ func TestBridgeProjectionRecoversAfterIngestAndCheckpointRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Restart drops all parser memory, including partial text and pending tool.
-	srv = &Server{store: st, hub: events.NewHub(), log: slog.Default()}
+	srv = &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
 	appendProjectionLine(t, st, p, 3, `{"type":"tool_execution_end","toolCallId":"tool-1","result":"synthetic result"}`)
 	appendProjectionLine(t, st, p, 4, `{"type":"message_end","messageId":"native-message","message":{"role":"assistant","content":[],"stopReason":"stop"}}`)
 	if err := srv.projectBeforeBridgeCompletion(ctx, &p); err != nil {
@@ -86,7 +90,7 @@ func TestBridgeProjectionRecoversAfterIngestAndCheckpointRestart(t *testing.T) {
 	}
 	id := assistant[0].ID
 	trace := string(assistant[0].Trace)
-	srv = &Server{store: st, hub: events.NewHub(), log: slog.Default()}
+	srv = &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
 	if err := srv.projectBridgeRecords(ctx, 128); err != nil {
 		t.Fatal(err)
 	}

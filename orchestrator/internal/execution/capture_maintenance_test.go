@@ -135,7 +135,7 @@ func TestCaptureMaintenanceReservesCapacityBeforeDispatch(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, _, owner, binding, _ := captureMaintenanceFixture(t)
 	// A second uncertain create consumes the only available product slot.
-	if err := st.CreateSession(ctx, store.Session{ExecutionBackend: "khora", ID: "other", UserID: "synthetic", Agent: "sh", Mode: "shell", Status: "created", Workspace: "opaque", RestoreID: "unused", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+	if err := st.CreateSession(ctx, store.Session{ID: "other", UserID: "synthetic", Agent: "sh", Mode: "shell", Status: "created", Workspace: "opaque", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateEnvironmentBinding(ctx, execution.Environment{ID: "other-env", SessionID: "other", BackendName: "engine", StoreID: binding.StoreID}); err != nil {

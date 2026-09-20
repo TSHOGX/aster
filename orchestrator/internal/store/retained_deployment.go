@@ -7,26 +7,8 @@ import (
 	"time"
 )
 
-// RequireRetainedDeployment rejects an implicit migration: the standalone Khora
-// process has no embedded runtime with which to serve or retire legacy sessions.
-func (s *Store) RequireRetainedDeployment(ctx context.Context, owner string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(owner)); err != nil {
-		return err
-	}
-	var legacy int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sessions s LEFT JOIN session_execution_backends b ON b.session_id=s.id WHERE b.backend IS NULL OR b.backend!='khora'`).Scan(&legacy); err != nil {
-		return err
-	}
-	if legacy != 0 {
-		return fmt.Errorf("Khora-only startup requires explicit migration of %d legacy sessions", legacy)
-	}
-	return tx.Commit()
-}
+// RetainedIdleCandidates pages accepted bindings eligible for idle release.
+
 func (s *Store) RetainedIdleCandidates(ctx context.Context, owner, after string, threshold time.Time, limit int) ([]execution.Binding, error) {
 	if limit <= 0 || limit > 128 {
 		return nil, fmt.Errorf("bounded idle candidate page required")

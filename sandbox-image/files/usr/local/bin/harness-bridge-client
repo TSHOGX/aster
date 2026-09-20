@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import collections
-import fcntl
 import json
 import os
 import subprocess
@@ -14,34 +13,7 @@ import uuid
 from pathlib import Path
 
 
-INBOX = "inbox"
-OUTBOX = "outbox"
-HEARTBEAT = "heartbeat"
-HOST_HEARTBEAT_DIR = "host-heartbeat"
-TMP = "tmp"
-BRIDGE_HEARTBEAT = "bridge"
-HOST_HEARTBEAT = "host"
-CHECKPOINT_READY = "checkpoint-ready"
-# Host → sandbox control for the turn that is executing right now (abort/steer).
-#
-# It cannot travel as a normal bridge message: the bridge is request/response,
-# the sandbox is the only requester, and during a turn nothing is polling the
-# inbox — the turn thread is blocked reading pi. So the host drops a single
-# JSON file here and a watcher thread reads it.
-#
-# It lives in the inbox directory, which is already mounted read-only into the
-# sandbox, and its name is deliberately NOT a seq name: both queue readers accept
-# only the fixed-width `00000000000000000001.json` form, and the host's response
-# prune only ever deletes seq-named files. So this file is invisible to the queue
-# machinery and safe from its cleanup, with no new mount and no contract change.
-TURN_CONTROL_FILE = "turn-control.json"
-TURN_CONTROL_COMMANDS = frozenset({"abort", "steer"})
-# Schema version of that file, shared with the host writer
-# (orchestrator/internal/bridge/turncontrol.go). Anything else is refused rather
-# than guessed at, so a host and a rootfs that disagree fail visibly instead of
-# dropping the user's Stop.
-TURN_CONTROL_VERSION = 1
-PI_CODING_AGENT_DIR = "/root/.pi/agent" if os.environ.get("HARNESS_BACKEND") == "khora" else "/agent-home/.pi/agent"
+PI_CODING_AGENT_DIR = "/root/.pi/agent"
 PI_SESSION_DIR = f"{PI_CODING_AGENT_DIR}/sessions"
 PI_MODELS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/models.json"
 PI_SETTINGS_SANDBOX_PATH = f"{PI_CODING_AGENT_DIR}/settings.json"
@@ -55,126 +27,20 @@ DRIVER_STATE_DIGEST_PREFIX = b"driver_state_digest_v1\n"
 DEFAULT_MAX_CLAIM_FAILURES = 20
 
 
-def seq_name(seq):
-    return f"{seq:020d}.json"
 
 
-def parse_seq_name(name):
-    if len(name) != len("00000000000000000001.json") or not name.endswith(".json"):
-        return None
-    raw = name[:-5]
-    if not raw.isdigit():
-        return None
-    seq = int(raw, 10)
-    if seq <= 0 or seq_name(seq) != name:
-        return None
-    return seq
 
 
-def fsync_dir(path):
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
 
 
-def write_heartbeat(root, name):
-    if name not in {BRIDGE_HEARTBEAT, HOST_HEARTBEAT}:
-        raise ValueError(f"unsupported heartbeat file {name}")
-    dirname = HOST_HEARTBEAT_DIR if name == HOST_HEARTBEAT else HEARTBEAT
-    write_control_file(root, dirname, name, ".heartbeat")
 
 
-def write_checkpoint_ready(root):
-    write_control_file(root, HEARTBEAT, CHECKPOINT_READY, ".ready")
 
 
-def clear_checkpoint_ready(root):
-    ready = Path(root) / HEARTBEAT / CHECKPOINT_READY
-    try:
-        ready.unlink()
-        fsync_dir(ready.parent)
-    except FileNotFoundError:
-        pass
 
 
-def write_control_file(root, dirname, name, suffix):
-    root = Path(root)
-    tmp = root / TMP
-    target_dir = root / dirname
-    tmp.mkdir(parents=True, exist_ok=True)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    tmp_path = tmp / f"{uuid.uuid4()}{suffix}"
-    with open(tmp_path, "xb") as f:
-        f.write(f"{time.time_ns()}\n".encode("ascii"))
-        f.flush()
-        os.fsync(f.fileno())
-    try:
-        os.replace(tmp_path, target_dir / name)
-        fsync_dir(target_dir)
-    finally:
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
-def read_turn_control(root):
-    """Read the host's turn-control log: an ordered list of commands.
-
-    A log rather than a single slot because this is polled every few hundred ms.
-    Two commands written inside one interval would leave only the second in a
-    single-slot file, and for steer that is a message the user typed — silently
-    dropped while the host has already reported it delivered. Every entry the
-    watcher has not applied yet is still here when it next looks.
-
-    Tolerant by construction: the host replaces the file with an atomic rename,
-    so a missing, half-visible or malformed file is an ordinary observation rather
-    than a fault. Anything unparseable yields an empty list and is simply retried
-    — this must never raise into the watcher thread, because that thread runs
-    inside the sandbox's init process.
-
-    Entries missing a token or turn_id are skipped, not fatal: the token lets the
-    watcher ignore one it has already applied, and the turn_id keeps a stale
-    command from reaching a later turn that happens to be running when it is
-    finally noticed. Skipping one bad entry still delivers the good ones around
-    it.
-    """
-    path = Path(root) / INBOX / TURN_CONTROL_FILE
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-    except (FileNotFoundError, NotADirectoryError, PermissionError, json.JSONDecodeError, UnicodeDecodeError, OSError):
-        return []
-    if not isinstance(payload, dict) or payload.get("version") != TURN_CONTROL_VERSION:
-        return []
-    raw_commands = payload.get("commands")
-    if not isinstance(raw_commands, list):
-        return []
-    commands = []
-    for entry in raw_commands:
-        if not isinstance(entry, dict):
-            continue
-        command = str(entry.get("command") or "")
-        if command not in TURN_CONTROL_COMMANDS:
-            continue
-        token = str(entry.get("token") or "")
-        if not token:
-            continue
-        try:
-            turn_id = int(entry.get("turn_id"))
-        except (TypeError, ValueError):
-            continue
-        commands.append(
-            {
-                "command": command,
-                "token": token,
-                "turn_id": turn_id,
-                "message": str(entry.get("message") or ""),
-            }
-        )
-    return commands
 
 
 def canonical_json_bytes(payload):
@@ -187,74 +53,6 @@ def driver_state_digest(payload):
     return "sha256:" + hashlib.sha256(DRIVER_STATE_DIGEST_PREFIX + canonical_json_bytes(payload)).hexdigest()
 
 
-class Queue:
-    def __init__(self, root, name):
-        self.root = Path(root)
-        self.name = name
-        self.dir = self.root / name
-        self.tmp = self.root / TMP
-        self.tmp.mkdir(parents=True, exist_ok=True)
-        self.dir.mkdir(parents=True, exist_ok=True)
-
-    def next_seq(self):
-        max_seq = 0
-        for entry in self.dir.iterdir():
-            seq = parse_seq_name(entry.name)
-            if seq is not None and seq > max_seq:
-                max_seq = seq
-        return max_seq + 1
-
-    def write(self, envelope):
-        envelope = dict(envelope)
-        envelope.setdefault("message_id", str(uuid.uuid4()))
-        payload = (json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-        tmp_path = self.tmp / f"{uuid.uuid4()}.json"
-        with open(tmp_path, "xb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            while True:
-                target = self.dir / seq_name(self.next_seq())
-                try:
-                    os.link(tmp_path, target)
-                    fsync_dir(self.dir)
-                    return envelope["message_id"]
-                except FileExistsError:
-                    continue
-        finally:
-            try:
-                tmp_path.unlink()
-            except FileNotFoundError:
-                pass
-
-    def read_all(self, min_seq=0):
-        """List readable messages with seq > min_seq, oldest first.
-
-        A file that is listed by iterdir but gone (or not yet complete) by the
-        time it is opened is skipped, not raised. The host prunes stale inbox
-        responses on its own schedule and this directory is read-only to the
-        sandbox, so a vanishing entry is an ordinary event here — and an
-        uncaught one used to take the whole claim loop, i.e. the sandbox, down.
-        """
-        files = []
-        for entry in self.dir.iterdir():
-            seq = parse_seq_name(entry.name)
-            if seq is None or seq <= min_seq:
-                continue
-            try:
-                with open(entry, "r", encoding="utf-8") as f:
-                    files.append((seq, entry, json.load(f)))
-            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
-                continue
-        return sorted(files, key=lambda item: item[0])
-
-    def unlink(self, path):
-        try:
-            Path(path).unlink()
-            fsync_dir(self.dir)
-        except (FileNotFoundError, PermissionError):
-            pass
 
 
 def args_driver_id(args):
@@ -266,186 +64,6 @@ def args_driver_id(args):
 
 class BridgeClient:
     def __init__(self, root, session_id, generation_id, driver_id, poll_interval=0.05):
-        self.root = Path(root)
-        self.session_id = session_id
-        self.generation_id = generation_id
-        self.driver_id = (driver_id or "").strip()
-        if not self.driver_id:
-            raise RuntimeError("driver_id is required")
-        self.poll_interval = poll_interval
-        self.inbox = Queue(root, INBOX)
-        self.outbox = Queue(root, OUTBOX)
-        self.last_output_sequence_by_turn = {}
-        self.leased_turn_id = None
-        self._producer_lock_fd = None
-        # Highest inbox sequence already consumed. The inbox is host-owned and
-        # mounted read-only, so responses cannot be unlinked from this side;
-        # the host writes them with a monotonic sequence and prunes old ones
-        # itself. Tracking the high-water mark means a response is opened
-        # once, and stale ones are never opened at all.
-        self.inbox_seen_seq = 0
-
-    def acquire_producer_lock(self):
-        """Ensure only one claim-loop process can produce turn output.
-
-        The bridge directory survives process restarts.  Without a producer
-        fence, a stale client and its replacement can emit the same logical
-        output sequence concurrently, which the host must (correctly) reject
-        as a protocol corruption.  flock is released automatically if the
-        process dies, so a crash never leaves a permanent lockout.
-        """
-        if self._producer_lock_fd is not None:
-            return
-        lock_path = self.root / TMP / "producer.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as err:
-            os.close(fd)
-            raise RuntimeError("another bridge producer is already running") from err
-        self._producer_lock_fd = fd
-
-    def release_producer_lock(self):
-        fd, self._producer_lock_fd = self._producer_lock_fd, None
-        if fd is None:
-            return
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
-
-    def envelope(self, message_type, request_id=None, turn_id=None, payload=None):
-        envelope = {
-            "message_id": str(uuid.uuid4()),
-            "request_id": request_id or str(uuid.uuid4()),
-            "type": message_type,
-            "session_id": self.session_id,
-            "generation_id": self.generation_id,
-        }
-        if turn_id is not None:
-            envelope["turn_id"] = turn_id
-        if payload is not None:
-            envelope["payload"] = payload
-        return envelope
-
-    def send(self, message_type, request_id=None, turn_id=None, payload=None):
-        envelope = self.envelope(message_type, request_id=request_id, turn_id=turn_id, payload=payload)
-        self.outbox.write(envelope)
-        return envelope
-
-    def wait_response(self, request_id, timeout=None):
-        deadline = None if timeout is None else time.monotonic() + timeout
-        while True:
-            for seq, _, envelope in self.inbox.read_all(min_seq=self.inbox_seen_seq):
-                # Only one request is ever outstanding, so every newer response
-                # that is not ours answers a request we already gave up on
-                # (a timeout). Consume it and move on.
-                self.inbox_seen_seq = max(self.inbox_seen_seq, seq)
-                if envelope.get("request_id") != request_id:
-                    continue
-                if envelope.get("type") == "error":
-                    payload = envelope.get("payload") or {}
-                    raise RuntimeError(payload.get("error") or "bridge error")
-                return envelope
-            if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(f"timed out waiting for {request_id}")
-            time.sleep(self.poll_interval)
-
-    def hello(self, timeout=None):
-        request_id = str(uuid.uuid4())
-        self.send(
-            "hello",
-            request_id=request_id,
-            payload={"driver_id": self.driver_id, "protocol_version": 2, "turn_input_schema": "RunTurn"},
-        )
-        response = self.wait_response(request_id, timeout=timeout)
-        payload = response.get("payload") or {}
-        self.last_output_sequence_by_turn = {
-            int(turn_id): int(sequence)
-            for turn_id, sequence in (payload.get("last_output_sequence_by_turn") or {}).items()
-        }
-        # The host acknowledgement only includes events already committed to
-        # SQLite.  A crash/reconnect can leave durable emit_output files in the
-        # sandbox outbox that have not been consumed yet.  Include those files
-        # in the resume boundary so a replacement producer never reuses a
-        # sequence that is already pending on disk.
-        for _, _, pending in self.outbox.read_all():
-            if pending.get("type") != "emit_output":
-                continue
-            turn_id = pending.get("turn_id")
-            pending_payload = pending.get("payload") or {}
-            sequence = pending_payload.get("output_sequence")
-            if turn_id is None or sequence is None:
-                continue
-            try:
-                turn_id = int(turn_id)
-                sequence = int(sequence)
-            except (TypeError, ValueError):
-                continue
-            self.last_output_sequence_by_turn[turn_id] = max(
-                self.last_output_sequence_by_turn.get(turn_id, 0), sequence
-            )
-        self.leased_turn_id = payload.get("leased_turn_id")
-        return payload
-
-    def probe_network(self, timeout=None):
-        request_id = str(uuid.uuid4())
-        self.send("probe_network", request_id=request_id)
-        return self.wait_response(request_id, timeout=timeout).get("payload") or {}
-
-    def heartbeat(self):
-        self.touch_bridge_heartbeat()
-        self.send("heartbeat")
-
-    def touch_bridge_heartbeat(self):
-        write_heartbeat(self.root, BRIDGE_HEARTBEAT)
-
-    def mark_checkpoint_ready(self):
-        write_checkpoint_ready(self.root)
-
-    def clear_checkpoint_ready(self):
-        clear_checkpoint_ready(self.root)
-
-    def claim_next_turn(self, timeout=None):
-        request_id = str(uuid.uuid4())
-        self.send("claim_next_turn", request_id=request_id)
-        response = self.wait_response(request_id, timeout=timeout)
-        if response.get("type") != "grant":
-            return None
-        return response.get("payload") or {}
-
-    def resume_turn(self, turn_id, timeout=None):
-        request_id = str(uuid.uuid4())
-        self.send("resume_turn", request_id=request_id, turn_id=turn_id)
-        response = self.wait_response(request_id, timeout=timeout)
-        if response.get("type") != "grant":
-            return None
-        return response.get("payload") or {}
-
-    def ack_turn_started(self, turn_id, sandbox_source_ip):
-        self.send("ack_turn_started", turn_id=turn_id, payload={"sandbox_source_ip": sandbox_source_ip})
-
-    def emit_output(self, turn_id, output_sequence, payload, stream="stdout"):
-        self.send(
-            "emit_output",
-            turn_id=turn_id,
-            payload={"output_sequence": output_sequence, "stream": stream, "payload": payload},
-        )
-
-    def ack_turn_completed(self, turn_id, status="completed", error_class="", error="", driver_state_update=None):
-        payload = {"status": status}
-        if error_class:
-            payload["error_class"] = error_class
-        if error:
-            payload["error"] = error
-        if driver_state_update is not None:
-            payload["driver_state_update"] = driver_state_update
-        self.send("ack_turn_completed", turn_id=turn_id, payload=payload)
-
-
-class StdioBridgeClient(BridgeClient):
-    def __init__(self, root, session_id, generation_id, driver_id, poll_interval=0.05):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
         import harness_stream
         self.root = Path(root)
@@ -456,15 +74,11 @@ class StdioBridgeClient(BridgeClient):
         self.last_output_sequence_by_turn = {}
         self.leased_turn_id = None
         self.journal = harness_stream.Journal(root, generation_id)
-        self.protocol = {"protocol_version": 2, "driver_id": driver_id, "turn_input_schema": "RunTurn"}
-        if os.environ.get('HARNESS_BACKEND') == 'khora':
-            from harness_launch import template_protocol
-            self.protocol = template_protocol(driver_id)
+        from harness_launch import template_protocol
+        self.protocol = template_protocol(driver_id)
         self.channel = harness_stream.StdioChannel(self.journal, sys.stdin.buffer, sys.stdout.buffer,
                                                  self.protocol)
 
-    def acquire_producer_lock(self):
-        pass  # Journal acquired the execution's producer lock before reading stdin.
 
     def release_producer_lock(self):
         # The reader is daemon-scoped to this process. Closing stdin by the host
@@ -472,13 +86,16 @@ class StdioBridgeClient(BridgeClient):
         if not self.channel.reader.is_alive():
             self.journal.close()
 
+
     def send(self, message_type, request_id=None, turn_id=None, payload=None):
         envelope = self.envelope(message_type, request_id=request_id, turn_id=turn_id, payload=payload)
         self.channel.emit(envelope)
         return envelope
 
+
     def wait_response(self, request_id, timeout=None):
         return self.channel.wait_response(request_id, timeout)
+
 
     def hello(self, timeout=None):
         request = self.send("hello", payload=self.protocol)
@@ -492,17 +109,10 @@ class StdioBridgeClient(BridgeClient):
             self.last_output_sequence_by_turn[turn] = max(sequence, self.last_output_sequence_by_turn.get(turn, 0))
         return payload
 
-    def touch_bridge_heartbeat(self):
-        pass
 
-    def mark_checkpoint_ready(self):
-        pass
-
-    def clear_checkpoint_ready(self):
-        pass
-
-    def ack_turn_started(self, turn_id, sandbox_source_ip):
+    def ack_turn_started(self, turn_id):
         self.send("ack_turn_started", turn_id=turn_id, payload={})
+
 
     def ack_turn_completed(self, turn_id, status="completed", error_class="", error="", driver_state_update=None):
         payload = {"status": status, "final_output_sequence": self.last_output_sequence_by_turn.get(turn_id, 0)}
@@ -513,6 +123,7 @@ class StdioBridgeClient(BridgeClient):
         if driver_state_update is not None:
             payload["driver_state_update"] = driver_state_update
         self.send("ack_turn_completed", turn_id=turn_id, payload=payload)
+
 
     def start_control_watcher(self, runner, turn_id):
         stop = threading.Event()
@@ -543,6 +154,60 @@ class StdioBridgeClient(BridgeClient):
                               payload={'command_id': command['token'], 'status': 'rejected'})
         threading.Thread(target=watch, daemon=True).start()
         return stop
+
+
+    def envelope(self, message_type, request_id=None, turn_id=None, payload=None):
+        envelope = {
+            "message_id": str(uuid.uuid4()),
+            "request_id": request_id or str(uuid.uuid4()),
+            "type": message_type,
+            "session_id": self.session_id,
+            "generation_id": self.generation_id,
+        }
+        if turn_id is not None:
+            envelope["turn_id"] = turn_id
+        if payload is not None:
+            envelope["payload"] = payload
+        return envelope
+
+
+    def probe_network(self, timeout=None):
+        request_id = str(uuid.uuid4())
+        self.send("probe_network", request_id=request_id)
+        return self.wait_response(request_id, timeout=timeout).get("payload") or {}
+
+
+    def claim_next_turn(self, timeout=None):
+        request_id = str(uuid.uuid4())
+        self.send("claim_next_turn", request_id=request_id)
+        response = self.wait_response(request_id, timeout=timeout)
+        if response.get("type") != "grant":
+            return None
+        return response.get("payload") or {}
+
+
+    def resume_turn(self, turn_id, timeout=None):
+        request_id = str(uuid.uuid4())
+        self.send("resume_turn", request_id=request_id, turn_id=turn_id)
+        response = self.wait_response(request_id, timeout=timeout)
+        if response.get("type") != "grant":
+            return None
+        return response.get("payload") or {}
+
+
+    def emit_output(self, turn_id, output_sequence, payload, stream="stdout"):
+        self.send(
+            "emit_output",
+            turn_id=turn_id,
+            payload={"output_sequence": output_sequence, "stream": stream, "payload": payload},
+        )
+
+
+    def heartbeat(self):
+        self.send("heartbeat")
+
+
+
 
 
 class ShellTurnRunner:
@@ -643,24 +308,12 @@ def validate_pi_config_materialization():
             raise RuntimeError(f"pi config missing: {path}") from err
         if not candidate.is_file():
             raise RuntimeError(f"pi config is not a regular file: {path}")
-        if pi_config_writable_by_sandbox_uid(st):
-            raise RuntimeError(f"pi config is writable by sandbox uid/gid: {path}")
+        if st.st_mode & 0o222:
+            raise RuntimeError(f"pi config must be read-only: {path}")
         with open(candidate, "rb") as f:
             f.read(1)
 
 
-def pi_config_writable_by_sandbox_uid(st):
-    try:
-        uid = int(os.environ.get("HARNESS_AGENT_UID", "65534"))
-        gid = int(os.environ.get("HARNESS_AGENT_GID", "65534"))
-    except ValueError:
-        uid, gid = 65534, 65534
-    mode = st.st_mode
-    return bool(
-        mode & 0o002
-        or (st.st_uid == uid and mode & 0o200)
-        or (st.st_gid == gid and mode & 0o020)
-    )
 
 
 def read_pi_system_prompt():
@@ -674,7 +327,7 @@ def read_pi_system_prompt():
         raise RuntimeError(f"pi system prompt stat failed: {path}") from err
     if not path.is_file():
         raise RuntimeError(f"pi system prompt is not a regular file: {path}")
-    if pi_config_writable_by_sandbox_uid(st):
+    if st.st_mode & 0o222:
         raise RuntimeError(f"pi system prompt is writable by sandbox uid/gid: {path}")
     try:
         return path.read_text(encoding="utf-8").strip()
@@ -772,37 +425,17 @@ class PiRPCTurnRunner:
             pi_command.extend(["--append-system-prompt", system_prompt])
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            "HOME": "/root" if os.environ.get("HARNESS_BACKEND") == "khora" else "/agent-home",
-            "USER": "root" if os.environ.get("HARNESS_BACKEND") == "khora" else "harness",
-            "LOGNAME": "root" if os.environ.get("HARNESS_BACKEND") == "khora" else "harness",
+            "HOME": "/root",
+            "USER": "root",
+            "LOGNAME": "root",
             "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", ""),
         }
         env.update(pi_runtime_env)
-        if os.environ.get("HARNESS_BACKEND") == "khora":
-            env["HARNESS_BACKEND"] = "khora"
         for optional_name in ("LANG", "TMPDIR"):
             optional_value = os.environ.get(optional_name)
             if optional_value:
                 env[optional_name] = optional_value
-        target_uid = "0" if os.environ.get("HARNESS_BACKEND") == "khora" else os.environ.get("HARNESS_AGENT_UID", "65534")
-        target_gid = "0" if os.environ.get("HARNESS_BACKEND") == "khora" else os.environ.get("HARNESS_AGENT_GID", "65534")
-        if str(os.geteuid()) == target_uid and str(os.getegid()) == target_gid:
-            command = pi_command
-        else:
-            command = [
-                "setpriv",
-                "--reuid",
-                target_uid,
-                "--regid",
-                target_gid,
-                "--clear-groups",
-                "env",
-                "HOME=/agent-home",
-                "USER=harness",
-                "LOGNAME=harness",
-                *[f"{name}={value}" for name, value in env.items() if name.startswith("PI_")],
-                *pi_command,
-            ]
+        command = pi_command
         self.proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -1164,18 +797,6 @@ def make_turn_runner(driver_id):
     raise RuntimeError(f"unsupported driver {driver_id}")
 
 
-def sandbox_source_ip():
-    try:
-        output = subprocess.check_output(["ip", "-j", "addr", "show"], text=True)
-        for link in json.loads(output):
-            if link.get("ifname") == "lo":
-                continue
-            for addr in link.get("addr_info", []):
-                if addr.get("family") == "inet" and addr.get("local"):
-                    return addr["local"]
-    except Exception:
-        pass
-    return "127.0.0.1"
 
 
 def parse_statuses(value, default):
@@ -1207,28 +828,8 @@ def run_network_probe(base_url, healthz_statuses, timeout):
         raise RuntimeError(f"probe GET /healthz returned {healthz_status}, want one of {sorted(healthz_statuses)}")
 
 
-def run_probe(args):
-    driver_id = args_driver_id(args)
-    client = BridgeClient(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
-    client.heartbeat()
-    client.hello(timeout=args.timeout)
-    if driver_id == "pi":
-        run_network_probe(
-            args.base_url,
-            parse_statuses(args.healthz_statuses, {200}),
-            args.http_timeout,
-        )
-    client.probe_network(timeout=args.timeout)
-    client.touch_bridge_heartbeat()
-    client.mark_checkpoint_ready()
 
 
-def run_heartbeat_loop(args):
-    client = BridgeClient(args.bridge_dir, args.session_id, args.generation_id, args_driver_id(args), args.poll_interval)
-    interval = max(args.interval, 0.001)
-    while True:
-        client.heartbeat()
-        time.sleep(interval)
 
 
 def start_background_heartbeat(client, interval):
@@ -1246,51 +847,6 @@ def start_background_heartbeat(client, interval):
     return stop
 
 
-def start_turn_control_watcher(root, runner, turn_id, interval=0.2):
-    """Watch for host abort/steer while a turn executes, and apply it to pi.
-
-    Exists because the turn thread is blocked in _read_rpc for the whole turn: no
-    amount of inbox polling elsewhere can reach it, so the delivery has to happen
-    on a second thread. Modeled on start_background_heartbeat above — daemon
-    thread, stop via Event, every exception contained.
-
-    Containment matters more than usual here: this process is the sandbox's init,
-    so an exception escaping this thread would take the sandbox down, which is the
-    exact cost this whole change exists to avoid.
-
-    Each token is applied at most once. Abort ends the watch (the turn is over);
-    steer does not, because the turn keeps running and the user may steer again.
-    """
-    stop = threading.Event()
-    if not hasattr(runner, "deliver_control"):
-        return stop
-    applied = set()
-
-    def loop():
-        while not stop.wait(max(interval, 0.01)):
-            try:
-                for control in read_turn_control(root):
-                    if control["token"] in applied:
-                        continue
-                    # An entry naming a different turn is stale: the host wrote it
-                    # for a turn that has since ended. Ignoring it is what keeps a
-                    # late abort from killing the turn that came after it.
-                    if control["turn_id"] != turn_id:
-                        continue
-                    applied.add(control["token"])
-                    delivered = runner.deliver_control(control["command"], turn_id, control.get("message", ""))
-                    if delivered:
-                        print(f"[bridge] applied {control['command']} to turn {turn_id}", file=sys.stderr, flush=True)
-                    # Abort ends the watch: the turn is over, so anything after it
-                    # in the log belongs to a turn this watcher will never see.
-                    if delivered and control["command"] == "abort":
-                        return
-            except Exception as err:
-                print(f"[bridge] turn control watch failed: {err}", file=sys.stderr, flush=True)
-
-    thread = threading.Thread(target=loop, daemon=True)
-    thread.start()
-    return stop
 
 
 def execute_grant(client, runner, grant):
@@ -1300,8 +856,8 @@ def execute_grant(client, runner, grant):
         raise RuntimeError(f"unsupported turn_input_schema {grant.get('turn_input_schema')}")
     content = str(run_turn.get("content") or "")
     output_sequence = int(client.last_output_sequence_by_turn.get(turn_id, 0)) + 1
-    client.clear_checkpoint_ready()
-    client.ack_turn_started(turn_id, "" if isinstance(client, StdioBridgeClient) else sandbox_source_ip())
+
+    client.ack_turn_started(turn_id)
 
     def emit(stream, line):
         nonlocal output_sequence
@@ -1313,7 +869,7 @@ def execute_grant(client, runner, grant):
     # which a Stop can land is exactly the window in which the turn is running.
     if hasattr(runner, "set_turn_context"):
         runner.set_turn_context(grant)
-    stop_control_watch = client.start_control_watcher(runner, turn_id) if hasattr(client, "start_control_watcher") else start_turn_control_watcher(client.root, runner, turn_id)
+    stop_control_watch = client.start_control_watcher(runner, turn_id)
     try:
         result = runner.run_turn(content, emit)
         driver_state_update = None
@@ -1342,14 +898,13 @@ def execute_grant(client, runner, grant):
         error=error,
         driver_state_update=driver_state_update,
     )
-    client.mark_checkpoint_ready()
+
 
 
 def run_claim_loop(args, runner=None):
     driver_id = args_driver_id(args)
-    client_type = StdioBridgeClient if getattr(args, "transport", "files") == "stdio" else BridgeClient
-    client = client_type(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
-    client.acquire_producer_lock()
+    client = BridgeClient(args.bridge_dir, args.session_id, args.generation_id, driver_id, args.poll_interval)
+
     try:
         client.heartbeat()
         client.hello(timeout=args.timeout)
@@ -1360,7 +915,7 @@ def run_claim_loop(args, runner=None):
                 args.http_timeout,
             )
         client.probe_network(timeout=args.timeout)
-        client.mark_checkpoint_ready()
+
         runner = runner or make_turn_runner(driver_id)
         stop_heartbeat = start_background_heartbeat(client, args.heartbeat_interval)
         completed = 0
@@ -1412,8 +967,7 @@ def run_claim_loop(args, runner=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--transport", choices=("files", "stdio"), default="files")
-    parser.add_argument("--bridge-dir", default=os.environ.get("HARNESS_BRIDGE_DIR", "/harness-control/bridge"))
+    parser.add_argument("--bridge-dir", default="/harness-bridge")
     parser.add_argument("--session-id", default=os.environ.get("SESSION_ID"))
     parser.add_argument("--generation-id", default=os.environ.get("GENERATION_ID"))
     parser.add_argument("--driver-id", default=os.environ.get("HARNESS_DRIVER_ID", ""))
@@ -1428,9 +982,6 @@ def main(argv=None):
     parser.add_argument("--healthz-statuses", default=os.environ.get("HARNESS_PROBE_HEALTHZ_STATUSES", "200"))
     parser.add_argument("--http-timeout", type=float, default=float(os.environ.get("HARNESS_PROBE_HTTP_TIMEOUT", "3")))
     subcommands = parser.add_subparsers(dest="command", required=True)
-    subcommands.add_parser("probe")
-    heartbeat_loop = subcommands.add_parser("heartbeat-loop")
-    heartbeat_loop.add_argument("--interval", type=float, default=float(os.environ.get("HARNESS_BRIDGE_HEARTBEAT_INTERVAL", "30")))
     claim_loop = subcommands.add_parser("claim-loop")
     claim_loop.add_argument("--idle-interval", type=float, default=float(os.environ.get("HARNESS_BRIDGE_IDLE_INTERVAL", "0.05")))
     claim_loop.add_argument("--heartbeat-interval", type=float, default=float(os.environ.get("HARNESS_BRIDGE_HEARTBEAT_INTERVAL", "30")))
@@ -1442,12 +993,7 @@ def main(argv=None):
         parser.error("--session-id and --generation-id are required")
     if not args.driver_id:
         parser.error("--driver-id is required")
-    if args.command == "probe":
-        run_probe(args)
-    elif args.command == "heartbeat-loop":
-        run_heartbeat_loop(args)
-    elif args.command == "claim-loop":
-        run_claim_loop(args)
+    run_claim_loop(args)
     return 0
 
 

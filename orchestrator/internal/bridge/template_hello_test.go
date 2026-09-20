@@ -11,7 +11,7 @@ import (
 type pinnedProtocol struct{ digest string }
 
 func (p pinnedProtocol) BridgeProtocolEvidence(context.Context, string, string) (store.BridgeProtocolEvidence, error) {
-	return store.BridgeProtocolEvidence{DriverID: "sh", ProtocolVersion: 2, TurnInputSchema: "RunTurn", AgentManifestDigest: p.digest, RequireManifestDigest: true}, nil
+	return store.BridgeProtocolEvidence{DriverID: "sh", ProtocolVersion: 2, TurnInputSchema: "RunTurn", AgentManifestDigest: p.digest}, nil
 }
 func TestRetainedProtocolRequiresPinnedGuestManifest(t *testing.T) {
 	want := "sha256:" + strings.Repeat("a", 64)

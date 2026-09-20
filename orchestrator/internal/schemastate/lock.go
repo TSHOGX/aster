@@ -8,8 +8,8 @@ import (
 	"syscall"
 )
 
-// LockPaths supplements the legacy process lock with a canonical per-database
-// lock. A different run_dir cannot open the same managed database concurrently.
+// LockPaths holds canonical per-database locks. A different run_dir cannot
+// open the same product database concurrently.
 func LockPaths(paths ...string) (func(), error) {
 	var canonical []string
 	for _, p := range paths {

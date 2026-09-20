@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func steeringFixture(t *testing.T) (*Store, BoundBridgeStore, execution.Binding, execution.TurnCommand, int64) {
+func steeringFixture(t *testing.T) (*Store, *Store, execution.Binding, execution.TurnCommand, int64) {
 	t.Helper()
 	ctx := context.Background()
 	st, bridge, binding, observed := boundExecutionFixtureForDriver(t, "pi")

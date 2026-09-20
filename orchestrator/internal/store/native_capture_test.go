@@ -48,7 +48,7 @@ func TestNativeCaptureRequestsOrderedAndReceiptsMatchOriginalSource(t *testing.T
 	if err != nil || len(requests) != 1 || requests[0].StateVersion != 3 {
 		t.Fatalf("next pending request: %+v %v", requests, err)
 	}
-	if err := st.CompleteNativeCapture(ctx, requests[0], nativecapture.Result{Skipped: true, Reason: "test session"}); err != nil {
+	if err := st.CompleteNativeCapture(ctx, requests[0], nativecapture.Result{ArchivePath: "second-archive"}); err != nil {
 		t.Fatal(err)
 	}
 	requests, err = st.PendingNativeCaptures(ctx, 32)

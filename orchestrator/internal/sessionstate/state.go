@@ -8,8 +8,8 @@ const (
 	Created       Status = "created"
 	RunningActive Status = "running_active"
 	RunningIdle   Status = "running_idle"
-	Checkpointing Status = "checkpointing"
-	Checkpointed  Status = "checkpointed"
+	Pausing       Status = "pausing"
+	Paused        Status = "paused"
 	Failed        Status = "failed"
 	Destroyed     Status = "destroyed"
 )
@@ -18,8 +18,8 @@ var validStatuses = map[Status]struct{}{
 	Created:       {},
 	RunningActive: {},
 	RunningIdle:   {},
-	Checkpointing: {},
-	Checkpointed:  {},
+	Pausing:       {},
+	Paused:        {},
 	Failed:        {},
 	Destroyed:     {},
 }
@@ -28,8 +28,8 @@ var allStatuses = []Status{
 	Created,
 	RunningActive,
 	RunningIdle,
-	Checkpointing,
-	Checkpointed,
+	Pausing,
+	Paused,
 	Failed,
 	Destroyed,
 }
@@ -38,8 +38,8 @@ var activeStatuses = []Status{
 	Created,
 	RunningActive,
 	RunningIdle,
-	Checkpointing,
-	Checkpointed,
+	Pausing,
+	Paused,
 }
 
 func Validate(value string) error {
@@ -51,7 +51,7 @@ func Validate(value string) error {
 
 func CanAcceptInput(value string) bool {
 	switch Status(value) {
-	case Created, RunningIdle, Checkpointed:
+	case Created, RunningIdle, Paused:
 		return true
 	default:
 		return false
@@ -60,7 +60,7 @@ func CanAcceptInput(value string) bool {
 
 func IsBusy(value string) bool {
 	switch Status(value) {
-	case RunningActive, Checkpointing:
+	case RunningActive, Pausing:
 		return true
 	default:
 		return false
@@ -78,7 +78,7 @@ func IsTerminal(value string) bool {
 
 func IsActive(value string) bool {
 	switch Status(value) {
-	case Created, RunningActive, RunningIdle, Checkpointing, Checkpointed:
+	case Created, RunningActive, RunningIdle, Pausing, Paused:
 		return true
 	default:
 		return false

@@ -9,7 +9,7 @@ import (
 
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/events"
-	"harness-platform/orchestrator/internal/runtime"
+
 	"harness-platform/orchestrator/internal/store"
 )
 
@@ -164,13 +164,13 @@ func (p *streamParser) handleBridgeOutput(output normalizerBridgeOutput) {
 	}
 	if output.Stream == "runtime" {
 		if hasLine {
-			p.publish("system.status", runtime.Output{Stream: output.Stream, Line: line})
+			p.publish("system.status", agentOutput{Stream: output.Stream, Line: line})
 		}
 		return
 	}
 	if output.Stream == "stderr" {
 		if hasLine {
-			p.publish("agent.output", runtime.Output{Stream: output.Stream, Line: line})
+			p.publish("agent.output", agentOutput{Stream: output.Stream, Line: line})
 		}
 		return
 	}
@@ -241,7 +241,7 @@ func (shellOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutp
 				p.handleShellTurnDone(event.ExitCode)
 				return
 			default:
-				p.publish("agent.output", runtime.Output{Stream: output.Stream, Line: rawLine})
+				p.publish("agent.output", agentOutput{Stream: output.Stream, Line: rawLine})
 				return
 			}
 		}
@@ -587,7 +587,7 @@ func (p *streamParser) handleShellOutput(stream, text string) {
 	if text == "" {
 		return
 	}
-	out := runtime.Output{Stream: stream, Line: text}
+	out := agentOutput{Stream: stream, Line: text}
 	p.publish("agent.output", out)
 	p.persistShellOutput(text)
 }
@@ -806,4 +806,9 @@ func (p *streamParser) publish(eventType string, payload any) {
 		return
 	}
 	p.srv.hub.Publish(events.Event{Type: eventType, SessionID: p.sessionID, Payload: payload})
+}
+
+type agentOutput struct {
+	Stream string `json:"stream"`
+	Line   string `json:"line"`
 }

@@ -682,7 +682,7 @@ func ValidateHelloPayload(ctx context.Context, st ProtocolEvidenceStore, envelop
 	if payload.DriverID != evidence.DriverID {
 		return helloPayload{}, store.BridgeProtocolEvidence{}, protocolErrorf("hello driver_id %q does not match generation driver %q", payload.DriverID, evidence.DriverID)
 	}
-	if evidence.RequireManifestDigest && payload.ManifestDigest != evidence.AgentManifestDigest {
+	if evidence.AgentManifestDigest == "" || payload.ManifestDigest != evidence.AgentManifestDigest {
 		return helloPayload{}, store.BridgeProtocolEvidence{}, protocolErrorf("guest template manifest differs from accepted release")
 	}
 	if evidence.ProtocolVersion != requiredProtocolVersion {

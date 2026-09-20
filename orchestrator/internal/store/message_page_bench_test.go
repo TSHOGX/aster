@@ -18,7 +18,7 @@ func BenchmarkWorkbenchPages(b *testing.B) {
 			}
 			defer st.Close()
 			now := time.Now()
-			e = st.CreateSession(ctx, Session{ID: "synthetic", UserID: "synthetic", Agent: "pi", Mode: "agent", Status: "created", CreatedAt: now, UpdatedAt: now, Workspace: "/synthetic", RestoreID: "synthetic"})
+			e = st.CreateSession(ctx, Session{ID: "synthetic", UserID: "synthetic", Agent: "pi", Mode: "agent", Status: "created", CreatedAt: now, UpdatedAt: now, Workspace: "/synthetic"})
 			if e != nil {
 				b.Fatal(e)
 			}
@@ -57,7 +57,7 @@ func BenchmarkWorkbenchPages(b *testing.B) {
 			}
 			defer st.Close()
 			now := time.Now()
-			if e = st.CreateSession(ctx, Session{ID: "synthetic", UserID: "synthetic", Agent: "pi", Mode: "agent", Status: "created", CreatedAt: now, UpdatedAt: now, Workspace: "/synthetic", RestoreID: "synthetic"}); e != nil {
+			if e = st.CreateSession(ctx, Session{ID: "synthetic", UserID: "synthetic", Agent: "pi", Mode: "agent", Status: "created", CreatedAt: now, UpdatedAt: now, Workspace: "/synthetic"}); e != nil {
 				b.Fatal(e)
 			}
 			tx, e := st.db.BeginTx(ctx, nil)

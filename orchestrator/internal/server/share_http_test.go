@@ -1,6 +1,8 @@
 package server
 
 import (
+	"harness-platform/orchestrator/internal/agents"
+
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -16,7 +18,6 @@ import (
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
-	localworkspace "harness-platform/orchestrator/internal/workspace/local"
 )
 
 // shareFixture is a two-user server with one session owned by alice.
@@ -46,7 +47,7 @@ func newShareFixture(t *testing.T) *shareFixture {
 	now := time.Now().UTC()
 	session := store.Session{
 		ID: "sess_alice", UserID: "alice", Status: string(sessionstate.Created),
-		Agent: "pi", Mode: "agent", Workspace: dir, RestoreID: "r1",
+		Agent: "pi", Mode: "agent", Workspace: dir,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := st.CreateSession(ctx, session); err != nil {
@@ -371,7 +372,7 @@ func newArtifactShareFixture(t *testing.T) (*shareFixture, string) {
 	session := store.Session{
 		ID: "sess_alice", UserID: "alice", Status: string(sessionstate.Created),
 		Agent: "pi", Mode: "agent", Workspace: filepath.Join(dir, "sessions", "sess_alice"),
-		RestoreID: "r1", CreatedAt: now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := os.MkdirAll(session.Workspace, 0o755); err != nil {
 		t.Fatalf("create workspace dir: %v", err)
@@ -379,24 +380,15 @@ func newArtifactShareFixture(t *testing.T) (*shareFixture, string) {
 	if err := st.CreateSession(ctx, session); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	srv := &Server{
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
 		cfg: cfg, store: st, hub: events.NewHub(), log: slog.Default(),
 		creds:             newAuthRegistry(cfg, slog.Default()),
 		sessionOwnerCache: map[string]sessionOwnerEntry{},
 	}
-	volumeConfig, err := srv.dataVolumeProvisionerConfig()
-	if err != nil {
-		t.Fatalf("data volume config: %v", err)
-	}
-	workspace, err := (localworkspace.Volumes{Records: st}).ProvisionSessionWorkspace(ctx, localworkspace.ProvisionSessionWorkspaceParams{
-		SessionID: session.ID,
-		Config:    volumeConfig,
-		Now:       now,
-	})
-	if err != nil {
-		t.Fatalf("provision workspace: %v", err)
-	}
-	return &shareFixture{srv: srv, store: st, session: session, dir: dir}, workspace.HostPath
+	srv.workspaceReads = fixtureFiles{root: session.Workspace, store: st}
+	srv.workspaceWrites = fixtureFiles{root: session.Workspace, store: st}
+	return &shareFixture{srv: srv, store: st, session: session, dir: dir}, session.Workspace
+
 }
 
 // A reader may download a workspace file; the same grant must not let them PUT.

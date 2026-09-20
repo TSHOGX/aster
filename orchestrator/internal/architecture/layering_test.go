@@ -4,9 +4,7 @@
 //
 // The rules are checked with the stdlib go/build importer, so this adds no
 // module dependency. Only *production* imports are checked (GoFiles), not test
-// imports: tests legitimately reach across layers to build fixtures (for
-// example internal/memorystore's tests open a control store to exercise the
-// ingest handoff), and forbidding that would be noise rather than architecture.
+// imports: focused tests may compose multiple layers to build fixtures.
 package architecture
 
 import (
@@ -55,25 +53,7 @@ var rules = []rule{
 			"internal/trajectory",
 		},
 		why: "store is the bottom persistence layer for control.db; consumers depend on it " +
-			"through their own narrow interfaces, never the reverse. In particular store must " +
-			"not reach back into memorystore -- the memory tables live in a separate database " +
-			"and are fed through internal/controlsource.",
-	},
-	{
-		pkg: "internal/memorystore",
-		forbidden: []string{
-			"internal/store",
-			"internal/server",
-			"internal/controlsource",
-			"internal/bridge",
-			"internal/artifacts",
-			"internal/runtime",
-		},
-		why: "memorystore owns its own database file and must stay decoupled from control.db. " +
-			"Ingest flows in via memorystore.SessionSource, which internal/controlsource " +
-			"implements on top of store -- so the dependency points controlsource -> " +
-			"{store, memorystore}, and memorystore never imports store directly. A direct " +
-			"edge here would bypass the controlsource seam.",
+			"through their own narrow interfaces, never the reverse.",
 	},
 	{
 		pkg: "internal/sqlitex",
@@ -85,7 +65,7 @@ var rules = []rule{
 			"internal/sessionstate",
 		},
 		why: "sqlitex holds shared low-level SQLite helpers and must remain a leaf so both " +
-			"store and memorystore can depend on it.",
+			"product persistence can depend on it.",
 	},
 	{
 		pkg:       "internal/agents",
@@ -101,11 +81,6 @@ var rules = []rule{
 		pkg:       "internal/bridge",
 		forbidden: []string{"internal/server", "internal/artifacts", "internal/memorystore"},
 		why:       "bridge sits below the HTTP layer and reaches persistence only through bridge.Store.",
-	},
-	{
-		pkg:       "internal/artifacts",
-		forbidden: []string{"internal/server", "internal/memorystore", "internal/runtime"},
-		why:       "the artifacts watcher is a leaf consumer; the server depends on it, not the reverse.",
 	},
 	{
 		pkg: "internal/shareblob",
@@ -126,13 +101,6 @@ var rules = []rule{
 			"the delete -- a blob store that knew about links would invite deciding it somewhere " +
 			"a concurrent link creation could race it.",
 	},
-	{
-		pkg:       "internal/dbsplit",
-		forbidden: []string{"internal/server", "internal/store", "internal/memorystore"},
-		why: "dbsplit performs a one-window migration over raw SQLite and must not couple to the " +
-			"live store types, so the migration stays valid against on-disk databases written by " +
-			"any binary version.",
-	},
 }
 
 func TestLayering(t *testing.T) {
@@ -152,33 +120,6 @@ func TestLayering(t *testing.T) {
 // TestControlsourceIsTheOnlyStoreToMemorystoreBridge pins the ingest seam: exactly
 // one package may depend on both store and memorystore in production code.
 // Anything else joining them means the controlsource seam was bypassed.
-func TestControlsourceIsTheOnlyStoreToMemorystoreBridge(t *testing.T) {
-	root := moduleRoot(t)
-	const allowed = "internal/controlsource"
-
-	var joiners []string
-	for _, pkg := range walkPackages(t, root) {
-		if pkg == allowed {
-			continue
-		}
-		imports := productionImports(t, root, pkg)
-		_, hasStore := imports[modulePrefix+"internal/store"]
-		_, hasMemory := imports[modulePrefix+"internal/memorystore"]
-		if hasStore && hasMemory {
-			joiners = append(joiners, pkg)
-		}
-	}
-
-	// Process entry points open both databases and compose consumer-owned ports.
-	// Neither capture orchestration nor its archive sink imports both stores.
-	permitted := map[string]bool{"cmd/orchestrator": true, "cmd/native-capture": true}
-	for _, pkg := range joiners {
-		if !permitted[pkg] {
-			t.Errorf("layering violation: %s imports both store and memorystore in production code; "+
-				"cross-database access must go through %s", pkg, allowed)
-		}
-	}
-}
 
 // productionImports returns the non-test import set of a module-relative package.
 func productionImports(t *testing.T, root, pkg string) map[string]struct{} {

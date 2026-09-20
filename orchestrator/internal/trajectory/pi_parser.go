@@ -1,10 +1,4 @@
-// Package trajectory parses the Pi coding agent's native session JSONL into the
-// platform's normalized 7-primitive trajectory-event stream, and captures those
-// native files into a durable research archive. It replicates the field mapping
-// of the local sess-cli pi parser (parsers/pi.ts) so the platform's research
-// store is byte-faithful to what pi actually recorded — full, untruncated tool
-// I/O and verbatim thinking — rather than the lossy messages/message_traces
-// projection used for the product UI.
+// Package trajectory validates native Pi traces and produces immutable archives.
 package trajectory
 
 import (
@@ -16,13 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"harness-platform/orchestrator/internal/memorystore"
 )
 
-// PiSessionMeta carries session-level fields derived from the native file head
-// and body — the parts the snapshot index (trajectory_snapshots) and raw_sources
-// row need beyond the event stream itself.
+// PiSessionMeta describes identity and trace metadata read from native JSONL.
 type PiSessionMeta struct {
 	NativeSessionID string     // pi's own session uuid (session record `id`)
 	CWD             string     // working dir the pi session ran in
@@ -34,7 +24,6 @@ type PiSessionMeta struct {
 	TurnCount       int        // count of user|assistant message records
 	RecordCount     int        // total records (for the fingerprint)
 	Fingerprint     string     // "<recordCount>:<lastEpochSec>" — grows on append
-	IsTest          bool       // faux provider or throwaway cwd → caller should skip
 }
 
 // native record + message shapes (only the fields we map).
@@ -85,9 +74,9 @@ type piContentBlock struct {
 // parent_id (Tree A). Text is stored full/untruncated. Empty-text events (except
 // tool calls, whose text is the args JSON) are dropped. pi records no token
 // usage, so no "usage" events are ever emitted.
-func ParsePiSession(r io.Reader) ([]memorystore.TrajectoryEvent, PiSessionMeta, error) {
+func ParsePiSession(r io.Reader) ([]TrajectoryEvent, PiSessionMeta, error) {
 	var (
-		events []memorystore.TrajectoryEvent
+		events []TrajectoryEvent
 		meta   PiSessionMeta
 		idx    int
 	)
@@ -98,7 +87,7 @@ func ParsePiSession(r io.Reader) ([]memorystore.TrajectoryEvent, PiSessionMeta, 
 		if text == "" && kind != "tool_call" {
 			return
 		}
-		events = append(events, memorystore.TrajectoryEvent{
+		events = append(events, TrajectoryEvent{
 			Kind:     kind,
 			Subtype:  subtype,
 			Name:     name,
@@ -189,7 +178,6 @@ func ParsePiSession(r io.Reader) ([]memorystore.TrajectoryEvent, PiSessionMeta, 
 		return nil, PiSessionMeta{}, fmt.Errorf("scan pi session: %w", err)
 	}
 
-	meta.IsTest = isTestSession(meta.Provider, meta.CWD)
 	var lastEpoch int64
 	if meta.EndedAt != nil {
 		lastEpoch = meta.EndedAt.Unix()
@@ -258,28 +246,6 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-// isTestSession mirrors pi.ts isTestSession: drop faux-provider runs and
-// throwaway working dirs so test/eval traffic never pollutes the research store.
-func isTestSession(provider, cwd string) bool {
-	if strings.EqualFold(strings.TrimSpace(provider), "faux") {
-		return true
-	}
-	c := strings.TrimSpace(cwd)
-	if c == "" {
-		return false
-	}
-	if c == "/tmp" || c == "/private/tmp" {
-		return true
-	}
-	if strings.HasPrefix(c, "/private/var/folders") {
-		return true
-	}
-	if strings.Contains(c, "/pi-") && strings.Contains(c, "-test-") {
-		return true
-	}
-	return false
 }
 
 func parseISO(s string) *time.Time {

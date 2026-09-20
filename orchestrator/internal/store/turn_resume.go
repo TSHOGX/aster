@@ -22,10 +22,7 @@ import (
 // The agent's own pi session still holds the prior context, so continuing is
 // additive rather than a replay.
 //
-// A resume turn carries retry_policy = "resume:<n>" (n = 1-based continuation
-// number). That column already existed in the schema and was unused, so bounding
-// resume depth needs no migration — worth avoiding on this deployment, where an
-// ALTER-time index once produced a crash loop only on pre-existing databases.
+// A resume turn records its bounded continuation depth in retry_policy.
 
 // resumeRetryPolicyPrefix marks a turn as an automatic continuation. Turns
 // without this prefix are user-authored and always resumable from attempt 1.

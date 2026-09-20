@@ -12,7 +12,7 @@ import (
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
-func activeAdoptionFixture(t *testing.T) (*Store, BoundBridgeStore, execution.Binding, TurnGrant) {
+func activeAdoptionFixture(t *testing.T) (*Store, *Store, execution.Binding, TurnGrant) {
 	t.Helper()
 	ctx := context.Background()
 	st, bridge, b, _ := grantFixture(t)

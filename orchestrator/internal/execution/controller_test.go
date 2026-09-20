@@ -97,7 +97,7 @@ func controllerFixtureDriver(t *testing.T, driver string) (*execution.Controller
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	if err := st.CreateSession(ctx, store.Session{ExecutionBackend: "khora", ID: "session", UserID: "synthetic", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque", RestoreID: "unused", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := st.CreateSession(ctx, store.Session{ID: "session", UserID: "synthetic", Agent: driver, Mode: store.ModeForDriver(driver), Status: "created", Workspace: "opaque", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	backend := &controllerBackend{lifecycleBackend: lifecycleBackend{current: sandbox.Observation{Reference: sandbox.Reference{StoreID: "store", SandboxID: "sandbox", MutationRevision: "created-revision", Epoch: 1}, State: "running", PlacementState: "active"}}}

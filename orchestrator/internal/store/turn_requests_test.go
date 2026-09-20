@@ -31,7 +31,7 @@ func TestBoundClaimNoWorkCannotBecomeWorkOnReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	bridge = BoundBridgeStore{st}
+	bridge = st
 	if _, ok, err := bridge.ClaimNextTurn(ctx, p); err != nil || ok {
 		t.Fatalf("no-work replay claimed a later prompt: %t %v", ok, err)
 	}

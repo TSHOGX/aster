@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"harness-platform/orchestrator/internal/agents"
@@ -24,7 +23,7 @@ func bootstrapPiDriverState(driverStateBootstrapContext) (any, error) {
 
 func validatePiDriverStatePayload(object map[string]any) error {
 	sessionDir, _ := object["session_dir"].(string)
-	if sessionDir != agents.PiSessionDir && sessionDir != "/root/.pi/agent/sessions" {
+	if sessionDir != agents.PiSessionDir {
 		return fmt.Errorf("pi driver state session_dir = %q", sessionDir)
 	}
 	switch got, _ := object["state_kind"].(string); got {
@@ -61,29 +60,4 @@ func validatePiDriverStatePayload(object map[string]any) error {
 	default:
 		return fmt.Errorf("pi driver state_kind = %q", got)
 	}
-}
-
-func piAgentHomeHostPathFromContract(contract map[string]any) (string, error) {
-	dataVolumes, ok := contract["data_volumes"].(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("pi driver state validation requires data_volumes")
-	}
-	agentHome, ok := dataVolumes["agent_home"].(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("pi driver state validation requires agent_home data volume")
-	}
-	if driver, _ := agentHome["driver"].(string); driver != string(agents.Pi) {
-		return "", fmt.Errorf("pi agent_home data volume driver = %q", driver)
-	}
-	if key, _ := agentHome["driver_home_key"].(string); key != string(agents.Pi) {
-		return "", fmt.Errorf("pi agent_home data volume key = %q", key)
-	}
-	if destination, _ := agentHome["sandbox_destination"].(string); destination != "/agent-home" {
-		return "", fmt.Errorf("pi agent_home sandbox destination = %q", destination)
-	}
-	hostPath := strings.TrimSpace(stringValue(agentHome["host_path"]))
-	if hostPath == "" || !filepath.IsAbs(hostPath) {
-		return "", fmt.Errorf("pi agent_home host_path is required")
-	}
-	return hostPath, nil
 }

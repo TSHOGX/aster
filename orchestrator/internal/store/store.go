@@ -7,70 +7,30 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"harness-platform/orchestrator/internal/agents"
-	"harness-platform/orchestrator/internal/schemastate"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/sqlitex"
 )
 
 type Session struct {
-	ExecutionBackend      string     `json:"-"`
-	ID                    string     `json:"id"`
-	UserID                string     `json:"user_id"`
-	Status                string     `json:"status"`
-	Agent                 string     `json:"agent"`
-	Mode                  string     `json:"mode"`
-	Workspace             string     `json:"workspace"`
-	AgentHomePath         string     `json:"agent_home_path,omitempty"`
-	ActiveGenerationID    string     `json:"active_generation_id,omitempty"`
-	RestoreID             string     `json:"restore_id"`
-	RestoreMS             *int64     `json:"restore_ms,omitempty"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
-	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
-	EndedAt               *time.Time `json:"ended_at,omitempty"`
-	LastActivityAt        *time.Time `json:"last_activity_at,omitempty"`
-	CheckpointPath        string     `json:"checkpoint_path,omitempty"`
-	AutoCheckpointEnabled bool       `json:"auto_checkpoint_enabled"`
-	FailureReason         string     `json:"failure_reason,omitempty"`
-	ErrorClass            string     `json:"error_class,omitempty"`
-	Title                 string     `json:"title"`
-	TitleCustom           bool       `json:"title_custom"`
-}
-
-type DestroySessionResult struct {
-	GenerationIDs []string
-	EventID       int64
-}
-
-type InterruptSessionParams struct {
-	SessionID    string
-	GenerationID string
-	OwnerUUID    string
-	ErrorClass   string
-	Reason       string
-	Now          time.Time
-}
-
-type InterruptSessionResult struct {
-	SessionStatus string
-	EventIDs      []int64
-	// PendingQueued counts the turns Stop parked. They survive the interrupt and
-	// stay visible, but nothing will dispatch them until the user releases each
-	// one. Reported so the UI can say so rather than leaving the user to guess
-	// whether their queue is about to run.
-	PendingQueued int64
-	// InterruptedTurnID is the turn that was executing, or 0 when none was. The
-	// caller needs it to address the abort at the sandbox: a control command names
-	// its target turn so a late delivery cannot stop the turn that came after.
-	InterruptedTurnID int64
-	// Runtime is the post-interrupt projection, taken inside the same
-	// transaction.
-	Runtime SessionRuntimeSnapshot
+	ID                 string     `json:"id"`
+	UserID             string     `json:"user_id"`
+	Status             string     `json:"status"`
+	Agent              string     `json:"agent"`
+	Mode               string     `json:"mode"`
+	Workspace          string     `json:"workspace"`
+	ActiveGenerationID string     `json:"active_generation_id,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	EndedAt            *time.Time `json:"ended_at,omitempty"`
+	LastActivityAt     *time.Time `json:"last_activity_at,omitempty"`
+	FailureReason      string     `json:"failure_reason,omitempty"`
+	ErrorClass         string     `json:"error_class,omitempty"`
+	Title              string     `json:"title"`
+	TitleCustom        bool       `json:"title_custom"`
 }
 
 type Message struct {
@@ -82,7 +42,7 @@ type Message struct {
 	CreatedAt time.Time `json:"created_at"`
 	// StopReason is pi's terminator for an assistant message: "stop" for a
 	// turn's final reply, "toolUse" for an intermediate tool-calling step, or ""
-	// when unknown (user messages, shell output, salvaged text, pre-migration
+	// when unknown (user messages, shell output, salvaged text, unclassified
 	// history). Lets the client mark a completed answer vs. an interstitial.
 	StopReason string `json:"stop_reason,omitempty"`
 	// Trace holds the execution-trace nodes (thinking phases + tool calls) that
@@ -94,7 +54,7 @@ type Message struct {
 	// ("up"/"down"), or empty when unset. Populated by ListMessages.
 	Feedback string `json:"feedback,omitempty"`
 	// Bounded transcript projections set these fields. They remain omitted by
-	// the legacy full-history endpoint for wire compatibility.
+	// full-history responses.
 	ContentTruncated bool  `json:"content_truncated,omitempty"`
 	ContentLength    int   `json:"content_length,omitempty"`
 	HasTrace         bool  `json:"has_trace,omitempty"`
@@ -126,33 +86,17 @@ type Artifact struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Store is the CONTROL-PLANE store: sessions, messages, turns, runtime
-// generations, resources, notifications, auth. It owns control.db.
-//
-// The memory/distillation half (trajectory events, episode/semantic memories,
-// skill candidates, evolution runs) lives in a physically separate database
-// behind internal/memorystore. This package has NO knowledge of that package;
-// the dependency runs one way only, control -> memory, via the ingest-boundary
-// interfaces memorystore declares for itself (see memorystore/ingest.go).
+// Store owns durable product state, recovery evidence and trace projections.
 type Store struct {
 	// db is the writer pool: exactly one connection, opened with
 	// _txlock=immediate. Every method on Store currently runs through it, so
 	// concurrency behavior is identical to the single-pool setup this replaced.
 	db *sql.DB
-	// readDB is the reader pool. It is intentionally NOT used by any query
-	// method yet: this change only establishes the infrastructure so that
-	// migrating read paths off the writer is a separate, reviewable diff. To
-	// move a read query over, swap its s.db for s.readDB (and keep anything
-	// that writes, or that reads inside a write transaction, on s.db).
-	readDB  *sql.DB
-	options Options
+	// readDB serves read-only queries independently of the serialized writer.
+	readDB *sql.DB
 }
 
 type Options struct {
-	// Managed requires a verified explicit migration and never runs schema DDL.
-	Managed bool
-
-	AgentHomesRoot string
 	// ReaderPoolSize caps the reader pool. Zero means defaultReaderPoolSize.
 	// Each modernc.org/sqlite connection carries its own libc.TLS, so
 	// connections are not free; keep this small.
@@ -172,8 +116,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // OpenForMaintenance opens an existing database for a short-lived out-of-band
 // task (e.g. the `orchestrator user` subcommands) while the server may be
 // running against the same file. It applies the connection PRAGMAs but
-// deliberately SKIPS migrate(): schema setup includes ALTER TABLE statements
-// and an FTS rebuild, which a side process must not run under a live server.
+// verifies the exact current schema without running initialization.
 // A missing database file is an error here rather than something to create.
 //
 // The PRAGMAs come from the shared DSN builder rather than a one-shot
@@ -190,7 +133,7 @@ func OpenForMaintenance(ctx context.Context, path string) (*Store, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}
-	db, err := sqlitex.OpenWriter(path)
+	db, err := openValidatedWriter(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -198,36 +141,27 @@ func OpenForMaintenance(ctx context.Context, path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("configure database %s: %w", path, err)
 	}
-	return &Store{db: db, options: Options{AgentHomesRoot: "/var/lib/harness/agent-homes"}}, nil
+	if err := verifySchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db: db}, nil
 }
 
 func OpenWithOptions(ctx context.Context, path string, options Options) (*Store, error) {
-	if strings.TrimSpace(options.AgentHomesRoot) == "" {
-		options.AgentHomesRoot = "/var/lib/harness/agent-homes"
-	}
 	if options.ReaderPoolSize <= 0 {
 		options.ReaderPoolSize = sqlitex.DefaultReaderPoolSize
 	}
 
-	if options.Managed {
-		if err := schemastate.Verify(ctx, path, "store"); err != nil {
-			return nil, err
-		}
-	}
-	writer, err := sqlitex.OpenWriter(path)
+	writer, err := openValidatedWriter(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	store := &Store{db: writer, options: options}
-	// The writer creates the file and owns schema changes. Migrating before
+	store := &Store{db: writer}
+	// The writer creates the file and owns schema changes. Initializing before
 	// the reader pool exists means no reader can observe a half-built schema.
-	if err := func() error {
-		if options.Managed {
-			return nil
-		}
-		return store.migrate(ctx)
-	}(); err != nil {
+	if err := store.ensureSchema(ctx); err != nil {
 		_ = writer.Close()
 		return nil, err
 	}
@@ -264,10 +198,6 @@ func (s *Store) ReadDBForTest() *sql.DB {
 	return s.readDB
 }
 
-func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureSchema(ctx)
-}
-
 func (s *Store) EnsureUser(ctx context.Context, id, name string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `
@@ -295,19 +225,6 @@ func (s *Store) CreateSession(ctx context.Context, session Session) error {
 	if session.Mode == "" {
 		return fmt.Errorf("unsupported session mode for driver %q", session.Agent)
 	}
-	if session.ExecutionBackend == "" {
-		session.ExecutionBackend = "legacy"
-	}
-	if session.ExecutionBackend != "legacy" && session.ExecutionBackend != "khora" {
-		return fmt.Errorf("unsupported session execution backend")
-	}
-	if session.ExecutionBackend == "legacy" && strings.TrimSpace(session.AgentHomePath) == "" {
-		session.AgentHomePath = filepath.Join(s.options.AgentHomesRoot, session.ID)
-	}
-	if session.ExecutionBackend == "khora" {
-		session.AgentHomePath = ""
-		session.AutoCheckpointEnabled = false
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -315,33 +232,22 @@ func (s *Store) CreateSession(ctx context.Context, session Session) error {
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO sessions (
-  id, user_id, status, driver_id, mode, workspace, agent_home_path, restore_id,
-  created_at, updated_at, expires_at, auto_checkpoint_enabled
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.UserID, session.Status, session.Agent, session.Mode, session.Workspace, nullableString(session.AgentHomePath),
-		session.RestoreID,
-		formatTime(session.CreatedAt), formatTime(session.UpdatedAt), formatOptionalTime(session.ExpiresAt),
-		boolInt(session.AutoCheckpointEnabled),
+  id, user_id, status, driver_id, mode, workspace,
+  created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.UserID, session.Status, session.Agent, session.Mode, session.Workspace,
+		formatTime(session.CreatedAt), formatTime(session.UpdatedAt),
 	)
 	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO session_execution_backends(session_id,backend) VALUES(?,?)`, session.ID, session.ExecutionBackend); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) SessionExecutionBackend(ctx context.Context, session string) (string, error) {
-	var backend string
-	err := s.db.QueryRowContext(ctx, `SELECT b.backend FROM sessions s JOIN session_execution_backends b ON b.session_id=s.id WHERE s.id=?`, session).Scan(&backend)
-	return backend, err
-}
-
 // sessionSelectColumns is the 21-column projection consumed by scanSession. It
 // is shared by every "SELECT ... FROM sessions" query so the column order stays
 // in lockstep with the scan helper; only the WHERE/ORDER clauses differ.
-const sessionSelectColumns = `id, user_id, status, driver_id, mode, workspace, agent_home_path, active_generation_id, restore_id, restore_ms, created_at, updated_at, expires_at, ended_at, last_activity_at, checkpoint_path, auto_checkpoint_enabled, failure_reason, error_class, title, title_custom`
+const sessionSelectColumns = `id, user_id, status, driver_id, mode, workspace, active_generation_id, created_at, updated_at, ended_at, last_activity_at, failure_reason, error_class, title, title_custom`
 
 // prefixedSessionSelectColumns is sessionSelectColumns qualified with a table
 // alias, for joins where a bare column name would be ambiguous.
@@ -411,16 +317,8 @@ WHERE status IN (`+placeholders+`)`, args...).Scan(&count)
 	return count, err
 }
 
-// CountSandboxOccupyingSessions counts sessions that currently hold (or are in
-// the middle of bringing up) a live sandbox, i.e. sessions that occupy compute
-// resources against the concurrent-sandbox ceiling.
-//
-// This is deliberately narrower than CountActiveSessions: a session that has
-// been checkpointed (resource_state 'reserved_checkpointed') has released its
-// sandbox compute and is not counted, and neither is a 'created' session that
-// has not spun up a sandbox yet nor an idle session whose sandbox was already
-// reclaimed. Only the compute-occupying resource states count: 'allocating',
-// 'ready', 'live', and 'recreating' (a checkpoint being restored).
+// CountSandboxOccupyingSessions includes retained placements until verified pause
+// and reserves capacity for unresolved create/resume operations.
 func (s *Store) CountSandboxOccupyingSessions(ctx context.Context) (int, error) {
 	return countSandboxOccupyingSessions(ctx, s.db)
 }
@@ -429,18 +327,14 @@ func countSandboxOccupyingSessions(ctx context.Context, db dbRunner) (int, error
 	err := db.QueryRowContext(ctx, `
 SELECT COUNT(DISTINCT s.id)
 FROM sessions s
-LEFT JOIN runtime_generations g ON g.generation_id = s.active_generation_id
-  AND g.session_id = s.id
-LEFT JOIN runtime_generation_resources r ON r.generation_id = g.generation_id
-WHERE (s.status NOT IN ('failed', 'destroyed') AND r.resource_state IN ('allocating', 'ready', 'live', 'recreating'))
- OR EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.session_id=s.id AND (
+WHERE EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.session_id=s.id AND (
    (e.sandbox_id IS NOT NULL AND e.observed_state!='paused') OR
    EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=e.environment_id AND o.kind IN ('create','resume') AND o.state IN ('pending','issued','uncertain'))
  ))`).Scan(&count)
 	return count, err
 }
 
-func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string, restoreMS *int64) error {
+func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string) error {
 	if err := sessionstate.Validate(status); err != nil {
 		return err
 	}
@@ -451,9 +345,9 @@ func (s *Store) UpdateSessionStatus(ctx context.Context, id, status string, rest
 	}
 	query := `
 UPDATE sessions
-SET status = ?, restore_ms = COALESCE(?, restore_ms), updated_at = ?, ended_at = COALESCE(?, ended_at)
+SET status = ?, updated_at = ?, ended_at = COALESCE(?, ended_at)
 WHERE id = ?`
-	args := []any{status, restoreMS, formatTime(now), terminalAt, id}
+	args := []any{status, formatTime(now), terminalAt, id}
 	if !sessionstate.IsTerminal(status) {
 		query += ` AND status NOT IN ('failed', 'destroyed')`
 	}
@@ -479,110 +373,6 @@ WHERE id = ?`
 	return err
 }
 
-func (s *Store) DestroySession(ctx context.Context, id string, now time.Time) (DestroySessionResult, error) {
-	if strings.TrimSpace(id) == "" {
-		return DestroySessionResult{}, fmt.Errorf("session id is required")
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return DestroySessionResult{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var backend string
-	if err := tx.QueryRowContext(ctx, `SELECT backend FROM session_execution_backends WHERE session_id=?`, id).Scan(&backend); err != nil {
-		return DestroySessionResult{}, err
-	}
-	if backend == "khora" {
-		return DestroySessionResult{}, fmt.Errorf("retained session requires execution retirement")
-	}
-	generationIDs, err := queryStringColumnTx(ctx, tx, `
-SELECT generation_id
-FROM runtime_generations
-WHERE session_id = ?`, id)
-	if err != nil {
-		return DestroySessionResult{}, err
-	}
-
-	nowString := formatTime(now)
-	if _, err := tx.ExecContext(ctx, `
-UPDATE sessions
-SET status = 'destroyed',
-    checkpoint_path = NULL,
-    restore_ms = NULL,
-    error_class = 'session_destroyed',
-    failure_reason = 'session_destroyed',
-    updated_at = ?,
-    ended_at = COALESCE(ended_at, ?)
-WHERE id = ?`, nowString, nowString, id); err != nil {
-		return DestroySessionResult{}, err
-	}
-
-	// Deliberately NOT pendingTurnPredicate. Parking says "do not dispatch this
-	// yet", not "this turn no longer exists" — and the session is being destroyed,
-	// so a parked turn has to be cancelled along with every other one. Skipping it
-	// here would leave a queued row behind a session that can never run it.
-	if _, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET status = 'canceled',
-    completed_at = ?,
-    completed_by_generation = COALESCE(completed_by_generation, generation_id),
-    error_class = 'session_destroyed',
-    error = 'session_destroyed',
-    lease_owner = NULL,
-    lease_expires_at = NULL
-WHERE session_id = ?
-  AND status IN ('queued', 'leased', 'running')`, nowString, id); err != nil {
-		return DestroySessionResult{}, err
-	}
-
-	if len(generationIDs) > 0 {
-		args := []any{nowString}
-		args = appendStringIDs(args, generationIDs)
-		if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'failed',
-    error_class = COALESCE(error_class, 'session_destroyed'),
-    failure_reason = COALESCE(failure_reason, 'session_destroyed'),
-    ended_at = COALESCE(ended_at, ?),
-    lease_owner = NULL
-WHERE generation_id IN (`+sqlPlaceholders(len(generationIDs))+`)
-  AND status NOT IN ('failed', 'destroyed')`, args...); err != nil {
-			return DestroySessionResult{}, err
-		}
-		if err := markAllocationsReclaimableTx(ctx, tx, generationIDs); err != nil {
-			return DestroySessionResult{}, err
-		}
-		if err := deleteActiveContextsForGenerationsTx(ctx, tx, generationIDs); err != nil {
-			return DestroySessionResult{}, err
-		}
-	}
-
-	eventID, err := appendEventTx(ctx, tx, AppendEventParams{
-		SessionID: id,
-		DedupeKey: "session_destroyed:" + id,
-		Type:      "session.destroyed",
-		Payload: map[string]any{
-			"terminal":           true,
-			"status":             "destroyed",
-			"session_status":     "destroyed",
-			"session_updated_at": nowString,
-			"updated_at":         nowString,
-		},
-		Now: now,
-	})
-	if err != nil {
-		return DestroySessionResult{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return DestroySessionResult{}, err
-	}
-	return DestroySessionResult{GenerationIDs: generationIDs, EventID: eventID}, nil
-}
-
 // InterruptSession stops the turn the agent is executing and parks the rest of
 // the queue, leaving the generation alone.
 //
@@ -598,190 +388,6 @@ WHERE generation_id IN (`+sqlPlaceholders(len(generationIDs))+`)
 // commit-then-deliver ordering would leave the turn marked canceled while the
 // agent kept running, and the completion ack for a turn this transaction already
 // retired is discarded by CompleteTurn's CAS.
-func (s *Store) InterruptSession(ctx context.Context, p InterruptSessionParams) (InterruptSessionResult, error) {
-	if strings.TrimSpace(p.SessionID) == "" {
-		return InterruptSessionResult{}, fmt.Errorf("session id is required")
-	}
-	if strings.TrimSpace(p.GenerationID) == "" {
-		return InterruptSessionResult{}, fmt.Errorf("generation id is required")
-	}
-	if strings.TrimSpace(p.OwnerUUID) == "" {
-		return InterruptSessionResult{}, fmt.Errorf("owner uuid is required")
-	}
-	if p.Now.IsZero() {
-		p.Now = time.Now().UTC()
-	}
-	if strings.TrimSpace(p.ErrorClass) == "" {
-		p.ErrorClass = "user_interrupted"
-	}
-	if strings.TrimSpace(p.Reason) == "" {
-		p.Reason = "interrupted by user"
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return InterruptSessionResult{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := assertOwnerTx(ctx, tx, p.OwnerUUID); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	var sessionStatus, activeGeneration string
-	if err := tx.QueryRowContext(ctx, `
-SELECT status, COALESCE(active_generation_id, '')
-FROM sessions WHERE id = ?`, p.SessionID).Scan(&sessionStatus, &activeGeneration); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	if activeGeneration != p.GenerationID {
-		return InterruptSessionResult{}, fmt.Errorf("generation is no longer active")
-	}
-	// running_idle is accepted, not just running_active. After a Stop the session
-	// is idle with its queue parked, and a second press must be a no-op rather than
-	// an error: Stop is offered from the coarse session status until the first
-	// projection arrives, so a double-press is reachable and routine. Only a
-	// terminal or transitional session is refused — those have their own lifecycle
-	// to finish and no turn for Stop to act on.
-	if sessionStatus != string(sessionstate.RunningActive) && sessionStatus != string(sessionstate.RunningIdle) {
-		return InterruptSessionResult{}, fmt.Errorf("session is not running")
-	}
-	now := formatTime(p.Now)
-	// The turn the agent was actually executing. Its message stays in the
-	// transcript: the agent did see it, and whatever it streamed before the abort
-	// is real work the user should keep.
-	var interruptedTurnID int64
-	if err := tx.QueryRowContext(ctx, `
-SELECT id FROM turns
-WHERE session_id = ?
-  AND status IN ('leased','running')
-ORDER BY sequence
-LIMIT 1`, p.SessionID).Scan(&interruptedTurnID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return InterruptSessionResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE turns
-SET status = 'canceled',
-    completed_at = ?,
-    completed_by_generation = COALESCE(completed_by_generation, generation_id),
-    error_class = ?,
-    error = ?,
-    lease_owner = NULL,
-    lease_expires_at = NULL
-WHERE session_id = ?
-  AND status IN ('leased','running')`, now, p.ErrorClass, p.Reason, p.SessionID); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	// Turns still queued behind it are parked, not cancelled and not left running.
-	//
-	// Cancelling them threw away prompts the user was still waiting on, which is
-	// not what "Stop" says. Leaving them to run is not it either: the user asked
-	// for the work to stop, and having the next prompt start on its own a moment
-	// later is the same surprise in slower motion. Parked is the honest third
-	// state — the prompts survive, stay visible, and each waits for the user to
-	// release it.
-	pendingQueued, err := parkQueuedTurnsTx(ctx, tx, p.SessionID)
-	if err != nil {
-		return InterruptSessionResult{}, err
-	}
-	// The generation is deliberately untouched. Stop is now a turn-level
-	// operation: the agent's abort ends the turn while its process, its session and
-	// the workspace all survive, so retiring the generation here would throw away a
-	// warm sandbox — and charge the user a cold start — for no reason. The
-	// generation's own lifecycle (idle release, checkpointing, failure) is
-	// unchanged and still handled by the paths that own it.
-	if _, err := tx.ExecContext(ctx, `
-DELETE FROM active_model_request_contexts
-WHERE session_id = ? AND generation_id = ? AND turn_id = ?`, p.SessionID, p.GenerationID, interruptedTurnID); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	// The generation goes back to idle: the turn that made it active is over, and
-	// a parked queue is not pending work. Leaving it 'active' would make the idle
-	// sweeper skip it forever, so a session stopped once would hold its sandbox
-	// until the session ended.
-	if _, err := tx.ExecContext(ctx, `
-UPDATE runtime_generations
-SET status = 'idle'
-WHERE generation_id = ?
-  AND session_id = ?
-  AND status = 'active'`, p.GenerationID, p.SessionID); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	// Idle, always: after a Stop nothing will run without the user acting again.
-	// This is the one place the parked/queued distinction changes the answer — with
-	// an auto-running queue this had to report running_active, because going idle
-	// with live work would have let the idle sweeper checkpoint a session that
-	// still owed a reply. Parked turns owe nothing until released.
-	nextStatus := string(sessionstate.RunningIdle)
-	if _, err := tx.ExecContext(ctx, `
-UPDATE sessions
-SET status = ?,
-    updated_at = ?,
-    restore_ms = NULL,
-    error_class = NULL,
-    failure_reason = NULL
-WHERE id = ? AND active_generation_id = ? AND status = 'running_active'`, nextStatus, now, p.SessionID, p.GenerationID); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	// A press that found nothing to do says nothing. This is the double-press case
-	// accepted above: no turn was executing and the queue was already parked, so
-	// there is no state change to announce and an event would only make every
-	// client redraw an unchanged session.
-	if interruptedTurnID == 0 && pendingQueued == 0 {
-		snapshot, err := getSessionRuntimeSnapshot(ctx, tx, p.SessionID)
-		if err != nil {
-			return InterruptSessionResult{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return InterruptSessionResult{}, err
-		}
-		// Read from the snapshot rather than the status loaded at the top: the
-		// sessions UPDATE above still applies here, and it is worth applying — a
-		// running_active session with no turn at all is a stale marker, and settling
-		// it to idle is a repair, not a no-op.
-		return InterruptSessionResult{
-			SessionStatus: snapshot.SessionStatus,
-			PendingQueued: 0,
-			Runtime:       snapshot,
-		}, nil
-	}
-	// turn.interrupted, not generation.error: the generation is fine. Emitting a
-	// generation error here would tell every client the sandbox had failed, and the
-	// dedupe key was per-generation, so a second Stop in the same generation
-	// silently produced no event at all.
-	eventID, err := appendEventTx(ctx, tx, AppendEventParams{
-		SessionID:    p.SessionID,
-		GenerationID: p.GenerationID,
-		DedupeKey:    fmt.Sprintf("turn_interrupted:%s:%d", p.GenerationID, interruptedTurnID),
-		Type:         "turn.interrupted",
-		Payload: map[string]any{
-			"terminal":             false,
-			"error_class":          p.ErrorClass,
-			"error":                p.Reason,
-			"generation_id":        p.GenerationID,
-			"turn_id":              interruptedTurnID,
-			"parked_queued":        pendingQueued,
-			"session_status":       nextStatus,
-			"session_updated_at":   now,
-			"active_generation_id": p.GenerationID,
-		},
-		Now: p.Now,
-	})
-	if err != nil {
-		return InterruptSessionResult{}, err
-	}
-	snapshot, err := getSessionRuntimeSnapshot(ctx, tx, p.SessionID)
-	if err != nil {
-		return InterruptSessionResult{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return InterruptSessionResult{}, err
-	}
-	return InterruptSessionResult{
-		SessionStatus:     nextStatus,
-		EventIDs:          []int64{eventID},
-		PendingQueued:     pendingQueued,
-		InterruptedTurnID: interruptedTurnID,
-		Runtime:           snapshot,
-	}, nil
-}
 
 func (s *Store) CancelTerminalSessionPendingTurns(ctx context.Context, now time.Time) (int64, error) {
 	if now.IsZero() {
@@ -950,7 +556,7 @@ SET status = ?,
 WHERE id = ?
 	AND status IN (?, ?, ?, ?)`,
 		string(sessionstate.RunningActive), formatTime(p.Now), formatTime(p.Now), p.SessionID,
-		string(sessionstate.Created), string(sessionstate.RunningIdle), string(sessionstate.Checkpointed), string(sessionstate.RunningActive))
+		string(sessionstate.Created), string(sessionstate.RunningIdle), string(sessionstate.Paused), string(sessionstate.RunningActive))
 	if err != nil {
 		return EnqueueTurnMessageResult{}, err
 	}
@@ -1243,55 +849,39 @@ type rowScanner = sqlitex.RowScanner
 // sessionScan holds the nullable landing spots for the sessionSelectColumns
 // projection. It exists so a query that selects session columns PLUS extra
 // columns (see ListSessionsSharedWith) can reuse the one canonical scan instead
-// of duplicating the 21-column mapping: dest() supplies the targets to append
+// of duplicating the session column mapping: dest() supplies the targets to append
 // to, and finish() folds them into the Session.
 type sessionScan struct {
-	session               Session
-	restoreMS             sql.NullInt64
-	agentHomePath         sql.NullString
-	activeGenerationID    sql.NullString
-	createdAt             string
-	updatedAt             string
-	expiresAt             sql.NullString
-	endedAt               sql.NullString
-	lastActivityAt        sql.NullString
-	checkpointPath        sql.NullString
-	failureReason         sql.NullString
-	errorClass            sql.NullString
-	autoCheckpointEnabled int
-	titleCustom           int
+	session            Session
+	activeGenerationID sql.NullString
+	createdAt          string
+	updatedAt          string
+	endedAt            sql.NullString
+	lastActivityAt     sql.NullString
+	failureReason      sql.NullString
+	errorClass         sql.NullString
+	titleCustom        int
 }
 
 func (sc *sessionScan) dest() []any {
 	return []any{
 		&sc.session.ID, &sc.session.UserID, &sc.session.Status, &sc.session.Agent, &sc.session.Mode,
-		&sc.session.Workspace, &sc.agentHomePath, &sc.activeGenerationID, &sc.session.RestoreID,
-		&sc.restoreMS, &sc.createdAt, &sc.updatedAt, &sc.expiresAt, &sc.endedAt, &sc.lastActivityAt,
-		&sc.checkpointPath, &sc.autoCheckpointEnabled, &sc.failureReason, &sc.errorClass,
+		&sc.session.Workspace, &sc.activeGenerationID,
+		&sc.createdAt, &sc.updatedAt, &sc.endedAt, &sc.lastActivityAt,
+		&sc.failureReason, &sc.errorClass,
 		&sc.session.Title, &sc.titleCustom,
 	}
 }
 
 func (sc *sessionScan) finish() Session {
 	session := sc.session
-	if sc.restoreMS.Valid {
-		session.RestoreMS = &sc.restoreMS.Int64
-	}
-	if sc.agentHomePath.Valid {
-		session.AgentHomePath = sc.agentHomePath.String
-	}
 	if sc.activeGenerationID.Valid {
 		session.ActiveGenerationID = sc.activeGenerationID.String
 	}
 	session.CreatedAt = parseTime(sc.createdAt)
 	session.UpdatedAt = parseTime(sc.updatedAt)
-	session.ExpiresAt = optionalTimePtr(sc.expiresAt)
 	session.EndedAt = optionalTimePtr(sc.endedAt)
 	session.LastActivityAt = optionalTimePtr(sc.lastActivityAt)
-	if sc.checkpointPath.Valid {
-		session.CheckpointPath = sc.checkpointPath.String
-	}
-	session.AutoCheckpointEnabled = sc.autoCheckpointEnabled != 0
 	if sc.failureReason.Valid {
 		session.FailureReason = sc.failureReason.String
 	}
@@ -1333,7 +923,7 @@ func ModeForDriver(driverID string) string {
 // The time/null/placeholder helpers below are the package-local spelling of the
 // shared sqlitex primitives. They stay as unexported aliases so the ~137 call
 // sites across this package keep reading the way they always have, while the
-// single implementation is shared with internal/memorystore.
+// conversion helpers keep database encodings consistent.
 var (
 	nullableString     = sqlitex.NullableString
 	formatOptionalTime = sqlitex.FormatOptionalTime
@@ -1348,7 +938,7 @@ func formatEventTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
 }
 
-func (s *Store) UpdateSessionStatusAndActivity(ctx context.Context, id, status string, restoreMS *int64, lastActivity time.Time) error {
+func (s *Store) UpdateSessionStatusAndActivity(ctx context.Context, id, status string, lastActivity time.Time) error {
 	if err := sessionstate.Validate(status); err != nil {
 		return err
 	}
@@ -1359,9 +949,9 @@ func (s *Store) UpdateSessionStatusAndActivity(ctx context.Context, id, status s
 	}
 	query := `
 UPDATE sessions
-SET status = ?, restore_ms = COALESCE(?, restore_ms), updated_at = ?, ended_at = COALESCE(?, ended_at), last_activity_at = ?
+SET status = ?, updated_at = ?, ended_at = COALESCE(?, ended_at), last_activity_at = ?
 WHERE id = ?`
-	args := []any{status, restoreMS, formatTime(now), terminalAt, formatTime(lastActivity), id}
+	args := []any{status, formatTime(now), terminalAt, formatTime(lastActivity), id}
 	if !sessionstate.IsTerminal(status) {
 		query += ` AND status NOT IN ('failed', 'destroyed')`
 	}
