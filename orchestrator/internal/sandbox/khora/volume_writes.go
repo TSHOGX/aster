@@ -1,0 +1,80 @@
+package khora
+
+import (
+	"context"
+	"fmt"
+
+	"harness-platform/orchestrator/internal/sandbox"
+
+	sdk "github.com/TSHOGX/khora/pkg/khora"
+)
+
+// maxWriteChunk bounds one direct volume write. The engine holds its write-regime
+// marker for the whole request, so a single unbounded body would park cold starts
+// on that volume for as long as the transfer takes.
+const maxWriteChunk = 1 << 20
+
+func (b *Backend) MkdirVolume(ctx context.Context, reference sandbox.VolumeReference, name string) error {
+	if err := b.validateVolumeRead(ctx, reference, name); err != nil {
+		return err
+	}
+	if _, err := b.client.MkdirVolume(ctx, reference.VolumeID, name, 0o755); err != nil {
+		return mapError("volume mkdir", err)
+	}
+	return nil
+}
+
+func (b *Backend) WriteVolume(ctx context.Context, reference sandbox.VolumeReference, name string, data []byte) error {
+	if err := b.validateVolumeRead(ctx, reference, name); err != nil {
+		return err
+	}
+	if len(data) > maxWriteChunk {
+		return failure("volume write", sandbox.Invalid, fmt.Errorf("volume write exceeds %d bytes", maxWriteChunk))
+	}
+	result, err := b.client.WriteVolume(ctx, reference.VolumeID, name, 0, data)
+	if err != nil {
+		return mapError("volume write", err)
+	}
+	// A short write is not a partial success to retry blindly: the engine replaces
+	// the target before streaming, so the path now holds neither the old nor the
+	// intended content and only a full rewrite of this entry can settle it.
+	if result.VolumeID != reference.VolumeID || result.BytesWritten != int64(len(data)) {
+		return failure("volume write", sandbox.Uncertain, fmt.Errorf("engine wrote %d of %d bytes", result.BytesWritten, len(data)))
+	}
+	return nil
+}
+
+// SnapshotVolume derives an immutable published volume from prepared content.
+func (b *Backend) SnapshotVolume(ctx context.Context, source sandbox.VolumeReference, key string, capacity int64) (sandbox.Volume, error) {
+	if err := b.validateVolumeRead(ctx, source, "root"); err != nil {
+		return sandbox.Volume{}, err
+	}
+	if key == "" || capacity <= 0 {
+		return sandbox.Volume{}, failure("volume snapshot", sandbox.Invalid, fmt.Errorf("durable key and positive capacity required"))
+	}
+	id, err := b.client.SnapshotVolumeWithKey(ctx, source.VolumeID, capacity, sdk.IdempotencyKey(key))
+	if err != nil {
+		return sandbox.Volume{}, mapError("volume snapshot", err)
+	}
+	if id == "" {
+		return sandbox.Volume{}, failure("volume snapshot", sandbox.Uncertain, fmt.Errorf("engine omitted derived volume identity"))
+	}
+	// A replayed key can name an object that was since deleted, so a 2xx is not
+	// evidence the volume exists. Only a current inspection establishes that.
+	if _, err := b.Identity(ctx); err != nil {
+		return sandbox.Volume{}, err
+	}
+	volume, err := b.client.Volume(ctx, id)
+	if err != nil {
+		return sandbox.Volume{}, mapError("inspect volume", err)
+	}
+	if volume.VolumeID != id || volume.Size != capacity {
+		return sandbox.Volume{}, failure("inspect volume", sandbox.Uncertain, fmt.Errorf("derived volume observation does not match intent"))
+	}
+	return sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: b.identity.StoreID, VolumeID: volume.VolumeID}, Capacity: volume.Size, UsedBytes: volume.UsedByte}, nil
+}
+
+var (
+	_ sandbox.VolumeWrites     = (*Backend)(nil)
+	_ sandbox.VolumeDerivation = (*Backend)(nil)
+)

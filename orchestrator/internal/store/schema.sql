@@ -127,6 +127,36 @@ CREATE TABLE deferred_turn_requests (
  UNIQUE(generation_id,request_id)
 );
 
+-- content_publications is the durable record of transporting one authored
+-- revision into an immutable engine volume. The revision digest is content
+-- identity, so the same authored bytes converge on one row and one published
+-- volume, and different bytes can never claim an existing publication.
+--
+-- staging_volume_id is the prepared, writable source. It stays referenced
+-- because the engine pins a snapshot's parent; it is disposable preparation,
+-- never user data. published_volume_id is committed only after the published
+-- bytes have been read back and matched against revision_digest.
+CREATE TABLE content_publications (
+ store_id TEXT NOT NULL,
+ purpose TEXT NOT NULL CHECK(purpose IN ('assets','config')),
+ revision_digest TEXT NOT NULL CHECK(revision_digest LIKE 'sha256:%'),
+ capacity INTEGER NOT NULL CHECK(capacity>0),
+ entries TEXT NOT NULL,
+ staging_volume_id TEXT NOT NULL DEFAULT '',
+ derived_volume_id TEXT NOT NULL DEFAULT '',
+ published_volume_id TEXT NOT NULL DEFAULT '',
+ stage TEXT NOT NULL CHECK(stage IN ('preparing','staged','derived','published','failed')),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(store_id,purpose,revision_digest),
+ CHECK((stage='published') = (published_volume_id<>'')),
+ CHECK(published_volume_id='' OR published_volume_id=derived_volume_id),
+ CHECK((stage IN ('preparing','staged','failed')) OR derived_volume_id<>''),
+ CHECK((stage IN ('preparing','failed')) OR staging_volume_id<>''),
+ CHECK(staging_volume_id='' OR staging_volume_id<>derived_volume_id)
+);
+
 CREATE TABLE egress_allocations (
  generation_id TEXT PRIMARY KEY,
  session_id TEXT NOT NULL REFERENCES sessions(id),
@@ -708,6 +738,16 @@ CREATE INDEX agent_schedules_due_idx ON agent_schedules(enabled, next_run_at);
 CREATE INDEX agent_schedules_user_idx ON agent_schedules(user_id, created_at DESC);
 
 CREATE INDEX auth_sessions_expires_idx ON auth_sessions(expires_at);
+
+-- One volume is one publication. Without this, a replayed engine key observed
+-- under two rows would let a second revision claim the first's published bytes.
+CREATE UNIQUE INDEX content_publications_published_idx
+  ON content_publications(store_id, published_volume_id)
+  WHERE published_volume_id <> '';
+
+CREATE UNIQUE INDEX content_publications_staging_idx
+  ON content_publications(store_id, staging_volume_id)
+  WHERE staging_volume_id <> '';
 
 CREATE INDEX auth_sessions_user_idx ON auth_sessions(user_id);
 

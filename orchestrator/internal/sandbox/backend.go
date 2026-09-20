@@ -108,3 +108,22 @@ type VolumeReads interface {
 type VolumeListings interface {
 	ListVolume(context.Context, VolumeReference, string) ([]VolumeEntry, error)
 }
+
+// VolumeWrites populates a volume that no placement holds. The engine refuses a
+// direct write while a live read-write mount exists, so these verbs are only
+// usable for preparing content before it is published and mounted read-only.
+type VolumeWrites interface {
+	MkdirVolume(context.Context, VolumeReference, string) error
+	WriteVolume(context.Context, VolumeReference, string, []byte) error
+}
+
+// VolumeDerivation copies a prepared volume's whole tree into a new volume under
+// a durable idempotency key. The engine's snapshot is atomic and content-isolated
+// from later writes to its source; a replayed key names the original result.
+//
+// The engine does not make a derived volume read-only — it expresses immutability
+// as a read-only mount row — so a published volume stays unrewritten because the
+// product never holds a write path to one, not because the engine refuses.
+type VolumeDerivation interface {
+	SnapshotVolume(context.Context, VolumeReference, string, int64) (Volume, error)
+}
