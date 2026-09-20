@@ -20,11 +20,11 @@ import (
 // execution fails before creation or its routes are later revoked.
 func (s *Store) ReserveEgressCompilation(ctx context.Context, owner string, p egress.AllocationRequest) (egress.Compilation, error) {
 	var empty egress.Compilation
-	if len(p.Policy.Services) == 0 || len(p.Policy.Services) > 64 {
-		return empty, fmt.Errorf("one to sixty-four service allocations required")
+	if len(p.Policy.Endpoints) > 64 {
+		return empty, fmt.Errorf("at most sixty-four endpoint allocations required")
 	}
 	var placeholders []netip.Addr
-	for i := range p.Policy.Services {
+	for i := range p.Policy.Endpoints {
 		address, err := egress.SyntheticAddress(p.Deployment.SyntheticRange, uint64(i+1))
 		if err != nil {
 			return empty, err
@@ -136,7 +136,7 @@ func (s *Store) ReserveEgressCompilation(ctx context.Context, owner string, p eg
 		return empty, fmt.Errorf("engine synthetic range is already pinned")
 	}
 	var addresses []netip.Addr
-	for len(addresses) < len(p.Policy.Services) {
+	for len(addresses) < len(p.Policy.Endpoints) {
 		address, err := egress.SyntheticAddress(p.Deployment.SyntheticRange, next)
 		if err != nil {
 			return empty, err

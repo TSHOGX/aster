@@ -1,4 +1,4 @@
-// Package egress owns product service policy. Compilation is pure: it neither
+// Package egress compiles generic application connectivity policy. Compilation is pure: it neither
 // resolves names nor opens sockets, provisions routes or activates authority.
 package egress
 
@@ -10,44 +10,19 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
-	"time"
 )
 
-type Protocol string
-
-const (
-	ModelHTTP  Protocol = "model_http"
-	DorisMySQL Protocol = "doris_mysql"
-	OBSHTTP    Protocol = "obs_http"
-	WebHTTP    Protocol = "web_http"
-)
-
-type ModelService struct {
-	Models []string `json:"models"`
+// Endpoint names a managed TCP destination. Its purpose and protocol above TCP
+// are opaque to the application; the selected next hop owns upstream behavior.
+type Endpoint struct {
+	ID        string `json:"id"`
+	Hostname  string `json:"hostname"`
+	Port      uint16 `json:"port"`
+	Transport string `json:"transport"`
+	NextHop   string `json:"next_hop"`
 }
-type DorisService struct {
-	Databases []string `json:"databases"`
-}
-type OBSService struct {
-	Buckets  []string `json:"buckets"`
-	Prefixes []string `json:"prefixes"`
-	ReadOnly bool     `json:"read_only"`
-}
-
-type Service struct {
-	ID          string        `json:"id"`
-	Protocol    Protocol      `json:"protocol"`
-	Hostname    string        `json:"hostname"`
-	Port        uint16        `json:"port"`
-	UpstreamRef string        `json:"upstream_ref"`
-	Model       *ModelService `json:"model,omitempty"`
-	Doris       *DorisService `json:"doris,omitempty"`
-	OBS         *OBSService   `json:"obs,omitempty"`
-}
-
-type ServiceAccess struct {
-	ServiceID  string   `json:"service_id"`
-	Operations []string `json:"operations"`
+type EndpointAccess struct {
+	EndpointID string `json:"endpoint_id"`
 }
 
 type Tuple struct {
@@ -57,11 +32,11 @@ type Tuple struct {
 }
 
 type Policy struct {
-	Revision  string          `json:"revision"`
-	Driver    string          `json:"driver"`
-	Services  []ServiceAccess `json:"services"`
-	Direct    []Tuple         `json:"direct"`
-	Resolvers []netip.Addr    `json:"resolvers"`
+	Revision  string           `json:"revision"`
+	Driver    string           `json:"driver"`
+	Endpoints []EndpointAccess `json:"endpoints"`
+	Direct    []Tuple          `json:"direct"`
+	Resolvers []netip.Addr     `json:"resolvers"`
 }
 
 // RuntimeBinding is a dormant route identity. Possessing or compiling one does
@@ -72,20 +47,9 @@ type RuntimeBinding struct {
 	GenerationID string         `json:"generation_id"`
 	Epoch        uint64         `json:"epoch"`
 	Revision     uint64         `json:"revision"`
-	ServiceID    string         `json:"service_id"`
+	EndpointID   string         `json:"endpoint_id"`
 	Destination  netip.AddrPort `json:"destination"`
 	Gateway      netip.AddrPort `json:"gateway"`
-}
-
-type Grant struct {
-	ID              string
-	BindingID       string
-	BindingRevision uint64
-	GenerationID    string
-	TurnID          int64
-	PolicyDigest    string
-	Operations      []string
-	ExpiresAt       time.Time
 }
 
 type RequestContext struct {
@@ -96,7 +60,7 @@ type RequestContext struct {
 	BindingID       string `json:"binding_id"`
 	BackendID       string `json:"backend_id"`
 	GenerationID    string `json:"generation_id"`
-	ServiceID       string `json:"service_id"`
+	EndpointID      string `json:"endpoint_id"`
 	TurnID          int64  `json:"turn_id"`
 	Epoch           uint64 `json:"epoch"`
 	BindingRevision uint64 `json:"binding_revision"`
@@ -104,7 +68,7 @@ type RequestContext struct {
 
 type Gateway struct {
 	Endpoint netip.AddrPort
-	Protocol Protocol
+	ID       string
 }
 
 type Deployment struct {
@@ -126,25 +90,25 @@ type GuestHost struct {
 	Address netip.Addr `json:"address"`
 }
 
-type SelectedService struct {
-	Service Service        `json:"service"`
-	Access  ServiceAccess  `json:"access"`
-	Binding RuntimeBinding `json:"binding"`
+type SelectedEndpoint struct {
+	Endpoint Endpoint       `json:"endpoint"`
+	Access   EndpointAccess `json:"access"`
+	Binding  RuntimeBinding `json:"binding"`
 }
 
 type Compilation struct {
-	BackendID      string            `json:"backend_id"`
-	Version        int               `json:"version"`
-	PolicyRevision string            `json:"policy_revision"`
-	Driver         string            `json:"driver"`
-	Default        string            `json:"default"`
-	Allow          []Tuple           `json:"allow"`
-	Via            []Route           `json:"via"`
-	Hosts          []GuestHost       `json:"hosts"`
-	Resolvers      []netip.Addr      `json:"resolvers"`
-	Services       []SelectedService `json:"services"`
-	PolicyDigest   string            `json:"-"`
-	NetworkDigest  string            `json:"-"`
+	BackendID      string             `json:"backend_id"`
+	Version        int                `json:"version"`
+	PolicyRevision string             `json:"policy_revision"`
+	Driver         string             `json:"driver"`
+	Default        string             `json:"default"`
+	Allow          []Tuple            `json:"allow"`
+	Via            []Route            `json:"via"`
+	Hosts          []GuestHost        `json:"hosts"`
+	Resolvers      []netip.Addr       `json:"resolvers"`
+	Endpoints      []SelectedEndpoint `json:"endpoints"`
+	PolicyDigest   string             `json:"-"`
+	NetworkDigest  string             `json:"-"`
 }
 
 var fixedProtected = []netip.Prefix{
@@ -155,13 +119,13 @@ var fixedProtected = []netip.Prefix{
 // Compile emits only default-deny declarations with explicit direct prefixes,
 // resolver endpoints and exact TCP service routes. Broader internet access must
 // be represented by an explicitly granted service or validated direct rules.
-func Compile(policy Policy, catalog []Service, bindings []RuntimeBinding, deployment Deployment) (Compilation, error) {
-	out := Compilation{BackendID: deployment.BackendID, Version: 1, PolicyRevision: policy.Revision, Driver: policy.Driver, Default: "deny"}
+func Compile(policy Policy, catalog []Endpoint, bindings []RuntimeBinding, deployment Deployment) (Compilation, error) {
+	out := Compilation{BackendID: deployment.BackendID, Version: 2, PolicyRevision: policy.Revision, Driver: policy.Driver, Default: "deny"}
 	if policy.Revision == "" || (policy.Driver != "pi" && policy.Driver != "sh") {
 		return out, fmt.Errorf("policy revision and supported driver required")
 	}
 	reserved := deployment.SyntheticRange
-	if deployment.BackendID == "" || !validPrefix(reserved) || !reserved.Addr().IsPrivate() || reserved.Bits() < 8 {
+	if deployment.BackendID == "" || !validSyntheticRange(reserved) {
 		return out, fmt.Errorf("backend identity and private IPv4 synthetic range required")
 	}
 	reserved = reserved.Masked()
@@ -175,32 +139,38 @@ func Compile(policy Policy, catalog []Service, bindings []RuntimeBinding, deploy
 	if overlapsAny(reserved, protected) {
 		return out, fmt.Errorf("synthetic range overlaps protected network")
 	}
-	allowedGateways := map[netip.AddrPort]Protocol{}
+	allowedGateways := map[netip.AddrPort]string{}
 	for _, ingress := range deployment.Gateways {
 		gateway := ingress.Endpoint
 		if !validEndpoint(gateway) || overlapsAny(netip.PrefixFrom(gateway.Addr(), 32), fixedProtected) || reserved.Contains(gateway.Addr()) {
 			return out, fmt.Errorf("invalid gateway endpoint")
 		}
-		switch ingress.Protocol {
-		case ModelHTTP, DorisMySQL, OBSHTTP, WebHTTP:
-		default:
-			return out, fmt.Errorf("unsupported gateway protocol")
+		if ingress.ID == "" {
+			return out, fmt.Errorf("gateway identity required")
 		}
-		if protocol, exists := allowedGateways[gateway]; exists && protocol != ingress.Protocol {
-			return out, fmt.Errorf("one gateway listener cannot mix protocols")
+		if _, exists := allowedGateways[gateway]; exists {
+			return out, fmt.Errorf("duplicate gateway listener")
 		}
-		allowedGateways[gateway] = ingress.Protocol
+		for _, id := range allowedGateways {
+			if id == ingress.ID {
+				return out, fmt.Errorf("duplicate gateway identity")
+			}
+		}
+		allowedGateways[gateway] = ingress.ID
 		protected = append(protected, netip.PrefixFrom(gateway.Addr(), 32))
 	}
 	forbidden := append(append([]netip.Prefix(nil), protected...), reserved)
-	services := map[string]Service{}
+	services := map[string]Endpoint{}
 	for _, service := range catalog {
-		normalized, err := normalizeService(service)
+		normalized, err := normalizeEndpoint(service)
 		if err != nil {
 			return out, err
 		}
 		if _, exists := services[normalized.ID]; exists {
 			return out, fmt.Errorf("duplicate service %q", normalized.ID)
+		}
+		if _, exists := allowedGatewayID(allowedGateways, normalized.NextHop); !exists {
+			return out, fmt.Errorf("endpoint names unknown next hop %q", normalized.NextHop)
 		}
 		services[normalized.ID] = normalized
 	}
@@ -208,34 +178,34 @@ func Compile(policy Policy, catalog []Service, bindings []RuntimeBinding, deploy
 	ids := map[string]bool{}
 	tuples := map[netip.AddrPort]bool{}
 	for _, binding := range bindings {
-		if binding.ID == "" || binding.GenerationID == "" || binding.BackendID != deployment.BackendID || binding.Revision == 0 || !validEndpoint(binding.Destination) || !reserved.Contains(binding.Destination.Addr()) || allowedGateways[binding.Gateway] == "" {
+		if binding.ID == "" || binding.GenerationID == "" || binding.BackendID != deployment.BackendID || binding.Revision == 0 || binding.Epoch == 0 || !validEndpoint(binding.Destination) || !reserved.Contains(binding.Destination.Addr()) || allowedGateways[binding.Gateway] == "" {
 			return out, fmt.Errorf("invalid dormant service binding")
 		}
-		if _, ok := services[binding.ServiceID]; !ok {
-			return out, fmt.Errorf("binding names unknown service %q", binding.ServiceID)
+		if _, ok := services[binding.EndpointID]; !ok {
+			return out, fmt.Errorf("binding names unknown service %q", binding.EndpointID)
 		}
-		if allowedGateways[binding.Gateway] != services[binding.ServiceID].Protocol {
-			return out, fmt.Errorf("gateway protocol does not match service")
+		if allowedGateways[binding.Gateway] != services[binding.EndpointID].NextHop {
+			return out, fmt.Errorf("gateway does not match endpoint next hop")
 		}
-		if _, ok := routes[binding.ServiceID]; ok || ids[binding.ID] || tuples[binding.Destination] {
+		if _, ok := routes[binding.EndpointID]; ok || ids[binding.ID] || tuples[binding.Destination] {
 			return out, fmt.Errorf("duplicate service binding or destination")
 		}
-		routes[binding.ServiceID] = binding
+		routes[binding.EndpointID] = binding
 		ids[binding.ID] = true
 		tuples[binding.Destination] = true
 	}
-	accesses := append([]ServiceAccess(nil), policy.Services...)
-	sort.Slice(accesses, func(i, j int) bool { return accesses[i].ServiceID < accesses[j].ServiceID })
+	accesses := append([]EndpointAccess(nil), policy.Endpoints...)
+	sort.Slice(accesses, func(i, j int) bool { return accesses[i].EndpointID < accesses[j].EndpointID })
 	selected := map[string]bool{}
 	hostnames := map[string]bool{}
 	generation := ""
 	var epoch uint64
 	for _, access := range accesses {
-		service, ok := services[access.ServiceID]
-		if !ok || selected[access.ServiceID] {
-			return out, fmt.Errorf("unknown or duplicate policy service %q", access.ServiceID)
+		service, ok := services[access.EndpointID]
+		if !ok || selected[access.EndpointID] {
+			return out, fmt.Errorf("unknown or duplicate policy service %q", access.EndpointID)
 		}
-		binding, ok := routes[access.ServiceID]
+		binding, ok := routes[access.EndpointID]
 		if !ok || binding.Destination.Port() != service.Port {
 			return out, fmt.Errorf("service requires an exact dormant route")
 		}
@@ -248,21 +218,9 @@ func Compile(policy Policy, catalog []Service, bindings []RuntimeBinding, deploy
 			return out, fmt.Errorf("duplicate guest hostname")
 		}
 		hostnames[service.Hostname] = true
-		if service.Protocol == ModelHTTP && policy.Driver == "sh" {
-			return out, fmt.Errorf("shell cannot receive model access")
-		}
-		operations, err := canonicalStrings(access.Operations)
-		if err != nil || len(operations) == 0 {
-			return out, fmt.Errorf("service operations required")
-		}
-		for _, operation := range operations {
-			if !operationAllowed(service, operation) {
-				return out, fmt.Errorf("operation %q is not supported by service %q", operation, service.ID)
-			}
-		}
-		access.Operations = operations
+
 		selected[service.ID] = true
-		out.Services = append(out.Services, SelectedService{Service: service, Access: access, Binding: binding})
+		out.Endpoints = append(out.Endpoints, SelectedEndpoint{Endpoint: service, Access: access, Binding: binding})
 		out.Via = append(out.Via, Route{Match: Tuple{CIDR: netip.PrefixFrom(binding.Destination.Addr(), 32), Port: service.Port, Protocol: "tcp"}, Endpoint: binding.Gateway})
 		out.Hosts = append(out.Hosts, GuestHost{Name: service.Hostname, Address: binding.Destination.Addr()})
 	}
@@ -305,76 +263,17 @@ func Compile(policy Policy, catalog []Service, bindings []RuntimeBinding, deploy
 	return out, nil
 }
 
-func normalizeService(s Service) (Service, error) {
-	if s.ID == "" || s.UpstreamRef == "" || s.Port == 0 {
-		return s, fmt.Errorf("service identity, upstream reference and port required")
+func normalizeEndpoint(s Endpoint) (Endpoint, error) {
+	if s.ID == "" || strings.TrimSpace(s.ID) != s.ID || s.NextHop == "" || s.Port == 0 || s.Transport != "tcp" {
+		return s, fmt.Errorf("endpoint identity, next hop, port and TCP transport required")
 	}
 	s.Hostname = strings.ToLower(strings.TrimSuffix(s.Hostname, "."))
 	if !validHostname(s.Hostname) {
-		return s, fmt.Errorf("invalid guest service hostname")
+		return s, fmt.Errorf("invalid guest endpoint hostname")
 	}
-	var err error
-	switch s.Protocol {
-	case ModelHTTP:
-		if s.Model == nil || s.Doris != nil || s.OBS != nil {
-			return s, fmt.Errorf("model service requires model configuration only")
-		}
-		values, e := canonicalStrings(s.Model.Models)
-		err = e
-		s.Model = &ModelService{Models: values}
-		if len(values) == 0 {
-			return s, fmt.Errorf("model allowlist required")
-		}
-	case DorisMySQL:
-		if s.Doris == nil || s.Model != nil || s.OBS != nil {
-			return s, fmt.Errorf("Doris service requires database configuration only")
-		}
-		values, e := canonicalStrings(s.Doris.Databases)
-		err = e
-		s.Doris = &DorisService{Databases: values}
-		if len(values) == 0 {
-			return s, fmt.Errorf("Doris database allowlist required")
-		}
-	case OBSHTTP:
-		if s.OBS == nil || s.Model != nil || s.Doris != nil {
-			return s, fmt.Errorf("OBS service requires object configuration only")
-		}
-		buckets, e := canonicalStrings(s.OBS.Buckets)
-		if e != nil {
-			return s, e
-		}
-		prefixes, e := canonicalStrings(s.OBS.Prefixes)
-		err = e
-		s.OBS = &OBSService{Buckets: buckets, Prefixes: prefixes, ReadOnly: s.OBS.ReadOnly}
-		if len(buckets) == 0 {
-			return s, fmt.Errorf("OBS bucket allowlist required")
-		}
-	case WebHTTP:
-		if s.Model != nil || s.Doris != nil || s.OBS != nil {
-			return s, fmt.Errorf("web service cannot carry model or data configuration")
-		}
-	default:
-		return s, fmt.Errorf("unsupported service protocol %q", s.Protocol)
-	}
-	return s, err
+	return s, nil
 }
 
-func operationAllowed(s Service, operation string) bool {
-	switch s.Protocol {
-	case ModelHTTP:
-		return operation == "generate"
-	case DorisMySQL:
-		return operation == "query"
-	case OBSHTTP:
-		if s.OBS == nil {
-			return false
-		}
-		return operation == "get" || operation == "list" || (!s.OBS.ReadOnly && (operation == "put" || operation == "delete"))
-	case WebHTTP:
-		return operation == "request"
-	}
-	return false
-}
 func validPrefix(p netip.Prefix) bool     { return p.IsValid() && p.Addr().Is4() }
 func validEndpoint(p netip.AddrPort) bool { return p.IsValid() && p.Addr().Is4() && p.Port() != 0 }
 func overlapsAny(p netip.Prefix, others []netip.Prefix) bool {
@@ -397,20 +296,6 @@ func dedupeTuples(in []Tuple) []Tuple {
 		}
 	}
 	return out
-}
-func canonicalStrings(in []string) ([]string, error) {
-	out := append([]string(nil), in...)
-	sort.Strings(out)
-	var result []string
-	for _, value := range out {
-		if value == "" || strings.TrimSpace(value) != value {
-			return nil, fmt.Errorf("nonempty canonical value required")
-		}
-		if len(result) == 0 || result[len(result)-1] != value {
-			result = append(result, value)
-		}
-	}
-	return result, nil
 }
 func validHostname(host string) bool {
 	if len(host) == 0 || len(host) > 253 {
@@ -439,14 +324,14 @@ func contentDigest(value any) (string, error) {
 }
 
 func setCompilationDigests(out *Compilation, backendID string) error {
-	type policyService struct {
-		Service Service
-		Access  ServiceAccess
+	type policyEndpoint struct {
+		Endpoint Endpoint
+		Access   EndpointAccess
 	}
-	var effectiveServices []policyService
+	var effectiveEndpoints []policyEndpoint
 	var effectiveBindings []RuntimeBinding
-	for _, selected := range out.Services {
-		effectiveServices = append(effectiveServices, policyService{selected.Service, selected.Access})
+	for _, selected := range out.Endpoints {
+		effectiveEndpoints = append(effectiveEndpoints, policyEndpoint{selected.Endpoint, selected.Access})
 		effectiveBindings = append(effectiveBindings, selected.Binding)
 	}
 	var err error
@@ -455,8 +340,8 @@ func setCompilationDigests(out *Compilation, backendID string) error {
 		Revision, Driver, Default string
 		Allow                     []Tuple
 		Resolvers                 []netip.Addr
-		Services                  []policyService
-	}{out.Version, out.PolicyRevision, out.Driver, out.Default, out.Allow, out.Resolvers, effectiveServices})
+		Endpoints                 []policyEndpoint
+	}{out.Version, out.PolicyRevision, out.Driver, out.Default, out.Allow, out.Resolvers, effectiveEndpoints})
 	if err != nil {
 		return err
 	}
@@ -480,7 +365,7 @@ func setCompilationDigests(out *Compilation, backendID string) error {
 func ValidateCompilation(compilation Compilation) error {
 	expectedPolicy, expectedNetwork := compilation.PolicyDigest, compilation.NetworkDigest
 	backend := compilation.BackendID
-	for _, selected := range compilation.Services {
+	for _, selected := range compilation.Endpoints {
 		if backend != "" && backend != selected.Binding.BackendID {
 			return fmt.Errorf("compiled policy spans backend identities")
 		}
@@ -496,4 +381,24 @@ func ValidateCompilation(compilation Compilation) error {
 		return fmt.Errorf("compiled egress policy digest mismatch")
 	}
 	return nil
+}
+
+func allowedGatewayID(gateways map[netip.AddrPort]string, id string) (netip.AddrPort, bool) {
+	for endpoint, name := range gateways {
+		if name == id {
+			return endpoint, true
+		}
+	}
+	return netip.AddrPort{}, false
+}
+func validSyntheticRange(p netip.Prefix) bool {
+	if !validPrefix(p) || p != p.Masked() || p.Bits() > 30 {
+		return false
+	}
+	for _, private := range []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("172.16.0.0/12"), netip.MustParsePrefix("192.168.0.0/16")} {
+		if p.Bits() >= private.Bits() && private.Contains(p.Addr()) {
+			return true
+		}
+	}
+	return false
 }

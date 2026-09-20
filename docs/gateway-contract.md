@@ -1,180 +1,125 @@
-# Gateway ingress and authorization
+# Network gateways and optional proxies
 
-`internal/gateway` provides trusted ingress and flow-lifetime primitives, and the
-model HTTP adapter that uses them. Doris MySQL and OBS HTTP adapters are not
-implemented here; those deployments must compose these primitives with their own
-credential and protocol logic. The Khora daemon serves the authorization contract
-and drives every configured gateway's remote control.
+The application controls reachability and route lifetime. Endpoints name a host,
+TCP port and next-hop ID; their purpose is opaque. Database authentication, object
+permissions, model allowlists and upstream credentials belong to external services
+or separately configured proxies. No application network field selects a protocol
+adapter or carries resource permissions.
 
-## Model HTTP adapter
+## Connectivity compilation
 
-`NewModelGateway` terminates steered model generation, and `cmd/model-gateway`
-runs it as its own process under its own UID. It is an HTTP handler rather than a
-raw relay because the resource being authorized — the model — is a body field, so
-the adapter must parse the request to name what it is asking for.
+The deployment's `connectivity` block declares `revision`, `synthetic_range`,
+`protected`, `catalog` and per-driver `policies`. A catalog endpoint contains
+`id`, `hostname`, `port`, `transport: "tcp"` and `next_hop`. The next hop selects a
+`gateways[].id`, whose `listener` is an IPv4 address and port. Policy `endpoints`
+contains objects with `endpoint_id`; `direct` contains `cidr`, `port` and `proto`
+(`tcp` or `udp`); `resolvers` explicitly names approved IPv4 DNS servers.
 
-The destination comes from the kernel through `DestinationContext`, so a guest
-that sets `Host` or `Authorization` can neither select a service nor supply a
-credential. Every request is authorized, including one reusing an established
-connection, and each carries its own request identity. Guest authorization
-headers are dropped; only the gateway's configured credential reaches the
-upstream, read from a file that must not be group or world accessible.
+Compilation emits a complete default-deny declaration and matching hostname
+projection. It rejects protected/synthetic overlap, direct gateway access, wildcard
+ports, undeclared next hops and unsupported steering transports. Names do not
+establish authority: enforcement uses exact addresses and ports. Shell and Pi may
+receive any explicitly declared endpoint. An absent connectivity block means no
+network access. A direct-only policy needs no gateways. Zero-gateway deployments
+may omit authorization socket configuration.
 
-The adapter registers each authorized request as a flow before upstream I/O and
-calls `Finish` only after upstream activity has stopped, which is what makes a
-revocation acknowledgment mean something. Upstream status codes pass through and
-are recorded as the request outcome. Unauthorized, denied and unavailable
-authorization all fail closed without contacting the upstream.
+Direct permissions last for a running generation; revocation requires confirmed
+Khora placement teardown. Managed routes receive turn-scoped grants, whose expiry
+also bounds active flows during application outages. Use the mechanism matching the
+required lifetime. Connection closure does not undo an upstream business operation.
 
-The engine refuses an `egress.via` declaration unless it was started with a
-second-hop UID, because the endpoint process's own egress can only be pinned by
-uid. A deployment must therefore run its protocol gateways under that identity.
+## Trusted ingress and authorization
 
-## Connection attribution
+`DestinationContext` obtains the original IPv4 TCP destination from
+`SO_ORIGINAL_DST`. Guest headers and source addresses cannot supply identity.
+Unsteered connections and destinations outside the reserved range are refused.
+Khora requires its configured second-hop UID for steering; upstream connections
+must originate from the isolated next-hop process under that UID.
 
-Recover the original destination from the first accepted IPv4 TCP socket before
-TLS or relay wrapping. `AcceptDestination` requires a destination within the
-configured private service range and rejects direct listener connections.
-`OriginalDestination` uses the kernel's `SO_ORIGINAL_DST`; source IP and guest
-headers are never an authorization principal.
+`AuthorizationHandler` uses a protected Unix listener with `PeerContext`, which
+checks `SO_PEERCRED` against the configured gateway UID. Socket mode is `0660`
+with an explicit group. An existing socket is never replaced implicitly.
 
-Khora's declaration supplies exact per-binding `/32 + TCP port` routes to a shared
-listener for that protocol. The deployment must isolate listener exposure and
-run every upstream socket opener under the configured dedicated gateway UID.
-Application inspection requires the pinned engine with manual cold recovery,
-verified teardown and conditional mutation support. These ingress helpers alone
-do not prove the complete network or established-flow isolation contract.
-
-## Unix authorization control
-
-`AuthorizationHandler` requires `PeerContext` on a protected Unix listener.
-`PeerContext` reads `SO_PEERCRED`; only the configured UID is accepted. The socket
-uses mode `0660` and the explicitly configured gateway group. The listener refuses
-to replace an existing socket. No header can supply peer identity.
-
-`POST /v1/authorize` accepts:
+`POST /v1/authorize` accepts only generic route identity:
 
 ```json
 {
   "backend_id": "durable-engine-store",
   "destination": "10.80.0.1:443",
-  "service_id": "model",
-  "operation": "generate",
-  "request_id": "gateway-generated-request-id",
-  "model": "entitled-model"
+  "endpoint_id": "inference",
+  "request_id": "gateway-generated-request-id"
 }
 ```
 
-Data adapters provide `database` or `bucket`/`object_key` as appropriate. The
-trusted adapter derives these values from the actual protocol request and uses
-the kernel-derived destination. It must authorize every model request, SQL
-statement and object operation, including requests reusing an established
-connection. The response contains immutable session/turn/epoch/grant attribution,
-policy digest, expiry and typed service restrictions. Denial is 403, conflicting
-request identity is 409, and unavailable authorization is 503. All fail closed.
-Bodies are bounded and unknown or trailing fields are refused.
+`endpoint_id` is an optional cross-check, never a way to choose another destination.
+Authorization requires an accepted, current execution and a leased/running turn
+with a live matching grant. The response supplies session/user/generation/turn,
+binding revision, grant ID, policy digest and expiry. There are no model, database,
+bucket or operation fields. Every new flow or proxy request obtains current
+admission, including requests over reused connections.
 
+Denial is 403, conflicting request identity is 409 and unavailable authorization is
+503. Unknown fields and trailing JSON are rejected; the application owns the clock.
 `POST /v1/finish` accepts `backend_id`, `request_id`, `outcome` and nonnegative
-`bytes`. The application supplies timestamps and preserves attribution from the
-original request, even after the turn changes. Identical retries succeed;
-contradictory finishes return 409.
+`bytes`. It preserves original attribution across turn changes. Identical retries
+succeed; contradictory finishes return 409.
 
-## Revocation and shutdown
+## Gateway control and flow lifetime
 
-A new `Flows` registry starts with no active bindings. Reconciliation activates a
-binding revision. Register an authorized request before upstream I/O and use the
-returned expiring context for its stream/query. A duplicate active request ID is
-refused.
+`ControlHandler` requires application UID, gateway ID and a bounded timeout.
+`GET /v1/info` returns version `1`, `id` and random process `instance`. Both peers
+check kernel UIDs. Every response carries `X-Harness-Gateway-Instance`; mutations
+require the pinned instance or fail with 412.
 
-Revoke marks the binding unavailable under the same lock as flow admission,
-cancels all affected contexts and waits for every flow's `Finish` acknowledgment.
-Adapters call `Finish` only after upstream activity has stopped. A timeout is
-unresolved teardown, not successful revocation. Revoked IDs are tombstones and
-cannot be activated again. Closing the registry prevents new bindings and drains
-existing work.
-
-These behaviors have contract/race tests, including real Unix peer credentials
-and direct TCP listener refusal. Full real-Khora routing, external adapter
-stream/query/signing behavior, upstream DNS/redirect policy and deployment UID
-checks remain separate integration acceptance requirements.
-
-## Application-to-gateway control
-
-`ControlHandler` provides the reverse control direction inside a protocol gateway.
-Serve it on a protected `ListenControl` Unix listener with `PeerContext`; configure
-the application UID, gateway ID, protocol (`model_http`, `doris_mysql`, or
-`obs_http`) and a positive maximum operation timeout. It uses the gateway's
-actual flow registry. A separate registry that does not track upstream work
-cannot acknowledge teardown for that work.
-
-`GET /v1/info` returns version `1`, gateway `id`, `protocol` and a random process
-`instance`. Every response includes `X-Harness-Gateway-Instance`. Mutations require
-that same header from the caller and reject a different or missing instance with
-412 before modifying the registry.
-
-| POST endpoint | JSON body | Successful result |
+| POST endpoint | Body | Successful result |
 |---|---|---|
 | `/v1/bindings/activate` | `{"binding_id":"binding","revision":1}` | Binding revision registered |
-| `/v1/bindings/revoke` | `{"binding_id":"binding"}` | Binding tombstoned and all its upstream work stopped |
-| `/v1/grants/revoke` | `{"grant_id":"grant"}` | Grant tombstoned and all its upstream work stopped |
-| `/v1/drain` | `{}` | Registry closed to admission and all upstream work stopped |
+| `/v1/bindings/revoke` | `{"binding_id":"binding"}` | Binding tombstoned and flows stopped |
+| `/v1/grants/revoke` | `{"grant_id":"grant"}` | Grant tombstoned and flows stopped |
+| `/v1/drain` | `{}` | Admission closed and flows stopped |
 
-Success is exactly 204. Requests are bounded to 4 KiB; unknown fields, trailing
-JSON, irrelevant fields and query parameters are rejected. Failed operations
-return 503, expired drain deadlines return 504, and activation of a revoked
-binding returns 409. Cancellation alone never proves that upstream work stopped.
+Success is exactly 204. Register a flow with `Flows.Begin` before upstream I/O and
+use its expiring context. Revocation and admission share a lock. Revocation cancels
+flows and waits for `Finish`, which the adapter calls only after transport activity
+stops. A timeout is unresolved teardown; cancellation alone is insufficient.
+Revoked identities cannot reactivate. Deadline enforcement remains local to the
+gateway when the application is unavailable.
 
-`NewRemote` connects only to its configured absolute Unix socket, verifies the
-server's kernel peer UID, and pins the handshake ID, protocol, version and process
-instance. The server independently verifies the application's kernel UID. HTTP
-proxy environment variables and redirects are not used. Timeouts, lost replies,
-unexpected status codes or instance mismatches leave the operation unresolved.
-Identical revocation retries can settle a lost successful reply against the same
-instance. A restarted gateway cannot acknowledge that the previous process's
-work stopped; the client returns `ErrGatewayRestarted` and requires explicit
-reconciliation. Constructing a new client only establishes the new instance's
-identity; it does not prove termination of the old one.
+`NewRemote` pins the socket's UID, control version, ID and instance, disables
+redirects/proxy environment variables and bounds control requests. Lost replies
+retry against the same instance. `ErrGatewayRestarted` requires reconciliation;
+a new handshake alone cannot prove the prior process's flows stopped.
+`NewRemotes` accepts zero to sixteen unique controls. Client `Close` releases idle
+control connections; explicit `Drain` stops gateway work.
 
-`NewRemotes` requires an explicit set of up to sixteen unique gateway controls.
-Its route and grant revokers attempt every gateway concurrently and succeed only
-after every gateway acknowledges. An empty set is an error. Client `Close`
-releases idle control connections; gateway shutdown uses explicit `Drain`.
+## Separate model proxy
 
-These control adapters have real Unix socket and race tests for peer rejection,
-instance replacement, timed-out drains, lost replies and multi-gateway teardown.
-The executable selects these clients through `HARNESS_KHORA_DEPLOYMENT`.
-Upstream model/Doris/OBS compatibility is not established by these control tests;
-the external protocol gateways must implement the documented contract.
+`cmd/model-gateway` runs with its own configuration and UID. Its upstream entries
+map `endpoint_id` to `base_url`, `models`, fixed headers and an optional credential
+file. Credentials never enter product configuration, state or the guest. Model
+restrictions are enforced inside the proxy after generic application admission.
+Guest authorization and cookie headers are discarded. Upstream statuses are
+forwarded and recorded as outcomes. Pi endpoint/model selection belongs to authored
+native configuration, independently of network policy.
 
-## Durable synthetic destination allocation
+Ordinary Pi startup additionally requires local pre-turn readiness on an activated
+binding. The full readiness and real-engine gateway journey remains under active
+integration; unit/control tests alone do not establish that evidence.
 
-`ReserveEgressCompilation` implements the `egress.Allocator` port for planned
-executions. It requires the current product owner, session/environment identity,
-expected environment fence, target epoch, typed policy/catalog, explicit gateway
-selection for every service, and the deployment's synthetic/protected ranges.
-Initial environments plan epoch 1; retained environments must be paused and plan
-the next epoch. Running placements, unresolved lifecycle/recovery work, retired
-sessions and blocked engine identities cannot receive fresh allocations.
+## Durable destination allocation
 
-The store pins one canonical private IPv4 range (`/8` through `/30`) to each
-engine store identity. It reserves one address per service, excluding the range's
-network and broadcast addresses. All ports on an allocated address remain
-consumed. Preexisting route rows, including revoked ones, are skipped. The pool
-cursor, immutable execution allocation and dormant compiled route rows commit in
-one transaction. Failed compilation, route persistence or range exhaustion rolls
-back the entire allocation. Exhaustion is `egress.ErrTupleExhausted`; it never
-recycles old destinations or expands the range implicitly.
+`ReserveEgressCompilation` requires current owner, session/environment identity,
+fence and target epoch. Initial environments plan epoch 1; retained environments
+must be paused and plan their next epoch. Unresolved lifecycle/recovery operations,
+retirement and blocked engine identities prevent fresh allocation.
 
-Retries with the same intent return the same bindings and compilation. A changed
-session, environment fence, target epoch, policy, gateway or range fails. Binding
-IDs are stable for the engine/execution/service identity. Revocation leaves the
-allocation and route tombstones intact. After a store adopts managed allocation,
-new direct route registrations must match its recorded reservations; exact
-replays of historical registered rows remain valid without reviving authority.
+Each engine store pins one canonical private IPv4 `/8` through `/30` pool. A
+managed endpoint consumes one address, excluding network/broadcast, for the life
+of that store identity. Revoked allocations remain tombstones. Pool advancement,
+immutable allocation and route rows commit in one transaction. Exhaustion returns
+`egress.ErrTupleExhausted` without recycling or expanding the pool.
 
-Allocation is dormant: it does not configure Khora, activate gateway listeners,
-start a process or issue a turn grant. Tests cover its transactional connection to
-execution readiness and typed per-turn authorization. The daemon still needs to
-compose allocation with paused network replacement, config-volume publication,
-remote route activation and native restart before production service access is
-complete.
+Retries preserve original bindings and intent. A changed fence, epoch, policy,
+next hop or range fails. The compiler's complete network declaration replaces the
+plan's network before launch. Configuration observation precedes activation;
+bridge readiness and execution acceptance precede turn grants.

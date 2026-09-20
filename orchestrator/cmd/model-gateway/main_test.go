@@ -38,7 +38,7 @@ func gatewayValue() map[string]any {
 		"listen": "127.0.0.1:0", "reserved": "10.80.0.0/24",
 		"control": "control.sock", "application_uid": uid, "control_group": os.Getgid(),
 		"authorization": "/run/harness/authorization.sock", "request_timeout": "5s",
-		"upstreams": []any{map[string]any{"reference": "models", "base_url": "https://upstream.example", "api_key_header": "X-Api-Key", "api_key_file": "key"}},
+		"upstreams": []any{map[string]any{"endpoint_id": "model", "models": []string{"approved-model"}, "base_url": "https://upstream.example", "api_key_header": "X-Api-Key", "api_key_file": "key"}},
 	}
 }
 
@@ -141,9 +141,9 @@ func TestAuthorizationClientMapsContractStatuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	status, body = http.StatusOK, `{"service_id":"model","grant_id":"grant"}`
+	status, body = http.StatusOK, `{"endpoint_id":"model","grant_id":"grant"}`
 	authorization, err := client.Authorize(ctx, egress.AuthorizationRequest{RequestID: "one"})
-	if err != nil || authorization.GrantID != "grant" || authorization.ServiceID != "model" {
+	if err != nil || authorization.GrantID != "grant" || authorization.EndpointID != "model" {
 		t.Fatalf("authorized: %+v %v", authorization, err)
 	}
 	status, body = http.StatusForbidden, ""

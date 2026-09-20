@@ -23,9 +23,9 @@ func allocationFixture(t *testing.T) (*Store, string, egress.AllocationRequest) 
 		t.Fatal(err)
 	}
 	p := egress.AllocationRequest{SessionID: "session", EnvironmentID: "env", GenerationID: "planned-generation", Epoch: 1, EnvironmentFence: 0,
-		Policy:     egress.Policy{Revision: "policy-v1", Driver: "sh", Services: []egress.ServiceAccess{{ServiceID: "data", Operations: []string{"query"}}}},
-		Catalog:    []egress.Service{{ID: "data", Protocol: egress.DorisMySQL, Hostname: "data.internal", Port: 9030, UpstreamRef: "analytics", Doris: &egress.DorisService{Databases: []string{"approved"}}}},
-		Deployment: egress.Deployment{BackendID: "engine-store", SyntheticRange: netip.MustParsePrefix("10.80.0.0/29"), Protected: []netip.Prefix{netip.MustParsePrefix("10.200.0.0/16")}, Gateways: []egress.Gateway{{Endpoint: netip.MustParseAddrPort("192.0.2.1:19030"), Protocol: egress.DorisMySQL}}},
+		Policy:     egress.Policy{Revision: "policy-v1", Driver: "sh", Endpoints: []egress.EndpointAccess{{EndpointID: "data"}}},
+		Catalog:    []egress.Endpoint{{ID: "data", NextHop: "data", Transport: "tcp", Hostname: "data.internal", Port: 9030}},
+		Deployment: egress.Deployment{BackendID: "engine-store", SyntheticRange: netip.MustParsePrefix("10.80.0.0/29"), Protected: []netip.Prefix{netip.MustParsePrefix("10.200.0.0/16")}, Gateways: []egress.Gateway{{Endpoint: netip.MustParseAddrPort("192.0.2.1:19030"), ID: "data"}}},
 		Gateways:   map[string]netip.AddrPort{"data": netip.MustParseAddrPort("192.0.2.1:19030")}}
 	allocationEnvironment(t, st, p)
 	return st, GenerationLeaseOwner(owner.UUID), p
@@ -45,8 +45,8 @@ func TestEgressAllocationRetainsDestinationsAcrossReopenAndRevocation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Services) != 1 || first.Services[0].Binding.Destination.String() != "10.80.0.1:9030" {
-		t.Fatalf("unexpected first tuple: %+v", first.Services)
+	if len(first.Endpoints) != 1 || first.Endpoints[0].Binding.Destination.String() != "10.80.0.1:9030" {
+		t.Fatalf("unexpected first tuple: %+v", first.Endpoints)
 	}
 	var index int
 	var name, path string
@@ -68,11 +68,11 @@ func TestEgressAllocationRetainsDestinationsAcrossReopenAndRevocation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay.Services[0].Binding != first.Services[0].Binding || replay.NetworkDigest != first.NetworkDigest || replay.PolicyDigest != first.PolicyDigest {
+	if replay.Endpoints[0].Binding != first.Endpoints[0].Binding || replay.NetworkDigest != first.NetworkDigest || replay.PolicyDigest != first.PolicyDigest {
 		t.Fatal("reopen changed allocation/compilation")
 	}
 	var state string
-	if err := st.db.QueryRow(`SELECT state FROM egress_route_bindings WHERE binding_id=?`, first.Services[0].Binding.ID).Scan(&state); err != nil || state != "revoked" {
+	if err := st.db.QueryRow(`SELECT state FROM egress_route_bindings WHERE binding_id=?`, first.Endpoints[0].Binding.ID).Scan(&state); err != nil || state != "revoked" {
 		t.Fatalf("reservation revived authority: %s %v", state, err)
 	}
 	p.SessionID, p.EnvironmentID, p.GenerationID = "second", "second-env", "second-generation"
@@ -81,15 +81,15 @@ func TestEgressAllocationRetainsDestinationsAcrossReopenAndRevocation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Services[0].Binding.Destination.String() != "10.80.0.2:9030" {
-		t.Fatalf("retired tuple reused: %+v", second.Services)
+	if second.Endpoints[0].Binding.Destination.String() != "10.80.0.2:9030" {
+		t.Fatalf("retired tuple reused: %+v", second.Endpoints)
 	}
 	var executions int
 	if err := st.db.QueryRow(`SELECT count(*) FROM execution_bindings`).Scan(&executions); err != nil || executions != 0 {
 		t.Fatalf("tuple planning started execution: %d %v", executions, err)
 	}
 }
-func TestEgressAllocationFailsClosedOnExhaustionAndRollsBackPartialServices(t *testing.T) {
+func TestEgressAllocationFailsClosedOnExhaustionAndRollsBackPartialEndpoints(t *testing.T) {
 	ctx := context.Background()
 	st, owner, p := allocationFixture(t)
 	p.Deployment.SyntheticRange = netip.MustParsePrefix("10.80.0.0/30")
@@ -101,7 +101,7 @@ func TestEgressAllocationFailsClosedOnExhaustionAndRollsBackPartialServices(t *t
 	other := p.Catalog[0]
 	other.ID, other.Hostname = "other", "other.internal"
 	p.Catalog = append(p.Catalog, other)
-	p.Policy.Services = append(p.Policy.Services, egress.ServiceAccess{ServiceID: "other", Operations: []string{"query"}})
+	p.Policy.Endpoints = append(p.Policy.Endpoints, egress.EndpointAccess{EndpointID: "other"})
 	p.Gateways["other"] = p.Gateways["data"]
 	if _, err := st.ReserveEgressCompilation(ctx, owner, p); !errors.Is(err, egress.ErrTupleExhausted) {
 		t.Fatalf("partial range exhaustion accepted: %v", err)
@@ -116,11 +116,11 @@ func TestEgressAllocationFailsClosedOnExhaustionAndRollsBackPartialServices(t *t
 	if err := st.db.QueryRow(`SELECT count(*) FROM egress_route_bindings`).Scan(&routes); err != nil || routes != 1 {
 		t.Fatalf("partial compilation persisted: %d %v", routes, err)
 	}
-	p.Policy.Services = p.Policy.Services[:1]
+	p.Policy.Endpoints = p.Policy.Endpoints[:1]
 	p.Catalog = p.Catalog[:1]
 	delete(p.Gateways, "other")
 	result, err := st.ReserveEgressCompilation(ctx, owner, p)
-	if err != nil || result.Services[0].Binding.Destination.String() != "10.80.0.2:9030" {
+	if err != nil || result.Endpoints[0].Binding.Destination.String() != "10.80.0.2:9030" {
 		t.Fatalf("rolled back slot not available: %+v %v", result, err)
 	}
 }
@@ -156,7 +156,7 @@ func TestEgressAllocationRejectsChangedIntentForeignOwnerAndUnreservedRegistrati
 			}
 		})
 	}
-	binding := original.Services[0].Binding
+	binding := original.Endpoints[0].Binding
 	binding.ID = "unreserved"
 	binding.Destination = netip.MustParseAddrPort("10.80.0.6:9030")
 	forged, err := egress.Compile(p.Policy, p.Catalog, []egress.RuntimeBinding{binding}, p.Deployment)
@@ -211,7 +211,7 @@ func TestEgressAllocationSerializesConcurrentConsumers(t *testing.T) {
 		if result.err != nil {
 			t.Fatal(result.err)
 		}
-		destination := result.compilation.Services[0].Binding.Destination
+		destination := result.compilation.Endpoints[0].Binding.Destination
 		if seen[destination] {
 			t.Fatal("parallel reservations reused destination")
 		}
@@ -243,7 +243,7 @@ func TestEgressAllocationSkipsPreexistingTuplesAndPinsRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	allocated, err := st.ReserveEgressCompilation(ctx, owner, p)
-	if err != nil || allocated.Services[0].Binding.Destination.String() != "10.80.0.2:9030" {
+	if err != nil || allocated.Endpoints[0].Binding.Destination.String() != "10.80.0.2:9030" {
 		t.Fatalf("allocator reused historical address: %+v %v", allocated, err)
 	}
 	if err := st.RegisterEgressCompilation(ctx, compiled); err != nil {
@@ -264,8 +264,8 @@ func TestAllocatedServiceRoutesOnlyAuthorizeAfterExecutionAndTurnAcceptance(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := compiled.Services[0].Binding
-	request := egress.AuthorizationRequest{BackendID: p.Deployment.BackendID, Destination: route.Destination, ServiceID: "data", Operation: "query", Database: "approved", RequestID: "request"}
+	route := compiled.Endpoints[0].Binding
+	request := egress.AuthorizationRequest{BackendID: p.Deployment.BackendID, Destination: route.Destination, EndpointID: "data", RequestID: "request"}
 	if _, err := st.AuthorizeEgressRequest(ctx, request); !errors.Is(err, egress.ErrDenied) {
 		t.Fatalf("dormant reservation granted authority: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestEgressAllocationRollsBackWhenDormantRoutePersistenceFails(t *testing.T)
 		t.Fatal(err)
 	}
 	compiled, err := st.ReserveEgressCompilation(ctx, owner, p)
-	if err != nil || compiled.Services[0].Binding.Destination.String() != "10.80.0.1:9030" {
+	if err != nil || compiled.Endpoints[0].Binding.Destination.String() != "10.80.0.1:9030" {
 		t.Fatalf("failed transaction burned tuple: %+v %v", compiled, err)
 	}
 }

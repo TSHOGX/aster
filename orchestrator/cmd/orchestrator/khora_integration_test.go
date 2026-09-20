@@ -19,8 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"harness-platform/orchestrator/internal/egress"
-	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/launchplan"
 	"harness-platform/orchestrator/internal/store"
 
@@ -55,20 +53,7 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flows := gateway.NewFlows()
-	handler, err := gateway.ControlHandler(flows, gateway.ControlOptions{ID: "test-data", Protocol: egress.DorisMySQL, ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	gatewayPath := filepath.Join(root, "gateway.sock")
-	listener, err := gateway.ListenControl(gatewayPath, os.Getgid())
-	if err != nil {
-		t.Fatal(err)
-	}
-	gatewayServer := &http.Server{Handler: handler, ConnContext: gateway.PeerContext}
-	gatewayDone := make(chan error, 1)
-	go func() { gatewayDone <- gatewayServer.Serve(listener) }()
-	defer func() { _ = gatewayServer.Close(); <-gatewayDone }()
+
 	// Authored shared assets are published and verified by the daemon itself, so
 	// this exercises real content publication rather than a hand-built volume.
 	assetRoot := filepath.Join(root, "assets")
@@ -80,7 +65,7 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deployment := map[string]any{"version": 1, "backend_name": "daemon-engine", "engine": map[string]any{"endpoint": endpoint, "store_id": info.StoreID}, "manifest": manifest, "manifest_digest": digest, "plans": map[string]any{"sh": map[string]any{"template": template, "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": assetRoot}}, "content_bytes": 8 << 20, "gateways": []any{map[string]any{"id": "test-data", "protocol": "doris_mysql", "socket": gatewayPath, "peer_uid": os.Getuid()}}, "authorization": map[string]any{"socket": filepath.Join(root, "authorization.sock"), "peer_uid": os.Getuid(), "group": os.Getgid()}, "prepared_root": filepath.Join(root, "prepared"), "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "50ms", "event_interval": "50ms", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "100ms", "idle_interval": "50ms", "idle_threshold": "2s"}
+	deployment := map[string]any{"version": 1, "backend_name": "daemon-engine", "engine": map[string]any{"endpoint": endpoint, "store_id": info.StoreID}, "manifest": manifest, "manifest_digest": digest, "plans": map[string]any{"sh": map[string]any{"template": template, "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": assetRoot}}, "content_bytes": 8 << 20, "authorization": map[string]any{"socket": filepath.Join(root, "authorization.sock"), "peer_uid": os.Getuid(), "group": os.Getgid()}, "prepared_root": filepath.Join(root, "prepared"), "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "50ms", "event_interval": "50ms", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "100ms", "idle_interval": "50ms", "idle_threshold": "2s"}
 	raw, _ = json.Marshal(deployment)
 	deploymentPath := filepath.Join(root, "khora.json")
 	if err := os.WriteFile(deploymentPath, raw, 0600); err != nil {
@@ -192,7 +177,7 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(root, "authorization.sock"))
 	}}}
 	defer authorizationClient.CloseIdleConnections()
-	authorizationResponse, err := authorizationClient.Post("http://unix/v1/authorize", "application/json", strings.NewReader(`{"backend_id":"unknown","destination":"10.80.0.1:9030","service_id":"data","operation":"query","request_id":"ungranted"}`))
+	authorizationResponse, err := authorizationClient.Post("http://unix/v1/authorize", "application/json", strings.NewReader(`{"backend_id":"unknown","destination":"10.80.0.1:9030","endpoint_id":"data","request_id":"ungranted"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

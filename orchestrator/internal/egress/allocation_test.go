@@ -19,7 +19,7 @@ func TestSyntheticAddressRequiresCanonicalPrivateRangeAndExcludesEndpoints(t *te
 			t.Fatalf("reserved/exhausted address accepted: %d %v", offset, err)
 		}
 	}
-	for _, text := range []string{"10.80.0.1/24", "0.0.0.0/0", "192.0.2.0/24", "127.0.0.0/8", "fd00::/64", "10.80.0.0/31", "10.80.0.1/32"} {
+	for _, text := range []string{"10.80.0.1/24", "192.168.0.0/8", "172.16.0.0/8", "0.0.0.0/0", "192.0.2.0/24", "127.0.0.0/8", "fd00::/64", "10.80.0.0/31", "10.80.0.1/32"} {
 		if _, err := SyntheticAddress(netip.MustParsePrefix(text), 1); err == nil {
 			t.Fatalf("invalid service range accepted: %s", text)
 		}

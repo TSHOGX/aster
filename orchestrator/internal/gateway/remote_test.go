@@ -34,13 +34,13 @@ func serveControl(t *testing.T, path string, handler http.Handler) func() {
 func controlFixture(t *testing.T, timeout time.Duration) (*Flows, *Remote, func()) {
 	t.Helper()
 	flows := NewFlows()
-	handler, err := ControlHandler(flows, ControlOptions{ID: "model", Protocol: egress.ModelHTTP, ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: timeout})
+	handler, err := ControlHandler(flows, ControlOptions{ID: "model", ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: timeout})
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "control.sock")
 	stop := serveControl(t, path, handler)
-	remote, err := NewRemote(context.Background(), RemoteConfig{ID: "model", Protocol: egress.ModelHTTP, Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second})
+	remote, err := NewRemote(context.Background(), RemoteConfig{ID: "model", Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,9 +97,8 @@ func TestRemoteRevocationWaitsForActualUpstreamFinishAndRetriesTimeout(t *testin
 func TestRemoteControlRejectsWrongKernelPeerAndIdentity(t *testing.T) {
 	_, remote, _ := controlFixture(t, time.Second)
 	for name, change := range map[string]func(*RemoteConfig){
-		"uid":      func(p *RemoteConfig) { p.PeerUID++ },
-		"id":       func(p *RemoteConfig) { p.ID = "another" },
-		"protocol": func(p *RemoteConfig) { p.Protocol = egress.DorisMySQL },
+		"uid": func(p *RemoteConfig) { p.PeerUID++ },
+		"id":  func(p *RemoteConfig) { p.ID = "another" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := remote.config
@@ -110,7 +109,7 @@ func TestRemoteControlRejectsWrongKernelPeerAndIdentity(t *testing.T) {
 			}
 		})
 	}
-	handler, err := ControlHandler(NewFlows(), ControlOptions{ID: "forgery", Protocol: egress.ModelHTTP, ApplicationUID: 1234, MaxOperationTimeout: time.Second})
+	handler, err := ControlHandler(NewFlows(), ControlOptions{ID: "forgery", ApplicationUID: 1234, MaxOperationTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +127,7 @@ func TestRemoteGatewayRestartCannotAcknowledgeOldInstanceWork(t *testing.T) {
 	original := remote.Info()
 	stop()
 	newFlows := NewFlows()
-	handler, err := ControlHandler(newFlows, ControlOptions{ID: "model", Protocol: egress.ModelHTTP, ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: time.Second})
+	handler, err := ControlHandler(newFlows, ControlOptions{ID: "model", ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +228,7 @@ func TestRemoteFanoutAttemptsAllGatewaysAndRequiresEveryDrain(t *testing.T) {
 
 func TestRemoteRetrySettlesLostSuccessfulDrainReply(t *testing.T) {
 	flows := NewFlows()
-	handler, err := ControlHandler(flows, ControlOptions{ID: "data", Protocol: egress.DorisMySQL, ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: time.Second})
+	handler, err := ControlHandler(flows, ControlOptions{ID: "data", ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +249,7 @@ func TestRemoteRetrySettlesLostSuccessfulDrainReply(t *testing.T) {
 		}
 		handler.ServeHTTP(w, r)
 	}))
-	remote, err := NewRemote(context.Background(), RemoteConfig{ID: "data", Protocol: egress.DorisMySQL, Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second})
+	remote, err := NewRemote(context.Background(), RemoteConfig{ID: "data", Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +292,7 @@ func TestRemoteDrainClosesRegistryAndClientCloseOnlyDetaches(t *testing.T) {
 func TestRemoteSetRequiresExplicitUniqueGatewayConfiguration(t *testing.T) {
 	_, remote, _ := controlFixture(t, time.Second)
 	ctx := context.Background()
-	for _, configs := range [][]RemoteConfig{nil, {remote.config, remote.config}, {{ID: "bad", Socket: "relative", Protocol: egress.ModelHTTP, Timeout: time.Second}}} {
+	for _, configs := range [][]RemoteConfig{{remote.config, remote.config}, {{ID: "bad", Socket: "relative", Timeout: time.Second}}} {
 		if controls, err := NewRemotes(ctx, configs); err == nil {
 			controls.Close()
 			t.Fatal("invalid remote set accepted")

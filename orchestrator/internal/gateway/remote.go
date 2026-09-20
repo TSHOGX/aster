@@ -11,15 +11,12 @@ import (
 	"net/http"
 	"path/filepath"
 	"time"
-
-	"harness-platform/orchestrator/internal/egress"
 )
 
 var ErrGatewayRestarted = errors.New("gateway instance changed; reconciliation required")
 
 type RemoteConfig struct {
 	ID, Socket string
-	Protocol   egress.Protocol
 	PeerUID    uint32
 	Timeout    time.Duration
 }
@@ -35,7 +32,7 @@ type Remote struct {
 }
 
 func NewRemote(ctx context.Context, p RemoteConfig) (*Remote, error) {
-	if !validControlID(p.ID) || !filepath.IsAbs(p.Socket) || filepath.Clean(p.Socket) != p.Socket || !validProtocol(p.Protocol) || p.Timeout <= 0 {
+	if !validControlID(p.ID) || !filepath.IsAbs(p.Socket) || filepath.Clean(p.Socket) != p.Socket || p.Timeout <= 0 {
 		return nil, fmt.Errorf("gateway ID, protocol, absolute Unix socket and positive timeout required")
 	}
 	transport := &http.Transport{
@@ -69,7 +66,7 @@ func NewRemote(ctx context.Context, p RemoteConfig) (*Remote, error) {
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if readErr != nil || len(raw) > 4096 || response.StatusCode != http.StatusOK || decodeControlRequest(decoder, &r.info) != nil || r.info.Version != ControlVersion || r.info.ID != p.ID || r.info.Protocol != p.Protocol || !validControlID(r.info.Instance) || response.Header.Get(gatewayInstanceHeader) != r.info.Instance {
+	if readErr != nil || len(raw) > 4096 || response.StatusCode != http.StatusOK || decodeControlRequest(decoder, &r.info) != nil || r.info.Version != ControlVersion || r.info.ID != p.ID || !validControlID(r.info.Instance) || response.Header.Get(gatewayInstanceHeader) != r.info.Instance {
 		transport.CloseIdleConnections()
 		return nil, fmt.Errorf("gateway %s control identity or version mismatch", p.ID)
 	}
@@ -131,14 +128,14 @@ func (r *Remote) call(ctx context.Context, path string, p controlRequest) error 
 	return nil
 }
 
-// Remotes drains every configured protocol gateway. One failed drain does not
+// Remotes drains every configured gateway. One failed drain does not
 // suppress attempts at the other gateways, but the composite result succeeds
 // only when all have acknowledged actual upstream termination.
 type Remotes struct{ gateways []*Remote }
 
 func NewRemotes(ctx context.Context, configs []RemoteConfig) (*Remotes, error) {
-	if len(configs) == 0 || len(configs) > 16 {
-		return nil, fmt.Errorf("one to sixteen gateway controls required")
+	if len(configs) > 16 {
+		return nil, fmt.Errorf("at most sixteen gateway controls required")
 	}
 	ids, sockets := map[string]bool{}, map[string]bool{}
 	for _, p := range configs {
@@ -165,7 +162,7 @@ func (r *Remotes) Close() {
 }
 
 // Activate publishes a binding to every configured gateway. A gateway that does
-// not serve this binding's protocol still records the revision, so activation is
+// not serve this binding's endpoint still records the revision, so activation is
 // broadcast rather than routed: the application holds one authority record and a
 // gateway that never sees traffic for it is simply idle.
 //

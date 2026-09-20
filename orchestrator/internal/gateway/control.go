@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"harness-platform/orchestrator/internal/egress"
-
 	"github.com/google/uuid"
 )
 
@@ -27,15 +25,13 @@ type GatewayControl interface {
 }
 
 type ControlInfo struct {
-	Version  int             `json:"version"`
-	ID       string          `json:"id"`
-	Instance string          `json:"instance"`
-	Protocol egress.Protocol `json:"protocol"`
+	Version  int    `json:"version"`
+	ID       string `json:"id"`
+	Instance string `json:"instance"`
 }
 
 type ControlOptions struct {
 	ID                  string
-	Protocol            egress.Protocol
 	ApplicationUID      uint32
 	MaxOperationTimeout time.Duration
 }
@@ -56,17 +52,13 @@ func validControlID(id string) bool {
 	return id != "" && len(id) <= 512 && strings.TrimSpace(id) == id && !strings.ContainsAny(id, "\x00\r\n")
 }
 
-func validProtocol(protocol egress.Protocol) bool {
-	return protocol == egress.ModelHTTP || protocol == egress.DorisMySQL || protocol == egress.OBSHTTP
-}
-
 // ControlHandler is served in the credential-bearing gateway with PeerContext.
 // A random instance token fences replies and mutations across gateway restarts.
 func ControlHandler(control GatewayControl, p ControlOptions) (http.Handler, error) {
-	if control == nil || !validControlID(p.ID) || !validProtocol(p.Protocol) || p.MaxOperationTimeout <= 0 {
+	if control == nil || !validControlID(p.ID) || p.MaxOperationTimeout <= 0 {
 		return nil, fmt.Errorf("gateway control identity, protocol, flow registry and timeout required")
 	}
-	return &controlHandler{control: control, options: p, info: ControlInfo{Version: ControlVersion, ID: p.ID, Instance: uuid.NewString(), Protocol: p.Protocol}}, nil
+	return &controlHandler{control: control, options: p, info: ControlInfo{Version: ControlVersion, ID: p.ID, Instance: uuid.NewString()}}, nil
 }
 
 func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

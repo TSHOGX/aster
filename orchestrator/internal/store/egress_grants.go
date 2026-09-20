@@ -34,25 +34,21 @@ func (s *Store) RegisterEgressCompilation(ctx context.Context, compilation egres
 	return tx.Commit()
 }
 func registerEgressCompilationTx(ctx context.Context, tx *sql.Tx, compilation egress.Compilation) error {
-	for _, selected := range compilation.Services {
+	for _, selected := range compilation.Endpoints {
 		binding := selected.Binding
-		if binding.ID == "" || binding.BackendID == "" || binding.GenerationID == "" || binding.Epoch == 0 || binding.Revision == 0 || binding.ServiceID != selected.Service.ID {
+		if binding.ID == "" || binding.BackendID == "" || binding.GenerationID == "" || binding.Epoch == 0 || binding.Revision == 0 || binding.EndpointID != selected.Endpoint.ID {
 			return fmt.Errorf("complete dormant route binding required")
 		}
-		service, err := json.Marshal(selected.Service)
+		endpoint, err := json.Marshal(selected.Endpoint)
 		if err != nil {
 			return err
 		}
-		operations, err := json.Marshal(selected.Access.Operations)
-		if err != nil {
-			return err
-		}
-		var prior, policy, priorService, priorOperations string
+		var prior, policy, priorEndpoint string
 		var backend, generation, serviceID, destination, gateway string
 		var epoch, revision uint64
-		err = tx.QueryRowContext(ctx, `SELECT network_digest,policy_digest,service,operations,backend_id,generation_id,epoch,revision,service_id,destination,gateway FROM egress_route_bindings WHERE binding_id=?`, binding.ID).Scan(&prior, &policy, &priorService, &priorOperations, &backend, &generation, &epoch, &revision, &serviceID, &destination, &gateway)
+		err = tx.QueryRowContext(ctx, `SELECT network_digest,policy_digest,endpoint,backend_id,generation_id,epoch,revision,endpoint_id,destination,gateway FROM egress_route_bindings WHERE binding_id=?`, binding.ID).Scan(&prior, &policy, &priorEndpoint, &backend, &generation, &epoch, &revision, &serviceID, &destination, &gateway)
 		if err == nil {
-			if prior != compilation.NetworkDigest || policy != compilation.PolicyDigest || priorService != string(service) || priorOperations != string(operations) || backend != binding.BackendID || generation != binding.GenerationID || epoch != binding.Epoch || revision != binding.Revision || serviceID != binding.ServiceID || destination != binding.Destination.String() || gateway != binding.Gateway.String() {
+			if prior != compilation.NetworkDigest || policy != compilation.PolicyDigest || priorEndpoint != string(endpoint) || backend != binding.BackendID || generation != binding.GenerationID || epoch != binding.Epoch || revision != binding.Revision || serviceID != binding.EndpointID || destination != binding.Destination.String() || gateway != binding.Gateway.String() {
 				return fmt.Errorf("egress binding identity changed")
 			}
 			continue
@@ -84,7 +80,7 @@ func registerEgressCompilationTx(ctx context.Context, tx *sql.Tx, compilation eg
 				return fmt.Errorf("compiled route differs from managed tuple reservation")
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO egress_route_bindings(binding_id,backend_id,generation_id,epoch,revision,service_id,destination,gateway,policy_digest,network_digest,service,operations,state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'dormant')`, binding.ID, binding.BackendID, binding.GenerationID, binding.Epoch, binding.Revision, binding.ServiceID, binding.Destination.String(), binding.Gateway.String(), compilation.PolicyDigest, compilation.NetworkDigest, string(service), string(operations))
+		_, err = tx.ExecContext(ctx, `INSERT INTO egress_route_bindings(binding_id,backend_id,generation_id,epoch,revision,endpoint_id,destination,gateway,policy_digest,network_digest,endpoint,state) VALUES(?,?,?,?,?,?,?,?,?,?,?,'dormant')`, binding.ID, binding.BackendID, binding.GenerationID, binding.Epoch, binding.Revision, binding.EndpointID, binding.Destination.String(), binding.Gateway.String(), compilation.PolicyDigest, compilation.NetworkDigest, string(endpoint))
 		if err != nil {
 			return err
 		}
@@ -133,9 +129,9 @@ func issueBoundGrantsTx(ctx context.Context, tx *sql.Tx, generation string, turn
 func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.AuthorizationRequest) (egress.Authorization, error) {
 	// The destination is the authority: the product reserved one address per
 	// service, so a kernel-derived destination names the service unambiguously.
-	// ServiceID is an optional cross-check for an adapter that knows it, never a
+	// EndpointID is an optional cross-check for an adapter that knows it, never a
 	// way for a caller to select a different service than the one it reached.
-	if p.BackendID == "" || !p.Destination.IsValid() || p.RequestID == "" || p.Operation == "" {
+	if p.BackendID == "" || !p.Destination.IsValid() || p.RequestID == "" {
 		return egress.Authorization{}, egress.ErrDenied
 	}
 	if p.Now.IsZero() {
@@ -147,12 +143,12 @@ func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.Authorizati
 	}
 	defer tx.Rollback()
 	var result egress.Authorization
-	var serviceJSON, operations, owner, expires, driver string
-	err = tx.QueryRowContext(ctx, `SELECT r.binding_id,r.generation_id,r.epoch,r.revision,r.policy_digest,r.service,r.operations,b.owner,g.grant_id,g.turn_id,g.expires_at,b.driver_id
+	var owner, expires string
+	err = tx.QueryRowContext(ctx, `SELECT r.binding_id,r.generation_id,r.epoch,r.revision,r.policy_digest,r.endpoint_id,b.owner,g.grant_id,g.turn_id,g.expires_at
  FROM egress_route_bindings r JOIN execution_bindings b ON b.generation_id=r.generation_id JOIN egress_grants g ON g.binding_id=r.binding_id
  JOIN turns t ON t.id=g.turn_id AND t.generation_id=r.generation_id
- WHERE r.backend_id=? AND r.destination=? AND (?='' OR r.service_id=?) AND r.state='active' AND g.state='active' AND g.expires_at>? AND g.binding_revision=r.revision AND g.policy_digest=r.policy_digest
- AND b.store_id=r.backend_id AND b.epoch=r.epoch AND t.status IN ('leased','running') AND t.lease_owner=b.owner AND t.lease_expires_at>?`, p.BackendID, p.Destination.String(), p.ServiceID, p.ServiceID, formatTime(p.Now), formatTime(p.Now)).Scan(&result.BindingID, &result.GenerationID, &result.Epoch, &result.BindingRevision, &result.PolicyDigest, &serviceJSON, &operations, &owner, &result.GrantID, &result.TurnID, &expires, &driver)
+ WHERE r.backend_id=? AND r.destination=? AND (?='' OR r.endpoint_id=?) AND r.state='active' AND g.state='active' AND g.expires_at>? AND g.binding_revision=r.revision AND g.policy_digest=r.policy_digest
+ AND b.store_id=r.backend_id AND b.epoch=r.epoch AND t.status IN ('leased','running') AND t.lease_owner=b.owner AND t.lease_expires_at>?`, p.BackendID, p.Destination.String(), p.EndpointID, p.EndpointID, formatTime(p.Now), formatTime(p.Now)).Scan(&result.BindingID, &result.GenerationID, &result.Epoch, &result.BindingRevision, &result.PolicyDigest, &result.EndpointID, &owner, &result.GrantID, &result.TurnID, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, egress.ErrDenied
 	}
@@ -166,27 +162,10 @@ func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.Authorizati
 	if err := acceptedExecutionTx(ctx, tx, session, result.GenerationID, owner, p.Now); err != nil {
 		return result, egress.ErrDenied
 	}
-	if err := json.Unmarshal([]byte(serviceJSON), &result.Service); err != nil {
-		return result, err
-	}
-	var allowed []string
-	if err := json.Unmarshal([]byte(operations), &allowed); err != nil {
-		return result, err
-	}
-	permitted := false
-	for _, operation := range allowed {
-		if operation == p.Operation {
-			permitted = true
-		}
-	}
-	if !permitted || (driver == "sh" && result.Service.Protocol == egress.ModelHTTP) || !egress.AllowsResource(result.Service, p) {
-		return result, egress.ErrDenied
-	}
 	result.SessionID = session
 	result.UserID = user
 	result.RequestID = p.RequestID
 	result.BackendID = p.BackendID
-	result.ServiceID = result.Service.ID
 	result.ExpiresAt = parseTime(expires)
 	if generationExpiry := parseTime(lease); generationExpiry.Before(result.ExpiresAt) {
 		result.ExpiresAt = generationExpiry
@@ -211,7 +190,7 @@ func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.Authorizati
 	if !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO egress_requests(backend_id,request_id,request_digest,binding_id,grant_id,generation_id,turn_id,epoch,service_id,operation,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, p.BackendID, p.RequestID, digest, result.BindingID, result.GrantID, result.GenerationID, result.TurnID, result.Epoch, result.ServiceID, p.Operation, formatTime(p.Now))
+	_, err = tx.ExecContext(ctx, `INSERT INTO egress_requests(backend_id,request_id,request_digest,binding_id,grant_id,generation_id,turn_id,epoch,endpoint_id,started_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, p.BackendID, p.RequestID, digest, result.BindingID, result.GrantID, result.GenerationID, result.TurnID, result.Epoch, result.EndpointID, formatTime(p.Now))
 	if err != nil {
 		return result, err
 	}

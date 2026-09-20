@@ -122,7 +122,7 @@ func TestActiveControllerWaitsForRemoteGatewayDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer flow.Finish()
-	handler, err := gateway.ControlHandler(flows, gateway.ControlOptions{ID: "data", Protocol: egress.DorisMySQL, ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: 50 * time.Millisecond})
+	handler, err := gateway.ControlHandler(flows, gateway.ControlOptions{ID: "data", ApplicationUID: uint32(os.Getuid()), MaxOperationTimeout: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestActiveControllerWaitsForRemoteGatewayDrain(t *testing.T) {
 	finished := make(chan error, 1)
 	go func() { finished <- server.Serve(listener) }()
 	defer func() { _ = server.Close(); <-finished }()
-	remote, err := gateway.NewRemotes(ctx, []gateway.RemoteConfig{{ID: "data", Protocol: egress.DorisMySQL, Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second}})
+	remote, err := gateway.NewRemotes(ctx, []gateway.RemoteConfig{{ID: "data", Socket: path, PeerUID: uint32(os.Getuid()), Timeout: time.Second}})
 	if err != nil {
 		t.Fatal(err)
 	}

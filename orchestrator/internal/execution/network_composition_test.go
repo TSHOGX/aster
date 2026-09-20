@@ -16,30 +16,30 @@ import (
 // a test can check that composition is scoped to the planned generation.
 type staticComposer struct {
 	mu       sync.Mutex
-	requests []execution.ServiceRequest
+	requests []execution.NetworkRequest
 	fail     error
 	absent   bool
 	digest   string
 }
 
-func (c *staticComposer) ComposeGenerationServices(_ context.Context, p execution.ServiceRequest) (execution.ServiceComposition, error) {
+func (c *staticComposer) ComposeGenerationNetwork(_ context.Context, p execution.NetworkRequest) (execution.NetworkComposition, error) {
 	c.mu.Lock()
 	c.requests = append(c.requests, p)
 	c.mu.Unlock()
 	if c.fail != nil {
-		return execution.ServiceComposition{}, c.fail
+		return execution.NetworkComposition{}, c.fail
 	}
 	if c.absent {
-		return execution.ServiceComposition{}, nil
+		return execution.NetworkComposition{}, nil
 	}
 	digest := c.digest
 	if digest == "" {
 		digest = "network-digest"
 	}
 	destination := netip.MustParsePrefix("10.80.0.1/32")
-	return execution.ServiceComposition{
+	return execution.NetworkComposition{
 		Network: sandbox.Network{Via: []sandbox.Route{{Match: sandbox.Tuple{CIDR: destination, Port: 443, Protocol: "tcp"}, Endpoint: netip.MustParseAddrPort("192.0.2.1:8443")}}},
-		Hosts:   []execution.ServiceHost{{Name: "model.internal", Address: "10.80.0.1"}},
+		Hosts:   []execution.NetworkHost{{Name: "model.internal", Address: "10.80.0.1"}},
 		Routes:  []string{"route_model"},
 		Digest:  digest,
 	}, nil
@@ -73,13 +73,13 @@ func compositionControllerFixture(t *testing.T) (*execution.Controller, *control
 	t.Helper()
 	controller, _, backend, launcher, owner := controllerFixture(t)
 	composer, activator := &staticComposer{}, &recordingActivator{}
-	controller.Services = composer
+	controller.Connectivity = composer
 	controller.Activator = activator
 	controller.Routes = &recordingRevoker{}
 	return controller, backend, launcher, composer, activator, owner
 }
 
-func TestComposedServicesReachEngineAndGateways(t *testing.T) {
+func TestComposedEndpointsReachEngineAndGateways(t *testing.T) {
 	ctx := context.Background()
 	controller, backend, launcher, composer, activator, owner := compositionControllerFixture(t)
 	session := execution.Session{ID: "session", Driver: "sh"}
@@ -108,7 +108,7 @@ func TestComposedServicesReachEngineAndGateways(t *testing.T) {
 	}
 	// Composition is scoped to the planned generation at its target epoch.
 	composer.mu.Lock()
-	requests := append([]execution.ServiceRequest(nil), composer.requests...)
+	requests := append([]execution.NetworkRequest(nil), composer.requests...)
 	composer.mu.Unlock()
 	if len(requests) == 0 {
 		t.Fatal("no composition was requested")
@@ -173,7 +173,7 @@ func TestFailedActivationStopsLaunch(t *testing.T) {
 
 // Composition without an activator is a configuration error, not something to
 // discover at the first turn that needs a service.
-func TestComposedServicesRequireAnActivator(t *testing.T) {
+func TestComposedEndpointsRequireAnActivator(t *testing.T) {
 	ctx := context.Background()
 	controller, _, _, _, _, owner := compositionControllerFixture(t)
 	controller.Activator = nil

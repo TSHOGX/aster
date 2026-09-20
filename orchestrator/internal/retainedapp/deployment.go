@@ -21,7 +21,6 @@ import (
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/gateway"
 	"harness-platform/orchestrator/internal/launchplan"
-	"harness-platform/orchestrator/internal/sandbox"
 	khorabackend "harness-platform/orchestrator/internal/sandbox/khora"
 )
 
@@ -30,7 +29,7 @@ type Deployment struct {
 	Engine                                                                                 khorabackend.Config
 	Gateways                                                                               []gateway.RemoteConfig
 	Plans                                                                                  *launchplan.Source
-	Services                                                                               egress.Catalog
+	Connectivity                                                                           egress.Catalog
 	Content                                                                                []AuthoredContent
 	ContentBytes                                                                           int64
 	PreparedRoot, AuthorizationSocket                                                      string
@@ -62,38 +61,36 @@ type deploymentFile struct {
 	Manifest       string `json:"manifest"`
 	ManifestDigest string `json:"manifest_digest"`
 	Plans          map[string]struct {
-		Template       string          `json:"template"`
-		CPUMillis      int64           `json:"cpu_millis"`
-		MemoryBytes    int64           `json:"memory_bytes"`
-		DiskBytes      int64           `json:"disk_bytes"`
-		WorkspaceBytes int64           `json:"workspace_bytes"`
-		JournalBytes   int64           `json:"journal_bytes"`
-		Config         string          `json:"config"`
-		Assets         string          `json:"assets"`
-		Network        sandbox.Network `json:"network"`
-		Environment    []string        `json:"environment"`
+		Template       string   `json:"template"`
+		CPUMillis      int64    `json:"cpu_millis"`
+		MemoryBytes    int64    `json:"memory_bytes"`
+		DiskBytes      int64    `json:"disk_bytes"`
+		WorkspaceBytes int64    `json:"workspace_bytes"`
+		JournalBytes   int64    `json:"journal_bytes"`
+		Config         string   `json:"config"`
+		Assets         string   `json:"assets"`
+		Environment    []string `json:"environment"`
 	} `json:"plans"`
 	ContentBytes int64 `json:"content_bytes"`
 	Gateways     []struct {
-		ID       string  `json:"id"`
-		Protocol string  `json:"protocol"`
-		Socket   string  `json:"socket"`
-		PeerUID  *uint32 `json:"peer_uid"`
+		ID      string  `json:"id"`
+		Socket  string  `json:"socket"`
+		PeerUID *uint32 `json:"peer_uid"`
 		// Listener is where this gateway accepts steered guest traffic. It is the
 		// endpoint the engine's route sends packets to, distinct from the Unix
 		// control socket the application reaches it on.
 		Listener string `json:"listener"`
 	} `json:"gateways"`
-	// Services is the declared service inventory and per-driver entitlements. It is
+	// Connectivity declares opaque destinations and per-driver reachability. It is
 	// product authority; guest content never contributes to it. A deployment may
-	// omit it entirely, and every driver then runs with no service access.
-	Services struct {
-		Revision       string                        `json:"revision"`
-		SyntheticRange string                        `json:"synthetic_range"`
-		Protected      []string                      `json:"protected"`
-		Catalog        []egress.Service              `json:"catalog"`
-		Policies       map[string]egress.ServiceList `json:"policies"`
-	} `json:"services"`
+	// omit it entirely, and every driver then runs without network access.
+	Connectivity struct {
+		Revision       string                         `json:"revision"`
+		SyntheticRange string                         `json:"synthetic_range"`
+		Protected      []string                       `json:"protected"`
+		Catalog        []egress.Endpoint              `json:"catalog"`
+		Policies       map[string]egress.EndpointList `json:"policies"`
+	} `json:"connectivity"`
 	Authorization struct {
 		Socket  string  `json:"socket"`
 		PeerUID *uint32 `json:"peer_uid"`
@@ -141,7 +138,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return nil, fmt.Errorf("Khora deployment contains trailing data")
 	}
-	if wire.Version != 1 || strings.TrimSpace(wire.BackendName) == "" || wire.Engine.StoreID == "" || wire.MaxActive <= 0 || wire.InventoryLimit <= 0 || wire.InventoryLimit > 10000 || len(wire.Gateways) == 0 || len(wire.Gateways) > 16 {
+	if wire.Version != 1 || strings.TrimSpace(wire.BackendName) == "" || wire.Engine.StoreID == "" || wire.MaxActive <= 0 || wire.InventoryLimit <= 0 || wire.InventoryLimit > 10000 || len(wire.Gateways) > 16 {
 		return nil, fmt.Errorf("version 1, backend/store identity, gateways and positive deployment bounds required")
 	}
 	resolve := func(value string) string {
@@ -154,10 +151,16 @@ func LoadDeployment(path string) (*Deployment, error) {
 		return filepath.Join(filepath.Dir(absolute), value)
 	}
 	d := &Deployment{BackendName: wire.BackendName, MaxActive: wire.MaxActive, InventoryLimit: wire.InventoryLimit, PreparedRoot: resolve(wire.PreparedRoot), AuthorizationSocket: resolve(wire.Authorization.Socket)}
-	if d.PreparedRoot == "" || d.AuthorizationSocket == "" || wire.Authorization.PeerUID == nil || wire.Authorization.Group == nil || *wire.Authorization.Group < 0 {
-		return nil, fmt.Errorf("prepared content root and explicit authorization socket/peer/group required")
+	if d.PreparedRoot == "" {
+		return nil, fmt.Errorf("prepared content root required")
 	}
-	d.AuthorizationUID, d.AuthorizationGroup = *wire.Authorization.PeerUID, *wire.Authorization.Group
+	if len(wire.Gateways) != 0 || d.AuthorizationSocket != "" || wire.Authorization.PeerUID != nil || wire.Authorization.Group != nil {
+		if d.AuthorizationSocket == "" || wire.Authorization.PeerUID == nil || wire.Authorization.Group == nil || *wire.Authorization.Group < 0 {
+			return nil, fmt.Errorf("gateway authorization requires explicit socket, peer UID and group")
+		}
+		d.AuthorizationUID, d.AuthorizationGroup = *wire.Authorization.PeerUID, *wire.Authorization.Group
+	}
+
 	for _, p := range []struct {
 		name, value string
 		target      *time.Duration
@@ -218,23 +221,20 @@ func LoadDeployment(path string) (*Deployment, error) {
 		if *g.PeerUID != d.AuthorizationUID {
 			return nil, fmt.Errorf("gateway controls must use the configured authorization peer UID")
 		}
-		if g.Protocol != "model_http" && g.Protocol != "doris_mysql" && g.Protocol != "obs_http" {
-			return nil, fmt.Errorf("unsupported gateway protocol")
-		}
 		ids[g.ID], sockets[socket] = true, true
-		d.Gateways = append(d.Gateways, gateway.RemoteConfig{ID: g.ID, Socket: socket, PeerUID: *g.PeerUID, Protocol: egress.Protocol(g.Protocol), Timeout: d.ActionTimeout})
+		d.Gateways = append(d.Gateways, gateway.RemoteConfig{ID: g.ID, Socket: socket, PeerUID: *g.PeerUID, Timeout: d.ActionTimeout})
 		if g.Listener != "" {
 			listener, err := netip.ParseAddrPort(g.Listener)
 			if err != nil || !listener.Addr().Is4() || listener.Port() == 0 {
 				return nil, fmt.Errorf("gateway %q listener must be an IPv4 address and port", g.ID)
 			}
-			listeners = append(listeners, egress.Gateway{Endpoint: listener, Protocol: egress.Protocol(g.Protocol)})
+			listeners = append(listeners, egress.Gateway{ID: g.ID, Endpoint: listener})
 		}
 	}
-	if catalog, err := serviceCatalog(wire, listeners); err != nil {
+	if catalog, err := connectivityCatalog(wire, listeners); err != nil {
 		return nil, err
 	} else {
-		d.Services = catalog
+		d.Connectivity = catalog
 	}
 	if wire.ContentBytes <= 0 || wire.ContentBytes > 1<<30 {
 		return nil, fmt.Errorf("positive bounded content volume capacity required")
@@ -243,7 +243,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 	plans := map[string]execution.LaunchPlan{}
 	revisions := map[string]content.Revision{}
 	for driver, p := range wire.Plans {
-		plan := execution.LaunchPlan{TemplateID: p.Template, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, WorkspaceBytes: p.WorkspaceBytes, JournalBytes: p.JournalBytes, Network: p.Network, Environment: p.Environment}
+		plan := execution.LaunchPlan{TemplateID: p.Template, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, WorkspaceBytes: p.WorkspaceBytes, JournalBytes: p.JournalBytes, Environment: p.Environment}
 		for _, authored := range []struct{ purpose, root, destination string }{{"config", p.Config, "/harness-config"}, {"assets", p.Assets, "/root/.agents"}} {
 			if authored.root == "" {
 				continue
@@ -261,19 +261,6 @@ func LoadDeployment(path string) (*Deployment, error) {
 				d.Content = append(d.Content, AuthoredContent{Purpose: authored.purpose, Root: root, Revision: revision})
 			}
 			plan.Content = append(plan.Content, execution.ContentRequirement{Purpose: authored.purpose, Destination: authored.destination, RevisionDigest: revision.Digest})
-		}
-		// The guest's model origin is derived from the catalog, not declared per
-		// plan: the URL a guest resolves and the route the engine steers must
-		// describe one destination, and two independent declarations would drift.
-		if origin, model, entitled := d.Services.ModelEndpoint(driver); entitled {
-			if len(plan.Environment) != 0 {
-				return nil, fmt.Errorf("driver %q model environment is derived from the service catalog", driver)
-			}
-			plan.Environment = []string{"ANTHROPIC_BASE_URL=" + origin}
-			if model != "" {
-				plan.Environment = append(plan.Environment, "PI_MODEL="+model)
-			}
-			sort.Strings(plan.Environment)
 		}
 		plans[driver] = plan
 	}
@@ -298,7 +285,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 }
 
 func (d *Deployment) Options(backend Backend, gateways *gateway.Remotes, owner string) Options {
-	return Options{Backend: backend, Plans: d.Plans, Content: d.Content, ContentBytes: d.ContentBytes, Services: d.Services, Routes: gateways, Activator: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
+	return Options{Backend: backend, Plans: d.Plans, Content: d.Content, ContentBytes: d.ContentBytes, Connectivity: d.Connectivity, Routes: gateways, Activator: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
 }
 
 // Connect validates the pinned engine and every gateway before server mutation.
@@ -316,21 +303,18 @@ func (d *Deployment) Connect(ctx context.Context) (Backend, *gateway.Remotes, er
 	return backend, gateways, nil
 }
 
-// serviceCatalog builds the declared service inventory. An absent services block
+// connectivityCatalog builds the declared service inventory. An absent services block
 // is a deployment with no external service access, which is a valid and useful
 // configuration; a present but unsatisfiable one must stop startup, so the
 // catalog is fully compiled here rather than at the first launch that needs it.
-func serviceCatalog(wire deploymentFile, listeners []egress.Gateway) (egress.Catalog, error) {
-	declared := wire.Services
-	empty := declared.Revision == "" && declared.SyntheticRange == "" && len(declared.Catalog) == 0 && len(declared.Policies) == 0
+func connectivityCatalog(wire deploymentFile, listeners []egress.Gateway) (egress.Catalog, error) {
+	declared := wire.Connectivity
+	empty := declared.Revision == "" && declared.SyntheticRange == "" && len(declared.Catalog) == 0 && len(declared.Policies) == 0 && len(declared.Protected) == 0
 	if empty {
 		if len(listeners) != 0 {
 			return egress.Catalog{}, fmt.Errorf("gateway listeners are declared but no services are")
 		}
 		return egress.Catalog{}, nil
-	}
-	if len(listeners) == 0 {
-		return egress.Catalog{}, fmt.Errorf("declared services require at least one gateway listener")
 	}
 	synthetic, err := netip.ParsePrefix(declared.SyntheticRange)
 	if err != nil {
@@ -344,14 +328,14 @@ func serviceCatalog(wire deploymentFile, listeners []egress.Gateway) (egress.Cat
 		}
 		deployment.Protected = append(deployment.Protected, prefix)
 	}
-	catalog := egress.Catalog{Revision: declared.Revision, Services: declared.Catalog, Deployment: deployment, Policies: map[string]egress.Policy{}}
+	catalog := egress.Catalog{Revision: declared.Revision, Endpoints: declared.Catalog, Deployment: deployment, Policies: map[string]egress.Policy{}}
 	for driver, list := range declared.Policies {
 		if driver != "pi" && driver != "sh" {
 			return egress.Catalog{}, fmt.Errorf("service policy names unsupported driver %q", driver)
 		}
 		// The driver and revision come from the document's structure, never repeated
 		// inside the entry, so a policy cannot claim to belong to another driver.
-		catalog.Policies[driver] = egress.Policy{Revision: declared.Revision, Driver: driver, Services: list.Services, Direct: list.Direct, Resolvers: list.Resolvers}
+		catalog.Policies[driver] = egress.Policy{Revision: declared.Revision, Driver: driver, Endpoints: list.Endpoints, Direct: list.Direct, Resolvers: list.Resolvers}
 	}
 	if err := egress.ValidateCatalog(catalog); err != nil {
 		return egress.Catalog{}, err

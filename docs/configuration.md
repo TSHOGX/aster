@@ -45,3 +45,11 @@ The separate native-capture command requires `--control-db`, `--trajectory-root`
 and `--engine-endpoint`, with optional bounded polling and batch timeout. It opens
 an existing current product database and holds a canonical singleton capture lock.
 There are no Memory, Evolve, host workspace, checkpoint or legacy proxy settings.
+
+Networking is configured once in the deployment's optional `connectivity` block;
+launch plans do not accept independent network declarations. See the
+[gateway contract](gateway-contract.md) for endpoint, direct-rule, resolver and
+next-hop fields. An empty policy runs locally with zero gateways. Model proxy
+credentials and resource allowlists live in the proxy's separate configuration.
+The current database schema stores only generic route/grant authority; earlier
+schemas are rejected before writable access.

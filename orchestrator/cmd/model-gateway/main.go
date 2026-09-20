@@ -57,7 +57,8 @@ type gatewayFile struct {
 	Authorization  string `json:"authorization"`
 	RequestTimeout string `json:"request_timeout"`
 	Upstreams      []struct {
-		Reference    string            `json:"reference"`
+		EndpointID   string            `json:"endpoint_id"`
+		Models       []string          `json:"models"`
 		BaseURL      string            `json:"base_url"`
 		APIKeyHeader string            `json:"api_key_header"`
 		APIKeyFile   string            `json:"api_key_file"`
@@ -88,13 +89,13 @@ func run(ctx context.Context, args []string) error {
 	}
 	var upstreams []gateway.ModelUpstream
 	for _, upstream := range wire.Upstreams {
-		resolved := gateway.ModelUpstream{Reference: upstream.Reference, BaseURL: upstream.BaseURL, APIKeyHeader: upstream.APIKeyHeader, ExtraHeaders: upstream.ExtraHeaders}
+		resolved := gateway.ModelUpstream{EndpointID: upstream.EndpointID, Models: upstream.Models, BaseURL: upstream.BaseURL, APIKeyHeader: upstream.APIKeyHeader, ExtraHeaders: upstream.ExtraHeaders}
 		if upstream.APIKeyFile != "" {
 			// The credential is read from its own file so it never appears in this
 			// document, in a process argument or in an environment variable.
 			key, err := readCredential(resolve(base, upstream.APIKeyFile))
 			if err != nil {
-				return fmt.Errorf("read upstream %q credential: %w", upstream.Reference, err)
+				return fmt.Errorf("read upstream %q credential: %w", upstream.EndpointID, err)
 			}
 			resolved.APIKey = key
 		}
@@ -112,7 +113,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	control, err := gateway.ControlHandler(flows, gateway.ControlOptions{ID: wire.ID, Protocol: egress.ModelHTTP, ApplicationUID: *wire.ApplicationUID, MaxOperationTimeout: timeout})
+	control, err := gateway.ControlHandler(flows, gateway.ControlOptions{ID: wire.ID, ApplicationUID: *wire.ApplicationUID, MaxOperationTimeout: timeout})
 	if err != nil {
 		return err
 	}

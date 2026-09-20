@@ -47,18 +47,27 @@ func constructKhoraApplication(ctx context.Context, cfg config.Config, db *store
 		gateways.Close()
 		return nil, err
 	}
-	listener, err := gateway.ListenAuthorization(deployment.AuthorizationSocket, deployment.AuthorizationGroup)
-	if err != nil {
-		runtime.Close()
-		gateways.Close()
-		return nil, err
+	var listener net.Listener
+	var authorization *http.Server
+	if deployment.AuthorizationSocket != "" {
+		listener, err = gateway.ListenAuthorization(deployment.AuthorizationSocket, deployment.AuthorizationGroup)
+		if err != nil {
+			runtime.Close()
+			gateways.Close()
+			return nil, err
+		}
+		authorization = &http.Server{Handler: gateway.AuthorizationHandler(db, deployment.AuthorizationUID), ConnContext: gateway.PeerContext, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: deployment.ActionTimeout, WriteTimeout: deployment.ActionTimeout, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	}
-	authorization := &http.Server{Handler: gateway.AuthorizationHandler(db, deployment.AuthorizationUID), ConnContext: gateway.PeerContext, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: deployment.ActionTimeout, WriteTimeout: deployment.ActionTimeout, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
+
 	return &khoraApplication{log: log, app: app, runtime: runtime, gateways: gateways, authorization: authorization, listener: listener, deployment: deployment, store: db, owner: store.GenerationLeaseOwner(owner)}, nil
 }
 func (k *khoraApplication) Close() {
-	_ = k.authorization.Close()
-	_ = k.listener.Close()
+	if k.authorization != nil {
+		_ = k.authorization.Close()
+	}
+	if k.listener != nil {
+		_ = k.listener.Close()
+	}
 	_ = k.runtime.Close()
 	k.gateways.Close()
 }
@@ -71,12 +80,20 @@ func (k *khoraApplication) Run(ctx context.Context) error {
 		results <- k.app.RunRetainedMaintenance(run, k.deployment.PollInterval, k.deployment.ActionTimeout)
 	}()
 	go func() { results <- k.runIdle(run) }()
-	go func() { results <- k.authorization.Serve(k.listener) }()
-	stop := context.AfterFunc(run, func() { _ = k.authorization.Close() })
+	workers := 3
+	if k.authorization != nil {
+		workers++
+		go func() { results <- k.authorization.Serve(k.listener) }()
+	}
+	stop := context.AfterFunc(run, func() {
+		if k.authorization != nil {
+			_ = k.authorization.Close()
+		}
+	})
 	defer stop()
 	err := <-results
 	cancel()
-	for range 3 {
+	for range workers - 1 {
 		err = errors.Join(err, <-results)
 	}
 	return err

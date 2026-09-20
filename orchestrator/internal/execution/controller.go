@@ -89,12 +89,12 @@ type GenerationConfiguration struct {
 	Network     sandbox.Network `json:"network"`
 	Mounts      []sandbox.Mount `json:"mounts"`
 	Environment []string        `json:"environment"`
-	// Hosts, Routes and ServiceDigest describe the reserved service composition
+	// Hosts, Routes and ConnectivityDigest describe the reserved service composition
 	// this declaration carries. They are recorded with the declaration so a
 	// restart can activate exactly the routes the engine is enforcing.
-	Hosts         []ServiceHost `json:"hosts,omitempty"`
-	Routes        []string      `json:"routes,omitempty"`
-	ServiceDigest string        `json:"service_digest,omitempty"`
+	Hosts              []NetworkHost `json:"hosts,omitempty"`
+	Routes             []string      `json:"routes,omitempty"`
+	ConnectivityDigest string        `json:"connectivity_digest,omitempty"`
 }
 
 type Controller struct {
@@ -108,7 +108,7 @@ type Controller struct {
 	Lifetime          context.Context
 	Routes            RouteRevoker
 	Activator         RouteActivator
-	Services          ServiceComposer
+	Connectivity      NetworkComposer
 	GrantRevoker      GrantRevoker
 	RecoveryReader    JournalRecoveryReader
 	RecoveryProjector RecoveryProjector
@@ -248,11 +248,11 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	if err != nil {
 		return Binding{}, err
 	}
-	if configuration.ServiceDigest != "" {
-		if !present || applied.ServiceDigest != configuration.ServiceDigest {
+	if configuration.ConnectivityDigest != "" {
+		if !present || applied.ConnectivityDigest != configuration.ConnectivityDigest {
 			return Binding{}, ErrOperationConflict
 		}
-		if c.Activator == nil {
+		if len(applied.Routes) != 0 && c.Activator == nil {
 			return Binding{}, fmt.Errorf("service composition requires a gateway route activator")
 		}
 		for _, route := range applied.Routes {
@@ -464,35 +464,35 @@ func (c *Controller) Close() error {
 	return nil
 }
 
-// ServiceComposer reserves the immutable network declaration one generation runs
+// NetworkComposer reserves the immutable network declaration one generation runs
 // under: which synthetic destinations its entitled services answer on and which
 // trusted gateway each is steered to. It performs no remote effect.
 //
 // Composition is generation-scoped by construction, which is why it belongs in
 // generation configuration rather than environment identity.
-type ServiceComposer interface {
-	ComposeGenerationServices(context.Context, ServiceRequest) (ServiceComposition, error)
+type NetworkComposer interface {
+	ComposeGenerationNetwork(context.Context, NetworkRequest) (NetworkComposition, error)
 }
 
-// ServiceRequest describes the planned execution a composition is reserved for.
-type ServiceRequest struct {
+// NetworkRequest describes the planned execution a composition is reserved for.
+type NetworkRequest struct {
 	SessionID, EnvironmentID, GenerationID, Driver, Owner string
 	Epoch                                                 uint64
 	EnvironmentFence                                      int64
 }
 
-// ServiceComposition is the reserved declaration. Network is what the engine will
+// NetworkComposition is the reserved declaration. Network is what the engine will
 // enforce; Hosts is what the guest resolves; Routes are the dormant binding
 // identities that execution acceptance later activates.
-type ServiceComposition struct {
+type NetworkComposition struct {
 	Network sandbox.Network
-	Hosts   []ServiceHost
+	Hosts   []NetworkHost
 	Routes  []string
 	Digest  string
 }
 
-// ServiceHost maps one guest-visible service hostname to its reserved address.
-type ServiceHost struct {
+// NetworkHost maps one guest-visible service hostname to its reserved address.
+type NetworkHost struct {
 	Name    string
 	Address string
 }
@@ -515,12 +515,12 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 		return Environment{}, GenerationConfiguration{}, err
 	}
 	configuration := GenerationConfiguration{SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts, Environment: plan.Environment}
-	if c.Services != nil && generation != "" {
+	if c.Connectivity != nil && generation != "" {
 		epoch := environment.Epoch + 1
 		if environment.SandboxID == "" {
 			epoch = 1
 		}
-		composition, err := c.Services.ComposeGenerationServices(ctx, ServiceRequest{SessionID: session.ID, EnvironmentID: environment.ID, GenerationID: generation, Driver: session.Driver, Owner: owner, Epoch: epoch, EnvironmentFence: environment.Fence})
+		composition, err := c.Connectivity.ComposeGenerationNetwork(ctx, NetworkRequest{SessionID: session.ID, EnvironmentID: environment.ID, GenerationID: generation, Driver: session.Driver, Owner: owner, Epoch: epoch, EnvironmentFence: environment.Fence})
 		if err != nil {
 			return Environment{}, GenerationConfiguration{}, err
 		}
@@ -529,7 +529,7 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 		configuration.Network = composition.Network
 		configuration.Hosts = composition.Hosts
 		configuration.Routes = composition.Routes
-		configuration.ServiceDigest = composition.Digest
+		configuration.ConnectivityDigest = composition.Digest
 	}
 	environment, err = c.establishGenerationConfiguration(ctx, identity, environment, plan, configuration, owner, maximum)
 	if err != nil {

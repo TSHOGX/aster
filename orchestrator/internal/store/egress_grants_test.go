@@ -23,9 +23,9 @@ func grantFixture(t *testing.T) (*Store, *Store, execution.Binding, egress.Compi
 		t.Fatal(err)
 	}
 	gateway := netip.MustParseAddrPort("192.0.2.10:19030")
-	catalog := []egress.Service{{ID: "analytics", Protocol: egress.DorisMySQL, Hostname: "data.internal", Port: 9030, UpstreamRef: "synthetic-analytics", Doris: &egress.DorisService{Databases: []string{"approved"}}}}
-	routes := []egress.RuntimeBinding{{ID: "route", BackendID: binding.StoreID, GenerationID: binding.GenerationID, Epoch: binding.Epoch, Revision: 1, ServiceID: "analytics", Destination: netip.MustParseAddrPort("10.80.0.1:9030"), Gateway: gateway}}
-	compilation, err := egress.Compile(egress.Policy{Revision: "policy", Driver: "sh", Services: []egress.ServiceAccess{{ServiceID: "analytics", Operations: []string{"query"}}}}, catalog, routes, egress.Deployment{BackendID: binding.StoreID, SyntheticRange: netip.MustParsePrefix("10.80.0.0/16"), Gateways: []egress.Gateway{{Endpoint: gateway, Protocol: egress.DorisMySQL}}})
+	catalog := []egress.Endpoint{{ID: "analytics", NextHop: "data", Transport: "tcp", Hostname: "data.internal", Port: 9030}}
+	routes := []egress.RuntimeBinding{{ID: "route", BackendID: binding.StoreID, GenerationID: binding.GenerationID, Epoch: binding.Epoch, Revision: 1, EndpointID: "analytics", Destination: netip.MustParseAddrPort("10.80.0.1:9030"), Gateway: gateway}}
+	compilation, err := egress.Compile(egress.Policy{Revision: "policy", Driver: "sh", Endpoints: []egress.EndpointAccess{{EndpointID: "analytics"}}}, catalog, routes, egress.Deployment{BackendID: binding.StoreID, SyntheticRange: netip.MustParsePrefix("10.80.0.0/16"), Gateways: []egress.Gateway{{Endpoint: gateway, ID: "data"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func grantFixture(t *testing.T) (*Store, *Store, execution.Binding, egress.Compi
 	return st, bridge, binding, compilation
 }
 func queryRequest(binding execution.Binding) egress.AuthorizationRequest {
-	return egress.AuthorizationRequest{BackendID: binding.StoreID, Destination: netip.MustParseAddrPort("10.80.0.1:9030"), ServiceID: "analytics", Operation: "query", RequestID: "request", Database: "approved"}
+	return egress.AuthorizationRequest{BackendID: binding.StoreID, Destination: netip.MustParseAddrPort("10.80.0.1:9030"), EndpointID: "analytics", RequestID: "request"}
 }
 func claimGrantTurn(t *testing.T, st *Store, bridge *Store, binding execution.Binding, request string) TurnGrant {
 	t.Helper()
@@ -50,7 +50,7 @@ func claimGrantTurn(t *testing.T, st *Store, bridge *Store, binding execution.Bi
 	return grant
 }
 
-func TestEgressAuthorizationRequiresAcceptedExecutionCurrentTurnAndTypedResource(t *testing.T) {
+func TestEgressAuthorizationRequiresAcceptedExecutionCurrentTurnAndDestination(t *testing.T) {
 	ctx := context.Background()
 	st, bridge, binding, _ := grantFixture(t)
 	request := queryRequest(binding)
@@ -72,9 +72,7 @@ func TestEgressAuthorizationRequiresAcceptedExecutionCurrentTurnAndTypedResource
 		t.Fatalf("lost application attribution: %+v", authorization)
 	}
 	for name, mutate := range map[string]func(*egress.AuthorizationRequest){
-		"database":       func(p *egress.AuthorizationRequest) { p.Database = "forbidden" },
-		"domain":         func(p *egress.AuthorizationRequest) { p.ServiceID = "other-service" },
-		"operation":      func(p *egress.AuthorizationRequest) { p.Operation = "admin" },
+		"domain":         func(p *egress.AuthorizationRequest) { p.EndpointID = "other-service" },
 		"tuple":          func(p *egress.AuthorizationRequest) { p.Destination = netip.MustParseAddrPort("10.80.0.2:9030") },
 		"direct gateway": func(p *egress.AuthorizationRequest) { p.Destination = netip.MustParseAddrPort("192.0.2.10:19030") },
 		"store":          func(p *egress.AuthorizationRequest) { p.BackendID = "rebuilt-store" },
@@ -143,8 +141,8 @@ func TestEgressLateFinishRetainsOriginalTurnAndRevocationLeavesTupleTombstone(t 
 		t.Fatalf("re-registration revived retired tuple: %v", err)
 	}
 	changed := compilation
-	changed.Services = append([]egress.SelectedService(nil), compilation.Services...)
-	changed.Services[0].Binding.ID = "new-binding"
+	changed.Endpoints = append([]egress.SelectedEndpoint(nil), compilation.Endpoints...)
+	changed.Endpoints[0].Binding.ID = "new-binding"
 	if err := st.RegisterEgressCompilation(ctx, changed); err == nil {
 		t.Fatal("mutated compilation reused tuple")
 	}

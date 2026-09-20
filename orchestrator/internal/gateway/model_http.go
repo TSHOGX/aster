@@ -1,6 +1,5 @@
-// Package gateway also implements the protocol adapters that terminate steered
-// guest traffic. An adapter is the only component that holds upstream credentials;
-// the application authorizes each request and never sees them.
+// Package gateway provides network admission and optional host-side adapters.
+// Service credentials and resource restrictions belong to the adapters.
 package gateway
 
 import (
@@ -27,10 +26,11 @@ import (
 // belong to this record, in the gateway process, and are attached to the upstream
 // request only after the application authorized the guest's own request.
 type ModelUpstream struct {
-	// Reference matches the declared service's upstream_ref, which is how a
-	// service in the product catalog names credentials it must never contain.
-	Reference string
-	BaseURL   string
+	// EndpointID selects the opaque managed endpoint this proxy serves.
+	// Models is this proxy's own resource allowlist, never application policy.
+	EndpointID string
+	Models     []string
+	BaseURL    string
 	// APIKeyHeader and APIKey carry the upstream credential. A guest-supplied
 	// authorization header is always discarded rather than forwarded.
 	APIKeyHeader, APIKey string
@@ -63,9 +63,7 @@ type ModelAuthorizer interface {
 	Finish(context.Context, egress.RequestFinish) error
 }
 
-// ModelGateway terminates steered model traffic. It is an HTTP handler rather
-// than a raw relay because the resource being authorized — the model — is a body
-// field, so the adapter must parse the request to name what it is asking for.
+// ModelGateway enforces its own model allowlist after application route admission.
 type ModelGateway struct {
 	options   ModelOptions
 	upstreams map[string]ModelUpstream
@@ -84,20 +82,20 @@ func NewModelGateway(p ModelOptions) (*ModelGateway, error) {
 	}
 	upstreams := map[string]ModelUpstream{}
 	for _, upstream := range p.Upstreams {
-		if upstream.Reference == "" || upstream.BaseURL == "" {
+		if upstream.EndpointID == "" || upstream.BaseURL == "" || len(upstream.Models) == 0 {
 			return nil, fmt.Errorf("model upstream reference and base URL required")
 		}
 		endpoint, err := url.Parse(upstream.BaseURL)
 		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-			return nil, fmt.Errorf("model upstream %q must be an origin without credentials or query", upstream.Reference)
+			return nil, fmt.Errorf("model upstream %q must be an origin without credentials or query", upstream.EndpointID)
 		}
 		if (upstream.APIKey == "") != (upstream.APIKeyHeader == "") {
-			return nil, fmt.Errorf("model upstream %q credential header and value must be given together", upstream.Reference)
+			return nil, fmt.Errorf("model upstream %q credential header and value must be given together", upstream.EndpointID)
 		}
-		if _, exists := upstreams[upstream.Reference]; exists {
-			return nil, fmt.Errorf("duplicate model upstream %q", upstream.Reference)
+		if _, exists := upstreams[upstream.EndpointID]; exists {
+			return nil, fmt.Errorf("duplicate model upstream %q", upstream.EndpointID)
 		}
-		upstreams[upstream.Reference] = upstream
+		upstreams[upstream.EndpointID] = upstream
 	}
 	if p.Client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -131,9 +129,8 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "generation request exceeds bound", http.StatusRequestEntityTooLarge)
 		return
 	}
-	// The model is a body field, so the resource being authorized is derived from
-	// the actual request rather than from anything the guest could assert
-	// out-of-band.
+	// Resource restrictions belong to this adapter; the application only sees
+	// the destination and request identity.
 	var payload struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
@@ -142,25 +139,29 @@ func (g *ModelGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "generation request must name a model", http.StatusBadRequest)
 		return
 	}
-	// The service is named by the destination the product reserved for it, so the
-	// adapter asks about that destination and the application answers which
-	// service it is and which model catalog applies.
+	// The kernel destination selects immutable application route authority.
 	request := egress.AuthorizationRequest{
 		BackendID: g.options.BackendID, Destination: destination,
-		Operation: "generate", RequestID: "model-" + uuid.NewString(), Model: payload.Model,
+		RequestID: "model-" + uuid.NewString(),
 	}
 	authorization, err := g.authorize(r.Context(), request)
 	if err != nil {
 		writeAuthorizationFailure(w, err)
 		return
 	}
-	upstream, known := g.upstreams[authorization.Service.UpstreamRef]
+	upstream, known := g.upstreams[authorization.EndpointID]
 	if !known {
 		// A service the product authorized but this gateway holds no credentials
 		// for is a deployment mismatch, not something to improvise around.
 		http.Error(w, "no upstream is configured for the authorized service", http.StatusServiceUnavailable)
 		return
 	}
+	if !modelAllowed(upstream.Models, payload.Model) {
+		g.finish(r.Context(), request.RequestID, "model_denied", 0)
+		http.Error(w, "model is not allowed by this proxy", http.StatusForbidden)
+		return
+	}
+
 	flowCtx, flow, err := g.options.Flows.Begin(r.Context(), authorization)
 	if err != nil {
 		writeAuthorizationFailure(w, err)
@@ -289,4 +290,13 @@ func DestinationContext(reserved netip.Prefix) func(context.Context, net.Conn) c
 		}
 		return context.WithValue(ctx, originalDestinationKey{}, destination)
 	}
+}
+
+func modelAllowed(models []string, requested string) bool {
+	for _, model := range models {
+		if model == requested {
+			return true
+		}
+	}
+	return false
 }

@@ -112,21 +112,18 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	reserved := netip.MustParsePrefix("10.80.0.0/24")
 
 	catalog := egress.Catalog{
-		Revision: "integration-v1",
-		Services: []egress.Service{{ID: "model", Protocol: egress.ModelHTTP, Hostname: "model.internal", Port: 443, UpstreamRef: "models", Model: &egress.ModelService{Models: []string{"approved-model"}}}},
-		Policies: map[string]egress.Policy{"pi": {Revision: "integration-v1", Driver: "pi", Services: []egress.ServiceAccess{{ServiceID: "model", Operations: []string{"generate"}}}}},
+		Revision:  "integration-v1",
+		Endpoints: []egress.Endpoint{{ID: "model", NextHop: "model", Transport: "tcp", Hostname: "model.internal", Port: 443}},
+		Policies:  map[string]egress.Policy{"pi": {Revision: "integration-v1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "model"}}}},
 		Deployment: egress.Deployment{
 			BackendID: identity.StoreID, SyntheticRange: reserved,
-			Gateways: []egress.Gateway{{Endpoint: gatewayEndpoint, Protocol: egress.ModelHTTP}},
+			Gateways: []egress.Gateway{{Endpoint: gatewayEndpoint, ID: "model"}},
 		},
 	}
 	if err := egress.ValidateCatalog(catalog); err != nil {
 		t.Fatal(err)
 	}
-	origin, model, entitled := catalog.ModelEndpoint("pi")
-	if !entitled {
-		t.Fatal("catalog does not entitle Pi to a model service")
-	}
+	origin, model := "http://model.internal:443", "approved-model"
 
 	// Authored Pi configuration points at the guest-visible service origin, which
 	// resolves through the launcher-projected hosts entry to the reserved address.
@@ -277,7 +274,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	var remotes *gateway.Remotes
 	for attempt := 0; ; attempt++ {
 		handshake, cancelHandshake := context.WithTimeout(ctx, 2*time.Second)
-		remotes, err = gateway.NewRemotes(handshake, []gateway.RemoteConfig{{ID: "model", Socket: gatewayControl, PeerUID: uint32(viaUID), Protocol: egress.ModelHTTP, Timeout: 10 * time.Second}})
+		remotes, err = gateway.NewRemotes(handshake, []gateway.RemoteConfig{{ID: "model", Socket: gatewayControl, PeerUID: uint32(viaUID), Timeout: 10 * time.Second}})
 		cancelHandshake()
 		if err == nil {
 			break
@@ -296,7 +293,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 
 	app := server.New(config.Config{MaxSessions: 2, MaxEditBytes: 1 << 20, MaxUploadBytes: 1 << 20, MaxUploadFiles: 8}, st, events.NewHub(), testLogger())
 	runtime, err := Attach(ctx, app, st, Options{
-		Backend: backend, Plans: plans, Services: catalog,
+		Backend: backend, Plans: plans, Connectivity: catalog,
 		Content: []AuthoredContent{{Purpose: "config", Root: configRoot, Revision: revision}}, ContentBytes: 8 << 20,
 		Routes: remotes, Activator: remotes, Grants: remotes,
 		BackendName: "gateway-engine", OwnerUUID: owner.UUID, PreparedRoot: filepath.Join(root, "prepared"),
@@ -367,11 +364,11 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	}
 	// Authority was recorded per request, attributed to this turn.
 	var authorized int
-	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_requests WHERE turn_id=? AND service_id='model' AND operation='generate' AND outcome IS NOT NULL`, turn).Scan(&authorized); err != nil || authorized == 0 {
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_requests WHERE turn_id=? AND endpoint_id='model' AND operation='generate' AND outcome IS NOT NULL`, turn).Scan(&authorized); err != nil || authorized == 0 {
 		t.Fatalf("model requests were not authorized and settled: %d %v", authorized, err)
 	}
 	var active int
-	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_route_bindings WHERE state='active' AND service_id='model'`).Scan(&active); err != nil || active != 1 {
+	if err := st.DBForTest().QueryRow(`SELECT count(*) FROM egress_route_bindings WHERE state='active' AND endpoint_id='model'`).Scan(&active); err != nil || active != 1 {
 		t.Fatalf("composed route was not activated: %d %v", active, err)
 	}
 
@@ -386,7 +383,7 @@ func TestKhoraComposedModelGatewayCarriesRealTraffic(t *testing.T) {
 	}
 	if _, err := st.AuthorizeEgressRequest(ctx, egress.AuthorizationRequest{
 		BackendID: identity.StoreID, Destination: netip.MustParseAddrPort("10.80.0.1:443"),
-		Operation: "generate", RequestID: "after-release", Model: "approved-model",
+		RequestID: "after-release",
 	}); !errors.Is(err, egress.ErrDenied) {
 		t.Fatalf("released execution retained service authority: %v", err)
 	}

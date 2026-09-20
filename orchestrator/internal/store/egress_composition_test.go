@@ -13,26 +13,26 @@ import (
 func compositionCatalog() egress.Catalog {
 	return egress.Catalog{
 		Revision: "catalog-v1",
-		Services: []egress.Service{
-			{ID: "model", Protocol: egress.ModelHTTP, Hostname: "model.internal", Port: 443, UpstreamRef: "models", Model: &egress.ModelService{Models: []string{"approved-model"}}},
-			{ID: "data", Protocol: egress.DorisMySQL, Hostname: "data.internal", Port: 9030, UpstreamRef: "analytics", Doris: &egress.DorisService{Databases: []string{"approved"}}},
+		Endpoints: []egress.Endpoint{
+			{ID: "model", NextHop: "model", Transport: "tcp", Hostname: "model.internal", Port: 443},
+			{ID: "data", NextHop: "data", Transport: "tcp", Hostname: "data.internal", Port: 9030},
 		},
 		Policies: map[string]egress.Policy{
-			"pi": {Revision: "catalog-v1", Driver: "pi", Services: []egress.ServiceAccess{{ServiceID: "model", Operations: []string{"generate"}}, {ServiceID: "data", Operations: []string{"query"}}}},
-			"sh": {Revision: "catalog-v1", Driver: "sh", Services: []egress.ServiceAccess{{ServiceID: "data", Operations: []string{"query"}}}},
+			"pi": {Revision: "catalog-v1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "model"}, {EndpointID: "data"}}},
+			"sh": {Revision: "catalog-v1", Driver: "sh", Endpoints: []egress.EndpointAccess{{EndpointID: "data"}}},
 		},
 		Deployment: egress.Deployment{
 			BackendID: "engine-store", SyntheticRange: netip.MustParsePrefix("10.80.0.0/24"),
 			Protected: []netip.Prefix{netip.MustParsePrefix("10.200.0.0/16")},
 			Gateways: []egress.Gateway{
-				{Endpoint: netip.MustParseAddrPort("192.0.2.1:8443"), Protocol: egress.ModelHTTP},
-				{Endpoint: netip.MustParseAddrPort("192.0.2.1:19030"), Protocol: egress.DorisMySQL},
+				{Endpoint: netip.MustParseAddrPort("192.0.2.1:8443"), ID: "model"},
+				{Endpoint: netip.MustParseAddrPort("192.0.2.1:19030"), ID: "data"},
 			},
 		},
 	}
 }
 
-func compositionFixture(t *testing.T, driver string) (*Store, ServiceComposer, string, execution.ServiceRequest) {
+func compositionFixture(t *testing.T, driver string) (*Store, NetworkComposer, string, execution.NetworkRequest) {
 	t.Helper()
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
@@ -44,14 +44,14 @@ func compositionFixture(t *testing.T, driver string) (*Store, ServiceComposer, s
 		t.Fatal(err)
 	}
 	lease := GenerationLeaseOwner(owner.UUID)
-	return st, ServiceComposer{Catalog: compositionCatalog(), Allocator: st}, lease,
-		execution.ServiceRequest{SessionID: "session", EnvironmentID: "env", GenerationID: "planned", Driver: driver, Owner: lease, Epoch: 1}
+	return st, NetworkComposer{Catalog: compositionCatalog(), Allocator: st}, lease,
+		execution.NetworkRequest{SessionID: "session", EnvironmentID: "env", GenerationID: "planned", Driver: driver, Owner: lease, Epoch: 1}
 }
 
-func TestServiceCompositionDeclaresEntitledDestinationsOnly(t *testing.T) {
+func TestNetworkCompositionDeclaresEntitledDestinationsOnly(t *testing.T) {
 	ctx := context.Background()
 	_, composer, _, request := compositionFixture(t, "pi")
-	composition, err := composer.ComposeGenerationServices(ctx, request)
+	composition, err := composer.ComposeGenerationNetwork(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,10 +88,10 @@ func TestServiceCompositionDeclaresEntitledDestinationsOnly(t *testing.T) {
 	}
 }
 
-func TestServiceCompositionRestrictsByDriverEntitlement(t *testing.T) {
+func TestNetworkCompositionRestrictsByDriverEntitlement(t *testing.T) {
 	ctx := context.Background()
 	_, composer, _, request := compositionFixture(t, "sh")
-	composition, err := composer.ComposeGenerationServices(ctx, request)
+	composition, err := composer.ComposeGenerationNetwork(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,14 +105,14 @@ func TestServiceCompositionRestrictsByDriverEntitlement(t *testing.T) {
 	}
 }
 
-func TestServiceCompositionIsIdempotentAndImmutable(t *testing.T) {
+func TestNetworkCompositionIsIdempotentAndImmutable(t *testing.T) {
 	ctx := context.Background()
 	_, composer, _, request := compositionFixture(t, "pi")
-	first, err := composer.ComposeGenerationServices(ctx, request)
+	first, err := composer.ComposeGenerationNetwork(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := composer.ComposeGenerationServices(ctx, request)
+	second, err := composer.ComposeGenerationNetwork(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,20 +128,20 @@ func TestServiceCompositionIsIdempotentAndImmutable(t *testing.T) {
 	// not a silent replacement of reserved authority.
 	narrowed := composer
 	catalog := compositionCatalog()
-	catalog.Policies["pi"] = egress.Policy{Revision: "catalog-v1", Driver: "pi", Services: []egress.ServiceAccess{{ServiceID: "data", Operations: []string{"query"}}}}
+	catalog.Policies["pi"] = egress.Policy{Revision: "catalog-v1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "data"}}}
 	narrowed.Catalog = catalog
-	if _, err := narrowed.ComposeGenerationServices(ctx, request); err == nil {
+	if _, err := narrowed.ComposeGenerationNetwork(ctx, request); err == nil {
 		t.Fatal("a changed policy reused an existing reservation")
 	}
 }
 
-func TestServiceCompositionIsAbsentWithoutPolicy(t *testing.T) {
+func TestNetworkCompositionIsAbsentWithoutPolicy(t *testing.T) {
 	ctx := context.Background()
 	_, composer, _, request := compositionFixture(t, "pi")
 	catalog := compositionCatalog()
 	delete(catalog.Policies, "pi")
 	composer.Catalog = catalog
-	composition, err := composer.ComposeGenerationServices(ctx, request)
+	composition, err := composer.ComposeGenerationNetwork(ctx, request)
 	if err != nil {
 		t.Fatalf("a driver with no policy must compose nothing, not fail: %v", err)
 	}
@@ -153,23 +153,23 @@ func TestServiceCompositionIsAbsentWithoutPolicy(t *testing.T) {
 	}
 }
 
-func TestServiceCompositionRequiresPlannedExecution(t *testing.T) {
+func TestNetworkCompositionRequiresPlannedExecution(t *testing.T) {
 	ctx := context.Background()
 	_, composer, _, request := compositionFixture(t, "pi")
-	for name, mutate := range map[string]func(*execution.ServiceRequest){
-		"session":     func(r *execution.ServiceRequest) { r.SessionID = "" },
-		"environment": func(r *execution.ServiceRequest) { r.EnvironmentID = "" },
-		"generation":  func(r *execution.ServiceRequest) { r.GenerationID = "" },
-		"owner":       func(r *execution.ServiceRequest) { r.Owner = "" },
-		"epoch":       func(r *execution.ServiceRequest) { r.Epoch = 0 },
+	for name, mutate := range map[string]func(*execution.NetworkRequest){
+		"session":     func(r *execution.NetworkRequest) { r.SessionID = "" },
+		"environment": func(r *execution.NetworkRequest) { r.EnvironmentID = "" },
+		"generation":  func(r *execution.NetworkRequest) { r.GenerationID = "" },
+		"owner":       func(r *execution.NetworkRequest) { r.Owner = "" },
+		"epoch":       func(r *execution.NetworkRequest) { r.Epoch = 0 },
 	} {
 		incomplete := request
 		mutate(&incomplete)
-		if _, err := composer.ComposeGenerationServices(ctx, incomplete); err == nil {
+		if _, err := composer.ComposeGenerationNetwork(ctx, incomplete); err == nil {
 			t.Fatalf("composition accepted a request missing its %s", name)
 		}
 	}
-	if _, err := (ServiceComposer{Catalog: compositionCatalog()}).ComposeGenerationServices(ctx, request); err == nil {
+	if _, err := (NetworkComposer{Catalog: compositionCatalog()}).ComposeGenerationNetwork(ctx, request); err == nil {
 		t.Fatal("composition without a durable allocator succeeded")
 	}
 }
@@ -177,26 +177,20 @@ func TestServiceCompositionRequiresPlannedExecution(t *testing.T) {
 func TestDeclaredCatalogValidationRejectsUnsatisfiableDeclarations(t *testing.T) {
 	for name, mutate := range map[string]func(*egress.Catalog){
 		"no revision": func(c *egress.Catalog) { c.Revision = "" },
-		"no services": func(c *egress.Catalog) { c.Services = nil },
+		"no services": func(c *egress.Catalog) { c.Endpoints = nil },
 		"no policies": func(c *egress.Catalog) { c.Policies = nil },
 		"revision mismatch": func(c *egress.Catalog) {
-			c.Policies["pi"] = egress.Policy{Revision: "other", Driver: "pi", Services: c.Policies["pi"].Services}
+			c.Policies["pi"] = egress.Policy{Revision: "other", Driver: "pi", Endpoints: c.Policies["pi"].Endpoints}
 		},
 		"driver mismatch": func(c *egress.Catalog) {
-			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "sh", Services: c.Policies["pi"].Services}
+			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "sh", Endpoints: c.Policies["pi"].Endpoints}
 		},
 		"undeclared service": func(c *egress.Catalog) {
-			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "pi", Services: []egress.ServiceAccess{{ServiceID: "absent", Operations: []string{"generate"}}}}
+			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "absent"}}}
 		},
 		"missing gateway":    func(c *egress.Catalog) { c.Deployment.Gateways = c.Deployment.Gateways[:1] },
-		"duplicate hostname": func(c *egress.Catalog) { c.Services[1].Hostname = c.Services[0].Hostname },
-		"duplicate id":       func(c *egress.Catalog) { c.Services[1].ID = c.Services[0].ID },
-		"shell model access": func(c *egress.Catalog) {
-			c.Policies["sh"] = egress.Policy{Revision: c.Revision, Driver: "sh", Services: []egress.ServiceAccess{{ServiceID: "model", Operations: []string{"generate"}}}}
-		},
-		"unsupported operation": func(c *egress.Catalog) {
-			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "pi", Services: []egress.ServiceAccess{{ServiceID: "data", Operations: []string{"drop"}}}}
-		},
+		"duplicate hostname": func(c *egress.Catalog) { c.Endpoints[1].Hostname = c.Endpoints[0].Hostname },
+		"duplicate id":       func(c *egress.Catalog) { c.Endpoints[1].ID = c.Endpoints[0].ID },
 		"protected overlap": func(c *egress.Catalog) {
 			c.Deployment.Protected = []netip.Prefix{netip.MustParsePrefix("10.80.0.0/16")}
 		},
@@ -204,11 +198,11 @@ func TestDeclaredCatalogValidationRejectsUnsatisfiableDeclarations(t *testing.T)
 			// A /30 reserves network and broadcast, leaving two usable addresses for
 			// three entitled services.
 			c.Deployment.SyntheticRange = netip.MustParsePrefix("10.80.0.0/30")
-			c.Services = append(c.Services, egress.Service{ID: "third", Protocol: egress.DorisMySQL, Hostname: "third.internal", Port: 9031, UpstreamRef: "more", Doris: &egress.DorisService{Databases: []string{"approved"}}})
-			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "pi", Services: []egress.ServiceAccess{
-				{ServiceID: "model", Operations: []string{"generate"}},
-				{ServiceID: "data", Operations: []string{"query"}},
-				{ServiceID: "third", Operations: []string{"query"}}}}
+			c.Endpoints = append(c.Endpoints, egress.Endpoint{ID: "third", NextHop: "data", Transport: "tcp", Hostname: "third.internal", Port: 9031})
+			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "pi", Endpoints: []egress.EndpointAccess{
+				{EndpointID: "model"},
+				{EndpointID: "data"},
+				{EndpointID: "third"}}}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -224,16 +218,29 @@ func TestDeclaredCatalogValidationRejectsUnsatisfiableDeclarations(t *testing.T)
 	}
 }
 
-func TestCatalogModelEndpointMatchesDeclaredService(t *testing.T) {
-	catalog := compositionCatalog()
-	origin, model, entitled := catalog.ModelEndpoint("pi")
-	if !entitled || origin != "https://model.internal" || model != "approved-model" {
-		t.Fatalf("model endpoint: %s %s %v", origin, model, entitled)
+func TestNetworkCompositionPreservesDirectOnlyPolicyWithoutGateways(t *testing.T) {
+	ctx := context.Background()
+	st, composer, _, request := compositionFixture(t, "sh")
+	composer.Catalog.Endpoints = nil
+	composer.Catalog.Deployment.Gateways = nil
+	rule := egress.Tuple{CIDR: netip.MustParsePrefix("198.51.100.8/32"), Port: 9030, Protocol: "tcp"}
+	composer.Catalog.Policies = map[string]egress.Policy{"sh": {Revision: composer.Catalog.Revision, Driver: "sh", Direct: []egress.Tuple{rule}}}
+	if err := egress.ValidateCatalog(composer.Catalog); err != nil {
+		t.Fatal(err)
 	}
-	if _, _, entitled := catalog.ModelEndpoint("sh"); entitled {
-		t.Fatal("shell was offered a model endpoint")
+	got, err := composer.ComposeGenerationNetwork(ctx, request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, _, entitled := (egress.Catalog{}).ModelEndpoint("pi"); entitled {
-		t.Fatal("an empty catalog offered a model endpoint")
+	if len(got.Network.Allow) != 1 || got.Network.Allow[0].CIDR != rule.CIDR || got.Digest == "" || len(got.Routes) != 0 {
+		t.Fatalf("direct policy was lost: %+v", got)
+	}
+	var count int
+	if err := st.db.QueryRow(`SELECT count(*) FROM egress_route_bindings`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("direct rules acquired managed routes: %d %v", count, err)
+	}
+	retried, err := composer.ComposeGenerationNetwork(ctx, request)
+	if err != nil || retried.Digest != got.Digest {
+		t.Fatalf("direct allocation retry: %+v %v", retried, err)
 	}
 }

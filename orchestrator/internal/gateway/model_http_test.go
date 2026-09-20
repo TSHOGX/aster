@@ -25,7 +25,7 @@ type scriptedAuthorizer struct {
 	finishes  []egress.RequestFinish
 	deny      bool
 	fail      error
-	service   egress.Service
+	service   egress.Endpoint
 	expires   time.Duration
 	bindingID string
 }
@@ -52,9 +52,9 @@ func (a *scriptedAuthorizer) Authorize(_ context.Context, request egress.Authori
 		RequestContext: egress.RequestContext{
 			SessionID: "session", UserID: "user", RequestID: request.RequestID, GrantID: "grant",
 			BindingID: binding, BackendID: request.BackendID, GenerationID: "generation",
-			ServiceID: a.service.ID, TurnID: 7, Epoch: 1, BindingRevision: 1,
+			EndpointID: a.service.ID, TurnID: 7, Epoch: 1, BindingRevision: 1,
 		},
-		PolicyDigest: "digest", ExpiresAt: time.Now().Add(expires), Service: a.service,
+		PolicyDigest: "digest", ExpiresAt: time.Now().Add(expires),
 	}, nil
 }
 
@@ -95,14 +95,14 @@ func modelFixture(t *testing.T, handler http.HandlerFunc) (*ModelGateway, *scrip
 		handler(w, r)
 	}))
 	t.Cleanup(upstream.Close)
-	authorizer := &scriptedAuthorizer{service: egress.Service{ID: "model", Protocol: egress.ModelHTTP, Hostname: "model.internal", Port: 443, UpstreamRef: "models", Model: &egress.ModelService{Models: []string{"approved-model"}}}}
+	authorizer := &scriptedAuthorizer{service: egress.Endpoint{ID: "model", NextHop: "model", Transport: "tcp", Hostname: "model.internal", Port: 443}}
 	flows := NewFlows()
 	if err := flows.Activate("route_model", 1); err != nil {
 		t.Fatal(err)
 	}
 	gateway, err := NewModelGateway(ModelOptions{
 		BackendID: "engine-store", Reserved: netip.MustParsePrefix("10.80.0.0/24"),
-		Upstreams:  []ModelUpstream{{Reference: "models", BaseURL: upstream.URL, APIKeyHeader: "X-Api-Key", APIKey: "upstream-secret", ExtraHeaders: map[string]string{"Anthropic-Version": "2023-06-01"}}},
+		Upstreams:  []ModelUpstream{{EndpointID: "model", Models: []string{"approved-model"}, BaseURL: upstream.URL, APIKeyHeader: "X-Api-Key", APIKey: "upstream-secret", ExtraHeaders: map[string]string{"Anthropic-Version": "2023-06-01"}}},
 		Flows:      flows,
 		Authorizer: authorizer, RequestTimeout: 5 * time.Second, Client: upstream.Client(),
 	})
@@ -156,13 +156,13 @@ func TestModelGatewayForwardsAuthorizedGenerationWithoutLeakingCredentials(t *te
 		t.Fatalf("upstream body was rewritten: %s", bodies[0])
 	}
 	requests, finishes := authorizer.observed()
-	if len(requests) != 1 || requests[0].Model != "approved-model" || requests[0].Operation != "generate" {
+	if len(requests) != 1 || requests[0].Destination != netip.MustParseAddrPort("10.80.0.1:443") {
 		t.Fatalf("authorization did not describe the actual request: %+v", requests)
 	}
 	if requests[0].Destination.String() != "10.80.0.1:443" {
 		t.Fatalf("authorization used a destination other than the kernel's: %+v", requests[0])
 	}
-	if requests[0].ServiceID != "" {
+	if requests[0].EndpointID != "" {
 		t.Fatal("adapter asserted a service identity it cannot derive")
 	}
 	if len(finishes) != 1 || finishes[0].Outcome != "ok" || finishes[0].Bytes == 0 {
@@ -248,7 +248,7 @@ func TestModelGatewayRefusesUnsteeredAndUnauthorizedRequests(t *testing.T) {
 func TestModelGatewayRefusesServiceWithoutConfiguredUpstream(t *testing.T) {
 	gateway, authorizer, _, record := modelFixture(t, func(w http.ResponseWriter, r *http.Request) {})
 	service := authorizer.service
-	service.UpstreamRef = "unconfigured"
+	service.ID = "unconfigured"
 	authorizer.service = service
 	if response := steered(t, gateway, `{"model":"approved-model"}`, nil); response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("service with no credentials here: %d", response.Code)
@@ -327,7 +327,7 @@ func TestModelGatewayReportsUpstreamFailureOutcomes(t *testing.T) {
 func TestModelGatewayRequiresCompleteConfiguration(t *testing.T) {
 	valid := ModelOptions{
 		BackendID: "engine", Reserved: netip.MustParsePrefix("10.80.0.0/24"),
-		Upstreams: []ModelUpstream{{Reference: "models", BaseURL: "https://upstream.example"}},
+		Upstreams: []ModelUpstream{{EndpointID: "model", Models: []string{"approved-model"}, BaseURL: "https://upstream.example"}},
 		Flows:     NewFlows(), Authorizer: &scriptedAuthorizer{}, RequestTimeout: time.Second,
 	}
 	if _, err := NewModelGateway(valid); err != nil {
@@ -365,5 +365,24 @@ func TestModelGatewayBoundsRequestBodies(t *testing.T) {
 	}
 	if headers, _ := record.seen(); len(headers) != 0 {
 		t.Fatal("an oversized request reached the upstream")
+	}
+}
+
+func TestModelAllowlistBelongsToProxyAfterGenericRouteAdmission(t *testing.T) {
+	proxy, authorizer, _, upstream := modelFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("forbidden model reached upstream") })
+	response := steered(t, proxy, `{"model":"forbidden"}`, nil)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status %d", response.Code)
+	}
+	requests, finishes := authorizer.observed()
+	if len(requests) != 1 || len(finishes) != 1 || finishes[0].Outcome != "model_denied" {
+		t.Fatalf("route admission and local refusal: %+v %+v", requests, finishes)
+	}
+	raw, err := json.Marshal(requests[0])
+	if err != nil || strings.Contains(string(raw), `"model"`) || strings.Contains(string(raw), `"operation"`) {
+		t.Fatalf("resource policy leaked into network request: %s %v", raw, err)
+	}
+	if headers, _ := upstream.seen(); len(headers) != 0 {
+		t.Fatal("denied model forwarded")
 	}
 }

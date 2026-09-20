@@ -50,7 +50,7 @@ func deploymentFixture(t *testing.T) (string, map[string]any) {
 			t.Fatal(err)
 		}
 	}
-	value := map[string]any{"version": 1, "backend_name": "engine", "engine": map[string]any{"endpoint": "http://127.0.0.1:18191", "store_id": "pinned-store"}, "manifest": "manifest.json", "manifest_digest": pin, "prepared_root": "prepared", "authorization": map[string]any{"socket": "authorization.sock", "peer_uid": os.Getuid(), "group": os.Getgid()}, "gateways": []any{map[string]any{"id": "data", "protocol": "doris_mysql", "socket": "data.sock", "peer_uid": os.Getuid()}}, "plans": map[string]any{"sh": map[string]any{"template": "battery", "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": "assets"}}, "content_bytes": 8 << 20, "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "100ms", "event_interval": "1s", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "1s", "idle_interval": "1m", "idle_threshold": "30m"}
+	value := map[string]any{"version": 1, "backend_name": "engine", "engine": map[string]any{"endpoint": "http://127.0.0.1:18191", "store_id": "pinned-store"}, "manifest": "manifest.json", "manifest_digest": pin, "prepared_root": "prepared", "authorization": map[string]any{"socket": "authorization.sock", "peer_uid": os.Getuid(), "group": os.Getgid()}, "gateways": []any{map[string]any{"id": "data", "socket": "data.sock", "peer_uid": os.Getuid()}}, "plans": map[string]any{"sh": map[string]any{"template": "battery", "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": "assets"}}, "content_bytes": 8 << 20, "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "100ms", "event_interval": "1s", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "1s", "idle_interval": "1m", "idle_threshold": "30m"}
 	return filepath.Join(root, "deployment.json"), value
 }
 func writeDeployment(t *testing.T, path string, value map[string]any) {
@@ -229,5 +229,27 @@ func TestDeploymentEngineTLSAuthenticatesBothPeers(t *testing.T) {
 	if response, err := deployment.Engine.HTTPClient.Get(untrusted.URL); err == nil {
 		response.Body.Close()
 		t.Fatal("deployment trusted an unconfigured engine CA")
+	}
+}
+
+func TestDeploymentSupportsLocalOnlyAndDirectOnlyWithoutGateways(t *testing.T) {
+	for _, direct := range []bool{false, true} {
+		path, value := deploymentFixture(t)
+		delete(value, "gateways")
+		delete(value, "authorization")
+		if direct {
+			value["connectivity"] = map[string]any{"revision": "direct-v1", "synthetic_range": "10.80.0.0/24", "policies": map[string]any{"sh": map[string]any{"direct": []any{map[string]any{"cidr": "198.51.100.8/32", "port": 9030, "proto": "tcp"}}}}}
+		}
+		writeDeployment(t, path, value)
+		deployment, err := LoadDeployment(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(deployment.Gateways) != 0 || deployment.AuthorizationSocket != "" {
+			t.Fatal("local deployment requires a gateway")
+		}
+		if direct && len(deployment.Connectivity.Policies["sh"].Direct) != 1 {
+			t.Fatal("direct policy lost")
+		}
 	}
 }

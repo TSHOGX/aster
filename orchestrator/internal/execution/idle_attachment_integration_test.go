@@ -42,14 +42,14 @@ func TestIdleAttachmentFailureClassificationRequiresExactInspection(t *testing.T
 			if err := original.Close(); err != nil {
 				t.Fatal(err)
 			}
-			attachment := &failedIdleAttacher{scriptedLauncher: launcher, err: &sandbox.Error{Class: sandbox.NotFound, Operation: "connect", Cause: errors.New("missing process")}}
+			attachment := &failedIdleAttacher{scriptedLauncher: launcher, err: &sandbox.Error{Class: sandbox.NotFound, Cause: errors.New("missing process")}}
 			switch fault {
 			case "exited":
 				attachment.async = true
-				attachment.err = &sandbox.Error{Class: sandbox.Precondition, Operation: "receive", Cause: errors.New("exited process")}
+				attachment.err = &sandbox.Error{Class: sandbox.Precondition, Cause: errors.New("exited process")}
 			case "network":
 				attachment.async = true
-				attachment.err = &sandbox.Error{Class: sandbox.Unavailable, Operation: "receive", Cause: errors.New("transport outage")}
+				attachment.err = &sandbox.Error{Class: sandbox.Unavailable, Cause: errors.New("transport outage")}
 			case "epoch":
 				backend.current.Epoch++
 			case "revision":

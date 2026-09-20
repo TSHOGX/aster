@@ -27,7 +27,7 @@ func (a *idleFallbackActions) RecoverInterrupted(_ context.Context, session, gen
 func TestIdleReconciliationEscalatesOnlyUnrecoverableAttachment(t *testing.T) {
 	for _, class := range []sandbox.ErrorClass{sandbox.NotFound, sandbox.Precondition, sandbox.Unavailable, sandbox.IdentityChanged, sandbox.Incompatible, sandbox.Capacity, sandbox.Uncertain} {
 		t.Run(string(class), func(t *testing.T) {
-			original := &sandbox.Error{Class: class, Operation: "connect process", Cause: errors.New("injected")}
+			original := &sandbox.Error{Class: class, Cause: errors.New("injected")}
 			recoveryError := errors.New("recovery drain unavailable")
 			actions := &idleFallbackActions{attachment: original, recovery: recoveryError}
 			r := Reconciler{Controller: actions, Owner: "owner"}
