@@ -131,7 +131,11 @@ func issueBoundGrantsTx(ctx context.Context, tx *sql.Tx, generation string, turn
 }
 
 func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.AuthorizationRequest) (egress.Authorization, error) {
-	if p.BackendID == "" || !p.Destination.IsValid() || p.RequestID == "" || p.ServiceID == "" || p.Operation == "" {
+	// The destination is the authority: the product reserved one address per
+	// service, so a kernel-derived destination names the service unambiguously.
+	// ServiceID is an optional cross-check for an adapter that knows it, never a
+	// way for a caller to select a different service than the one it reached.
+	if p.BackendID == "" || !p.Destination.IsValid() || p.RequestID == "" || p.Operation == "" {
 		return egress.Authorization{}, egress.ErrDenied
 	}
 	if p.Now.IsZero() {
@@ -147,8 +151,8 @@ func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.Authorizati
 	err = tx.QueryRowContext(ctx, `SELECT r.binding_id,r.generation_id,r.epoch,r.revision,r.policy_digest,r.service,r.operations,b.owner,g.grant_id,g.turn_id,g.expires_at,b.driver_id
  FROM egress_route_bindings r JOIN execution_bindings b ON b.generation_id=r.generation_id JOIN egress_grants g ON g.binding_id=r.binding_id
  JOIN turns t ON t.id=g.turn_id AND t.generation_id=r.generation_id
- WHERE r.backend_id=? AND r.destination=? AND r.service_id=? AND r.state='active' AND g.state='active' AND g.expires_at>? AND g.binding_revision=r.revision AND g.policy_digest=r.policy_digest
- AND b.store_id=r.backend_id AND b.epoch=r.epoch AND t.status IN ('leased','running') AND t.lease_owner=b.owner AND t.lease_expires_at>?`, p.BackendID, p.Destination.String(), p.ServiceID, formatTime(p.Now), formatTime(p.Now)).Scan(&result.BindingID, &result.GenerationID, &result.Epoch, &result.BindingRevision, &result.PolicyDigest, &serviceJSON, &operations, &owner, &result.GrantID, &result.TurnID, &expires, &driver)
+ WHERE r.backend_id=? AND r.destination=? AND (?='' OR r.service_id=?) AND r.state='active' AND g.state='active' AND g.expires_at>? AND g.binding_revision=r.revision AND g.policy_digest=r.policy_digest
+ AND b.store_id=r.backend_id AND b.epoch=r.epoch AND t.status IN ('leased','running') AND t.lease_owner=b.owner AND t.lease_expires_at>?`, p.BackendID, p.Destination.String(), p.ServiceID, p.ServiceID, formatTime(p.Now), formatTime(p.Now)).Scan(&result.BindingID, &result.GenerationID, &result.Epoch, &result.BindingRevision, &result.PolicyDigest, &serviceJSON, &operations, &owner, &result.GrantID, &result.TurnID, &expires, &driver)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, egress.ErrDenied
 	}
@@ -182,7 +186,7 @@ func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.Authorizati
 	result.UserID = user
 	result.RequestID = p.RequestID
 	result.BackendID = p.BackendID
-	result.ServiceID = p.ServiceID
+	result.ServiceID = result.Service.ID
 	result.ExpiresAt = parseTime(expires)
 	if generationExpiry := parseTime(lease); generationExpiry.Before(result.ExpiresAt) {
 		result.ExpiresAt = generationExpiry
@@ -207,7 +211,7 @@ func (s *Store) AuthorizeEgressRequest(ctx context.Context, p egress.Authorizati
 	if !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO egress_requests(backend_id,request_id,request_digest,binding_id,grant_id,generation_id,turn_id,epoch,service_id,operation,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, p.BackendID, p.RequestID, digest, result.BindingID, result.GrantID, result.GenerationID, result.TurnID, result.Epoch, p.ServiceID, p.Operation, formatTime(p.Now))
+	_, err = tx.ExecContext(ctx, `INSERT INTO egress_requests(backend_id,request_id,request_digest,binding_id,grant_id,generation_id,turn_id,epoch,service_id,operation,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, p.BackendID, p.RequestID, digest, result.BindingID, result.GrantID, result.GenerationID, result.TurnID, result.Epoch, result.ServiceID, p.Operation, formatTime(p.Now))
 	if err != nil {
 		return result, err
 	}

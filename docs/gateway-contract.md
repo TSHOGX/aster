@@ -1,10 +1,34 @@
 # Gateway ingress and authorization
 
-`internal/gateway` provides trusted ingress and flow-lifetime primitives. It is
-not an upstream HTTP, MySQL or OBS implementation. Production protocol adapters
-must compose these primitives with their existing credential and protocol logic;
-the Khora daemon mode serves the new authorization contract and selects remote
-control adapters.
+`internal/gateway` provides trusted ingress and flow-lifetime primitives, and the
+model HTTP adapter that uses them. Doris MySQL and OBS HTTP adapters are not
+implemented here; those deployments must compose these primitives with their own
+credential and protocol logic. The Khora daemon serves the authorization contract
+and drives every configured gateway's remote control.
+
+## Model HTTP adapter
+
+`NewModelGateway` terminates steered model generation, and `cmd/model-gateway`
+runs it as its own process under its own UID. It is an HTTP handler rather than a
+raw relay because the resource being authorized — the model — is a body field, so
+the adapter must parse the request to name what it is asking for.
+
+The destination comes from the kernel through `DestinationContext`, so a guest
+that sets `Host` or `Authorization` can neither select a service nor supply a
+credential. Every request is authorized, including one reusing an established
+connection, and each carries its own request identity. Guest authorization
+headers are dropped; only the gateway's configured credential reaches the
+upstream, read from a file that must not be group or world accessible.
+
+The adapter registers each authorized request as a flow before upstream I/O and
+calls `Finish` only after upstream activity has stopped, which is what makes a
+revocation acknowledgment mean something. Upstream status codes pass through and
+are recorded as the request outcome. Unauthorized, denied and unavailable
+authorization all fail closed without contacting the upstream.
+
+The engine refuses an `egress.via` declaration unless it was started with a
+second-hop UID, because the endpoint process's own egress can only be pinned by
+uid. A deployment must therefore run its protocol gateways under that identity.
 
 ## Connection attribution
 

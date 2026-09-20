@@ -13,14 +13,17 @@ type AuthorizationRequest struct {
 	// Destination comes from trusted ingress, never a guest header or source IP.
 	BackendID   string         `json:"backend_id"`
 	Destination netip.AddrPort `json:"destination"`
-	ServiceID   string         `json:"service_id"`
-	Operation   string         `json:"operation"`
-	RequestID   string         `json:"request_id"`
-	Model       string         `json:"model,omitempty"`
-	Database    string         `json:"database,omitempty"`
-	Bucket      string         `json:"bucket,omitempty"`
-	ObjectKey   string         `json:"object_key,omitempty"`
-	Now         time.Time      `json:"-"`
+	// ServiceID is an optional cross-check. The destination already names the
+	// service, because the product reserved one address per service; an adapter
+	// that cannot derive the name from a kernel address leaves this empty.
+	ServiceID string    `json:"service_id,omitempty"`
+	Operation string    `json:"operation"`
+	RequestID string    `json:"request_id"`
+	Model     string    `json:"model,omitempty"`
+	Database  string    `json:"database,omitempty"`
+	Bucket    string    `json:"bucket,omitempty"`
+	ObjectKey string    `json:"object_key,omitempty"`
+	Now       time.Time `json:"-"`
 }
 type Authorization struct {
 	RequestContext
