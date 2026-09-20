@@ -89,6 +89,12 @@ type GenerationConfiguration struct {
 	Network     sandbox.Network `json:"network"`
 	Mounts      []sandbox.Mount `json:"mounts"`
 	Environment []string        `json:"environment"`
+	// Hosts, Routes and ServiceDigest describe the reserved service composition
+	// this declaration carries. They are recorded with the declaration so a
+	// restart can activate exactly the routes the engine is enforcing.
+	Hosts         []ServiceHost `json:"hosts,omitempty"`
+	Routes        []string      `json:"routes,omitempty"`
+	ServiceDigest string        `json:"service_digest,omitempty"`
 }
 
 type Controller struct {
@@ -101,6 +107,8 @@ type Controller struct {
 	MaxActive         int
 	Lifetime          context.Context
 	Routes            RouteRevoker
+	Activator         RouteActivator
+	Services          ServiceComposer
 	GrantRevoker      GrantRevoker
 	RecoveryReader    JournalRecoveryReader
 	RecoveryProjector RecoveryProjector
@@ -199,7 +207,7 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	if err != nil {
 		return Binding{}, err
 	}
-	environment, err := c.provisionEnvironment(ctx, session, identity, plan, owner, c.MaxActive)
+	environment, configuration, err := c.provisionEnvironment(ctx, session, identity, plan, generation, owner, c.MaxActive)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -231,7 +239,40 @@ func (c *Controller) Ensure(ctx context.Context, session Session, owner string) 
 	if observed.Epoch != environment.Epoch || observed.State != "running" || observed.PlacementState != "active" || observed.MutationRevision != environment.MutationRevision {
 		return Binding{}, fmt.Errorf("retained environment requires reconciled resume before a new execution")
 	}
-	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: []string{"--session-id", session.ID, "--generation-id", generation, "--driver-id", session.Driver}, Environment: plan.Environment, Directory: "/workspace"}
+	// The engine is enforcing the declaration it confirmed, so the gateways must
+	// be told about exactly those routes — not the plan's — before a process can
+	// reach them. Activation is idempotent in the binding revision, and a route
+	// that cannot be activated must stop the launch rather than start a process
+	// whose destinations answer at no gateway.
+	applied, present, err := environment.AppliedConfiguration()
+	if err != nil {
+		return Binding{}, err
+	}
+	if configuration.ServiceDigest != "" {
+		if !present || applied.ServiceDigest != configuration.ServiceDigest {
+			return Binding{}, ErrOperationConflict
+		}
+		if c.Activator == nil {
+			return Binding{}, fmt.Errorf("service composition requires a gateway route activator")
+		}
+		for _, route := range applied.Routes {
+			if err := c.Activator.Activate(ctx, route, 1); err != nil {
+				return Binding{}, err
+			}
+		}
+	}
+	launchEnvironment := plan.Environment
+	if present {
+		launchEnvironment = applied.Environment
+	}
+	// Service hostnames are passed as launcher arguments rather than guest-writable
+	// files or environment: the engine projects no /etc/hosts, and the names must
+	// describe the same destinations the confirmed declaration steers.
+	arguments := []string{"--session-id", session.ID, "--generation-id", generation, "--driver-id", session.Driver}
+	for _, host := range applied.Hosts {
+		arguments = append(arguments, "--service-host", host.Name+"="+host.Address)
+	}
+	request := sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.Epoch, Handle: "bridge_" + generation}, IdempotencyKey: "bridge:" + generation, Command: "/usr/local/bin/harness-khora-launcher", Arguments: arguments, Environment: launchEnvironment, Directory: "/workspace"}
 	start := WorkerRequest{Reserve: ReserveBindingParams{GenerationID: generation, SessionID: session.ID, EnvironmentID: environment.ID, Owner: owner, Driver: session.Driver, SpecDigest: plan.SpecDigest, ManifestDigest: plan.ManifestDigest, LeaseTTL: c.LeaseTTL}, Process: request}
 	var binding Binding
 	var connection AgentConnection
@@ -423,37 +464,105 @@ func (c *Controller) Close() error {
 	return nil
 }
 
-// provisionEnvironment reconciles a session's retained environment against one
-// generation's plan. Identity must match exactly; configuration is applied.
+// ServiceComposer reserves the immutable network declaration one generation runs
+// under: which synthetic destinations its entitled services answer on and which
+// trusted gateway each is steered to. It performs no remote effect.
 //
-// A fresh environment is created with the generation's configuration directly. A
-// retained one already holds its storage, so a changed configuration is applied
-// through a fenced configure operation while it is paused, which is the only
-// state the engine accepts an egress edit in. The applied declaration is recorded
-// from the operation's own immutable request, never from the plan, so a lost
-// reply cannot make the product believe an unapplied configuration is live.
-func (c *Controller) provisionEnvironment(ctx context.Context, session Session, identity sandbox.Identity, plan LaunchPlan, owner string, maximum int) (Environment, error) {
+// Composition is generation-scoped by construction, which is why it belongs in
+// generation configuration rather than environment identity.
+type ServiceComposer interface {
+	ComposeGenerationServices(context.Context, ServiceRequest) (ServiceComposition, error)
+}
+
+// ServiceRequest describes the planned execution a composition is reserved for.
+type ServiceRequest struct {
+	SessionID, EnvironmentID, GenerationID, Driver, Owner string
+	Epoch                                                 uint64
+	EnvironmentFence                                      int64
+}
+
+// ServiceComposition is the reserved declaration. Network is what the engine will
+// enforce; Hosts is what the guest resolves; Routes are the dormant binding
+// identities that execution acceptance later activates.
+type ServiceComposition struct {
+	Network sandbox.Network
+	Hosts   []ServiceHost
+	Routes  []string
+	Digest  string
+}
+
+// ServiceHost maps one guest-visible service hostname to its reserved address.
+type ServiceHost struct {
+	Name    string
+	Address string
+}
+
+// RouteActivator publishes a reserved binding to its trusted gateway. Possessing
+// a compiled route grants no traffic: the accepted execution and current grant do.
+type RouteActivator interface {
+	Activate(context.Context, string, uint64) error
+}
+
+// provisionEnvironment reconciles identity, reserves this generation's service
+// composition and brings the environment to the resulting declaration.
+//
+// The order matters: a composition must exist before the declaration that carries
+// its routes is dispatched, and the declaration must be confirmed before any
+// process can use those destinations.
+func (c *Controller) provisionEnvironment(ctx context.Context, session Session, identity sandbox.Identity, plan LaunchPlan, generation, owner string, maximum int) (Environment, GenerationConfiguration, error) {
+	environment, mounts, err := c.ensureEnvironmentIdentity(ctx, session, identity, plan)
+	if err != nil {
+		return Environment{}, GenerationConfiguration{}, err
+	}
+	configuration := GenerationConfiguration{SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts, Environment: plan.Environment}
+	if c.Services != nil && generation != "" {
+		epoch := environment.Epoch + 1
+		if environment.SandboxID == "" {
+			epoch = 1
+		}
+		composition, err := c.Services.ComposeGenerationServices(ctx, ServiceRequest{SessionID: session.ID, EnvironmentID: environment.ID, GenerationID: generation, Driver: session.Driver, Owner: owner, Epoch: epoch, EnvironmentFence: environment.Fence})
+		if err != nil {
+			return Environment{}, GenerationConfiguration{}, err
+		}
+		// The composed declaration replaces the plan's static network wholesale. A
+		// merge on an allow-list is how a rule is dropped without anyone deciding to.
+		configuration.Network = composition.Network
+		configuration.Hosts = composition.Hosts
+		configuration.Routes = composition.Routes
+		configuration.ServiceDigest = composition.Digest
+	}
+	environment, err = c.establishGenerationConfiguration(ctx, identity, environment, plan, configuration, owner, maximum)
+	if err != nil {
+		return Environment{}, GenerationConfiguration{}, err
+	}
+	return environment, configuration, nil
+}
+
+// ensureEnvironmentIdentity reconciles the session's retained environment and its
+// own storage. Identity must match exactly: a mismatch means a different
+// environment, not a change one session may adopt.
+func (c *Controller) ensureEnvironmentIdentity(ctx context.Context, session Session, identity sandbox.Identity, plan LaunchPlan) (Environment, []sandbox.Mount, error) {
 	if plan.TemplateID == "" || plan.SpecDigest == "" || plan.ManifestDigest == "" || plan.CPUMillis <= 0 || plan.MemoryBytes <= 0 || plan.DiskBytes <= 0 || plan.WorkspaceBytes <= 0 || plan.JournalBytes <= 0 {
-		return Environment{}, fmt.Errorf("driver plan requires pinned release and positive resource caps")
+		return Environment{}, nil, fmt.Errorf("driver plan requires pinned release and positive resource caps")
 	}
 	environment, found, err := c.Repository.FindSessionEnvironment(ctx, session.ID)
 	if err != nil {
-		return Environment{}, err
+		return Environment{}, nil, err
 	}
 	desiredSpec := desiredEnvironment{Driver: session.Driver, Template: plan.TemplateID, ManifestDigest: plan.ManifestDigest, CPU: plan.CPUMillis, Memory: plan.MemoryBytes, Disk: plan.DiskBytes, Workspace: plan.WorkspaceBytes, Journal: plan.JournalBytes}
 	desired, err := json.Marshal(desiredSpec)
 	if err != nil {
-		return Environment{}, err
+		return Environment{}, nil, err
 	}
 	if !found {
 		environment = Environment{ID: "env_" + session.ID, SessionID: session.ID, BackendName: c.BackendName, StoreID: identity.StoreID, Desired: desired}
 		if err := c.Repository.CreateEnvironmentBinding(ctx, environment); err != nil {
-			return Environment{}, err
+			return Environment{}, nil, err
 		}
 	} else {
 		var persisted desiredEnvironment
 		if err := json.Unmarshal(environment.Desired, &persisted); err != nil || environment.StoreID != identity.StoreID || environment.BackendName != c.BackendName || persisted != desiredSpec {
-			return Environment{}, ErrOperationConflict
+			return Environment{}, nil, ErrOperationConflict
 		}
 	}
 	storage := StorageService{Repository: c.Repository, Backend: c.Backend}
@@ -464,18 +573,27 @@ func (c *Controller) provisionEnvironment(ctx context.Context, session Session, 
 	}{{"workspace", "/workspace", plan.WorkspaceBytes}, {"bridge", "/harness-bridge", plan.JournalBytes}} {
 		binding, err := storage.EnsureVolume(ctx, environment.ID, volume.purpose, volume.capacity)
 		if err != nil {
-			return Environment{}, err
+			return Environment{}, nil, err
 		}
 		mounts = append(mounts, sandbox.Mount{VolumeID: binding.VolumeID, Destination: volume.destination, Access: "exclusive"})
 	}
 	environment, err = c.Repository.GetEnvironmentBinding(ctx, environment.ID)
-	if err != nil {
-		return Environment{}, err
-	}
-	configuration := GenerationConfiguration{SpecDigest: plan.SpecDigest, Network: plan.Network, Mounts: mounts, Environment: plan.Environment}
+	return environment, mounts, err
+}
+
+// establishGenerationConfiguration brings the environment to one generation's
+// declaration, creating it if it does not exist yet.
+//
+// A fresh environment is created with the declaration directly. A retained one
+// already holds its storage, so a changed declaration is applied through a fenced
+// configure while it is paused, which is the only state the engine accepts an
+// egress edit in. The applied declaration is recorded from the operation's own
+// immutable request, never from the plan, so a lost reply cannot make the product
+// believe an unapplied configuration is live.
+func (c *Controller) establishGenerationConfiguration(ctx context.Context, identity sandbox.Identity, environment Environment, plan LaunchPlan, configuration GenerationConfiguration, owner string, maximum int) (Environment, error) {
 	lifecycle := EnvironmentService{Repository: c.Repository, Backend: c.Backend}
 	if environment.SandboxID == "" {
-		request := sandbox.CreateRequest{IdempotencyKey: "create:" + environment.ID, TemplateID: plan.TemplateID, CPUMillis: plan.CPUMillis, MemoryBytes: plan.MemoryBytes, DiskBytes: plan.DiskBytes, Mounts: mounts, Network: plan.Network}
+		request := sandbox.CreateRequest{IdempotencyKey: "create:" + environment.ID, TemplateID: plan.TemplateID, CPUMillis: plan.CPUMillis, MemoryBytes: plan.MemoryBytes, DiskBytes: plan.DiskBytes, Mounts: configuration.Mounts, Network: configuration.Network}
 		raw, err := json.Marshal(EnvironmentRequest{Reference: sandbox.Reference{StoreID: identity.StoreID}, Create: &request, Configuration: &configuration})
 		if err != nil {
 			return Environment{}, err

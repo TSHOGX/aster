@@ -51,7 +51,10 @@ func (c *Controller) EnsureWorkspace(ctx context.Context, sessionID, owner strin
 	if err != nil {
 		return err
 	}
-	environment, err := c.provisionEnvironment(ctx, session, identity, plan, owner, maximum)
+	// Provisioning a workspace before any turn exists must not reserve service
+	// authority: the generation that will use it has not been planned yet, and a
+	// reservation is immutable once made.
+	environment, _, err := c.provisionEnvironment(ctx, session, identity, plan, "", owner, maximum)
 	if err != nil {
 		return err
 	}

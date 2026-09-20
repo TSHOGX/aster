@@ -30,6 +30,7 @@ type Deployment struct {
 	Engine                                                                                 khorabackend.Config
 	Gateways                                                                               []gateway.RemoteConfig
 	Plans                                                                                  *launchplan.Source
+	Services                                                                               egress.Catalog
 	Content                                                                                []AuthoredContent
 	ContentBytes                                                                           int64
 	PreparedRoot, AuthorizationSocket                                                      string
@@ -78,7 +79,21 @@ type deploymentFile struct {
 		Protocol string  `json:"protocol"`
 		Socket   string  `json:"socket"`
 		PeerUID  *uint32 `json:"peer_uid"`
+		// Listener is where this gateway accepts steered guest traffic. It is the
+		// endpoint the engine's route sends packets to, distinct from the Unix
+		// control socket the application reaches it on.
+		Listener string `json:"listener"`
 	} `json:"gateways"`
+	// Services is the declared service inventory and per-driver entitlements. It is
+	// product authority; guest content never contributes to it. A deployment may
+	// omit it entirely, and every driver then runs with no service access.
+	Services struct {
+		Revision       string                        `json:"revision"`
+		SyntheticRange string                        `json:"synthetic_range"`
+		Protected      []string                      `json:"protected"`
+		Catalog        []egress.Service              `json:"catalog"`
+		Policies       map[string]egress.ServiceList `json:"policies"`
+	} `json:"services"`
 	Authorization struct {
 		Socket  string  `json:"socket"`
 		PeerUID *uint32 `json:"peer_uid"`
@@ -194,6 +209,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 	// would detach healthy long turns. Startup and control operations are bounded.
 	d.Engine = khorabackend.Config{Endpoint: wire.Engine.Endpoint, StoreID: wire.Engine.StoreID, HTTPClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	ids, sockets := map[string]bool{}, map[string]bool{d.AuthorizationSocket: true}
+	var listeners []egress.Gateway
 	for _, g := range wire.Gateways {
 		socket := resolve(g.Socket)
 		if g.ID == "" || g.PeerUID == nil || socket == "" || ids[g.ID] || sockets[socket] {
@@ -207,6 +223,18 @@ func LoadDeployment(path string) (*Deployment, error) {
 		}
 		ids[g.ID], sockets[socket] = true, true
 		d.Gateways = append(d.Gateways, gateway.RemoteConfig{ID: g.ID, Socket: socket, PeerUID: *g.PeerUID, Protocol: egress.Protocol(g.Protocol), Timeout: d.ActionTimeout})
+		if g.Listener != "" {
+			listener, err := netip.ParseAddrPort(g.Listener)
+			if err != nil || !listener.Addr().Is4() || listener.Port() == 0 {
+				return nil, fmt.Errorf("gateway %q listener must be an IPv4 address and port", g.ID)
+			}
+			listeners = append(listeners, egress.Gateway{Endpoint: listener, Protocol: egress.Protocol(g.Protocol)})
+		}
+	}
+	if catalog, err := serviceCatalog(wire, listeners); err != nil {
+		return nil, err
+	} else {
+		d.Services = catalog
 	}
 	if wire.ContentBytes <= 0 || wire.ContentBytes > 1<<30 {
 		return nil, fmt.Errorf("positive bounded content volume capacity required")
@@ -234,6 +262,19 @@ func LoadDeployment(path string) (*Deployment, error) {
 			}
 			plan.Content = append(plan.Content, execution.ContentRequirement{Purpose: authored.purpose, Destination: authored.destination, RevisionDigest: revision.Digest})
 		}
+		// The guest's model origin is derived from the catalog, not declared per
+		// plan: the URL a guest resolves and the route the engine steers must
+		// describe one destination, and two independent declarations would drift.
+		if origin, model, entitled := d.Services.ModelEndpoint(driver); entitled {
+			if len(plan.Environment) != 0 {
+				return nil, fmt.Errorf("driver %q model environment is derived from the service catalog", driver)
+			}
+			plan.Environment = []string{"ANTHROPIC_BASE_URL=" + origin}
+			if model != "" {
+				plan.Environment = append(plan.Environment, "PI_MODEL="+model)
+			}
+			sort.Strings(plan.Environment)
+		}
 		plans[driver] = plan
 	}
 	// Publication order must not depend on map iteration: startup publishes this
@@ -257,7 +298,7 @@ func LoadDeployment(path string) (*Deployment, error) {
 }
 
 func (d *Deployment) Options(backend Backend, gateways *gateway.Remotes, owner string) Options {
-	return Options{Backend: backend, Plans: d.Plans, Content: d.Content, ContentBytes: d.ContentBytes, Routes: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
+	return Options{Backend: backend, Plans: d.Plans, Content: d.Content, ContentBytes: d.ContentBytes, Services: d.Services, Routes: gateways, Activator: gateways, Grants: gateways, BackendName: d.BackendName, OwnerUUID: owner, PreparedRoot: d.PreparedRoot, MaxActive: d.MaxActive, InventoryLimit: d.InventoryLimit, LeaseTTL: d.LeaseTTL, PollInterval: d.PollInterval, EventInterval: d.EventInterval, ActionTimeout: d.ActionTimeout, CaptureWindow: d.CaptureWindow, InventoryInterval: d.InventoryInterval}
 }
 
 // Connect validates the pinned engine and every gateway before server mutation.
@@ -273,4 +314,47 @@ func (d *Deployment) Connect(ctx context.Context) (Backend, *gateway.Remotes, er
 		return nil, nil, err
 	}
 	return backend, gateways, nil
+}
+
+// serviceCatalog builds the declared service inventory. An absent services block
+// is a deployment with no external service access, which is a valid and useful
+// configuration; a present but unsatisfiable one must stop startup, so the
+// catalog is fully compiled here rather than at the first launch that needs it.
+func serviceCatalog(wire deploymentFile, listeners []egress.Gateway) (egress.Catalog, error) {
+	declared := wire.Services
+	empty := declared.Revision == "" && declared.SyntheticRange == "" && len(declared.Catalog) == 0 && len(declared.Policies) == 0
+	if empty {
+		if len(listeners) != 0 {
+			return egress.Catalog{}, fmt.Errorf("gateway listeners are declared but no services are")
+		}
+		return egress.Catalog{}, nil
+	}
+	if len(listeners) == 0 {
+		return egress.Catalog{}, fmt.Errorf("declared services require at least one gateway listener")
+	}
+	synthetic, err := netip.ParsePrefix(declared.SyntheticRange)
+	if err != nil {
+		return egress.Catalog{}, fmt.Errorf("service synthetic range must be a canonical IPv4 prefix")
+	}
+	deployment := egress.Deployment{BackendID: wire.Engine.StoreID, SyntheticRange: synthetic, Gateways: listeners}
+	for _, value := range declared.Protected {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return egress.Catalog{}, fmt.Errorf("protected range %q must be a canonical IPv4 prefix", value)
+		}
+		deployment.Protected = append(deployment.Protected, prefix)
+	}
+	catalog := egress.Catalog{Revision: declared.Revision, Services: declared.Catalog, Deployment: deployment, Policies: map[string]egress.Policy{}}
+	for driver, list := range declared.Policies {
+		if driver != "pi" && driver != "sh" {
+			return egress.Catalog{}, fmt.Errorf("service policy names unsupported driver %q", driver)
+		}
+		// The driver and revision come from the document's structure, never repeated
+		// inside the entry, so a policy cannot claim to belong to another driver.
+		catalog.Policies[driver] = egress.Policy{Revision: declared.Revision, Driver: driver, Services: list.Services, Direct: list.Direct, Resolvers: list.Resolvers}
+	}
+	if err := egress.ValidateCatalog(catalog); err != nil {
+		return egress.Catalog{}, err
+	}
+	return catalog, nil
 }

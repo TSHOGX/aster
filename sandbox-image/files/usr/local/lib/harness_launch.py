@@ -88,13 +88,13 @@ def _sync_dir(path):
         os.close(descriptor)
 
 
-def _replace_config(path, raw):
+def _replace_config(path, raw, mode=0o444):
     descriptor, staging = tempfile.mkstemp(prefix='.config-', dir=path.parent)
     try:
         with os.fdopen(descriptor, 'wb') as output:
             output.write(raw)
             output.flush()
-            os.fchmod(output.fileno(), 0o444)
+            os.fchmod(output.fileno(), mode)
             os.fsync(output.fileno())
         os.replace(staging, path)
         _sync_dir(path.parent)
@@ -140,6 +140,51 @@ def prepare_pi(home=Path('/root'), source=Path('/harness-config/pi'), assets=Pat
             target.symlink_to(shared)
             _sync_dir(agent)
     return agent
+
+
+SERVICE_HOSTS_MARKER = '# harness service hosts'
+
+
+def project_service_hosts(entries, path=Path('/etc/hosts')):
+    """Publish this generation's service hostnames for the guest resolver.
+
+    The engine projects no /etc/hosts, and a guest must resolve the exact
+    synthetic addresses the confirmed network declaration steers. The block is
+    rewritten whole on every launch, so a superseded generation's names cannot
+    survive into the next one, and anything the image shipped above it is kept.
+    """
+    resolved = {}
+    for entry in entries or ():
+        name, separator, address = entry.partition('=')
+        name, address = name.strip().lower(), address.strip()
+        if not separator or not name or not address:
+            raise ValueError('service host must be name=address')
+        if name in resolved:
+            raise ValueError('duplicate service hostname')
+        if any(character.isspace() for character in address) or ':' in address:
+            raise ValueError('service host address must be a bare IPv4 literal')
+        octets = address.split('.')
+        if len(octets) != 4 or not all(part.isdigit() and 0 <= int(part) <= 255 and str(int(part)) == part for part in octets):
+            raise ValueError('service host address must be a bare IPv4 literal')
+        for label in name.split('.'):
+            if not label or label.startswith('-') or label.endswith('-') or not all(c.isalnum() or c == '-' for c in label):
+                raise ValueError('invalid service hostname')
+        resolved[name] = address
+    if path.is_symlink():
+        raise ValueError('host file must not be a symlink')
+    existing = path.read_text(encoding='utf-8').splitlines() if path.is_file() else []
+    preserved = []
+    for line in existing:
+        if line.strip() == SERVICE_HOSTS_MARKER:
+            break
+        preserved.append(line)
+    body = list(preserved)
+    if resolved:
+        body.append(SERVICE_HOSTS_MARKER)
+        for name in sorted(resolved):
+            body.append(f'{resolved[name]}\t{name}')
+    _replace_config(path, ('\n'.join(body) + '\n').encode('utf-8'), mode=0o444)
+    return resolved
 
 
 def launch_environment(driver):

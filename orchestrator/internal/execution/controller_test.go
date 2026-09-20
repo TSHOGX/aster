@@ -21,10 +21,13 @@ type controllerBackend struct {
 	loseResume  bool
 	configured  bool
 	createKeys  []string
+	created     []sandbox.CreateRequest
+	configures  []sandbox.Network
 }
 
 func (b *controllerBackend) Configure(ctx context.Context, reference sandbox.Reference, network sandbox.Network, mounts []sandbox.Mount) (sandbox.Observation, error) {
 	b.configured = true
+	b.configures = append(b.configures, network)
 	return b.lifecycleBackend.Configure(ctx, reference, network, mounts)
 }
 
@@ -46,6 +49,7 @@ func (b *controllerBackend) CreateVolume(_ context.Context, key string, capacity
 }
 func (b *controllerBackend) Create(ctx context.Context, p sandbox.CreateRequest) (sandbox.Observation, error) {
 	b.createKeys = append(b.createKeys, p.IdempotencyKey)
+	b.created = append(b.created, p)
 	if b.loseCreate {
 		b.loseCreate = false
 		return sandbox.Observation{}, &sandbox.Error{Class: sandbox.Unavailable, Cause: errors.New("lost create response")}

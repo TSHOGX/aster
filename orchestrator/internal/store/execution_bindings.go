@@ -214,6 +214,14 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 	if _, err := tx.ExecContext(ctx, `UPDATE sandbox_environments SET observed_state='running' WHERE environment_id=(SELECT environment_id FROM execution_bindings WHERE generation_id=?)`, p.GenerationID); err != nil {
 		return err
 	}
+	// Acceptance is what makes this generation's reserved routes usable. Doing it
+	// in the accepting transaction means no window exists where a process is
+	// accepted but its service authority is not yet recorded, or the reverse.
+	// Only a dormant route of this generation at the accepted epoch advances; a
+	// revoked one stays a tombstone.
+	if _, err := tx.ExecContext(ctx, `UPDATE egress_route_bindings SET state='active' WHERE generation_id=? AND state='dormant' AND EXISTS(SELECT 1 FROM execution_bindings b WHERE b.generation_id=egress_route_bindings.generation_id AND b.store_id=egress_route_bindings.backend_id AND b.epoch=egress_route_bindings.epoch AND b.state='accepted')`, p.GenerationID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

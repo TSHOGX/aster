@@ -163,6 +163,17 @@ func (r *Remotes) Close() {
 		gateway.Close()
 	}
 }
+
+// Activate publishes a binding to every configured gateway. A gateway that does
+// not serve this binding's protocol still records the revision, so activation is
+// broadcast rather than routed: the application holds one authority record and a
+// gateway that never sees traffic for it is simply idle.
+//
+// It succeeds only when every gateway acknowledged, because a partially
+// activated route would answer at some listeners and fail at others.
+func (r *Remotes) Activate(ctx context.Context, binding string, revision uint64) error {
+	return r.each(func(gateway *Remote) error { return gateway.Activate(ctx, binding, revision) })
+}
 func (r *Remotes) Revoke(ctx context.Context, binding string) error {
 	return r.each(func(gateway *Remote) error { return gateway.Revoke(ctx, binding) })
 }

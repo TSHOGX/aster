@@ -92,6 +92,14 @@ func registerEgressCompilationTx(ctx context.Context, tx *sql.Tx, compilation eg
 	return nil
 }
 
+// ActivateExecutionRoutes reconciles service authority for an execution that is
+// already accepted. AcceptExecutionBinding activates this generation's reserved
+// routes in its own transaction, which is the normal path; this exists for the
+// case where a compilation becomes known to the product after acceptance, so a
+// reconciler can settle it without a fresh process.
+//
+// Both use the same predicate — a dormant route of this generation at the
+// accepted epoch — so neither can revive a revoked tombstone.
 func (s *Store) ActivateExecutionRoutes(ctx context.Context, session, generation, owner string, now time.Time) error {
 	if now.IsZero() {
 		now = time.Now().UTC()

@@ -12,6 +12,7 @@ import (
 	"harness-platform/orchestrator/internal/agentbridge"
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/driverstate"
+	"harness-platform/orchestrator/internal/egress"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/launchplan"
 	"harness-platform/orchestrator/internal/sandbox"
@@ -35,9 +36,13 @@ type Options struct {
 	// Content is every authored revision a launch may mount. It is published and
 	// verified before the server accepts work, so no session can reach a plan whose
 	// content this engine store has not established.
-	Content                                                                                []AuthoredContent
-	ContentBytes                                                                           int64
+	Content      []AuthoredContent
+	ContentBytes int64
+	// Services is the declared inventory this deployment composes per generation.
+	// An empty catalog means no session receives external service access.
+	Services                                                                               egress.Catalog
 	Routes                                                                                 execution.RouteRevoker
+	Activator                                                                              execution.RouteActivator
 	Grants                                                                                 execution.GrantRevoker
 	BackendName, OwnerUUID, PreparedRoot                                                   string
 	MaxActive, InventoryLimit                                                              int
@@ -98,10 +103,17 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	if err != nil {
 		return nil, err
 	}
+	var composer execution.ServiceComposer
+	if len(p.Services.Policies) != 0 {
+		if p.Activator == nil {
+			return nil, fmt.Errorf("declared services require a gateway route activator")
+		}
+		composer = store.ServiceComposer{Catalog: p.Services, Allocator: st}
+	}
 	lifetime, cancel := context.WithCancel(ctx)
 	hooks := app.ExecutionHooks()
 	launcher := agentbridge.Launcher{Backend: p.Backend, Store: st, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: hooks.BeforeComplete, AfterEventCommit: hooks.AfterEventCommit}
-	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
+	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, Activator: p.Activator, Services: composer, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
 	reader := sessionfiles.Reader{Repository: st, Backend: p.Backend}
 	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: uploads, MaxActive: p.MaxActive, Provisioner: controller}
 	inventory := sessionfiles.Scanner{Repository: st, Source: reader, Owner: owner, Limit: p.InventoryLimit, AfterCommit: hooks.AfterEventCommit}

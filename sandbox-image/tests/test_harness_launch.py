@@ -3,6 +3,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
@@ -96,3 +97,58 @@ class KhoraLauncherTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ServiceHostProjectionTests(unittest.TestCase):
+    def _hosts(self, body='127.0.0.1\tlocalhost\n'):
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        path = Path(directory) / 'hosts'
+        path.write_text(body)
+        return path
+
+    def test_projects_entitled_service_names(self):
+        path = self._hosts()
+        resolved = launch.project_service_hosts(
+            ['Model.Internal=10.80.0.1', 'data.internal=10.80.0.2'], path=path)
+        self.assertEqual(resolved, {'model.internal': '10.80.0.1', 'data.internal': '10.80.0.2'})
+        text = path.read_text()
+        self.assertIn('127.0.0.1\tlocalhost', text)
+        self.assertIn('10.80.0.1\tmodel.internal', text)
+        self.assertIn('10.80.0.2\tdata.internal', text)
+        # The block is rewritten whole, so a superseded generation's names cannot
+        # survive into the next launch.
+        launch.project_service_hosts(['other.internal=10.80.0.3'], path=path)
+        text = path.read_text()
+        self.assertNotIn('model.internal', text)
+        self.assertIn('10.80.0.3\tother.internal', text)
+        self.assertIn('127.0.0.1\tlocalhost', text)
+
+    def test_no_entitlement_leaves_only_image_hosts(self):
+        path = self._hosts()
+        launch.project_service_hosts(['model.internal=10.80.0.1'], path=path)
+        self.assertEqual(launch.project_service_hosts([], path=path), {})
+        self.assertEqual(path.read_text(), '127.0.0.1\tlocalhost\n')
+
+    def test_refuses_unusable_declarations(self):
+        path = self._hosts()
+        for entry in ('model.internal', '=10.80.0.1', 'model.internal=',
+                      'model.internal=10.80.0.1 extra', 'model.internal=not-an-ip',
+                      'model.internal=10.80.0.1:443', 'model.internal=10.80.0.256',
+                      'model.internal=010.80.0.1', 'bad_name=10.80.0.1',
+                      '-lead.internal=10.80.0.1'):
+            with self.assertRaises(ValueError, msg=entry):
+                launch.project_service_hosts([entry], path=path)
+        with self.assertRaises(ValueError):
+            launch.project_service_hosts(
+                ['model.internal=10.80.0.1', 'model.internal=10.80.0.2'], path=path)
+
+    def test_refuses_symlinked_host_file(self):
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        target = Path(directory) / 'real'
+        target.write_text('127.0.0.1\tlocalhost\n')
+        link = Path(directory) / 'hosts'
+        link.symlink_to(target)
+        with self.assertRaises(ValueError):
+            launch.project_service_hosts(['model.internal=10.80.0.1'], path=link)
