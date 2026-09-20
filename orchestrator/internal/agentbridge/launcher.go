@@ -54,6 +54,7 @@ func (l Launcher) connect(ctx context.Context, binding execution.Binding, reques
 	if l.Backend == nil || l.Store == nil || l.Receipts == nil || l.LeaseTTL <= 0 {
 		return nil, fmt.Errorf("agent bridge ports and lease TTL required")
 	}
+	binding.ProcessHandle = request.Handle
 	runCtx, cancel := context.WithCancel(ctx)
 	var stream sandbox.ProcessStream
 	var err error

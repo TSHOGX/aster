@@ -41,6 +41,9 @@ const labUserID = "lab"
 var ()
 
 type Server struct {
+	continuationAfter    string
+	workerObserver       func(string, error)
+	diagnostics          func(context.Context) (any, error)
 	retainedDrivers      map[agents.ID]bool
 	executionReconciler  interface{ Run(context.Context) error }
 	workspaceInventory   sessionInventoryScanner
@@ -259,6 +262,18 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin")
 	switch {
+	case path == "/diagnostics" && r.Method == http.MethodGet:
+		w.Header().Set("Cache-Control", "no-store")
+		if s.diagnostics == nil {
+			writeError(w, http.StatusServiceUnavailable, "diagnostics unavailable")
+			return
+		}
+		snapshot, err := s.diagnostics(r.Context())
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "diagnostics unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot)
 	case path == "/users" && r.Method == http.MethodGet:
 		names := s.creds.usernames()
 		users := make([]map[string]string, 0, len(names))
@@ -1547,4 +1562,9 @@ func (s *Server) getQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"soft_session_ceiling": s.cfg.MaxSessions, "active_sessions": count})
+}
+
+func (s *Server) SetWorkerObserver(observe func(string, error)) { s.workerObserver = observe }
+func (s *Server) SetDiagnostics(provider func(context.Context) (any, error)) {
+	s.diagnostics = provider
 }

@@ -29,6 +29,7 @@ type EventRepository interface {
 // process revalidation use separate durable work loops, so a failed environment
 // cannot prevent the cursor from catching up through its captured window.
 type EventReconciler struct {
+	Observe        func(error)
 	StoreID, Owner string
 	Source         sandbox.EventSource
 	Repository     EventRepository
@@ -108,6 +109,9 @@ func (r *EventReconciler) Run(ctx context.Context, interval, timeout time.Durati
 		action, cancel := context.WithTimeout(ctx, timeout)
 		err := r.Step(action)
 		cancel()
+		if r.Observe != nil {
+			r.Observe(err)
+		}
 		if err != nil && onError != nil && !errors.Is(err, context.Canceled) {
 			onError(err)
 		}

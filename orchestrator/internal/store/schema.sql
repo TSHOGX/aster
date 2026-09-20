@@ -326,6 +326,8 @@ CREATE TABLE execution_bindings (
   store_id TEXT NOT NULL,
   sandbox_id TEXT NOT NULL,
   process_handle TEXT NOT NULL DEFAULT '',
+  detached INTEGER NOT NULL DEFAULT 0 CHECK(detached IN (0,1)),
+  detach_reason TEXT NOT NULL DEFAULT '',
   epoch INTEGER NOT NULL CHECK(epoch>0),
   environment_fence INTEGER NOT NULL,
   owner TEXT NOT NULL,
@@ -1037,3 +1039,13 @@ CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
   INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
 END;
+
+CREATE TABLE worker_health (
+ name TEXT PRIMARY KEY,
+ owner TEXT NOT NULL,
+ state TEXT NOT NULL,
+ observed_at TEXT NOT NULL,
+ last_success_at TEXT NOT NULL,
+ error TEXT NOT NULL,
+ stale_after_ns INTEGER NOT NULL CHECK(stale_after_ns>0)
+);

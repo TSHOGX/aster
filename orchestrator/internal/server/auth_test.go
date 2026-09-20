@@ -242,3 +242,26 @@ func TestAdminFeatureFlagRequiresRoleAndAudits(t *testing.T) {
 		t.Fatalf("audit=%+v err=%v", entries, err)
 	}
 }
+
+func TestOperationalDiagnosticsRequiresAdministrator(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dir, "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := newAuthTestServer(t, dir, st, []config.AuthUser{{Username: "admin", PasswordHash: mustHash(t, "pw"), Role: "admin"}, {Username: "alice", PasswordHash: mustHash(t, "pw")}})
+	srv.SetDiagnostics(func(context.Context) (any, error) { return map[string]int{"pending": 1}, nil })
+	for user, want := range map[string]int{"alice": http.StatusForbidden, "admin": http.StatusOK} {
+		login := httptest.NewRecorder()
+		srv.issueAuthSession(login, httptest.NewRequest(http.MethodPost, "/api/login", nil), user)
+		request := httptest.NewRequest(http.MethodGet, "/api/admin/diagnostics", nil)
+		request.AddCookie(login.Result().Cookies()[0])
+		response := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("%s diagnostics: %d", user, response.Code)
+		}
+	}
+}

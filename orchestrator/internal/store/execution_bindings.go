@@ -174,7 +174,7 @@ func (s *Store) AcceptExecutionBinding(ctx context.Context, p execution.ObserveB
 	if invalidated != 0 {
 		return execution.ErrReadinessInvalidated
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch AND e.store_id=execution_bindings.store_id AND e.sandbox_id=execution_bindings.sandbox_id) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM engine_event_cursors c WHERE c.store_id=execution_bindings.store_id AND c.resync=1) AND NOT EXISTS(SELECT 1 FROM engine_backend_blocks k WHERE k.store_id=execution_bindings.store_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
+	result, err := tx.ExecContext(ctx, `UPDATE execution_bindings SET state='accepted',detached=0,detach_reason='' WHERE generation_id=? AND owner=? AND process_handle=? AND process_handle!='' AND epoch=? AND environment_fence=? AND state='starting' AND EXISTS(SELECT 1 FROM sandbox_environments e WHERE e.environment_id=execution_bindings.environment_id AND e.fence=execution_bindings.environment_fence AND e.epoch=execution_bindings.epoch AND e.store_id=execution_bindings.store_id AND e.sandbox_id=execution_bindings.sandbox_id) AND NOT EXISTS(SELECT 1 FROM environment_reconcile_requests r WHERE r.environment_id=execution_bindings.environment_id) AND NOT EXISTS(SELECT 1 FROM engine_event_cursors c WHERE c.store_id=execution_bindings.store_id AND c.resync=1) AND NOT EXISTS(SELECT 1 FROM engine_backend_blocks k WHERE k.store_id=execution_bindings.store_id) AND NOT EXISTS(SELECT 1 FROM environment_operations o WHERE o.environment_id=execution_bindings.environment_id AND o.state IN ('pending','issued','uncertain'))`, p.GenerationID, p.Owner, p.ProcessHandle, p.Epoch, p.EnvironmentFence)
 	if err != nil {
 		return err
 	}
@@ -311,6 +311,27 @@ func (s *Store) AssertExecutionAccepted(ctx context.Context, generation, owner s
 		return err
 	}
 	if err := acceptedExecutionTx(ctx, tx, binding.SessionID, generation, owner, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RecordExecutionDetachment requests reattachment without claiming that the
+// remote process stopped. Current process/owner fences reject late callbacks.
+func (s *Store) RecordExecutionDetachment(ctx context.Context, b execution.Binding, reason string) error {
+	if len(reason) > 2048 {
+		reason = reason[:2048]
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := assertOwnerTx(ctx, tx, ownerUUIDFromLeaseOwner(b.Owner)); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE execution_bindings SET detached=1,detach_reason=? WHERE generation_id=? AND owner=? AND store_id=? AND sandbox_id=? AND epoch=? AND process_handle=? AND state='accepted'`, reason, b.GenerationID, b.Owner, b.StoreID, b.SandboxID, b.Epoch, b.ProcessHandle)
+	if err != nil {
 		return err
 	}
 	return tx.Commit()

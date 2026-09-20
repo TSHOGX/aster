@@ -14,6 +14,7 @@ import (
 	"harness-platform/orchestrator/internal/driverstate"
 	"harness-platform/orchestrator/internal/egress"
 	"harness-platform/orchestrator/internal/execution"
+	"harness-platform/orchestrator/internal/health"
 	"harness-platform/orchestrator/internal/launchplan"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/server"
@@ -55,6 +56,8 @@ type Options struct {
 	OnError                                                                                func(string, error)
 }
 type Runtime struct {
+	Health       *health.Registry
+	store        *store.Store
 	Controller   *execution.Controller
 	Writer       *sessionfiles.Writer
 	Inventory    sessionfiles.Scanner
@@ -140,10 +143,18 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	}
 	launcher := agentbridge.Launcher{Backend: p.Backend, Store: st, Receipts: st, Commands: st, IdleReplay: st, ActiveReplay: st, Requests: st, LeaseTTL: p.LeaseTTL, AfterCommit: hooks.AfterCommit, BeforeComplete: beforeComplete, AfterEventCommit: hooks.AfterEventCommit}
 	controller := &execution.Controller{Repository: st, Backend: p.Backend, Agents: launcher, Plans: plans, BackendName: p.BackendName, LeaseTTL: p.LeaseTTL, MaxActive: p.MaxActive, Lifetime: lifetime, Routes: p.Routes, Activator: p.Activator, Connectivity: composer, GrantRevoker: p.Grants, RecoveryReader: agentbridge.RecoveryReader{Backend: p.Backend, Records: st, AfterEventCommit: hooks.AfterEventCommit}, RecoveryProjector: app, NativeRestorer: driverstate.Restorer{Backend: p.Backend}}
+	launcher.OnExit = controller.NotifyDetached
+	controller.Agents = launcher
+	progress := &health.Registry{}
+	observe := func(name string) func(error) {
+		return func(err error) { progress.Observe(name, err, p.ActionTimeout+2*p.InventoryInterval+time.Second) }
+	}
 	reader := sessionfiles.Reader{Repository: st, Backend: p.Backend}
 	writer := &sessionfiles.Writer{Repository: st, Backend: p.Backend, Lifecycle: p.Backend, Content: uploads, MaxActive: p.MaxActive, Provisioner: controller}
-	inventory := sessionfiles.Scanner{Repository: st, Source: reader, Owner: owner, Limit: p.InventoryLimit, AfterCommit: hooks.AfterEventCommit}
-	reconciler := &execution.Reconciler{Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: p.MaxActive, CaptureWindow: p.CaptureWindow, Interval: p.PollInterval, ActionTimeout: p.ActionTimeout, AfterWorkspace: inventory.ScanSession, AfterRetirement: hooks.AfterEventCommit, OnError: func(kind execution.ReconcileKind, id string, err error) {
+	inventory := sessionfiles.Scanner{Observe: observe("workspace_inventory"), Repository: st, Source: reader, Owner: owner, Limit: p.InventoryLimit, AfterCommit: hooks.AfterEventCommit}
+	reconciler := &execution.Reconciler{Observe: func(kind execution.ReconcileKind, err error) {
+		progress.Observe("execution."+string(kind), err, p.ActionTimeout+2*p.PollInterval+time.Second)
+	}, Repository: st, Controller: controller, Workspace: writer, Owner: owner, MaxActive: p.MaxActive, CaptureWindow: p.CaptureWindow, Interval: p.PollInterval, ActionTimeout: p.ActionTimeout, AfterWorkspace: inventory.ScanSession, AfterRetirement: hooks.AfterEventCommit, OnError: func(kind execution.ReconcileKind, id string, err error) {
 		if p.OnError != nil {
 			p.OnError(string(kind)+":"+id, err)
 		}
@@ -163,7 +174,10 @@ func Attach(ctx context.Context, app *server.Server, st *store.Store, p Options)
 	app.SetNativeStateValidator(func(ctx context.Context, input store.DriverStateValidationInput, turn int64) (workspace.File, error) {
 		return driverstate.ValidateRemote(ctx, input.CanonicalPayload, fmt.Sprint(turn), fmt.Sprintf("native-state-%s-%d", input.Evidence.GenerationID, turn), guest.Files{Backend: p.Backend, Reference: input.Reference, Root: "/root/.pi/agent/sessions"})
 	})
-	return &Runtime{Prepared: &prepared.Collector{Store: uploads, Repository: st, Owner: owner}, EngineEvents: &execution.EventReconciler{StoreID: identity.StoreID, Owner: owner, Source: p.Backend, Repository: st}, Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
+	app.SetWorkerObserver(func(name string, err error) {
+		progress.Observe(name, err, p.ActionTimeout+2*p.PollInterval+time.Second)
+	})
+	return &Runtime{Health: progress, store: st, Prepared: &prepared.Collector{Observe: observe("prepared_content"), Store: uploads, Repository: st, Owner: owner}, EngineEvents: &execution.EventReconciler{Observe: observe("engine_events"), StoreID: identity.StoreID, Owner: owner, Source: p.Backend, Repository: st}, Controller: controller, Writer: writer, Inventory: inventory, Reconciler: reconciler, ctx: lifetime, cancel: cancel, options: p}, nil
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
@@ -177,8 +191,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
-	results := make(chan error, 5)
-	workers := 4
+	results := make(chan error, 6)
+	workers := 5
+	go func() { results <- r.reportHealth(r.ctx) }()
 	if r.options.GatewayMaintenance != nil {
 		workers++
 		go func() {
@@ -219,3 +234,21 @@ func (r *Runtime) Run(ctx context.Context) error {
 	return err
 }
 func (r *Runtime) Close() error { r.cancel(); return r.Controller.Close() }
+
+func (r *Runtime) reportHealth(ctx context.Context) error {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			action, cancel := context.WithTimeout(ctx, r.options.ActionTimeout)
+			err := r.store.RecordWorkerHealth(action, r.options.OwnerUUID, r.Health.Snapshot())
+			cancel()
+			if err != nil && ctx.Err() == nil && r.options.OnError != nil {
+				r.options.OnError("health", err)
+			}
+		}
+	}
+}

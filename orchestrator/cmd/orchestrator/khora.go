@@ -47,6 +47,15 @@ func constructKhoraApplication(ctx context.Context, cfg config.Config, db *store
 		gateways.Close()
 		return nil, err
 	}
+	app.SetDiagnostics(func(ctx context.Context) (any, error) {
+		action, cancel := context.WithTimeout(ctx, deployment.ActionTimeout)
+		defer cancel()
+		snapshot, err := db.OperationalSnapshot(action, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"product": snapshot, "workers": runtime.Health.Snapshot(), "gateways": gateways.Status(), "max_active": deployment.MaxActive}, nil
+	})
 	var listener net.Listener
 	var authorization *http.Server
 	if deployment.AuthorizationSocket != "" {

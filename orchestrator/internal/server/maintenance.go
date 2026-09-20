@@ -47,9 +47,6 @@ func (s *Server) handleBridgeCommittedEnvelope(ctx context.Context, envelope bri
 		s.publishSessionRuntimeFromStore(ctx, envelope.SessionID)
 	case bridge.TypeAckTurnCompleted:
 		s.handleBridgeCompletion(ctx, envelope)
-		// See turn_resume.go: continue a turn whose model call died on a
-		// transient upstream fault, rather than leaving the reply truncated.
-		s.maybeResumeFailedTurn(ctx, envelope)
 	}
 }
 

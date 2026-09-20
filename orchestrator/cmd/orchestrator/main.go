@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "help") {
-		fmt.Println("orchestrator [--config PATH] [serve|version|user]")
+		fmt.Println("orchestrator [--config PATH] [serve|version|user|diagnostics]")
 		return
 	}
 	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
@@ -54,6 +54,12 @@ func main() {
 	// banner below is only logged on the full server boot path.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "diagnostics":
+			if err := runDiagnostics(ctx, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			return
 		case "user":
 			if err := runUser(ctx, os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)

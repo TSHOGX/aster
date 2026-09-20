@@ -26,6 +26,9 @@ func (s Scanner) Run(ctx context.Context, interval, timeout time.Duration, onErr
 	after := ""
 	for {
 		sessions, err := s.Repository.WorkspaceInventorySessions(ctx, after, 32)
+		if s.Observe != nil {
+			s.Observe(err)
+		}
 		if err != nil {
 			return err
 		}
@@ -36,6 +39,9 @@ func (s Scanner) Run(ctx context.Context, interval, timeout time.Duration, onErr
 			scan, cancel := context.WithTimeout(ctx, timeout)
 			err := s.ScanSession(scan, session)
 			cancel()
+			if s.Observe != nil {
+				s.Observe(err)
+			}
 			if err != nil && onError != nil {
 				onError(session, err)
 			}
@@ -55,6 +61,7 @@ func (s Scanner) Run(ctx context.Context, interval, timeout time.Duration, onErr
 }
 
 type Scanner struct {
+	Observe     func(error)
 	Repository  workspace.InventoryRepository
 	Source      InventorySource
 	Owner       string

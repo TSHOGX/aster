@@ -56,6 +56,7 @@ type WorkspaceRecovery interface {
 // other loops keep progressing. Keyset pagination prevents failed old rows from
 // permanently hiding newer work. The product owner fence remains authoritative.
 type Reconciler struct {
+	Observe                                func(ReconcileKind, error)
 	Repository                             ReconcileRepository
 	Controller                             ReconcileController
 	Workspace                              WorkspaceRecovery
@@ -94,6 +95,9 @@ func (r *Reconciler) Run(ctx context.Context) error {
 				pageCtx, cancel := context.WithTimeout(ctx, r.ActionTimeout)
 				items, err := r.Repository.PendingExecutionWork(pageCtx, kind, r.Owner, after, 16)
 				cancel()
+				if r.Observe != nil {
+					r.Observe(kind, err)
+				}
 				if err != nil {
 					r.report(kind, "", err)
 				} else {
@@ -110,8 +114,14 @@ func (r *Reconciler) Run(ctx context.Context) error {
 						}
 						after = item.Key
 						action, cancel := context.WithTimeout(ctx, r.ActionTimeout)
+						if r.Observe != nil {
+							r.Observe(kind, nil)
+						}
 						err := r.apply(action, kind, item)
 						cancel()
+						if r.Observe != nil {
+							r.Observe(kind, err)
+						}
 						if err != nil {
 							r.report(kind, item.Key, err)
 						}

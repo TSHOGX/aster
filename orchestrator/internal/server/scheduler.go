@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"harness-platform/orchestrator/internal/events"
@@ -111,8 +112,12 @@ func (s *Server) runScheduler(ctx context.Context) {
 	// worker to re-read authoritative state at the moment it starts, so the
 	// database stays the single source of truth for "should this still run".
 	jobs := make(chan string, workers*2)
+	var pool sync.WaitGroup
+	defer pool.Wait()
 	for i := 0; i < workers; i++ {
+		pool.Add(1)
 		go func() {
+			defer pool.Done()
 			for {
 				select {
 				case runID := <-jobs:
@@ -227,12 +232,18 @@ func (s *Server) runScheduler(ctx context.Context) {
 	}
 	s.recoverStaleScheduleCursors(ctx)
 	dispatch()
+	if s.workerObserver != nil {
+		s.workerObserver("scheduler", nil)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			dispatch()
+			if s.workerObserver != nil {
+				s.workerObserver("scheduler", nil)
+			}
 		case <-s.schedulerWake:
 			dispatch()
 		case <-ctx.Done():

@@ -19,6 +19,7 @@ type ControllerRepository interface {
 	AdoptionRepository
 	TurnCommandRepository
 	AssertExecutionOwner(context.Context, string) error
+	RecordExecutionDetachment(context.Context, Binding, string) error
 	ExecutionSession(context.Context, string) (Session, error)
 	AdoptStartingExecution(context.Context, string, string, time.Duration) (Binding, error)
 	RecordStartingProcessExit(context.Context, string, string, sandbox.ProcessReference, string) error
@@ -656,4 +657,30 @@ func (c *Controller) applyGenerationConfiguration(ctx context.Context, environme
 
 func (c *Controller) InspectEnvironment(ctx context.Context, id, owner string) (sandbox.Observation, error) {
 	return InspectEnvironment(ctx, c.Repository, c.Backend, id, owner)
+}
+
+// NotifyDetached records loss of the currently attached stream immediately.
+// A delayed exit from an older attachment cannot invalidate its replacement.
+func (c *Controller) NotifyDetached(binding Binding, cause error) {
+	worker, _, err := c.session(binding.SessionID)
+	if err != nil {
+		return
+	}
+	worker.mu.Lock()
+	defer worker.mu.Unlock()
+	if worker.connection == nil || worker.binding.GenerationID != binding.GenerationID || worker.binding.Owner != binding.Owner {
+		return
+	}
+	select {
+	case <-worker.connection.Done():
+	default:
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Lifetime), 5*time.Second)
+	defer cancel()
+	reason := "execution stream detached"
+	if cause != nil {
+		reason = cause.Error()
+	}
+	_ = c.Repository.RecordExecutionDetachment(ctx, worker.binding, reason)
 }

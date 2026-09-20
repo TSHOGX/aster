@@ -49,6 +49,7 @@ type messageStore interface {
 	// ResumeFailedTurn appends a continuation turn for a turn that failed on a
 	// transient upstream fault. It writes no message row: the user did not type
 	// the continuation prompt.
+	PendingTurnContinuations(context.Context, string, time.Time, int) ([]store.TurnContinuation, error)
 	ResumeFailedTurn(context.Context, store.ResumeFailedTurnParams) (store.ResumeFailedTurnResult, error)
 }
 

@@ -515,3 +515,7 @@ SSE is not a completeness guarantee; clients reconcile against HTTP windows.
 
 Message pages report database and encoding durations through `Server-Timing`.
 The routes use the current product schema.
+
+`GET /api/admin/diagnostics` is administrator-only and returns product queue ages,
+worker freshness, pipeline errors, capacity accounting and gateway control status.
+It uses `Cache-Control: no-store`; it is not a session-sharing endpoint.

@@ -101,6 +101,21 @@ WHERE id = ?
 		return ResumeFailedTurnResult{}, err
 	}
 
+	var superseded int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND sequence>?`, p.SessionID, sequence).Scan(&superseded); err != nil {
+		return ResumeFailedTurnResult{}, err
+	}
+	if superseded != 0 {
+		return ResumeFailedTurnResult{}, ErrTurnNotResumable
+	}
+	var generation, owner string
+	if err := tx.QueryRowContext(ctx, `SELECT b.generation_id,b.owner FROM execution_bindings b JOIN sessions s ON s.active_generation_id=b.generation_id WHERE s.id=? AND b.state='accepted'`, p.SessionID).Scan(&generation, &owner); err != nil {
+		return ResumeFailedTurnResult{}, ErrTurnNotResumable
+	}
+	if err := acceptedExecutionTx(ctx, tx, p.SessionID, generation, owner, p.Now); err != nil {
+		return ResumeFailedTurnResult{}, ErrTurnNotResumable
+	}
+
 	// Continuations chain: resuming a resume increments the same budget, so a
 	// persistent fault cannot walk the session forward indefinitely one hop at a
 	// time.
@@ -225,4 +240,34 @@ func resumeAttemptNumber(retryPolicy sql.NullString) (int, error) {
 		return 0, fmt.Errorf("malformed resume retry policy %q", raw)
 	}
 	return previous + 1, nil
+}
+
+type TurnContinuation struct {
+	SessionID string
+	TurnID    int64
+}
+
+func (s *Store) PendingTurnContinuations(ctx context.Context, after string, cutoff time.Time, limit int) ([]TurnContinuation, error) {
+	if limit <= 0 || limit > 128 {
+		limit = 32
+	}
+	rows, err := s.reader().QueryContext(ctx, `SELECT t.session_id,t.id FROM turns t JOIN sessions s ON s.id=t.session_id JOIN execution_bindings b ON b.generation_id=s.active_generation_id
+ WHERE t.session_id>? AND t.status='failed' AND t.completed_at<=? AND t.error_class IN ('upstream_rate_limit','proxy_context_lost','upstream_timeout','upstream_5xx')
+ AND b.state='accepted' AND b.detached=0 AND s.status IN ('running_idle','running_active')
+ AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.session_id=t.session_id AND newer.sequence>t.sequence)
+ AND NOT EXISTS(SELECT 1 FROM session_retirements r WHERE r.session_id=t.session_id)
+ ORDER BY t.session_id LIMIT ?`, after, formatTime(cutoff), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var candidates []TurnContinuation
+	for rows.Next() {
+		var candidate TurnContinuation
+		if err := rows.Scan(&candidate.SessionID, &candidate.TurnID); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, rows.Err()
 }

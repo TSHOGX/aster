@@ -16,7 +16,8 @@ func (s *Server) RunRetainedMaintenance(ctx context.Context, interval, timeout t
 		return fmt.Errorf("retained maintenance requires owner, controller, bounds and indefinite retention")
 	}
 	tasks := map[string]func(context.Context) error{
-		"projection": func(ctx context.Context) error { return s.projectBridgeRecords(ctx, 128) },
+		"continuations": s.resumeDueTurns,
+		"projection":    func(ctx context.Context) error { return s.projectBridgeRecords(ctx, 128) },
 		"product_cleanup": func(ctx context.Context) error {
 			now := time.Now().UTC()
 			if _, err := s.store.SweepExpiredAuthSessions(ctx, now); err != nil {
@@ -47,6 +48,9 @@ func (s *Server) RunRetainedMaintenance(ctx context.Context, interval, timeout t
 				action, cancel := context.WithTimeout(ctx, timeout)
 				err := task(action)
 				cancel()
+				if s.workerObserver != nil {
+					s.workerObserver(name, err)
+				}
 				if err != nil && !errors.Is(err, context.Canceled) {
 					s.log.Warn("retained product maintenance failed", "stage", name, "error", err)
 				}

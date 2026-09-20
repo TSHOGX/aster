@@ -365,6 +365,15 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
+	diagnostics := exec.CommandContext(ctx, binary, "diagnostics", "--db", dbPath)
+	output, err := diagnostics.CombinedOutput()
+	if err != nil {
+		t.Fatalf("read-only diagnostics: %v %s", err, output)
+	}
+	var healthSnapshot store.OperationalSnapshot
+	if err := json.Unmarshal(output, &healthSnapshot); err != nil || len(healthSnapshot.Workers) == 0 || healthSnapshot.Capacity["retained_environments"] < 1 {
+		t.Fatalf("daemon diagnostics incomplete: %s %v", output, err)
+	}
 	stop()
 	start()
 	send()

@@ -180,6 +180,9 @@ func (s *Server) projectBridgeRecord(ctx context.Context, record store.BridgeRec
 }
 
 func (s *Server) projectBeforeBridgeCompletion(ctx context.Context, p *store.CompleteTurnParams) error {
+	if p.TerminalStatus == "failed" && p.ErrorClass == "agent_execution_failed" {
+		p.ErrorClass = piErrorClass(p.Error)
+	}
 	if err := s.store.PrepareBridgeCompletion(ctx, *p); err != nil {
 		return err
 	}

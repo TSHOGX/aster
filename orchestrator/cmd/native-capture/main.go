@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/engineconfig"
+	"harness-platform/orchestrator/internal/health"
 	"harness-platform/orchestrator/internal/nativecapture"
 	capturesource "harness-platform/orchestrator/internal/nativecapture/guest"
 	"harness-platform/orchestrator/internal/sandbox/khora"
@@ -70,10 +71,15 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	worker := nativecapture.Worker{Repository: st, Source: capturesource.Source{Backend: backend}, Sink: trajectory.NewCapturer(*root), ItemTimeout: *itemTimeout}
+	progress := &health.Registry{}
 	for {
+		progress.Observe("native_capture", nil, *timeout+2**interval)
+		_ = st.RecordWorkerHealth(ctx, "", progress.Snapshot())
 		batch, cancel := context.WithTimeout(ctx, *timeout)
 		count, err := worker.Step(batch, 32)
 		cancel()
+		progress.Observe("native_capture", err, *timeout+2**interval)
+		_ = st.RecordWorkerHealth(ctx, "", progress.Snapshot())
 		if ctx.Err() != nil {
 			return nil
 		}

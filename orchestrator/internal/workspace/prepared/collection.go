@@ -89,6 +89,7 @@ type Collection struct {
 // cursor between steps. A new sweep rescans from the start: unlinking while
 // enumerating may defer an entry until the next sweep, never lose its data.
 type Collector struct {
+	Observe    func(error)
 	Store      *Store
 	Repository References
 	Owner      string
@@ -207,6 +208,9 @@ func (c *Collector) Run(ctx context.Context, interval, timeout time.Duration, on
 		action, cancel := context.WithTimeout(ctx, timeout)
 		_, err := c.Step(action, 128)
 		cancel()
+		if c.Observe != nil {
+			c.Observe(err)
+		}
 		if err != nil && onError != nil && !errors.Is(err, context.Canceled) {
 			onError(err)
 		}
