@@ -108,3 +108,65 @@ External evaluation/evolution integration requires explicit `EVOLUTION_*`
 variables. It has no checked-in host path and is disabled when configuration is
 absent. Its implementation boundary and allowlist behavior are documented in
 [memory and knowledge](agents-kb.md).
+
+## Retained Khora daemon
+
+Set `HARNESS_KHORA_DEPLOYMENT` to a version-1 JSON deployment file to select the
+retained backend in `orchestrator serve`. Missing or invalid files are fatal; there
+is no fallback to the embedded runtime. The application YAML still configures
+HTTP/authentication, sharing, scheduler and product retention. Session retention
+must be zero. Startup rejects any database containing sessions pinned to the
+legacy backend; this mode does not migrate them implicitly.
+
+The JSON document requires these fields:
+
+| Field | Value |
+|---|---|
+| `version` | `1` |
+| `backend_name` | Stable application name for the engine |
+| `engine.endpoint`, `engine.store_id` | Engine origin and explicit durable store pin |
+| `manifest`, `manifest_digest` | Exported template manifest file and canonical `sha256:` digest |
+| `plans` | Driver IDs mapped to immutable launch plans |
+| `gateways` | One to sixteen gateway control endpoints |
+| `authorization` | Application authorization socket and kernel peer/group configuration |
+| `prepared_root` | Directory for prepared upload content |
+| `max_active`, `inventory_limit` | Positive limits; inventory maximum is 10000 |
+| `lease_ttl`, `poll_interval`, `event_interval`, `action_timeout` | Positive duration strings |
+| `capture_window`, `inventory_interval`, `idle_interval`, `idle_threshold` | Positive duration strings |
+
+Each plan requires `template`, `cpu_millis`, `memory_bytes`, `disk_bytes`,
+`workspace_bytes` and `journal_bytes`. Resource values must be positive. Optional
+`config_volume` mounts an existing immutable volume at `/harness-config`;
+`assets_volume` mounts one at `/root/.agents`. Pi requires a config volume. Optional
+`network` uses the application sandbox vocabulary (`Allow` tuples and `Via`
+routes); `environment` is limited to the launch-plan allowlist. The manifest
+validator checks driver, bridge, engine and installed-component compatibility
+before any backend connection. Spec digests are computed from the validated
+plans, not supplied in JSON.
+
+Each gateway entry has `id`, `protocol`, `socket` and explicit `peer_uid`.
+`authorization` has `socket`, explicit `peer_uid` and `group`. All configured
+gateways must run under that authorization peer UID. IDs and socket paths must be
+unique, including the application's authorization socket. See the
+[gateway control contract](gateway-contract.md) for handshake and drain semantics.
+
+Relative paths resolve beside the deployment file. Plain HTTP requires a loopback
+IP literal. HTTPS requires `engine.ca_file`, `engine.client_cert` and
+`engine.client_key`; the client validates the server and presents its certificate.
+Engine origins cannot contain credentials, paths, queries or fragments. Redirects
+and HTTP proxy environment settings are disabled for engine/control connections.
+Never point `manifest` at an engine-owned mutable template directory; use the
+exported release artifact.
+
+This mode runs retained execution, event reconciliation, workspace inventory,
+product maintenance, scheduler and idle pause services. It serves the new Unix
+request-authorization contract and uses remote gateway drain acknowledgments. It
+does not construct the embedded runtime, local artifact watcher, checkpoint
+maintenance or source-IP proxy-correlation listener. Shutdown detaches application
+connections and keeps retained sandboxes available for adoption/resume.
+
+An actual daemon subprocess acceptance test covers HTTP upload/turns, automatic
+pause and restart/resume without creating host runtime directories. Existing
+config/asset volumes must already be published. Production model/Doris/OBS route
+allocation, gateway protocol integration, deletion parity and migration remain
+separate work; selecting this mode does not claim those cutover gates are met.

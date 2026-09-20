@@ -20,6 +20,7 @@ import (
 	"harness-platform/orchestrator/internal/events"
 	"harness-platform/orchestrator/internal/memory"
 	"harness-platform/orchestrator/internal/memorystore"
+	"harness-platform/orchestrator/internal/retainedapp"
 	"harness-platform/orchestrator/internal/runtime"
 	"harness-platform/orchestrator/internal/schemastate"
 	"harness-platform/orchestrator/internal/server"
@@ -27,6 +28,7 @@ import (
 	"harness-platform/orchestrator/internal/store"
 	"harness-platform/orchestrator/internal/trajectory"
 	localworkspace "harness-platform/orchestrator/internal/workspace/local"
+	"net"
 )
 
 // version is injected at build time via -ldflags, e.g.:
@@ -126,7 +128,14 @@ func main() {
 		log.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
-	if _, err := config.ValidateIsolationRoots(cfg.IsolationRoots()); err != nil {
+	var khoraDeployment *retainedapp.Deployment
+	if path := os.Getenv("HARNESS_KHORA_DEPLOYMENT"); path != "" {
+		khoraDeployment, err = retainedapp.LoadDeployment(path)
+		if err != nil {
+			log.Error("invalid Khora deployment", "error", err)
+			os.Exit(1)
+		}
+	} else if _, err := config.ValidateIsolationRoots(cfg.IsolationRoots()); err != nil {
 		log.Error("invalid isolation roots", "error", err)
 		os.Exit(1)
 	}
@@ -177,88 +186,102 @@ func main() {
 	memoryIngest := memorystore.NewIngestor(memoryDB, controlsource.New(db))
 	var app *server.Server
 	var watcher *artifacts.Watcher
-	startup, err := runStartupRuntimeRecovery(ctx, cfg, owner.UUID, startupRuntimeRecoveryHooks{
-		ClearActiveSessionExpiry: db.ClearActiveSessionExpiry,
-		ConstructRuntime: func() error {
-			rt := runtime.New(runtime.Config{
-				RunscRoot:               cfg.RunscRoot,
-				RunscNetwork:            cfg.RunscNetwork,
-				RunscOverlay2:           cfg.RunscOverlay2,
-				SessionsRoot:            cfg.SessionsRoot,
-				AgentHomesRoot:          cfg.AgentHomesRoot,
-				CheckpointsRoot:         cfg.CheckpointsRoot,
-				BundleRoot:              cfg.BundleRoot,
-				RootFSPath:              cfg.RootFSPath,
-				ResolverPath:            os.Getenv("HARNESS_RESOLV_CONF"),
-				AgentsKBRoot:            cfg.AgentsKBRoot,
-				SandboxDataProxyAliases: sandboxDataProxyAliases(cfg.Harness),
-				ObsGateway:              obsGatewayConfig(cfg.Harness),
-				DefaultAgent:            cfg.DefaultAgent,
-				SandboxUID:              cfg.Harness.SandboxIdentity.UID,
-				SandboxGID:              cfg.Harness.SandboxIdentity.GID,
-				SandboxSupplementalGIDs: append([]int(nil), cfg.Harness.SandboxIdentity.SupplementalGIDs...),
-				RunDir:                  cfg.Harness.RunDir,
-				PreStartProbeAttempts:   cfg.Harness.Probe.PreStartAttempts,
-				PreStartProbeInterval:   cfg.Harness.Probe.PreStartInterval.Duration,
-				ProbeHealthzStatuses:    cfg.Harness.Probe.AcceptStatus.GetHealthz,
-				BridgeHeartbeat:         cfg.Harness.Bridge.HeartbeatInterval.Duration,
-				BridgePollInterval:      cfg.Harness.Bridge.PollInterval.Duration,
-				CommandTimeout:          cfg.Harness.Runtime.CommandTimeout.Duration,
-				SandboxMemoryLimitBytes: cfg.Harness.Runtime.SandboxMemoryLimitBytes,
-				SandboxPidsLimit:        cfg.Harness.Runtime.SandboxPidsLimit,
-			})
-			hub := events.NewHub()
-			volumeConfig, err := dataVolumeProvisionerConfig(cfg)
-			if err != nil {
-				return err
-			}
-			watcher = artifacts.New(volumeConfig, db, hub, log)
-			app = server.New(cfg, db, rt, watcher, hub, log)
-			app.SetOwnerUUID(owner.UUID)
-			// The runtime reports every `runsc run` exit here; see
-			// server.HandleSandboxExit. Wired after New because the handler needs
-			// the store and the event hub the server owns.
-			rt.SetContainerExitHandler(app.HandleSandboxExit)
-			app.SetVersion(version)
-			app.SetBuildCommit(commit)
-			// Snapshots for public share links. A failure here is fatal rather
-			// than degrading to text-only links: the alternative is a deployment
-			// that silently rejects every file share with a 503.
-			shareBlobs, err := shareblob.New(cfg.ShareBlobRoot)
-			if err != nil {
-				return fmt.Errorf("open share blob store: %w", err)
-			}
-			app.SetShareBlobStore(shareBlobs)
-			// Per-entry KB review. Injected here (not in server.New) because the
-			// KB writer and the memory DB are both optional: with no KB root
-			// configured the review endpoints report 503 rather than the process
-			// refusing to start.
-			app.SetKBReview(memory.NewKB(cfg.AgentsKBRoot), memoryDB)
-			return nil
-		},
-		RecoverExpiredRuntimeResources: func(ctx context.Context, now time.Time) (store.StartupRecoveryResult, error) {
-			return app.RecoverExpiredRuntimeResources(ctx, now)
-		},
-		ReapResources: db.ReapResources,
-		DestroyReclaimableGenerationResources: func(ctx context.Context, now time.Time) {
-			app.DestroyReclaimableGenerationResources(ctx, now)
-		},
-	})
+	var retained *khoraApplication
+	if khoraDeployment != nil {
+		retained, err = constructKhoraApplication(ctx, cfg, db, owner.UUID, khoraDeployment, log)
+		if err != nil {
+			log.Error("failed Khora startup", "error", err)
+			os.Exit(1)
+		}
+		defer retained.Close()
+		app = retained.app
+	} else {
+		startup, err := runStartupRuntimeRecovery(ctx, cfg, owner.UUID, startupRuntimeRecoveryHooks{
+			ClearActiveSessionExpiry: db.ClearActiveSessionExpiry,
+			ConstructRuntime: func() error {
+				rt := runtime.New(runtime.Config{
+					RunscRoot:               cfg.RunscRoot,
+					RunscNetwork:            cfg.RunscNetwork,
+					RunscOverlay2:           cfg.RunscOverlay2,
+					SessionsRoot:            cfg.SessionsRoot,
+					AgentHomesRoot:          cfg.AgentHomesRoot,
+					CheckpointsRoot:         cfg.CheckpointsRoot,
+					BundleRoot:              cfg.BundleRoot,
+					RootFSPath:              cfg.RootFSPath,
+					ResolverPath:            os.Getenv("HARNESS_RESOLV_CONF"),
+					AgentsKBRoot:            cfg.AgentsKBRoot,
+					SandboxDataProxyAliases: sandboxDataProxyAliases(cfg.Harness),
+					ObsGateway:              obsGatewayConfig(cfg.Harness),
+					DefaultAgent:            cfg.DefaultAgent,
+					SandboxUID:              cfg.Harness.SandboxIdentity.UID,
+					SandboxGID:              cfg.Harness.SandboxIdentity.GID,
+					SandboxSupplementalGIDs: append([]int(nil), cfg.Harness.SandboxIdentity.SupplementalGIDs...),
+					RunDir:                  cfg.Harness.RunDir,
+					PreStartProbeAttempts:   cfg.Harness.Probe.PreStartAttempts,
+					PreStartProbeInterval:   cfg.Harness.Probe.PreStartInterval.Duration,
+					ProbeHealthzStatuses:    cfg.Harness.Probe.AcceptStatus.GetHealthz,
+					BridgeHeartbeat:         cfg.Harness.Bridge.HeartbeatInterval.Duration,
+					BridgePollInterval:      cfg.Harness.Bridge.PollInterval.Duration,
+					CommandTimeout:          cfg.Harness.Runtime.CommandTimeout.Duration,
+					SandboxMemoryLimitBytes: cfg.Harness.Runtime.SandboxMemoryLimitBytes,
+					SandboxPidsLimit:        cfg.Harness.Runtime.SandboxPidsLimit,
+				})
+				hub := events.NewHub()
+				volumeConfig, err := dataVolumeProvisionerConfig(cfg)
+				if err != nil {
+					return err
+				}
+				watcher = artifacts.New(volumeConfig, db, hub, log)
+				app = server.New(cfg, db, rt, watcher, hub, log)
+				app.SetOwnerUUID(owner.UUID)
+				// The runtime reports every `runsc run` exit here; see
+				// server.HandleSandboxExit. Wired after New because the handler needs
+				// the store and the event hub the server owns.
+				rt.SetContainerExitHandler(app.HandleSandboxExit)
+				return nil
+			},
+			RecoverExpiredRuntimeResources: func(ctx context.Context, now time.Time) (store.StartupRecoveryResult, error) {
+				return app.RecoverExpiredRuntimeResources(ctx, now)
+			},
+			ReapResources: db.ReapResources,
+			DestroyReclaimableGenerationResources: func(ctx context.Context, now time.Time) {
+				app.DestroyReclaimableGenerationResources(ctx, now)
+			},
+		})
+		if err != nil {
+			log.Error("failed startup runtime recovery", "error", err)
+			os.Exit(1)
+		}
+		if startup.ClearedActiveSessionExpiries > 0 {
+			log.Info("cleared active session expiry", "sessions", startup.ClearedActiveSessionExpiries)
+		}
+	}
+	app.SetVersion(version)
+	app.SetBuildCommit(commit)
+	// Snapshots for public share links. A failure here is fatal rather
+	// than degrading to text-only links: the alternative is a deployment
+	// that silently rejects every file share with a 503.
+	shareBlobs, err := shareblob.New(cfg.ShareBlobRoot)
 	if err != nil {
-		log.Error("failed startup runtime recovery", "error", err)
+		log.Error("open share blob store", "error", err)
 		os.Exit(1)
 	}
-	if startup.ClearedActiveSessionExpiries > 0 {
-		log.Info("cleared active session expiry", "sessions", startup.ClearedActiveSessionExpiries)
-	}
+	app.SetShareBlobStore(shareBlobs)
+	// Per-entry KB review. Injected here (not in server.New) because the
+	// KB writer and the memory DB are both optional: with no KB root
+	// configured the review endpoints report 503 rather than the process
+	// refusing to start.
+	app.SetKBReview(memory.NewKB(cfg.AgentsKBRoot), memoryDB)
 	ownerHeartbeatErr := db.StartOwnerHeartbeat(ctx, owner)
 	if err := db.EnsureUser(ctx, "lab", "Lab User"); err != nil {
 		log.Error("failed to ensure lab user", "error", err)
 		os.Exit(1)
 	}
-	if err := os.MkdirAll(cfg.AgentHomesRoot, 0o755); err != nil {
-		log.Error("failed to create agent homes root", "error", err)
-		os.Exit(1)
+	if retained == nil {
+		if err := os.MkdirAll(cfg.AgentHomesRoot, 0o755); err != nil {
+			log.Error("failed to create agent homes root", "error", err)
+			os.Exit(1)
+		}
 	}
 	if err := ensureAgentsKB(cfg.AgentsKBRoot, agentsKBSeedDir(cfg.RepoRoot)); err != nil {
 		log.Error("failed to ensure agents knowledge base", "error", err)
@@ -272,23 +295,37 @@ func main() {
 		}
 	}()
 
-	go func() {
-		if err := watcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("artifact watcher stopped", "error", err)
-		}
-	}()
+	var retainedDone chan error
+	if retained != nil {
+		retainedDone = make(chan error, 1)
+		go func() {
+			err := retained.Run(ctx)
+			retainedDone <- err
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("Khora services stopped", "error", err)
+				stop()
+			}
+		}()
+	} else {
+		go func() {
+			if err := watcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("artifact watcher stopped", "error", err)
+			}
+		}()
 
-	// Start idle session monitoring
-	go func() {
-		if err := app.MonitorIdleSessions(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("idle session monitor stopped", "error", err)
-		}
-	}()
-	go func() {
-		if err := app.RunMaintenance(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("maintenance stopped", "error", err)
-		}
-	}()
+		// Start idle session monitoring
+		go func() {
+			if err := app.MonitorIdleSessions(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("idle session monitor stopped", "error", err)
+			}
+		}()
+		go func() {
+			if err := app.RunMaintenance(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("maintenance stopped", "error", err)
+			}
+		}()
+
+	}
 
 	// Nightly trajectory-distillation loop: normalize session trajectories,
 	// extract memory/skills via the configured LLM, and publish promoted
@@ -300,7 +337,7 @@ func main() {
 	// out-of-band (e.g. a scheduled overnight job) without the server's own timer
 	// competing for the DB or firing an expensive re-harvest during the day.
 	if !cfg.MemoryLLM.Enabled {
-		log.Info("nightly distillation loop disabled (memory-llm enabled:false); KB mount still served")
+		log.Info("nightly distillation loop disabled (memory-llm enabled:false)")
 	} else if pipeline := memory.NewPipeline(memory.PipelineOptions{
 		Store:  memoryDB,
 		Ingest: memoryIngest,
@@ -344,11 +381,16 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MiB, well above any legitimate header set
 	}
-	proxyCorrelationServer := app.ProxyCorrelationServer()
-	proxyCorrelationListener, proxyCorrelationSocket, err := app.ListenProxyCorrelation()
-	if err != nil {
-		log.Error("failed to listen on proxy correlation socket", "error", err)
-		os.Exit(1)
+	var proxyCorrelationServer *http.Server
+	var proxyCorrelationListener net.Listener
+	var proxyCorrelationSocket string
+	if retained == nil {
+		proxyCorrelationServer = app.ProxyCorrelationServer()
+		proxyCorrelationListener, proxyCorrelationSocket, err = app.ListenProxyCorrelation()
+		if err != nil {
+			log.Error("failed to listen on proxy correlation socket", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	go func() {
@@ -358,13 +400,16 @@ func main() {
 			stop()
 		}
 	}()
-	go func() {
-		log.Info("proxy correlation listening", "socket", proxyCorrelationSocket)
-		if err := proxyCorrelationServer.Serve(proxyCorrelationListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("proxy correlation server stopped", "error", err)
-			stop()
-		}
-	}()
+	if retained == nil {
+		go func() {
+			log.Info("proxy correlation listening", "socket", proxyCorrelationSocket)
+			if err := proxyCorrelationServer.Serve(proxyCorrelationListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("proxy correlation server stopped", "error", err)
+				stop()
+			}
+		}()
+
+	}
 
 	<-ctx.Done()
 	// net/http.Server.Shutdown does not cancel active request contexts. Signal
@@ -372,7 +417,9 @@ func main() {
 	// loops; otherwise graceful shutdown waits until its deadline for clients to
 	// disconnect on their own.
 	app.BeginShutdown()
-	_ = os.Remove(proxyCorrelationSocket)
+	if retained == nil {
+		_ = os.Remove(proxyCorrelationSocket)
+	}
 
 	// Both servers shut down concurrently under one overall budget. Using one
 	// context sequentially made the second Shutdown inherit whatever time the
@@ -382,6 +429,9 @@ func main() {
 	// hold the old PID/port hostage.
 	shutdownDeadline := time.Now().Add(10 * time.Second)
 	shutdown := func(name string, srv *http.Server) {
+		if srv == nil {
+			return
+		}
 		remaining := time.Until(shutdownDeadline)
 		if remaining <= 0 {
 			remaining = time.Millisecond
@@ -408,6 +458,14 @@ func main() {
 		shutdown("http", httpServer)
 	}()
 	shutdownWG.Wait()
+	if retainedDone != nil {
+		retained.Close()
+		select {
+		case <-retainedDone:
+		case <-time.After(10 * time.Second):
+			log.Error("retained services did not finish shutdown")
+		}
+	}
 }
 
 func dataVolumeProvisionerConfig(cfg config.Config) (localworkspace.DataVolumeProvisionerConfig, error) {

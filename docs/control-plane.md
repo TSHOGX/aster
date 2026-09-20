@@ -11,6 +11,13 @@ lock and canonical database-path locks, opens the control/memory stores, records
 the owner and constructs runtime/event/artifact services. Managed mode verifies
 schema without DDL; offline migrations use the separate database command.
 
+With `HARNESS_KHORA_DEPLOYMENT`, startup validates the pinned engine, exported
+release plans and gateway controls before serving. It selects retained execution
+services, product housekeeping and automatic idle pause, with a separate Unix
+request-authorization server. Legacy sessions require explicit migration before
+this mode starts. The legacy mode instead follows the resource-recovery path
+below. See [configuration](configuration.md#retained-khora-daemon).
+
 Runtime recovery reconciles expired resources before ordinary work. Background
 workers handle owner heartbeat, artifact watching, idle release, bridge polling,
 maintenance and the independent core scheduler. Optional memory extraction starts
@@ -307,8 +314,8 @@ invalidates readiness.
 A changed engine store identity or incompatible engine contract creates a durable
 `engine_backend_blocks` record, invalidates known environments and revokes their
 grants. Later event pages or handshakes do not clear that block or reinterpret
-old sandbox/process references. The default executable still uses its legacy
-composition; these services are owned by `retainedapp.Runtime`.
+old sandbox/process references. These services are owned by `retainedapp.Runtime`
+and selected by the executable's `HARNESS_KHORA_DEPLOYMENT` configuration.
 
 ## Workspace mutation admission
 
@@ -459,17 +466,17 @@ When new-session policy selects Khora, create-mode availability comes from the
 validated plan's enabled drivers, without legacy image/provider validation. Legacy
 stale-session repair, host-liveness lease renewal and cold-fallback selection
 exclude sessions pinned to Khora. This prevents absent host runtime rows from
-being treated as evidence of a dead retained sandbox. The normal executable's
-deployment configuration and external gateway composition are not yet switched
-to this composition package.
+being treated as evidence of a dead retained sandbox. An explicit
+`HARNESS_KHORA_DEPLOYMENT` file selects this composition and authenticated remote
+gateway controls in the executable; without it, startup retains the legacy mode.
 
 The Khora integration profile includes a real worker turn through this path:
 keyed volume/environment provisioning, process journal handshake, accepted binding,
 claim/start/output/completion, replayable message projection and durable receipt
 watermark. Its assertions require no legacy runtime, network or source-IP context
 rows. The shared HTTP/scheduler entry path dispatches through an injected
-controller for sessions pinned to Khora. The default executable startup still
-constructs the legacy runtime until deployment composition is complete.
+controller for sessions pinned to Khora. The Khora daemon rejects legacy sessions
+until explicit migration; it constructs no embedded runtime or host watcher.
 
 Session creation persists its backend in the same transaction as the session.
 Existing sessions keep their backend when the new-session policy changes.
@@ -628,7 +635,7 @@ replies retain conditional intents, and the current product owner can reconcile
 them after restart. Definitively rejected activation is followed by verified
 pause before the workflow is released. Application startup must poll the pending
 activation requests; the injectable execution reconciler performs this polling.
-Default executable composition still needs to select that reconciler.
+The Khora daemon selects that reconciler through its deployment file.
 
 The retained execution reconciler runs independent sequential loops for pending
 aborts, steering sends, workspace mutations, capture activations, idle and active

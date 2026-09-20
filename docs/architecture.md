@@ -172,9 +172,9 @@ and retention timers.
 The adapter permits plaintext HTTP only on loopback; remote control requires an
 authenticated TLS gateway supplied by the deployment. Fault tests cover lost
 create responses, stale replayed create IDs, backend rebuilds, stale mutation
-revisions, unresolved stop and distinct error classes. The server still uses the
-local execution backend until environment, process, workspace and gateway cutover
-is complete. Architecture guards prevent the application ports and Khora adapter
+revisions, unresolved stop and distinct error classes. The executable selects
+retained composition through `HARNESS_KHORA_DEPLOYMENT`; its default mode remains
+the local backend while migration and production gateway acceptance are pending. Architecture guards prevent the application ports and Khora adapter
 from importing the embedded runtime, host command execution or engine internals.
 
 The Khora process adapter uses the generated public Connect client with a

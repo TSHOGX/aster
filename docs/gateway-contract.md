@@ -3,7 +3,8 @@
 `internal/gateway` provides trusted ingress and flow-lifetime primitives. It is
 not an upstream HTTP, MySQL or OBS implementation. Production protocol adapters
 must compose these primitives with their existing credential and protocol logic;
-the main application does not yet serve the new control contract.
+the Khora daemon mode serves the new authorization contract and selects remote
+control adapters.
 
 ## Connection attribution
 
@@ -117,6 +118,6 @@ releases idle control connections; gateway shutdown uses explicit `Drain`.
 
 These control adapters have real Unix socket and race tests for peer rejection,
 instance replacement, timed-out drains, lost replies and multi-gateway teardown.
-They are available for daemon and protocol-gateway composition; the executable
-does not yet select them, and upstream model/Doris/OBS compatibility is not
-established by these control tests.
+The executable selects these clients through `HARNESS_KHORA_DEPLOYMENT`.
+Upstream model/Doris/OBS compatibility is not established by these control tests;
+the external protocol gateways must implement the documented contract.
