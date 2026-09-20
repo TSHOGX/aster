@@ -17,8 +17,12 @@ In `frontend/`, run `npm run lint`, `npm run typecheck`, `npm test` and
 backend; it is separate from reducer/component unit tests.
 
 Real Khora integration requires the pinned engine and a freshly finalized template.
+The [portable isolated harness](../dev/README.md) provisions disposable prerequisites
+and records exact inputs. Its sustained workload reports latency, capacity and
+logical storage growth with explicit fault injections.
 Set `KHORA_INTEGRATION_ENDPOINT`, `KHORA_INTEGRATION_TEMPLATE` and
-`KHORA_INTEGRATION_MANIFEST` to isolated test inputs, then run:
+`KHORA_INTEGRATION_MANIFEST`, `KHORA_INTEGRATION_VIA_UID` and
+`KHORA_INTEGRATION_VIA_GID` to isolated test inputs, then run:
 
 ```bash
 go -C orchestrator test -p 1 -tags khoraintegration ./internal/sandbox/khora ./internal/server ./internal/retainedapp ./cmd/orchestrator -run '^TestKhora' -v -count=1 -timeout=180s

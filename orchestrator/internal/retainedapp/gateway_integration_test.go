@@ -17,7 +17,6 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -725,18 +724,16 @@ func mustJSON(value any) []byte {
 // protocol gateways under that identity.
 func lookupViaIdentity(t *testing.T) (int, int) {
 	t.Helper()
-	account, err := user.Lookup("khoravia")
-	if err != nil {
-		t.Fatalf("engine second-hop account required: %v", err)
+
+	uid, err := strconv.Atoi(os.Getenv("KHORA_INTEGRATION_VIA_UID"))
+	if err != nil || uid <= 0 {
+		t.Fatal("explicit non-root KHORA_INTEGRATION_VIA_UID required")
 	}
-	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		t.Fatal(err)
+	gid, err := strconv.Atoi(os.Getenv("KHORA_INTEGRATION_VIA_GID"))
+	if err != nil || gid < 0 {
+		t.Fatal("explicit KHORA_INTEGRATION_VIA_GID required")
 	}
-	gid, err := strconv.Atoi(account.Gid)
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	return uid, gid
 }
 

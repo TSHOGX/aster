@@ -1,0 +1,42 @@
+{
+  "inputs": {
+    "application": "95eafe9c350e0a7de48f20d34bc76a49dc688800",
+    "dirty": true,
+    "engine_module": "v0.0.2-0.20260920024301-e8cd021a9c7c",
+    "engine_binary_sha256": "de6c6c70e1cd7ce846b2611a95a3bb3726c21050fb6e7ca72413bb38354377ea",
+    "manifest_raw_sha256": "6e7d92dc1e0d2a597032714e1dc25032bad96122666f56f80e1c8a9dc545df64",
+    "manifest_digest": "sha256:073e3ed4769ec726af4ad6fc91e619a2b6829eaab8052f6c46b757e261bf1ab4"
+  },
+  "result": {
+    "capacity": {
+      "capture_activations": 0,
+      "detached_executions": 0,
+      "occupying_sessions": 0,
+      "retained_environments": 2,
+      "running_placements": 0,
+      "running_turns": 0,
+      "starting_executions": 0
+    },
+    "committed_history_bytes": 2229636,
+    "concurrency": 2,
+    "database_growth_bytes": 12599296,
+    "duration_seconds": 62.072413951,
+    "engine": "e8cd021a9c7c",
+    "latency_p50_seconds": 1.206877961,
+    "latency_p95_seconds": 2.375747541,
+    "long_turn_seconds": 8,
+    "manifest": "sha256:073e3ed4769ec726af4ad6fc91e619a2b6829eaab8052f6c46b757e261bf1ab4",
+    "output_bytes_per_turn": 32768,
+    "owner_restarts": 1,
+    "pause_resume_cycles": 16,
+    "storage_bytes": {
+      "native_archives_logical": 0,
+      "native_snapshots_logical": 0,
+      "product_database_allocated": 13426688,
+      "retained_overlay_capacity": 536870912,
+      "session_volume_capacity": 268435456,
+      "workspace_inventory": 30
+    },
+    "turns": 68
+  }
+}

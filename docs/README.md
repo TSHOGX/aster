@@ -22,6 +22,7 @@ canonical; production deployment readiness is not claimed.
 | [Gateway contract](gateway-contract.md) | Peer identity, grants and revocation |
 | [Notifications](notifications.md) | Inbox and audience checks |
 | [Security](security.md) | Trust and authorization boundaries |
+| [Development evidence](development-evidence.md) | Executed fault paths and finite workload measurements |
 | [Verification](verification.md) | Development correctness and real integration |
 | [Operations](operations.md) | Development diagnostics |
 | [Public/private boundary](delivery/privacy.md) | Private configuration and evidence |
