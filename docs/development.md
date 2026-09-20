@@ -17,6 +17,7 @@ Keep the engine store, volumes, cgroups and network namespace isolated from othe
 The frontend uses Node and npm; `npm ci`, then `npm run dev`. Set its orchestrator
 origin for the local daemon. Authentication and same-origin proxy checks remain active.
 
-Scope is [Khora-only branch development](development-scope.md). The private plan names
-remaining publication, gateway composition and recovery work. Preparation ends with
-validation and a handoff; it does not implicitly start those workstreams.
+Scope is [Khora-only branch development](development-scope.md). The private branch
+plan describes overall objectives, publication, gateway composition, recovery and
+sustained development verification. Preparation is complete; subsequent iterations
+follow that plan when authorized as development work.

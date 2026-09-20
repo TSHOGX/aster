@@ -12,5 +12,6 @@ acceptance are deferred together to a separate project after implementation is c
 Production Memory/Evolve data will be archived separately, not imported into this
 system. Development work must not change production data.
 
-The local preparation plan is `private/khora-refactor-plan.md`; private evidence and
-machine-specific plans remain untracked and must not enter release artifacts.
+The local branch development plan is `private/khora-refactor-plan.md`. Private
+evidence and machine-specific plans remain untracked and must not enter release
+artifacts.
