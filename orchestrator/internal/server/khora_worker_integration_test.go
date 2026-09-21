@@ -728,6 +728,12 @@ else:raise RuntimeError('guest did not commit terminal journal record')
 				t.Fatalf("lost capture receipt not surfaced: %d %v", n, err)
 			}
 			for range completedNativeVersion {
+				// The worker's production retry policy backs off for 30 seconds
+				// after the injected lost receipt. This focused integration step
+				// advances the durable clock explicitly so it remains bounded.
+				if _, err := st.DBForTest().ExecContext(ctx, `UPDATE native_capture_requests SET retry_after='' WHERE session_id=?`, session.ID); err != nil {
+					t.Fatal(err)
+				}
 				if n, err := capture.Step(ctx, 32); err != nil || n != 1 {
 					t.Fatalf("completed snapshot capture: %d %v", n, err)
 				}
