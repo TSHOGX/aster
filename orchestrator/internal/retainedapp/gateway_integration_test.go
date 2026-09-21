@@ -189,7 +189,8 @@ func runComposedGateway(t *testing.T, fullFaults bool) {
 	}
 	models := map[string]any{"providers": map[string]any{"harness_anthropic_proxy": map[string]any{"baseUrl": origin, "api": "anthropic-messages", "apiKey": "harness-placeholder", "models": []map[string]any{{"id": model, "name": model, "reasoning": false, "input": []string{"text"}, "contextWindow": 8192, "maxTokens": 256, "cost": map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}}}}}
 	encoded, _ := json.Marshal(models)
-	for name, body := range map[string][]byte{"pi/models.json": encoded, "pi/settings.json": []byte(`{"defaultProvider":"harness_anthropic_proxy","defaultModel":"approved-model","compaction":{"enabled":false}}`)} {
+	settings := fmt.Sprintf(`{"defaultProvider":"harness_anthropic_proxy","defaultModel":"approved-model","compaction":{"enabled":false},"harnessTestVariant":%q}`, map[bool]string{true: "faults", false: "boundary"}[fullFaults])
+	for name, body := range map[string][]byte{"pi/models.json": encoded, "pi/settings.json": []byte(settings)} {
 		if err := os.WriteFile(filepath.Join(configRoot, name), body, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -384,22 +385,30 @@ func runComposedGateway(t *testing.T, fullFaults bool) {
 	background, stop := context.WithCancel(ctx)
 	finished := make(chan error, 1)
 	go func() { finished <- runtime.Run(background) }()
-	defer func() {
-		stop()
-		select {
-		case err := <-finished:
-			if err != nil && !errors.Is(err, context.Canceled) {
-				t.Error(err)
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			stop()
+			select {
+			case err := <-finished:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					t.Error(err)
+				}
+			case <-time.After(15 * time.Second):
+				t.Error("composed services did not stop")
 			}
-		case <-time.After(15 * time.Second):
-			t.Error("composed services did not stop")
-		}
-	}()
+		})
+	}
+	defer shutdown()
 
 	client, _ := sdk.New(endpoint)
 	session := createIntegrationSession(t, ctx, app, "agent")
 	defer func() {
-		runtime.Close()
+		// Stop all maintenance workers before deleting authored publication
+		// volumes. Otherwise a worker from this test can race the next test's
+		// publication and observe a volume that cleanup just removed.
+		shutdown()
+		_ = runtime.Close()
 		cleanup, done := context.WithTimeout(context.Background(), 20*time.Second)
 		defer done()
 		if environment, err := st.GetSessionEnvironment(cleanup, session); err == nil {
