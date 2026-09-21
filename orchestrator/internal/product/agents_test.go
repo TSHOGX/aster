@@ -9,10 +9,20 @@ import (
 	"harness-platform/orchestrator/internal/agentwire"
 )
 
+// agentServiceFixture is agentFixture with a Project profile that declares a
+// service audience, so grant issuance has a declared destination to resolve.
+func agentServiceFixture(t *testing.T) (*Store, Scope, Incarnation, agentwire.Frame) {
+	t.Helper()
+	return agentFixtureWith(t, serviceProfile())
+}
 func agentFixture(t *testing.T) (*Store, Scope, Incarnation, agentwire.Frame) {
 	t.Helper()
+	return agentFixtureWith(t, testProfile())
+}
+func agentFixtureWith(t *testing.T, profile Profile) (*Store, Scope, Incarnation, agentwire.Frame) {
+	t.Helper()
 	l, scope, _ := lifecycleFixture(t)
-	must(t, l.EnsureActive(ctx, scope, testProfile()))
+	must(t, l.EnsureActive(ctx, scope, profile))
 	drive(t, l, scope.ProjectID)
 	_, err := l.Store.CreateSession(ctx, scope, "agent", "Agent")
 	must(t, err)

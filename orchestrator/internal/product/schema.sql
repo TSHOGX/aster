@@ -208,29 +208,32 @@ CREATE TABLE native_captures (
  state TEXT NOT NULL DEFAULT 'guest' CHECK(state IN ('guest','exported','archived'))
 );
 
+-- A grant is scoped to a Session's agent incarnation and one declared audience,
+-- never to a turn. Turn attribution is resolved by the host at each request, so
+-- a stale credential cannot inherit a successor turn's authority and a guest
+-- never holds a per-turn secret.
 CREATE TABLE service_grants (
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL,
  session_id TEXT NOT NULL,
- turn_id TEXT NOT NULL,
  incarnation_id TEXT NOT NULL,
- audience TEXT NOT NULL,
- credential_digest TEXT NOT NULL,
+ audience TEXT NOT NULL CHECK(audience<>''),
+ credential_digest TEXT NOT NULL CHECK(length(credential_digest)=64),
  expires_at TEXT NOT NULL,
  state TEXT NOT NULL CHECK(state IN ('active','revoked','expired')),
  created_at TEXT NOT NULL,
  FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id),
- FOREIGN KEY(project_id,session_id,turn_id) REFERENCES turns(project_id,session_id,id),
  FOREIGN KEY(project_id,session_id,incarnation_id) REFERENCES agent_incarnations(project_id,session_id,id)
 );
 CREATE INDEX service_grants_live ON service_grants(project_id,state,expires_at);
+CREATE UNIQUE INDEX service_grants_one_live ON service_grants(incarnation_id,audience) WHERE state='active';
 
-CREATE TRIGGER revoke_turn_services AFTER UPDATE OF state ON turns
-WHEN NEW.state NOT IN ('starting','running')
-BEGIN UPDATE service_grants SET state='revoked' WHERE turn_id=NEW.id AND state='active'; END;
 CREATE TRIGGER revoke_project_services AFTER UPDATE OF state ON projects
 WHEN NEW.state<>'active'
 BEGIN UPDATE service_grants SET state='revoked' WHERE project_id=NEW.id AND state='active'; END;
 CREATE TRIGGER revoke_incarnation_services AFTER UPDATE OF state ON agent_incarnations
-WHEN NEW.state<>'running'
+WHEN NEW.state<>'running' AND NEW.state<>'starting'
 BEGIN UPDATE service_grants SET state='revoked' WHERE incarnation_id=NEW.id AND state='active'; END;
+CREATE TRIGGER revoke_session_services AFTER UPDATE OF state ON sessions
+WHEN NEW.state IN ('deleting','deleted')
+BEGIN UPDATE service_grants SET state='revoked' WHERE session_id=NEW.id AND state='active'; END;

@@ -22,10 +22,14 @@ type fakeLifecycle struct {
 	mounts     map[string][]sandbox.Mount
 	fail       map[string]int
 	calls      map[string]int
+	// projections and epochs record the host-owned guest files this Project wrote
+	// and the placement epoch each was written under.
+	projections map[string]map[string]string
+	epochs      map[string]uint64
 }
 
 func fakeBackend() *fakeLifecycle {
-	return &fakeLifecycle{store: "engine", volumes: map[string]sandbox.Volume{}, volumeKeys: map[string]string{}, creates: map[string]string{}, sandboxes: map[string]sandbox.Observation{}, mounts: map[string][]sandbox.Mount{}, fail: map[string]int{}, calls: map[string]int{}}
+	return &fakeLifecycle{store: "engine", volumes: map[string]sandbox.Volume{}, volumeKeys: map[string]string{}, creates: map[string]string{}, sandboxes: map[string]sandbox.Observation{}, mounts: map[string][]sandbox.Mount{}, fail: map[string]int{}, calls: map[string]int{}, projections: map[string]map[string]string{}, epochs: map[string]uint64{}}
 }
 func (f *fakeLifecycle) lost(kind string) error {
 	f.calls[kind]++
@@ -114,6 +118,20 @@ func (f *fakeLifecycle) DeleteVolume(_ context.Context, ref sandbox.VolumeRefere
 	delete(f.volumes, ref.VolumeID)
 	return f.lost("delete-volume")
 }
+func (f *fakeLifecycle) WriteProjection(_ context.Context, ref sandbox.Reference, path string, content []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.sandboxes[ref.SandboxID]
+	if !ok || o.Reference != ref || o.State != "running" {
+		return ErrConflict
+	}
+	if f.projections[ref.SandboxID] == nil {
+		f.projections[ref.SandboxID] = map[string]string{}
+	}
+	f.projections[ref.SandboxID][path] = string(content)
+	f.epochs[ref.SandboxID+path] = ref.Epoch
+	return f.lost("projection")
+}
 func testProfile() Profile {
 	return Profile{StoreID: "engine", TemplateID: "test", CPUMillis: 1000, MemoryBytes: 256 << 20, DiskBytes: 128 << 20, WorkspaceBytes: 64 << 20, RuntimeBytes: 32 << 20}
 }
@@ -133,6 +151,18 @@ func drive(t *testing.T, l *Lifecycle, project string) {
 		must(t, err)
 	}
 	t.Fatal("reconciliation did not settle")
+}
+
+// settle converges a Project whose backend is injecting lost replies, so a test
+// can assert the eventual state without treating each injected loss as fatal.
+func settle(t *testing.T, l *Lifecycle, project string) {
+	t.Helper()
+	for i := 0; i < 24; i++ {
+		if errors.Is(l.Reconcile(ctx, project), ErrNotFound) {
+			return
+		}
+	}
+	t.Fatal("reconciliation did not settle after injected losses")
 }
 
 func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {

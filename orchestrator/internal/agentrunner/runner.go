@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +26,12 @@ type Config struct {
 	PiArgs                                               []string
 	Environment                                          []string
 	JournalBytes                                         int64
+	// ServiceCredential is this incarnation's application token for the Project's
+	// declared service audience. It is written into Pi's authored provider
+	// configuration before Pi starts, so no native command carries a secret and no
+	// per-turn rewrite races a running turn. It is not isolation from a sibling
+	// Session: guest root can read either Session's configuration.
+	ServiceCredential string
 }
 type Runner struct {
 	config       Config
@@ -87,6 +92,9 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 		return agentjournal.ErrUnknown
 	}
 	if err = becomeSubreaper(); err != nil {
+		return err
+	}
+	if err = materializeCredential(root, c.ServiceCredential); err != nil {
 		return err
 	}
 	nativeFile := filepath.Join(nativeRoot, "session.jsonl")
@@ -266,21 +274,6 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 		_, err = r.journal.Result(ctx, c.ID, "rejected", json.RawMessage(`{"error":"no running turn"}`))
 		r.notify()
 		return err
-	}
-	// The per-turn service credential is published to the retained Session root
-	// before dispatch so the native process can read it for this turn only. It is
-	// an application credential, never a boundary between sibling processes.
-	if kind == "prompt" && f.Credential != "" {
-		if len(f.Credential) > 256 || strings.ContainsAny(f.Credential, "\r\n\x00") {
-			return agentwire.ErrFrame
-		}
-		path := filepath.Join(r.config.StateRoot, "sessions", r.config.Session, "service-token")
-		if err := os.WriteFile(path+".tmp", []byte(f.Credential), 0600); err != nil {
-			return err
-		}
-		if err := os.Rename(path+".tmp", path); err != nil {
-			return err
-		}
 	}
 	if err = r.journal.Dispatch(ctx, f.Owner, c.ID); err != nil {
 		return err

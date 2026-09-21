@@ -25,7 +25,7 @@ type Profile struct {
 	DiskBytes       int64           `json:"disk_bytes"`
 	WorkspaceBytes  int64           `json:"workspace_bytes"`
 	RuntimeBytes    int64           `json:"runtime_bytes"`
-	Network         sandbox.Network `json:"network"`
+	Reachability    Reachability    `json:"reachability"`
 	PublishedMounts []sandbox.Mount `json:"published_mounts"`
 }
 
@@ -38,7 +38,7 @@ func (p Profile) validate() error {
 			return ErrInvalid
 		}
 	}
-	return nil
+	return p.Reachability.validate()
 }
 
 type Resources struct {
@@ -74,6 +74,10 @@ type LifecycleBackend interface {
 	Resume(context.Context, sandbox.Reference) (sandbox.Observation, error)
 	Destroy(context.Context, sandbox.Reference) error
 	DeleteVolume(context.Context, sandbox.VolumeReference) error
+	// WriteProjection materializes a host-owned guest file for a placement. Only
+	// the lifecycle calls it, and only from the immutable profile, so a child
+	// start can never rewrite reachability that a sibling depends on.
+	WriteProjection(context.Context, sandbox.Reference, string, []byte) error
 }
 
 // Lifecycle is the sole Project placement authority. Fixed locks bound memory;
@@ -299,12 +303,16 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 	if err != nil {
 		return l.unknown(ctx, o, err)
 	}
-	switch o.Kind {
-	case "create":
+	switch {
+	// A committed placement awaiting its guest projection is resumed by phase, not
+	// by kind: create and resume converge on the same remaining work.
+	case o.Phase == "reachability" && (o.Kind == "create" || o.Kind == "resume"):
+		err = l.reprojectReachability(ctx, o, r)
+	case o.Kind == "create":
 		err = l.provision(ctx, o, r)
-	case "pause", "resume":
+	case o.Kind == "pause" || o.Kind == "resume":
 		err = l.transition(ctx, o, r)
-	case "delete":
+	case o.Kind == "delete":
 		err = l.destroy(ctx, o, r)
 	default:
 		err = ErrInvalid
@@ -367,17 +375,55 @@ func (l *Lifecycle) provision(ctx context.Context, o operation, r Resources) err
 		p := r.Profile
 		mounts := append([]sandbox.Mount{}, p.PublishedMounts...)
 		mounts = append(mounts, sandbox.Mount{VolumeID: r.WorkspaceVolume, Destination: "/workspace", Access: "exclusive"}, sandbox.Mount{VolumeID: r.RuntimeVolume, Destination: "/runtime", Access: "exclusive"})
-		observed, err := l.Backend.Create(ctx, sandbox.CreateRequest{IdempotencyKey: o.ID + "/sandbox", TemplateID: p.TemplateID, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, Network: p.Network, Mounts: mounts})
+		observed, err := l.Backend.Create(ctx, sandbox.CreateRequest{IdempotencyKey: o.ID + "/sandbox", TemplateID: p.TemplateID, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, Network: p.Reachability.Declaration(), Mounts: mounts})
 		if err != nil {
 			return err
 		}
 		if observed.StoreID != r.Reference.StoreID || observed.SandboxID == "" || observed.Epoch == 0 || observed.MutationRevision == "" || observed.State != "running" || observed.PlacementState != "active" {
 			return ErrConflict
 		}
-		return l.finish(ctx, o, observed, "active", true, false)
+		// The binding identity is committed before the projection is written, so a
+		// lost reply here retries the projection against the original placement
+		// rather than creating a second sandbox.
+		if err = l.commit(ctx, o, observed, "reachability"); err != nil {
+			return err
+		}
+		o.Phase = "reachability"
+		return l.reachability(ctx, o, r.Profile, observed.Reference)
 	default:
 		return ErrInvalid
 	}
+}
+
+// reprojectReachability retries the guest projection for an already committed
+// placement, after a crash or a lost reply. It re-inspects rather than trusting
+// the stored epoch, so it can never write into a successor placement.
+func (l *Lifecycle) reprojectReachability(ctx context.Context, o operation, r Resources) error {
+	observed, err := l.Backend.Inspect(ctx, r.Reference)
+	if err != nil {
+		return err
+	}
+	if observed.SandboxID != r.Reference.SandboxID || observed.Epoch != r.Reference.Epoch || observed.MutationRevision != r.Reference.MutationRevision || observed.State != "running" || observed.PlacementState != "active" {
+		return ErrConflict
+	}
+	return l.reachability(ctx, o, r.Profile, r.Reference)
+}
+
+// reachability writes the Project's host-owned guest projections for one
+// placement. It is idempotent: the bytes derive only from the immutable profile,
+// so a retry after a lost reply writes identical content.
+func (l *Lifecycle) reachability(ctx context.Context, o operation, p Profile, ref sandbox.Reference) error {
+	for _, projection := range []struct{ path, content string }{
+		{"/etc/hosts", p.Reachability.HostsProjection()},
+		{"/etc/resolv.conf", p.Reachability.ResolverProjection()},
+	} {
+		if err := l.Backend.WriteProjection(ctx, ref, projection.path, []byte(projection.content)); err != nil {
+			return err
+		}
+	}
+	return l.Store.write(ctx, func(tx *sql.Tx) error {
+		return l.settle(ctx, tx, o, "active", true, false)
+	})
 }
 func (l *Lifecycle) transition(ctx context.Context, o operation, r Resources) error {
 	var request operationRequest
@@ -413,7 +459,28 @@ func (l *Lifecycle) transition(ctx context.Context, o operation, r Resources) er
 	if observed.StoreID != ref.StoreID || observed.SandboxID != ref.SandboxID || observed.State != "running" || observed.PlacementState != "active" || observed.Epoch != ref.Epoch+1 {
 		return ErrConflict
 	}
-	return l.finish(ctx, o, observed, "active", true, false)
+	// A resumed placement is a fresh guest filesystem for host-owned projections:
+	// the engine rebuilds network rules from the stored declaration, but /etc
+	// content lives in the template layer and must be rewritten for this epoch.
+	if err = l.commit(ctx, o, observed, "reachability"); err != nil {
+		return err
+	}
+	o.Phase = "reachability"
+	return l.reachability(ctx, o, r.Profile, observed.Reference)
+}
+// commit records the observed placement binding and advances the operation to a
+// later phase without completing it. The binding must be durable before any
+// further remote work so a lost reply retries that work, not the placement.
+func (l *Lifecycle) commit(ctx context.Context, o operation, obs sandbox.Observation, next string) error {
+	if obs.MutationRevision == "" {
+		return ErrConflict
+	}
+	return l.Store.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET sandbox_id=?,mutation_revision=?,epoch=?,occupied=1 WHERE project_id=?`, obs.SandboxID, obs.MutationRevision, obs.Epoch, o.ProjectID); err != nil {
+			return err
+		}
+		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state<>'succeeded'`, next, o.ID, o.Phase))
+	})
 }
 func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observation, state string, occupied, restart bool) error {
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
@@ -423,27 +490,30 @@ func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observa
 		if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET sandbox_id=?,mutation_revision=?,epoch=?,occupied=? WHERE project_id=?`, obs.SandboxID, obs.MutationRevision, obs.Epoch, occupied, o.ProjectID); err != nil {
 			return err
 		}
-		if err := changed(tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded',error='' WHERE id=? AND state<>'succeeded'`, o.ID)); err != nil {
-			return err
-		}
-		var deleting bool
-		if err := tx.QueryRowContext(ctx, `SELECT state='deleting' FROM projects WHERE id=?`, o.ProjectID).Scan(&deleting); err != nil {
-			return err
-		}
-		if deleting {
-			return nil
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE projects SET state=?,failure='' WHERE id=?`, state, o.ProjectID); err != nil {
-			return err
-		}
-		if err := l.Store.bumpProject(ctx, tx, o.ProjectID, "project."+state); err != nil {
-			return err
-		}
-		if restart {
-			return l.newOperation(ctx, tx, o.ProjectID, "resume", "sandbox", operationRequest{Reference: obs.Reference})
-		}
-		return nil
+		return l.settle(ctx, tx, o, state, occupied, restart, obs.Reference)
 	})
+}
+func (l *Lifecycle) settle(ctx context.Context, tx *sql.Tx, o operation, state string, occupied, restart bool, resume ...sandbox.Reference) error {
+	if err := changed(tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded',error='' WHERE id=? AND state<>'succeeded'`, o.ID)); err != nil {
+		return err
+	}
+	var deleting bool
+	if err := tx.QueryRowContext(ctx, `SELECT state='deleting' FROM projects WHERE id=?`, o.ProjectID).Scan(&deleting); err != nil {
+		return err
+	}
+	if deleting {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET state=?,failure='' WHERE id=?`, state, o.ProjectID); err != nil {
+		return err
+	}
+	if err := l.Store.bumpProject(ctx, tx, o.ProjectID, "project."+state); err != nil {
+		return err
+	}
+	if restart && len(resume) == 1 {
+		return l.newOperation(ctx, tx, o.ProjectID, "resume", "sandbox", operationRequest{Reference: resume[0]})
+	}
+	return nil
 }
 func (l *Lifecycle) destroy(ctx context.Context, o operation, r Resources) error {
 	switch o.Phase {

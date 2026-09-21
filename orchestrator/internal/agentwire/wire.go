@@ -26,7 +26,6 @@ type Frame struct {
 	Sequence    uint64          `json:"sequence,omitempty"`
 	After       uint64          `json:"after,omitempty"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
-	Credential  string          `json:"credential,omitempty"`
 	State       string          `json:"state,omitempty"`
 	Error       string          `json:"error,omitempty"`
 }

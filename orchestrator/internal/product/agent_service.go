@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,16 +16,23 @@ import (
 
 type agentAttachment struct {
 	incarnation Incarnation
-	cancel      context.CancelFunc
-	input       sync.Mutex
-	ready       bool
-	err         error
+	// credential is this incarnation's service token, delivered once in the
+	// opening sync frame. It is empty when the deployment declares no service.
+	credential string
+	cancel     context.CancelFunc
+	input      sync.Mutex
+	ready      bool
+	err        error
 }
 
 // Agents owns one output attachment per runner and fans committed projections
 // out through the product outbox. HTTP requests never own this stream context.
 type Agents struct {
+	// ServiceAudience names the Project profile service that agents may reach.
+	// Empty means this deployment issues no service credentials at all, which is
+	// a supported zero-gateway configuration.
 	ServiceAudience string
+	ServiceTTL      time.Duration
 	Store           *Store
 	Lifecycle       *Lifecycle
 	Backend         sandbox.Processes
@@ -102,6 +108,17 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 			return err
 		}
 		attachment.incarnation = i
+		// The credential is issued before the runner is started, so Pi's authored
+		// configuration already names it when the first turn dispatches. A failure
+		// here is a Project-level problem, not a per-turn one.
+		attachment.credential, err = a.serviceCredential(ctx, scope, i)
+		if err != nil {
+			a.mu.Lock()
+			delete(a.attachments, session)
+			a.mu.Unlock()
+			cancel()
+			return err
+		}
 		a.wg.Add(1)
 		go func() {
 			defer a.wg.Done()
@@ -125,19 +142,6 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 	if err != nil {
 		return err
 	}
-	if a.ServiceAudience != "" {
-		var command struct{ Type string }
-		if err := json.Unmarshal(f.Payload, &command); err != nil {
-			return err
-		}
-		if command.Type == "prompt" {
-			_, token, err := a.Store.GrantService(ctx, scope, session, f.TurnID, attachment.incarnation.ID, a.ServiceAudience, time.Hour)
-			if err != nil {
-				return err
-			}
-			f.Credential = token
-		}
-	}
 	if err = a.send(ctx, attachment, f); err != nil {
 		// SendInput may have delivered a prefix. No automatic resend is safe on this
 		// stream; preserve the original command and let durable evidence settle it.
@@ -155,6 +159,79 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 		return err
 	}
 	return nil
+}
+// serviceCredential mints this incarnation's grant for the configured audience.
+// It is issued once per incarnation, before Pi starts, and revoked when the
+// incarnation stops running. Its authority still requires an admitted turn at
+// every request, so holding it while idle reaches nothing.
+// Stop ends one Session's runner and waits for its termination evidence. It is
+// what child deletion and Session replacement use: it signals that runner's own
+// process group and never a sibling's, and never the Project placement.
+//
+// A signal is a request. Only the runner's exit frame settles the incarnation, so
+// a caller must still observe the durable state rather than assume success.
+func (a *Agents) Stop(ctx context.Context, project, session string) error {
+	a.mu.Lock()
+	attachment := a.attachments[session]
+	a.mu.Unlock()
+	incarnation := Incarnation{}
+	if attachment != nil {
+		incarnation = attachment.incarnation
+	} else {
+		// No local attachment. A live incarnation from a previous application owner is
+		// still signalled, using its own durable process reference.
+		i, err := liveIncarnation(ctx, a.Store.reader, session)
+		if errors.Is(err, ErrNotFound) {
+			// Nothing is running for this Session. That is the settled state Stop is
+			// asking for, so it is success rather than a failure to signal.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		incarnation = i
+	}
+	if incarnation.ProjectID != project {
+		return ErrNotFound
+	}
+	// SIGTERM lets the runner settle its journal and enumerate descendants before
+	// exiting. The attachment is deliberately left in place: its own stream must
+	// observe the terminal exit frame, which is the only evidence that records this
+	// incarnation as exited. Cancelling here would replace that evidence with a
+	// transport cancellation, and an unobserved exit is not a settled process.
+	if err := a.Backend.SignalProcess(ctx, incarnation.Reference, 15); err != nil {
+		// A process the engine no longer holds is already gone. Its durable exit is
+		// still recorded by the attachment's stream, never manufactured here.
+		if sandbox.Is(err, sandbox.NotFound) || sandbox.Is(err, sandbox.Precondition) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+func (a *Agents) serviceCredential(ctx context.Context, scope Scope, i Incarnation) (string, error) {
+	if a.ServiceAudience == "" {
+		return "", nil
+	}
+	_, token, err := a.Store.GrantService(ctx, scope, i.SessionID, i.ID, a.ServiceAudience, a.grantTTL())
+	if errors.Is(err, ErrConflict) {
+		// A live grant already exists for this incarnation and audience. Its secret
+		// was only ever known to the guest, so the durable credential the runner
+		// already materialized stays authoritative and no second one is issued.
+		return "", nil
+	}
+	if errors.Is(err, ErrInvalid) {
+		// The Project profile does not declare this audience. That is a deployment
+		// choice, not a Session failure: the agent simply has no service access.
+		return "", nil
+	}
+	return token, err
+}
+func (a *Agents) grantTTL() time.Duration {
+	if a.ServiceTTL > 0 {
+		return a.ServiceTTL
+	}
+	return 12 * time.Hour
 }
 func (a *Agents) takeOwnership(ctx context.Context, i Incarnation) (Incarnation, error) {
 	err := a.Store.write(ctx, func(tx *sql.Tx) error {
@@ -190,7 +267,14 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 	var stream sandbox.ProcessStream
 	var err error
 	if i.State == "starting" {
-		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: []string{"--session", i.SessionID, "--incarnation", i.ID}, Directory: "/workspace", Environment: []string{"HOME=/root", "PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin"}})
+		environment := []string{"HOME=/root", "PATH=/opt/node-v24.15.0/bin:/usr/local/bin:/usr/bin:/bin"}
+		if attachment.credential != "" {
+			// The credential travels in the start environment, not in a protocol
+			// frame: the framed stream is journaled durable evidence and must not
+			// retain a secret, and a reconnect must not need to resend one.
+			environment = append(environment, "HARNESS_SERVICE_CREDENTIAL="+attachment.credential)
+		}
+		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: []string{"--session", i.SessionID, "--incarnation", i.ID}, Directory: "/workspace", Environment: environment})
 	} else {
 		stream, err = a.Backend.ConnectProcess(ctx, i.Reference, 0)
 	}
