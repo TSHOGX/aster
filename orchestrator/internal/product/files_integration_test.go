@@ -1,0 +1,259 @@
+//go:build khoraintegration
+
+package product
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	sdk "github.com/TSHOGX/khora/pkg/khora"
+	"harness-platform/orchestrator/internal/projectfiles"
+	"harness-platform/orchestrator/internal/sandbox"
+	"harness-platform/orchestrator/internal/sandbox/khora"
+)
+
+type loseFileReply struct {
+	FileBackend
+	lose bool
+}
+
+func (b *loseFileReply) StartProcess(ctx context.Context, r sandbox.StartProcessRequest) (sandbox.ProcessStream, error) {
+	stream, err := b.FileBackend.StartProcess(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	if b.lose {
+		b.lose = false
+		return lostFileEnd{stream}, nil
+	}
+	return stream, nil
+}
+
+type lostFileEnd struct{ sandbox.ProcessStream }
+
+func (s lostFileEnd) Next() (sandbox.ProcessFrame, error) {
+	f, err := s.ProcessStream.Next()
+	if f.Kind == "end" {
+		return sandbox.ProcessFrame{}, io.ErrUnexpectedEOF
+	}
+	return f, err
+}
+
+func TestProjectFilesOnKhora(t *testing.T) {
+	endpoint := os.Getenv("PROJECT_TEST_ENDPOINT")
+	if endpoint == "" {
+		t.Fatal("isolated PROJECT_TEST_ENDPOINT required")
+	}
+	runctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	api, err := sdk.New(endpoint)
+	must(t, err)
+	for i := 0; i < 100; i++ {
+		if api.Ready(runctx) == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	backend, err := khora.New(runctx, khora.Config{Endpoint: endpoint})
+	must(t, err)
+	identity, err := backend.Identity(runctx)
+	must(t, err)
+	s := testStore(t)
+	l := &Lifecycle{Store: s, Backend: backend, MaxProjects: 1}
+	scope := Scope{"owner", "files"}
+	_, err = s.CreateProject(runctx, scope.Actor, scope.ProjectID, "Files")
+	must(t, err)
+	profile := testProfile()
+	profile.StoreID = identity.StoreID
+	profile.TemplateID = "battery"
+	profile.MemoryBytes = 1 << 30
+	profile.DiskBytes = 256 << 20
+	must(t, l.EnsureActive(runctx, scope, profile))
+	drive(t, l, scope.ProjectID)
+	r, err := l.ActiveResources(runctx, scope)
+	must(t, err)
+	for _, name := range []string{"workspace-files", "projectfiles.test"} {
+		file, err := os.Open(os.Getenv("PROJECT_TEST_BIN_DIR") + "/" + name)
+		must(t, err)
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/tmp/"+name, file))
+		file.Close()
+	}
+	serial := 0
+	shell := func(t *testing.T, command string) string {
+		t.Helper()
+		serial++
+		handle := fmt.Sprintf("file-setup-%d", serial)
+		stream, err := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", command}, Directory: "/workspace"})
+		must(t, err)
+		defer stream.Close()
+		var output strings.Builder
+		for {
+			frame, err := stream.Next()
+			must(t, err)
+			output.Write(frame.Data)
+			if frame.Kind == "end" {
+				if frame.ExitCode != 0 {
+					t.Fatalf("guest command %s: exit %d: %s", command, frame.ExitCode, output.String())
+				}
+				return output.String()
+			}
+		}
+	}
+	shell(t, "chmod +x /tmp/workspace-files /tmp/projectfiles.test")
+	wrapped := &loseFileReply{FileBackend: backend}
+	files := &Files{Store: s, Lifecycle: l, Backend: wrapped, Profile: profile, Helper: "/tmp/workspace-files"}
+	t.Cleanup(func() {
+		c, done := context.WithTimeout(context.Background(), 25*time.Second)
+		defer done()
+		_ = files.Reconcile(c, 100)
+		p, e := s.Project(c, scope)
+		if e == nil {
+			_ = s.DeleteProject(c, scope, p.Revision)
+			for i := 0; i < 12; i++ {
+				_ = l.Reconcile(c, scope.ProjectID)
+			}
+		}
+	})
+	t.Run("confinement-and-races-inside-runsc", func(t *testing.T) {
+		output := shell(t, "/tmp/projectfiles.test -test.v -test.timeout=45s")
+		if !strings.Contains(output, "PASS") {
+			t.Fatal(output)
+		}
+		t.Log(output)
+	})
+	t.Run("large-stream-and-native-PTY-concurrency", func(t *testing.T) {
+		terminals := NewTerminals(runctx, s, l, backend, profile, 4)
+		defer terminals.Close()
+		guest := &terminalGuest{ctx: runctx, store: s, lifecycle: l, terminals: terminals, backend: backend, resources: r, scope: scope}
+		_, view := guest.start(t, "files-pty", 24, 80)
+		defer view.Close()
+		guest.run(t, view, "printf sibling > /workspace/sibling", "SIBLING-WROTE")
+		var out bytes.Buffer
+		_, err := files.Run(runctx, scope, "read-sibling", projectfiles.Request{Operation: "read", Path: "sibling"}, nil, &out)
+		must(t, err)
+		if out.String() != "sibling" {
+			t.Fatal(out.String())
+		}
+		data := bytes.Repeat([]byte("streamed-世界\x00"), 1<<19)
+		request := projectfiles.Request{Operation: "write", Path: "large", Size: int64(len(data)), Digest: fmt.Sprintf("%x", sha256.Sum256(data))}
+		_, err = files.Run(runctx, scope, "large-write", request, bytes.NewReader(data), nil)
+		must(t, err)
+		hash := sha256.New()
+		_, err = files.Run(runctx, scope, "large-read", projectfiles.Request{Operation: "read", Path: "large"}, nil, hash)
+		must(t, err)
+		if fmt.Sprintf("%x", hash.Sum(nil)) != request.Digest {
+			t.Fatal("large transfer digest mismatch")
+		}
+		if got := guest.run(t, view, "sha256sum /workspace/large", "HASH"); !strings.Contains(got, request.Digest) {
+			t.Fatal(got)
+		}
+		must(t, terminals.Stop(runctx, scope.ProjectID, "files-pty"))
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			child, e := s.Terminal(runctx, scope, "files-pty")
+			must(t, e)
+			if child.State == "exited" {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Logf("%d streamed bytes round-tripped with exact digest while native PTY retained Project activity", len(data))
+	})
+	t.Run("lost-write-reply-and-sibling-overwrite", func(t *testing.T) {
+		wrapped.lose = true
+		request := writeRequest("contended", "original")
+		o, err := files.Run(runctx, scope, "lost-write", request, strings.NewReader("original"), nil)
+		wantError(t, err, ErrFileOutcomeUnknown)
+		shell(t, "printf newer > /workspace/contended")
+		_, err = files.Run(runctx, scope, "lost-write", request, strings.NewReader("original"), nil)
+		wantError(t, err, ErrFileOutcomeUnknown)
+		must(t, files.Reconcile(runctx, 32))
+		o, err = s.FileOperation(runctx, scope, o.ID)
+		must(t, err)
+		if !o.Settled || o.State != "unknown" {
+			t.Fatal(o)
+		}
+		if got := shell(t, "cat /workspace/contended"); got != "newer" {
+			t.Fatal("recovery overwrote sibling", got)
+		}
+	})
+	t.Run("canceled-upload-keeps-prior-bytes", func(t *testing.T) {
+		shell(t, "printf retained > /workspace/canceled")
+		uploadctx, stop := context.WithCancel(runctx)
+		reader, writer := io.Pipe()
+		request := writeRequest("canceled", strings.Repeat("x", 1<<20))
+		result := make(chan error, 1)
+		go func() { _, err := files.Run(uploadctx, scope, "canceled-write", request, reader, nil); result <- err }()
+		_, err := writer.Write(bytes.Repeat([]byte("x"), 32<<10))
+		must(t, err)
+		stop()
+		writer.Close()
+		select {
+		case err := <-result:
+			wantError(t, err, ErrFileOutcomeUnknown)
+		case <-time.After(10 * time.Second):
+			t.Fatal("canceled upload did not return")
+		}
+		must(t, files.Reconcile(runctx, 32))
+		if got := shell(t, "cat /workspace/canceled"); got != "retained" {
+			t.Fatal("cancellation published partial bytes", got)
+		}
+		o, err := s.FileOperation(runctx, scope, "canceled-write")
+		must(t, err)
+		if !o.Settled {
+			t.Fatal(o)
+		}
+	})
+	t.Run("watch-invalidation-and-paused-observers", func(t *testing.T) {
+		watchctx, stop := context.WithTimeout(runctx, 10*time.Second)
+		defer stop()
+		watch, err := files.Watch(watchctx, scope, 0)
+		must(t, err)
+		defer watch.Close()
+		shell(t, "printf watched > /workspace/watched")
+		e, err := watch.Next()
+		must(t, err)
+		if e.Epoch != r.Reference.Epoch {
+			t.Fatal(e)
+		}
+		watch.Close()
+		p, err := s.Project(runctx, scope)
+		must(t, err)
+		must(t, l.Pause(runctx, scope, p.Revision))
+		drive(t, l, scope.ProjectID)
+		_, err = files.Watch(runctx, scope, 0)
+		wantError(t, err, ErrPending)
+		_, err = files.Run(runctx, scope, "paused-list", projectfiles.Request{Operation: "list", Limit: 100}, nil, io.Discard)
+		wantError(t, err, ErrPending)
+		p, err = s.Project(runctx, scope)
+		must(t, err)
+		if p.State != "paused" {
+			t.Fatal("watch woke Project")
+		}
+		_, err = files.Run(runctx, scope, "paused-read", projectfiles.Request{Operation: "read", Path: "contended"}, nil, io.Discard)
+		wantError(t, err, ErrPending)
+		drive(t, l, scope.ProjectID)
+		r, err = l.ActiveResources(runctx, scope)
+		must(t, err)
+		// /tmp is overlay, not retained; install the release helper for this new
+		// placement. Production templates include it at its fixed release path.
+		file, err := os.Open(os.Getenv("PROJECT_TEST_BIN_DIR") + "/workspace-files")
+		must(t, err)
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/tmp/workspace-files", file))
+		file.Close()
+		shell(t, "chmod +x /tmp/workspace-files")
+		var out bytes.Buffer
+		_, err = files.Run(runctx, scope, "paused-read", projectfiles.Request{Operation: "read", Path: "contended"}, nil, &out)
+		must(t, err)
+		if out.String() != "newer" {
+			t.Fatal(out.String())
+		}
+	})
+}

@@ -75,6 +75,10 @@ func status(err error) (int, string) {
 		return http.StatusConflict, "conflicting or stale intent"
 	case errors.Is(err, product.ErrDeleting):
 		return http.StatusConflict, "resource is deleting"
+	case errors.Is(err, product.ErrFileOperationFailed):
+		return http.StatusUnprocessableEntity, "file operation failed"
+	case errors.Is(err, product.ErrFileOutcomeUnknown):
+		return http.StatusConflict, err.Error()
 	case errors.Is(err, product.ErrBusy):
 		return http.StatusConflict, "project has admitted activity"
 	case errors.Is(err, product.ErrPending):

@@ -14,6 +14,7 @@ type Server struct {
 	Store     *Store
 	Terminals *product.Terminals
 	Agents    *product.Agents
+	Files     *product.Files
 	Lifecycle *product.Lifecycle
 	Auth      Authenticator
 	Config    Config
@@ -32,6 +33,12 @@ type Store = product.Store
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/projects/{project}/files", s.listFiles)
+	mux.HandleFunc("GET /api/projects/{project}/files/content", s.readFile)
+	mux.HandleFunc("PUT /api/projects/{project}/files/content", s.writeFile)
+	mux.HandleFunc("POST /api/projects/{project}/files", s.mutateFile)
+	mux.HandleFunc("GET /api/projects/{project}/files/operations/{operation}", s.fileOperation)
+	mux.HandleFunc("GET /api/projects/{project}/files/watch", s.watchFiles)
 	mux.HandleFunc("GET /api/projects", s.listProjects)
 	mux.HandleFunc("POST /api/projects", s.createProject)
 	mux.HandleFunc("GET /api/projects/{project}", s.getProject)

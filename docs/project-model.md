@@ -123,3 +123,48 @@ including input split inside a UTF-8 sequence, guest-observed resize, interrupt
 sparing the shell, detach past the engine ring rejoining the same process, and
 cleanup that waits for termination evidence while sparing siblings. No Chromium
 journey renders a live terminal yet.
+
+## Project Files
+
+`internal/product.Files` serves the Project workspace independently of the selected
+Agent Session. Files and native processes can read, replace, rename and remove the
+same paths concurrently using ordinary Linux behavior. There are no workspace
+locks, turn-based upload restrictions or file ownership inferred from messages.
+
+The `workspace-files` Go executable confines operations to `/workspace`. It walks
+with directory descriptors, opens components using `O_PATH|O_NOFOLLOW`, and checks
+the selected inode before opening regular file content through its descriptor.
+All traversed symlinks and nonregular read targets are refused. Removing a symlink
+unlinks the entry itself; removing a directory requires it to be empty. Absolute,
+traversing, malformed and excessively deep paths are refused.
+
+Uploads stream through one helper with a declared length and SHA-256 digest,
+limited to 256 MiB. Only complete, verified bytes replace the target through a
+same-directory rename. Cancellation cannot publish a partial replacement; an
+abruptly killed helper can leave a removable `.upload-*` temporary file. Transfers
+use bounded buffers, and directory pages contain at most 200 observations. Neither
+file bytes nor terminal bytes enter the Agent journal or product event outbox.
+
+Mutation IDs identify immutable requests. A duplicate returns its existing outcome
+without dispatching again, even if a sibling has since changed the file. Lost
+replies report `unknown`; recovery terminates or observes the original helper and
+releases its activity without replaying the mutation. A known process exit and a
+known mutation outcome are separate facts. Confirmed helper errors report failure;
+a rename whose durability confirmation failed reports an unknown outcome.
+
+Explicit reads and writes request normal Project resume when paused and return
+pending until placement is ready. Directory listing and watch observation never
+resume a Project. Files watches invalidate browser inventory; gaps, disconnects
+and resets require bounded rescans and do not represent a transactional snapshot
+or a complete write audit. Watches hold no lifecycle activity.
+
+The Go API uses Project permission, origin checks, bounded bodies and authenticated
+operation lookup. Reads/downloads stream raw bytes; uploads require `Content-Length`,
+`X-Content-SHA256` and `Idempotency-Key`. Mutations and operation outcomes are rooted
+at `/api/projects/{project}/files`. Browser integration and the composed deployment
+are qualified separately from these application contracts.
+
+The isolated pinned-engine gate runs confinement tests inside runsc, including
+adversarial symlink swaps. It also verifies an 8 MiB transfer alongside a native
+PTY, cancellation retaining prior bytes, a lost write reply followed by a sibling
+overwrite, watch invalidation, and retained bytes across cold pause/resume.

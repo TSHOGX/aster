@@ -277,3 +277,21 @@ BEGIN UPDATE service_grants SET state='revoked' WHERE incarnation_id=NEW.id AND 
 CREATE TRIGGER revoke_session_services AFTER UPDATE OF deletion_intent ON sessions
 WHEN NEW.deletion_intent>0
 BEGIN UPDATE service_grants SET state='revoked' WHERE session_id=NEW.id AND state='active'; END;
+
+-- File operation outcomes are independent from helper liveness. An unknown
+-- write is never replayed, while confirmed helper termination releases activity.
+CREATE TABLE file_operations (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ request TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ sandbox_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL CHECK(epoch>0),
+ handle TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('running','succeeded','failed','unknown')),
+ settled INTEGER NOT NULL DEFAULT 0 CHECK(settled IN (0,1)),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE INDEX file_operations_pending ON file_operations(settled,updated_at,project_id);
