@@ -75,7 +75,7 @@ func (s *Store) activity(ctx context.Context, tx *sql.Tx, project string) error 
 	return err
 }
 func (s *Store) CreateProject(ctx context.Context, actor, id, title string) (Project, error) {
-	if !validText(actor, 256) || !validText(id, 128) || !validText(title, 256) {
+	if !validText(actor, 256) || !validID(id) || !validText(title, 256) {
 		return Project{}, ErrInvalid
 	}
 	var p Project
@@ -174,7 +174,7 @@ func (s *Store) Terminals(ctx context.Context, scope Scope, after string, limit 
 	return out, rows.Err()
 }
 func (s *Store) CreateSession(ctx context.Context, scope Scope, id, title string) (Session, error) {
-	if !validText(id, 128) || !validText(title, 256) {
+	if !validID(id) || !validText(title, 256) {
 		return Session{}, ErrInvalid
 	}
 	var p Session
@@ -212,7 +212,7 @@ func (s *Store) CreateSession(ctx context.Context, scope Scope, id, title string
 	return p, err
 }
 func (s *Store) CreateTerminal(ctx context.Context, scope Scope, id, title string, rows, cols int) (Terminal, error) {
-	if !validText(id, 128) || !validText(title, 256) || rows < 1 || rows > 500 || cols < 1 || cols > 1000 {
+	if !validID(id) || !validText(title, 256) || rows < 1 || rows > 500 || cols < 1 || cols > 1000 {
 		return Terminal{}, ErrInvalid
 	}
 	var p Terminal

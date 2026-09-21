@@ -121,6 +121,13 @@ func (s *Store) ReleaseTurn(ctx context.Context, scope Scope, session, id string
 		if t.State != "held" {
 			return ErrConflict
 		}
+		var steering int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_commands WHERE turn_id=? AND kind='steer' AND state IN ('pending','sending','dispatching','unknown')`, id).Scan(&steering); err != nil {
+			return err
+		}
+		if steering > 0 {
+			return ErrConflict
+		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE turns SET state='queued',updated_at=? WHERE id=? AND state='held'`, s.timestamp(), id)); err != nil {
 			return err
 		}

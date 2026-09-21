@@ -139,3 +139,71 @@ CREATE TABLE project_activity (
  FOREIGN KEY(project_id,terminal_id) REFERENCES terminals(project_id,id)
 );
 CREATE INDEX project_activity_pending ON project_activity(project_id,state);
+
+CREATE TABLE agent_incarnations (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ sandbox_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL CHECK(epoch>0),
+ handle TEXT NOT NULL,
+ owner INTEGER NOT NULL CHECK(owner>0),
+ state TEXT NOT NULL CHECK(state IN ('starting','running','stopping','exited','unknown')),
+ ingested_sequence INTEGER NOT NULL DEFAULT 0,
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id),
+ UNIQUE(project_id,session_id,id),
+ UNIQUE(store_id,sandbox_id,epoch,handle)
+);
+CREATE UNIQUE INDEX agent_incarnation_live ON agent_incarnations(session_id) WHERE state IN ('starting','running','stopping','unknown');
+CREATE TABLE agent_commands (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ incarnation_id TEXT NOT NULL,
+ turn_id TEXT,
+ kind TEXT NOT NULL CHECK(kind IN ('prompt','steer','abort','get_state')),
+ payload BLOB NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','sending','dispatching','applied','rejected','completed','unknown')),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ FOREIGN KEY(project_id,session_id,incarnation_id) REFERENCES agent_incarnations(project_id,session_id,id),
+ FOREIGN KEY(project_id,session_id,turn_id) REFERENCES turns(project_id,session_id,id)
+);
+CREATE UNIQUE INDEX agent_prompt_turn ON agent_commands(turn_id) WHERE kind='prompt';
+CREATE INDEX agent_commands_pending ON agent_commands(incarnation_id,state,created_at);
+CREATE TABLE agent_records (
+ incarnation_id TEXT NOT NULL REFERENCES agent_incarnations(id),
+ sequence INTEGER NOT NULL CHECK(sequence>0),
+ digest TEXT NOT NULL,
+ command_id TEXT NOT NULL,
+ turn_id TEXT NOT NULL,
+ kind TEXT NOT NULL,
+ payload BLOB NOT NULL,
+ PRIMARY KEY(incarnation_id,sequence)
+);
+CREATE TABLE messages (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ turn_id TEXT NOT NULL,
+ role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+ content TEXT NOT NULL,
+ native_message BLOB,
+ sequence INTEGER NOT NULL,
+ created_at TEXT NOT NULL,
+ FOREIGN KEY(project_id,session_id,turn_id) REFERENCES turns(project_id,session_id,id),
+ UNIQUE(session_id,sequence)
+);
+CREATE INDEX messages_project ON messages(project_id,session_id,sequence);
+CREATE TABLE native_captures (
+ turn_id TEXT PRIMARY KEY REFERENCES turns(id),
+ incarnation_id TEXT NOT NULL REFERENCES agent_incarnations(id),
+ path TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ size INTEGER NOT NULL CHECK(size>=0),
+ host_path TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL DEFAULT 'guest' CHECK(state IN ('guest','exported','archived'))
+);

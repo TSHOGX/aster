@@ -116,9 +116,10 @@ func blockers(ctx context.Context, q queryer, project string) ([]Blocker, error)
  SELECT 'turn',id,state FROM turns WHERE project_id=? AND state IN ('queued','starting','running','stopping')
  UNION ALL SELECT 'terminal',id,state FROM terminals WHERE project_id=? AND state IN ('starting','running','stopping')
  UNION ALL SELECT kind,id,detail FROM project_activity WHERE project_id=? AND state<>'complete'
+ UNION ALL SELECT 'agent_process',id,state FROM agent_incarnations WHERE project_id=? AND state IN ('starting','stopping','unknown')
  UNION ALL SELECT 'session_cleanup',id,state FROM sessions WHERE project_id=? AND state='deleting'
  UNION ALL SELECT 'terminal_cleanup',id,state FROM terminals WHERE project_id=? AND state='deleting'
- LIMIT 501`, project, project, project, project, project)
+ LIMIT 501`, project, project, project, project, project, project)
 	if err != nil {
 		return nil, err
 	}

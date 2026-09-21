@@ -1,0 +1,121 @@
+package product
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"harness-platform/orchestrator/internal/sandbox"
+)
+
+type NativeCapture struct {
+	TurnID, ProjectID, SessionID, IncarnationID, Path, Digest, State, HostPath string
+	Size                                                                       int64
+	Reference                                                                  sandbox.Reference
+}
+type CaptureReader interface {
+	ReadNativeCapture(context.Context, sandbox.Reference, string) (io.ReadCloser, error)
+}
+
+// Captures exports immutable completed native bytes. Once HostPath is committed,
+// archive retry is host-only work and doesn't retain Project activity.
+type Captures struct {
+	Store     *Store
+	Backend   CaptureReader
+	Directory string
+}
+
+func (s *Store) PendingCaptures(ctx context.Context, limit int) ([]NativeCapture, error) {
+	rows, err := s.reader.QueryContext(ctx, `SELECT c.turn_id,i.project_id,i.session_id,c.incarnation_id,c.path,c.digest,c.state,c.host_path,c.size,r.store_id,r.sandbox_id,r.epoch,r.mutation_revision FROM native_captures c JOIN agent_incarnations i ON i.id=c.incarnation_id JOIN project_resources r ON r.project_id=i.project_id WHERE c.state='guest' ORDER BY c.rowid LIMIT ?`, pageSize(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NativeCapture
+	for rows.Next() {
+		var c NativeCapture
+		if err := rows.Scan(&c.TurnID, &c.ProjectID, &c.SessionID, &c.IncarnationID, &c.Path, &c.Digest, &c.State, &c.HostPath, &c.Size, &c.Reference.StoreID, &c.Reference.SandboxID, &c.Reference.Epoch, &c.Reference.MutationRevision); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
+	if !filepath.IsAbs(c.Directory) || capture.Size < 0 || capture.Size > 64<<20 || !strings.HasPrefix(capture.Digest, "sha256:") {
+		return ErrInvalid
+	}
+	// Selection comes from the committed capture ledger, never a browser path.
+	var path, digest, state string
+	var size int64
+	if err := c.Store.reader.QueryRowContext(ctx, `SELECT path,digest,size,state FROM native_captures WHERE turn_id=? AND incarnation_id=?`, capture.TurnID, capture.IncarnationID).Scan(&path, &digest, &size, &state); err != nil {
+		return err
+	}
+	if path != capture.Path || digest != capture.Digest || size != capture.Size {
+		return ErrConflict
+	}
+	if state != "guest" {
+		return nil
+	}
+	source, err := c.Backend.ReadNativeCapture(ctx, capture.Reference, path)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	directory := filepath.Join(c.Directory, capture.ProjectID)
+	if !validID(capture.ProjectID) {
+		return ErrInvalid
+	}
+	if err = os.MkdirAll(directory, 0700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(directory, "capture-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer temp.Close()
+	defer os.Remove(temp.Name())
+	hash := sha256.New()
+	n, err := io.Copy(io.MultiWriter(temp, hash), io.LimitReader(source, capture.Size+1))
+	if err != nil {
+		return err
+	}
+	sum := fmt.Sprintf("sha256:%x", hash.Sum(nil))
+	if n != capture.Size || sum != capture.Digest {
+		return errors.New("native capture differs from committed digest")
+	}
+	if err = temp.Sync(); err != nil {
+		return err
+	}
+	if err = temp.Close(); err != nil {
+		return err
+	}
+	destination := filepath.Join(directory, strings.TrimPrefix(sum, "sha256:")+".jsonl")
+	if err = os.Rename(temp.Name(), destination); err != nil {
+		return err
+	}
+	dir, err := os.Open(directory)
+	if err != nil {
+		return err
+	}
+	err = dir.Sync()
+	dir.Close()
+	if err != nil {
+		return err
+	}
+	return c.Store.write(ctx, func(tx *sql.Tx) error {
+		if err := changed(tx.ExecContext(ctx, `UPDATE native_captures SET host_path=?,state='exported' WHERE turn_id=? AND digest=? AND state='guest'`, destination, capture.TurnID, capture.Digest)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE project_activity SET state='complete',updated_at=? WHERE id=? AND project_id=?`, c.Store.timestamp(), "capture/"+capture.TurnID, capture.ProjectID); err != nil {
+			return err
+		}
+		return c.Store.activity(ctx, tx, capture.ProjectID)
+	})
+}

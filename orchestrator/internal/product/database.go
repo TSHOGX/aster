@@ -172,3 +172,15 @@ func changed(res sql.Result, err error) error {
 func validText(s string, max int) bool {
 	return strings.TrimSpace(s) != "" && len(s) <= max && !strings.ContainsRune(s, 0)
 }
+
+func validID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
