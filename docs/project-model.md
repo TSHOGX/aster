@@ -37,3 +37,29 @@ Run the contracts with:
 go -C orchestrator test -race ./internal/product
 go -C orchestrator vet ./internal/product
 ```
+
+The Project lifecycle service reserves one active placement per Project before
+remote work. It provisions one workspace volume at `/workspace` and one retained
+runtime volume at `/runtime`. Child creation leaves these mounts and the Project
+network profile unchanged. Only immutable published volumes may be shared mounts.
+
+Provisioning, pause, resume and deletion use durable operation lanes. A worker
+performs one remote phase per reconciliation, preserving create keys and original
+conditional resource references across lost replies. Uncertain placements remain
+charged to capacity. Confirmed pause releases placement capacity; retained storage
+remains owned until Project deletion verifies its removal.
+
+Idle uses durable activity and a revision-fenced deadline. Admitted turns,
+retained running Terminals, child cleanup and guest-dependent Files/control work
+block pause. Held prompts, created Terminal rows and browser connections do not.
+Explicit pause rejects busy Projects. New admitted work during an issued pause
+remains queued for a later resume. Restart is a cold pause/resume, without process
+memory preservation.
+
+Real pinned-Khora tests cover retained bytes, independent Session state paths,
+lost successful lifecycle replies and verified sandbox/volume deletion. They also
+show that process-group termination does not stop an escaped `setsid` descendant;
+such descendants require supervision and directed cleanup. An escaped descendant
+can retain stdout, so waiting for output EOF alone cannot establish cleanup.
+Application ownership is single-process; lifecycle lane locks are not a claim of
+active-active fencing.

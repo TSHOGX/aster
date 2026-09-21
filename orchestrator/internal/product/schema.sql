@@ -94,3 +94,48 @@ BEGIN UPDATE conversation_grants SET revoked=1 WHERE session_id=NEW.id; END;
 CREATE TRIGGER revoke_project_grants AFTER UPDATE OF state ON projects
 WHEN NEW.state IN ('deleting','deleted')
 BEGIN UPDATE conversation_grants SET revoked=1 WHERE session_id IN (SELECT id FROM sessions WHERE project_id=NEW.id); END;
+
+CREATE TABLE project_resources (
+ project_id TEXT PRIMARY KEY REFERENCES projects(id),
+ store_id TEXT NOT NULL CHECK(store_id<>''),
+ profile TEXT NOT NULL,
+ workspace_volume TEXT NOT NULL DEFAULT '',
+ runtime_volume TEXT NOT NULL DEFAULT '',
+ sandbox_id TEXT NOT NULL DEFAULT '',
+ mutation_revision TEXT NOT NULL DEFAULT '',
+ epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),
+ occupied INTEGER NOT NULL CHECK(occupied IN (0,1))
+);
+CREATE UNIQUE INDEX project_sandbox_unique ON project_resources(store_id,sandbox_id) WHERE sandbox_id<>'';
+CREATE UNIQUE INDEX project_workspace_unique ON project_resources(store_id,workspace_volume) WHERE workspace_volume<>'';
+CREATE UNIQUE INDEX project_runtime_unique ON project_resources(store_id,runtime_volume) WHERE runtime_volume<>'';
+
+CREATE TABLE project_operations (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ kind TEXT NOT NULL CHECK(kind IN ('create','pause','resume','delete')),
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','issued','unknown','succeeded')),
+ phase TEXT NOT NULL,
+ request TEXT NOT NULL,
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ attempted_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX project_operation_lane ON project_operations(project_id) WHERE state<>'succeeded';
+CREATE INDEX project_operations_pending ON project_operations(state,attempted_at,project_id);
+
+CREATE TABLE project_activity (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ session_id TEXT,
+ terminal_id TEXT,
+ kind TEXT NOT NULL CHECK(kind IN ('agent_start','agent_control','terminal_start','terminal_control','files','capture','descendants')),
+ state TEXT NOT NULL CHECK(state IN ('active','unknown','complete')),
+ detail TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ CHECK(session_id IS NULL OR terminal_id IS NULL),
+ FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id),
+ FOREIGN KEY(project_id,terminal_id) REFERENCES terminals(project_id,id)
+);
+CREATE INDEX project_activity_pending ON project_activity(project_id,state);
