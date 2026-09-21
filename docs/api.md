@@ -226,9 +226,10 @@ existing-session runs enqueue into the configured owner session, preserving its
 conversation context and workspace files. `GET .../{id}/runs` exposes durable
 status (`queued`, `running`, `succeeded`, `failed`, `timed_out`), attempt,
 timestamps, associated `session_id`, error class/message, and a bounded output
-summary. The background worker is independent of maintenance and is enabled only
-when both `harness.scheduler.enabled` and the `cron_agent` runtime feature flag
-are true; manual run rows remain durable while the worker is disabled. Schedule
+summary. The background worker is independent of maintenance and is enabled by
+`harness.scheduler.enabled`; the `cron_agent` flag controls the administrative UI
+capability and does not silently stop persisted schedules. Manual run rows remain
+durable while the scheduler worker is disabled. Schedule
 updates use an optimistic `version` field and due claims are atomic, so restarts
 cannot double-dispatch a cron slot.
 

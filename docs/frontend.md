@@ -348,5 +348,5 @@ poll. Switching cancels obsolete transcript requests. Public shares use the same
 presentational components with their own provider-free, scoped data adapter.
 
 Message and artifact pages are current product paths. The capability response lets
-the frontend keep those views aligned with the daemon during rollout; no legacy
-transport or rollback switch is part of the Khora architecture.
+the frontend keep those views aligned with the daemon. The Khora architecture has
+one current transcript/file path and one SSE event transport.
