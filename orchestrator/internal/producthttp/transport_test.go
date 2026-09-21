@@ -657,3 +657,12 @@ func TestProjectPauseRejectsLiveTerminalAndReportsBlocker(t *testing.T) {
 }
 
 var _ = url.Parse
+
+func (f *ptyBackend) InspectProcess(_ context.Context, ref sandbox.ProcessReference) (sandbox.ProcessObservation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.streams[ref.Handle] == nil {
+		return sandbox.ProcessObservation{}, &sandbox.Error{Class: sandbox.NotFound}
+	}
+	return sandbox.ProcessObservation{ProcessReference: ref, State: "running"}, nil
+}

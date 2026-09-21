@@ -167,7 +167,7 @@ func TestHeldAdmissionAndIdempotencyAcrossRestartAndRename(t *testing.T) {
 	}
 	child, err = s.Session(ctx, a, child.ID)
 	must(t, err)
-	must(t, s.ReleaseTurn(ctx, a, child.ID, held.ID, child.Revision))
+	must(t, s.ReleaseTurn(ctx, a, child.ID, held.ID, child.ControlRevision))
 	p, err = s.Project(ctx, a)
 	must(t, err)
 	if p.ActivityRevision != before.ActivityRevision+1 {
@@ -352,4 +352,26 @@ func TestRejectForeignSchemaAndDriftWithoutModification(t *testing.T) {
 		st.Close()
 		t.Fatal("schema drift repaired silently")
 	}
+}
+
+func TestProductDatabaseHasOneApplicationOwnerAcrossPathAliases(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "product.db")
+	first, err := Open(ctx, path)
+	must(t, err)
+	if second, err := Open(ctx, path); err == nil {
+		second.Close()
+		t.Fatal("second application owner accepted")
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	must(t, os.Symlink(directory, alias))
+	if second, err := Open(ctx, filepath.Join(alias, "product.db")); err == nil {
+		second.Close()
+		t.Fatal("path alias bypassed owner lock")
+	}
+	must(t, first.Close())
+	must(t, first.Close())
+	second, err := Open(ctx, path)
+	must(t, err)
+	must(t, second.Close())
 }

@@ -10,8 +10,8 @@ import (
 )
 
 const projectColumns = `id,owner_id,title,state,revision,activity_revision,coalesce(idle_deadline,''),failure,created_at,updated_at`
-const sessionColumns = `id,project_id,title,state,deletion_intent,revision,failure,created_at,updated_at`
-const terminalColumns = `id,project_id,title,state,deletion_intent,revision,rows,cols,exit_code,failure,created_at,updated_at`
+const sessionColumns = `id,project_id,title,state,deletion_intent,control_revision,revision,failure,created_at,updated_at`
+const terminalColumns = `id,project_id,title,state,deletion_intent,revision,rows,cols,exit_code,failure,created_at,updated_at,coalesce((SELECT ti.id FROM terminal_incarnations ti WHERE ti.terminal_id=terminals.id ORDER BY ti.rowid DESC LIMIT 1),'')`
 
 type scanner interface{ Scan(...any) error }
 
@@ -20,11 +20,11 @@ func scanProject(row scanner) (p Project, err error) {
 	return
 }
 func scanSession(row scanner) (p Session, err error) {
-	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Deletion, &p.Revision, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
+	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Deletion, &p.ControlRevision, &p.Revision, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
 	return
 }
 func scanTerminal(row scanner) (p Terminal, err error) {
-	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Deletion, &p.Revision, &p.Rows, &p.Cols, &p.ExitCode, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
+	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Deletion, &p.Revision, &p.Rows, &p.Cols, &p.ExitCode, &p.Failure, &p.CreatedAt, &p.UpdatedAt, &p.Incarnation))
 	return
 }
 
@@ -360,6 +360,9 @@ func (s *Store) DeleteProject(ctx context.Context, scope Scope, revision int64) 
 			return err
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE projects SET state='deleting',revision=revision+1,activity_revision=activity_revision+1,idle_deadline=NULL,updated_at=? WHERE id=? AND revision=?`, s.timestamp(), scope.ProjectID, revision)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='canceled',updated_at=? WHERE project_id=? AND state IN ('queued','held')`, s.timestamp(), scope.ProjectID); err != nil {
 			return err
 		}
 		return s.event(ctx, tx, scope.ProjectID, "", "", "project.deleting", revision+1)

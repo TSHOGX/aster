@@ -357,3 +357,23 @@ func (j *Journal) Unresolved(ctx context.Context) ([]Command, error) {
 	}
 	return out, rows.Err()
 }
+
+// Status observes original receipt/dispatch evidence without receiving or
+// dispatching a command. An absent result is fenced against old-owner input.
+func (j *Journal) Status(ctx context.Context, owner uint64, id string) (string, error) {
+	if id == "" || len(id) > 128 {
+		return "", ErrConflict
+	}
+	state := "absent"
+	err := j.transaction(ctx, func(tx *sql.Tx) error {
+		if err := fence(ctx, tx, owner); err != nil {
+			return err
+		}
+		err := tx.QueryRowContext(ctx, `SELECT state FROM commands WHERE id=?`, id).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	return state, err
+}

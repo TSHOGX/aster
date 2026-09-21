@@ -50,3 +50,10 @@ type ProcessExitError struct {
 func (e *ProcessExitError) Error() string {
 	return fmt.Sprintf("process exited with code %d: %s", e.Code, e.Diagnostic)
 }
+
+type ProcessObservation struct {
+	ProcessReference
+	State    string
+	PID      int
+	ExitCode *int
+}

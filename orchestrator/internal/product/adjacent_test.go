@@ -233,3 +233,26 @@ func TestNotificationPagingKeepsNewestFirstAndCountsAudience(t *testing.T) {
 		t.Fatal(count)
 	}
 }
+
+func TestNotificationTracksResolvedNativeOutcome(t *testing.T) {
+	s, scope, _ := fixture(t)
+	_, err := s.CreateSession(ctx, scope, "agent", "Agent")
+	must(t, err)
+	turn, err := s.AdmitTurn(ctx, scope, "agent", "request", "work", false)
+	must(t, err)
+	_, err = s.db.Exec(`UPDATE turns SET state='unknown' WHERE id=?`, turn.ID)
+	must(t, err)
+	notices, err := s.Notifications(ctx, scope.Actor, "", 100)
+	must(t, err)
+	if len(notices) != 1 || notices[0].Title != "Agent turn unknown" {
+		t.Fatal(notices)
+	}
+	must(t, s.ReadNotification(ctx, scope.Actor, notices[0].ID))
+	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, turn.ID)
+	must(t, err)
+	notices, err = s.Notifications(ctx, scope.Actor, "", 100)
+	must(t, err)
+	if len(notices) != 1 || notices[0].Title != "Agent turn completed" || notices[0].Read {
+		t.Fatal("resolved evidence left a stale notification", notices)
+	}
+}

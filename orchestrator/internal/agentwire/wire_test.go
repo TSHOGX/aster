@@ -2,6 +2,7 @@ package agentwire
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -35,5 +36,24 @@ func TestPartialCoalescedAndTruncatedFrames(t *testing.T) {
 		if _, err := NewDecoder(strings.NewReader(raw)).Next(); !errors.Is(err, ErrFrame) {
 			t.Fatalf("bad frame accepted: %v", err)
 		}
+	}
+}
+
+func TestHTMLPayloadDoesNotExpandPastWireBudget(t *testing.T) {
+	payload := json.RawMessage(`{"text":"` + strings.Repeat("<", 1<<20) + `"}`)
+	frame := Frame{Kind: "record", Session: "session", Incarnation: "incarnation", Owner: 1, Sequence: 1, Payload: payload}
+	var buffer bytes.Buffer
+	if err := Encode(&buffer, frame); err != nil {
+		t.Fatal("HTML escaping exhausted the frame budget", err)
+	}
+	if buffer.Len() > 2<<20 {
+		t.Fatal("raw native payload expanded", buffer.Len())
+	}
+	decoded, err := NewDecoder(&buffer).Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded.Payload, payload) {
+		t.Fatal("native payload changed")
 	}
 }

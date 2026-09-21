@@ -89,6 +89,9 @@ func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, r proje
 			return e
 		}
 		fresh = true
+		if r.Operation == "list" {
+			return nil
+		}
 		return s.activity(ctx, tx, scope.ProjectID)
 	})
 	return
@@ -119,6 +122,9 @@ func (s *Store) finishFile(ctx context.Context, o FileOperation, state, detail s
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE project_activity SET state=?,updated_at=? WHERE id=?`, activity, s.timestamp(), "file:"+o.ID); err != nil {
 			return err
+		}
+		if o.Request.Operation == "list" {
+			return nil
 		}
 		return s.activity(ctx, tx, o.ProjectID)
 	})
@@ -164,7 +170,7 @@ func (f *Files) Run(ctx context.Context, scope Scope, id string, r projectfiles.
 		if _, err := f.Lifecycle.ActiveResources(ctx, scope); err != nil {
 			return FileOperation{}, err
 		}
-	} else if err := f.Lifecycle.EnsureActive(ctx, scope, f.Profile); err != nil {
+	} else if err := f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile); err != nil {
 		return FileOperation{}, err
 	}
 	f.mu.Lock()
@@ -379,6 +385,7 @@ func (f *Files) Reconcile(ctx context.Context, limit int) error {
 			failures = append(failures, err)
 			continue
 		}
+		_, _ = f.Store.db.ExecContext(ctx, `UPDATE file_operations SET updated_at=? WHERE id=?`, f.Store.timestamp(), id)
 		err = f.recover(ctx, o)
 		if err != nil {
 			failures = append(failures, err)

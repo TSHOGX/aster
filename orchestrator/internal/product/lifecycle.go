@@ -89,6 +89,7 @@ type LifecycleBackend interface {
 // Lifecycle is the sole Project placement authority. Fixed locks bound memory;
 // durable operation lanes supply restart discovery, not active-active ownership.
 type Lifecycle struct {
+	Artifacts   ProjectArtifacts
 	Store       *Store
 	Backend     LifecycleBackend
 	MaxProjects int
@@ -104,6 +105,7 @@ func (l *Lifecycle) lane(id string) *sync.Mutex {
 type operationRequest struct {
 	Reference sandbox.Reference
 	Restart   bool
+	Force     bool
 }
 type operation struct{ ID, ProjectID, Kind, State, Phase, Request, Error string }
 
@@ -273,10 +275,12 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 			}
 			r, err = resources(ctx, tx, project)
 			if errors.Is(err, ErrNotFound) {
-				if _, err = tx.ExecContext(ctx, `UPDATE projects SET state='deleted' WHERE id=?`, project); err != nil {
+				if err = l.newOperation(ctx, tx, project, "delete", "complete", operationRequest{}); err != nil {
 					return err
 				}
-				return l.Store.bumpProject(ctx, tx, project, "project.deleted")
+				o, err = pendingOperation(ctx, tx, project)
+				r.ProjectID = project
+				return err
 			}
 			if err != nil {
 				return err
@@ -290,8 +294,21 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 			return err
 		}
 		r, err = resources(ctx, tx, project)
+		if errors.Is(err, ErrNotFound) && o.Kind == "delete" && o.Phase == "complete" {
+			r.ProjectID = project
+			err = nil
+		}
 		if err != nil {
 			return err
+		}
+		if o.Kind == "create" && !r.Occupied {
+			if err = l.reserve(ctx, tx); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE project_resources SET occupied=1 WHERE project_id=?`, project); err != nil {
+				return err
+			}
+			r.Occupied = true
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE project_operations SET state='issued',attempted_at=? WHERE id=?`, l.Store.timestamp(), o.ID)
 		return err
@@ -300,6 +317,13 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 		return err
 	}
 	if o.ID == "" {
+		return nil
+	}
+	if o.Kind == "delete" && o.Phase == "complete" {
+		err := l.destroy(ctx, o, r)
+		if err != nil {
+			return l.unknown(ctx, o, err)
+		}
 		return nil
 	}
 	identity, err := l.Backend.Identity(ctx)
@@ -520,6 +544,11 @@ func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observa
 		if _, err := l.Store.loseStalePTYs(ctx, tx, o.ProjectID, current, reason); err != nil {
 			return err
 		}
+		if state == "paused" {
+			if err := l.Store.settleLostActivities(ctx, tx, o.ProjectID); err != nil {
+				return err
+			}
+		}
 		return l.settle(ctx, tx, o, state, occupied, restart, obs.Reference)
 	})
 }
@@ -556,6 +585,9 @@ func (l *Lifecycle) destroy(ctx context.Context, o operation, r Resources) error
 		// The original binding remains as tombstone evidence until all storage is
 		// reclaimed; only confirmed sandbox absence releases placement capacity.
 		return l.Store.write(ctx, func(tx *sql.Tx) error {
+			if err := l.Store.settleDestroyedPlacement(ctx, tx, o.ProjectID); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET occupied=0 WHERE project_id=?`, o.ProjectID); err != nil {
 				return err
 			}
@@ -574,7 +606,24 @@ func (l *Lifecycle) destroy(ctx context.Context, o operation, r Resources) error
 		}
 		return l.phase(ctx, o, next, "", "")
 	case "complete":
+		if l.Artifacts != nil {
+			if err := l.Artifacts.RemoveProject(ctx, o.ProjectID); err != nil {
+				return err
+			}
+		} else {
+			var pending int
+			if err := l.Store.reader.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM shares WHERE project_id=? AND cleaned=0)+(SELECT count(*) FROM native_captures c JOIN agent_incarnations i ON i.id=c.incarnation_id WHERE i.project_id=? AND c.host_path<>'')`, o.ProjectID, o.ProjectID).Scan(&pending); err != nil {
+				return err
+			}
+			if pending > 0 {
+				return ErrPending
+			}
+		}
 		return l.Store.write(ctx, func(tx *sql.Tx) error {
+			if err := l.Store.purgeProject(ctx, tx, o.ProjectID); err != nil {
+				return err
+			}
+
 			if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded',error='' WHERE id=?`, o.ID); err != nil {
 				return err
 			}

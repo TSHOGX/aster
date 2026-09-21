@@ -21,12 +21,16 @@ export function TerminalPanel({
   projectId,
   terminalId,
   title,
+  processState,
+  processExitCode,
   wantInput = true,
   onClose,
 }: {
   projectId: string;
   terminalId: string;
   title: string;
+  processState: string;
+  processExitCode?: number;
   wantInput?: boolean;
   onClose?: () => void;
 }) {
@@ -108,11 +112,15 @@ export function TerminalPanel({
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-xs font-medium">{title}</span>
           <span className="text-2xs text-[var(--color-foreground-muted)]">
-            {describe(attachment, exitCode)}
+            {processState === "exited"
+              ? `exited ${processExitCode ?? exitCode ?? ""}`
+              : processState === "lost"
+                ? "process lost"
+                : describe(attachment, exitCode)}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          {attachment === "detached" ? (
+          {attachment === "detached" && processState === "running" ? (
             <button onClick={() => setReconnect((n) => n + 1)}>
               Reconnect view
             </button>

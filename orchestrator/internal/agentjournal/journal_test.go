@@ -172,3 +172,29 @@ func TestTruncatedAndWrongIdentityJournalRejected(t *testing.T) {
 		t.Fatal("truncated database accepted")
 	}
 }
+
+func TestStatusQueryCannotDispatchOrCreateACommand(t *testing.T) {
+	journal := open(t, 1<<20)
+	must(t, journal.Sync(ctx, 1, 0))
+	state, err := journal.Status(ctx, 1, "original")
+	must(t, err)
+	if state != "absent" {
+		t.Fatal(state)
+	}
+	var count int
+	must(t, journal.db.QueryRow(`SELECT count(*) FROM commands`).Scan(&count))
+	if count != 0 {
+		t.Fatal("status query created native work")
+	}
+	_, _, err = journal.Receive(ctx, 1, command())
+	must(t, err)
+	state, err = journal.Status(ctx, 1, command().ID)
+	must(t, err)
+	if state != "received" {
+		t.Fatal(state)
+	}
+	must(t, journal.Sync(ctx, 2, 0))
+	if _, err = journal.Status(ctx, 1, command().ID); !errors.Is(err, ErrStale) {
+		t.Fatal("stale status owner accepted", err)
+	}
+}

@@ -32,6 +32,7 @@ export function FilePreview({ path, href }: { path: string; href: string }) {
             : type === "image"
               ? `image/${path.toLowerCase().endsWith(".svg") ? "svg+xml" : path.split(".").pop()}`
               : "application/octet-stream";
+        if (abort.signal.aborted) return;
         objectURL = URL.createObjectURL(new Blob([blob], { type: mime }));
         if (!abort.signal.aborted) {
           setLoaded({ blob, url: objectURL, text });

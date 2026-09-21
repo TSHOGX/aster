@@ -270,8 +270,13 @@ func list(root int, r Request, out io.Writer) error {
 	defer dir.Close()
 	kept := &names{}
 	heap.Init(kept)
+	scanned := 0
 	for {
 		batch, err := dir.Readdirnames(128)
+		scanned += len(batch)
+		if scanned > 100000 {
+			return errors.New("directory exceeds 100000-entry inventory scan bound")
+		}
 		for _, name := range batch {
 			if name <= r.After || !utf8.ValidString(name) {
 				continue

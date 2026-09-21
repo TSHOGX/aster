@@ -300,3 +300,23 @@ func TestIdleAgentHasNoServiceAuthorityWithoutAdmittedTurn(t *testing.T) {
 		t.Fatal(terminal, grants)
 	}
 }
+
+func TestServiceRenewalFencesOwnerAndNeverRevivesExpiredGrant(t *testing.T) {
+	s, scope, i, _ := agentServiceFixture(t)
+	clock := s.now()
+	s.now = func() time.Time { return clock }
+	_, token, err := s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
+	must(t, err)
+	clock = clock.Add(40 * time.Minute)
+	must(t, s.RenewService(ctx, i, "model", time.Hour))
+	clock = clock.Add(30 * time.Minute)
+	_, err = s.AuthorizeService(ctx, "model", token)
+	must(t, err)
+	stale := i
+	stale.Owner++
+	wantError(t, s.RenewService(ctx, stale, "model", time.Hour), ErrConflict)
+	clock = clock.Add(time.Hour)
+	wantError(t, s.RenewService(ctx, i, "model", time.Hour), ErrNotFound)
+	_, err = s.AuthorizeService(ctx, "model", token)
+	wantError(t, err, ErrNotFound)
+}

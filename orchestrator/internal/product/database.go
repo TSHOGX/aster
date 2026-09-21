@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"harness-platform/orchestrator/internal/schemastate"
 	"harness-platform/orchestrator/internal/sqlitex"
 )
 
@@ -23,15 +24,27 @@ var schema string
 // Store is a single product database, with serialized immediate transactions
 // and independent bounded readers. There is no migration or legacy fallback.
 type Store struct {
+	release    func()
+	closeOnce  sync.Once
+	closeError error
 	db, reader *sql.DB
 	now        func() time.Time
 }
 
-func Open(ctx context.Context, path string) (*Store, error) {
+func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
+	release, err := schemastate.LockPaths(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			release()
+		}
+	}()
 	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
 		u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
 		check, err := sql.Open("sqlite", u.String())
@@ -85,9 +98,17 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return fail(err)
 	}
-	return &Store{db: db, reader: reader, now: time.Now}, nil
+	return &Store{db: db, reader: reader, now: time.Now, release: release}, nil
 }
-func (s *Store) Close() error      { return errors.Join(s.reader.Close(), s.db.Close()) }
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() {
+		s.closeError = errors.Join(s.reader.Close(), s.db.Close())
+		if s.release != nil {
+			s.release()
+		}
+	})
+	return s.closeError
+}
 func (s *Store) timestamp() string { return sqlitex.FormatTime(s.now()) }
 
 type queryer interface {

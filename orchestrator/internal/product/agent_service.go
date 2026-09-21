@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"harness-platform/orchestrator/internal/agentwire"
@@ -15,7 +16,9 @@ import (
 )
 
 type agentAttachment struct {
-	incarnation Incarnation
+	projectID     string
+	statusQueried time.Time
+	incarnation   Incarnation
 	// credential is this incarnation's service token, delivered once in the
 	// opening sync frame. It is empty when the deployment declares no service.
 	credential string
@@ -27,6 +30,10 @@ type agentAttachment struct {
 
 // Agents owns one output attachment per runner and fans committed projections
 // out through the product outbox. HTTP requests never own this stream context.
+type AgentBackend interface {
+	sandbox.Processes
+	InspectProcess(context.Context, sandbox.ProcessReference) (sandbox.ProcessObservation, error)
+}
 type Agents struct {
 	// ServiceAudience names the Project profile service that agents may reach.
 	// Empty means this deployment issues no service credentials at all, which is
@@ -35,10 +42,11 @@ type Agents struct {
 	ServiceTTL      time.Duration
 	Store           *Store
 	Lifecycle       *Lifecycle
-	Backend         sandbox.Processes
+	Backend         AgentBackend
 	RunnerBinary    string
 	Profile         Profile
 	MaxProcesses    int
+	MaxPerProject   int
 	mu              sync.Mutex
 	attachments     map[string]*agentAttachment
 	ctx             context.Context
@@ -46,7 +54,7 @@ type Agents struct {
 	wg              sync.WaitGroup
 }
 
-func NewAgents(ctx context.Context, s *Store, l *Lifecycle, b sandbox.Processes, profile Profile, max int) *Agents {
+func NewAgents(ctx context.Context, s *Store, l *Lifecycle, b AgentBackend, profile Profile, max int) *Agents {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Agents{Store: s, Lifecycle: l, Backend: b, RunnerBinary: "/usr/local/bin/agent-runner", Profile: profile, MaxProcesses: max, attachments: map[string]*agentAttachment{}, ctx: ctx, cancel: cancel}
 }
@@ -67,7 +75,7 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 	if _, err := a.Store.Session(ctx, scope, session); err != nil {
 		return err
 	}
-	if err := a.Lifecycle.EnsureActive(ctx, scope, a.Profile); err != nil {
+	if err := a.Lifecycle.EnsureConfiguredActive(ctx, scope, a.Profile); err != nil {
 		return err
 	}
 	if _, err := a.Lifecycle.ActiveResources(ctx, scope); err != nil {
@@ -81,14 +89,24 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 		attachment = nil
 	}
 	if attachment == nil {
-		if a.MaxProcesses < 1 || len(a.attachments) >= a.MaxProcesses {
+		projectCount := 0
+		for _, current := range a.attachments {
+			if current.projectID == scope.ProjectID {
+				projectCount++
+			}
+		}
+		perProject := a.MaxPerProject
+		if perProject < 1 {
+			perProject = min(a.MaxProcesses, max(2, a.MaxProcesses/2))
+		}
+		if a.MaxProcesses < 1 || len(a.attachments) >= a.MaxProcesses || projectCount >= perProject {
 			a.mu.Unlock()
 			return ErrCapacity
 		}
 		// Reserve a local slot before asynchronous attachment. Durable process
 		// reservation below is independent from this acceleration map.
 		attachctx, cancel := context.WithCancel(a.ctx)
-		attachment = &agentAttachment{cancel: cancel}
+		attachment = &agentAttachment{cancel: cancel, projectID: scope.ProjectID}
 		a.attachments[session] = attachment
 		a.mu.Unlock()
 		i, err := a.Store.reserveAgent(ctx, scope, session)
@@ -107,7 +125,9 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 			cancel()
 			return err
 		}
+		a.mu.Lock()
 		attachment.incarnation = i
+		a.mu.Unlock()
 		// The credential is issued before the runner is started, so Pi's authored
 		// configuration already names it when the first turn dispatches. A failure
 		// here is a Project-level problem, not a per-turn one.
@@ -138,6 +158,28 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 	if !ready {
 		return ErrPending
 	}
+	if err := a.queryUncertainCommands(ctx, attachment); err != nil {
+		return err
+	}
+	var stopping bool
+	if err := a.Store.reader.QueryRowContext(ctx, `SELECT state='stopping' FROM agent_incarnations WHERE id=? AND owner=?`, attachment.incarnation.ID, attachment.incarnation.Owner).Scan(&stopping); err != nil {
+		return missing(err)
+	}
+	if stopping {
+		return a.Stop(ctx, scope.ProjectID, session)
+	}
+	if a.ServiceAudience != "" {
+		resources, e := a.Store.Resources(ctx, scope)
+		if e != nil {
+			return e
+		}
+		if _, declared := resources.Profile.Reachability.Audience(a.ServiceAudience); declared {
+			if e = a.Store.RenewService(ctx, attachment.incarnation, a.ServiceAudience, a.grantTTL()); e != nil {
+				_ = a.Stop(ctx, scope.ProjectID, session)
+				return e
+			}
+		}
+	}
 	f, err := a.Store.agentCommand(ctx, attachment.incarnation)
 	if err != nil {
 		return err
@@ -151,11 +193,15 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 			if _, e := tx.ExecContext(settle, `UPDATE agent_commands SET state='unknown',error=? WHERE id=? AND state='sending'`, err.Error(), f.CommandID); e != nil {
 				return e
 			}
+			if _, e := tx.ExecContext(settle, `UPDATE agent_incarnations SET state='stopping',error='native input outcome unknown; terminating original process' WHERE id=? AND owner=? AND state IN ('starting','running')`, attachment.incarnation.ID, attachment.incarnation.Owner); e != nil {
+				return e
+			}
 			if _, e := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='native input outcome unknown' WHERE id=? AND deletion_intent<2`, session); e != nil {
 				return e
 			}
 			return a.Store.bumpSession(settle, tx, scope.ProjectID, session, "session.blocked")
 		})
+		_ = a.Stop(settle, scope.ProjectID, session)
 		return err
 	}
 	return nil
@@ -174,11 +220,12 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 func (a *Agents) Stop(ctx context.Context, project, session string) error {
 	a.mu.Lock()
 	attachment := a.attachments[session]
-	a.mu.Unlock()
 	incarnation := Incarnation{}
 	if attachment != nil {
 		incarnation = attachment.incarnation
-	} else {
+	}
+	a.mu.Unlock()
+	if incarnation.ID == "" {
 		// No local attachment. A live incarnation from a previous application owner is
 		// still signalled, using its own durable process reference.
 		i, err := liveIncarnation(ctx, a.Store.reader, session)
@@ -191,6 +238,39 @@ func (a *Agents) Stop(ctx context.Context, project, session string) error {
 			return err
 		}
 		incarnation = i
+		// Restart cleanup must adopt the original output stream before signalling;
+		// otherwise its exit frame has no owner to commit the termination evidence.
+		a.mu.Lock()
+		if current := a.attachments[session]; current != nil {
+			incarnation = current.incarnation
+			a.mu.Unlock()
+		} else {
+			owned, e := a.takeOwnership(ctx, i)
+			if e != nil {
+				a.mu.Unlock()
+				return e
+			}
+			if e = a.Store.write(ctx, func(tx *sql.Tx) error {
+				return changed(tx.ExecContext(ctx, `UPDATE agent_incarnations SET state='stopping' WHERE id=? AND owner=? AND state<>'exited'`, owned.ID, owned.Owner))
+			}); e != nil {
+				a.mu.Unlock()
+				return e
+			}
+			attachctx, cancel := context.WithCancel(a.ctx)
+			attachment := &agentAttachment{projectID: project, incarnation: owned, cancel: cancel}
+			a.attachments[session] = attachment
+			incarnation = owned
+			a.wg.Add(1)
+			go func() {
+				defer a.wg.Done()
+				e := a.attach(attachctx, attachment)
+				a.mu.Lock()
+				attachment.err = e
+				attachment.ready = false
+				a.mu.Unlock()
+			}()
+			a.mu.Unlock()
+		}
 	}
 	if incarnation.ProjectID != project {
 		return ErrNotFound
@@ -280,14 +360,16 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 		stream, err = a.Backend.ConnectProcess(ctx, i.Reference, 0)
 	}
 	if err != nil {
+		a.inspectEnded(ctx, i, err)
 		return err
 	}
 	defer stream.Close()
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	defer writer.Close()
-	streamctx, cancel := context.WithCancel(ctx)
+	_, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var synchronized atomic.Bool
 	pumpDone := make(chan struct{})
 	go func() {
 		defer close(pumpDone)
@@ -302,18 +384,17 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 				writer.CloseWithError(&sandbox.ProcessExitError{Code: f.ExitCode})
 				return
 			}
-			if f.Gap {
-				select {
-				case <-streamctx.Done():
-					return
-				default:
+			if f.Gap || f.ResetReason != "" {
+				if !synchronized.Load() {
+					continue
 				}
-				if err := a.send(ctx, attachment, agentwire.Frame{Kind: "sync", After: i.Ingested}); err != nil {
-					writer.CloseWithError(err)
-					return
-				}
-				continue
+				writer.CloseWithError(errors.New("Agent transport gap; resynchronize original journal"))
+				return
 			}
+			if f.Replay {
+				continue
+			} // The new sync explicitly replays the durable journal.
+
 			if f.Kind == "data" && f.Stream != "stderr" {
 				if _, err = writer.Write(f.Data); err != nil {
 					return
@@ -326,12 +407,19 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 		return err
 	}
 	decoder := agentwire.NewDecoder(reader)
+	syncTimer := time.AfterFunc(10*time.Second, func() { _ = stream.Close() })
+	defer syncTimer.Stop()
 	for {
 		f, err := decoder.Next()
 		if err != nil {
+			if !synchronized.Load() && errors.Is(err, agentwire.ErrFrame) && decoder.Recoverable() {
+				continue
+			}
 			var exit *sandbox.ProcessExitError
 			if errors.As(err, &exit) {
 				a.recordExit(ctx, i, exit.Code)
+			} else {
+				a.inspectEnded(ctx, i, err)
 			}
 			return err
 		}
@@ -341,10 +429,15 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 		if f.Owner != i.Owner {
 			continue
 		} // engine ring can contain previous-owner frames.
+		if !synchronized.Load() && f.Kind != "synced" && f.Kind != "error" {
+			continue
+		}
 		switch f.Kind {
 		case "synced":
+			synchronized.Store(true)
+			syncTimer.Stop()
 			err = a.Store.write(ctx, func(tx *sql.Tx) error {
-				if err := changed(tx.ExecContext(ctx, `UPDATE agent_incarnations SET state='running',error='' WHERE id=? AND owner=? AND state IN ('starting','running')`, i.ID, i.Owner)); err != nil {
+				if err := changed(tx.ExecContext(ctx, `UPDATE agent_incarnations SET state=CASE WHEN state='stopping' THEN 'stopping' ELSE 'running' END,error='' WHERE id=? AND owner=? AND state IN ('starting','running','stopping')`, i.ID, i.Owner)); err != nil {
 					return err
 				}
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state='idle' WHERE id=? AND state='starting'`, i.SessionID); err != nil {
@@ -358,6 +451,9 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 			a.mu.Lock()
 			attachment.ready = true
 			a.mu.Unlock()
+			if err = a.queryUncertainCommands(ctx, attachment); err != nil {
+				return err
+			}
 		case "record":
 			sequence, err := a.Store.IngestAgent(ctx, i, f)
 			if err != nil {
@@ -366,13 +462,11 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 			if err = a.send(ctx, attachment, agentwire.Frame{Kind: "ack", Sequence: sequence}); err != nil {
 				return err
 			}
-		case "command_status": // Transport status never creates a user message.
-			if f.State == "dispatching" {
-				_, err = a.Store.db.ExecContext(ctx, `UPDATE agent_commands SET state='dispatching' WHERE id=? AND incarnation_id=? AND state='sending'`, f.CommandID, i.ID)
-				if err != nil {
-					return err
-				}
+		case "command_status":
+			if err = a.Store.commandStatus(ctx, i, f.CommandID, f.State); err != nil {
+				return err
 			}
+
 		case "error":
 			return fmt.Errorf("runner: %s", f.Error)
 		default:
@@ -391,36 +485,112 @@ func (a *Agents) recordExit(ctx context.Context, i Incarnation, code int32) {
 		if owner != i.Owner {
 			return ErrConflict
 		}
-		// Exit 0 is emitted only after the runner verifies descendant cleanup and
-		// has no unresolved native commands. Nonzero exit retains ambiguity.
-		if code == 0 {
-			var pending int
-			if err := tx.QueryRowContext(settle, `SELECT count(*) FROM turns WHERE session_id=? AND state IN ('starting','running','stopping','unknown')`, i.SessionID).Scan(&pending); err != nil {
+		cleanup := "unknown"
+		if code == 0 || code == agentwire.ExitCleanFailure {
+			cleanup = "settled"
+		}
+		if _, err := tx.ExecContext(settle, `UPDATE agent_incarnations SET state='exited',cleanup_state=?,recovery_state='pending',error=? WHERE id=? AND owner=?`, cleanup, fmt.Sprintf("guardian exit %d", code), i.ID, i.Owner); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(settle, `INSERT INTO project_activity(id,project_id,session_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'agent_control','active','original Agent journal recovery',?,?) ON CONFLICT(id) DO NOTHING`, "recovery/"+i.ID, i.ProjectID, i.SessionID, a.Store.timestamp(), a.Store.timestamp()); err != nil {
+			return err
+		}
+		if cleanup == "unknown" {
+			if _, err := tx.ExecContext(settle, `INSERT INTO project_activity(id,project_id,session_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'descendants','unknown','guardian ended without descendant settlement',?,?) ON CONFLICT(id) DO NOTHING`, "exit/"+i.ID, i.ProjectID, i.SessionID, a.Store.timestamp(), a.Store.timestamp()); err != nil {
 				return err
 			}
-			if pending == 0 {
-				if _, err := tx.ExecContext(settle, `UPDATE agent_incarnations SET state='exited',error='' WHERE id=? AND owner=?`, i.ID, i.Owner); err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='idle',failure='' WHERE id=? AND deletion_intent<2`, i.SessionID); err != nil {
-					return err
-				}
-				return a.Store.bumpSession(settle, tx, i.ProjectID, i.SessionID, "session.exited")
-			}
-		}
-		// Nonzero exit doesn't establish escaped descendants or native settlement.
-		if _, err := tx.ExecContext(settle, `INSERT INTO project_activity(id,project_id,session_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'descendants','unknown','runner exited before verified descendant settlement',?,?) ON CONFLICT(id) DO NOTHING`, "exit/"+i.ID, i.ProjectID, i.SessionID, a.Store.timestamp(), a.Store.timestamp()); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(settle, `UPDATE agent_incarnations SET state='exited',error=? WHERE id=? AND owner=?`, fmt.Sprintf("runner exit %d", code), i.ID, i.Owner); err != nil {
-			return err
 		}
 		if _, err := tx.ExecContext(settle, `UPDATE turns SET state='unknown',updated_at=? WHERE session_id=? AND state IN ('starting','running','stopping')`, a.Store.timestamp(), i.SessionID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='runner exited; reconcile journal and descendants' WHERE id=? AND deletion_intent<2`, i.SessionID); err != nil {
+		var unknown int
+		if err := tx.QueryRowContext(settle, `SELECT count(*) FROM turns WHERE session_id=? AND state='unknown' AND acknowledged=0`, i.SessionID).Scan(&unknown); err != nil {
 			return err
 		}
-		return a.Store.bumpSession(settle, tx, i.ProjectID, i.SessionID, "session.blocked")
+		if code != 0 || unknown > 0 {
+			if _, err := tx.ExecContext(settle, `UPDATE turns SET state='held',updated_at=? WHERE session_id=? AND state='queued'`, a.Store.timestamp(), i.SessionID); err != nil {
+				return err
+			}
+		}
+		state, failure := "idle", ""
+		if cleanup != "settled" || unknown > 0 {
+			state, failure = "blocked", "reconciling original Agent journal and cleanup evidence"
+		}
+		if _, err := tx.ExecContext(settle, `UPDATE sessions SET state=?,failure=? WHERE id=? AND deletion_intent<2`, state, failure, i.SessionID); err != nil {
+			return err
+		}
+
+		return a.Store.bumpSession(settle, tx, i.ProjectID, i.SessionID, "session.recovering")
 	})
+}
+
+func (a *Agents) inspectEnded(ctx context.Context, i Incarnation, cause error) {
+	if ctx.Err() != nil || (!sandbox.Is(cause, sandbox.NotFound) && !sandbox.Is(cause, sandbox.Precondition)) {
+		return
+	}
+	observed, err := a.Backend.InspectProcess(ctx, i.Reference)
+	if err == nil && observed.State == "exited" && observed.ExitCode != nil {
+		a.recordExit(ctx, i, int32(*observed.ExitCode))
+		return
+	}
+	if !sandbox.Is(err, sandbox.NotFound) && (err != nil || observed.State != "lost") {
+		return
+	}
+	settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	_ = a.Store.write(settle, func(tx *sql.Tx) error {
+		if err := changed(tx.ExecContext(settle, `UPDATE agent_incarnations SET state='exited',cleanup_state='unknown',recovery_state='pending',error='original guardian handle is absent; no exit outcome is asserted' WHERE id=? AND owner=? AND state<>'exited'`, i.ID, i.Owner)); err != nil {
+			return err
+		}
+		for _, activity := range []struct{ id, kind, detail string }{{"exit/" + i.ID, "descendants", "guardian handle absent; descendant cleanup unknown"}, {"recovery/" + i.ID, "agent_control", "original Agent journal recovery"}} {
+			if _, err := tx.ExecContext(settle, `INSERT INTO project_activity(id,project_id,session_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,?,'unknown',?,?,?) ON CONFLICT(id) DO UPDATE SET state='unknown'`, activity.id, i.ProjectID, i.SessionID, activity.kind, activity.detail, a.Store.timestamp(), a.Store.timestamp()); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(settle, `UPDATE turns SET state='unknown',updated_at=? WHERE session_id=? AND state IN ('starting','running','stopping')`, a.Store.timestamp(), i.SessionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(settle, `UPDATE turns SET state='held',updated_at=? WHERE session_id=? AND state='queued'`, a.Store.timestamp(), i.SessionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='original guardian handle absent; reconcile history and descendant cleanup' WHERE id=? AND deletion_intent<2`, i.SessionID); err != nil {
+			return err
+		}
+		return a.Store.bumpSession(settle, tx, i.ProjectID, i.SessionID, "session.recovering")
+	})
+}
+
+func (a *Agents) queryUncertainCommands(ctx context.Context, attachment *agentAttachment) error {
+	a.mu.Lock()
+	if time.Since(attachment.statusQueried) < time.Second {
+		a.mu.Unlock()
+		return nil
+	}
+	attachment.statusQueried = time.Now()
+	a.mu.Unlock()
+
+	rows, err := a.Store.reader.QueryContext(ctx, `SELECT id FROM agent_commands WHERE incarnation_id=? AND state='unknown' ORDER BY created_at,id LIMIT 16`, attachment.incarnation.ID)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err = a.send(ctx, attachment, agentwire.Frame{Kind: "status", CommandID: id}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

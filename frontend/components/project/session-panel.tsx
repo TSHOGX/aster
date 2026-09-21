@@ -61,6 +61,18 @@ export function SessionPanel({
   }, [targetMessage]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [turnHistory, setTurnHistory] = useState<Turn[] | null>(null);
+  const loadTurns = async (after = 0) => {
+    try {
+      setTurnHistory(
+        (await api<{ turns: Turn[] }>(`${base}/turns?after=${after}&limit=50`))
+          .turns,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Turn history unavailable.");
+    }
+  };
+
   const request = useRef(0);
   const invalidate = useCallback(() => {
     request.current++;
@@ -70,7 +82,7 @@ export function SessionPanel({
     const serial = ++request.current;
     try {
       const next = await api<SessionSnapshot>(
-        `${base}/snapshot?before=${before}${focusMessage ? `&message=${encodeURIComponent(focusMessage)}` : ""}`,
+        `${base}/snapshot?before=${before}&records=${state.current.snapshot ? "0" : "1"}${focusMessage ? `&message=${encodeURIComponent(focusMessage)}` : ""}`,
       );
       if (serial !== request.current) return;
       setView((current) => acceptSnapshot(current, next));
@@ -137,7 +149,7 @@ export function SessionPanel({
     void act(() =>
       command(`${base}/turns/${encodeURIComponent(turn.id)}/control`, {
         action,
-        revision: current.revision,
+        control_revision: current.control_revision,
       }),
     );
   const active = view.snapshot?.turns.some((turn) =>
@@ -199,6 +211,63 @@ export function SessionPanel({
           {error || current.failure}
         </p>
       ) : null}
+      {current.state === "blocked" && (
+        <section className="notice warning">
+          <p>
+            This Session needs recovery. Unknown prior effects will not be
+            repeated.
+          </p>
+          {view.snapshot?.recovery
+            ?.filter((r) => r.recovery !== "none")
+            .map((r) => (
+              <p key={r.id}>
+                {r.recovery === "complete"
+                  ? "Journal reconciled"
+                  : r.recovery === "failed"
+                    ? "Journal recovery unavailable"
+                    : "Reconciling original journal"}{" "}
+                ·{" "}
+                {r.cleanup === "settled"
+                  ? "Child processes settled"
+                  : "Descendant cleanup is unknown"}
+                {r.error ? ` · ${r.error}` : ""}
+              </p>
+            ))}
+          {view.snapshot?.recovery?.some((r) => r.recovery === "failed") && (
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(() =>
+                  command(`${base}/control`, {
+                    action: "retry_recovery",
+                    revision: current.revision,
+                  }),
+                )
+              }
+            >
+              Retry journal recovery
+            </button>
+          )}
+          <button
+            disabled={busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Continue from the retained native history? Prior unknown effects remain unknown and queued prompts will stay held.",
+                )
+              )
+                void act(() =>
+                  command(`${base}/control`, {
+                    action: "continue",
+                    revision: current.revision,
+                  }),
+                );
+            }}
+          >
+            Continue from history
+          </button>
+        </section>
+      )}
       <div
         className="conversation-scroll"
         onClick={(event) => {
@@ -246,7 +315,25 @@ export function SessionPanel({
             data-message-id={message.id}
           >
             <small>{message.role === "user" ? "You" : "Agent"}</small>
-            <MarkdownView content={message.content} />
+            <MarkdownView content={message.content.slice(0, 64000)} />
+            {message.content.length > 64000 && (
+              <button
+                onClick={() => {
+                  const url = URL.createObjectURL(
+                    new Blob([message.content], {
+                      type: "text/plain;charset=utf-8",
+                    }),
+                  );
+                  const link = document.createElement("a");
+                  link.href = url;
+                  link.download = `message-${message.sequence}.txt`;
+                  link.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}
+              >
+                Download full message
+              </button>
+            )}
             {[
               ...new Set(
                 message.content.match(/\/workspace\/[^\s`"'<>\])]+/g) || [],
@@ -269,13 +356,13 @@ export function SessionPanel({
             className="chat-message assistant streaming"
             aria-live="polite"
           >
-            <small>Agent · writing</small>
+            <small>Agent · latest output</small>
             <MarkdownView content={view.partial} highlight={false} />
           </article>
         )}
         {view.tools.length > 0 && (
           <details className="tool-trace">
-            <summary>Tool activity ({view.tools.length})</summary>
+            <summary>Recent activity ({view.tools.length})</summary>
             {view.tools.map((tool) => (
               <details key={tool.id}>
                 <summary>
@@ -292,6 +379,55 @@ export function SessionPanel({
           </p>
         )}
       </div>
+      {view.snapshot?.turns
+        .filter((turn) => turn.state === "unknown")
+        .map((turn) => (
+          <p className="notice warning" key={turn.id}>
+            Unknown outcome: {turn.content.slice(0, 180)}. Inspect any files or
+            external effects before repeating this work.
+          </p>
+        ))}
+      {turnHistory && (
+        <section className="prompt-queue" aria-label="Turn history">
+          <div className="row-actions">
+            <button onClick={() => setTurnHistory(null)}>Close history</button>
+            <button onClick={() => void loadTurns()}>First turns</button>
+            {turnHistory.length === 50 && (
+              <button
+                onClick={() =>
+                  void loadTurns(turnHistory.at(-1)?.sequence || 0)
+                }
+              >
+                Next turns
+              </button>
+            )}
+          </div>
+          {turnHistory.map((turn) => (
+            <details key={turn.id}>
+              <summary>
+                #{turn.sequence} · {turn.state} · {turn.content.slice(0, 80)}
+              </summary>
+              <pre>{turn.content.slice(0, 8000)}</pre>
+              {turn.state === "held" && (
+                <button
+                  disabled={busy}
+                  onClick={() => control(turn, "release")}
+                >
+                  Release prompt
+                </button>
+              )}
+              {["held", "queued"].includes(turn.state) && (
+                <button
+                  disabled={busy}
+                  onClick={() => control(turn, "canceled")}
+                >
+                  Cancel prompt
+                </button>
+              )}
+            </details>
+          ))}
+        </section>
+      )}
       {queue.length > 0 && (
         <div className="prompt-queue">
           {queue.map((turn) => (
@@ -317,7 +453,7 @@ export function SessionPanel({
                               action: "steer",
                               source: turn.id,
                               request_id: newID(),
-                              revision: current.revision,
+                              control_revision: current.control_revision,
                             }),
                           )
                         }
@@ -363,7 +499,12 @@ export function SessionPanel({
           }}
         />
         <div className="composer-actions">
-          <small>Shared /workspace · Ctrl ↵ to send</small>
+          <div className="row-actions">
+            <small>Shared /workspace · Ctrl ↵ to send</small>
+            <button type="button" onClick={() => void loadTurns()}>
+              Turn history
+            </button>
+          </div>
           <div className="row-actions">
             {active && (
               <button
@@ -374,7 +515,7 @@ export function SessionPanel({
                     command(`${base}/control`, {
                       action: "interrupt",
                       request_id: newID(),
-                      revision: current.revision,
+                      control_revision: current.control_revision,
                     }),
                   )
                 }

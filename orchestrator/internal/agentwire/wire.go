@@ -67,7 +67,7 @@ func (d *Decoder) Next() (Frame, error) {
 }
 func Encode(w io.Writer, f Frame) error {
 	f.Version = Version
-	raw, err := json.Marshal(f)
+	raw, err := MarshalJSON(f)
 	if err != nil {
 		return err
 	}
@@ -75,6 +75,7 @@ func Encode(w io.Writer, f Frame) error {
 		return ErrFrame
 	}
 	raw = append(raw, '\n')
+
 	for len(raw) > 0 {
 		n, err := w.Write(raw)
 		if err != nil {
@@ -86,4 +87,26 @@ func Encode(w io.Writer, f Frame) error {
 		raw = raw[n:]
 	}
 	return nil
+}
+
+// ExitCleanFailure means the worker failed but its independent guardian verified
+// descendant settlement. ExitUnsettled never permits automatic replacement.
+const ExitCleanFailure = 10
+const ExitUnsettled = 11
+
+// Recoverable reports whether a malformed line was consumed without exhausting
+// the bounded scanner. Hosts may discard such a prefix only before a new-owner
+// synchronization frame; command decoders remain strict throughout.
+func (d *Decoder) Recoverable() bool { return d.scanner.Err() == nil }
+
+// MarshalJSON keeps native JSON out of HTML escaping; these bytes travel only
+// through JSON protocols, never as inline page markup.
+func MarshalJSON(value any) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
 }

@@ -223,3 +223,17 @@ func TestFilesActivityRejectsStalePauseAndDoesNotWakeFromWatch(t *testing.T) {
 		t.Fatal(p)
 	}
 }
+
+func TestInventoryRefreshDoesNotKeepProjectAwake(t *testing.T) {
+	f, scope, _ := fileFixture(t)
+	timer, err := f.Store.ArmIdle(ctx, scope, time.Nanosecond)
+	must(t, err)
+	_, err = f.Run(ctx, scope, "inventory", projectfiles.Request{Operation: "list", Limit: 100}, nil, io.Discard)
+	must(t, err)
+	current, err := f.Store.Project(ctx, scope)
+	must(t, err)
+	if current.ActivityRevision != timer.ActivityRevision || current.IdleDeadline != timer.IdleDeadline {
+		t.Fatal("metadata observation invalidated idle", timer, current)
+	}
+	must(t, f.Lifecycle.PauseIdle(ctx, scope, timer))
+}

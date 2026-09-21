@@ -7,6 +7,7 @@ export type Project = {
   failure?: string;
 };
 export type AgentSession = {
+  control_revision: number;
   id: string;
   project_id: string;
   title: string;
@@ -16,6 +17,7 @@ export type AgentSession = {
   failure?: string;
 };
 export type ProjectTerminal = {
+  incarnation?: string;
   id: string;
   project_id: string;
   title: string;
@@ -43,11 +45,20 @@ export type Message = {
   turn_id?: string;
 };
 export type SessionSnapshot = {
+  records?: AgentRecord[];
+  recovery?: {
+    id: string;
+    state: string;
+    cleanup: string;
+    recovery: string;
+    error?: string;
+  }[];
   session: AgentSession;
   messages: Message[];
   turns: Turn[];
   record_cursor: number;
   has_earlier: boolean;
+  has_more_turns?: boolean;
 };
 export type AgentRecord = {
   cursor: number;

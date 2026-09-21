@@ -12,18 +12,21 @@ import (
 // has its own bounded loop so file recovery and host-only work cannot stall
 // admission, process attachments or lifecycle observations.
 type Workers struct {
-	Store     *Store
-	Lifecycle *Lifecycle
-	Agents    *Agents
-	Terminals *Terminals
-	Files     *Files
-	Shares    *Shares
-	Captures  *Captures
-	Titles    TitleGenerator
-	IdleAfter time.Duration
-	Interval  time.Duration
-	Report    func(string, error)
-	cursor    string
+	Store          *Store
+	Lifecycle      *Lifecycle
+	Agents         *Agents
+	Terminals      *Terminals
+	Files          *Files
+	Shares         *Shares
+	Captures       *Captures
+	Recovery       *AgentRecovery
+	Retirement     *ChildRetirement
+	Titles         TitleGenerator
+	IdleAfter      time.Duration
+	IdleAgentAfter time.Duration
+	Interval       time.Duration
+	Report         func(string, error)
+	cursor         string
 }
 
 func (w *Workers) report(kind string, err error) {
@@ -56,6 +59,12 @@ func (w *Workers) Run(ctx context.Context) {
 		}()
 	}
 	loop("runtime", interval, w.Step)
+	loop("agent recovery", time.Second, func(ctx context.Context) error {
+		if w.Recovery != nil {
+			return w.Recovery.Step(ctx, 8)
+		}
+		return nil
+	})
 	loop("files", time.Second, func(ctx context.Context) error {
 		if w.Files != nil {
 			return w.Files.Reconcile(ctx, 8)
@@ -78,6 +87,7 @@ func (w *Workers) Run(ctx context.Context) {
 		}
 		return errors.Join(errs...)
 	})
+	loop("metadata retention", time.Minute, w.Store.PruneMetadata)
 	loop("adjacent", time.Second, func(ctx context.Context) error {
 		_, scheduleErr := w.Store.TickSchedules(ctx, 16)
 		_, titleErr := w.Store.GenerateTitles(ctx, w.Titles, 8)
@@ -138,6 +148,7 @@ func (w *Workers) Step(ctx context.Context) error {
 }
 func (w *Workers) project(ctx context.Context, p Project) error {
 	scope := Scope{p.OwnerID, p.ID}
+	w.report("placement observation", w.Lifecycle.Observe(ctx, p.ID))
 	if w.Terminals != nil {
 		w.report("terminal reconciliation", w.Terminals.Reconcile(ctx, p.ID))
 	}
@@ -154,11 +165,16 @@ func (w *Workers) project(ctx context.Context, p Project) error {
 		if child.Kind == "terminal" && w.Terminals != nil {
 			w.report("stop terminal", w.Terminals.Stop(ctx, p.ID, child.ID))
 		}
-		w.report("child cleanup", w.Store.SettleChild(ctx, child))
+		if p.State != "deleting" && w.Retirement != nil {
+			w.report("child cleanup", w.Retirement.Step(ctx, child))
+		} else if p.State != "deleting" {
+			w.report("child cleanup", w.Store.SettleChild(ctx, child))
+		}
 	}
 	w.report("lifecycle", w.Lifecycle.Reconcile(ctx, p.ID))
 	if w.Agents != nil {
 		w.report("agent reconciliation", w.Agents.Reconcile(ctx, p.ID))
+		w.report("agent controls", w.Agents.ReconcileControls(ctx, p.ID))
 	}
 	if p.State == "deleting" {
 		return nil
@@ -195,6 +211,9 @@ func (w *Workers) project(ctx context.Context, p Project) error {
 			_, err = w.Terminals.Start(ctx, scope, terminal.TerminalID, terminal.Rows, terminal.Cols)
 			w.report("terminal adoption", err)
 		}
+	}
+	if w.Agents != nil {
+		w.report("idle Agent quiescence", w.Agents.QuiesceIdle(ctx, p.ID, w.IdleAgentAfter))
 	}
 	p, err = w.Store.Project(ctx, scope)
 	if err != nil {

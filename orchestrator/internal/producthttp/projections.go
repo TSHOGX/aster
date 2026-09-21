@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Server) resumeProject(w http.ResponseWriter, r *http.Request) {
-	if err := s.Lifecycle.EnsureActive(r.Context(), s.scope(r), s.Profile); err != nil {
+	if err := s.Lifecycle.EnsureConfiguredActive(r.Context(), s.scope(r), s.Profile); err != nil {
 		fail(w, err)
 		return
 	}
@@ -22,7 +22,7 @@ func (s *Server) sessionSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		before = sequence + 51
 	}
-	snapshot, err := s.Store.SessionSnapshot(r.Context(), s.scope(r), r.PathValue("session"), before)
+	snapshot, err := s.Store.SessionSnapshot(r.Context(), s.scope(r), r.PathValue("session"), before, r.URL.Query().Get("records") == "1")
 	if err != nil {
 		fail(w, err)
 		return
@@ -40,20 +40,25 @@ func (s *Server) agentRecords(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Action    string `json:"action"`
-		RequestID string `json:"request_id"`
-		Source    string `json:"source"`
-		Revision  int64  `json:"revision"`
+		ControlRevision int64  `json:"control_revision"`
+		Action          string `json:"action"`
+		RequestID       string `json:"request_id"`
+		Source          string `json:"source"`
+		Revision        int64  `json:"revision"`
 	}
 	if !decode(w, r, s.Config.bodyLimit(), &body) {
 		return
 	}
 	var err error
 	switch body.Action {
+	case "retry_recovery":
+		err = s.Store.RetryRecovery(r.Context(), s.scope(r), r.PathValue("session"), body.Revision)
+	case "continue":
+		err = s.Store.ContinueSession(r.Context(), s.scope(r), r.PathValue("session"), body.Revision)
 	case "interrupt":
-		err = s.Store.Interrupt(r.Context(), s.scope(r), r.PathValue("session"), body.RequestID, body.Revision)
+		err = s.Store.Interrupt(r.Context(), s.scope(r), r.PathValue("session"), body.RequestID, body.ControlRevision)
 	case "steer":
-		err = s.Store.Steer(r.Context(), s.scope(r), r.PathValue("session"), body.Source, body.RequestID, body.Revision)
+		err = s.Store.Steer(r.Context(), s.scope(r), r.PathValue("session"), body.Source, body.RequestID, body.ControlRevision)
 	default:
 		err = product.ErrInvalid
 	}
@@ -65,17 +70,17 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) queuedControl(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Action   string `json:"action"`
-		Revision int64  `json:"revision"`
+		Action          string `json:"action"`
+		ControlRevision int64  `json:"control_revision"`
 	}
 	if !decode(w, r, s.Config.bodyLimit(), &body) {
 		return
 	}
 	var err error
 	if body.Action == "release" {
-		err = s.Store.ReleaseTurn(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.Revision)
+		err = s.Store.ReleaseTurn(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.ControlRevision)
 	} else {
-		err = s.Store.ChangeQueuedTurn(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.Action, body.Revision)
+		err = s.Store.ChangeQueuedTurn(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.Action, body.ControlRevision)
 	}
 	if err != nil {
 		fail(w, err)

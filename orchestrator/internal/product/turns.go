@@ -30,6 +30,9 @@ func (s *Store) AdmitTurn(ctx context.Context, scope Scope, session, request, co
 	return t, err
 }
 func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session, request, content string, held bool) (Turn, error) {
+	if _, err := nativePayload(map[string]string{"type": "prompt", "message": content}); err != nil {
+		return Turn{}, err
+	}
 	var t Turn
 	err := func() error {
 		if _, err := writableProject(ctx, tx, scope); err != nil {
@@ -97,17 +100,22 @@ func (s *Store) Turns(ctx context.Context, scope Scope, session string, after in
 	}
 	defer rows.Close()
 	out := []Turn{}
+	total := 0
 	for rows.Next() {
 		t, err := scanTurn(rows)
 		if err != nil {
 			return nil, err
 		}
+		if total+len(t.Content) > 2<<20 && len(out) > 0 {
+			break
+		}
+		total += len(t.Content)
 		out = append(out, t)
 	}
 	return out, rows.Err()
 }
 
-// ReleaseTurn requires the Session revision, because it changes that Session's
+// ReleaseTurn requires the Session control revision, because it changes that Session's
 // ordered queue. A stale browser cannot release work using a sibling revision.
 func (s *Store) ReleaseTurn(ctx context.Context, scope Scope, session, id string, revision int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
@@ -121,7 +129,7 @@ func (s *Store) ReleaseTurn(ctx context.Context, scope Scope, session, id string
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
-		if child.Revision != revision {
+		if child.ControlRevision != revision {
 			return ErrConflict
 		}
 		t, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE project_id=? AND session_id=? AND id=?`, scope.ProjectID, session, id))

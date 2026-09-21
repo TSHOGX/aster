@@ -36,26 +36,28 @@ const (
 )
 
 type Session struct {
-	ID        string   `json:"id"`
-	ProjectID string   `json:"project_id"`
-	Title     string   `json:"title"`
-	State     string   `json:"state"`
-	Deletion  Deletion `json:"deletion"`
-	Revision  int64    `json:"revision"`
-	Failure   string   `json:"failure,omitempty"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
+	ControlRevision int64    `json:"control_revision"`
+	ID              string   `json:"id"`
+	ProjectID       string   `json:"project_id"`
+	Title           string   `json:"title"`
+	State           string   `json:"state"`
+	Deletion        Deletion `json:"deletion"`
+	Revision        int64    `json:"revision"`
+	Failure         string   `json:"failure,omitempty"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 type Terminal struct {
-	ID        string   `json:"id"`
-	ProjectID string   `json:"project_id"`
-	Title     string   `json:"title"`
-	State     string   `json:"state"`
-	Deletion  Deletion `json:"deletion"`
-	Revision  int64    `json:"revision"`
-	Rows      int      `json:"rows"`
-	Cols      int      `json:"cols"`
+	Incarnation string   `json:"incarnation,omitempty"`
+	ID          string   `json:"id"`
+	ProjectID   string   `json:"project_id"`
+	Title       string   `json:"title"`
+	State       string   `json:"state"`
+	Deletion    Deletion `json:"deletion"`
+	Revision    int64    `json:"revision"`
+	Rows        int      `json:"rows"`
+	Cols        int      `json:"cols"`
 	// ExitCode is the last incarnation's observed exit status, absent when no
 	// process has ended. A lost placement leaves it absent: the PTY did not exit.
 	ExitCode  *int   `json:"exit_code,omitempty"`

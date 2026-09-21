@@ -14,6 +14,7 @@ const snapshot = (revision: number, id = "agent"): SessionSnapshot => ({
     state: "running",
     revision,
     deletion: 0,
+    control_revision: revision,
   },
   messages: [],
   turns: [
@@ -112,4 +113,38 @@ describe("Project projections", () => {
       ]),
     ).toHaveLength(1);
   });
+});
+
+it("restores bounded tool activity and ignores old text replay after completion", () => {
+  const next = {
+    ...snapshot(3),
+    turns: [],
+    records: [
+      {
+        cursor: 3,
+        turn_id: "old",
+        kind: "native",
+        payload: {
+          type: "tool_execution_end",
+          toolCallId: "call",
+          toolName: "bash",
+          result: { output: "done" },
+        },
+      },
+    ],
+  };
+  const view = acceptSnapshot(emptySessionView(), next);
+  expect(view.tools).toHaveLength(1);
+  const replay = acceptRecords(view, [
+    {
+      cursor: 6,
+      turn_id: "old",
+      kind: "native",
+      payload: {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "historical text" },
+      },
+    },
+  ]);
+  expect(replay.partial).toBe("");
 });

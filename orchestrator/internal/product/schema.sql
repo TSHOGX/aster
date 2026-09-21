@@ -25,6 +25,7 @@ CREATE TABLE sessions (
  creation_digest TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','starting','running','stopping','blocked')),
  deletion_intent INTEGER NOT NULL DEFAULT 0 CHECK(deletion_intent IN (0,1,2)),
+ control_revision INTEGER NOT NULL DEFAULT 1 CHECK(control_revision>0),
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
  failure TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
@@ -66,6 +67,7 @@ CREATE TABLE turns (
  content TEXT NOT NULL CHECK(length(content)>0),
  initially_held INTEGER NOT NULL CHECK(initially_held IN (0,1)),
  state TEXT NOT NULL CHECK(state IN ('held','queued','starting','running','stopping','completed','failed','canceled','unknown')),
+ acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
  sequence INTEGER NOT NULL CHECK(sequence>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
@@ -115,6 +117,7 @@ CREATE TABLE project_resources (
  sandbox_id TEXT NOT NULL DEFAULT '',
  mutation_revision TEXT NOT NULL DEFAULT '',
  epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),
+ observed_at TEXT NOT NULL DEFAULT '',
  occupied INTEGER NOT NULL CHECK(occupied IN (0,1))
 );
 CREATE UNIQUE INDEX project_sandbox_unique ON project_resources(store_id,sandbox_id) WHERE sandbox_id<>'';
@@ -161,6 +164,10 @@ CREATE TABLE agent_incarnations (
  handle TEXT NOT NULL,
  owner INTEGER NOT NULL CHECK(owner>0),
  state TEXT NOT NULL CHECK(state IN ('starting','running','stopping','exited','unknown')),
+ last_work_at TEXT NOT NULL DEFAULT '',
+ cleanup_state TEXT NOT NULL DEFAULT 'unknown' CHECK(cleanup_state IN ('unknown','settled')),
+ recovery_state TEXT NOT NULL DEFAULT 'none' CHECK(recovery_state IN ('none','pending','replaying','complete','failed')),
+ recovery_attempted TEXT NOT NULL DEFAULT '',
  ingested_sequence INTEGER NOT NULL DEFAULT 0,
  error TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
@@ -246,6 +253,8 @@ CREATE TABLE native_captures (
  digest TEXT NOT NULL,
  size INTEGER NOT NULL CHECK(size>=0),
  host_path TEXT NOT NULL DEFAULT '',
+ attempted_at TEXT NOT NULL DEFAULT '',
+ error TEXT NOT NULL DEFAULT '',
  state TEXT NOT NULL DEFAULT 'guest' CHECK(state IN ('guest','exported','archived'))
 );
 
@@ -354,7 +363,9 @@ CREATE TRIGGER notify_turn_outcome AFTER UPDATE OF state ON turns
 WHEN NEW.state IN ('completed','failed','canceled','unknown') AND NEW.state<>OLD.state
 BEGIN
  INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
- SELECT 'turn/'||NEW.id,owner_id,NEW.project_id,NEW.session_id,'Agent turn '||NEW.state,'Open the conversation to inspect the outcome.',NEW.updated_at FROM projects WHERE id=NEW.project_id AND state NOT IN ('deleting','deleted');
+ SELECT 'turn/'||NEW.id,owner_id,NEW.project_id,NEW.session_id,'Agent turn '||NEW.state,'Open the conversation to inspect the outcome.',NEW.updated_at FROM projects WHERE id=NEW.project_id AND state NOT IN ('deleting','deleted')
+ ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,created_at=excluded.created_at;
+ DELETE FROM notification_reads WHERE notification_id='turn/'||NEW.id;
 END;
 
 CREATE TABLE shares (
@@ -402,3 +413,30 @@ CREATE TABLE auth_sessions (
  expires_at TEXT NOT NULL
 );
 CREATE INDEX auth_sessions_expiry ON auth_sessions(expires_at);
+
+CREATE TABLE session_cleanup (
+ session_id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ sandbox_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ handle TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','complete')),
+ attempted_at TEXT NOT NULL,
+ error TEXT NOT NULL DEFAULT '',
+ FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id)
+);
+
+-- Streaming projections must not invalidate a user's execution-control intent.
+CREATE TRIGGER turn_control_insert AFTER INSERT ON turns BEGIN
+ UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
+END;
+CREATE TRIGGER turn_control_update AFTER UPDATE OF state ON turns WHEN NEW.state<>OLD.state BEGIN
+ UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
+END;
+CREATE TRIGGER command_control_insert AFTER INSERT ON agent_commands BEGIN
+ UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
+END;
+CREATE TRIGGER command_control_update AFTER UPDATE OF state ON agent_commands WHEN NEW.state<>OLD.state BEGIN
+ UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
+END;

@@ -3,7 +3,6 @@ package product
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
@@ -56,7 +55,7 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if child.Revision != revision {
+		if child.ControlRevision != revision {
 			return ErrConflict
 		}
 		var active string
@@ -93,7 +92,10 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 				return err
 			}
 		}
-		raw, _ := json.Marshal(payload)
+		raw, err := nativePayload(payload)
+		if err != nil {
+			return err
+		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_commands(id,project_id,session_id,incarnation_id,turn_id,kind,payload,state,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)`, id, scope.ProjectID, session, i.ID, turn, kind, raw, s.timestamp()); err != nil {
 			return err
 		}

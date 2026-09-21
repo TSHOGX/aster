@@ -578,6 +578,24 @@ function ProjectSpace({
           </button>
           <button
             className="danger"
+            disabled={busy || project.state !== "active"}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Force a cold Project restart? This ends every running Agent and terminal, holds queued work, and leaves unresolved effects unknown.",
+                )
+              )
+                void act(() =>
+                  command(
+                    `${base}/restart?revision=${project.revision}&force=1`,
+                  ),
+                );
+            }}
+          >
+            Force restart
+          </button>
+          <button
+            className="danger"
             disabled={busy || project.state === "deleting"}
             onClick={() => {
               if (
@@ -776,10 +794,12 @@ function ProjectSpace({
                 );
                 return terminal ? (
                   <TerminalPanel
-                    key={id}
+                    key={`${id}:${terminal.incarnation || "created"}`}
                     projectId={projectId}
                     terminalId={id}
                     title={terminal.title}
+                    processState={terminal.state}
+                    processExitCode={terminal.exit_code}
                     onClose={() =>
                       setOpenTerminals((open) =>
                         open.filter((value) => value !== id),

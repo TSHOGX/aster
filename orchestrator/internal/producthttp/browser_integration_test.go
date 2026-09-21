@@ -4,6 +4,7 @@ package producthttp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,10 +30,15 @@ import (
 // guest placements. The application, auth, workers and proxy are production code.
 type browserSubstrate struct {
 	*khora.Backend
-	api         *sdk.Client
-	binaries    string
-	mu          sync.Mutex
-	initialized map[string]bool
+	api               *sdk.Client
+	binaries          string
+	mu                sync.Mutex
+	initialized       map[string]bool
+	modelMode         string
+	loseDeleteReplies bool
+	lostDestroy       map[string]bool
+	lostVolumes       map[string]bool
+	destroyed         chan struct{}
 }
 
 func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Reference, path string, data []byte) error {
@@ -48,7 +54,7 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 	if b.initialized[key] {
 		return nil
 	}
-	for _, name := range []string{"agent-runner", "workspace-files", "runtime-fixture"} {
+	for _, name := range []string{"agent-runner", "workspace-files", "runtime-fixture", "runtime-cleanup"} {
 		f, err := os.Open(filepath.Join(b.binaries, name))
 		if err != nil {
 			return err
@@ -59,8 +65,8 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 			return err
 		}
 	}
-	handle := "browser-setup"
-	stream, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", "chmod +x /usr/local/bin/agent-runner /usr/local/bin/workspace-files /usr/local/bin/runtime-fixture; mkdir -p /opt/agent-config/pi"}, Directory: "/workspace"})
+	handle := fmt.Sprintf("browser-setup-%d", ref.Epoch)
+	stream, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", "chmod +x /usr/local/bin/agent-runner /usr/local/bin/workspace-files /usr/local/bin/runtime-fixture /usr/local/bin/runtime-cleanup; mkdir -p /opt/agent-config/pi"}, Directory: "/workspace"})
 	if err != nil {
 		return err
 	}
@@ -85,7 +91,11 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 	if err = b.api.WriteFile(ctx, ref.SandboxID, "/opt/agent-config/pi/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)); err != nil {
 		return err
 	}
-	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: "browser-model"}, IdempotencyKey: "browser-model", Command: "/usr/local/bin/runtime-fixture", Arguments: []string{"model"}, Directory: "/workspace"})
+	mode := b.modelMode
+	if mode == "" {
+		mode = "model"
+	}
+	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: fmt.Sprintf("browser-model-%d", ref.Epoch)}, IdempotencyKey: fmt.Sprintf("browser-model-%d", ref.Epoch), Command: "/usr/local/bin/runtime-fixture", Arguments: []string{mode}, Directory: "/workspace"})
 	if err != nil {
 		return err
 	}
@@ -144,7 +154,10 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
 	shares := &product.Shares{Store: store, Files: files, Directory: t.TempDir()}
 	captures := &product.Captures{Store: store, Backend: backend, Directory: t.TempDir()}
-	workers := &product.Workers{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Captures: captures, IdleAfter: 5 * time.Minute, Interval: 100 * time.Millisecond, Report: func(kind string, err error) { t.Logf("worker %s: %v", kind, err) }}
+	lifecycle.Artifacts = &product.Artifacts{Store: store, Captures: captures, Shares: shares}
+	recovery := &product.AgentRecovery{Store: store, Lifecycle: lifecycle, Backend: backend}
+	retirement := &product.ChildRetirement{Store: store, Lifecycle: lifecycle, Backend: backend, Captures: captures, Shares: shares}
+	workers := &product.Workers{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Captures: captures, Recovery: recovery, Retirement: retirement, IdleAfter: 5 * time.Minute, Interval: 100 * time.Millisecond, Report: func(kind string, err error) { t.Logf("worker %s: %v", kind, err) }}
 	workerctx, stopWorkers := context.WithCancel(runctx)
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); workers.Run(workerctx) }()
@@ -192,4 +205,45 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	output, err := browser.CombinedOutput()
 	t.Log(string(output))
 	must(t, err)
+}
+
+func (b *browserSubstrate) Destroy(ctx context.Context, ref sandbox.Reference) error {
+	if err := b.Backend.Destroy(ctx, ref); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.loseDeleteReplies {
+		if b.lostDestroy == nil {
+			b.lostDestroy = map[string]bool{}
+		}
+		if !b.lostDestroy[ref.SandboxID] {
+			b.lostDestroy[ref.SandboxID] = true
+			if b.destroyed != nil {
+				select {
+				case b.destroyed <- struct{}{}:
+				default:
+				}
+			}
+			return errors.New("injected lost successful sandbox deletion reply")
+		}
+	}
+	return nil
+}
+func (b *browserSubstrate) DeleteVolume(ctx context.Context, ref sandbox.VolumeReference) error {
+	if err := b.Backend.DeleteVolume(ctx, ref); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.loseDeleteReplies {
+		if b.lostVolumes == nil {
+			b.lostVolumes = map[string]bool{}
+		}
+		if !b.lostVolumes[ref.VolumeID] {
+			b.lostVolumes[ref.VolumeID] = true
+			return errors.New("injected lost successful volume deletion reply")
+		}
+	}
+	return nil
 }

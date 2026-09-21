@@ -17,7 +17,7 @@ const (
 	socketWriteWait   = 10 * time.Second
 	socketPingPeriod  = 30 * time.Second
 	socketPongWait    = 70 * time.Second
-	socketReauthorize = 15 * time.Second
+	socketReauthorize = time.Second
 )
 
 // clientMessage is the text-frame control protocol. Raw input arrives as binary
@@ -81,9 +81,25 @@ func (s *Server) attachTerminal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) readSocket(r *http.Request, conn *websocket.Conn, observer *product.TerminalObserver, scope product.Scope, terminal string) {
+	allowance, controls := float64(1<<20), float64(100)
+	last := time.Now()
+
 	for {
 		kind, data, err := conn.ReadMessage()
 		if err != nil {
+			return
+		}
+		actor, e := s.Auth.Actor(r)
+		if e != nil || actor != scope.Actor {
+			return
+		}
+		elapsed := time.Since(last).Seconds()
+		last = time.Now()
+		allowance = min(float64(1<<20), allowance+elapsed*(64<<10))
+		controls = min(float64(100), controls+elapsed*100)
+		allowance -= float64(len(data))
+		controls--
+		if allowance < 0 || controls < 0 {
 			return
 		}
 		switch kind {
@@ -103,11 +119,11 @@ func (s *Server) readSocket(r *http.Request, conn *websocket.Conn, observer *pro
 			}
 			switch message.Type {
 			case "resize":
-				_ = s.Terminals.Resize(r.Context(), scope, terminal, message.Rows, message.Cols)
+				_ = s.Terminals.ObserverResize(r.Context(), scope, observer, message.Rows, message.Cols)
 			case "claim_input":
 				_ = s.Terminals.ClaimInput(observer)
 			case "eof":
-				_ = s.Terminals.EOF(r.Context(), scope, terminal)
+				_ = s.Terminals.ObserverEOF(r.Context(), observer)
 			case "interrupt":
 				// Ctrl-C is a PTY byte, not a directed signal: the line discipline
 				// delivers SIGINT to the foreground process group, leaving the shell
@@ -118,7 +134,7 @@ func (s *Server) readSocket(r *http.Request, conn *websocket.Conn, observer *pro
 				// browser cannot ask the application to deliver an arbitrary signal,
 				// and a read-only view cannot end someone else's process.
 				if observer.HoldsInput() && (message.Signal == 15 || message.Signal == 9) {
-					_ = s.Terminals.Signal(r.Context(), scope, terminal, message.Signal)
+					_ = s.Terminals.ObserverSignal(r.Context(), observer, message.Signal)
 				}
 			}
 		}
@@ -144,6 +160,11 @@ func (s *Server) writeSocket(r *http.Request, conn *websocket.Conn, observer *pr
 				return
 			}
 		case <-recheck.C:
+			actor, e := s.Auth.Actor(r)
+			if e != nil || actor != scope.Actor {
+				s.closeSocket(conn, websocket.ClosePolicyViolation, "login no longer valid")
+				return
+			}
 			if _, err := s.Store.Project(r.Context(), scope); err != nil {
 				s.closeSocket(conn, websocket.ClosePolicyViolation, closeReason(err))
 				return

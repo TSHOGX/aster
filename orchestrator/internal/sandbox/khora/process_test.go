@@ -18,13 +18,15 @@ import (
 
 type processFixture struct {
 	transport.UnimplementedProcessServiceHandler
-	mu      sync.Mutex
-	start   *v1.StartRequest
-	connect *v1.ConnectRequest
-	header  string
-	signals []int32
-	inputs  [][]byte
-	frames  []*v1.ProcessEvent
+	mu       sync.Mutex
+	start    *v1.StartRequest
+	connect  *v1.ConnectRequest
+	header   string
+	signals  []int32
+	inputs   [][]byte
+	frames   []*v1.ProcessEvent
+	live     []*v1.ProcessInfo
+	snapshot map[string]any
 }
 
 func (f *processFixture) Start(_ context.Context, request *connect.Request[v1.StartRequest], stream *connect.ServerStream[v1.ProcessEvent]) error {
@@ -79,6 +81,11 @@ func processBackend(t *testing.T, frames ...*v1.ProcessEvent) (*Backend, *proces
 	mux.Handle(route, handler)
 	mux.HandleFunc("/v1/info", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"store_id": "store", "version": EngineRevision, "manual_cold_recovery": true})
+	})
+	mux.HandleFunc("/v1/processes/process", func(w http.ResponseWriter, r *http.Request) {
+		fixture.mu.Lock()
+		defer fixture.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(fixture.snapshot)
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -181,5 +188,40 @@ func TestProcessOverflowIsBackpressureNotNodeCapacity(t *testing.T) {
 	err := processError("receive process output", connect.NewError(connect.CodeResourceExhausted, io.ErrShortBuffer))
 	if !sandbox.Is(err, sandbox.Backpressure) || sandbox.Is(err, sandbox.Capacity) {
 		t.Fatalf("stream overflow misclassified as node quota: %v", err)
+	}
+}
+
+func (f *processFixture) List(_ context.Context, request *connect.Request[v1.ListRequest]) (*connect.Response[v1.ListResponse], error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.header = request.Header().Get(sandboxHeader)
+	return connect.NewResponse(&v1.ListResponse{Processes: f.live}), nil
+}
+func TestProcessInspectionUsesLiveEvidenceAndFencesRetainedIdentity(t *testing.T) {
+	backend, fixture, ref := processBackend(t)
+	fixture.live = []*v1.ProcessInfo{{ProcessHandle: ref.Handle, PlacementEpoch: ref.Epoch, Pid: 42, State: "running"}}
+	observed, err := backend.InspectProcess(context.Background(), ref)
+	if err != nil || observed.PID != 42 || observed.State != "running" || fixture.header != ref.SandboxID {
+		t.Fatal(observed, err)
+	}
+	fixture.live[0].PlacementEpoch++
+	if _, err = backend.InspectProcess(context.Background(), ref); !sandbox.Is(err, sandbox.Precondition) {
+		t.Fatal("accepted stale placement", err)
+	}
+	fixture.live = nil
+	fixture.snapshot = map[string]any{"process_id": ref.Handle, "sandbox_id": ref.SandboxID, "placement_epoch": ref.Epoch, "state": "running"}
+	observed, err = backend.InspectProcess(context.Background(), ref)
+	if err != nil || observed.State != "unknown" || observed.ExitCode != nil {
+		t.Fatal("invented termination from stale control-plane snapshot", observed, err)
+	}
+	fixture.snapshot["state"] = "exited"
+	fixture.snapshot["exit_code"] = 7
+	observed, err = backend.InspectProcess(context.Background(), ref)
+	if err != nil || observed.ExitCode == nil || *observed.ExitCode != 7 {
+		t.Fatal(observed, err)
+	}
+	fixture.snapshot["process_id"] = "sibling"
+	if _, err = backend.InspectProcess(context.Background(), ref); !sandbox.Is(err, sandbox.Precondition) {
+		t.Fatal("accepted another process's exit", err)
 	}
 }

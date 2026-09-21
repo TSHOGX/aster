@@ -137,10 +137,10 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 	must(t, err)
 	child, err := s.Session(ctx, scope, i.SessionID)
 	must(t, err)
-	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "steer-request", child.Revision))
+	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "steer-request", child.ControlRevision))
 	child, err = s.Session(ctx, scope, i.SessionID)
 	must(t, err)
-	wantError(t, s.ReleaseTurn(ctx, scope, i.SessionID, source.ID, child.Revision), ErrConflict)
+	wantError(t, s.ReleaseTurn(ctx, scope, i.SessionID, source.ID, child.ControlRevision), ErrConflict)
 	steer, err := s.agentCommand(ctx, i)
 	must(t, err)
 	var state string
@@ -170,7 +170,7 @@ func TestAbortHoldsQueueAndWaitsForNativeCancellation(t *testing.T) {
 	must(t, err)
 	child, err := s.Session(ctx, scope, i.SessionID)
 	must(t, err)
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop", child.Revision))
+	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop", child.ControlRevision))
 	turns, err := s.Turns(ctx, scope, i.SessionID, 0, 100)
 	must(t, err)
 	if turns[0].State != "stopping" || turns[1].State != "held" {
@@ -193,5 +193,33 @@ func TestAbortHoldsQueueAndWaitsForNativeCancellation(t *testing.T) {
 	}
 	if _, err = s.agentCommand(ctx, i); !errors.Is(err, ErrNotFound) {
 		t.Fatal("held prompt auto-dispatched", err)
+	}
+}
+
+func TestOwnerRecoveryRetainsOriginalIdentityForNeverDispatchedCommand(t *testing.T) {
+	s, scope, i, original := agentFixture(t)
+	// The old owner committed sending intent and died before writing any bytes.
+	_, err := s.db.Exec(`UPDATE agent_commands SET state='unknown' WHERE id=?`, original.CommandID)
+	must(t, err)
+	_, err = s.agentCommand(ctx, i)
+	wantError(t, err, ErrPending)
+	must(t, s.commandStatus(ctx, i, original.CommandID, "absent"))
+	recovered, err := s.agentCommand(ctx, i)
+	must(t, err)
+	if recovered.CommandID != original.CommandID || recovered.TurnID != original.TurnID || string(recovered.Payload) != string(original.Payload) {
+		t.Fatal("recovery changed original command", original, recovered)
+	}
+	_, err = s.IngestAgent(ctx, i, record(i, original, 1, "command.applied", `{"success":true}`))
+	must(t, err)
+	must(t, s.commandStatus(ctx, i, original.CommandID, "absent"))
+	var state string
+	must(t, s.reader.QueryRow(`SELECT state FROM agent_commands WHERE id=?`, original.CommandID).Scan(&state))
+	if state != "applied" {
+		t.Fatal("stale status requeued an applied command")
+	}
+	turns, err := s.Turns(ctx, scope, i.SessionID, 0, 100)
+	must(t, err)
+	if len(turns) != 1 {
+		t.Fatal(turns)
 	}
 }

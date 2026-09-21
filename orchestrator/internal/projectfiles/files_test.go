@@ -142,3 +142,32 @@ func TestConcurrentSymlinkSubstitution(t *testing.T) {
 }
 
 func digest(b []byte) string { return fmt.Sprintf("%x", sha256.Sum256(b)) }
+
+func TestPrivateCleanupNeverFollowsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("sibling"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "session", "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "session", "nested", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "session", "native"), []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveTree(root, "session"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveTree(root, "session"); err != nil {
+		t.Fatal("cleanup retry", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "session")); !os.IsNotExist(err) {
+		t.Fatal("private directory retained", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(outside, "keep")); err != nil || string(got) != "sibling" {
+		t.Fatal("cleanup escaped root", err)
+	}
+}

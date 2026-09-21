@@ -142,7 +142,10 @@ export function FilesPanel({
         <div className="row-actions">
           <button
             disabled={busy || project.state !== "active"}
-            onClick={() => void refresh()}
+            onClick={() => {
+              void refresh();
+              setVersion((n) => n + 1);
+            }}
           >
             Refresh
           </button>

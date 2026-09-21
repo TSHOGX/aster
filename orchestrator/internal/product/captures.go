@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"harness-platform/orchestrator/internal/sandbox"
 )
@@ -26,13 +27,14 @@ type CaptureReader interface {
 // Captures exports immutable completed native bytes. Once HostPath is committed,
 // archive retry is host-only work and doesn't retain Project activity.
 type Captures struct {
+	mu        sync.Mutex
 	Store     *Store
 	Backend   CaptureReader
 	Directory string
 }
 
 func (s *Store) PendingCaptures(ctx context.Context, limit int) ([]NativeCapture, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT c.turn_id,i.project_id,i.session_id,c.incarnation_id,c.path,c.digest,c.state,c.host_path,c.size,r.store_id,r.sandbox_id,r.epoch,r.mutation_revision FROM native_captures c JOIN agent_incarnations i ON i.id=c.incarnation_id JOIN project_resources r ON r.project_id=i.project_id WHERE c.state='guest' ORDER BY c.rowid LIMIT ?`, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT c.turn_id,i.project_id,i.session_id,c.incarnation_id,c.path,c.digest,c.state,c.host_path,c.size,r.store_id,r.sandbox_id,r.epoch,r.mutation_revision FROM native_captures c JOIN agent_incarnations i ON i.id=c.incarnation_id JOIN project_resources r ON r.project_id=i.project_id JOIN projects p ON p.id=i.project_id WHERE c.state='guest' AND p.state NOT IN ('deleting','deleted') ORDER BY c.attempted_at,c.rowid LIMIT ?`, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +50,19 @@ func (s *Store) PendingCaptures(ctx context.Context, limit int) ([]NativeCapture
 	return out, rows.Err()
 }
 func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.Store.db.ExecContext(ctx, `UPDATE native_captures SET attempted_at=? WHERE turn_id=?`, c.Store.timestamp(), capture.TurnID); err != nil {
+		return err
+	}
+	var deleting bool
+	if err := c.Store.reader.QueryRowContext(ctx, `SELECT p.state IN ('deleting','deleted') OR s.deletion_intent>0 FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND p.id=?`, capture.SessionID, capture.ProjectID).Scan(&deleting); err != nil {
+		return missing(err)
+	}
+	if deleting {
+		return ErrDeleting
+	}
+
 	if !filepath.IsAbs(c.Directory) || capture.Size < 0 || capture.Size > 64<<20 || !strings.HasPrefix(capture.Digest, "sha256:") {
 		return ErrInvalid
 	}
@@ -68,8 +83,8 @@ func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
 		return err
 	}
 	defer source.Close()
-	directory := filepath.Join(c.Directory, capture.ProjectID)
-	if !validID(capture.ProjectID) {
+	directory := filepath.Join(c.Directory, capture.ProjectID, capture.SessionID)
+	if !validID(capture.ProjectID) || !validID(capture.SessionID) {
 		return ErrInvalid
 	}
 	if err = os.MkdirAll(directory, 0700); err != nil {

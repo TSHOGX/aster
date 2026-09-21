@@ -142,6 +142,9 @@ func (s *Store) TerminalRunning(ctx context.Context, i TerminalIncarnation) erro
 // a live process must be told. Resize is not a product event: dimensions travel on
 // the attachment, and a resize storm must not flood the outbox.
 func (s *Store) ResizeTerminal(ctx context.Context, scope Scope, terminal string, rows, cols int) (TerminalIncarnation, error) {
+	return s.resizeTerminal(ctx, scope, terminal, rows, cols, nil)
+}
+func (s *Store) resizeTerminal(ctx context.Context, scope Scope, terminal string, rows, cols int, expected *TerminalIncarnation) (TerminalIncarnation, error) {
 	if rows < 1 || rows > 500 || cols < 1 || cols > 1000 {
 		return TerminalIncarnation{}, ErrInvalid
 	}
@@ -153,6 +156,15 @@ func (s *Store) ResizeTerminal(ctx context.Context, scope Scope, terminal string
 		}
 		if child.Deletion != Live {
 			return ErrDeleting
+		}
+		if expected != nil {
+			current, e := liveTerminalIncarnation(ctx, tx, terminal)
+			if e != nil {
+				return e
+			}
+			if current.ID != expected.ID || current.Owner != expected.Owner {
+				return ErrConflict
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE terminals SET rows=?,cols=?,updated_at=? WHERE id=? AND project_id=?`, rows, cols, s.timestamp(), terminal, scope.ProjectID); err != nil {
 			return err
@@ -293,4 +305,9 @@ func (s *Store) loseStalePTYs(ctx context.Context, tx *sql.Tx, project string, e
 		return nil
 	}()
 	return settled, err
+}
+
+func (s *Store) terminalAuthority(ctx context.Context, i TerminalIncarnation) error {
+	var found string
+	return missing(s.reader.QueryRowContext(ctx, `SELECT i.id FROM terminal_incarnations i JOIN terminals t ON t.id=i.terminal_id JOIN project_resources r ON r.project_id=i.project_id JOIN projects p ON p.id=i.project_id WHERE i.id=? AND i.owner=? AND i.state IN ('starting','running') AND t.deletion_intent=0 AND p.state='active' AND r.store_id=i.store_id AND r.sandbox_id=i.sandbox_id AND r.epoch=i.epoch`, i.ID, i.Owner).Scan(&found))
 }

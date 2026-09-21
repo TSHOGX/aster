@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,17 +13,31 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 func main() {
-	if len(os.Args) != 2 {
+	if len(os.Args) < 2 {
 		panic("fixture mode required")
 	}
 	switch os.Args[1] {
 	case "model":
-		model()
+		model(true)
+	case "model-independent":
+		model(false)
+	case "corrupt-journal", "restore-journal":
+		if len(os.Args) != 4 {
+			panic("Session and incarnation required")
+		}
+		journalFault(os.Args[1], os.Args[2], os.Args[3])
+	case "kill-worker":
+		if len(os.Args) != 3 {
+			panic("Session required")
+		}
+		killWorker(os.Args[2])
 	case "native":
 		native()
 	case "upstream":
@@ -123,7 +138,7 @@ func upstream() {
 		panic(err)
 	}
 }
-func model() {
+func model(coordinated bool) {
 	var mu sync.Mutex
 	count := 0
 	both := make(chan struct{})
@@ -145,13 +160,15 @@ func model() {
 			fmt.Println("overlapping-model-requests")
 		}
 		mu.Unlock()
-		select {
-		case <-both:
-		case <-r.Context().Done():
-			return
-		case <-time.After(20 * time.Second):
-			http.Error(w, "overlap timeout", 408)
-			return
+		if coordinated {
+			select {
+			case <-both:
+			case <-r.Context().Done():
+				return
+			case <-time.After(20 * time.Second):
+				http.Error(w, "overlap timeout", 408)
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		records := []string{
@@ -162,11 +179,47 @@ func model() {
 			`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":4}}`,
 			`{"type":"message_stop"}`,
 		}
+
+		slow := false
+		messages, _ := request["messages"].([]any)
+		if len(messages) > 0 {
+			last, _ := json.Marshal(messages[len(messages)-1])
+			slow = bytes.Contains(last, []byte("long-for-interrupt"))
+			if bytes.Contains(last, []byte("offline-ring")) {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(time.Second):
+				}
+				delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": strings.Repeat("durable-native-output ", 12000)}})
+				records[2] = string(delta)
+			}
+
+			if bytes.Contains(last, []byte("crash-descendants")) {
+				input, _ := json.Marshal(map[string]string{"command": "setsid sh -c 'echo $$ > /workspace/escaped-fault.pid; exec sleep 300' & echo ready > /workspace/fault-ready; sleep 300"})
+				delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "input_json_delta", "partial_json": string(input)}})
+				records = []string{records[0], `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"fault-tool","name":"bash","input":{}}}`, string(delta), records[3], `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":4}}`, records[5]}
+			}
+		}
+		if slow {
+			output := []string{records[0], records[1]}
+			for n := 0; n < 200; n++ {
+				output = append(output, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"streaming "}}`)
+			}
+			records = append(output, records[3:]...)
+		}
 		for _, raw := range records {
 			var value map[string]any
 			_ = json.Unmarshal([]byte(raw), &value)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", value["type"], raw)
 			w.(http.Flusher).Flush()
+			if slow {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
 		}
 	})
 	fmt.Println("model-ready")
@@ -207,6 +260,80 @@ func native() {
 				time.Sleep(10 * time.Millisecond)
 			}
 			fmt.Println(`{"type":"agent_end","messages":[]}`)
+		}
+	}
+}
+
+func killWorker(session string) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		panic(err)
+	}
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile("/proc/" + entry.Name() + "/cmdline")
+		if err != nil {
+			continue
+		}
+		args := strings.Split(string(raw), "\x00")
+		if len(args) == 0 || filepath.Base(args[0]) != "agent-runner" {
+			continue
+		}
+		worker, match := false, false
+		for i, arg := range args {
+			if arg == "--worker" {
+				worker = true
+			}
+			if arg == "--session" && i+1 < len(args) && args[i+1] == session {
+				match = true
+			}
+		}
+		if worker && match {
+			if err = syscall.Kill(pid, syscall.SIGKILL); err != nil {
+				panic(err)
+			}
+			fmt.Println("killed worker", pid)
+			return
+		}
+	}
+	panic("worker not found")
+}
+
+func journalFault(mode, session, incarnation string) {
+	for _, id := range []string{session, incarnation} {
+		if id == "" || id == "." || id == ".." || filepath.Base(id) != id {
+			panic("invalid fixture identity")
+		}
+	}
+	path := filepath.Join("/runtime/sessions", session, "incarnations", incarnation, "journal.db")
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		file := path + suffix
+		if mode == "corrupt-journal" {
+			if _, err := os.Stat(file); os.IsNotExist(err) {
+				continue
+			} else if err != nil {
+				panic(err)
+			}
+			if err := os.Rename(file, file+".fixture-backup"); err != nil {
+				panic(err)
+			}
+		} else {
+			if _, err := os.Stat(file + ".fixture-backup"); os.IsNotExist(err) {
+				continue
+			} else if err != nil {
+				panic(err)
+			}
+			if err := os.Rename(file+".fixture-backup", file); err != nil {
+				panic(err)
+			}
+		}
+	}
+	if mode == "corrupt-journal" {
+		if err := os.WriteFile(path, []byte("intentionally invalid test journal"), 0600); err != nil {
+			panic(err)
 		}
 	}
 }

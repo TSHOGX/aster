@@ -19,7 +19,7 @@ import (
 // every keystroke's echo to disk.
 const (
 	terminalReplayBytes   = 256 << 10
-	terminalObserverQueue = 64
+	terminalObserverQueue = 16
 	terminalInputBytes    = 1 << 20
 )
 
@@ -111,6 +111,7 @@ func (o *TerminalObserver) deliver(f TerminalFrame) {
 }
 
 type terminalAttachment struct {
+	projectID   string
 	incarnation TerminalIncarnation
 	cancel      context.CancelFunc
 
@@ -130,6 +131,7 @@ type terminalAttachment struct {
 // TerminalBackend is the process substrate a Terminal needs. It is the ordinary
 // process port plus PTY allocation and resize.
 type TerminalBackend interface {
+	InspectProcess(context.Context, sandbox.ProcessReference) (sandbox.ProcessObservation, error)
 	sandbox.Processes
 	StartPTY(context.Context, sandbox.StartProcessRequest, int, int) (sandbox.ProcessStream, error)
 	ResizePTY(context.Context, sandbox.ProcessReference, int, int) error
@@ -149,11 +151,12 @@ type Terminals struct {
 	// Shell and its arguments are deployment configuration, not user input. A
 	// Terminal has no user-supplied command: that would be a way to ask the
 	// application to run something the Project policy never declared.
-	Shell        string
-	ShellArgs    []string
-	Directory    string
-	Environment  []string
-	MaxTerminals int
+	Shell         string
+	ShellArgs     []string
+	Directory     string
+	Environment   []string
+	MaxTerminals  int
+	MaxPerProject int
 	// TerminationGrace bounds how long an explicit close waits for a polite exit
 	// before escalating to SIGKILL. Zero uses a small default.
 	TerminationGrace time.Duration
@@ -203,7 +206,7 @@ func (t *Terminals) Start(ctx context.Context, scope Scope, terminal string, row
 	if child.Deletion != Live {
 		return TerminalIncarnation{}, ErrDeleting
 	}
-	if err = t.Lifecycle.EnsureActive(ctx, scope, t.Profile); err != nil {
+	if err = t.Lifecycle.EnsureConfiguredActive(ctx, scope, t.Profile); err != nil {
 		return TerminalIncarnation{}, err
 	}
 	if _, err = t.Lifecycle.ActiveResources(ctx, scope); err != nil {
@@ -228,11 +231,17 @@ func (t *Terminals) Start(ctx context.Context, scope Scope, terminal string, row
 func (t *Terminals) ensure(ctx context.Context, scope Scope, terminal string, rows, cols int) (*terminalAttachment, error) {
 	t.mu.Lock()
 	a := t.attachments[terminal]
-	if a != nil && a.err != nil {
+	var existingError error
+	if a != nil {
+		a.mu.Lock()
+		existingError = a.err
+		a.mu.Unlock()
+	}
+	if a != nil && existingError != nil {
 		// A failed attachment is discarded and its reason reported, rather than
 		// replaced silently. Returning ErrPending here would make a PTY that cannot
 		// start indistinguishable from one that is still starting, forever.
-		failure := a.err
+		failure := existingError
 		a.cancel()
 		delete(t.attachments, terminal)
 		t.mu.Unlock()
@@ -242,12 +251,22 @@ func (t *Terminals) ensure(ctx context.Context, scope Scope, terminal string, ro
 		t.mu.Unlock()
 		return a, nil
 	}
-	if t.MaxTerminals < 1 || len(t.attachments) >= t.MaxTerminals {
+	projectCount := 0
+	for _, current := range t.attachments {
+		if current.projectID == scope.ProjectID {
+			projectCount++
+		}
+	}
+	perProject := t.MaxPerProject
+	if perProject < 1 {
+		perProject = min(t.MaxTerminals, max(2, t.MaxTerminals/2))
+	}
+	if t.MaxTerminals < 1 || len(t.attachments) >= t.MaxTerminals || projectCount >= perProject {
 		t.mu.Unlock()
 		return nil, ErrCapacity
 	}
 	attachctx, cancel := context.WithCancel(t.ctx)
-	a = &terminalAttachment{cancel: cancel, observers: map[*TerminalObserver]struct{}{}}
+	a = &terminalAttachment{cancel: cancel, projectID: scope.ProjectID, observers: map[*TerminalObserver]struct{}{}}
 	t.attachments[terminal] = a
 	t.mu.Unlock()
 	abandon := func(err error) (*terminalAttachment, error) {
@@ -267,7 +286,9 @@ func (t *Terminals) ensure(ctx context.Context, scope Scope, terminal string, ro
 	if err != nil {
 		return abandon(err)
 	}
+	a.mu.Lock()
 	a.incarnation = i
+	a.mu.Unlock()
 	t.wg.Add(1)
 	go func() {
 		defer t.wg.Done()
@@ -308,6 +329,9 @@ func (t *Terminals) Attach(ctx context.Context, scope Scope, terminal string, in
 	defer a.mu.Unlock()
 	if a.err != nil {
 		return nil, a.err
+	}
+	if len(a.observers) >= 8 {
+		return nil, ErrCapacity
 	}
 	o := &TerminalObserver{frames: make(chan TerminalFrame, terminalObserverQueue), pty: a}
 	if input && a.owner == nil {
@@ -401,6 +425,12 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 	}
 	a.input.Lock()
 	defer a.input.Unlock()
+	if !o.input.Load() {
+		return ErrConflict
+	}
+	if err = t.Store.terminalAuthority(ctx, i); err != nil {
+		return err
+	}
 	return t.Backend.SendPTYInput(ctx, i.Reference, data)
 }
 
@@ -486,6 +516,28 @@ func (t *Terminals) Stop(ctx context.Context, project, terminal string) error {
 	if i.ProjectID != project {
 		return ErrNotFound
 	}
+	t.mu.Lock()
+	if t.attachments[terminal] == nil {
+		owned, e := t.Store.takeTerminalOwnership(ctx, i)
+		if e != nil {
+			t.mu.Unlock()
+			return e
+		}
+		attachctx, cancel := context.WithCancel(t.ctx)
+		attachment := &terminalAttachment{projectID: project, incarnation: owned, cancel: cancel, observers: map[*TerminalObserver]struct{}{}}
+		t.attachments[terminal] = attachment
+		i = owned
+		t.wg.Add(1)
+		go func() {
+			defer t.wg.Done()
+			e := t.attach(attachctx, attachment)
+			attachment.mu.Lock()
+			attachment.err = e
+			attachment.ready = false
+			attachment.mu.Unlock()
+		}()
+	}
+	t.mu.Unlock()
 	if err = t.signal(ctx, i, 15); err != nil {
 		return err
 	}
@@ -514,7 +566,10 @@ func (t *Terminals) Stop(ctx context.Context, project, terminal string) error {
 // an exit: the process is gone, but its outcome was never observed.
 func (t *Terminals) signal(ctx context.Context, i TerminalIncarnation, signal int32) error {
 	if err := t.Backend.SignalProcess(ctx, i.Reference, signal); err != nil {
-		if sandbox.Is(err, sandbox.NotFound) || sandbox.Is(err, sandbox.Precondition) {
+		if sandbox.Is(err, sandbox.Precondition) {
+			return ErrPending
+		}
+		if sandbox.Is(err, sandbox.NotFound) {
 			return t.Store.LoseTerminal(ctx, i, "process handle absent at termination")
 		}
 		return err
@@ -539,6 +594,32 @@ func (t *Terminals) attach(ctx context.Context, a *terminalAttachment) error {
 			Command: t.Shell, Arguments: t.ShellArgs, Directory: t.Directory, Environment: t.Environment,
 		}, i.Rows, i.Cols)
 	} else {
+		observation, e := t.Backend.InspectProcess(ctx, i.Reference)
+		if e != nil {
+			return e
+		}
+		if observation.State == "exited" && observation.ExitCode != nil {
+			if e = t.Store.SettleTerminalExit(ctx, i, *observation.ExitCode); e != nil {
+				return e
+			}
+			t.broadcast(a, TerminalFrame{Kind: "exit", ExitCode: observation.ExitCode})
+			return nil
+		}
+		if observation.State == "lost" {
+			return t.Store.LoseTerminal(ctx, i, "retained process record reports loss")
+		}
+		if observation.State != "running" && observation.State != "unknown" {
+			return ErrPending
+		}
+		if observation.State == "running" {
+			a.mu.Lock()
+			a.ready = true
+			a.incarnation.State = "running"
+			a.mu.Unlock()
+		}
+		// An absent live process with stale control-plane state still needs Connect:
+		// its retained end frame may be the observation that advances that projection.
+
 		stream, err = t.Backend.ConnectProcess(ctx, i.Reference, 0)
 	}
 	if err != nil {
@@ -560,6 +641,9 @@ func (t *Terminals) attach(ctx context.Context, a *terminalAttachment) error {
 	for {
 		f, err := stream.Next()
 		if err != nil {
+			if sandbox.Is(err, sandbox.NotFound) && i.State == "running" {
+				return t.Store.LoseTerminal(ctx, i, "original PTY handle is no longer retained")
+			}
 			if errors.Is(err, io.EOF) {
 				// The transport ended without a terminal frame. That is a lost stream,
 				// not a process exit, so nothing is settled here.
@@ -659,14 +743,71 @@ func (t *Terminals) Reconcile(ctx context.Context, project string) error {
 	t.mu.Lock()
 	var stale []*terminalAttachment
 	for terminal, a := range t.attachments {
+		a.mu.Lock()
 		if a.incarnation.ProjectID == project && recognized[terminal] != a.incarnation.ID {
 			stale = append(stale, a)
 			delete(t.attachments, terminal)
 		}
+		a.mu.Unlock()
 	}
 	t.mu.Unlock()
 	for _, a := range stale {
 		a.cancel()
 	}
+	return nil
+}
+
+// Observer controls retain the attachment's original incarnation. A delayed EOF,
+// resize or signal can never resolve the stable Terminal ID to a successor PTY.
+func (t *Terminals) observerIdentity(ctx context.Context, o *TerminalObserver, input bool) (TerminalIncarnation, error) {
+	if o == nil || o.pty == nil {
+		return TerminalIncarnation{}, ErrInvalid
+	}
+	if input && !o.input.Load() {
+		return TerminalIncarnation{}, ErrConflict
+	}
+	o.pty.mu.Lock()
+	i := o.pty.incarnation
+	_, attached := o.pty.observers[o]
+	o.pty.mu.Unlock()
+	if !attached {
+		return i, ErrConflict
+	}
+	return i, t.Store.terminalAuthority(ctx, i)
+}
+func (t *Terminals) ObserverEOF(ctx context.Context, o *TerminalObserver) error {
+	i, err := t.observerIdentity(ctx, o, true)
+	if err != nil {
+		return err
+	}
+	return t.Backend.CloseProcessInput(ctx, i.Reference)
+}
+func (t *Terminals) ObserverSignal(ctx context.Context, o *TerminalObserver, signal int32) error {
+	if signal != 15 && signal != 9 {
+		return ErrInvalid
+	}
+	i, err := t.observerIdentity(ctx, o, true)
+	if err != nil {
+		return err
+	}
+	return t.Backend.SignalProcess(ctx, i.Reference, signal)
+}
+func (t *Terminals) ObserverResize(ctx context.Context, scope Scope, o *TerminalObserver, rows, cols int) error {
+	i, err := t.observerIdentity(ctx, o, false)
+	if err != nil {
+		return err
+	}
+	updated, err := t.Store.resizeTerminal(ctx, scope, i.TerminalID, rows, cols, &i)
+	if err != nil {
+		return err
+	}
+	if err = t.Backend.ResizePTY(ctx, updated.Reference, rows, cols); err != nil {
+		return err
+	}
+	o.pty.mu.Lock()
+	o.pty.incarnation.Rows = rows
+	o.pty.incarnation.Cols = cols
+	o.pty.mu.Unlock()
+	t.broadcast(o.pty, TerminalFrame{Kind: "status", Rows: rows, Cols: cols})
 	return nil
 }

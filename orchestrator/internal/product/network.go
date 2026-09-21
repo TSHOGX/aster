@@ -177,3 +177,29 @@ func (s *Store) ServiceGrants(ctx context.Context, scope Scope) ([]ServiceGrant,
 	}
 	return out, rows.Err()
 }
+
+// RenewService extends only a still-valid grant held by this exact application
+// owner. An expired/revoked credential never regains authority through renewal.
+func (s *Store) RenewService(ctx context.Context, i Incarnation, audience string, ttl time.Duration) error {
+	if ttl <= 0 || ttl > 24*time.Hour {
+		return ErrInvalid
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		current, err := liveIncarnation(ctx, tx, i.SessionID)
+		if err != nil {
+			return err
+		}
+		if current.ID != i.ID || current.Owner != i.Owner {
+			return ErrConflict
+		}
+		var expiry string
+		if err = tx.QueryRowContext(ctx, `SELECT expires_at FROM service_grants WHERE incarnation_id=? AND audience=? AND state='active' AND expires_at>?`, i.ID, audience, s.timestamp()).Scan(&expiry); err != nil {
+			return missing(err)
+		}
+		if expiry > sqlitex.FormatTime(s.now().Add(ttl/2)) {
+			return nil
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE service_grants SET expires_at=? WHERE incarnation_id=? AND audience=? AND state='active' AND expires_at>?`, sqlitex.FormatTime(s.now().Add(ttl)), i.ID, audience, s.timestamp())
+		return err
+	})
+}

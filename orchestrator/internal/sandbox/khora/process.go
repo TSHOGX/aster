@@ -214,3 +214,42 @@ func (b *Backend) SendPTYInput(ctx context.Context, reference sandbox.ProcessRef
 	_, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).SendInput(ctx, request)
 	return processError("send pty input", err)
 }
+
+// InspectProcess uses a live guest scan for liveness. Durable control-plane
+// records supply only retained exit evidence when a process is no longer live.
+func (b *Backend) InspectProcess(ctx context.Context, ref sandbox.ProcessReference) (sandbox.ProcessObservation, error) {
+	if err := b.validateProcess(ctx, ref); err != nil {
+		return sandbox.ProcessObservation{}, err
+	}
+	request := connect.NewRequest(&v1.ListRequest{})
+	request.Header().Set(sandboxHeader, ref.SandboxID)
+	response, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).List(ctx, request)
+	if err != nil {
+		return sandbox.ProcessObservation{}, processError("inspect process", err)
+	}
+	for _, process := range response.Msg.Processes {
+		if process.ProcessHandle != ref.Handle {
+			continue
+		}
+		if process.PlacementEpoch != ref.Epoch {
+			return sandbox.ProcessObservation{}, failure("inspect process", sandbox.Precondition, fmt.Errorf("process placement changed"))
+		}
+		observation := sandbox.ProcessObservation{ProcessReference: ref, State: process.State, PID: int(process.Pid)}
+		if process.ExitCode != nil {
+			code := int(*process.ExitCode)
+			observation.ExitCode = &code
+		}
+		return observation, nil
+	}
+	snapshot, err := b.client.ProcessSnapshot(ctx, ref.Handle)
+	if err != nil {
+		return sandbox.ProcessObservation{}, mapError("inspect process", err)
+	}
+	if snapshot.ProcessID != ref.Handle || snapshot.SandboxID != ref.SandboxID || snapshot.PlacementEpoch != ref.Epoch {
+		return sandbox.ProcessObservation{}, failure("inspect process", sandbox.Precondition, fmt.Errorf("retained process identity changed"))
+	}
+	if snapshot.State != "exited" && snapshot.State != "lost" {
+		return sandbox.ProcessObservation{ProcessReference: ref, State: "unknown"}, nil
+	}
+	return sandbox.ProcessObservation{ProcessReference: ref, State: snapshot.State, PID: snapshot.PID, ExitCode: snapshot.ExitCode}, nil
+}

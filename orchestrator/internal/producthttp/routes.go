@@ -202,7 +202,13 @@ func (s *Server) pauseProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) restartProject(w http.ResponseWriter, r *http.Request) {
 	revision := int64Param(r.URL.Query(), "revision")
-	if err := s.Lifecycle.Restart(r.Context(), s.scope(r), revision); err != nil {
+	var err error
+	if r.URL.Query().Get("force") == "1" {
+		err = s.Lifecycle.ForceRestart(r.Context(), s.scope(r), revision)
+	} else {
+		err = s.Lifecycle.Restart(r.Context(), s.scope(r), revision)
+	}
+	if err != nil {
 		fail(w, err)
 		return
 	}

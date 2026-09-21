@@ -57,6 +57,9 @@ func scheduleNext(s Schedule, now time.Time) (string, error) {
 	return sqlitex.FormatTime(next), nil
 }
 func validSchedule(s Schedule) bool {
+	if _, err := nativePayload(map[string]string{"type": "prompt", "message": s.Prompt}); err != nil {
+		return false
+	}
 	return validID(s.ID) && validText(s.Title, 256) && validText(s.Prompt, 1<<20) && (s.SessionID == "" || validID(s.SessionID)) && validText(s.Timezone, 128)
 }
 func (s *Store) CreateSchedule(ctx context.Context, scope Scope, input Schedule) (Schedule, error) {

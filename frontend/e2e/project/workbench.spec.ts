@@ -74,6 +74,20 @@ test("Project agents, retained terminals and Files through the Go edge", async (
   await expect(second).not.toContainText(
     "First independent Agent conversation",
   );
+  await first.locator("textarea").fill("long-for-interrupt");
+  await first.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(first.locator(".streaming")).toBeVisible();
+  await first.getByRole("button", { name: "Stop turn", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const result = await context.request.get(
+        `/api/projects/${project}/sessions/${firstID}/turns`,
+      );
+      return (await result.json()).turns.find(
+        (turn: { content: string }) => turn.content === "long-for-interrupt",
+      )?.state;
+    })
+    .toBe("canceled");
   await page
     .getByRole("button", { name: /browser.txt/ })
     .first()
@@ -225,4 +239,21 @@ test("Project agents, retained terminals and Files through the Go edge", async (
     .getByRole("button", { name: "Ctrl-D", exact: true })
     .click();
   await expect(secondTerminal).toContainText("exited");
+  const prior = await context.request.get(
+    `/api/projects/${project}/terminals/${terminalID}`,
+  );
+  const priorIncarnation = (await prior.json()).incarnation;
+  await page
+    .locator(".terminal-chip")
+    .getByRole("button", { name: /^Terminal 1 · exited/ })
+    .click();
+  await expect(page.locator(".terminal-grid > section").first()).toContainText(
+    "input",
+  );
+  await terminalInput(page, "printf 'REOPENED-NATIVE\\n'");
+  await expect.poll(() => terminalText(page)).toContain("REOPENED-NATIVE");
+  const fresh = await context.request.get(
+    `/api/projects/${project}/terminals/${terminalID}`,
+  );
+  expect((await fresh.json()).incarnation).not.toBe(priorIncarnation);
 });

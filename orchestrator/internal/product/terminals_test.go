@@ -554,3 +554,44 @@ func TestTerminalReconcilePreservesOtherProjects(t *testing.T) {
 		t.Fatal("test needs distinct Projects")
 	}
 }
+
+func TestObserverControlsCannotReachSuccessorOrBypassReadOnly(t *testing.T) {
+	terminals, backend, scope := terminalFixture(t)
+	i := startTerminal(t, terminals, backend, scope, "controlled", 24, 80)
+	owner, err := terminals.Attach(ctx, scope, "controlled", true)
+	must(t, err)
+	defer owner.Close()
+	reader, err := terminals.Attach(ctx, scope, "controlled", false)
+	must(t, err)
+	defer reader.Close()
+	wantError(t, terminals.ObserverEOF(ctx, reader), ErrConflict)
+	wantError(t, terminals.ObserverSignal(ctx, reader, 9), ErrConflict)
+	_, err = terminals.Store.takeTerminalOwnership(ctx, i)
+	must(t, err)
+	if err = terminals.Input(ctx, owner, []byte("stale input")); err == nil {
+		t.Fatal("stale owner input accepted")
+	}
+	if err = terminals.ObserverEOF(ctx, owner); err == nil {
+		t.Fatal("stale EOF accepted")
+	}
+	if err = terminals.ObserverResize(ctx, scope, owner, 50, 150); err == nil {
+		t.Fatal("stale resize accepted")
+	}
+	if err = terminals.ObserverSignal(ctx, owner, 9); err == nil {
+		t.Fatal("stale signal accepted")
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if len(backend.input[i.Reference.Handle]) > 0 || backend.eof[i.Reference.Handle] > 0 || len(backend.signals[i.Reference.Handle]) > 0 {
+		t.Fatal("stale/read-only observer reached process controls")
+	}
+}
+
+func (f *fakePTY) InspectProcess(_ context.Context, ref sandbox.ProcessReference) (sandbox.ProcessObservation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.streams[ref.Handle] == nil {
+		return sandbox.ProcessObservation{}, &sandbox.Error{Class: sandbox.NotFound}
+	}
+	return sandbox.ProcessObservation{ProcessReference: ref, State: "running"}, nil
+}

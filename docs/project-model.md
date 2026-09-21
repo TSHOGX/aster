@@ -81,8 +81,8 @@ overwrites how a child was running.
 
 Closing a browser view performs no database write and does not stop the PTY. An
 explicit close requests termination and escalates after a bounded grace period,
-because an interactive login shell ignores `SIGTERM`; only the process's own
-terminal frame records the exit code. Ctrl-C is the interrupt **byte** written to
+because an interactive login shell ignores `SIGTERM`; an identity-validated engine exit frame or retained exit record establishes its
+exit code. Ctrl-C is the interrupt **byte** written to
 the PTY, not a directed signal: the engine signals the handle's whole process
 group, so a directed `SIGINT` would end the shell instead of the command being
 interrupted. Reopening an ended Terminal creates a new incarnation at the persisted
@@ -252,3 +252,54 @@ local model fixtures. It covers overlapping Agent turns, shared-file edits from
 Files and a PTY, independent view closure, retained input ownership, reload,
 Unicode/paste, resize, Ctrl-C, explicit output gaps and foreign-origin rejection.
 The rendered result is inspected as part of that qualification.
+
+
+## Recovery and retirement
+
+One application owner holds the product database through a canonical filesystem
+lock. A path alias cannot create a second owner. An Agent runner now has an
+independent per-Session Go guardian: if its worker fails, the guardian settles
+adopted descendants and reports whether cleanup was verified. Losing the guardian
+itself leaves cleanup unknown, blocks that Session and keeps named activity;
+siblings continue. Normal pause/restart rejects retained work. An explicit force
+restart may end it and never replays terminal input or unknown native commands.
+
+A separate journal-replay mode never starts Pi. It re-ingests the original
+incarnation's committed records under a fresh ownership fence, including after
+output exceeded the engine ring. Original command status can distinguish work
+never dispatched from ambiguous native effects. Only verified absent/received
+work can return to pending under its original command ID. Unknown effects remain
+unknown and require deliberate continuation from available native history.
+Unavailable journal recovery is retryable and scoped to the Session; a terminated
+helper does not retain unrelated Project activity forever.
+
+Engine transport failure does not prove placement loss. After engine restart the
+application inspects its original store/sandbox/epoch and can reconnect to the
+same live PTY and runners. Process control-plane projections may lag their end
+frames; live process inspection and retained stream evidence remain distinct.
+Actual placement loss fences old child owners, marks PTYs lost without fabricating
+exit codes and preserves Project volumes. Changed deployment defaults do not
+rewrite existing Projects' saved configuration.
+
+Streaming revisions and execution-control revisions are separate. Native token
+output updates projections without invalidating Stop, Steer or queue actions.
+Terminal controls are fenced to their observer's original incarnation; a delayed
+EOF or resize cannot act on a successor shell. Cookies are rechecked for live
+sockets. At most eight observers attach to a Terminal, with bounded queues and
+input rates. Idle Agent processes can release their own slots while retained
+terminals or sibling work keep the Project active.
+
+Project deletion closes admission, revokes grants/shares and disables schedules.
+Confirmed sandbox absence releases placement capacity; cleanup then removes both
+owned volumes, frozen share bytes, native archives and dependent conversation/
+command records. Small identity/outcome tombstones remain. Lost successful delete
+replies retain their original operation and resource identities until verified.
+A host artifact failure keeps deletion pending. Shared published assets and
+templates are never selected as Project-owned storage.
+
+Session deletion reclaims only its private runtime directory, archives, conversation
+and shares. It preserves shared workspace files, sibling execution and Project-owned
+schedules with other run history. The private-directory helper rejects symlink
+traversal and uses bounded descriptor-relative cleanup. Metadata observation does
+not reset idle deadlines. Expired login tokens, old read/list operation metadata
+and excess product-event replay are pruned independently of live Agent history.

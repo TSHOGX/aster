@@ -218,6 +218,12 @@ func (r *Runner) input(ctx context.Context, input io.Reader) {
 				}
 				r.notify()
 			}
+		case "status":
+			var state string
+			state, err = r.journal.Status(ctx, f.Owner, f.CommandID)
+			if err == nil {
+				r.response(agentwire.Frame{Kind: "command_status", Owner: f.Owner, CommandID: f.CommandID, State: state})
+			}
 		case "ack":
 			err = r.journal.Ack(ctx, f.Owner, f.Sequence)
 		case "command":
@@ -282,7 +288,7 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 		return err
 	}
 	native["id"], _ = json.Marshal(c.ID)
-	raw, err := json.Marshal(native)
+	raw, err := agentwire.MarshalJSON(native)
 	if err != nil {
 		return err
 	}
@@ -317,10 +323,12 @@ func (r *Runner) emit(ctx context.Context, output io.Writer) {
 		case f := <-r.syncs:
 			owner, cursor = f.Owner, f.After
 			if err := send(agentwire.Frame{Kind: "synced", Owner: owner, After: cursor}); err != nil {
+				r.fail(err)
 				return
 			}
 		case f := <-r.responses:
 			if err := send(f); err != nil {
+				r.fail(err)
 				return
 			}
 		case <-r.wake:
@@ -338,6 +346,7 @@ func (r *Runner) emit(ctx context.Context, output io.Writer) {
 		}
 		for _, record := range records {
 			if err := send(agentwire.Frame{Kind: "record", Owner: owner, Sequence: record.Sequence, CommandID: record.CommandID, TurnID: record.TurnID, State: record.Kind, Payload: record.Payload}); err != nil {
+				r.fail(err)
 				return
 			}
 			cursor = record.Sequence

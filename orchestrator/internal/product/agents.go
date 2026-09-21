@@ -50,6 +50,13 @@ func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (
 		if child.State == "blocked" {
 			return ErrConflict
 		}
+		var recovering int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_incarnations WHERE session_id=? AND recovery_state IN ('pending','replaying')`, session).Scan(&recovering); err != nil {
+			return err
+		}
+		if recovering > 0 {
+			return ErrPending
+		}
 		i, err = liveIncarnation(ctx, tx, session)
 		if err == nil {
 			return nil
@@ -63,11 +70,11 @@ func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (
 		}
 		id := uuid.NewString()
 		i = Incarnation{ID: id, ProjectID: scope.ProjectID, SessionID: session, Reference: sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: "agent-" + id}, Owner: 1, State: "starting"}
-		_, err = tx.ExecContext(ctx, `INSERT INTO agent_incarnations(id,project_id,session_id,store_id,sandbox_id,epoch,handle,owner,state,created_at) VALUES(?,?,?,?,?,?,?,1,'starting',?)`, id, scope.ProjectID, session, i.Reference.StoreID, i.Reference.SandboxID, i.Reference.Epoch, i.Reference.Handle, s.timestamp())
+		_, err = tx.ExecContext(ctx, `INSERT INTO agent_incarnations(id,project_id,session_id,store_id,sandbox_id,epoch,handle,owner,state,last_work_at,created_at) VALUES(?,?,?,?,?,?,?,1,'starting',?,?)`, id, scope.ProjectID, session, i.Reference.StoreID, i.Reference.SandboxID, i.Reference.Epoch, i.Reference.Handle, s.timestamp(), s.timestamp())
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET state='starting' WHERE id=?`, session); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET state='starting',failure='' WHERE id=?`, session); err != nil {
 			return err
 		}
 		if err = s.activity(ctx, tx, scope.ProjectID); err != nil {
@@ -95,12 +102,19 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		if current.ID != i.ID || current.Owner != i.Owner || current.State != "running" {
 			return ErrConflict
 		}
+		var unknown int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_commands WHERE incarnation_id=? AND state='unknown'`, i.ID).Scan(&unknown); err != nil {
+			return err
+		}
+		if unknown > 0 {
+			return ErrPending
+		}
 		var id, turn, kind string
 		var payload []byte
 		err = tx.QueryRowContext(ctx, `SELECT id,coalesce(turn_id,''),kind,payload FROM agent_commands WHERE incarnation_id=? AND state='pending' ORDER BY created_at,id LIMIT 1`, i.ID).Scan(&id, &turn, &kind, &payload)
 		if errors.Is(err, sql.ErrNoRows) {
 			var active int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND state IN ('starting','running','stopping','unknown')`, i.SessionID).Scan(&active); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND (state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0))`, i.SessionID).Scan(&active); err != nil {
 				return err
 			}
 			if active > 0 {
@@ -111,7 +125,10 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 				return missing(err)
 			}
 			id, kind = uuid.NewString(), "prompt"
-			payload, _ = json.Marshal(map[string]string{"type": "prompt", "message": content})
+			payload, err = nativePayload(map[string]string{"type": "prompt", "message": content})
+			if err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO agent_commands(id,project_id,session_id,incarnation_id,turn_id,kind,payload,state,created_at) VALUES(?,?,?,?,?,'prompt',?,'pending',?)`, id, i.ProjectID, i.SessionID, i.ID, turn, payload, s.timestamp()); err != nil {
 				return err
 			}
@@ -133,13 +150,22 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 // IngestAgent commits raw record identity and its projection together. A caller
 // may ACK only the returned watermark, and only after this transaction commits.
 func (s *Store) IngestAgent(ctx context.Context, i Incarnation, f agentwire.Frame) (uint64, error) {
+	return s.ingestAgent(ctx, i, f, false)
+}
+func (s *Store) ingestAgent(ctx context.Context, i Incarnation, f agentwire.Frame, recovery bool) (uint64, error) {
 	if f.Kind != "record" || f.Session != i.SessionID || f.Incarnation != i.ID || f.Owner != i.Owner || f.Sequence == 0 || len(f.Payload) > agentwire.MaxFrame-1024 || !json.Valid(f.Payload) {
 		return 0, ErrInvalid
 	}
 	digest := creationDigest(f.CommandID, f.TurnID, f.State, string(f.Payload))
 	var watermark uint64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		current, err := liveIncarnation(ctx, tx, i.SessionID)
+		var current Incarnation
+		var err error
+		if recovery {
+			current, err = scanIncarnation(tx.QueryRowContext(ctx, `SELECT `+incarnationColumns+` FROM agent_incarnations WHERE id=? AND state='exited' AND recovery_state='replaying'`, i.ID))
+		} else {
+			current, err = liveIncarnation(ctx, tx, i.SessionID)
+		}
 		if err != nil {
 			return err
 		}
@@ -178,7 +204,7 @@ func (s *Store) IngestAgent(ctx context.Context, i Incarnation, f agentwire.Fram
 		if err = s.projectAgentRecord(ctx, tx, i, f); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE agent_incarnations SET ingested_sequence=? WHERE id=? AND owner=?`, f.Sequence, i.ID, i.Owner); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_incarnations SET ingested_sequence=?,last_work_at=? WHERE id=? AND owner=?`, f.Sequence, s.timestamp(), i.ID, i.Owner); err != nil {
 			return err
 		}
 		watermark = f.Sequence
@@ -340,4 +366,35 @@ func (s *Store) messages(ctx context.Context, project, session string, after int
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func nativePayload(value any) ([]byte, error) {
+	raw, err := agentwire.MarshalJSON(value)
+	if err != nil || len(raw) > agentwire.MaxFrame-1024 {
+		return nil, ErrInvalid
+	}
+	return raw, nil
+}
+
+func (s *Store) commandStatus(ctx context.Context, i Incarnation, id, state string) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		current, err := liveIncarnation(ctx, tx, i.SessionID)
+		if err != nil {
+			return err
+		}
+		if current.ID != i.ID || current.Owner != i.Owner {
+			return ErrConflict
+		}
+		switch state {
+		case "absent", "received":
+			// The new owner's serialized status query proves the original native command
+			// was never dispatched. Retain its original ID/payload/turn for first dispatch.
+			_, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='pending',error='' WHERE id=? AND incarnation_id=? AND state='unknown'`, id, i.ID)
+		case "dispatching":
+			_, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='dispatching' WHERE id=? AND incarnation_id=? AND state IN ('sending','unknown')`, id, i.ID)
+		}
+		// Applied/completed/rejected statuses are not projection authority. Their
+		// original sequenced journal record must still commit before changing a turn.
+		return err
+	})
 }
