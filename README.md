@@ -7,7 +7,7 @@ survive disposable processes. Khora is the only execution backend.
 This branch intentionally breaks production compatibility. Memory and Evolve are
 removed; shared assets are manually maintained, versioned and read-only. Use fresh,
 isolated development databases. Production migration and deployment acceptance are
-a separate future project after implementation is complete.
+a separate project.
 
 ```bash
 go -C orchestrator build ./...
@@ -23,7 +23,7 @@ npm run build
 ```
 
 See [development](docs/development.md), [architecture](docs/architecture.md),
-[verification](docs/verification.md), [scope](docs/development-scope.md) and the
+[verification](docs/verification.md), [recorded evidence](docs/development-evidence.md), [scope](docs/development-scope.md) and the
 [documentation index](docs/README.md). Fake-backed tests do not replace isolated
 real Khora integration. No production release or deployment readiness is claimed.
 

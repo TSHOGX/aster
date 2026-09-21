@@ -6,23 +6,22 @@
 
 ## Route trees
 
-The orchestrator serves three trees:
+`Server.Routes` serves health/auth endpoints, authenticated `/api/` and
+`/artifacts/` routes, administrator-only `/api/admin/`, and unauthenticated public
+links under `/api/shared/` and `/shared/`. The specific public-link patterns are
+registered outside the login middleware.
 
-1. **Public HTTP** (`Server.Routes`) — the browser-facing API, on `cfg.Addr`. It
-   contains one **unauthenticated** subtree, `/api/shared/`, registered outside
-   `requireAuth`; Go's ServeMux prefers the more specific pattern, so it wins over
-   `/api/`. That precedence is load-bearing and pinned by a test in both
-   directions.
-2. **Operator** (`Server.OperatorRoutes`) — `GET /api/agents`; defined but not wired
-   into `main.go` today.
-3. **Proxy correlation** (`Server.ProxyCorrelationRoutes`) — served over a Unix
-   socket, authenticated by SO_PEERCRED; not reachable over TCP.
+The optional gateway authorization listener is a separate Unix socket authenticated
+with kernel peer credentials. Its `/v1/route`, `/v1/authorize` and request-outcome
+contracts are described in [gateway contracts](gateway-contract.md). The daemon
+has no proxy-correlation listener. `Server.OperatorRoutes` defines an agent catalog
+handler for embedders; the shipped daemon does not start a separate operator server.
 
 ## Public HTTP routes
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/healthz` | none | `{"status":"ok"}` |
+| GET | `/healthz` | none | process status, version and commit |
 | POST | `/api/login` | none | log in; issues the session cookie |
 | GET | `/api/me` | none | `{auth_required, user_id}` (never 401s) |
 | POST | `/api/logout` | required | revoke the session, expire the cookie |
@@ -52,9 +51,10 @@ The orchestrator serves three trees:
 | GET | `/api/shared/{token}/messages` | **none** | the link's frozen conversation |
 | GET | `/api/shared/{token}/artifacts` | **none** | the link's file whitelist |
 | GET | `/shared/{token}/files/{path...}` | **none** | frozen bytes of one whitelisted file |
-| GET | `/api/quota` | required | session & `/30` pool ceilings |
+| GET | `/api/quota` | required | product session ceiling and occupied count |
 | GET | `/api/deployment-capabilities` | required | creatable product modes |
-| GET | `/api/feature-flags` | required | runtime rollout flags (all disabled by default in R0) |
+| GET | `/api/feature-flags` | required | current product feature flags |
+| GET | `/api/admin/diagnostics` | admin | durable queues, capacity, workers and gateway status |
 | GET | `/api/admin/users` | admin | configured user ids and roles (no password material) |
 | GET | `/api/admin/feature-flags` | admin | complete flag records |
 | PATCH | `/api/admin/feature-flags/{key}` | admin | update a flag and append an audit record |
@@ -76,15 +76,14 @@ journal settlement and verified pause, retaining its sandbox and stored data.
 Success is `200` with `{"status":"destroyed"}`; unresolved retirement returns
 `503` with `error_class: session_retirement_pending`. A committed request continues
 in the background, and repeated DELETE is idempotent. See
-[session retirement](session-lifecycle.md#retained-session-retirement).
+[session retirement](session-lifecycle.md#retirement).
 
 ### Owner gate vs. read gate
 
-Every `/api/sessions/{id}/*` route is owner-gated except four, which run a
-**read gate** instead: `GET /api/sessions/{id}`, `GET .../messages`,
-`GET .../runtime`, `GET .../artifacts`, and `GET /artifacts/{sessionID}/{path...}`.
-The read gate admits the owner **or** a user holding a live read grant
-(`session_shares`).
+Session detail, runtime, message/history/content/trace reads, artifact listings/pages
+and workspace downloads use a read gate. It admits the owner or a live identity
+read grant, subject to the grant's visibility. Summary readers cannot retrieve
+trace details. See [bounded reads](#bounded-workbench-reads) for the page routes.
 
 Everything else — including `PATCH`/`DELETE` on the session, `POST .../messages`,
 uploads, `PUT /artifacts/...`, and the share-management routes themselves — stays
@@ -103,17 +102,18 @@ the `username|IP` key is rate-limited (5 failures / 15 min).
 
 **`GET /api/me`** → `{"auth_required":bool, "user_id":string, "role":"user"|"admin"}`.
 In open mode `{auth_required:false, user_id:"lab", role:"user"}`; with auth enabled
-but no valid cookie, `user_id:""`. It never returns 401 — the client uses it to
-decide whether to show the login screen.
+but no valid cookie, `user_id:""`. It never returns 401; the client uses it to
+decide whether to show login. A database failure returns `503` from both `/api/me` and authenticated routes. Login
+persists the same expiry as the cookie, so maintenance preserves valid sessions.
 
-**Administrator APIs (R0).** Credentials without a `role` field are regular
+**Administrator APIs.** Credentials without a `role` field are regular
 users. Only a hot-reloaded credential with `role: admin` can enter
 `/api/admin/*`; open/lab mode is deliberately denied. `PATCH` accepts
 `{"enabled":bool,"description":"...","reason":"..."}`. Audit pagination is
 bounded to 200 rows (`limit` and `offset` query parameters).
 
 **`POST /api/sessions`** — `{"mode":"agent"|"shell"}` (default `agent`; raw `agent`
-field rejected with `400`). → `200` an `apiSession`. `503 {"error_class":"pool_exhausted"}`
+field rejected with `400`). → `201` an `apiSession`. `503 {"error_class":"pool_exhausted"}`
 when the live sandbox ceiling is reached.
 
 **`PATCH /api/sessions/{id}`** — `{"title":"..."}`. Renames the session and marks
@@ -122,12 +122,11 @@ trimmed, must be non-empty, and is capped at 200 runes (`400` otherwise). →
 `200` the updated `apiSession`; broadcasts a `session.updated` event.
 
 **`POST /api/sessions/{id}/messages`** — `{"content":"..."}`.
-→ `202 {"status": <session status>, "session_id", "turn_id", "message":
-<apiMessage>, "runtime": <runtime projection>}`. Accepted while the session is
-already running: the turn is appended to the queue and the runtime drains it after
-the current one. The response pairs the stored message with the post-send
-projection so a client applies both in one update instead of following up with a
-`GET .../runtime` that could land after the worker claimed the turn.
+→ `202 {"status":"running_active", "session_id":"...", "turn_id":1,
+"runtime":<runtime projection>}`. A running session can queue additional turns.
+There is no message in this response: the prompt becomes a transcript entry when
+claimed, and until then appears only in `runtime.queued_turns`. A transient lifecycle
+or workspace conflict can reject admission; inspect the response before retrying.
 
 On the first message of an untitled session the server sets a placeholder title
 (the truncated first message) and, when the title LLM is configured
@@ -140,13 +139,13 @@ generated title — each emits a `session.updated` event.
 **identical** payload, so a client has one shape to apply however it arrives:
 
 ```
-{"session_id", "session_status", "revision",
+{"session_id", "session_status", "sandbox", "revision",
  "active_turn": <turn|null>, "queued_turns": [<turn>...]}
 ```
 
 A turn is `{id, sequence, content, status, phase?, phase_at?, tool_name?,
-tool_detail?, started_at?, created_at}`. `phase` is one of `thinking`, `tool`,
-`streaming`, `compacting`, `retrying`, recorded on the turn row as it happens and
+tool_detail?, started_at?, created_at, parked?, steering_pending?}`. `phase` is
+one of `thinking`, `tool`, `streaming`, `compacting`, `retrying`, recorded on the turn row as it happens and
 present on the active turn only.
 
 Two properties clients depend on:
@@ -163,9 +162,8 @@ Two properties clients depend on:
 **`DELETE /api/sessions/{id}/turns/{turnID}`** withdraws a turn that is still
 queued → `200` the resulting projection. Once the worker claims it the turn is
 running and this returns `409 turn_not_cancelable`; ending it is then
-`POST .../interrupt`. The withdrawn turn's message row is deleted with it: the
-turn was never asked, so leaving the text in the transcript would read as an
-unanswered prompt.
+`POST .../interrupt`. An unclaimed turn has no transcript message; withdrawing
+it removes it from the queue without creating an unanswered prompt in history.
 
 **`POST /api/sessions/{id}/interrupt`** → `202 {"status", "pending_queued",
 "runtime"}`. It stops the running turn and nothing else.
@@ -214,7 +212,7 @@ the user could not tell from success.
 
 Shell commands may be queued and released; steering a running shell command returns `409`.
 
-**Cron Agent (R2/R4).** `POST /api/schedules` accepts `name`, `prompt`, optional
+**Schedules.** `POST /api/schedules` accepts `name`, `prompt`, optional
 `cron_expr` (five-field standard cron), `timezone` (IANA name), `enabled`,
 `timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `result_mode`
 (`new_session` or `existing_session`), and `target_session_id` when routing to an
@@ -224,20 +222,21 @@ retaining configuration and run history. `POST .../{id}/run` returns `202` with 
 queued run. New-session runs create a durable session titled after the schedule;
 existing-session runs enqueue into the configured owner session, preserving its
 conversation context and workspace files. `GET .../{id}/runs` exposes durable
-status (`queued`, `running`, `succeeded`, `failed`, `timed_out`), attempt,
+status (`queued`, `running`, `succeeded`, `failed`, `timed_out`, `canceled`), attempt,
 timestamps, associated `session_id`, error class/message, and a bounded output
-summary. The background worker is independent of maintenance and is enabled by
-`harness.scheduler.enabled`; the `cron_agent` flag controls the administrative UI
-capability and does not silently stop persisted schedules. Manual run rows remain
-durable while the scheduler worker is disabled. Schedule
+summary. The maintenance supervisor always runs bounded workers to recover running
+and queued rows, including manual runs. `harness.scheduler.enabled` controls new
+cron claims and stale cron-cursor recovery. Turning it off does not freeze already
+queued work. The stored `cron_agent` feature flag is not a scheduler dispatch gate.
+The current frontend does not read it to hide or enable schedules. Schedule
 updates use an optimistic `version` field and due claims are atomic, so restarts
 cannot double-dispatch a cron slot.
 
-**`GET /api/quota`** →
-`{"soft_session_ceiling", "active_sessions", "live_pool_ceiling",
-"allocated_pool_slots", "remaining_pool_slots"}`. The session ceiling
-(`max_sessions`) and the `/30` pool ceiling are reported independently — one is not
-clamped to the other.
+**`GET /api/quota`** → `{"soft_session_ceiling":32,"active_sessions":2}`.
+The count is deployment-wide occupied sandbox capacity, including unresolved
+provisioning, rather than the number of conversation rows owned by this caller.
+The deployment's `max_active` separately bounds execution admission. Reserved
+network tuple usage is exposed through admin diagnostics, not this endpoint.
 
 **`GET /api/deployment-capabilities`** →
 ```json
@@ -247,6 +246,9 @@ clamped to the other.
    {"mode":"shell","label":"Shell","visible":true,"create_enabled":true,"disabled_reason":null}]}
 ```
 `disabled_reason` carries the capability error code when a mode is not creatable.
+The response also advertises `message_pages` and `artifact_pages`. `default_mode`
+is `shell` when Pi is unavailable and shell is enabled; clients should wait for
+capabilities and submit that mode explicitly.
 
 **`GET /api/search`** — `?q=<text>&limit=<1..50>` (default 50). Full-text search
 scoped by the store to the caller's own sessions. →
@@ -260,8 +262,9 @@ must be ≥3 characters. `apiSearchHit`: `kind` (`session`|`message`), `session_
 name is the relative destination path (folder uploads preserve structure). Rejected
 while a turn is in progress (`409 turn_in_progress`). Capped by `MaxUploadBytes` /
 `MaxUploadFiles` (`413 too_many_files` / `edit_too_large`). →
-`200 {"uploaded":["path", ...]}`; a synchronous workspace scan runs so the artifact
-list and SSE are current on return.
+`200 {"uploaded":["path", ...]}`; a post-write inventory scan is attempted. The write can succeed while inventory
+reconciliation is pending; refresh the listing rather than assuming metadata is
+already current.
 
 **`PUT /artifacts/{sessionID}/{path...}`** — raw text body (`text/plain`), the online
 editor. Rejected while a turn is in progress (`409 turn_in_progress`). Optional
@@ -352,7 +355,9 @@ count cap (`HARNESS_MAX_SHARE_LINK_FILES`, default 25) and a total byte cap
 `413` for too many bytes, `404` for a path that is not in the workspace. A rejected
 create leaves no link row. Omit `files` for a conversation-only link.
 
-Unknown, expired, revoked, and rotated-away tokens are all `404`. The subtree is
+Unknown, expired, revoked, and rotated-away tokens are all `404`. The daemon
+invalidates its token cache on revoke/rotate; out-of-band changes may remain cached
+for up to 10 seconds, while link expiry is checked against the current time. The subtree is
 GET-only (`405` otherwise) and sends `Referrer-Policy: no-referrer`, because the
 token is in the URL path. Access counters are buffered in memory and flushed by
 the maintenance loop, so anonymous reads never contend for the writer connection;
@@ -366,7 +371,9 @@ page is a snapshot with an explicit refresh rather than a live view.
 `apiSession` fields: `id`, `user_id`, `title`, `status`, `mode`, `mode_label`
 ("Agent" / "Shell"), `created_at`, `updated_at`,
 `ended_at`, `last_activity_at`, `failure_reason`,
-`error_class`. `title` is the session's display name (empty until named); the
+`error_class`, and optional `sandbox` (`live`, `starting`, or `released`).
+Creation/rename responses can omit `sandbox`; clients should preserve the previous
+value when it is absent. `title` is the session's display name (empty until named); the
 frontend falls back to the `id` when it is empty. The `title_custom` flag
 (whether the user renamed it) is internal and not exposed.
 
@@ -391,14 +398,14 @@ otherwise vanish from a shared shell session.
 `GET /api/sessions/{id}/messages` → `{"messages":[Message...]}` (`store.Message`):
 
 - `id`, `session_id`, `role`, `content`, `created_at` — the chat log.
-- `turn_id` — the durable turn a user message belongs to, when it has one (absent
-  for assistant/system messages and pre-migration history). Lets a client correlate
+- `turn_id` — optional durable turn identity on user or assistant messages.
+  Lets a client correlate
   a transcript entry with turn state by id rather than by matching content. A turn
   that is still `queued` has no message listed here at all — it lives in the runtime
   projection's `queued_turns` until the worker claims it, which is what makes it
   impossible for one prompt to appear in both places.
 - `stop_reason` — pi's terminator for an assistant message: `stop` (final reply),
-  `toolUse` (intermediate tool step), or empty (user/shell/pre-migration). Lets the
+  `toolUse` (intermediate tool step), or empty (user/shell output). Lets the
   client distinguish a completed answer from an interstitial.
 - `trace` — execution-trace nodes (thinking phases + tool calls) that produced the
   message; opaque JSON passed through verbatim, absent when there is no stored trace.
@@ -440,7 +447,7 @@ Event types:
 | `agent.output` | raw runtime stdout/stderr line |
 | `system.status` | informational status (toast) |
 | `artifact.updated` / `artifact.deleted` | workspace file metadata changes |
-| `notification.created` | new broadcast notification; payload is `{notification_id}` only, a "go refetch" signal (not durable, not replayed) |
+| `notification.created` | new broadcast or directed notification; payload is `{notification_id}` only, a "go refetch" signal (not durable, not replayed) |
 
 Payloads are scrubbed of internal identifiers and host paths (`event_dto.go`):
 `generation_id`, `driver_id`, `driver_state`, `data_volumes`, `netns_path`, any
@@ -450,7 +457,8 @@ Payloads are scrubbed of internal identifiers and host paths (`event_dto.go`):
 
 `GET /artifacts/{sessionID}/{path...}` streams a single regular file under the
 verified session workspace; `PUT` on the same path is the online editor (see the
-shape above). Ownership is re-checked before any file metadata is touched, and both
+shape above). Read permission (GET) or ownership (PUT) is checked before file
+metadata is touched, and both
 methods reject path traversal, symlink components, symlink escape, directories, and
 non-regular files. HTML/PDF downloads carry a preview-friendly same-origin CSP; all
 other types are served inert. See [security.md](./security.md).
@@ -472,7 +480,7 @@ Memory/Evolve APIs. `GET /healthz` reports the running version and commit.
 ## Bounded workbench reads
 
 `GET /api/deployment-capabilities` advertises `message_pages` and
-`artifact_pages`. Existing unpaged routes remain available. The new read routes
+`artifact_pages`. Existing unpaged routes remain available. The paged read routes
 use the same ownership/share gates; none grant write access.
 
 - `GET /api/sessions/{id}/messages/page`: optional mutually exclusive
@@ -508,7 +516,8 @@ feedback. Public session metadata also advertises the page capabilities.
 
 `GET /api/events/stream?view=workbench` projects committed bodies to bounded
 previews and excludes eager trace/tool-result payloads. Commit events can carry
-`stream_ids` for removing corresponding live previews. Durable event records and internal full-transcript consumers are unchanged.
+`stream_ids` for removing corresponding live previews. Durable event records and
+internal full-transcript consumers retain their full payloads.
 SSE is not a completeness guarantee; clients reconcile against HTTP windows.
 
 Message pages report database and encoding durations through `Server-Timing`.

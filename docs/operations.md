@@ -35,3 +35,27 @@ A detached process stream requests immediate fenced adoption instead of waiting 
 lease expiry. Loss of a stream is still not proof that the process died. Optional
 turn continuation is one bounded maintenance task over committed failed turns;
 backoff survives restart and newer user work always supersedes old failures.
+
+## Triage and retained data
+
+| Observation | Inspect and next action |
+|---|---|
+| Health responds but turns cannot start | Check admin diagnostics for engine identity, pending start/configure operations, gateway readiness and occupied capacity |
+| Turn control or retirement returns 503 | The durable obligation may still be pending; inspect its operation/drain record and allow reconciliation before retrying the same action |
+| Workspace write succeeded but files look stale | Refresh directory metadata; inventory can lag while maintenance/writer fences settle |
+| Capture lag grows | Check that the separate worker is running with the same database/deployment, inspect `pipeline_failures` and `retry_after`, and verify the archive root is writable |
+| Gateway socket was replaced | Check process-instance and pidfd evidence; a new socket does not prove the previous process exited |
+| Engine store/epoch contradicts a binding | Restore verified original engine/storage state; do not rewrite product identities to bypass fencing |
+| Tuple or storage capacity grows | Inspect `tuple_pools`, retained reservations and archive sizes; existing identities and user data are intentionally retained |
+
+Capture accepts absolute paths for all three required flags. Its default poll is
+5 seconds, batch timeout 2 minutes and per-item timeout 30 seconds. `--once` handles
+one batch, at most one eligible version per session, and can finish with zero work
+while sources await activation or retry deadlines; it is not a drain-all command.
+Capture failures back off durably, starting at 30 seconds and capped at 8 minutes.
+
+Keep the product database together with its engine store identity, retained engine
+storage, share blobs and native archives. Product DELETE and daemon shutdown do not
+reclaim user storage. Published content volumes must remain available while referenced;
+deleting them independently can leave durable publication/idempotency records pointing
+at missing objects. Test-substrate cleanup is separate from application retention.

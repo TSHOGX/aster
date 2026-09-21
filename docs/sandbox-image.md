@@ -20,3 +20,31 @@ Deployment-specific datasets and credentials stay private.
 
 Builders may configure package mirrors and DNS through the private build environment.
 Templates and build outputs must contain no host-specific credentials or production data.
+
+## Build and export
+
+Run the builder as root inside a disposable Linux build environment with package
+network access, Go and the pinned module available. The destination must not exist:
+
+```bash
+sudo env "PATH=$PATH" "GOPATH=$(go env GOPATH)" "GOCACHE=$(go env GOCACHE)" \
+  bash sandbox-image/build-khora-template.sh /absolute/path/templates/battery
+```
+
+The builder rejects ignored files in `sandbox-image/files`, installs both Pi and
+shell, builds the pinned `sandboxd`, and finalizes component hashes. It exports:
+
+- `/absolute/path/templates/battery`: template directory for engine registration.
+- `/absolute/path/templates/battery.manifest.json`: manifest consumed by the daemon.
+- `/absolute/path/templates/battery.manifest.sha256`: canonical JSON digest; prefix
+  its value with `sha256:` for deployment `manifest_digest`.
+
+The manifest inside the template is `etc/harness-image/agents.json`. Its canonical
+digest excludes formatting such as the trailing newline, so a raw `sha256sum` of
+the JSON file is not the deployment digest. Build a new revision directory when
+components change; the launch contract checks the pinned component hashes.
+
+The Khora wrapper uses `SANDBOX_BUILD_ENV=/dev/null`; it does not load a private
+build-env file automatically. Review [build-rootfs.sh](../sandbox-image/build-rootfs.sh)
+for supported exported environment settings. Use the exported template/manifest
+with the [isolated harness](../dev/README.md).

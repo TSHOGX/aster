@@ -18,7 +18,9 @@ Khora SDK, never engine internals or host runsc/network/filesystem operations.
 
 Guest HOME is `/root`. Pi history stays in the retained overlay at `/root/.pi`.
 An opaque volume backs `/workspace`; shared assets mount read-only at `/root/.agents`.
-A durable bridge journal supports replay across process and product restarts.
+The bridge journal lives on the `/harness-bridge` volume. The product database
+records accepted ingress, projection positions and outcomes for replay across
+process and application restarts.
 Product retirement revokes authority and settles execution while retaining storage.
 
 The only database schema is the current development schema. Native capture receipts
@@ -34,12 +36,30 @@ an interrupted publication resumes onto the same engine objects. A published vol
 is never rewritten, and a launch mounts only a revision this engine store published.
 
 An environment's identity — driver, template, release pin and resource/storage caps —
-is compared exactly and cannot change while its storage is retained. Mounts, network, hostnames and resolvers are generation configuration, applied to a retained paused
-environment through a fenced configure operation, which is how a session adopts a
-newly published revision without becoming a different environment.
+is compared exactly and cannot change while its storage is retained. Mounts, network, hostnames and resolvers are generation configuration, applied to a
+retained paused environment through a fenced configure operation. A session can
+adopt newly published content without becoming a different environment.
 
 A separate model proxy demonstrates the generic next-hop contract. It owns model
 restrictions and upstream credentials; application storage contains only network
 authority, original request deadlines and teardown receipts. Gateway processes
 recover through trusted Unix controls and kernel process-lifetime evidence.
 See [gateway contracts](gateway-contract.md) and [recovery](recovery.md).
+
+## Storage ownership
+
+| Data | Owner and location | Lifetime |
+|---|---|---|
+| Sessions, turns, grants and operation receipts | Product SQLite database | Durable product state |
+| HOME and selected Pi history | Khora retained sandbox overlay | Survives pause and product retirement |
+| Workspace and bridge journal | Khora volumes at `/workspace` and `/harness-bridge` | Retained with the session |
+| Authored assets/configuration | Published immutable Khora volumes | Revision identity; keep referenced publications available |
+| Prepared upload bytes | Product `prepared_root` | Collected after durable mutation obligations release them |
+| Frozen public-link files | Product share-blob root | Governed by link/file references and cleanup |
+| Native archives | Product trajectory root | Immutable archives with database receipts |
+
+The daemon publishes content and supervises product/execution maintenance. A separate
+capture worker archives completed native snapshots. Optional gateways own external
+service access; a local shell deployment can run with zero gateways. See
+[development setup](development.md) for startup order and [operations](operations.md)
+for diagnostics and retained-data accounting.

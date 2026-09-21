@@ -13,6 +13,8 @@ Stop reserves a turn-scoped abort and parks queued prompts. Steering reserves th
 source prompt until the guest outcome is known; transport receipt alone does not retire
 it. Recovery preserves these distinctions across owner replacement and replay.
 
+## Retirement
+
 DELETE requests product retirement: revoke grants/routes, block new admission, settle
 active work and recovery obligations, verify final pause, then commit the destroyed
 session event. Pending reconciliation returns 503 and retries in the background.

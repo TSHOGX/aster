@@ -1,6 +1,6 @@
 # Runtime state synchronization
 
-The browser treats `session.runtime` and GET `/sessions/:id/runtime` as the
+The browser treats `session.runtime` and GET `/api/sessions/{id}/runtime` as the
 same versioned projection. `revision` must cover **all** of its dependencies:
 turns, session status, active generation, generation status and execution binding state.
 The database column retains its historical name `turn_revision`; it is now the
@@ -9,12 +9,6 @@ normal writers, recovery, pause and idle release alike. No-op lifecycle
 updates do not advance it, and unrelated generations do not invalidate a session.
 These triggers are part of the single current development schema; mismatched
 databases are rejected without migration.
-
-Previously only turn changes advanced the revision. Idle release could change
-`live` to `released` without changing any turn, so the frontend correctly rejected
-the refreshed snapshot as a duplicate. The session list retained its old sandbox
-field and displayed Idle until a page reload. Accepting equal revisions would
-hide this bug but let reordered requests overwrite newer state.
 
 The runtime endpoint reads its revision, lifecycle and turns in one read
 transaction. Snapshots produced inside a write transaction continue to use that
@@ -27,7 +21,9 @@ cached. Opening a cached conversation always refreshes its runtime. Visible tabs
 also reconcile the session list and selected runtime every 15 seconds, including
 idle sessions, and when visibility/network connectivity returns. Hidden tabs
 skip polling, and periodic requests do not overlap. This bounds stale lifecycle
-state when no event arrives without polling message histories on every tick.
+state when no event arrives. Eligible loaded message windows also reconcile on
+these ticks; directory pages have their own refresh path. These are bounded reads,
+not full-history downloads.
 
 Session-list responses have no server revision. Their merge therefore preserves
 rows changed, created or removed locally since the request began; an old response

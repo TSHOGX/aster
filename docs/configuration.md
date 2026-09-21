@@ -75,3 +75,40 @@ Existing flows retain the deadline observed at admission; heartbeat renewal appl
 to new admissions. Size the lease above the longest proxy request plus a heartbeat
 interval and control margin. The model examples use a three-minute lease and a
 two-minute proxy timeout.
+
+## Paths and engine authentication
+
+An explicit YAML path selects the product configuration directory. Default
+`auth-users.yaml` and `title-llm.yaml` are beside that YAML; the default database is
+`.harness-local/development/control.db` under its parent directory. Without an
+explicit path, defaults are derived from the working directory (with special
+handling when it is named `orchestrator`). Set absolute `HARNESS_DB_PATH`,
+`HARNESS_RUN_DIR` and auth paths to make startup independent of the working directory.
+The default share-blob directory is beside the selected database.
+
+Deployment JSON paths, including authored trees, manifest, prepared root, gateway
+sockets and TLS files, resolve beside that JSON. The template field is an engine
+registered name, not a host path. `manifest_digest` is `sha256:` followed by the
+canonical digest exported by the template builder, not the raw JSON file hash.
+
+The `engine` object supports `endpoint`, `store_id`, `ca_file`, `client_cert` and
+`client_key`. Plain HTTP requires a loopback IP literal. HTTPS requires all three
+TLS files and validates the server with the configured CA. Proxy environment
+variables and redirects are disabled for engine traffic. Process streams use
+lifetime contexts; individual lifecycle/control calls have their own deadlines.
+
+## Scheduler behavior
+
+`harness.scheduler.enabled` enables new cron claims and stale cron-cursor recovery.
+The maintenance supervisor still dispatches queued/manual work and reconciles
+running rows when this setting is false. To prevent a particular schedule's pending
+work, disable or archive that schedule through its API; its pending backlog is
+canceled. The stored `cron_agent` feature flag does not gate worker dispatch; the current
+frontend does not consume it either. Manage execution through scheduler configuration
+and each schedule's enabled/archive state.
+
+`worker_count`, `max_concurrent_runs` and `max_pending_runs_per_schedule` bound
+scheduled work. `poll_interval`, `default_timeout`, `retry_backoff` and
+`misfire_grace` control timing. The strict loader provides defaults for omitted
+fields; see [config.go](../orchestrator/internal/config/config.go). Existing-session
+runs require a session owned by the schedule's user in agent mode.

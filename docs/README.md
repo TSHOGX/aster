@@ -1,7 +1,11 @@
 # Documentation
 
-These references describe the Khora-only development branch. Source and tests are
-canonical; production deployment readiness is not claimed.
+These references describe the Khora-only development branch. Source and tests define current behavior. Historical test results retain their
+actual execution revisions; production deployment readiness is not claimed.
+
+Start with [development](development.md) for an interactive daemon,
+[template building](sandbox-image.md) and the [isolated harness](../dev/README.md)
+for real-engine tests, or [operations](operations.md) to diagnose a running instance.
 
 | Reference | Purpose |
 |---|---|
@@ -29,3 +33,21 @@ canonical; production deployment readiness is not claimed.
 
 Machine-specific plans and raw evidence stay in ignored `private/`. Historical
 planning reports do not add compatibility obligations to the current scope.
+
+## Maintaining these references
+
+When behavior changes, update the relevant API/configuration reference and its
+setup commands together. Verify endpoint methods/status codes against handlers,
+configuration names/defaults against loaders, and browser behavior against the
+actual capability branches. Keep observed behavior distinct from intended cleanup.
+
+Run `python3 scripts/check-public-docs.py` and `git diff --check` from the repository
+root. The documentation checker validates local link targets, reference-language
+conventions and the private boundary; it does not verify command behavior, section
+anchors, API semantics or historical evidence. Review those explicitly. Use
+[verification](verification.md) for code or runtime changes.
+
+Record tests at the revision and dirty state emitted by the harness. Publish sanitized
+synthetic summaries rather than copying raw logs; a later docs-only commit is not a
+new execution result. See [evidence](development-evidence.md) and
+[public/private boundary](delivery/privacy.md).

@@ -7,7 +7,7 @@ Do not commit host inventories, machine/cloud IDs, actual hostnames or addresses
 real deployment paths/account mappings, capacity/incident snapshots, runtime PIDs,
 production BUILD_IDs, actual executable fingerprints, database backups, operation
 journals, screenshots, raw qualification logs or credentials. Public software
-versions and source-commit migration fixtures are different from observations
+versions and synthetic source-commit fixtures are different from observations
 about a particular machine.
 
 Keep target configuration and operational records outside the checkout in the
@@ -19,7 +19,10 @@ served by the application. Alternatively use `.harness-local/` or
 `*.local.json` / `*.local.yaml` / `*.local.md`, which are ignored. Ignore rules do
 not protect already tracked files: inspect the staged diff before committing.
 
-Synthetic fixtures may be versioned. Real deployment reports, raw integration
+Synthetic fixtures and sanitized workload summaries may be versioned, including
+source revisions, pinned build hashes, declared template digests and aggregate test
+measurements. This does not permit publishing identifiers or fingerprints from a
+real deployment. Real deployment reports, raw integration
 logs and machine-specific plans remain private. No production release pipeline
 is provided by this development branch.
 

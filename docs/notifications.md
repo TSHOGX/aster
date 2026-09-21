@@ -79,18 +79,19 @@ load, dropdown open, or reconnect-triggered refresh); it does not replay via
 ### CLI: `cmd/notify`
 
 ```
-go run ./cmd/notify -title "v2.3 released" -body "Changelog: ..." \
-  -db /var/lib/harness/state/orchestrator.db
+go -C orchestrator run ./cmd/notify -title "Development update" -body "Summary: ..." \
+  -db /absolute/path/development/control.db
 ```
 
 Writes directly to the orchestrator's SQLite file (WAL mode, safe for a
 second short-lived process), independent of whether the orchestrator is
-running. Intended for deploy scripts / release automation.
+running. Use an explicit development database path; the command's default is a separate
+`/var/lib/harness/state/orchestrator.db` path and does not follow `HARNESS_DB_PATH`.
 
 **Trade-off:** since it bypasses the running server process, it does not
 trigger the `Hub.Publish` broadcast — connected browser tabs won't get an
-instant toast, only the badge/list on their next poll or reload. Acceptable
-for deploy-time announcements; not suited for time-sensitive alerts.
+instant toast, only the badge/list on their next notification refresh or reload. This is not
+a delivery mechanism for time-sensitive alerts.
 
 ## Frontend
 
@@ -105,10 +106,8 @@ for deploy-time announcements; not suited for time-sensitive alerts.
   unread-count badge and a dropdown panel (click-to-mark-read). No dropdown
   primitive exists elsewhere in this codebase, so open/close-on-outside-click
   is hand-rolled with a `useRef` + `document` `mousedown` listener.
-- Mounted in both conversation headers —
-  `workbench/conversation.tsx` (agent/chat) and
-  `workbench/shell-conversation.tsx` (shell) — since each renders its own
-  independent header.
+- Mounted in the expanded sidebar and collapsed rail in
+  `workbench/sidebar.tsx`.
 
 ## Verification
 
