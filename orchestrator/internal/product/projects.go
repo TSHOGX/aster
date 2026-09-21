@@ -174,11 +174,16 @@ func (s *Store) Terminals(ctx context.Context, scope Scope, after string, limit 
 	return out, rows.Err()
 }
 func (s *Store) CreateSession(ctx context.Context, scope Scope, id, title string) (Session, error) {
-	if !validID(id) || !validText(title, 256) {
+	if !validID(id) || (title != "" && !validText(title, 256)) {
 		return Session{}, ErrInvalid
 	}
 	var p Session
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.write(ctx, func(tx *sql.Tx) error { var err error; p, err = s.createSession(ctx, tx, scope, id, title); return err })
+	return p, err
+}
+func (s *Store) createSession(ctx context.Context, tx *sql.Tx, scope Scope, id, title string) (Session, error) {
+	var p Session
+	err := func() error {
 		if _, err := writableProject(ctx, tx, scope); err != nil {
 			return err
 		}
@@ -197,7 +202,11 @@ func (s *Store) CreateSession(ctx context.Context, scope Scope, id, title string
 			return err
 		}
 		now := s.timestamp()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(id,project_id,title,creation_digest,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, scope.ProjectID, title, creationDigest(title), now, now); err != nil {
+		display, source := title, "user"
+		if title == "" {
+			display, source = "New agent", "pending"
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(id,project_id,title,title_source,creation_digest,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, scope.ProjectID, display, source, creationDigest(title), now, now); err != nil {
 			return err
 		}
 		if err := s.event(ctx, tx, scope.ProjectID, id, "", "session.created", 1); err != nil {
@@ -208,7 +217,7 @@ func (s *Store) CreateSession(ctx context.Context, scope Scope, id, title string
 		}
 		p, err = sessionIn(ctx, tx, scope, id)
 		return err
-	})
+	}()
 	return p, err
 }
 func (s *Store) CreateTerminal(ctx context.Context, scope Scope, id, title string, rows, cols int) (Terminal, error) {
@@ -325,6 +334,11 @@ func (s *Store) editChild(ctx context.Context, scope Scope, id, kind string, rev
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE `+table+` SET `+field+`=?,revision=revision+1,updated_at=? WHERE id=? AND project_id=? AND revision=?`, value, s.timestamp(), id, scope.ProjectID, revision)); err != nil {
 			return err
+		}
+		if kind == "session" && !deleting {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET title_source='user' WHERE id=?`, id); err != nil {
+				return err
+			}
 		}
 		session, terminal := id, ""
 		if kind == "terminal" {

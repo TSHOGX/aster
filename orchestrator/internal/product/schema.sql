@@ -21,6 +21,7 @@ CREATE TABLE sessions (
  id TEXT PRIMARY KEY CHECK(id<>''),
  project_id TEXT NOT NULL REFERENCES projects(id),
  title TEXT NOT NULL,
+ title_source TEXT NOT NULL DEFAULT 'user' CHECK(title_source IN ('user','pending','automatic')),
  creation_digest TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','starting','running','stopping','blocked')),
  deletion_intent INTEGER NOT NULL DEFAULT 0 CHECK(deletion_intent IN (0,1,2)),
@@ -295,3 +296,100 @@ CREATE TABLE file_operations (
  updated_at TEXT NOT NULL
 );
 CREATE INDEX file_operations_pending ON file_operations(settled,updated_at,project_id);
+
+CREATE TABLE schedules (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ session_id TEXT,
+ title TEXT NOT NULL,
+ prompt TEXT NOT NULL,
+ cron TEXT NOT NULL,
+ timezone TEXT NOT NULL,
+ enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+ deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1)),
+ next_at TEXT,
+ revision INTEGER NOT NULL DEFAULT 1,
+ creation_digest TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id)
+);
+CREATE INDEX schedules_due ON schedules(enabled,deleted,next_at,project_id);
+CREATE TABLE schedule_runs (
+ id TEXT PRIMARY KEY,
+ schedule_id TEXT NOT NULL REFERENCES schedules(id),
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ turn_id TEXT NOT NULL,
+ request_id TEXT NOT NULL,
+ due_at TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ UNIQUE(schedule_id,request_id),
+ FOREIGN KEY(project_id,session_id,turn_id) REFERENCES turns(project_id,session_id,id)
+);
+CREATE INDEX schedule_runs_project ON schedule_runs(project_id,created_at,id);
+CREATE TRIGGER stop_project_schedules AFTER UPDATE OF state ON projects
+WHEN NEW.state IN ('deleting','deleted')
+BEGIN UPDATE schedules SET enabled=0,next_at=NULL,revision=revision+1 WHERE project_id=NEW.id AND enabled=1; END;
+CREATE TRIGGER stop_session_schedules AFTER UPDATE OF deletion_intent ON sessions
+WHEN NEW.deletion_intent>0
+BEGIN UPDATE schedules SET enabled=0,next_at=NULL,revision=revision+1 WHERE session_id=NEW.id AND enabled=1; END;
+
+CREATE TABLE notifications (
+ id TEXT PRIMARY KEY,
+ audience TEXT,
+ project_id TEXT REFERENCES projects(id),
+ session_id TEXT REFERENCES sessions(id),
+ title TEXT NOT NULL,
+ body TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX notifications_audience ON notifications(audience,created_at,id);
+CREATE TABLE notification_reads (
+ notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+ actor TEXT NOT NULL,
+ PRIMARY KEY(notification_id,actor)
+);
+CREATE TRIGGER notify_turn_outcome AFTER UPDATE OF state ON turns
+WHEN NEW.state IN ('completed','failed','canceled','unknown') AND NEW.state<>OLD.state
+BEGIN
+ INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
+ SELECT 'turn/'||NEW.id,owner_id,NEW.project_id,NEW.session_id,'Agent turn '||NEW.state,'Open the conversation to inspect the outcome.',NEW.updated_at FROM projects WHERE id=NEW.project_id AND state NOT IN ('deleting','deleted');
+END;
+
+CREATE TABLE shares (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ token_digest TEXT NOT NULL UNIQUE,
+ title TEXT NOT NULL,
+ frontier INTEGER NOT NULL,
+ paths TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','published','revoked','failed')),
+ expires_at TEXT NOT NULL,
+ cleaned INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL,
+ FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id)
+);
+CREATE INDEX shares_cleanup ON shares(state,cleaned,created_at);
+CREATE TABLE share_files (
+ share_id TEXT NOT NULL REFERENCES shares(id),
+ path TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ size INTEGER NOT NULL CHECK(size>=0),
+ PRIMARY KEY(share_id,path)
+);
+CREATE TRIGGER revoke_session_links AFTER UPDATE OF deletion_intent ON sessions
+WHEN NEW.deletion_intent>0
+BEGIN UPDATE shares SET state='revoked' WHERE session_id=NEW.id; END;
+CREATE TRIGGER revoke_project_links AFTER UPDATE OF state ON projects
+WHEN NEW.state IN ('deleting','deleted')
+BEGIN UPDATE shares SET state='revoked' WHERE project_id=NEW.id; END;
+
+CREATE VIRTUAL TABLE message_search USING fts5(content,content='messages',content_rowid='rowid');
+CREATE TRIGGER index_message_insert AFTER INSERT ON messages BEGIN
+ INSERT INTO message_search(rowid,content) VALUES(NEW.rowid,NEW.content);
+END;
+CREATE TRIGGER index_message_delete AFTER DELETE ON messages BEGIN
+ INSERT INTO message_search(message_search,rowid,content) VALUES('delete',OLD.rowid,OLD.content);
+END;

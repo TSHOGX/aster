@@ -15,6 +15,7 @@ type Server struct {
 	Terminals *product.Terminals
 	Agents    *product.Agents
 	Files     *product.Files
+	Shares    *product.Shares
 	Lifecycle *product.Lifecycle
 	Auth      Authenticator
 	Config    Config
@@ -33,6 +34,25 @@ type Store = product.Store
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/projects/{project}/schedules", s.listSchedules)
+	mux.HandleFunc("POST /api/projects/{project}/schedules", s.createSchedule)
+	mux.HandleFunc("GET /api/projects/{project}/schedules/{schedule}", s.getSchedule)
+	mux.HandleFunc("PATCH /api/projects/{project}/schedules/{schedule}", s.updateSchedule)
+	mux.HandleFunc("DELETE /api/projects/{project}/schedules/{schedule}", s.deleteSchedule)
+	mux.HandleFunc("POST /api/projects/{project}/schedules/{schedule}/run", s.runSchedule)
+	mux.HandleFunc("GET /api/projects/{project}/schedules/{schedule}/runs", s.scheduleRuns)
+	mux.HandleFunc("GET /api/search", s.search)
+	mux.HandleFunc("GET /api/notifications", s.notifications)
+	mux.HandleFunc("POST /api/notifications/{notification}/read", s.readNotification)
+	mux.HandleFunc("GET /api/conversations", s.sharedConversations)
+	mux.HandleFunc("GET /api/conversations/{session}/messages", s.conversationMessages)
+	mux.HandleFunc("GET /api/conversations/{session}/events", s.conversationEvents)
+	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/readers", s.grantConversation)
+	mux.HandleFunc("DELETE /api/projects/{project}/sessions/{session}/readers/{reader}", s.revokeConversation)
+	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/shares", s.createShare)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/shares", s.listShares)
+	mux.HandleFunc("DELETE /api/projects/{project}/shares/{share}", s.revokeShare)
+	mux.HandleFunc("POST /api/projects/{project}/shares/{share}/rotate", s.rotateShare)
 	mux.HandleFunc("GET /api/projects/{project}/files", s.listFiles)
 	mux.HandleFunc("GET /api/projects/{project}/files/content", s.readFile)
 	mux.HandleFunc("PUT /api/projects/{project}/files/content", s.writeFile)
@@ -67,7 +87,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{project}/terminals/{terminal}/stop", s.stopTerminal)
 	mux.HandleFunc("GET /api/projects/{project}/terminals/{terminal}/attach", s.attachTerminal)
 
-	return s.guard(mux)
+	public := http.NewServeMux()
+	public.HandleFunc("GET /api/shared/{token}", s.publicShare)
+	public.HandleFunc("GET /api/shared/{token}/messages", s.publicMessages)
+	public.HandleFunc("GET /api/shared/{token}/files", s.publicFile)
+	public.Handle("/", s.guard(mux))
+	return public
 }
 
 // guard applies transport policy before any handler runs: origin for state

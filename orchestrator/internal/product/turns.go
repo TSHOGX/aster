@@ -23,6 +23,15 @@ func (s *Store) AdmitTurn(ctx context.Context, scope Scope, session, request, co
 	}
 	var t Turn
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		var err error
+		t, err = s.admitTurn(ctx, tx, scope, session, request, content, held)
+		return err
+	})
+	return t, err
+}
+func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session, request, content string, held bool) (Turn, error) {
+	var t Turn
+	err := func() error {
 		if _, err := writableProject(ctx, tx, scope); err != nil {
 			return err
 		}
@@ -64,9 +73,10 @@ func (s *Store) AdmitTurn(ctx context.Context, scope Scope, session, request, co
 		}
 		t, err = scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE id=?`, id))
 		return err
-	})
+	}()
 	return t, err
 }
+
 func (s *Store) bumpSession(ctx context.Context, tx *sql.Tx, project, session, kind string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET revision=revision+1,updated_at=? WHERE id=? AND project_id=?`, s.timestamp(), session, project); err != nil {
 		return err

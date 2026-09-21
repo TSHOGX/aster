@@ -44,6 +44,9 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0`, session, reader); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at) VALUES(?,?,?,?,?,?,?)`, "share/"+session+"/"+reader, reader, scope.ProjectID, session, "Conversation shared with you", "Open the shared conversation to read it.", s.timestamp()); err != nil {
+			return err
+		}
 		return s.bumpSession(ctx, tx, scope.ProjectID, session, "conversation.granted")
 	})
 }

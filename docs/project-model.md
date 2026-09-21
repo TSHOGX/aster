@@ -168,3 +168,45 @@ The isolated pinned-engine gate runs confinement tests inside runsc, including
 adversarial symlink swaps. It also verifies an 8 MiB transfer alongside a native
 PTY, cancellation retaining prior bytes, a lost write reply followed by a sibling
 overwrite, watch invalidation, and retained bytes across cold pause/resume.
+
+## Schedules and adjacent capabilities
+
+Schedules belong to a Project and choose an existing Agent Session or create one
+Session per run in that Project. Manual and cron runs use the foreground turn
+admission transaction. Repeating a manual request ID or delivering the same cron
+occurrence twice observes one durable run and one turn. Run history reports the
+turn's actual state; schedule completion never pauses a sandbox independently.
+
+Cron uses five fields and an explicit IANA timezone. An empty expression is
+manual-only. Missed occurrences coalesce into one run and advance beyond the
+current time. Disabling a schedule stops new admissions. Deleting a Project or
+target Session disables its schedules atomically. Already admitted runs retain
+ordinary Session controls and cleanup. Enabled schedules can wake a paused Project
+through normal admission; pausing a Project does not disable schedules.
+
+Authenticated conversation readers use separate read projections. Their grants
+authorize conversation messages and search results, without native records,
+Project events, live Files, terminal input or Agent commands. Subscriptions
+reauthorize and close after revocation. Search results include Project, Session
+and message identities so navigation retains the correct parent context.
+
+Public shares freeze a conversation frontier and up to 16 explicitly selected
+files, limited to 16 MiB per file and 64 MiB total. Files stream to a separate
+host-owned directory for each share before publication. Later workspace writes
+and messages do not change that published selection. The selection is an
+observation, not an atomic workspace snapshot. Public projections exclude native
+records and runtime identities. Tokens are random, stored by digest, expiring,
+revocable and rotatable. Lost creation responses can be recovered by listing the
+owner's shares and rotating a published token.
+
+Session and Project deletion revoke all their shares immediately. Cleanup removes
+owned frozen bytes; public snapshots do not outlive parent deletion indefinitely.
+Interrupted pending publications are failed and reclaimed after owner restart,
+never published from partial selections. Active downloads recheck authorization.
+
+An unnamed Session receives a bounded title from its first admitted prompt.
+Optional title generation is host-only, and a user's explicit rename wins over
+any delayed result. Notifications retain their audience and independent per-user
+read markers. Turn outcomes and conversation grants produce directed notices;
+operators can insert broadcast notices through an internal application port.
+Neither titles nor notifications retain Project runtime activity.

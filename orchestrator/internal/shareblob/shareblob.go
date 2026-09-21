@@ -1,16 +1,7 @@
-// Package shareblob is the content-addressed byte store behind public share
-// links. A link's whitelisted files are copied in here when the link is created,
-// so the bytes a link serves are frozen: an agent overwriting the file later, or
-// the session being destroyed and its workspace reclaimed, cannot change or
-// remove what an already-published URL returns.
-//
-// This is deliberately a LEAF package: stdlib only, no knowledge of store,
-// server, sessions, or links. It does three things -- write bytes and report
-// their digest, open bytes by digest, unlink a digest -- and it has no opinion
-// about who references what. Reference counting lives with the table that holds
-// the references (share_link_files), because that is the only place it can be
-// decided transactionally. internal/architecture/layering_test.go pins the
-// direction.
+// Package shareblob stores immutable bytes by content digest. Callers own
+// authorization, references and reclamation; this leaf package only puts, opens
+// and removes bounded blobs. Project public shares use a separate directory per
+// share, reclaimed when that share is revoked, expired or its parent is deleted.
 package shareblob
 
 import (
