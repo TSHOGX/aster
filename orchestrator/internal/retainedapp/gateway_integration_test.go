@@ -481,6 +481,7 @@ func runComposedGateway(t *testing.T, fullFaults bool) {
 	}
 
 	if !fullFaults {
+		verifyScheduledPiJourney(t, ctx, app, st, session)
 		followup := sendIntegrationTurn(t, ctx, app, session, "second native capture version")
 		awaitIntegrationTurn(t, ctx, st, session, followup)
 		verifyCaptureCommandRestart(t, ctx, root, deploymentPath, st, session)

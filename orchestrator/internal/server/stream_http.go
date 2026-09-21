@@ -13,40 +13,6 @@ import (
 	"harness-platform/orchestrator/internal/store"
 )
 
-func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	userID := userIDFromContext(r.Context())
-	sessionID := r.URL.Query().Get("session_id")
-	if sessionID != "" && !s.sessionVisibleTo(r.Context(), sessionID, userID) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	}
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-
-	ch, cancel := s.hub.Subscribe(sessionID)
-	defer cancel()
-
-	for {
-		select {
-		case <-s.shutdownSignal():
-			return
-		case event, ok := <-ch:
-			if !ok {
-				return
-			}
-			if !s.eventVisibleTo(r.Context(), event, userID) {
-				continue
-			}
-			if err := conn.WriteJSON(s.publicEventForDelivery(event)); err != nil {
-				return
-			}
-		}
-	}
-}
-
 func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {

@@ -19,5 +19,6 @@ origin for the local daemon. Authentication and same-origin proxy checks remain 
 
 Scope is [Khora-only branch development](development-scope.md). The private branch
 plan describes overall objectives, publication, gateway composition, recovery and
-sustained development verification. Preparation is complete; subsequent iterations
-follow that plan when authorized as development work.
+sustained development verification. The Khora refactor is implemented on this branch. Continue development by running
+the focused checks and the portable real-engine harness described in
+[verification](verification.md); production migration and deployment remain separate.

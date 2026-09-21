@@ -99,7 +99,7 @@ type generationStore interface {
 	SessionSandboxStates(context.Context) (map[string]store.SandboxState, error)
 }
 
-// eventStore covers the durable event log behind SSE/WebSocket replay.
+// eventStore covers the durable event log behind SSE replay.
 type eventStore interface {
 	GetEvent(context.Context, int64) (store.EventRecord, bool, error)
 	ListEvents(context.Context, store.ListEventsParams) ([]store.EventRecord, error)

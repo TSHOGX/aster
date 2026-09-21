@@ -189,7 +189,7 @@ func main() {
 
 	<-ctx.Done()
 	// net/http.Server.Shutdown does not cancel active request contexts. Signal
-	// the application first so SSE/WebSocket handlers leave their long-lived
+	// the application first so SSE handlers leave their long-lived
 	// loops; otherwise graceful shutdown waits until its deadline for clients to
 	// disconnect on their own.
 	app.BeginShutdown()

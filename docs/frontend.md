@@ -125,8 +125,8 @@ Proxy target: `HARNESS_API_BASE_URL` → `ORCHESTRATOR_URL` → default
 - `table-cells.ts` — `isNumericText`, the predicate deciding which markdown table
   cells right-align as figures. Unit-tested, because what counts as numeric ("80%"
   yes, "3 cycles" no) is easy to regress silently.
-- `ws.ts` — despite the name, builds the **SSE** URL (`/api/events/stream` with
-  `session_id` / `last_event_id`); WebSocket names are aliases.
+- `ws.ts` — builds the SSE URL (`/api/events/stream` with `session_id` /
+  `last_event_id`).
 - `agents.ts`, `artifact-tree.ts`, `mime.ts`, `languages.ts`, `format.ts`, `guards.ts`,
   `cn.ts` — presentation helpers (mode icons, flat-paths→tree, artifact
   classification, syntax language mapping, formatting, type guards).
@@ -347,8 +347,6 @@ reconcile every 15 seconds; disconnected active views use the message fallback
 poll. Switching cancels obsolete transcript requests. Public shares use the same
 presentational components with their own provider-free, scoped data adapter.
 
-Two build-time rollback switches independently select the retained legacy paths:
-`NEXT_PUBLIC_HARNESS_MESSAGE_PAGES=0` and
-`NEXT_PUBLIC_HARNESS_ARTIFACT_PAGES=0`. Publish a capable backend before enabling
-new frontend builds. Turning off message pages also selects the legacy SSE shape.
-These switches require rebuilding the frontend. No data migration is involved.
+Message and artifact pages are current product paths. The capability response lets
+the frontend keep those views aligned with the daemon during rollout; no legacy
+transport or rollback switch is part of the Khora architecture.

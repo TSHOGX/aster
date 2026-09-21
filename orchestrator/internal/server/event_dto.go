@@ -16,7 +16,7 @@ func publicEvent(event events.Event) events.Event {
 }
 
 // publicEventPayloadCacheCap bounds the per-server sanitized-payload cache. A
-// single durable event fans out to every SSE/WebSocket subscriber of its
+// single durable event fans out to every SSE subscriber of its
 // session within a short window; the cap only needs to comfortably exceed the
 // number of distinct event IDs in flight across all sessions at once. Entries
 // are evicted in insertion (== ascending event-id) order.

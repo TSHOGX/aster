@@ -20,8 +20,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/gorilla/websocket"
-
 	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/bridge"
@@ -56,7 +54,6 @@ type Server struct {
 	hub                  *events.Hub
 	log                  *slog.Logger
 	titler               *titler.Client
-	upgrader             websocket.Upgrader
 	ownerUUID            string
 	version              string
 	buildCommit          string
@@ -79,7 +76,7 @@ type Server struct {
 
 	// publicPayloads memoizes the sanitized client-facing payload per durable
 	// event id so a single event fanned out to N subscribers is sanitized once
-	// rather than N times on the SSE/WebSocket delivery path.
+	// rather than N times on the SSE delivery path.
 	publicPayloads publicPayloadCache
 
 	// shareLinkCache memoizes public-link token resolutions, and shareAccess
@@ -95,7 +92,7 @@ type Server struct {
 	schedulerRunsActive map[string]struct{}
 
 	// shutdownCh is closed before the HTTP servers begin graceful shutdown. Long
-	// lived streams (SSE/WebSocket) select on it because net/http.Server.Shutdown
+	// lived streams (SSE) select on it because net/http.Server.Shutdown
 	// does not cancel active request contexts; without this signal they can keep
 	// Shutdown waiting until its deadline expires.
 	shutdownOnce sync.Once
@@ -175,9 +172,6 @@ func New(
 		schedulerWake:       make(chan struct{}, 1),
 		schedulerRunsActive: make(map[string]struct{}),
 		shutdownCh:          make(chan struct{}),
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
 	}
 }
 
@@ -495,6 +489,7 @@ func (s *Server) issueAuthSession(w http.ResponseWriter, r *http.Request, userID
 		TokenHash: hashAuthToken(token),
 		UserID:    userID,
 		CreatedAt: now,
+		ExpiresAt: expiresAt,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -521,6 +516,10 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(s.cookieName(r)); err == nil && cookie.Value != "" {
 		if id, err := s.store.LookupAuthSession(r.Context(), hashAuthToken(cookie.Value), time.Now().UTC()); err == nil {
 			userID = id
+		} else if !errors.Is(err, store.ErrAuthSessionInvalid) {
+			s.log.Error("authentication store unavailable", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "authentication temporarily unavailable")
+			return
 		}
 	}
 	role := store.RoleUser
@@ -547,8 +546,6 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"flags": flags})
-	case r.URL.Path == "/api/events" && r.Method == http.MethodGet:
-		s.events(w, r)
 	case r.URL.Path == "/api/events/stream" && r.Method == http.MethodGet:
 		s.eventsStream(w, r)
 	case r.URL.Path == "/api/search" && r.Method == http.MethodGet:
@@ -764,11 +761,15 @@ func (s *Server) deploymentCapabilities(w http.ResponseWriter, r *http.Request) 
 		shellEnabled = false
 		shellReason = disabled(err.code)
 	}
+	defaultMode := "agent"
+	if !agentEnabled && shellEnabled {
+		defaultMode = "shell"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schema_version": 1,
 		"message_pages":  true,
 		"artifact_pages": true,
-		"default_mode":   "agent",
+		"default_mode":   defaultMode,
 		"session_modes": []modeDTO{
 			{Mode: "agent", Label: "Agent", Visible: true, CreateEnabled: agentEnabled, DisabledReason: agentReason},
 			{Mode: "shell", Label: "Shell", Visible: shellEnabled, CreateEnabled: shellEnabled, DisabledReason: shellReason},

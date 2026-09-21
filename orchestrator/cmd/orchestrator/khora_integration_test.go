@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/launchplan"
 	"harness-platform/orchestrator/internal/store"
 
@@ -26,7 +28,7 @@ import (
 )
 
 func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	endpoint, template, manifest := os.Getenv("KHORA_INTEGRATION_ENDPOINT"), os.Getenv("KHORA_INTEGRATION_TEMPLATE"), os.Getenv("KHORA_INTEGRATION_MANIFEST")
 	if endpoint == "" || template == "" || manifest == "" {
@@ -75,6 +77,14 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	if err := os.WriteFile(harnessPath, []byte("harness:\n  max_sessions: 2\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	authPath := filepath.Join(root, "auth-users.yaml")
+	hash, err := auth.HashPasswordWithIterations("synthetic-password", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, []byte(fmt.Sprintf("users:\n  - username: alice\n    password_hash: %q\n    role: admin\n  - username: bob\n    password_hash: %q\n", hash, hash)), 0600); err != nil {
+		t.Fatal(err)
+	}
 	binary := filepath.Join(root, "orchestrator")
 	build := exec.CommandContext(ctx, "go", "build", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
@@ -93,8 +103,9 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 		}
 	}
 	dbPath := filepath.Join(root, "state", "control.db")
-	environment = append(environment, "HARNESS_CONFIG_PATH="+harnessPath, "HARNESS_KHORA_DEPLOYMENT="+deploymentPath, "HARNESS_ORCHESTRATOR_ADDR="+address, "HARNESS_DB_PATH="+dbPath, "HARNESS_RUN_DIR="+filepath.Join(root, "run"))
-	httpClient := &http.Client{Timeout: 8 * time.Second}
+	environment = append(environment, "HARNESS_CONFIG_PATH="+harnessPath, "HARNESS_KHORA_DEPLOYMENT="+deploymentPath, "HARNESS_ORCHESTRATOR_ADDR="+address, "HARNESS_DB_PATH="+dbPath, "HARNESS_RUN_DIR="+filepath.Join(root, "run"), "HARNESS_AUTH_USERS_PATH="+authPath, "HARNESS_COOKIE_INSECURE=1")
+	jar, _ := cookiejar.New(nil)
+	httpClient := &http.Client{Timeout: 15 * time.Second, Jar: jar}
 	var process *exec.Cmd
 	var processDone chan error
 	logPath := filepath.Join(root, "daemon.log")
@@ -173,6 +184,7 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 		return response.StatusCode, raw
 	}
 	start()
+	daemonLogin(t, ctx, httpClient, "http://"+address, "alice")
 	authorizationClient := &http.Client{Timeout: time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(root, "authorization.sock"))
 	}}}
@@ -374,8 +386,10 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	if err := json.Unmarshal(output, &healthSnapshot); err != nil || len(healthSnapshot.Workers) == 0 || healthSnapshot.Capacity["retained_environments"] < 1 {
 		t.Fatalf("daemon diagnostics incomplete: %s %v", output, err)
 	}
+	verifyProductRestart := daemonProductJourney(t, ctx, httpClient, "http://"+address, session.ID)
 	stop()
 	start()
+	verifyProductRestart()
 	send()
 	// A 409 retry must re-submit the same prompt, never enqueue a second turn, so
 	// the durable count has to equal exactly what this test submitted.
@@ -386,6 +400,15 @@ func TestKhoraDaemonStartsWithoutEmbeddedRuntime(t *testing.T) {
 	latest, err := reader.GetSessionEnvironment(ctx, session.ID)
 	if err != nil || latest.SandboxID != first.SandboxID || latest.Epoch <= first.Epoch {
 		t.Fatalf("daemon restart lost retained environment: %+v -> %+v %v", first, latest, err)
+	}
+	if os.Getenv("KHORA_INTEGRATION_BROWSER") == "1" {
+		browser := exec.CommandContext(ctx, "node", "../../../frontend/e2e/daemon-journey.mjs", "http://"+address)
+		browser.Env = os.Environ()
+		if output, err := browser.CombinedOutput(); err != nil {
+			t.Fatalf("real daemon browser journey: %v\n%s", err, output)
+		} else {
+			t.Logf("real daemon browser journey: %s", output)
+		}
 	}
 	code, body = request("POST", "/api/sessions/"+session.ID+"/messages", `{"content":"printf 'retirement-preserved-output\\n'; sleep 60"}`)
 	if code != http.StatusAccepted {

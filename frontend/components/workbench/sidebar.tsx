@@ -385,6 +385,7 @@ function CollapsedRail({
 }) {
   const t = useT();
   const { createSession } = useHarness();
+  const capabilities = useCapabilities();
   const sessions = useSessions();
   const [creating, setCreating] = useState(false);
   const activeCount = useMemo(
@@ -394,7 +395,7 @@ function CollapsedRail({
 
   const handleCreate = async () => {
     setCreating(true);
-    const result = await createSession("agent");
+    const result = await createSession(capabilities?.default_mode ?? "agent");
     setCreating(false);
     if (result.ok) onOpenConversation?.();
   };
@@ -415,7 +416,7 @@ function CollapsedRail({
         size="icon"
         className="mt-1 h-9 w-9 border border-transparent hover:border-[var(--color-border)]"
         onClick={() => void handleCreate()}
-        disabled={creating}
+        disabled={creating || !capabilities?.session_modes.find((mode) => mode.mode === capabilities.default_mode)?.create_enabled}
         aria-label={t("sidebar.newSession")}
         title={t("sidebar.newSession")}
       >
@@ -508,13 +509,13 @@ function SidebarPanel({
     () => activeSessions.filter((session) => session.access === "reader"),
     [activeSessions]
   );
-  const agentCapability = capabilities?.session_modes.find((mode) => mode.mode === "agent");
-  const agentCreateDisabled = agentCapability ? !agentCapability.create_enabled : false;
+  const defaultCapability = capabilities?.session_modes.find((mode) => mode.mode === capabilities.default_mode);
+  const defaultCreateDisabled = !defaultCapability?.create_enabled;
 
   const handleCreate = async () => {
     setCreating(true);
     setCreateError(null);
-    const res = await createSession("agent");
+    const res = await createSession(capabilities?.default_mode ?? "agent");
     setCreating(false);
     if (!res.ok) setCreateError(res.error ?? t("sidebar.createFailed"));
     else {
@@ -591,8 +592,8 @@ function SidebarPanel({
           type="button"
           className="group flex h-9 w-full items-center gap-2.5 rounded-[var(--radius)] px-2.5 text-left text-2xs font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-surface-muted)]"
           onClick={() => void handleCreate()}
-          disabled={creating || agentCreateDisabled}
-          title={agentCapability?.disabled_reason ?? undefined}
+          disabled={creating || defaultCreateDisabled}
+          title={defaultCapability?.disabled_reason ?? undefined}
         >
           <span className="flex h-4 w-3 shrink-0 items-center justify-center text-[var(--color-foreground-muted)] transition-colors group-hover:text-[var(--color-foreground)]">
             {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <SquarePen className="h-[18px] w-[18px]" strokeWidth={1.7} />}

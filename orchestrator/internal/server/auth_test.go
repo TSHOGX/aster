@@ -5,6 +5,7 @@ import (
 
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -83,6 +84,13 @@ func TestLoginSuccessAndCookieAuth(t *testing.T) {
 	cookie := cookies[0]
 	if !cookie.HttpOnly {
 		t.Fatalf("cookie must be HttpOnly")
+	}
+	// Maintenance must retain this login until the same deadline as its cookie.
+	if removed, err := st.SweepExpiredAuthSessions(ctx, time.Now().UTC()); err != nil || removed != 0 {
+		t.Fatalf("fresh login swept: removed=%d err=%v", removed, err)
+	}
+	if _, err := st.LookupAuthSession(ctx, hashAuthToken(cookie.Value), cookie.Expires.Add(time.Second)); !errors.Is(err, store.ErrAuthSessionInvalid) {
+		t.Fatalf("login survived cookie expiry: %v", err)
 	}
 
 	// requireAuth accepts the cookie and injects the user id.
@@ -262,6 +270,36 @@ func TestOperationalDiagnosticsRequiresAdministrator(t *testing.T) {
 		srv.Routes().ServeHTTP(response, request)
 		if response.Code != want {
 			t.Fatalf("%s diagnostics: %d", user, response.Code)
+		}
+	}
+}
+
+func TestAuthenticationStoreFailureIsRetryable(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dir, "auth.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newAuthTestServer(t, dir, st, []config.AuthUser{{Username: "lab", PasswordHash: mustHash(t, "secret")}})
+	login := httptest.NewRecorder()
+	srv.login(login, httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"lab","password":"secret"}`)))
+	if login.Code != 200 {
+		t.Fatal(login.Body.String())
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, handler := range []http.Handler{
+		srv.requireAuth(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("unverified request admitted") })),
+		http.HandlerFunc(srv.me),
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+		req.AddCookie(login.Result().Cookies()[0])
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("store failure: %d %s", response.Code, response.Body.String())
 		}
 	}
 }

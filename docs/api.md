@@ -67,7 +67,6 @@ The orchestrator serves three trees:
 | POST | `/api/schedules/{id}/run` | required (owner) | queue one manual execution and retain its session for history |
 | GET | `/api/schedules/{id}/runs` | required (owner) | list durable execution history |
 | POST | `/api/notifications/{id}/read` | required | mark one notification read (idempotent) |
-| GET | `/api/events` | required | WebSocket event stream (compatibility) |
 | GET | `/api/events/stream` | required | SSE event stream (used by the workbench) |
 | GET | `/artifacts/{sessionID}/{path...}` | required | stream a workspace file |
 | PUT | `/artifacts/{sessionID}/{path...}` | required | online-edit a workspace text file |
@@ -358,7 +357,7 @@ token is in the URL path. Access counters are buffered in memory and flushed by
 the maintenance loop, so anonymous reads never contend for the writer connection;
 a restart loses at most one window of counts.
 
-Anonymous requests are **not** admitted to the SSE/WebSocket streams, so a shared
+Anonymous requests are **not** admitted to the SSE stream, so a shared
 page is a snapshot with an explicit refresh rather than a live view.
 
 ## Session DTO (`session_dto.go`)
@@ -406,8 +405,7 @@ otherwise vanish from a shared shell session.
 
 ## Events
 
-Transport is SSE at `GET /api/events/stream` (the WebSocket `GET /api/events` is a
-compatibility path). Query params: `session_id` (optional filter), `last_event_id`
+Transport is SSE at `GET /api/events/stream`. Query params: `session_id` (optional filter), `last_event_id`
 (or the `Last-Event-ID` header) for replay from the durable log. A `replay_gap`
 event is emitted if the requested cursor is older than the retention window; a 20s
 heartbeat keeps the connection open; every event is ownership-filtered.
@@ -509,8 +507,7 @@ feedback. Public session metadata also advertises the page capabilities.
 
 `GET /api/events/stream?view=workbench` projects committed bodies to bounded
 previews and excludes eager trace/tool-result payloads. Commit events can carry
-`stream_ids` for removing corresponding live previews. The legacy event shape,
-durable event records and internal full-transcript consumers are unchanged.
+`stream_ids` for removing corresponding live previews. Durable event records and internal full-transcript consumers are unchanged.
 SSE is not a completeness guarantee; clients reconcile against HTTP windows.
 
 Message pages report database and encoding durations through `Server-Timing`.

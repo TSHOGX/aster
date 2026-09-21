@@ -691,3 +691,15 @@ func assertPublicSessionJSONOmitsHostFields(t *testing.T, payload []byte) {
 		}
 	}
 }
+
+func TestShellOnlyDeploymentAdvertisesCreatableDefault(t *testing.T) {
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Shell: true}}
+	response := httptest.NewRecorder()
+	srv.deploymentCapabilities(response, httptest.NewRequest(http.MethodGet, "/api/deployment-capabilities", nil))
+	var capabilities struct {
+		Default string `json:"default_mode"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil || capabilities.Default != "shell" {
+		t.Fatalf("unavailable default mode: %s %v", response.Body, err)
+	}
+}

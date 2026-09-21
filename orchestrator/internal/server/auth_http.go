@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"harness-platform/orchestrator/internal/store"
 )
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
@@ -26,7 +29,12 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		userID, err := s.store.LookupAuthSession(r.Context(), hashAuthToken(cookie.Value), time.Now().UTC())
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "login required")
+			if errors.Is(err, store.ErrAuthSessionInvalid) {
+				writeError(w, http.StatusUnauthorized, "login required")
+			} else {
+				s.log.Error("authentication store unavailable", "error", err)
+				writeError(w, http.StatusServiceUnavailable, "authentication temporarily unavailable")
+			}
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, userID)))

@@ -1096,9 +1096,13 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         conversations: { ...p.conversations, [session.id]: emptyConvo() },
         runtimes: { ...p.runtimes, [session.id]: null }
       }));
+      // The creation response has no transcript. Load the durable window after
+      // selecting the new session so the paged transcript can reveal output
+      // committed by a turn that finishes before the first SSE reconciliation.
+      loadSessionDetails(session.id);
       return { ok: true as const, session };
     },
-    [discardEmptySession, setState]
+    [discardEmptySession, loadSessionDetails, setState]
   );
 
   const destroySession = useCallback(async (id: string) => {
