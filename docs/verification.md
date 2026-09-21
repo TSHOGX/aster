@@ -1,74 +1,47 @@
-# Development verification
+# Verification
 
-Run source checks from the repository root:
+Run the full Go race/vet suite and frontend typecheck/lint/tests/production build.
+Package-boundary and removal tests check the supported architecture. Runtime
+manifest tests reject changed components, native dependency escapes and mixed
+binary platforms. Authentication, scoped children, journals, Files, schedules,
+sharing and retirement have focused contract tests.
 
-```bash
-go -C orchestrator build ./...
-go -C orchestrator vet ./...
-go -C orchestrator test ./...
-go -C orchestrator test -race ./internal/store ./internal/execution ./internal/bridge ./internal/server ./internal/sessionfiles ./internal/gateway ./internal/trajectory ./internal/nativecapture
-python3 -m unittest discover -s sandbox-image/tests -p 'test_*.py'
-python3 scripts/check-public-docs.py
-bash -n dev/verify-khora.sh dev/khora/run.sh dev/khora/substrate.sh sandbox-image/build-rootfs.sh sandbox-image/build-khora-template.sh
-git diff --check
-```
+Real gates use the pinned engine on a disposable Linux substrate:
 
-In `frontend/`, install the locked dependencies and run:
+1. Project provisioning, bounded admission, pause/resume and owned-volume cleanup.
+2. Concurrent native Pi Sessions, journal replay, controls and uncertain dispatch.
+3. Retained PTYs, input ownership, output gaps, EOF/signals and browser detach.
+4. Confined Files under real runsc, symlink races, streaming and lost replies.
+5. Service reachability, host-derived attribution and per-turn drain.
+6. Owner/worker/guardian/engine process faults and recovery/retirement settlement.
+7. The actual released executable/image and cookie-authenticated Chromium journey.
+8. A five-minute mixed workload with two Projects, four Agents, two retained PTYs,
+   file read/write/watch traffic, scheduled turns and an impaired capture lane.
 
-```bash
-npm ci
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npx --no-install playwright install chromium
-npm run test:e2e -- --grep-invert 'performance|CPU slowdown'
-```
+The mixed test records HTTP/projection latencies, application RSS/CPU, database
+size, rounds, pending work, idle behavior and teardown. Targets are HTTP p95 under
+1 second/p99 under 2 seconds, completion projection p95 under 2 seconds, healthy
+work not delayed over 10 seconds by unrelated retries, RSS below 512 MiB, idle
+pause within its configured deadline plus 5 seconds, owner restart within
+15 seconds after dependencies are ready and teardown within 15 seconds excluding
+injected delay. A failed target requires investigation, not a silent threshold
+change.
 
-The six browser correctness fixtures use controlled API/SSE responses and a local
-Next server; they do not validate a live daemon. Optional performance scenarios
-run separately with `npm run test:performance`. Performance results depend on the
-host and must include the measurement conditions.
+The released-executable gate exercises four overlapping Pi Sessions on two
+Projects, content publication, binding observation, actual owner SIGKILL/restart,
+continued turns, scope rejection, idle pause and cleanup. The browser journey
+covers concurrent conversation views, native Stop, CodeMirror file editing,
+retained PTY detach/reload/input handoff, output gaps and fairness under output.
+These use the final guest binaries, not injected application replacements.
 
-## Real Khora integration
+Use [dev/README.md](../dev/README.md) to run and collect a gate. Preserve source
+revision, release digest, engine revision, platform, commands, test names and raw
+outcomes with measurements. Review whether selected tests actually ran; a skipped
+integration package or an empty test regex is not evidence.
 
-Use the [portable harness](../dev/README.md) with a finalized template and exported
-manifest. It creates disposable namespaces, engine storage and synthetic upstreams,
-and records source revision, dirty status and engine/template hashes. Pass `--browser`
-to include Chromium through the Next proxy to the real daemon; that check also needs
-frontend dependencies and an explicit browser executable when running under sudo.
+Process-fault tests do not qualify physical power loss, cross-host restore or
+active-active deployment. The supported deployment has one authoritative owner.
 
-The harness selects `^TestKhora` and a five-minute **per-package** timeout by default.
-Packages run serially because they share one engine budget. Concurrency is explicit
-inside the two-session sustained workload. The composed gateway test waits for an
-actual grant expiry, and the sustained test runs for at least 60 seconds; allow
-several minutes for the complete suite.
-
-If providing your own equivalent isolated substrate, set all five variables:
-`KHORA_INTEGRATION_ENDPOINT`, `KHORA_INTEGRATION_TEMPLATE`,
-`KHORA_INTEGRATION_MANIFEST`, `KHORA_INTEGRATION_VIA_UID` and
-`KHORA_INTEGRATION_VIA_GID`. Then run:
-
-```bash
-go -C orchestrator test -p 1 -tags khoraintegration \
-  ./internal/sandbox/khora ./internal/server ./internal/retainedapp ./cmd/orchestrator \
-  -run '^TestKhora' -v -count=1 -timeout=5m
-```
-
-Missing inputs cause tagged tests to fail or skip, depending on the fixture. Neither
-outcome counts as real-engine evidence. Inspect test names and final exit status;
-a successful package with “no tests to run” proves nothing about that package's
-integration paths.
-
-## Recording results
-
-Keep raw logs and machine-specific metadata private. Publish only sanitized synthetic
-measurements with the source revision and dirty status actually recorded at execution.
-A later documentation commit does not become a tested revision. Distinguish HTTP
-handler composition from a launched daemon and fixture browsers from real browsers.
-See [development evidence](development-evidence.md) for the recorded runs and limits.
-
-Tests cover policy/store invariants, owner/epoch fencing, lost replies, Pi
-turns, control, native restore, capture restart, workspace mutations, sharing/auth,
-SSE replay, gateway expiry/teardown and retained retirement. Power-loss durability
-and production migration/deployment acceptance are separate from these development checks.
+A sanitized [mixed-workload result](../dev/measurements/project-runtime.json)
+records the qualified ARM64 workload and its sampling limits. These are measured
+results for the declared workload, not hardware-independent service guarantees.

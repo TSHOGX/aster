@@ -1,13 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import { isChineseTag, resolveLocale } from "./locale";
-import { format, splitAround, translate } from "./index";
+import { format, translate } from "./index";
 import { EN, type MessageKey } from "./messages-en";
 import { ZH } from "./messages-zh";
 
 describe("isChineseTag", () => {
   it("matches every Chinese variant, not an allow-list of regions", () => {
-    for (const tag of ["zh", "zh-CN", "zh-TW", "zh-HK", "zh-Hans", "zh-Hant-HK", "zh-SG", "ZH-cn"]) {
+    for (const tag of [
+      "zh",
+      "zh-CN",
+      "zh-TW",
+      "zh-HK",
+      "zh-Hans",
+      "zh-Hant-HK",
+      "zh-SG",
+      "ZH-cn",
+    ]) {
       expect(isChineseTag(tag), tag).toBe(true);
     }
   });
@@ -73,14 +82,19 @@ describe("catalogs", () => {
     const copyOnly = (s: string) => s.replace(/\{\w+\}/g, "");
     for (const key of enKeys) {
       if (!/[A-Za-z]/.test(copyOnly(EN[key]))) continue;
-      expect(HAN.test(ZH[key]), `ZH ${key} looks untranslated: ${ZH[key]}`).toBe(true);
+      expect(
+        HAN.test(ZH[key]),
+        `ZH ${key} looks untranslated: ${ZH[key]}`,
+      ).toBe(true);
     }
   });
 
   it("keeps the same placeholders on both sides", () => {
     const names = (s: string) => (s.match(/\{(\w+)\}/g) ?? []).sort();
     for (const key of enKeys) {
-      expect(names(ZH[key]), `placeholders differ for ${key}`).toEqual(names(EN[key]));
+      expect(names(ZH[key]), `placeholders differ for ${key}`).toEqual(
+        names(EN[key]),
+      );
     }
   });
 });
@@ -105,64 +119,12 @@ describe("format", () => {
 
 describe("translate", () => {
   it("reads the requested locale", () => {
-    expect(translate("zh", "workspace.title")).toBe("工作区");
-    expect(translate("en", "workspace.title")).toBe("Workspace");
-  });
-
-  it("interpolates in both locales", () => {
-    expect(translate("en", "trace.steps", { count: 2 })).toBe("2 steps");
-    expect(translate("zh", "trace.steps", { count: 2 })).toBe("2 个步骤");
+    expect(translate("zh", "Project Files")).toBe("项目文件");
+    expect(translate("en", "Project Files")).toBe("Project Files");
   });
 });
 
-describe("splitAround", () => {
-  it("splits an English sentence around the path", () => {
-    expect(splitAround("Files go to {path}.", "path")).toEqual({
-      before: "Files go to ",
-      after: "."
-    });
-  });
-
-  it("splits a Chinese sentence, where the path sits mid-clause", () => {
-    // The trailing 目录 after the placeholder is exactly why word order has to
-    // live in the catalog and not in JSX.
-    expect(splitAround("智能体会把文件写入 {path} 目录。", "path")).toEqual({
-      before: "智能体会把文件写入 ",
-      after: " 目录。"
-    });
-  });
-
-  it("returns null when the placeholder is absent, so callers can fall back", () => {
-    expect(splitAround("No placeholder here.", "path")).toBeNull();
-  });
-
-  it("splits at the first occurrence", () => {
-    expect(splitAround("{path} and {path}", "path")).toEqual({
-      before: "",
-      after: " and {path}"
-    });
-  });
-});
-
-describe("path-bearing messages", () => {
-  it("keeps a {path} placeholder in both locales for chip-rendered strings", () => {
-    // MessageWithPath splits on this token; losing it in one locale would drop
-    // the path from that locale's UI without any type error.
-    for (const key of ["conversation.emptyBody"] as const) {
-      expect(EN[key], `EN ${key}`).toContain("{path}");
-      expect(ZH[key], `ZH ${key}`).toContain("{path}");
-    }
-  });
-
-  it("keeps a {brand} placeholder in both locales for brand-bearing strings", () => {
-    // The brand name is interpolated, never written into the catalog: hardcoding
-    // it would defeat NEXT_PUBLIC_HARNESS_BRAND_NAME in that locale only.
-    for (const key of ["workspace.empty"] as const) {
-      expect(EN[key], `EN ${key}`).toContain("{brand}");
-      expect(ZH[key], `ZH ${key}`).toContain("{brand}");
-    }
-  });
-
+describe("brand independence", () => {
   it("never hardcodes the default brand name in either catalog", () => {
     for (const key of Object.keys(EN) as MessageKey[]) {
       expect(EN[key], `EN ${key}`).not.toContain("BatteryGPT");

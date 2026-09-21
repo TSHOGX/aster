@@ -29,123 +29,16 @@ type rule struct {
 }
 
 var rules = []rule{
-	{pkg: "internal/launchplan", forbidden: []string{"internal/store", "internal/server", "internal/runtime", "internal/sandbox/khora"}, why: "release launch plans validate exported metadata and domain values without provider internals or persistence"},
-	{pkg: "internal/sessionfiles", forbidden: []string{"internal/store", "internal/server", "internal/runtime", "internal/workspace/local"}, why: "retained workspace access uses consumer-owned records and opaque engine references"},
-	{pkg: "internal/nativecapture", forbidden: []string{"internal/store", "internal/memorystore", "internal/trajectory", "internal/server", "internal/runtime"}, why: "capture worker coordinates consumer-owned interfaces; adapters own persistence and source mechanisms"},
-	{pkg: "internal/workspace", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "workspace operations expose portable streams and metadata; provider paths and filesystem mechanisms belong to adapters"},
-	{pkg: "internal/execution", forbidden: []string{"internal/server", "internal/store", "internal/runtime", "internal/config", "internal/workspace/local"}, why: "execution coordinates application ownership through consumer-owned operations, independent of HTTP, persistence implementations and substrate adapters"},
-	{
-		pkg: "internal/store",
-		forbidden: []string{
-			"internal/server",
-			"internal/artifacts",
-			"internal/bridge",
-			"internal/runtime",
-			"internal/workspace/local",
-			"internal/driverstate",
-			"internal/memorystore",
-			"internal/controlsource",
-			"internal/dbsplit",
-			"internal/config",
-			"internal/events",
-			"internal/auth",
-			"internal/titler",
-			"internal/trajectory",
-		},
-		why: "store is the bottom persistence layer for control.db; consumers depend on it " +
-			"through their own narrow interfaces, never the reverse.",
-	},
-	{
-		pkg: "internal/sqlitex",
-		forbidden: []string{
-			"internal/store",
-			"internal/memorystore",
-			"internal/server",
-			"internal/agents",
-			"internal/sessionstate",
-		},
-		why: "sqlitex holds shared low-level SQLite helpers and must remain a leaf so both " +
-			"product persistence can depend on it.",
-	},
-	{
-		pkg:       "internal/agents",
-		forbidden: []string{"internal/store", "internal/server", "internal/memorystore", "internal/config"},
-		why:       "the agents catalog is a leaf domain package; persistence and transport depend on it.",
-	},
-	{
-		pkg:       "internal/sessionstate",
-		forbidden: []string{"internal/store", "internal/server", "internal/memorystore", "internal/agents"},
-		why:       "session state is a leaf domain enum; it must not depend on persistence or transport.",
-	},
-	{
-		pkg:       "internal/bridge",
-		forbidden: []string{"internal/server", "internal/artifacts", "internal/memorystore"},
-		why:       "bridge sits below the HTTP layer and reaches persistence only through bridge.Store.",
-	},
-	{
-		pkg: "internal/product",
-		forbidden: []string{
-			"internal/server",
-			"internal/producthttp",
-			"internal/edge",
-			"internal/store",
-			"internal/execution",
-			"internal/bridge",
-			"internal/agentbridge",
-			"internal/egress",
-			"internal/gateway",
-			"internal/sandbox/khora",
-			"internal/retainedapp",
-			"internal/launchplan",
-			"internal/agents",
-		},
-		why: "product owns Project/Session/Terminal intent behind narrow ports. It must not " +
-			"reach the HTTP layer, the retired Session-owned daemon packages, or a concrete " +
-			"engine adapter: a browser boundary or a substrate client that could call back " +
-			"into the product model is how execution ownership leaks out of it.",
-	},
-	{
-		pkg: "internal/producthttp",
-		forbidden: []string{
-			"internal/server",
-			"internal/store",
-			"internal/execution",
-			"internal/bridge",
-			"internal/egress",
-			"internal/gateway",
-			"internal/sandbox/khora",
-			"internal/retainedapp",
-		},
-		why: "the product browser boundary translates authorized requests into product calls " +
-			"and returns projections. It owns no execution or recovery loop, holds no engine " +
-			"client, and shares nothing with the legacy Session daemon.",
-	},
-	{
-		pkg:       "internal/edge",
-		forbidden: []string{"internal/product", "internal/producthttp", "internal/server", "internal/store", "internal/sandbox/khora"},
-		why: "the edge is the single browser origin and nothing more: it routes by path prefix " +
-			"to two configured upstreams. A reverse proxy that could read product state would " +
-			"be a second place where authorization decisions live.",
-	},
-	{
-		pkg: "internal/shareblob",
-		forbidden: []string{
-			"internal/store",
-			"internal/memorystore",
-			"internal/server",
-			"internal/config",
-			"internal/artifacts",
-			"internal/runtime",
-			"internal/sessionstate",
-			"internal/agents",
-		},
-		why: "shareblob is the content-addressed byte store for public share links and must stay a " +
-			"leaf: write bytes / read by digest / unlink, with no knowledge of sessions, links, or " +
-			"who references what. Reference counting belongs with the table holding the references " +
-			"(share_link_files), because only there can it be decided in the same transaction as " +
-			"the delete -- a blob store that knew about links would invite deciding it somewhere " +
-			"a concurrent link creation could race it.",
-	},
+	{pkg: "internal/product", forbidden: []string{"internal/application", "internal/producthttp", "internal/edge", "internal/engineconfig", "internal/servicegateway", "internal/sandbox/khora"}, why: "Project intent and workers use consumer-owned substrate ports"},
+	{pkg: "internal/producthttp", forbidden: []string{"internal/application", "internal/engineconfig", "internal/sandbox/khora", "internal/servicegateway"}, why: "HTTP translates authenticated intent and owns no engine or execution loop"},
+	{pkg: "internal/agentrunner", forbidden: []string{"internal/product", "internal/producthttp", "internal/application", "internal/sandbox/khora"}, why: "the guest Agent process knows only its native adapter and journal"},
+	{pkg: "internal/agentjournal", forbidden: []string{"internal/product", "internal/producthttp", "internal/application", "internal/sandbox"}, why: "per-incarnation journals are independent from product and engine state"},
+	{pkg: "internal/content", forbidden: []string{"internal/product", "internal/application", "internal/producthttp", "internal/sandbox/khora"}, why: "publication uses narrow persistence and public substrate ports"},
+	{pkg: "internal/sandbox/khora", forbidden: []string{"internal/product", "internal/application", "internal/producthttp"}, why: "engine observations cannot grant product authority"},
+	{pkg: "internal/edge", forbidden: []string{"internal/product", "internal/producthttp", "internal/application", "internal/sandbox"}, why: "the edge routes one origin without owning product state"},
+	{pkg: "internal/shareblob", forbidden: []string{"internal/product", "internal/application", "internal/producthttp", "internal/sandbox"}, why: "byte storage is independent of ownership and authorization"},
+	{pkg: "internal/runtimerelease", forbidden: []string{"internal/product", "internal/application", "internal/producthttp", "internal/sandbox/khora"}, why: "release identity does not depend on live product or provider state"},
+	{pkg: "internal/sqlitex", forbidden: []string{"internal/product", "internal/application", "internal/producthttp", "internal/agentrunner"}, why: "SQLite helpers are a leaf"},
 }
 
 func TestLayering(t *testing.T) {
@@ -278,7 +171,7 @@ func TestApplicationPortsCannotReachSubstrate(t *testing.T) {
 		}
 		return result
 	}
-	for _, pkg := range []string{"internal/execution", "internal/sandbox", "internal/sandbox/khora", "internal/workspace", "internal/egress"} {
+	for _, pkg := range []string{"internal/sandbox", "internal/sandbox/khora", "internal/edge"} {
 		if bad := forbiddenApplicationDependency(modulePrefix+pkg, imports); bad != "" {
 			t.Errorf("%s reaches forbidden substrate dependency %s", pkg, bad)
 		}
@@ -286,7 +179,7 @@ func TestApplicationPortsCannotReachSubstrate(t *testing.T) {
 }
 
 func TestApplicationPortGuardRejectsIndirectSubstrateAccess(t *testing.T) {
-	root, helper := modulePrefix+"internal/execution", modulePrefix+"internal/helper"
+	root, helper := modulePrefix+"internal/sandbox", modulePrefix+"internal/helper"
 	for _, forbidden := range []string{modulePrefix + "internal/runtime", "os/exec", "syscall", "golang.org/x/sys/unix", "github.com/TSHOGX/khora/internal/lifecycle"} {
 		graph := map[string][]string{root: {helper}, helper: {forbidden}}
 		if got := forbiddenApplicationDependency(root, func(pkg string) []string { return graph[pkg] }); got != forbidden {

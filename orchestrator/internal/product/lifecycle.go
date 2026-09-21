@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
@@ -18,6 +19,7 @@ var ErrPending = errors.New("project operation pending")
 var ErrCapacity = errors.New("active Project capacity exhausted")
 
 type Profile struct {
+	ReleaseDigest   string          `json:"release_digest,omitempty"`
 	StoreID         string          `json:"store_id"`
 	TemplateID      string          `json:"template_id"`
 	CPUMillis       int64           `json:"cpu_millis"`
@@ -29,7 +31,10 @@ type Profile struct {
 	PublishedMounts []sandbox.Mount `json:"published_mounts"`
 }
 
-func (p Profile) validate() error {
+func (p Profile) Validate() error {
+	if p.ReleaseDigest != "" && !content.ValidDigest(p.ReleaseDigest) {
+		return ErrInvalid
+	}
 	if p.StoreID == "" || p.TemplateID == "" || p.CPUMillis <= 0 || p.MemoryBytes <= 0 || p.DiskBytes <= 0 || p.WorkspaceBytes <= 0 || p.RuntimeBytes <= 0 {
 		return ErrInvalid
 	}
@@ -89,11 +94,12 @@ type LifecycleBackend interface {
 // Lifecycle is the sole Project placement authority. Fixed locks bound memory;
 // durable operation lanes supply restart discovery, not active-active ownership.
 type Lifecycle struct {
-	Artifacts   ProjectArtifacts
-	Store       *Store
-	Backend     LifecycleBackend
-	MaxProjects int
-	lanes       [64]sync.Mutex
+	VerifyRuntime func(context.Context, sandbox.Reference, string) error
+	Artifacts     ProjectArtifacts
+	Store         *Store
+	Backend       LifecycleBackend
+	MaxProjects   int
+	lanes         [64]sync.Mutex
 }
 
 func (l *Lifecycle) lane(id string) *sync.Mutex {
@@ -145,7 +151,7 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 // EnsureActive records original provisioning/resume intent. It does not issue
 // remote work or tie its lifetime to an HTTP request. Workers call Reconcile.
 func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, profile Profile) error {
-	if err := profile.validate(); err != nil {
+	if err := profile.Validate(); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(profile)
@@ -448,6 +454,14 @@ func (l *Lifecycle) reachability(ctx context.Context, o operation, p Profile, re
 		{"/etc/resolv.conf", p.Reachability.ResolverProjection()},
 	} {
 		if err := l.Backend.WriteProjection(ctx, ref, projection.path, []byte(projection.content)); err != nil {
+			return err
+		}
+	}
+	if p.ReleaseDigest != "" {
+		if l.VerifyRuntime == nil {
+			return ErrInvalid
+		}
+		if err := l.VerifyRuntime(ctx, ref, p.ReleaseDigest); err != nil {
 			return err
 		}
 	}

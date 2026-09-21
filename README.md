@@ -1,32 +1,33 @@
-# BatteryGPT Khora development branch
+# BatteryGPT
 
-A Go product control plane and Next.js workbench for retained agent sessions on
-Khora. Conversations, workspaces, durable turn recovery and Pi native history
-survive disposable processes. Khora is the only execution backend.
+BatteryGPT is a Project workbench for concurrent Agent conversations, retained
+Terminals and shared workspace files. A Project owns one Khora sandbox, one
+workspace volume and one runtime volume. Sessions and Terminals are independent
+children of that Project. Closing a browser view leaves its work running.
 
-This branch intentionally breaks production compatibility. Memory and Evolve are
-removed; shared assets are manually maintained, versioned and read-only. Use fresh,
-isolated development databases. Production migration and deployment acceptance are
-a separate project.
+The Go application owns authentication, the product database, HTTP/SSE/WebSocket,
+runtime workers and the browser edge. Next.js serves the workbench and assets.
+Native Pi runs under the Go Agent guardian inside the Project. Khora is the only
+execution backend, accessed through its pinned public SDK and Connect APIs.
 
-```bash
-go -C orchestrator build ./...
+```sh
+go -C orchestrator test -race ./...
 go -C orchestrator vet ./...
-go -C orchestrator test ./...
-python3 -m unittest discover -s sandbox-image/tests -p 'test_*.py'
 cd frontend
 npm ci
-npm run lint
 npm run typecheck
+npm run lint
 npm test
 npm run build
 ```
 
-See [development](docs/development.md), [architecture](docs/architecture.md),
-[verification](docs/verification.md), [recorded evidence](docs/development-evidence.md), [scope](docs/development-scope.md) and the
-[documentation index](docs/README.md). Fake-backed tests do not replace isolated
-real Khora integration. No production release or deployment readiness is claimed.
+Start with [configuration](docs/configuration.md) and [operations](docs/operations.md).
+See the [architecture](docs/architecture.md), [development guide](docs/development.md),
+[verification gates](docs/verification.md) and [documentation index](docs/README.md).
+Image assembly and real runtime verification require a disposable Linux builder
+with the [documented substrate](docs/sandbox-image.md).
 
-Keep credentials, real endpoint inventories, databases and raw operational logs
-outside version control. `private/` is an ignored local planning/evidence area;
-see the [public/private boundary](docs/delivery/privacy.md).
+The supported deployment has one authoritative application owner and uses a fresh
+Project database. There is no automatic schema migration or alternate backend.
+Keep credentials, deployment inventories, databases and operational evidence out
+of source control; see the [publication boundary](docs/delivery/privacy.md).

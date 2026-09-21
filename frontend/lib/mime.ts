@@ -7,8 +7,8 @@ const TEXT_EXT = new Set(["txt", "log", "env", "diff", "patch"]);
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"]);
 
 export function classifyArtifact(path: string): ArtifactClassification {
-  const ext = (path.split(".").pop() ?? "").toLowerCase();
   const base = (path.split("/").pop() ?? "").toLowerCase();
+  const ext = base.includes(".") ? base.split(".").pop() ?? "" : "";
   if (!ext) {
     if (["dockerfile", "makefile", "rakefile", "readme", "license"].includes(base)) {
       return { kind: "text" };

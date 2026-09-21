@@ -1,46 +1,43 @@
 # Security boundaries
 
-The HTTP server authenticates users and checks ownership or explicit read grants for
-sessions, messages, workspaces and shares. Public links freeze a conversation boundary and serve immutable whitelisted
-file snapshots. Browser requests use the same-origin frontend proxy with origin checks;
-role checks protect administrator APIs. Untrusted guest output is sanitized before
-public event delivery.
+A Project is one Linux execution trust domain. Its Agents and Terminals share
+workspace files, processes and readable runtime state under guest root. Logical
+Session directories organize history and attribution; they do not isolate hostile
+siblings. Separate Projects provide separate sandbox/resource authorization.
 
-Khora provides sandbox isolation. Guest root is not an application authorization
-boundary. Upstream credentials stay in trusted gateways; identity and service authority
-come from accepted product bindings, epochs, grants and peer-authenticated gateway
-contracts. Guest-provided source addresses or filesystem contents confer no authority.
+Go owns cookie authentication, credential fingerprints, CSRF Origin checks and
+WebSocket authorization. The browser edge replaces forwarded identity headers and
+preserves Origin. Private API and operator Unix sockets are mode 0600 under
+protected directories. Keep them inaccessible to unrelated host users.
 
-Workspace requests use confined engine APIs and retained writer/read obligations.
-The application does not read session workspace or Pi-home host paths. Prepared uploads,
-share blobs and native archives are separate product-owned stores with bounded access.
-A failed or ambiguous remote operation cannot release its durable fence prematurely.
+Every child lookup authorizes its stored Project parent in the same operation.
+A child ID alone conveys no permission. Foreign and missing resources use the same
+not-found response. Conversation reader grants do not expose live Files or PTYs.
+Public shares use expiring, revocable bearer tokens and frozen selected files.
+Rotation invalidates the prior token; no public link exposes the live workspace.
 
-The database accepts only the current development schema. Production compatibility,
-upgrades and deployment acceptance are outside this phase. Tests must continue to cover
-authorization, cross-session denial, replay, interruption and ownership changes.
+The Files helper confines operations to selected regular files/directories below
+`/workspace`, rejects symlink traversal and special files, bounds transfers and
+never automatically repeats an uncertain mutation. The application independently
+checks actor scope before starting the helper.
 
-## Authentication and the frontend proxy
+Runtime authority requires the configured release manifest and per-placement
+component/native-tree verification. The release includes the pinned public Khora
+module and native Pi/Node versions. Build inputs and reviewed content are operator
+trust; a digest does not make malicious authored content safe.
 
-With no configured users and no `HARNESS_LAB_PASSWORD`, the daemon runs in open
-mode as `lab`; administrator routes remain denied. With login enabled, cookies
-are HttpOnly and their expiry matches the server-side login session. Invalid or
-revoked sessions return 401; an unavailable auth database returns 503.
+Project gateways keep upstream secrets on the host and derive request attribution
+from live database authority. The dedicated host UID remains under Khora's
+second-hop network floor. Direct reachability is available to every Project
+process and must be reviewed as such.
 
-Forwarded protocol/IP headers are trusted by default. For direct local access,
-set `HARNESS_TRUST_FORWARDED_PROTO=false` and `HARNESS_TRUST_PROXY_HEADERS=false`.
-When using a trusted reverse proxy, it must overwrite the forwarded identity
-headers. Cookies use SameSite=None only with Secure on HTTPS; plain HTTP uses
-SameSite=Strict. The frontend checks Origin hosts on writes before stripping the
-header upstream. Direct daemon routes do not supply that frontend origin check.
+Frontend Markdown does not enable raw HTML. File responses use restricted preview
+headers and the browser uses bounded fetched blobs. Office previews are separate
+renderers and should be treated as parsing untrusted documents. The default page
+CSP permits portal framing; operators should restrict `frame-ancestors` at their
+outer edge where embedding is unnecessary. Origin checks do not prevent a user
+being tricked into clicking inside an allowed frame.
 
-The frontend permits framing (`frame-ancestors *`). Its write-origin check does
-not prevent a user from being tricked into clicking controls in an embedded app.
-Artifact previews have their own content restrictions. Current header behavior is
-in [next.config.mjs](../frontend/next.config.mjs) and
-[orchestrator-proxy.ts](../frontend/lib/orchestrator-proxy.ts).
-
-Engine HTTP is restricted to loopback IP literals. HTTPS requires a CA and client
-certificate/key; both daemon and capture use the same engine connection loader.
-Gateway control uses kernel peer identity and process-lifetime fencing rather than
-browser cookies. See [gateway contracts](gateway-contract.md).
+Use TLS for externally reachable browser/engine endpoints and protect the
+frontend origin from untrusted direct access. Do not trust user-supplied forward
+headers at an outer proxy without replacing them under a configured trust policy.

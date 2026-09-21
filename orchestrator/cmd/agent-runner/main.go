@@ -44,8 +44,8 @@ func main() {
 	// The service credential arrives in the start environment rather than as a
 	// flag, so it never appears in the guest process table. It is cleared here so
 	// Pi and its tool descendants do not inherit it as an ambient variable.
-	c.ServiceCredential = os.Getenv("HARNESS_SERVICE_CREDENTIAL")
-	if err := os.Unsetenv("HARNESS_SERVICE_CREDENTIAL"); err != nil {
+	c.ServiceCredential = os.Getenv("PROJECT_SERVICE_CREDENTIAL")
+	if err := os.Unsetenv("PROJECT_SERVICE_CREDENTIAL"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

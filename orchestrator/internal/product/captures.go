@@ -27,14 +27,14 @@ type CaptureReader interface {
 // Captures exports immutable completed native bytes. Once HostPath is committed,
 // archive retry is host-only work and doesn't retain Project activity.
 type Captures struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	Store     *Store
 	Backend   CaptureReader
 	Directory string
 }
 
 func (s *Store) PendingCaptures(ctx context.Context, limit int) ([]NativeCapture, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT c.turn_id,i.project_id,i.session_id,c.incarnation_id,c.path,c.digest,c.state,c.host_path,c.size,r.store_id,r.sandbox_id,r.epoch,r.mutation_revision FROM native_captures c JOIN agent_incarnations i ON i.id=c.incarnation_id JOIN project_resources r ON r.project_id=i.project_id JOIN projects p ON p.id=i.project_id WHERE c.state='guest' AND p.state NOT IN ('deleting','deleted') ORDER BY c.attempted_at,c.rowid LIMIT ?`, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT c.turn_id,i.project_id,i.session_id,c.incarnation_id,c.path,c.digest,c.state,c.host_path,c.size,r.store_id,r.sandbox_id,r.epoch,r.mutation_revision FROM native_captures c JOIN agent_incarnations i ON i.id=c.incarnation_id JOIN project_resources r ON r.project_id=i.project_id JOIN projects p ON p.id=i.project_id WHERE c.state='guest' AND p.state NOT IN ('deleting','deleted') ORDER BY row_number() OVER (PARTITION BY i.session_id ORDER BY c.attempted_at,c.rowid),c.attempted_at,c.rowid LIMIT ?`, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +50,8 @@ func (s *Store) PendingCaptures(ctx context.Context, limit int) ([]NativeCapture
 	return out, rows.Err()
 }
 func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if _, err := c.Store.db.ExecContext(ctx, `UPDATE native_captures SET attempted_at=? WHERE turn_id=?`, c.Store.timestamp(), capture.TurnID); err != nil {
 		return err
 	}

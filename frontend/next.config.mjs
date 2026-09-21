@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 // wiring; 'unsafe-inline' for script/style is the tradeoff. The real agent
 // output is rendered via react-markdown (no rehype-raw) and highlight.js
 // (HTML-escaped), so stored-HTML XSS is already contained. connect-src stays
-// 'self' because the browser only talks to the same-origin /api proxy.
+// 'self' because the browser only talks to the same-origin Go edge.
 // `next dev` compiles React Refresh's runtime by evaluating a string, so the dev
 // server cannot run under a CSP without 'unsafe-eval' (the page dies with
 // "Uncaught EvalError" and renders blank). Production builds do not need it, so
@@ -21,23 +21,9 @@ const scriptSrc = ["'self'", "'unsafe-inline'", ...(isDev ? ["'unsafe-eval'"] : 
 // the browser used rather than to 'self'.
 const connectSrc = ["'self'", "blob:", ...(isDev ? ["ws:", "wss:"] : [])].join(" ");
 
-// The app is embeddable in any page's iframe by default: it is deployed as a
-// component of third-party portals, so `frame-ancestors *` is the intended
-// posture rather than an escape hatch.
-//
-// This deliberately gives up clickjacking protection — a hostile page can frame
-// the authenticated workbench and bait clicks onto real controls (destroy
-// session, edit file). Two things carry that weight instead: the auth cookie is
-// HttpOnly (framed script cannot read it) and every mutating /api call is
-// origin-checked in the proxy layer (frontend/lib/orchestrator-proxy.ts), so a
-// cross-site page cannot drive state changes even with the cookie attached.
-// Clicks the USER is tricked into making are not covered; that is the residual
-// risk accepted here.
-//
-// X-Frame-Options is omitted entirely rather than set: it has no wildcard form
-// (ALLOW-FROM is dead in every current browser), and a browser that sees it
-// disagree with frame-ancestors blocks the frame outright — the "refused to
-// connect" failure this default exists to avoid.
+// Portal embedding is supported. Operators should restrict frame ancestors at
+// their outer edge when embedding is unnecessary. Cookie and origin checks live
+// in the Go application; they do not prevent clickjacking inside an allowed frame.
 const frameAncestorsDirective = "frame-ancestors *";
 
 const csp = [
@@ -67,30 +53,25 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
-  distDir: process.env.HARNESS_PERF_FIXTURES === "1" ? ".next-perf" : ".next",
+  distDir: ".next",
   output: "standalone",
   outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
   reactStrictMode: true,
   // Dev-only: hosts the browser may load the dev server from. Every deployment
   // is reached at a different address (a cloud VM's public IP, a local VM's LAN
-  // address), so the list comes entirely from HARNESS_DEV_ORIGINS
+  // address), so the list comes entirely from PROJECT_DEV_ORIGINS
   // (comma-separated) — no address is committed here. Unset means localhost only,
   // which is all `next dev` allows by default.
-  allowedDevOrigins: (process.env.HARNESS_DEV_ORIGINS ?? "")
+  allowedDevOrigins: (process.env.PROJECT_DEV_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean),
   async headers() {
     return [
       {
-        // Everything EXCEPT /artifacts/* and /shared/*. Both carry their own
-        // framing + CSP headers straight from the orchestrator (see getArtifact
-        // and sharedFile): HTML and PDF are framable SAMEORIGIN so a preview
-        // iframe can load them. If we also emitted X-Frame-Options here the two
-        // values would collide and the browser would fall back to blocking the
-        // frame, which is exactly the "refused to connect" preview bug — on the
-        // public share page that would be a blank panel with no explanation.
-        source: "/((?!artifacts/|shared/).*)",
+        // Next serves pages and assets. The Go edge routes /api directly to Go,
+        // where file responses receive their own confined preview policy.
+        source: "/:path*",
         headers: securityHeaders
       },
       {

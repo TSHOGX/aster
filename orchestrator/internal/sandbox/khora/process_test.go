@@ -101,7 +101,7 @@ func dataFrame(handle string, epoch uint64) *v1.ProcessEvent {
 
 func TestStartProcessPreservesDurableIdentityAndDetachDoesNotSignal(t *testing.T) {
 	backend, fixture, reference := processBackend(t, dataFrame("process", 7))
-	stream, err := backend.StartProcess(context.Background(), sandbox.StartProcessRequest{ProcessReference: reference, IdempotencyKey: "start-key", Command: "/usr/local/bin/harness-bridge", Arguments: []string{"--stdio"}, Directory: "/workspace", Environment: []string{"HOME=/root"}})
+	stream, err := backend.StartProcess(context.Background(), sandbox.StartProcessRequest{ProcessReference: reference, IdempotencyKey: "start-key", Command: "/usr/local/bin/agent-runner", Arguments: []string{"--session", "agent", "--incarnation", "one"}, Directory: "/workspace", Environment: []string{"HOME=/root"}})
 	if err != nil {
 		t.Fatal(err)
 	}

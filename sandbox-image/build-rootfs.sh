@@ -1,204 +1,24 @@
 #!/usr/bin/env bash
+# Build a fresh OS/workload/native-Pi base for an immutable Project template.
 set -Eeuo pipefail
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-
-ROOTFS_DIR="${ROOTFS_DIR:-${SCRIPT_DIR}/rootfs}"
-
-# Everything deployment-specific about this build — package mirrors, the DNS
-# servers baked into the image, an optional build-host DNS hook — comes from an
-# env file the host provides, never from a committed value. Defaults below are
-# upstream-canonical and carry no environment's fingerprint, so a build with no
-# env file at all is correct (just not mirrored). See build.env.example.
-SANDBOX_BUILD_ENV="${SANDBOX_BUILD_ENV:-${SCRIPT_DIR}/build.env}"
-if [ -f "${SANDBOX_BUILD_ENV}" ]; then
-  # shellcheck disable=SC1090
-  . "${SANDBOX_BUILD_ENV}"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOTFS_DIR=$(realpath -m -- "${ROOTFS_DIR:-$SCRIPT_DIR/rootfs}")
+[[ $EUID == 0 && $ROOTFS_DIR != / && ! -e $ROOTFS_DIR ]] || { echo 'a new non-root filesystem path and a privileged disposable builder are required' >&2; exit 2; }
+SANDBOX_BUILD_ENV=${SANDBOX_BUILD_ENV:-$SCRIPT_DIR/build.env}
+if [[ -f $SANDBOX_BUILD_ENV ]]; then source "$SANDBOX_BUILD_ENV"; fi
+UBUNTU_SUITE=${UBUNTU_SUITE:-noble}
+if [[ -z ${UBUNTU_MIRROR:-} ]]; then
+ case $(dpkg --print-architecture) in amd64|i386) UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu;; *) UBUNTU_MIRROR=http://ports.ubuntu.com/ubuntu-ports;; esac
 fi
+UBUNTU_COMPONENTS=${UBUNTU_COMPONENTS:-main,universe}
+NODE_DIST_BASE_URL=${NODE_DIST_BASE_URL:-https://nodejs.org/dist}
+PI_NODE_VERSION=24.15.0
+PI_CODING_AGENT_VERSION=0.77.0
+PI_PACKAGE=@earendil-works/pi-coding-agent
+PI_PACKAGE_INTEGRITY='sha512-huS+k+dhQRR9PlTK7crLfeSRUw3a96V6JYfP0ZH3Zkko/m10gsYk8dKQmwScSy5Dll516pXorz19BURfD6S2qQ=='
+APT_PACKAGES=(ca-certificates curl fonts-wqy-microhei fonts-wqy-zenhei git mysql-client-core-8.0 nodejs npm python3 python3-pip python3-venv xz-utils)
+log(){ printf '[build-rootfs] %s\n' "$*"; }
 
-UBUNTU_SUITE="${UBUNTU_SUITE:-noble}"
-# archive.ubuntu.com carries amd64/i386 only; every other arch (arm64 — the local
-# dev VM on Apple silicon) is on ports.ubuntu.com. Pick by host arch so the same
-# command works on both, and still allow an explicit override.
-if [ -z "${UBUNTU_MIRROR:-}" ]; then
-  case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
-    amd64 | i386 | x86_64) UBUNTU_MIRROR="http://archive.ubuntu.com/ubuntu" ;;
-    *) UBUNTU_MIRROR="http://ports.ubuntu.com/ubuntu-ports" ;;
-  esac
-fi
-UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-main,universe}"
-# Package index overrides. Empty means the tool's own default (pypi.org,
-# registry.npmjs.org, nodejs.org) — a mirrored deployment sets these.
-PIP_INDEX_URL="${PIP_INDEX_URL:-}"
-PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-}"
-NPM_REGISTRY="${NPM_REGISTRY:-}"
-NODE_DIST_BASE_URL="${NODE_DIST_BASE_URL:-https://nodejs.org/dist}"
-# Resolvers baked into the image's /etc/resolv.conf. These are what the sandbox
-# uses when the orchestrator is not projecting a per-generation resolv.conf, so
-# they have to be reachable from wherever the image runs — a cloud deployment
-# points them at its VPC resolvers, and nothing here assumes any one of them.
-SANDBOX_DNS_SERVERS="${SANDBOX_DNS_SERVERS:-1.1.1.1 8.8.8.8}"
-SANDBOX_DNS_SEARCH="${SANDBOX_DNS_SEARCH:-}"
-# Optional executable run after debootstrap with the rootfs dir as $1, to fix up
-# build-host network quirks (e.g. pinning hosts by IP behind an intercepting
-# resolver). Unset on any host with working DNS. See dev/build-dns-pin.sh.
-SANDBOX_BUILD_DNS_HOOK="${SANDBOX_BUILD_DNS_HOOK:-}"
-FORCE="${FORCE:-0}"
-SANDBOX_AGENT_DRIVERS="${SANDBOX_AGENT_DRIVERS:-pi}"
-PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-0.77.0}"
-PI_NODE_VERSION="${PI_NODE_VERSION:-24.15.0}"
-PI_PACKAGE="@earendil-works/pi-coding-agent"
-PI_PACKAGE_SHASUM="627664c042507babf8a134a3770285272ccae5d8"
-PI_PACKAGE_INTEGRITY="sha512-huS+k+dhQRR9PlTK7crLfeSRUw3a96V6JYfP0ZH3Zkko/m10gsYk8dKQmwScSy5Dll516pXorz19BURfD6S2qQ=="
-PI_EVENT_SCHEMA="pi_rpc_events_v1.0"
-
-APT_PACKAGES=(
-  ca-certificates
-  curl
-  fonts-wqy-microhei
-  fonts-wqy-zenhei
-  git
-  # Doris speaks the MySQL wire protocol on its FE, and the doris-query skill
-  # documents the `mysql` CLI as the quick-check path. Upstream MySQL's client,
-  # not mariadb-client: Doris FE reports itself as 5.7.99 and offers only
-  # mysql_native_password, which is the negotiation path mysql-client takes
-  # natively (mariadb-client diverges on auth-plugin preference and TLS
-  # defaults). Keep this pinned to one implementation — a future credential
-  # gateway terminates the handshake itself and has to match a known client.
-  mysql-client-core-8.0
-  nodejs
-  npm
-  python3
-  python3-pip
-  python3-venv
-  xz-utils
-)
-
-# The data-analysis stack agents are expected to have available. Everything a
-# user's code imports directly is listed explicitly, even when another entry
-# would pull it in transitively (matplotlib/pandas/scipy arrive via
-# seaborn/statsmodels, lxml via python-docx) — otherwise an upstream dependency
-# change silently removes it from the image.
-#
-# Nothing here is version-pinned: a rebuild takes whatever is current, so minor
-# versions do move between images (numpy and matplotlib have crossed minor
-# versions this way, which can affect user analysis code). The two packages that
-# talk to something outside the image are self-aligning rather than pin-dependent:
-#   duckdb  — install_duckdb_extensions names the extension directory from the
-#             engine version it finds after install, so httpfs always matches.
-#   pymysql — negotiates the Doris FE handshake by protocol, not by version.
-# After a rebuild, verify rather than freeze: LOAD httpfs offline, and a Doris
-# connect.
-#
-# Version-checking hazard, because both packages misreport in different
-# directions: pymysql's `__version__` is "2.2.8", which is a deliberate
-# mysqlclient impersonation for Django's version check (PyMySQL has no 2.x
-# series) — the real version is `pymysql.VERSION_STRING`. And duckdb's
-# `__version__` is read from dist-info and is the Python wrapper's version, not
-# the bundled engine's — that one is `duckdb.__duckdb_version__`. Verify per
-# package; there is no single symbol to trust.
-PIP_PACKAGES=(
-  # core numerics / dataframes
-  matplotlib
-  numpy
-  pandas
-  scipy
-  seaborn
-  statsmodels
-  # columnar & analytical engines
-  duckdb
-  fastparquet
-  pyarrow
-  # interactive charts (kaleido renders them to static images)
-  kaleido
-  plotly
-  # databases
-  psycopg2-binary
-  pymysql
-  sqlalchemy
-  # office documents
-  lxml
-  openpyxl
-  python-docx
-  python-pptx
-  xlrd
-  xlsxwriter
-  # pdf
-  fpdf2
-  pypdf
-  reportlab
-  # misc formatting
-  tabulate
-)
-
-log() {
-  printf '[build-rootfs] %s\n' "$*"
-}
-
-SELECTED_AGENT_DRIVERS=()
-
-parse_agent_drivers() {
-  local raw driver canonical
-  declare -A seen=()
-  SELECTED_AGENT_DRIVERS=()
-  IFS=',' read -ra raw_drivers <<< "${SANDBOX_AGENT_DRIVERS}"
-  for raw in "${raw_drivers[@]}"; do
-    driver="$(printf '%s' "${raw}" | tr -d '[:space:]')"
-    if [ -z "${driver}" ]; then
-      continue
-    fi
-    case "${driver}" in
-      pi|sh) canonical="${driver}" ;;
-      *)
-        echo "unsupported SANDBOX_AGENT_DRIVERS entry: ${driver}" >&2
-        exit 1
-        ;;
-    esac
-    if [ -z "${seen[${canonical}]:-}" ]; then
-      SELECTED_AGENT_DRIVERS+=("${canonical}")
-      seen["${canonical}"]=1
-    fi
-  done
-  if [ "${#SELECTED_AGENT_DRIVERS[@]}" -eq 0 ]; then
-    echo "SANDBOX_AGENT_DRIVERS must select at least one driver" >&2
-    exit 1
-  fi
-}
-
-driver_selected() {
-  local want="$1"
-  local driver
-  for driver in "${SELECTED_AGENT_DRIVERS[@]}"; do
-    if [ "${driver}" = "${want}" ]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-selected_agent_drivers_csv() {
-  local IFS=,
-  printf '%s' "${SELECTED_AGENT_DRIVERS[*]}"
-}
-
-require_root() {
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "build-rootfs.sh must run as root because debootstrap/chroot need root privileges." >&2
-    exit 1
-  fi
-}
-
-copy_overlay_files() {
-  log "installing harness files into ${ROOTFS_DIR}"
-  rsync -a --chmod=F755,D755 "${SCRIPT_DIR}/files/" "${ROOTFS_DIR}/"
-  chmod 0444 "${ROOTFS_DIR}/usr/local/share/harness/pi-system-prompt.md"
-}
-
-# DuckDB's httpfs extension is needed to read Parquet straight off Huawei OBS
-# (skills/obs-parquet-duckdb). Sessions must not have to `INSTALL httpfs` at
-# runtime, so bake it into a shared extension dir agents point at via
-# `SET extension_directory=...` / connect(config={"extension_directory": ...}).
 install_duckdb_extensions() {
   log "installing DuckDB extensions (httpfs)"
   chroot "${ROOTFS_DIR}" /bin/sh -lc '
@@ -285,344 +105,49 @@ rm -rf /tmp/mplbuild
 '
 }
 
-install_modern_node_for_pi() {
-  if ! driver_selected pi; then
-    return
-  fi
-  log "installing Node ${PI_NODE_VERSION} for Pi"
-  chroot "${ROOTFS_DIR}" /bin/sh -lc '
-set -eu
-arch="$(dpkg --print-architecture)"
-case "${arch}" in
-  amd64) node_arch="x64" ;;
-  arm64) node_arch="arm64" ;;
-  *) echo "unsupported Node architecture for Pi: ${arch}" >&2; exit 1 ;;
-esac
-version="'"${PI_NODE_VERSION}"'"
-dist_base="'"${NODE_DIST_BASE_URL}"'"
-prefix="/opt/node-v${version}"
-if [ ! -x "${prefix}/bin/node" ]; then
-  tmp="/tmp/node-v${version}.tar.xz"
-  curl -fsSL "${dist_base}/v${version}/node-v${version}-linux-${node_arch}.tar.xz" -o "${tmp}"
-  mkdir -p "${prefix}"
-  tar -xJf "${tmp}" -C "${prefix}" --strip-components=1
-  rm -f "${tmp}"
-fi
-ln -sf "${prefix}/bin/node" /usr/local/bin/node
-ln -sf "${prefix}/bin/npm" /usr/local/bin/npm
-ln -sf "${prefix}/bin/npx" /usr/local/bin/npx
-node --version >/dev/null
-npm --version >/dev/null
-'
-}
-
-# Stop and steer are not ours: they are pi RPC commands, and the bridge client
-# writes exactly two shapes to pi's stdin — {"type":"abort"} and
-# {"type":"steer","message":...} (harness-bridge-client: deliver_control).
-#
-# Nothing else in the image would notice if a pi upgrade renamed or reshaped
-# them. The client would keep writing, pi would ignore the line, and Stop would
-# do nothing at all: no error, no event, a button that silently stopped working.
-# So assert the contract at build time, where a rebuild fails loudly, rather than
-# discovering it from a user whose Stop did nothing.
-#
-# Checked against the shipped rpc-types.d.ts because that is pi's own declaration
-# of the protocol. Verify rather than freeze, as with httpfs above: a version pin
-# would not have caught a reshape within the same version.
-verify_pi_rpc_turn_control() {
-  log "verifying pi RPC turn-control contract (abort/steer)"
-  python3 - "${ROOTFS_DIR}" "${PI_PACKAGE}" <<'PY'
-import pathlib
-import re
-import sys
-
-rootfs, package = sys.argv[1:]
-types = pathlib.Path(rootfs) / "usr/local/lib/node_modules" / package / "dist/modes/rpc/rpc-types.d.ts"
-if not types.is_file():
-    sys.exit(f"pi RPC type declarations missing at {types}")
-source = types.read_text(encoding="utf-8")
-
-# The union member, not just the literal: `type: "abort"` has to be a command pi
-# accepts, and steer has to still carry the message we inject.
-if not re.search(r'type:\s*"abort"', source):
-    sys.exit("pi RPC no longer declares an 'abort' command; Stop cannot reach the agent")
-steer = re.search(r'type:\s*"steer";\s*message:\s*string', source)
-if steer is None:
-    sys.exit("pi RPC 'steer' no longer takes a message; queue-row send cannot inject text")
-PY
-}
-
-install_agent_drivers() {
-  local driver
-  for driver in "${SELECTED_AGENT_DRIVERS[@]}"; do
-    case "${driver}" in
-      pi)
-        log "installing Pi coding agent ${PI_CODING_AGENT_VERSION}"
-        local npm_registry_arg=""
-        if [ -n "${NPM_REGISTRY}" ]; then
-          npm_registry_arg="--registry ${NPM_REGISTRY}"
-          log "using npm registry ${NPM_REGISTRY}"
-        fi
-        chroot "${ROOTFS_DIR}" /bin/sh -lc "npm install -g --prefix /usr/local ${npm_registry_arg} '${PI_PACKAGE}@${PI_CODING_AGENT_VERSION}'"
-        verify_pi_rpc_turn_control
-        ;;
-      sh)
-        log "using bundled shell agent"
-        ;;
-    esac
-  done
-}
-
-generate_agent_manifest() {
-  local drivers
-  drivers="$(selected_agent_drivers_csv)"
-  log "generating /etc/harness-image/agents.json for ${drivers}"
-  python3 - "${ROOTFS_DIR}" "${drivers}" "${PI_CODING_AGENT_VERSION}" "${PI_PACKAGE}" "${PI_PACKAGE_SHASUM}" "${PI_PACKAGE_INTEGRITY}" "${PI_EVENT_SCHEMA}" "${PI_NODE_VERSION}" <<'PY'
-import hashlib
-import json
-import os
-import pathlib
-import sys
-
-rootfs = pathlib.Path(sys.argv[1]).resolve()
-drivers = [driver for driver in sys.argv[2].split(",") if driver]
-pi_version, pi_package, pi_shasum, pi_integrity, pi_event_schema, pi_node_version = sys.argv[3:9]
 
 
-def rootfs_path(sandbox_path):
-    if not sandbox_path.startswith("/"):
-        raise SystemExit(f"manifest path must be absolute: {sandbox_path}")
-    return os.path.join(str(rootfs), sandbox_path.lstrip("/"))
-
-
-def resolve_under_rootfs(sandbox_path):
-    path = rootfs_path(sandbox_path)
-    root = str(rootfs)
-    seen = set()
-    for _ in range(40):
-        if os.path.commonpath([root, os.path.abspath(path)]) != root:
-            raise SystemExit(f"{sandbox_path} escapes rootfs via {path}")
-        if not os.path.islink(path):
-            return path
-        if path in seen:
-            raise SystemExit(f"{sandbox_path} contains a symlink cycle")
-        seen.add(path)
-        target = os.readlink(path)
-        if os.path.isabs(target):
-            path = rootfs_path(target)
-        else:
-            path = os.path.normpath(os.path.join(os.path.dirname(path), target))
-    raise SystemExit(f"{sandbox_path} symlink resolution exceeded limit")
-
-
-def file_sha256(sandbox_path):
-    path = resolve_under_rootfs(sandbox_path)
-    if not os.path.isfile(path):
-        raise SystemExit(f"selected driver binary missing: {sandbox_path}")
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return "sha256:" + h.hexdigest()
-
-
-def common(driver_id, label, kind, binary_path, output_schema, model_access):
-    return {
-        "driver_id": driver_id,
-        "label": label,
-        "kind": kind,
-        "binary_path": binary_path,
-        "installed_binary_digest": file_sha256(binary_path),
-        "bridge_protocol": "harness_bridge_v2",
-        "bridge_protocol_version": 2,
-        "turn_input_schema": "RunTurn",
-        "output_schema": output_schema,
-        "model_access": model_access,
-    }
-
-
-entries = []
-for driver in drivers:
-    if driver == "pi":
-        entry = common("pi", "Pi", "agent", "/usr/local/bin/pi", pi_event_schema, True)
-        entry.update({
-            "package_name": pi_package,
-            "package_version": pi_version,
-            "package_shasum": pi_shasum,
-            "package_integrity": pi_integrity,
-            "event_schema_version": pi_event_schema,
-            "node_version": "v" + pi_node_version,
-            "installed_config_paths": [
-                "/harness-config/pi/models.json",
-                "/harness-config/pi/settings.json",
-                "/root/.pi/agent/models.json",
-                "/root/.pi/agent/settings.json",
-            ],
-            "writable_state_paths": [
-                "/root/.pi/agent",
-                "/root/.pi/agent/sessions",
-            ],
-        })
-    else:
-        raise SystemExit(f"unsupported selected driver: {driver}")
-    entries.append(entry)
-
-manifest = {
-    "schema_version": 1,
-    "build_input": {
-        "sandbox_agent_drivers": drivers,
-    },
-    "drivers": entries,
-}
-out_dir = rootfs / "etc" / "harness-image"
-out_dir.mkdir(parents=True, exist_ok=True)
-with open(out_dir / "agents.json", "w", encoding="utf-8") as f:
-    json.dump(manifest, f, indent=2, sort_keys=True)
-    f.write("\n")
-PY
-}
-
-# The chroot resolves names itself (apt, pip, npm, nodejs.org), so it needs a
-# usable resolv.conf and a /etc/hosts during the build — debootstrap leaves it
-# with neither. Both files are build-time state: resolv.conf is replaced by
-# render_sandbox_resolv_conf at the end, and hosts is reset to localhost-only by
-# sanitize_isolated_rootfs, so nothing the build host resolved survives into the
-# image.
-#
-# A host whose resolver cannot be used from the chroot supplies
-# SANDBOX_BUILD_DNS_HOOK to fix that up; with the hook unset this is just the
-# two default files.
-prepare_build_time_dns() {
-  log "seeding build-time resolv.conf/hosts into ${ROOTFS_DIR}"
-  install -d -m 0755 "${ROOTFS_DIR}/etc"
-  printf 'nameserver %s\n' ${BUILD_DNS_SERVERS:-1.1.1.1 8.8.8.8} \
-    > "${ROOTFS_DIR}/etc/resolv.conf"
-  write_localhost_only_hosts
-
-  if [ -z "${SANDBOX_BUILD_DNS_HOOK}" ]; then
-    return
-  fi
-  if [ ! -x "${SANDBOX_BUILD_DNS_HOOK}" ]; then
-    echo "SANDBOX_BUILD_DNS_HOOK is set but not executable: ${SANDBOX_BUILD_DNS_HOOK}" >&2
-    exit 1
-  fi
-  log "running build DNS hook ${SANDBOX_BUILD_DNS_HOOK}"
-  "${SANDBOX_BUILD_DNS_HOOK}" "${ROOTFS_DIR}"
-}
-
-write_localhost_only_hosts() {
-  {
-    printf '127.0.0.1\tlocalhost\n'
-    printf '::1\t\tlocalhost ip6-localhost ip6-loopback\n'
-  } > "${ROOTFS_DIR}/etc/hosts"
-}
-
-# The image's own resolv.conf, rendered from the deployment's resolvers. Runs
-# after copy_overlay_files so it replaces the build-time one written above. The
-# orchestrator may also project a per-generation /etc/hosts over the sandbox
-# (renderNetworkHostsProjection), but that projection is conditional — see
-# requiresNetworkHostsProjection — so what is baked here has to stand on its own.
-render_sandbox_resolv_conf() {
-  if [[ "${HARNESS_GENERIC_ROOTFS:-0}" == 1 ]]; then
-    printf "# instance resolver is mounted at runtime\n" > "${ROOTFS_DIR}/etc/resolv.conf"
-    chmod 0644 "${ROOTFS_DIR}/etc/resolv.conf"
-    return
-  fi
-  log "rendering /etc/resolv.conf for: ${SANDBOX_DNS_SERVERS}"
-  {
-    printf 'nameserver %s\n' ${SANDBOX_DNS_SERVERS}
-    printf 'options edns0\n'
-    if [ -n "${SANDBOX_DNS_SEARCH}" ]; then
-      printf 'search %s\n' "${SANDBOX_DNS_SEARCH}"
-    fi
-  } > "${ROOTFS_DIR}/etc/resolv.conf"
-  chmod 0644 "${ROOTFS_DIR}/etc/resolv.conf"
-}
-
-sanitize_isolated_rootfs() {
-  log "sanitizing rootfs for Khora"
-  rm -rf --one-file-system \
-    "${ROOTFS_DIR}/workspace" \
-        "${ROOTFS_DIR}/sessions" \
-        "${ROOTFS_DIR}/harness-secrets" \
-    "${ROOTFS_DIR}/root/.cache"
-  install -d -m 0755 "${ROOTFS_DIR}/workspace" "${ROOTFS_DIR}/harness-bridge" "${ROOTFS_DIR}/harness-config"
-  find "${ROOTFS_DIR}" -maxdepth 1 -type f -name '.gvisor.filestore.*' -delete
-  # Drop whatever the build host resolved into /etc/hosts, so the image carries
-  # no trace of the machine it was built on. Reset rather than delete: the
-  # per-generation hosts projection is conditional, and a sandbox running
-  # without it still needs localhost to resolve.
-  write_localhost_only_hosts
-  chmod 0644 "${ROOTFS_DIR}/etc/hosts"
-}
-
-# Both entry paths (fresh build and FORCE=0 reuse) end here, so the image is
-# assembled the same way either way.
-finalize_rootfs() {
-  copy_overlay_files
-  render_sandbox_resolv_conf
-  generate_agent_manifest
-  sanitize_isolated_rootfs
-  if driver_selected pi; then verify_pi_rpc_turn_control; fi
-}
-
-parse_agent_drivers
-
-if [ -d "${ROOTFS_DIR}" ] && [ "${FORCE}" != "1" ]; then
-  log "reusing existing rootfs at ${ROOTFS_DIR}; set FORCE=1 to rebuild"
-  finalize_rootfs
-  log "done"
-  exit 0
-fi
-
-require_root
-
-if ! command -v debootstrap >/dev/null 2>&1; then
-  echo "debootstrap is required. Install it with: apt-get update && apt-get install -y debootstrap" >&2
-  exit 1
-fi
-
-if [ -e "${ROOTFS_DIR}" ]; then
-  log "removing existing rootfs because FORCE=1"
-  rm -rf --one-file-system "${ROOTFS_DIR}"
-fi
-
-log "bootstrapping Ubuntu ${UBUNTU_SUITE} rootfs"
-mkdir -p "${ROOTFS_DIR}"
-debootstrap --variant=minbase --include=ca-certificates --components="${UBUNTU_COMPONENTS}" "${UBUNTU_SUITE}" "${ROOTFS_DIR}" "${UBUNTU_MIRROR}"
-
-prepare_build_time_dns
-
-if [[ "${HARNESS_GENERIC_ROOTFS:-0}" == 1 ]]; then
-  printf 'Acquire::Check-Valid-Until "false";\n' > "${ROOTFS_DIR}/etc/apt/apt.conf.d/99harness-snapshot"
-fi
-
-log "installing apt packages"
-chroot "${ROOTFS_DIR}" /bin/sh -lc "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${APT_PACKAGES[*]} && apt-get clean && rm -rf /var/lib/apt/lists/*"
-
-log "installing Python packages"
-pip_args=""
-if [ -n "${PIP_INDEX_URL}" ]; then
-  pip_args="--index-url ${PIP_INDEX_URL}"
-  log "using pip index ${PIP_INDEX_URL}"
-fi
-if [ -n "${PIP_TRUSTED_HOST}" ]; then
-  pip_args="${pip_args} --trusted-host ${PIP_TRUSTED_HOST}"
-fi
-if [[ "${HARNESS_GENERIC_ROOTFS:-0}" == 1 ]]; then
-  cp "${SCRIPT_DIR}/requirements.lock" "${ROOTFS_DIR}/tmp/harness-requirements.lock"
-  chroot "${ROOTFS_DIR}" python3 -m pip install --break-system-packages --no-cache-dir --require-hashes -r /tmp/harness-requirements.lock
-  rm "${ROOTFS_DIR}/tmp/harness-requirements.lock"
-else
-  chroot "${ROOTFS_DIR}" /bin/sh -lc "python3 -m pip install --break-system-packages --no-cache-dir ${pip_args} ${PIP_PACKAGES[*]}"
-fi
-
+command -v debootstrap >/dev/null || { echo 'debootstrap is required' >&2; exit 2; }
+mkdir -p "$ROOTFS_DIR"
+debootstrap --variant=minbase --include=ca-certificates --components="$UBUNTU_COMPONENTS" "$UBUNTU_SUITE" "$ROOTFS_DIR" "$UBUNTU_MIRROR"
+printf 'nameserver %s\n' ${BUILD_DNS_SERVERS:-1.1.1.1 8.8.8.8} > "$ROOTFS_DIR/etc/resolv.conf"
+printf '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n' > "$ROOTFS_DIR/etc/hosts"
+if [[ -n ${SANDBOX_BUILD_DNS_HOOK:-} ]]; then "$SANDBOX_BUILD_DNS_HOOK" "$ROOTFS_DIR"; fi
+chroot "$ROOTFS_DIR" apt-get update
+chroot "$ROOTFS_DIR" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${APT_PACKAGES[@]}"
+chroot "$ROOTFS_DIR" apt-get clean
+cp "$SCRIPT_DIR/requirements.lock" "$ROOTFS_DIR/tmp/project-requirements.lock"
+chroot "$ROOTFS_DIR" env PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}" PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-}" python3 -m pip install --break-system-packages --no-cache-dir --require-hashes -r /tmp/project-requirements.lock
+unlink "$ROOTFS_DIR/tmp/project-requirements.lock"
 install_duckdb_extensions
 patch_matplotlibrc_for_cjk
-
-install_modern_node_for_pi
-install_agent_drivers
-
-finalize_rootfs
-
-log "rootfs ready at ${ROOTFS_DIR}"
+chroot "$ROOTFS_DIR" env NODE_DIST_BASE_URL="$NODE_DIST_BASE_URL" NODE_VERSION="$PI_NODE_VERSION" /bin/bash -s <<'NATIVE'
+set -euo pipefail
+case $(dpkg --print-architecture) in amd64) architecture=x64;; arm64) architecture=arm64;; *) exit 2;; esac
+archive="node-v${NODE_VERSION}-linux-${architecture}.tar.xz"
+curl -fsSL "$NODE_DIST_BASE_URL/v$NODE_VERSION/$archive" -o "/tmp/$archive"
+curl -fsSL "$NODE_DIST_BASE_URL/v$NODE_VERSION/SHASUMS256.txt" -o /tmp/node-checksums
+(cd /tmp && sha256sum -c --ignore-missing node-checksums)
+mkdir -p "/opt/node-v$NODE_VERSION"
+tar -xJf "/tmp/$archive" -C "/opt/node-v$NODE_VERSION" --strip-components=1
+ln -s "/opt/node-v$NODE_VERSION/bin/node" /usr/local/bin/node
+ln -s "/opt/node-v$NODE_VERSION/bin/npm" /usr/local/bin/npm
+ln -s "/opt/node-v$NODE_VERSION/bin/npx" /usr/local/bin/npx
+unlink "/tmp/$archive"
+unlink /tmp/node-checksums
+NATIVE
+chroot "$ROOTFS_DIR" env NPM_CONFIG_REGISTRY="${NPM_REGISTRY:-https://registry.npmjs.org}" PI_PACKAGE="$PI_PACKAGE" PI_VERSION="$PI_CODING_AGENT_VERSION" PI_INTEGRITY="$PI_PACKAGE_INTEGRITY" /bin/bash -s <<'PI'
+set -euo pipefail
+mkdir -p /tmp/pi-install
+cd /tmp/pi-install
+npm pack "$PI_PACKAGE@$PI_VERSION" --pack-destination . --json > package.json
+node -e 'const fs=require("node:fs"),crypto=require("node:crypto");const entry=JSON.parse(fs.readFileSync("package.json","utf8"))[0];const actual="sha512-"+crypto.createHash("sha512").update(fs.readFileSync(entry.filename)).digest("base64");if(actual!==process.env.PI_INTEGRITY)throw new Error("Pi package differs from reviewed integrity pin");fs.writeFileSync("package-path",entry.filename);'
+npm install -g --prefix /usr/local "./$(cat package-path)"
+PI
+# Build caches and temporary package archives are not runtime state.
+for directory in "$ROOTFS_DIR/root/.cache" "$ROOTFS_DIR/root/.npm" "$ROOTFS_DIR/tmp/pi-install" "$ROOTFS_DIR/var/lib/apt/lists"; do
+ if [[ -d $directory ]]; then find "$directory" -depth -mindepth 1 -delete; rmdir "$directory" || true; fi
+done
+printf '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n' > "$ROOTFS_DIR/etc/hosts"
+printf '# Project lifecycle supplies its resolver configuration.\n' > "$ROOTFS_DIR/etc/resolv.conf"
+log "OS/Pi base ready at $ROOTFS_DIR"

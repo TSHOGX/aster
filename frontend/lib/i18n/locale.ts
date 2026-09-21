@@ -59,8 +59,8 @@ export function detectLocale(): Locale {
     Array.isArray(navigator.languages) && navigator.languages.length > 0
       ? navigator.languages
       : navigator.language
-      ? [navigator.language]
-      : [];
+        ? [navigator.language]
+        : [];
   return resolveLocale(tags);
 }
 

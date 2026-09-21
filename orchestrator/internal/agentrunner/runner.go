@@ -103,7 +103,19 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 	nativeFile := filepath.Join(nativeRoot, "session.jsonl")
 	args := c.PiArgs
 	if args == nil {
-		args = []string{"--mode", "rpc", "--session", nativeFile, "--session-dir", nativeRoot, "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes"}
+		args = []string{"--mode", "rpc", "--session", nativeFile, "--session-dir", nativeRoot, "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--append-system-prompt", "/usr/local/share/project-runtime/system.md"}
+		for _, contextFile := range []string{"/opt/shared-assets/AGENTS.md", "/opt/agent-config/pi/APPEND_SYSTEM.md"} {
+			if info, e := os.Stat(contextFile); e == nil && info.Mode().IsRegular() {
+				args = append(args, "--append-system-prompt", contextFile)
+			} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+				return e
+			}
+		}
+		if info, e := os.Stat("/opt/shared-assets/skills"); e == nil && info.IsDir() {
+			args = append(args, "--skill", "/opt/shared-assets/skills")
+		} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return e
+		}
 	}
 	cmd := exec.Command(c.PiBinary, args...)
 	cmd.Dir = c.Workspace

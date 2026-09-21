@@ -1,37 +1,15 @@
-# Public source and private operations
+# Public reference and private inputs
 
-This repository and its Release assets must be safe to publish. They contain
-source, generic examples, build inputs and synthetic test results only.
+Public source contains generic configuration examples, architecture, contracts,
+reproducible tests and build tooling. It must not contain real credentials,
+endpoint/account inventories, user databases, native histories, deployment paths,
+operational logs or private planning/evidence links.
 
-Do not commit host inventories, machine/cloud IDs, actual hostnames or addresses,
-real deployment paths/account mappings, capacity/incident snapshots, runtime PIDs,
-production BUILD_IDs, actual executable fingerprints, database backups, operation
-journals, screenshots, raw qualification logs or credentials. Public software
-versions and synthetic source-commit fixtures are different from observations
-about a particular machine.
+Keep deployment configuration and raw evidence outside source control. The local
+`private/` directory is ignored and must never be force-added, shipped in an image
+or included in a CI artifact. Reviewed shared assets must be deliberately selected
+and checked before publication; a hash does not remove private content.
 
-Keep target configuration and operational records outside the checkout in the
-operator's private configuration/state directories or private operations system.
-For temporary operational handoff, use the ignored root `private/` directory
-with restricted permissions. It may hold archived local scripts/configuration and
-audit evidence, but must never be force-added, globbed into release inputs or
-served by the application. Alternatively use `.harness-local/` or
-`*.local.json` / `*.local.yaml` / `*.local.md`, which are ignored. Ignore rules do
-not protect already tracked files: inspect the staged diff before committing.
-
-Synthetic fixtures and sanitized workload summaries may be versioned, including
-source revisions, pinned build hashes, declared template digests and aggregate test
-measurements. This does not permit publishing identifiers or fingerprints from a
-real deployment. Real deployment reports, raw integration
-logs and machine-specific plans remain private. No production release pipeline
-is provided by this development branch.
-
-Deleting a file in a new commit does not remove previous Git objects, remote
-refs, pull-request caches, artifacts or other clones. Before changing repository
-visibility, audit all branches/tags/history and hosting-provider artifacts. Any
-history replacement must be coordinated and use an exact lease; it does not
-promise deletion of the hosting provider's cached or unreachable objects.
-
-Current-tree hardening covers public references, defaults, code comments and
-embedded examples. It is not a certification
-that all pre-existing repository history is safe to publish.
+`python3 scripts/check-public-docs.py` checks reference language, local links,
+account-specific home paths and the tracked/private boundary. It supplements
+manual content review and is not a complete secret/history audit.

@@ -94,9 +94,18 @@ func upstream() {
 			}
 			mu.Unlock()
 		}
-		if _, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, 8<<20)); err != nil {
+		requestBody, bodyErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
+		if bodyErr != nil {
 			http.Error(w, "unreadable request", 400)
 			return
+		}
+		if os.Getenv("PROJECT_UPSTREAM_REQUIRE_CONTEXT") == "1" {
+			for _, marker := range []string{"Project working context", "Reviewed release qualification context.", "Reviewed qualification skill"} {
+				if !bytes.Contains(requestBody, []byte(marker)) {
+					http.Error(w, "reviewed native context missing", 422)
+					return
+				}
+			}
 		}
 		mu.Lock()
 		if !sessions[observed["session"]] {
@@ -131,6 +140,16 @@ func upstream() {
 			_ = json.Unmarshal([]byte(raw), &value)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", value["type"], raw)
 			w.(http.Flusher).Flush()
+		}
+		if completed := os.Getenv("PROJECT_UPSTREAM_COMPLETIONS"); completed != "" {
+			observed["completed_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+			line, _ := json.Marshal(observed)
+			mu.Lock()
+			if file, e := os.OpenFile(completed, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); e == nil {
+				_, _ = file.Write(append(line, '\n'))
+				_ = file.Close()
+			}
+			mu.Unlock()
 		}
 	})
 	fmt.Println("upstream-ready")
@@ -223,7 +242,7 @@ func model(coordinated bool) {
 		}
 	})
 	fmt.Println("model-ready")
-	if err := http.ListenAndServe("127.0.0.1:18889", mux); err != nil {
+	if err := http.ListenAndServe(modelAddress(), mux); err != nil {
 		panic(err)
 	}
 }
@@ -336,4 +355,11 @@ func journalFault(mode, session, incarnation string) {
 			panic(err)
 		}
 	}
+}
+
+func modelAddress() string {
+	if address := os.Getenv("PROJECT_MODEL_ADDR"); address != "" {
+		return address
+	}
+	return "127.0.0.1:18889"
 }

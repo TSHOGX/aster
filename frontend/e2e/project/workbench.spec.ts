@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 async function login(page: Page) {
@@ -29,6 +30,15 @@ test("Project agents, retained terminals and Files through the Go edge", async (
 }) => {
   const failures: string[] = [];
   page.on("pageerror", (error) => failures.push(error.message));
+  await page.addInitScript(() => {
+    const drawn = new Set<string>();
+    (window as Window & { officeDrawn?: Set<string> }).officeDrawn = drawn;
+    const original = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, x, y, width) {
+      if (["Sample", "Capacity", "100", "95"].includes(text)) drawn.add(text);
+      return width === undefined ? original.call(this, text, x, y) : original.call(this, text, x, y, width);
+    };
+  });
   await login(page);
   page.once("dialog", (dialog) => dialog.accept("Browser Project"));
   await page.getByRole("button", { name: "New Project", exact: true }).click();
@@ -220,12 +230,32 @@ test("Project agents, retained terminals and Files through the Go edge", async (
   await expect(page.locator(`[data-session-id="${secondID}"]`)).toContainText(
     "deterministic-local-reply",
   );
+  const documents = readFileSync("e2e/project/documents.py").toString("base64");
+  await terminalInput(page, `python3 -c "import base64; exec(base64.b64decode('${documents}'))"`);
+  await expect.poll(() => terminalText(page), { timeout: 20000 }).toContain("DOCUMENTS-READY");
+  for (const [file, text] of [["preview.docx", "Reviewed document preview"], ["preview.pptx", "Reviewed presentation preview"], ["preview.xlsx", ""]]) {
+    if (file === "preview.xlsx") await page.evaluate(() => (window as Window & { officeDrawn?: Set<string> }).officeDrawn?.clear());
+    await page.getByRole("button", { name: new RegExp(file) }).first().click();
+    const preview = page.locator(".office-preview");
+    await expect(preview).toBeVisible();
+    if (text) await expect(preview).toContainText(text, { timeout: 15000 });
+    else {
+      await expect.poll(() => page.evaluate(() => [...((window as Window & { officeDrawn?: Set<string> }).officeDrawn ?? [])]), { timeout: 15000 }).toEqual(expect.arrayContaining(["Sample", "Capacity", "100", "95"]));
+    }
+    await expect(page.getByRole("button", { name: "Edit text", exact: true })).toHaveCount(0);
+    await expect(page.locator(".selected-file .notice.error")).toHaveCount(0);
+  }
   await page.screenshot({
     path:
       process.env.PROJECT_BROWSER_SCREENSHOT ||
       "test-results/project/workbench.png",
     fullPage: true,
   });
+  await page.getByRole("button", { name: /browser.txt/ }).first().click();
+  await expect(page.getByRole("region", { name: "File browser.txt" })).toContainText("Files edit while a terminal stays live");
+  await page.setViewportSize({ width: 1590, height: 990 });
+  await terminalInput(page, "printf 'AFTER-PREVIEW-CLOSE\\n'");
+  await expect.poll(() => terminalText(page)).toContain("AFTER-PREVIEW-CLOSE");
   expect(failures).toEqual([]);
   await page
     .locator(".terminal-chip")
@@ -256,4 +286,21 @@ test("Project agents, retained terminals and Files through the Go edge", async (
     `/api/projects/${project}/terminals/${terminalID}`,
   );
   expect((await fresh.json()).incarnation).not.toBe(priorIncarnation);
+});
+
+
+test.describe("Chinese workbench", () => {
+  test.use({ locale: "zh-CN" });
+  test("localized login and Project navigation", async ({ page }) => {
+    await page.goto("/");
+    await page.getByLabel("用户名", { exact: true }).fill("researcher");
+    await page.getByLabel("密码", { exact: true }).fill("isolated-browser-fixture");
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    page.once("dialog", dialog => dialog.accept("中文项目"));
+    await page.getByRole("button", { name: "新建项目", exact: true }).click();
+    await expect(page.getByRole("heading", { name: /中文项目/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "新建代理", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "新建终端", exact: true })).toBeVisible();
+    await expect(page.getByText("项目文件", { exact: true })).toBeVisible();
+  });
 });

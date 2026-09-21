@@ -168,40 +168,6 @@ func (b *Backend) Resume(ctx context.Context, reference sandbox.Reference) (sand
 	return observed, nil
 }
 
-func (b *Backend) Configure(ctx context.Context, reference sandbox.Reference, network sandbox.Network, mounts []sandbox.Mount) (sandbox.Observation, error) {
-	if err := b.validateReference(ctx, reference, true); err != nil {
-		return sandbox.Observation{}, err
-	}
-	declaration, err := networkDeclaration(network)
-	if err != nil {
-		return sandbox.Observation{}, err
-	}
-	bindings, err := volumeBindings(mounts)
-	if err != nil {
-		return sandbox.Observation{}, err
-	}
-	zero := "0s"
-	_, patchErr := b.client.PatchIfMatch(ctx, reference.SandboxID, reference.MutationRevision, sdk.PatchRequest{Network: &declaration, Volumes: &bindings, IdleTimeout: &zero, Retention: &zero})
-	mapped := mapError("configure", patchErr)
-	if patchErr != nil && !sandbox.Is(mapped, sandbox.Precondition) {
-		return sandbox.Observation{}, mapped
-	}
-	observed, err := b.InspectConfiguration(ctx, reference)
-	if err != nil {
-		return sandbox.Observation{}, err
-	}
-	if observed.State != "paused" || observed.PlacementState != "lost" || observed.Epoch != reference.Epoch || !sandbox.SameConfiguration(observed, network, mounts) {
-		if patchErr != nil {
-			return observed.Observation, mapped
-		}
-		return observed.Observation, failure("configure", sandbox.Uncertain, fmt.Errorf("observed binding differs from requested paused configuration"))
-	}
-	// A 412 retry may follow a lost successful PATCH response. Only the exact
-	// complete declaration at the original epoch settles it; never refresh the
-	// validator and redispatch a stale replacement.
-	return observed.Observation, nil
-}
-
 func (b *Backend) CreateVolume(ctx context.Context, key string, capacity int64) (sandbox.Volume, error) {
 	if key == "" || capacity <= 0 {
 		return sandbox.Volume{}, failure("create volume", sandbox.Invalid, fmt.Errorf("key and positive volume capacity required"))

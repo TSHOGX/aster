@@ -1,4 +1,7 @@
 "use client";
+import { useT } from "@/lib/i18n";
+import dynamic from "next/dynamic";
+import { classifyArtifact } from "@/lib/mime";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -15,7 +18,13 @@ import {
   type Project,
 } from "@/lib/project-api";
 import { FilePreview } from "./file-preview";
-
+const CodeEditor = dynamic(
+  () =>
+    import("@/components/workbench/viewers/code-editor").then(
+      (m) => m.CodeEditor,
+    ),
+  { ssr: false },
+);
 export function FilesPanel({
   project,
   selected,
@@ -25,6 +34,7 @@ export function FilesPanel({
   selected: string;
   onSelect: (path: string) => void;
 }) {
+  const tr = useT();
   const [directory, setDirectory] = useState("");
   const [after, setAfter] = useState("");
   const [page, setPage] = useState<FilePage>({ entries: [] });
@@ -94,7 +104,7 @@ export function FilesPanel({
     }
   };
   const move = (name: string) => {
-    const destination = window.prompt("Move to Project path", name);
+    const destination = window.prompt(tr("Move to Project path"), name);
     if (destination && destination !== name)
       void act(() =>
         command(base, {
@@ -130,15 +140,17 @@ export function FilesPanel({
         abort.signal,
         1 << 20,
       );
-      setEdit(await blob.text());
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(await blob.arrayBuffer());
+      if (text.includes("\0")) throw new Error("This file contains binary data.");
+      setEdit(text);
     });
   return (
     <aside
       className={`files-panel ${selected ? "previewing" : ""}`}
-      aria-label="Project Files"
+      aria-label={tr("Project Files")}
     >
       <header className="panel-heading">
-        <strong>Project Files</strong>
+        <strong>{tr("Project Files")}</strong>
         <div className="row-actions">
           <button
             disabled={busy || project.state !== "active"}
@@ -147,18 +159,18 @@ export function FilesPanel({
               setVersion((n) => n + 1);
             }}
           >
-            Refresh
+            {tr("Refresh")}
           </button>
           <button
             disabled={busy || project.state !== "active"}
             onClick={() => fileInput.current?.click()}
           >
-            Upload
+            {tr("Upload")}
           </button>
           <button
             disabled={busy || project.state !== "active"}
             onClick={() => {
-              const name = window.prompt("New folder name");
+              const name = window.prompt(tr("New folder name"));
               if (name)
                 void act(() =>
                   command(base, {
@@ -169,7 +181,7 @@ export function FilesPanel({
                 );
             }}
           >
-            New folder
+            {tr("New folder")}
           </button>
         </div>
       </header>
@@ -198,21 +210,27 @@ export function FilesPanel({
       )}
       {uncertain && (
         <div className="notice warning">
-          Operation {uncertain} has an uncertain outcome. Inspect current file
-          contents before a new write.{" "}
+          {tr("Operation")}
+          {uncertain}
+          {tr(
+            "has an uncertain outcome. Inspect current file contents before a new write.",
+          )}{" "}
           <button
             onClick={() => {
               setUncertain("");
               void refresh();
             }}
           >
-            Inspect files
+            {tr("Inspect files")}
           </button>
         </div>
       )}
       {project.state !== "active" ? (
         <div className="empty-state">
-          <p>The workspace is {project.state}.</p>
+          <p>
+            {tr("The workspace is")}
+            {project.state}.
+          </p>
           <button
             className="primary"
             disabled={busy}
@@ -220,7 +238,7 @@ export function FilesPanel({
               void act(() => command(`${projectURL(project.id)}/resume`))
             }
           >
-            Resume Project
+            {tr("Resume Project")}
           </button>
         </div>
       ) : (
@@ -261,7 +279,7 @@ export function FilesPanel({
                     onClick={() => open(entry)}
                     title={
                       entry.kind === "symlink"
-                        ? "Symlinks are not followed"
+                        ? tr("Symlinks are not followed")
                         : name
                     }
                   >
@@ -283,7 +301,7 @@ export function FilesPanel({
                     aria-label={`Move ${entry.name}`}
                     onClick={() => move(name)}
                   >
-                    Move
+                    {tr("Move")}
                   </button>
                   <button
                     aria-label={`Remove ${entry.name}`}
@@ -295,12 +313,14 @@ export function FilesPanel({
               );
             })}
             {!page.entries.length && (
-              <p className="notice">This directory is empty.</p>
+              <p className="notice">{tr("This directory is empty.")}</p>
             )}
-            {after && <button onClick={() => setAfter("")}>First page</button>}
+            {after && (
+              <button onClick={() => setAfter("")}>{tr("First page")}</button>
+            )}
             {page.next && (
               <button onClick={() => setAfter(page.next || "")}>
-                Next files
+                {tr("Next files")}
               </button>
             )}
           </div>
@@ -312,36 +332,36 @@ export function FilesPanel({
             <strong title={selected}>{selected}</strong>
             <div className="row-actions">
               <a href={fileURL(project.id, selected)} download>
-                Download
+                {tr("Download")}
               </a>
-              <button
-                disabled={busy || project.state !== "active"}
-                onClick={editFile}
-              >
-                Edit text
-              </button>
+              {["code", "text", "markdown", "json", "table"].includes(classifyArtifact(selected).kind) && (
+                <button disabled={busy || project.state !== "active"} onClick={editFile}>
+                  {tr("Edit text")}
+                </button>
+              )}
               <button
                 onClick={() => {
                   onSelect("");
                   setEdit(null);
                 }}
               >
-                Close file
+                {tr("Close file")}
               </button>
             </div>
           </header>
           {edit !== null ? (
             <>
-              <textarea
-                className="file-editor"
-                aria-label={`Edit ${selected}`}
-                value={edit}
-                onChange={(e) => setEdit(e.target.value)}
-                maxLength={1 << 20}
-                spellCheck={false}
-              />
+              <div className="file-editor">
+                <CodeEditor
+                  path={selected}
+                  initialText={edit}
+                  onChange={setEdit}
+                />
+              </div>
               <div className="row-actions">
-                <button onClick={() => setEdit(null)}>Cancel edit</button>
+                <button onClick={() => setEdit(null)}>
+                  {tr("Cancel edit")}
+                </button>
                 <button
                   className="primary"
                   disabled={busy}
@@ -352,7 +372,7 @@ export function FilesPanel({
                     })
                   }
                 >
-                  Save file
+                  {tr("Save file")}
                 </button>
               </div>
             </>

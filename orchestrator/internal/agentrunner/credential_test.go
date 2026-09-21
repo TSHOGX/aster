@@ -34,7 +34,7 @@ func providers(t *testing.T, root string) map[string]map[string]any {
 }
 
 func TestCredentialReplacesPlaceholderAndPreservesCatalog(t *testing.T) {
-	root := catalog(t, `{"providers":{"local":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"harness-placeholder","models":[{"id":"m"}]},"second":{"apiKey":"harness-placeholder"}},"other":{"kept":true}}`)
+	root := catalog(t, `{"providers":{"local":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"project-service-token","models":[{"id":"m"}]},"second":{"apiKey":"project-service-token"}},"other":{"kept":true}}`)
 	if err := materializeCredential(root, "grant.secret"); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestCredentialRefusesAuthoredSecretsAndInvalidInput(t *testing.T) {
 		}
 	}
 	for _, credential := range []string{"has\nnewline", "has\x00nul", `has"quote`, strings.Repeat("x", 257)} {
-		if err := materializeCredential(catalog(t, `{"providers":{"local":{"apiKey":"harness-placeholder"}}}`), credential); err == nil {
+		if err := materializeCredential(catalog(t, `{"providers":{"local":{"apiKey":"project-service-token"}}}`), credential); err == nil {
 			t.Fatalf("invalid credential %q was accepted", credential)
 		}
 	}
@@ -91,7 +91,7 @@ func TestCredentialRefusesAuthoredSecretsAndInvalidInput(t *testing.T) {
 func TestCredentialIsSkippedWithoutServiceOrCatalog(t *testing.T) {
 	// A zero-gateway deployment issues no credential and must leave the authored
 	// catalog exactly as it shipped.
-	root := catalog(t, `{"providers":{"local":{"apiKey":"harness-placeholder"}}}`)
+	root := catalog(t, `{"providers":{"local":{"apiKey":"project-service-token"}}}`)
 	if err := materializeCredential(root, ""); err != nil {
 		t.Fatal(err)
 	}

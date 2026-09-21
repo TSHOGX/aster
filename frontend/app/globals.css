@@ -1,47 +1,15 @@
 @import "tailwindcss";
 
-/*
-  Self-hosted code face (variable weight axis, normal style).
-
-  --font-mono previously named JetBrains Mono and Fira Code without ever loading
-  either, so every user fell through to a system monospace — DejaVu Sans Mono on
-  most Linux boxes, which is what made long code blocks tiring to read. Served
-  from our own origin rather than a font CDN, matching how the rest of the app
-  keeps browser traffic same-origin; the file carries unicode-range subsets, so a
-  latin-only page fetches ~40KB and nothing else.
-*/
 @import "@fontsource-variable/jetbrains-mono/wght.css";
 
-/*
-  Two themes, one token contract.
-
-  All UI colors flow through the semantic `--color-*` custom properties below.
-  Components reference them via `var(--color-*)`, so switching the whole app is
-  just a matter of redefining these variables. `:root` holds the light theme
-  (white surfaces on a cool pale blue-grey canvas); `[data-theme="dark"]`
-  overrides them with a neutral deep blue-grey. Both share one indigo accent —
-  the only saturated hue in the chrome, so it always reads as "interactive".
-  The `@theme` block registers the tokens with Tailwind so `bg-background` /
-  `text-foreground` utilities resolve to the same live variables and pick up the
-  active theme automatically.
-
-  Beyond color, three scales are tokens too, so components never hardcode a
-  literal: --text-* (type), --shadow-* (elevation), --measure (reading width).
-*/
-
 @theme {
-  /* CJK faces follow the Latin ones: Inter has no Chinese coverage, so without
-     an explicit stack the browser picks an arbitrary fallback whose weight and
-     metrics clash with Inter in mixed Chinese/English runs. */
+
   --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
     "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  /* "JetBrains Mono Variable" is the family name @fontsource registers. CJK faces
-     follow because it carries no Chinese glyphs — comments in Chinese would
-     otherwise fall through to an arbitrary system font mid-line. */
+
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
     SFMono-Regular, Menlo, Consolas, "PingFang SC", "Noto Sans SC", monospace;
 
-  /* Registered with Tailwind; concrete values live in :root / [data-theme] below. */
   --color-background: var(--bg);
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
@@ -56,9 +24,7 @@
   --color-button-primary: var(--button-primary);
   --color-button-primary-hover: var(--button-primary-hover);
   --color-button-primary-foreground: var(--button-primary-foreground);
-  /* Quieter sibling of the primary fill: a tinted surface with accent-colored
-     ink. Used where an action should read as the default without dominating the
-     panel it lives in (the sidebar's New session). */
+
   --color-button-soft: var(--button-soft);
   --color-button-soft-hover: var(--button-soft-hover);
   --color-button-soft-foreground: var(--button-soft-foreground);
@@ -68,20 +34,16 @@
   --color-danger-soft: var(--danger-soft);
   --color-user-bubble: var(--user-bubble);
 
-  /* Code presentation + overlay share the same token contract. */
   --color-code-bg: var(--code-bg);
   --color-code-border: var(--code-border);
   --color-code-ink: var(--code-ink);
   --color-overlay: var(--overlay);
 
-  /* Interaction states: text selection + scrollbar. */
   --color-selection-bg: var(--selection-bg);
   --color-selection-ink: var(--selection-ink);
   --color-scrollbar: var(--scrollbar);
   --color-scrollbar-hover: var(--scrollbar-hover);
 
-  /* Categorical palette for agent-produced charts. Ordered for adjacent-hue
-     separation, so the first few series stay distinguishable without tuning. */
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -97,27 +59,13 @@
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
 
-  /*
-    Type scale. 14px is the floor and 16px is body text: the original 10px/11px
-    labels were far below a comfortable reading size, and two rounds of raising
-    them (12px, then 13px) still read small on a dense analysis screen.
-    Registered as Tailwind `text-*` sizes so `text-2xs` … `text-xl` resolve here —
-    shifting the whole UI is a matter of editing these six values, since no
-    component hardcodes a pixel size.
-  */
-  --text-2xs: 0.875rem;   /* 14px — dense metadata (sizes, timestamps) */
-  --text-xs: 0.9375rem;   /* 15px — secondary text, dense controls */
-  --text-sm: 1rem;        /* 16px — body default */
-  --text-base: 1.0625rem; /* 17px — emphasized body */
-  --text-lg: 1.1875rem;   /* 19px — panel titles */
-  --text-xl: 1.5rem;      /* 24px — page/screen titles */
+  --text-2xs: 0.875rem;
+  --text-xs: 0.9375rem;
+  --text-sm: 1rem;
+  --text-base: 1.0625rem;
+  --text-lg: 1.1875rem;
+  --text-xl: 1.5rem;
 
-  /*
-    Elevation. Cool-tinted and deliberately shallow: the enterprise look comes
-    from hairline borders plus a barely-there lift, not from drop shadows. Dark
-    mode overrides these below (a black shadow is invisible on a dark canvas, so
-    depth there comes from the border instead).
-  */
   --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.04);
   --shadow-sm: 0 1px 3px rgb(15 23 42 / 0.06), 0 1px 2px rgb(15 23 42 / 0.04);
   --shadow-md: 0 2px 8px rgb(15 23 42 / 0.07), 0 1px 3px rgb(15 23 42 / 0.05);
@@ -125,30 +73,18 @@
   --shadow-xl: 0 16px 48px rgb(15 23 42 / 0.12), 0 4px 12px rgb(15 23 42 / 0.06);
 }
 
-/*
-  Reading measure: the conversation column and the composer share this width so
-  they align into one vertical channel instead of a full-bleed log sitting above
-  a narrow centered input.
-
-  56rem (896px) is wider than a prose-optimal measure would be, deliberately: the
-  replies here are mostly tables, code and plots, and those want horizontal room
-  far more than a paragraph does.
-*/
 :root {
   --measure: 56rem;
 }
 
-/* ── Light: white + pale blue-grey ──────────────────────────────────── */
 :root {
   color-scheme: light;
 
-  /* Panels are pure white and lift off a faintly blue-tinted canvas, so the
-     structure reads from the surface change alone — no heavy dividers needed. */
   --bg: #f6f8fb;
   --surface: #ffffff;
   --surface-muted: #eef2f7;
   --foreground: #0f172a;
-  --foreground-muted: #5a687d; /* 4.9:1 on --surface, 4.6:1 on --bg */
+  --foreground-muted: #5a687d;
   --border: #e4e9f0;
   --border-strong: #cbd5e1;
 
@@ -157,13 +93,10 @@
   --accent-foreground: #ffffff;
   --accent-soft: #e5e7fb;
 
-  /* Primary button: the deeper end of the indigo ramp, so white label text
-     clears 4.5:1 (the lighter --accent does not). */
   --button-primary: #4f46e5;
   --button-primary-hover: #4338ca;
   --button-primary-foreground: #ffffff;
-  /* Indigo wash + deep indigo ink: ~7:1 on the label, so it stays readable
-     while sitting far back from the saturated primary fill. */
+
   --button-soft: #eceefc;
   --button-soft-hover: #dfe2f8;
   --button-soft-foreground: #3730a3;
@@ -175,21 +108,17 @@
 
   --user-bubble: #e8eafd;
 
-  /* Code slab: a cool tint of the canvas so code reads as its own surface,
-     with a hairline to define the trough. */
   --code-bg: #f8fafc;
   --code-border: #e2e8f0;
   --code-ink: #334155;
 
   --overlay: rgba(15, 23, 42, 0.32);
 
-  /* Text selection + scrollbar, aligned with the indigo accent. */
   --selection-bg: #d9dcfa;
   --selection-ink: #0f172a;
   --scrollbar: #cbd5e1;
   --scrollbar-hover: #94a3b8;
 
-  /* Chart series — saturated enough to read on white, spaced around the wheel. */
   --chart-1: #4f46e5;
   --chart-2: #0891b2;
   --chart-3: #059669;
@@ -199,15 +128,14 @@
   --chart-7: #2563eb;
   --chart-8: #65a30d;
 
-  /* syntax highlighting — GitHub Light family, cool-toned to match the slab. */
   --hl-base: var(--code-ink);
-  --hl-keyword: #cf222e;   /* red — keywords / storage */
-  --hl-entity: #8250df;    /* purple — function & type names */
-  --hl-constant: #0550ae;  /* blue — numbers / constants */
-  --hl-string: #0a3069;    /* deep navy — strings */
-  --hl-variable: #953800;  /* orange-brown — variables / built-ins */
-  --hl-comment: #6e7781;   /* grey — comments */
-  --hl-tag: #116329;       /* green — tags / selectors */
+  --hl-keyword: #cf222e;
+  --hl-entity: #8250df;
+  --hl-constant: #0550ae;
+  --hl-string: #0a3069;
+  --hl-variable: #953800;
+  --hl-comment: #6e7781;
+  --hl-tag: #116329;
   --hl-section: #0550ae;
   --hl-bullet: #953800;
   --hl-addition-fg: #116329;
@@ -216,23 +144,17 @@
   --hl-deletion-bg: #ffebe9;
 }
 
-/* ── Dark: neutral deep blue-grey ───────────────────────────────────── */
 [data-theme="dark"] {
   color-scheme: dark;
 
-  /* Inverted from light: panels sit *above* the canvas here. On a dark screen a
-     lighter surface is what reads as raised, so --surface is lighter than --bg
-     (in light mode the relationship is the other way round). */
   --bg: #0f1419;
   --surface: #161b22;
   --surface-muted: #1f2733;
   --foreground: #e6edf3;
-  --foreground-muted: #93a1b1; /* 6.4:1 on --surface */
+  --foreground-muted: #93a1b1;
   --border: #262d38;
   --border-strong: #364152;
 
-  /* Lighter end of the indigo ramp: #6366f1 on a near-black canvas is too dim
-     for text/icons, so the accent brightens while the button stays deep. */
   --accent: #818cf8;
   --accent-hover: #a5b4fc;
   --accent-foreground: #0f1419;
@@ -241,8 +163,7 @@
   --button-primary: #4f46e5;
   --button-primary-hover: #6366f1;
   --button-primary-foreground: #ffffff;
-  /* Dark side of the soft fill: a lifted panel tint carrying the light accent
-     ink, so the button reads as raised rather than as a colored slab. */
+
   --button-soft: #262a45;
   --button-soft-hover: #313760;
   --button-soft-foreground: #b6bdfb;
@@ -254,20 +175,17 @@
 
   --user-bubble: #1e2438;
 
-  /* Code slab: darker than both canvas and panels so code sinks into a trough. */
   --code-bg: #0b0f14;
   --code-border: #212936;
   --code-ink: #d7e0ea;
 
   --overlay: rgba(3, 7, 12, 0.66);
 
-  /* Text selection + scrollbar. */
   --selection-bg: #31365c;
   --selection-ink: #e6edf3;
   --scrollbar: #2f3947;
   --scrollbar-hover: #46536b;
 
-  /* Chart series — lightened so each reads against the near-black canvas. */
   --chart-1: #818cf8;
   --chart-2: #22d3ee;
   --chart-3: #34d399;
@@ -277,26 +195,20 @@
   --chart-7: #60a5fa;
   --chart-8: #a3e635;
 
-  /*
-    Elevation in dark mode: a black shadow is invisible against a near-black
-    canvas, so shallow lifts fall back to borders and only the genuinely
-    floating layers (popovers, dialogs) keep a deep, wide shadow.
-  */
   --shadow-xs: 0 0 0 1px rgb(0 0 0 / 0.2);
   --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.4);
   --shadow-md: 0 4px 12px rgb(0 0 0 / 0.45);
   --shadow-lg: 0 10px 28px rgb(0 0 0 / 0.55);
   --shadow-xl: 0 20px 56px rgb(0 0 0 / 0.65);
 
-  /* syntax highlighting — GitHub Dark family, matching the light theme's roles. */
   --hl-base: var(--code-ink);
-  --hl-keyword: #ff7b72;   /* coral — keywords / storage */
-  --hl-entity: #d2a8ff;    /* purple — function & type names */
-  --hl-constant: #79c0ff;  /* blue — numbers / constants */
-  --hl-string: #a5d6ff;    /* pale blue — strings */
-  --hl-variable: #ffa657;  /* orange — variables / built-ins */
-  --hl-comment: #8b949e;   /* grey — comments */
-  --hl-tag: #7ee787;       /* green — tags / selectors */
+  --hl-keyword: #ff7b72;
+  --hl-entity: #d2a8ff;
+  --hl-constant: #79c0ff;
+  --hl-string: #a5d6ff;
+  --hl-variable: #ffa657;
+  --hl-comment: #8b949e;
+  --hl-tag: #7ee787;
   --hl-section: #79c0ff;
   --hl-bullet: #ffa657;
   --hl-addition-fg: #7ee787;
@@ -305,13 +217,6 @@
   --hl-deletion-bg: #29161a;
 }
 
-/*
-  Element resets live in @layer base, alongside Tailwind's own preflight.
-  Unlayered CSS outranks every layer, so a bare `button { color: inherit }` here
-  would beat `.text-*` utilities and silently strip color from every styled
-  button — visible in light mode as near-black label text on the primary button,
-  and invisible in dark mode only because the inherited color happens to be light.
-*/
 @layer base {
   * {
     box-sizing: border-box;
@@ -329,16 +234,10 @@
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* Proportional digits reflow as values change; lining tabular digits keep
-       counters, durations and sizes from shifting width mid-update. */
+
     font-variant-numeric: tabular-nums;
   }
 
-  /*
-    Ease the palette swap on toggle. The init script sets data-theme before first
-    paint, so there is no initial value change to animate — this only smooths an
-    actual user toggle. Disabled entirely under reduced-motion.
-  */
   @media (prefers-reduced-motion: no-preference) {
     body,
     aside,
@@ -350,11 +249,6 @@
     }
   }
 
-  /*
-    `font: inherit` is the point of this rule — form controls otherwise fall back
-    to the OS widget font. `color: inherit` only supplies a starting point, and
-    being in @layer base lets any text-* utility override it.
-  */
   button,
   select,
   textarea,
@@ -389,8 +283,6 @@
     color: var(--color-selection-ink);
   }
 
-  /* Themed scrollbars so overflow areas match the palette instead of falling
-     back to a bright OS scrollbar in dark mode. */
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--color-scrollbar) transparent;
@@ -414,91 +306,12 @@
   }
 }
 
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-.animate-pulse-dot {
-  animation: pulse-dot 1.4s ease-in-out infinite;
-}
-
-/* Loading placeholders: a slow opacity breathe rather than a sweeping gradient,
-   which stays quiet when several blocks animate at once. */
-@keyframes skeleton-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-
-.skeleton-pulse {
-  animation: skeleton-pulse 1.6s ease-in-out infinite;
-}
-
-/* Activity strip: three-dot "thinking" shimmer, staggered per dot. */
-@keyframes activity-bounce {
-  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-  40% { transform: translateY(-3px); opacity: 1; }
-}
-
-.activity-dot {
-  animation: activity-bounce 1.2s ease-in-out infinite;
-}
-.activity-dot:nth-child(2) { animation-delay: 0.16s; }
-.activity-dot:nth-child(3) { animation-delay: 0.32s; }
-
-/* Jump-to-message: brief highlight when the search palette opens a specific
-   message, so the eye lands on the right row. */
-@keyframes msg-jump-flash {
-  0% { background-color: var(--color-accent-soft); }
-  100% { background-color: transparent; }
-}
-
-.msg-jump-flash {
-  animation: msg-jump-flash 1.5s ease-out;
-}
-
-/* Execution-trace node: gentle reveal of the expanded args/result/diff. */
-@keyframes trace-expand {
-  0% { opacity: 0; transform: translateY(-2px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-.trace-expand {
-  animation: trace-expand 0.15s ease-out;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .animate-pulse-dot,
-  .activity-dot,
-  .skeleton-pulse {
-    animation: none;
-  }
-  .msg-jump-flash {
-    animation: none;
-    background-color: var(--color-accent-soft);
-  }
-  .trace-expand {
-    animation: none;
-  }
-}
-
-/*
-  Assistant replies are the substance of the page, so they run at the same size
-  as the user's own message (--text-sm, the body default) rather than a notch
-  smaller. The trace "steps" above a reply keep their own --text-2xs sizing
-  (trace-node.tsx) — they are metadata about the reply, not the reply.
-*/
 .markdown-body {
   font-size: var(--text-sm);
   line-height: 1.65;
   word-wrap: break-word;
 }
 
-/*
-  Denser prose for a file preview inside the right panel, which is an index-like
-  surface rather than a reading column. Two classes so it outranks the base rule
-  (both are unlayered, so a Tailwind text-* utility could not win here).
-*/
 .markdown-body.markdown-compact {
   font-size: 13px;
 }
@@ -524,7 +337,7 @@
   border-top: 1px solid var(--color-border);
   margin: 1.2em 0;
 }
-/* Inline code: a subtle chip that reads as code without shouting. */
+
 .markdown-body code {
   font-family: var(--font-mono);
   font-size: 0.88em;
@@ -534,11 +347,7 @@
   padding: 0.08em 0.34em;
   border-radius: var(--radius-xs);
 }
-/*
-  Fenced blocks: a defined trough distinct from the surrounding surface, wrapped
-  by a header strip carrying the language and a copy button (markdown-view.tsx).
-  The frame lives on the wrapper so the header and the code share one outline.
-*/
+
 .markdown-body .code-block {
   margin: 0.8em 0;
   border: 1px solid var(--color-code-border);
@@ -570,8 +379,7 @@
   font-size: var(--text-2xs);
   color: var(--color-foreground-muted);
   background: transparent;
-  /* Revealed on hover/focus so a wall of code blocks is not also a wall of
-     buttons; focus-visible keeps it reachable by keyboard. */
+
   opacity: 0;
   transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
@@ -592,16 +400,13 @@
   padding: 0.85em 1em;
   overflow-x: auto;
   margin: 0;
-  /* JetBrains Mono ships coding ligatures (=>, !==, ->). `calt` also keeps the
-     arrow/operator forms it was designed around, which is most of why it reads
-     more easily than a system monospace at the same size. */
+
   font-variant-ligatures: contextual;
   font-feature-settings: "calt" 1;
-  /* Code is where a run of digits matters most — keep them in register. */
+
   font-variant-numeric: tabular-nums;
 }
-/* A <pre> that is not inside .code-block (none today, but markdown can nest one
-   inside a list or blockquote) still needs its own frame. */
+
 .markdown-body > pre,
 .markdown-body li > pre,
 .markdown-body blockquote > pre {
@@ -627,12 +432,7 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-/*
-  Tables. The agent emits these constantly (cell comparisons, cycle summaries,
-  measurement runs), so they get the full data-grid treatment rather than default
-  markdown borders: the wrapper scrolls, the header sticks to the top of that
-  scroll so column meaning survives a long table, and rows zebra.
-*/
+
 .markdown-body .table-scroll {
   margin: 0.8em 0;
   max-height: 26rem;
@@ -648,7 +448,7 @@
   width: 100%;
   font-size: 0.95em;
 }
-/* A bare table (no wrapper) still needs its own frame. */
+
 .markdown-body > table {
   margin: 0.8em 0;
   border: 1px solid var(--color-border);
@@ -661,7 +461,7 @@
   text-align: left;
   vertical-align: top;
 }
-/* Vertical rules between columns only — horizontal ones come from the cells. */
+
 .markdown-body th + th,
 .markdown-body td + td {
   border-left: 1px solid var(--color-border);
@@ -676,8 +476,7 @@
   background: var(--color-surface-muted);
   font-weight: 600;
   white-space: nowrap;
-  /* A sticky cell's own border does not travel with it, so the divider under the
-     header row is drawn as a shadow instead. */
+
   box-shadow: inset 0 -1px 0 var(--color-border);
 }
 .markdown-body tbody tr:nth-child(even) td {
@@ -686,11 +485,7 @@
 .markdown-body tbody tr:hover td {
   background: var(--color-accent-soft);
 }
-/*
-  Numeric cells right-align so digits line up by place value, and use tabular
-  figures so columns stay in register. Detected in markdown-view.tsx, which tags
-  cells whose text is purely numeric — CSS cannot inspect content itself.
-*/
+
 .markdown-body td[data-numeric="true"],
 .markdown-body th[data-numeric="true"] {
   text-align: right;
@@ -698,15 +493,10 @@
   font-family: var(--font-mono);
   font-size: 0.94em;
 }
-/* GFM task lists render a checkbox as the list marker. */
+
 .markdown-body li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.1em; }
 .markdown-body input[type="checkbox"] { margin-right: 0.4em; accent-color: var(--color-accent); }
 
-/*
-  Syntax highlighting (highlight.js token classes). Colors are driven by the
-  --hl-* variables above so code blocks retheme with the rest of the app.
-  Structure mirrors highlight.js's github / github-dark themes.
-*/
 .hljs {
   color: var(--hl-base);
   background: transparent;
@@ -751,34 +541,3 @@
 .hljs-strong { color: var(--hl-base); font-weight: bold; }
 .hljs-addition { color: var(--hl-addition-fg); background-color: var(--hl-addition-bg); }
 .hljs-deletion { color: var(--hl-deletion-fg); background-color: var(--hl-deletion-bg); }
-
-/*
-  Office document previews (read-only). The xlsx/docx/pptx renderers ship their
-  own DOM + inline styles; these rules only reconcile their chrome with the app
-  shell — the document bodies themselves keep the source formatting.
-*/
-
-/* Excel (x-spreadsheet): let the grid fill the pane and drop its own border. */
-.office-view [data-office-kind="spreadsheet"] { height: 100%; }
-.office-view .x-spreadsheet { border: 0 !important; }
-.office-view .x-spreadsheet-bottombar {
-  background: var(--color-surface);
-  border-top: 1px solid var(--color-border);
-}
-
-/* Word (docx-preview): center pages on the muted pane and give each rendered
-   page a paper card look with a soft shadow. The page interior stays white so
-   the document's own colors/contrast are preserved (also in dark mode). */
-.office-view .docx-wrapper {
-  background: transparent;
-  padding: 0;
-}
-.office-view .docx-wrapper > section.docx {
-  margin: 0 auto 1.5rem;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.08);
-  border-radius: var(--radius-xs);
-}
-
-/* PowerPoint (pptx-preview): center the slide stage and its pager. */
-.office-view [data-office-kind="presentation"] { width: 100%; }
-

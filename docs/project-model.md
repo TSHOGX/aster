@@ -1,305 +1,38 @@
-# Project product contracts
+# Project model
 
-The `orchestrator/internal/product` application module defines the Project
-aggregate and its fresh SQLite schema. Application, guest and Chromium tests
-exercise the composed modules through the Go transport and edge proxy. Release
-command/configuration qualification remains separate from these module tests.
+A Project is the authorization, workspace, runtime and reachability unit. It owns
+one sandbox binding and two exclusive volumes: `/workspace` for ordinary user
+files and `/runtime` for Session state and journals. Reviewed content volumes are
+shared read-only publications and do not belong to Project cleanup.
 
-A Project owns live resource permission. Agent Sessions and native Terminals
-have immutable Project parents and independent revisions. Sessions describe
-execution, Terminals describe processes, and Projects describe resource
-lifecycle. A browser view is not a persisted resource or a lifecycle owner.
+Project states describe provisioning, active execution, pause/resume, failure and
+deletion. Durable operations preserve original keys and revision fences across
+retries. A Project is active only after binding observation, host/resolver
+projection and runtime-release verification have succeeded.
 
-Only the Project owner has live access. Conversation grants are separate read
-capabilities: they do not authorize Project events, Files, terminal input, or
-Agent actions. Session or Project deletion revokes conversation grants.
-Deletion initially records intent; resource cleanup must finish before reporting
-a resource deleted. Child deletion does not delete workspace files or change
-its Project's lifecycle.
+An Agent Session is a conversation with a durable ordered turn queue. Its logical
+identity survives worker and placement changes. Each runner incarnation has an
+owner fence, command journal and native capture lineage. Held turns require an
+explicit continue action. Separate control revisions let Stop/Steer remain valid
+while token events advance the display projection.
 
-A prompt has an explicit `held` state before admission. Releasing it queues
-work, advances Project activity, and invalidates an idle deadline. Every admitted
-turn has immutable request identity; replay with different content is rejected.
-Requests and scoped projection events commit atomically. Output bytes and file
-contents do not belong in the product event outbox.
+A Terminal is a retained PTY resource with its own incarnation, dimensions and
+observed exit status. Browser sockets are observers. One observer holds input;
+read-only observers can watch. Detach changes no execution intent. Reopening an
+exited Terminal creates a new incarnation and resets the renderer.
 
-Mutation commands compare the edited entity's revision. Session changes do not
-advance sibling or Project lifecycle revisions. All child operations resolve
-the stored Project parent; an arbitrary child ID cannot grant resource access.
-Lists and event replay use bounded pages and reauthorize each request.
+Admission accounts for real work: starting/running turns, terminal processes,
+workspace mutations, captures, recovery and cleanup. An idle Project pauses only
+when those blockers have settled and its idle deadline expires. Read-only
+inventory and browser watchers do not extend the deadline. Idle Agent slots can
+quiesce without pausing a Project or its sibling Sessions.
 
-The database opens only an exact current schema. It rejects foreign schemas and
-drift without migration or reset. The writer uses SQLite WAL with FULL
-synchronization; actual power-loss guarantees also depend on the storage stack.
+Schedules belong to Projects. They may target an existing Session or create a
+Session per run. Conversation-reader grants expose conversation projections only.
+Public shares freeze messages and selected files with a revocable bearer token;
+they do not grant a live workspace or terminal.
 
-Run the contracts with:
-
-```sh
-go -C orchestrator test -race ./internal/product
-go -C orchestrator vet ./internal/product
-```
-
-The Project lifecycle service reserves one active placement per Project before
-remote work. It provisions one workspace volume at `/workspace` and one retained
-runtime volume at `/runtime`. Child creation leaves these mounts and the Project
-network profile unchanged. Only immutable published volumes may be shared mounts.
-
-Provisioning, pause, resume and deletion use durable operation lanes. A worker
-performs one remote phase per reconciliation, preserving create keys and original
-conditional resource references across lost replies. Uncertain placements remain
-charged to capacity. Confirmed pause releases placement capacity; retained storage
-remains owned until Project deletion verifies its removal.
-
-Idle uses durable activity and a revision-fenced deadline. Admitted turns,
-retained running Terminals, child cleanup and guest-dependent Files/control work
-block pause. Held prompts, created Terminal rows and browser connections do not.
-Explicit pause rejects busy Projects. New admitted work during an issued pause
-remains queued for a later resume. Restart is a cold pause/resume, without process
-memory preservation.
-
-Real pinned-Khora tests cover retained bytes, independent Session state paths,
-lost successful lifecycle replies and verified sandbox/volume deletion. They also
-show that process-group termination does not stop an escaped `setsid` descendant;
-such descendants require supervision and directed cleanup. An escaped descendant
-can retain stdout, so waiting for output EOF alone cannot establish cleanup.
-Application ownership is single-process; lifecycle lane locks are not a claim of
-active-active fencing.
-
-## Native Terminals
-
-A Terminal is a Project child with a stable identity, persistent dimensions and a
-succession of PTY **incarnations**. It has no conversation, turn, prompt marker or
-model access, and its bytes never enter the product event outbox. `terminal_incarnations`
-records one row per PTY process with its store/sandbox/epoch/handle, an application
-owner fence, requested size, state and exit code.
-
-A Terminal row alone owns no process and pins nothing. A live incarnation always
-pins the Project, including while silent and while every browser has detached.
-Deletion intent lives in its own column, so `state` stays descriptive: a Terminal
-that exited 130 still reports 130 after cleanup, and a deletion request never
-overwrites how a child was running.
-
-Closing a browser view performs no database write and does not stop the PTY. An
-explicit close requests termination and escalates after a bounded grace period,
-because an interactive login shell ignores `SIGTERM`; an identity-validated engine exit frame or retained exit record establishes its
-exit code. Ctrl-C is the interrupt **byte** written to
-the PTY, not a directed signal: the engine signals the handle's whole process
-group, so a directed `SIGINT` would end the shell instead of the command being
-interrupted. Reopening an ended Terminal creates a new incarnation at the persisted
-size and never replays the previous one. A replaced placement records the PTY as
-`lost` with an explicit reason and no exit code: the process did not exit, its
-outcome simply cannot be observed.
-
-One application attachment drains each live PTY and fans output out to authorized
-browsers, which never reach the engine. Each observer has a bounded queue; a
-stalled one is disconnected with an explicit gap marker and resyncs rather than
-stalling the reader, a sibling, or Agent ingest. A bounded in-memory replay ring
-repaints an ordinary reconnect and marks a gap when it cannot. There is no durable
-PTY journal, so full terminal history across application restart or placement loss
-is not promised. At most one connection holds input; an additional view is
-read-only until it explicitly claims a free claim, and unacknowledged input is
-never replayed after a reconnect.
-
-## Browser boundary
-
-`internal/producthttp` is the product's browser boundary. It resolves the actor,
-enforces origin for every state-changing request and for the WebSocket handshake,
-bounds request bodies, and returns projections; it owns no execution or recovery
-loop. Terminal output, input, resize and control travel on one WebSocket per
-attached Terminal — binary frames are raw PTY bytes, text frames are a small JSON
-control protocol — so a terminal flood cannot delay Agent completion or lifecycle
-delivery on the SSE projection stream.
-
-`internal/edge` is the single browser origin: it routes the product API, its event
-stream and terminal sockets to the application and everything else to the frontend.
-It exists because a WebSocket upgrade cannot pass through the frontend's fetch
-proxy, and because that proxy stripped `Origin` before forwarding, leaving origin
-enforcement where it could no longer see the browser's request. The application
-receives the real `Origin` and a forwarded host naming the public origin, while a
-client-supplied forwarding chain is discarded.
-
-Terminal contracts are verified against real PTYs in an isolated pinned engine:
-concurrent terminals sharing one workspace, raw byte fidelity in both directions
-including input split inside a UTF-8 sequence, guest-observed resize, interrupt
-sparing the shell, detach past the engine ring rejoining the same process, and
-cleanup that waits for termination evidence while sparing siblings. The Chromium workbench journey verifies the renderer through the Go edge with
-real native PTYs and two overlapping Pi Sessions.
-
-## Project Files
-
-`internal/product.Files` serves the Project workspace independently of the selected
-Agent Session. Files and native processes can read, replace, rename and remove the
-same paths concurrently using ordinary Linux behavior. There are no workspace
-locks, turn-based upload restrictions or file ownership inferred from messages.
-
-The `workspace-files` Go executable confines operations to `/workspace`. It walks
-with directory descriptors, opens components using `O_PATH|O_NOFOLLOW`, and checks
-the selected inode before opening regular file content through its descriptor.
-All traversed symlinks and nonregular read targets are refused. Removing a symlink
-unlinks the entry itself; removing a directory requires it to be empty. Absolute,
-traversing, malformed and excessively deep paths are refused.
-
-Uploads stream through one helper with a declared length and SHA-256 digest,
-limited to 256 MiB. Only complete, verified bytes replace the target through a
-same-directory rename. Cancellation cannot publish a partial replacement; an
-abruptly killed helper can leave a removable `.upload-*` temporary file. Transfers
-use bounded buffers, and directory pages contain at most 200 observations. Neither
-file bytes nor terminal bytes enter the Agent journal or product event outbox.
-
-Mutation IDs identify immutable requests. A duplicate returns its existing outcome
-without dispatching again, even if a sibling has since changed the file. Lost
-replies report `unknown`; recovery terminates or observes the original helper and
-releases its activity without replaying the mutation. A known process exit and a
-known mutation outcome are separate facts. Confirmed helper errors report failure;
-a rename whose durability confirmation failed reports an unknown outcome.
-
-Explicit reads and writes request normal Project resume when paused and return
-pending until placement is ready. Directory listing and watch observation never
-resume a Project. Files watches invalidate browser inventory; gaps, disconnects
-and resets require bounded rescans and do not represent a transactional snapshot
-or a complete write audit. Watches hold no lifecycle activity.
-
-The Go API uses Project permission, origin checks, bounded bodies and authenticated
-operation lookup. Reads/downloads stream raw bytes; uploads require `Content-Length`,
-`X-Content-SHA256` and `Idempotency-Key`. Mutations and operation outcomes are rooted
-at `/api/projects/{project}/files`. Browser integration and the composed deployment
-are qualified separately from these application contracts.
-
-The isolated pinned-engine gate runs confinement tests inside runsc, including
-adversarial symlink swaps. It also verifies an 8 MiB transfer alongside a native
-PTY, cancellation retaining prior bytes, a lost write reply followed by a sibling
-overwrite, watch invalidation, and retained bytes across cold pause/resume.
-
-## Schedules and adjacent capabilities
-
-Schedules belong to a Project and choose an existing Agent Session or create one
-Session per run in that Project. Manual and cron runs use the foreground turn
-admission transaction. Repeating a manual request ID or delivering the same cron
-occurrence twice observes one durable run and one turn. Run history reports the
-turn's actual state; schedule completion never pauses a sandbox independently.
-
-Cron uses five fields and an explicit IANA timezone. An empty expression is
-manual-only. Missed occurrences coalesce into one run and advance beyond the
-current time. Disabling a schedule stops new admissions. Deleting a Project or
-target Session disables its schedules atomically. Already admitted runs retain
-ordinary Session controls and cleanup. Enabled schedules can wake a paused Project
-through normal admission; pausing a Project does not disable schedules.
-
-Authenticated conversation readers use separate read projections. Their grants
-authorize conversation messages and search results, without native records,
-Project events, live Files, terminal input or Agent commands. Subscriptions
-reauthorize and close after revocation. Search results include Project, Session
-and message identities so navigation retains the correct parent context.
-
-Public shares freeze a conversation frontier and up to 16 explicitly selected
-files, limited to 16 MiB per file and 64 MiB total. Files stream to a separate
-host-owned directory for each share before publication. Later workspace writes
-and messages do not change that published selection. The selection is an
-observation, not an atomic workspace snapshot. Public projections exclude native
-records and runtime identities. Tokens are random, stored by digest, expiring,
-revocable and rotatable. Lost creation responses can be recovered by listing the
-owner's shares and rotating a published token.
-
-Session and Project deletion revoke all their shares immediately. Cleanup removes
-owned frozen bytes; public snapshots do not outlive parent deletion indefinitely.
-Interrupted pending publications are failed and reclaimed after owner restart,
-never published from partial selections. Active downloads recheck authorization.
-
-An unnamed Session receives a bounded title from its first admitted prompt.
-Optional title generation is host-only, and a user's explicit rename wins over
-any delayed result. Notifications retain their audience and independent per-user
-read markers. Turn outcomes and conversation grants produce directed notices;
-operators can insert broadcast notices through an internal application port.
-Neither titles nor notifications retain Project runtime activity.
-
-
-## Workbench and browser convergence
-
-The browser opens Projects with up to four independent Agent views, retained
-Terminal panels, and Project Files. Closing an Agent or Terminal view changes
-only browser state. Stop turn, terminate Terminal, delete Session and delete
-Project are separate commands. Files remain available while Agents work and
-stay mounted when Agent views change. Browser drafts, open views and selected
-files are bounded and scoped by authenticated actor and Project.
-
-Session snapshots use one database read transaction with a Session revision,
-100-message and 100-turn windows, and an Agent-record frontier. Older history
-has explicit pages. The browser rejects stale or foreign snapshots and deduplicates
-record replay. Provisional text and tool displays are bounded; committed messages
-remain authoritative. Search can locate an older message in its parent Session.
-New event subscriptions start from a snapshot frontier, and invalid or unavailable
-cursors cause a gap/resnapshot response. Product projections remain separate from
-terminal output and Files invalidation streams.
-
-Go owns credential login, expiring HttpOnly cookies, token digests, login limits,
-exact-origin checks, and reauthorization of subscriptions. Password changes and
-logout invalidate old cookies. Missing credentials do not silently enable open
-access; local development requires an explicit actor configuration. The Next.js
-API and artifact fetch proxies are removed; the Go edge forwards the original
-browser origin and carries WebSocket upgrades.
-
-Application workers run independently of HTTP in bounded classes for runtime
-control, Files recovery, capture, schedules and adjacent work. Reconciling one
-Project does not detach another Project's terminals. Cold placement loss fences
-old Agent owners and ends process incarnations while preserving logical Sessions
-and retained native state. Each Session atomically selects its authored Agent
-configuration; a later incarnation can replace its service credential without
-losing that selection or affecting siblings.
-
-The real-browser qualification uses a production frontend build, cookie login,
-the Go edge and application workers, isolated Khora, native Pi and deterministic
-local model fixtures. It covers overlapping Agent turns, shared-file edits from
-Files and a PTY, independent view closure, retained input ownership, reload,
-Unicode/paste, resize, Ctrl-C, explicit output gaps and foreign-origin rejection.
-The rendered result is inspected as part of that qualification.
-
-
-## Recovery and retirement
-
-One application owner holds the product database through a canonical filesystem
-lock. A path alias cannot create a second owner. An Agent runner now has an
-independent per-Session Go guardian: if its worker fails, the guardian settles
-adopted descendants and reports whether cleanup was verified. Losing the guardian
-itself leaves cleanup unknown, blocks that Session and keeps named activity;
-siblings continue. Normal pause/restart rejects retained work. An explicit force
-restart may end it and never replays terminal input or unknown native commands.
-
-A separate journal-replay mode never starts Pi. It re-ingests the original
-incarnation's committed records under a fresh ownership fence, including after
-output exceeded the engine ring. Original command status can distinguish work
-never dispatched from ambiguous native effects. Only verified absent/received
-work can return to pending under its original command ID. Unknown effects remain
-unknown and require deliberate continuation from available native history.
-Unavailable journal recovery is retryable and scoped to the Session; a terminated
-helper does not retain unrelated Project activity forever.
-
-Engine transport failure does not prove placement loss. After engine restart the
-application inspects its original store/sandbox/epoch and can reconnect to the
-same live PTY and runners. Process control-plane projections may lag their end
-frames; live process inspection and retained stream evidence remain distinct.
-Actual placement loss fences old child owners, marks PTYs lost without fabricating
-exit codes and preserves Project volumes. Changed deployment defaults do not
-rewrite existing Projects' saved configuration.
-
-Streaming revisions and execution-control revisions are separate. Native token
-output updates projections without invalidating Stop, Steer or queue actions.
-Terminal controls are fenced to their observer's original incarnation; a delayed
-EOF or resize cannot act on a successor shell. Cookies are rechecked for live
-sockets. At most eight observers attach to a Terminal, with bounded queues and
-input rates. Idle Agent processes can release their own slots while retained
-terminals or sibling work keep the Project active.
-
-Project deletion closes admission, revokes grants/shares and disables schedules.
-Confirmed sandbox absence releases placement capacity; cleanup then removes both
-owned volumes, frozen share bytes, native archives and dependent conversation/
-command records. Small identity/outcome tombstones remain. Lost successful delete
-replies retain their original operation and resource identities until verified.
-A host artifact failure keeps deletion pending. Shared published assets and
-templates are never selected as Project-owned storage.
-
-Session deletion reclaims only its private runtime directory, archives, conversation
-and shares. It preserves shared workspace files, sibling execution and Project-owned
-schedules with other run history. The private-directory helper rejects symlink
-traversal and uses bounded descriptor-relative cleanup. Metadata observation does
-not reset idle deadlines. Expired login tokens, old read/list operation metadata
-and excess product-event replay are pruned independently of live Agent history.
+Session retirement removes its private runtime/capture state after termination
+and recovery settle. Project deletion waits for sandbox destruction, owned-volume
+reclamation and host artifact cleanup. Small tombstones preserve deletion truth;
+private conversation payloads, shares and owned artifacts are purged.

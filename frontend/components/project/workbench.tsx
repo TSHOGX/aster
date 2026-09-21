@@ -1,4 +1,5 @@
 "use client";
+import { useT } from "@/lib/i18n";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,6 +26,7 @@ import {
   type ProjectTerminal,
   type Projection,
 } from "@/lib/project-api";
+import { brandName } from "@/lib/ui-config";
 import { setTheme } from "@/lib/theme";
 import { SessionPanel } from "./session-panel";
 import { FilesPanel } from "./files-panel";
@@ -43,9 +45,9 @@ const TerminalPanel = dynamic(
     ),
   { ssr: false },
 );
-
 type View = "project" | "search" | "inbox" | "shared";
 export function ProjectWorkbench() {
+  const tr = useT();
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [booted, setBooted] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -60,8 +62,11 @@ export function ProjectWorkbench() {
   const refresh = useCallback(async () => {
     try {
       setProjects(
-        (await api<{ projects: Project[] }>("/api/projects?limit=100"))
-          .projects,
+        (
+          await api<{
+            projects: Project[];
+          }>("/api/projects?limit=100")
+        ).projects,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Projects are unavailable.");
@@ -134,7 +139,7 @@ export function ProjectWorkbench() {
       });
   };
   const create = async () => {
-    const title = window.prompt("Project name", "New Project");
+    const title = window.prompt(tr("Project name"), "New Project");
     if (!title?.trim()) return;
     try {
       const project = await command<Project>("/api/projects", {
@@ -148,7 +153,11 @@ export function ProjectWorkbench() {
     }
   };
   if (!booted)
-    return <main className="project-loading">Opening your workbench…</main>;
+    return (
+      <main className="project-loading">
+        {tr("Opening your workbench\u2026")}
+      </main>
+    );
   if (!identity)
     return (
       <main className="project-login">
@@ -169,15 +178,15 @@ export function ProjectWorkbench() {
           }}
         >
           <div className="brand-mark">B</div>
-          <h1>BatteryGPT</h1>
-          <p>Your research, agents, and workspace.</p>
+          <h1>{brandName}</h1>
+          <p>{tr("Your research, agents, and workspace.")}</p>
           {error && (
             <p className="notice error" role="alert">
               {error}
             </p>
           )}
           <label>
-            Username
+            {tr("Username")}
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -186,7 +195,7 @@ export function ProjectWorkbench() {
             />
           </label>
           <label>
-            Password
+            {tr("Password")}
             <input
               type="password"
               value={password}
@@ -196,7 +205,7 @@ export function ProjectWorkbench() {
             />
           </label>
           <button className="primary" disabled={loginBusy}>
-            {loginBusy ? "Signing in…" : "Sign in"}
+            {loginBusy ? tr("Signing in…") : tr("Sign in")}
           </button>
         </form>
       </main>
@@ -213,11 +222,11 @@ export function ProjectWorkbench() {
           }}
         >
           <span className="brand-mark">B</span>
-          <strong>BatteryGPT</strong>
+          <strong>{brandName}</strong>
         </Link>
         <button className="new-project primary" onClick={() => void create()}>
           <Plus size={16} />
-          New Project
+          {tr("New Project")}
         </button>
         <nav className="global-nav">
           <button
@@ -225,26 +234,29 @@ export function ProjectWorkbench() {
             onClick={() => setView("search")}
           >
             <Search size={16} />
-            Search
+            {tr("Search")}
           </button>
           <button
             aria-current={view === "inbox" ? "page" : undefined}
             onClick={() => setView("inbox")}
           >
             <Bell size={16} />
-            Inbox
+            {tr("Inbox")}
           </button>
           <button
             aria-current={view === "shared" ? "page" : undefined}
             onClick={() => setView("shared")}
           >
             <MessageSquare size={16} />
-            Shared with me
+            {tr("Shared with me")}
           </button>
         </nav>
         <div className="sidebar-label">
-          PROJECTS{" "}
-          <button aria-label="Refresh Projects" onClick={() => void refresh()}>
+          {tr("PROJECTS")}{" "}
+          <button
+            aria-label={tr("Refresh Projects")}
+            onClick={() => void refresh()}
+          >
             ↻
           </button>
         </div>
@@ -269,12 +281,14 @@ export function ProjectWorkbench() {
           {projects.length === 100 && (
             <button
               onClick={() =>
-                void api<{ projects: Project[] }>(
+                void api<{
+                  projects: Project[];
+                }>(
                   `/api/projects?after=${encode(projects.at(-1)?.id || "")}&limit=100`,
                 ).then((data) => setProjects(data.projects))
               }
             >
-              More Projects
+              {tr("More Projects")}
             </button>
           )}
         </nav>
@@ -293,7 +307,7 @@ export function ProjectWorkbench() {
                 )
               }
             >
-              Theme
+              {tr("Theme")}
             </button>
             <button
               onClick={() =>
@@ -304,7 +318,7 @@ export function ProjectWorkbench() {
                 })
               }
             >
-              Sign out
+              {tr("Sign out")}
             </button>
           </div>
         </footer>
@@ -313,7 +327,7 @@ export function ProjectWorkbench() {
         {error && (
           <p className="notice error" role="alert">
             {error}
-            <button onClick={() => setError("")}>Dismiss</button>
+            <button onClick={() => setError("")}>{tr("Dismiss")}</button>
           </p>
         )}
         {view === "search" ? (
@@ -340,19 +354,22 @@ export function ProjectWorkbench() {
           />
         ) : (
           <div className="project-welcome">
-            <span className="eyebrow">A WORKSPACE FOR YOUR RESEARCH</span>
+            <span className="eyebrow">
+              {tr("A WORKSPACE FOR YOUR RESEARCH")}
+            </span>
             <h1>
-              One Project.
+              {tr("One Project.")}
               <br />
-              Room for every idea.
+              {tr("Room for every idea.")}
             </h1>
             <p>
-              Run agents side by side, open a terminal, and work with shared
-              files.
+              {tr(
+                "Run agents side by side, open a terminal, and work with shared files.",
+              )}
             </p>
             <button className="primary" onClick={() => void create()}>
               <Plus size={16} />
-              Create a Project
+              {tr("Create a Project")}
             </button>
           </div>
         )}
@@ -375,6 +392,7 @@ function ProjectSpace({
   onChanged: () => void;
   onDeleted: () => void;
 }) {
+  const tr = useT();
   const key = `project-view:${actor}:${projectId}:views`;
   const [project, setProject] = useState<Project | null>(null);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
@@ -404,8 +422,12 @@ function ProjectSpace({
     try {
       const [p, s, t] = await Promise.all([
         api<Project>(base),
-        api<{ sessions: AgentSession[] }>(`${base}/sessions?limit=100`),
-        api<{ terminals: ProjectTerminal[] }>(`${base}/terminals?limit=100`),
+        api<{
+          sessions: AgentSession[];
+        }>(`${base}/sessions?limit=100`),
+        api<{
+          terminals: ProjectTerminal[];
+        }>(`${base}/terminals?limit=100`),
       ]);
       if (serial !== refreshSerial.current) return;
       setProject((prior) => (prior && prior.revision > p.revision ? prior : p));
@@ -497,7 +519,9 @@ function ProjectSpace({
       );
     const url = `${base}/terminals/${encode(terminal.id)}/start`;
     for (let attempt = 0; attempt < 100; attempt++) {
-      const result = await command<{ state?: string }>(url, {
+      const result = await command<{
+        state?: string;
+      }>(url, {
         rows: terminal.rows,
         cols: terminal.cols,
       });
@@ -514,23 +538,23 @@ function ProjectSpace({
   if (!project)
     return (
       <div className="empty-state">
-        <h2>Opening Project…</h2>
+        <h2>{tr("Opening Project\u2026")}</h2>
         {error && <p className="notice error">{error}</p>}
       </div>
     );
   if (project.state === "deleted")
     return (
       <div className="empty-state">
-        <h2>Project deleted</h2>
-        <p>Its owned runtime resources have been reclaimed.</p>
-        <button onClick={onDeleted}>Back to Projects</button>
+        <h2>{tr("Project deleted")}</h2>
+        <p>{tr("Its owned runtime resources have been reclaimed.")}</p>
+        <button onClick={onDeleted}>{tr("Back to Projects")}</button>
       </div>
     );
   return (
     <>
       <header className="project-heading">
         <div>
-          <div className="eyebrow">PROJECT WORKSPACE</div>
+          <div className="eyebrow">{tr("PROJECT WORKSPACE")}</div>
           <h1>
             {project.title}
             <span className={`project-state ${project.state}`}>
@@ -542,14 +566,14 @@ function ProjectSpace({
           <button
             disabled={busy}
             onClick={() => {
-              const title = window.prompt("Project name", project.title);
+              const title = window.prompt(tr("Project name"), project.title);
               if (title?.trim())
                 void act(() =>
                   command(base, { title, revision: project.revision }, "PATCH"),
                 );
             }}
           >
-            Rename
+            {tr("Rename")}
           </button>
           <button
             disabled={busy || project.state !== "active"}
@@ -559,14 +583,16 @@ function ProjectSpace({
               )
             }
           >
-            Pause
+            {tr("Pause")}
           </button>
           <button
             disabled={busy || project.state !== "active"}
             onClick={() => {
               if (
                 window.confirm(
-                  "Cold restart this idle Project? Live terminals and admitted work must end first.",
+                  tr(
+                    "Cold restart this idle Project? Live terminals and admitted work must end first.",
+                  ),
                 )
               )
                 void act(() =>
@@ -574,7 +600,7 @@ function ProjectSpace({
                 );
             }}
           >
-            Restart
+            {tr("Restart")}
           </button>
           <button
             className="danger"
@@ -582,7 +608,9 @@ function ProjectSpace({
             onClick={() => {
               if (
                 window.confirm(
-                  "Force a cold Project restart? This ends every running Agent and terminal, holds queued work, and leaves unresolved effects unknown.",
+                  tr(
+                    "Force a cold Project restart? This ends every running Agent and terminal, holds queued work, and leaves unresolved effects unknown.",
+                  ),
                 )
               )
                 void act(() =>
@@ -592,7 +620,7 @@ function ProjectSpace({
                 );
             }}
           >
-            Force restart
+            {tr("Force restart")}
           </button>
           <button
             className="danger"
@@ -600,7 +628,9 @@ function ProjectSpace({
             onClick={() => {
               if (
                 window.confirm(
-                  "Delete this Project, all its Sessions, terminals, workspace files and shares?",
+                  tr(
+                    "Delete this Project, all its Sessions, terminals, workspace files and shares?",
+                  ),
                 )
               )
                 void act(() =>
@@ -612,7 +642,7 @@ function ProjectSpace({
                 );
             }}
           >
-            Delete Project
+            {tr("Delete Project")}
           </button>
         </div>
       </header>
@@ -627,19 +657,19 @@ function ProjectSpace({
             aria-current={tab === "work" ? "page" : undefined}
             onClick={() => setTab("work")}
           >
-            Workbench
+            {tr("Workbench")}
           </button>
           <button
             aria-current={tab === "schedules" ? "page" : undefined}
             onClick={() => setTab("schedules")}
           >
-            Schedules
+            {tr("Schedules")}
           </button>
           <button
             aria-current={tab === "share" ? "page" : undefined}
             onClick={() => setTab("share")}
           >
-            Sharing
+            {tr("Sharing")}
           </button>
         </nav>
         <div className="row-actions">
@@ -656,7 +686,7 @@ function ProjectSpace({
             }
           >
             <Plus size={14} />
-            New agent
+            {tr("New agent")}
           </button>
           <button
             disabled={busy || project.state === "deleting"}
@@ -676,12 +706,12 @@ function ProjectSpace({
             }
           >
             <TerminalSquare size={14} />
-            New terminal
+            {tr("New terminal")}
           </button>
         </div>
       </div>
       <div className="child-strip">
-        <span>Agents</span>
+        <span>{tr("Agents")}</span>
         {sessions
           .filter((s) => s.deletion === 0)
           .map((s) => (
@@ -713,7 +743,7 @@ function ProjectSpace({
                     )
                   }
                 >
-                  Terminate
+                  {tr("Terminate")}
                 </button>
               )}
               <button
@@ -777,10 +807,11 @@ function ProjectSpace({
               ) && (
                 <div className="empty-state">
                   <MessageSquare size={30} />
-                  <h2>Open an agent to begin</h2>
+                  <h2>{tr("Open an agent to begin")}</h2>
                   <p>
-                    Agent views run independently in this Project’s shared
-                    workspace.
+                    {tr(
+                      "Agent views run independently in this Project\u2019s shared workspace.",
+                    )}
                   </p>
                 </div>
               )}
@@ -820,10 +851,12 @@ function ProjectSpace({
     </>
   );
 }
-function mergeEntities<T extends { id: string; revision: number }>(
-  current: T[],
-  next: T[],
-): T[] {
+function mergeEntities<
+  T extends {
+    id: string;
+    revision: number;
+  },
+>(current: T[], next: T[]): T[] {
   return next.map((item) => {
     const old = current.find((prior) => prior.id === item.id);
     return old && old.revision > item.revision ? old : item;

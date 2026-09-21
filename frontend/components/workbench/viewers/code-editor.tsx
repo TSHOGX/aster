@@ -2,8 +2,18 @@
 
 import { useEffect, useRef } from "react";
 import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+} from "@codemirror/view";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+} from "@codemirror/commands";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
@@ -52,23 +62,23 @@ const appTheme = EditorView.theme({
     height: "100%",
     fontSize: "12px",
     backgroundColor: "var(--color-code-bg)",
-    color: "var(--color-code-ink)"
+    color: "var(--color-code-ink)",
   },
   ".cm-scroller": {
     fontFamily:
       "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
     lineHeight: "1.6",
-    overflow: "auto"
+    overflow: "auto",
   },
   ".cm-content": { padding: "12px 0" },
   ".cm-gutters": {
     backgroundColor: "var(--color-code-bg)",
     color: "var(--color-foreground-muted)",
-    border: "none"
+    border: "none",
   },
   "&.cm-focused": { outline: "none" },
   ".cm-activeLine": { backgroundColor: "var(--color-surface-muted)" },
-  ".cm-activeLineGutter": { backgroundColor: "var(--color-surface-muted)" }
+  ".cm-activeLineGutter": { backgroundColor: "var(--color-surface-muted)" },
 });
 
 type Props = {
@@ -92,6 +102,10 @@ export function CodeEditor({ path, initialText, onChange }: Props) {
     const lang = languageForPath(path);
     const extensions: Extension[] = [
       lineNumbers(),
+      EditorView.contentAttributes.of({ "aria-label": `Edit ${path}` }),
+      EditorState.transactionFilter.of((transaction) =>
+        transaction.newDoc.length <= 1 << 20 ? transaction : [],
+      ),
       history(),
       indentOnInput(),
       bracketMatching(),
@@ -103,13 +117,13 @@ export function CodeEditor({ path, initialText, onChange }: Props) {
         if (update.docChanged) {
           onChangeRef.current(update.state.doc.toString());
         }
-      })
+      }),
     ];
     if (lang) extensions.push(lang);
 
     const view = new EditorView({
       state: EditorState.create({ doc: initialText, extensions }),
-      parent: hostRef.current
+      parent: hostRef.current,
     });
     return () => view.destroy();
     // Rebuild only when switching files; text edits flow through updateListener.

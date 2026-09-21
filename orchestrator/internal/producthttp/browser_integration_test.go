@@ -199,9 +199,9 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	if !ready {
 		t.Fatal("frontend did not start")
 	}
-	browser := exec.CommandContext(runctx, "node", filepath.Join(repo, "frontend/node_modules/@playwright/test/cli.js"), "test", "--config", "playwright.project.config.ts")
+	browser := exec.CommandContext(runctx, "node", filepath.Join(repo, "frontend/node_modules/@playwright/test/cli.js"), "test", "--config", "playwright.config.ts")
 	browser.Dir = filepath.Join(repo, "frontend")
-	browser.Env = append(os.Environ(), "PROJECT_BROWSER_URL="+edgeServer.URL, "PLAYWRIGHT_BROWSERS_PATH=/home/hsw/.cache/ms-playwright", "PROJECT_BROWSER_SCREENSHOT="+filepath.Join(os.Getenv("PROJECT_TEST_BIN_DIR"), "S08-workbench.png"))
+	browser.Env = append(os.Environ(), "PROJECT_BROWSER_URL="+edgeServer.URL, "PROJECT_BROWSER_SCREENSHOT="+filepath.Join(os.Getenv("PROJECT_TEST_BIN_DIR"), "S08-workbench.png"))
 	output, err := browser.CombinedOutput()
 	t.Log(string(output))
 	must(t, err)

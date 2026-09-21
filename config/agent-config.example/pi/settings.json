@@ -1,5 +1,5 @@
 {
-  "defaultProvider": "harness_anthropic_proxy",
+  "defaultProvider": "project_model",
   "defaultModel": "example-model",
   "steeringMode": "all",
   "followUpMode": "all",

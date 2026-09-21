@@ -3,9 +3,6 @@
 // it owns no execution, recovery, or attachment lifetime.
 //
 // Authentication, authorization, origin policy and byte limits live here, in Go.
-// The frontend's fetch proxy is not the security boundary: it cannot carry a
-// WebSocket upgrade, and its header stripping left origin enforcement in a place
-// that no longer sees the browser's request.
 package producthttp
 
 import (

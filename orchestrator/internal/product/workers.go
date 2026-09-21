@@ -71,22 +71,7 @@ func (w *Workers) Run(ctx context.Context) {
 		}
 		return nil
 	})
-	loop("capture", time.Second, func(ctx context.Context) error {
-		if w.Captures == nil {
-			return nil
-		}
-		pending, err := w.Store.PendingCaptures(ctx, 8)
-		if err != nil {
-			return err
-		}
-		var errs []error
-		for _, c := range pending {
-			attempt, done := context.WithTimeout(ctx, 5*time.Second)
-			errs = append(errs, w.Captures.Export(attempt, c))
-			done()
-		}
-		return errors.Join(errs...)
-	})
+	loop("capture", time.Second, w.captureStep)
 	loop("metadata retention", time.Minute, w.Store.PruneMetadata)
 	loop("adjacent", time.Second, func(ctx context.Context) error {
 		_, scheduleErr := w.Store.TickSchedules(ctx, 16)
@@ -259,4 +244,29 @@ func (s *Store) projectChildrenForCleanup(ctx context.Context, project string, d
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// One Session's slow source never serializes unrelated exports. The selection
+// places one item per Session first; at most eight bounded streams run at once.
+func (w *Workers) captureStep(ctx context.Context) error {
+	if w.Captures == nil {
+		return nil
+	}
+	pending, err := w.Store.PendingCaptures(ctx, 8)
+	if err != nil {
+		return err
+	}
+	errs := make([]error, len(pending))
+	var group sync.WaitGroup
+	for index, capture := range pending {
+		group.Add(1)
+		go func(index int, capture NativeCapture) {
+			defer group.Done()
+			attempt, done := context.WithTimeout(ctx, 5*time.Second)
+			defer done()
+			errs[index] = w.Captures.Export(attempt, capture)
+		}(index, capture)
+	}
+	group.Wait()
+	return errors.Join(errs...)
 }

@@ -78,7 +78,7 @@ func hostEndpoint(t *testing.T) netip.Addr {
 	return netip.Addr{}
 }
 
-const guestModels = `{"providers":{"gateway":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"harness-placeholder","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
+const guestModels = `{"providers":{"gateway":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"project-service-token","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
 
 func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	endpoint, binaries := os.Getenv("PROJECT_TEST_ENDPOINT"), os.Getenv("PROJECT_TEST_BIN_DIR")
@@ -217,6 +217,8 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	stopGateway := newGateway(t, gatewayListener)
 	defer stopGateway()
 	captures := &product.Captures{Store: store, Backend: backend, Directory: t.TempDir()}
+	recovery := &product.AgentRecovery{Store: store, Lifecycle: lifecycle, Backend: backend}
+	retirement := &product.ChildRetirement{Store: store, Lifecycle: lifecycle, Backend: backend, Captures: captures}
 
 	serial := 0
 	shell := func(t *testing.T, command string) (string, int32) {
@@ -336,7 +338,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 		return strings.TrimSpace(out)
 	}
 	tokenA, tokenB := credential(t, "a"), credential(t, "b")
-	if tokenA == "" || tokenA == tokenB || strings.Contains(tokenA+tokenB, "fixture-upstream-secret") || strings.Contains(tokenA+tokenB, "harness-placeholder") {
+	if tokenA == "" || tokenA == tokenB || strings.Contains(tokenA+tokenB, "fixture-upstream-secret") || strings.Contains(tokenA+tokenB, "project-service-token") {
 		t.Fatalf("guest credentials are wrong: %q %q", tokenA, tokenB)
 	}
 	t.Log("two real Pi Sessions completed overlapping turns through one Project gateway, each attributed to its own Session, incarnation and turn, with the upstream secret held only by the gateway")
@@ -435,16 +437,9 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 		must(t, err)
 		quiesced = len(blockers) == 0
 		if !quiesced {
-			// Drive the child cleanup the deletion requested, using the same exported
-			// operations a composed worker uses: stop the runner, then settle the child
-			// once its termination evidence and activity allow it.
-			// Completed native bytes must leave the sandbox before it does, so the
-			// capture worker runs alongside child cleanup.
-			pendingCaptures, err := store.PendingCaptures(runctx, 16)
-			must(t, err)
-			for _, capture := range pendingCaptures {
-				must(t, captures.Export(runctx, capture))
-			}
+			// Use the actual retirement path: deleted Sessions discard their private
+			// captures only after runner/descendant termination is established.
+			must(t, recovery.Step(runctx, 8))
 			children, err := store.PendingChildren(runctx, 16)
 			must(t, err)
 			for _, child := range children {
@@ -453,7 +448,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if err := store.SettleChild(runctx, child); err != nil && !errors.Is(err, product.ErrBusy) {
+				if err := retirement.Step(runctx, child); err != nil && !errors.Is(err, product.ErrBusy) && !errors.Is(err, product.ErrPending) {
 					t.Fatal(err)
 				}
 			}
@@ -465,7 +460,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 		children, _ := store.PendingChildren(runctx, 16)
 		var reasons []string
 		for _, child := range children {
-			reasons = append(reasons, fmt.Sprintf("%s: %v", child.ID, store.SettleChild(runctx, child)))
+			reasons = append(reasons, fmt.Sprintf("%s: %v", child.ID, retirement.Step(runctx, child)))
 		}
 		t.Fatalf("Project did not quiesce for an explicit restart: %+v\nsettle: %v", blockers, reasons)
 	}

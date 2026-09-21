@@ -2,14 +2,12 @@
 // projection stream and terminal sockets to the Go application, and everything
 // else to the frontend.
 //
-// This exists because a WebSocket upgrade cannot pass through the frontend's
-// fetch proxy, and because that proxy stripped Origin before forwarding, which
-// left origin enforcement in the one place that no longer saw the browser's
-// request. Here Go receives the real request, so the security boundary and the
-// upgrade path are the same hop.
+// One Go hop preserves browser Origin and carries HTTP, SSE and WebSocket
+// through the same authentication and authorization boundary.
 package edge
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -25,6 +23,8 @@ import (
 type Config struct {
 	// Application serves the product API, events and terminal sockets.
 	Application *url.URL
+	// ApplicationSocket confines the local API hop to an owner-only Unix socket.
+	ApplicationSocket string
 	// Frontend serves assets and server-rendered pages.
 	Frontend *url.URL
 	// APIPrefixes are routed to Application. Everything else goes to Frontend.
@@ -70,7 +70,14 @@ func New(config Config) (http.Handler, error) {
 		// must not be buffered by a decompressor on the way through.
 		DisableCompression: true,
 	}
-	application := reverseProxy(config.Application, transport)
+	applicationTransport := transport
+	if config.ApplicationSocket != "" {
+		applicationTransport = transport.Clone()
+		applicationTransport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", config.ApplicationSocket)
+		}
+	}
+	application := reverseProxy(config.Application, applicationTransport)
 	frontend := reverseProxy(config.Frontend, transport)
 	prefixes := config.prefixes()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +106,7 @@ func reverseProxy(upstream *url.URL, transport http.RoundTripper) *httputil.Reve
 			// client-supplied X-Forwarded-For cannot become the leftmost entry, and
 			// X-Forwarded-Host names the public origin rather than this hop. The
 			// application is the origin authority, so Origin is passed through
-			// untouched: that is precisely what the old Node proxy stripped.
+			// untouched for the application's origin check.
 			p.SetXForwarded()
 			if host, _, err := net.SplitHostPort(p.In.RemoteAddr); err == nil {
 				p.Out.Header.Set("X-Real-IP", host)

@@ -9,7 +9,7 @@ import (
 
 func TestSessionConfigurationSelectionSurvivesCredentialReplacement(t *testing.T) {
 	source, root := t.TempDir(), t.TempDir()
-	authored := `{"providers":{"local":{"apiKey":"harness-placeholder","baseUrl":"http://service"}}}`
+	authored := `{"providers":{"local":{"apiKey":"project-service-token","baseUrl":"http://service"}}}`
 	if err := os.WriteFile(filepath.Join(source, "models.json"), []byte(authored), 0600); err != nil {
 		t.Fatal(err)
 	}

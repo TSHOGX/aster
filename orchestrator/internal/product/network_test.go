@@ -60,7 +60,7 @@ func TestReachabilityValidationRejectsUnsafeDeclarations(t *testing.T) {
 	// reserved for a Project.
 	bad := serviceProfile()
 	bad.Reachability.Services[0].Gateway = netip.MustParseAddrPort("127.0.0.1:1")
-	wantError(t, bad.validate(), ErrInvalid)
+	wantError(t, bad.Validate(), ErrInvalid)
 }
 
 func TestReachabilityDeclarationAndProjections(t *testing.T) {
@@ -319,4 +319,23 @@ func TestServiceRenewalFencesOwnerAndNeverRevivesExpiredGrant(t *testing.T) {
 	wantError(t, s.RenewService(ctx, i, "model", time.Hour), ErrNotFound)
 	_, err = s.AuthorizeService(ctx, "model", token)
 	wantError(t, err, ErrNotFound)
+}
+
+func TestNativeAbortRetainsExistingRequestUntilCancellationSettles(t *testing.T) {
+	s, scope, i, command := agentServiceFixture(t)
+	_, token, err := s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
+	must(t, err)
+	existing, err := s.AuthorizeService(ctx, "model", token)
+	must(t, err)
+	session, err := s.Session(ctx, scope, i.SessionID)
+	must(t, err)
+	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop", session.ControlRevision))
+	// A gateway check can happen after durable Stop admission but before Pi reads
+	// abort. Existing stream must survive that interval; a new request is refused.
+	must(t, s.HoldsAttribution(ctx, existing))
+	_, err = s.AuthorizeService(ctx, "model", token)
+	wantError(t, err, ErrNotFound)
+	_, err = s.db.Exec(`UPDATE turns SET state='canceled' WHERE id=?`, command.TurnID)
+	must(t, err)
+	wantError(t, s.HoldsAttribution(ctx, existing), ErrNotFound)
 }

@@ -1,12 +1,13 @@
 "use client";
+import { useT } from "@/lib/i18n";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { classifyArtifact } from "@/lib/mime";
 import { readPreview } from "@/lib/project-api";
 import { MarkdownView } from "@/components/workbench/markdown-view";
 import { CodeView } from "@/components/workbench/viewers/code-view";
-
 export function FilePreview({ path, href }: { path: string; href: string }) {
+  const tr = useT();
   const [loaded, setLoaded] = useState<{
     blob: Blob;
     url: string;
@@ -49,7 +50,7 @@ export function FilePreview({ path, href }: { path: string; href: string }) {
     };
   }, [href, path]);
   if (error) return <p className="notice error">{error}</p>;
-  if (!loaded) return <p className="notice">Loading preview…</p>;
+  if (!loaded) return <p className="notice">{tr("Loading preview\u2026")}</p>;
   if (kind.kind === "image")
     return (
       <div className="image-preview">
@@ -72,7 +73,7 @@ export function FilePreview({ path, href }: { path: string; href: string }) {
       />
     );
   if (["spreadsheet", "document", "presentation"].includes(kind.kind))
-    return <OfficePreview blob={loaded.blob} kind={kind.kind} />;
+    return <OfficePreview blob={loaded.blob} url={loaded.url} kind={kind.kind} path={path} />;
   if (kind.kind === "markdown" && loaded.blob.size <= 1 << 20)
     return (
       <div className="file-markdown">
@@ -86,14 +87,17 @@ export function FilePreview({ path, href }: { path: string; href: string }) {
     return <CodeView code={loaded.text} language={kind.language} />;
   return (
     <div className="empty-state">
-      <p>Preview is not available for this file.</p>
+      <p>{tr("Preview is not available for this file.")}</p>
       <a href={href} download>
-        Download {path}
+        {tr("Download")}
+        {path}
       </a>
     </div>
   );
 }
-function OfficePreview({ blob, kind }: { blob: Blob; kind: string }) {
+function OfficePreview({ blob, url, kind, path }: { blob: Blob; url: string; kind: string; path: string }) {
+  const tr = useT();
+  const [notice, setNotice] = useState("");
   const host = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -110,12 +114,34 @@ function OfficePreview({ blob, kind }: { blob: Blob; kind: string }) {
             "@/components/workbench/viewers/office-excel-loader"
           );
           if (gone) return;
-          const view = renderer.init(element, {
-            minColLength: 10,
-            minRowLength: 20,
-          });
-          dispose = () => view.destroy();
-          await view.preview(buffer);
+          const options = { minColLength: 10, minRowLength: 20, xls: path.toLowerCase().endsWith(".xls") };
+          const stage = document.createElement("div");
+          stage.style.height = "100%";
+          element.appendChild(stage);
+          const view = renderer.init(stage, options);
+          let rendering: Promise<unknown> = Promise.resolve();
+          dispose = () => {
+            // The parser queues callbacks against its workbook during load.
+            // Keep its detached stage valid until those callbacks finish.
+            const finish = () => { setTimeout(() => view.destroy(), 0); };
+            void rendering.then(finish, finish);
+          };
+          try {
+            // Reuse the owned object URL: passing an ArrayBuffer makes this
+            // renderer create another blob URL that it never revokes.
+            rendering = view.preview(url);
+            await rendering;
+          } catch (error) {
+            if (gone || !(error instanceof Error) || !error.message.includes("anchors")) throw error;
+            // Its embedded ExcelJS parser cannot read some chart-only drawing
+            // relationships. Spreadsheet conversion preserves cells so the
+            // original workbook remains useful without altering its download.
+            const converted = { ...options, xls: true };
+            view.setOptions(converted);
+            rendering = view.preview(url);
+            await rendering;
+            if (!gone) setNotice(tr("Some drawings are unavailable in this preview. Download the workbook to view them."));
+          }
         } else if (kind === "document") {
           const renderer = await import("docx-preview");
           if (gone) return;
@@ -143,9 +169,10 @@ function OfficePreview({ blob, kind }: { blob: Blob; kind: string }) {
       dispose();
       element.replaceChildren();
     };
-  }, [blob, kind]);
+  }, [blob, url, kind, path, tr]);
   return (
     <>
+      {notice && <p className="notice">{notice}</p>}
       {error && <p className="notice error">{error}</p>}
       <div className="office-preview" ref={host} />
     </>

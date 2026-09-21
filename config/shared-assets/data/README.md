@@ -5,5 +5,5 @@ reference material into a manually maintained private asset revision and add the
 facts and skills there. Keep source filenames, internal schemas, bucket layouts
 and credentials outside the public repository and release build inputs.
 
-Running generations stay pinned to their mounted snapshot. Publish a new immutable
+Projects stay pinned to their mounted snapshot. Publish a new immutable
 snapshot to change reference data; do not mutate a live snapshot in place.

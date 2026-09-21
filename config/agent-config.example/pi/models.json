@@ -1,9 +1,9 @@
 {
   "providers": {
-    "harness_anthropic_proxy": {
+    "project_model": {
       "baseUrl": "http://model.service.internal:443",
       "api": "anthropic-messages",
-      "apiKey": "harness-placeholder",
+      "apiKey": "project-service-token",
       "models": [
         {
           "id": "example-model",

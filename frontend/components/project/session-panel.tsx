@@ -1,4 +1,5 @@
 "use client";
+import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownView } from "@/components/workbench/markdown-view";
 import {
@@ -19,7 +20,6 @@ import {
   emptySessionView,
   type SessionView,
 } from "@/lib/project-projections";
-
 export function SessionPanel({
   actor,
   session,
@@ -37,6 +37,7 @@ export function SessionPanel({
   onFile: (path: string) => void;
   targetMessage: string;
 }) {
+  const tr = useT();
   const key = `project-view:${actor}:${session.project_id}:draft:${session.id}`;
   const [draft, setDraft] = useState(() =>
     (() => {
@@ -65,14 +66,16 @@ export function SessionPanel({
   const loadTurns = async (after = 0) => {
     try {
       setTurnHistory(
-        (await api<{ turns: Turn[] }>(`${base}/turns?after=${after}&limit=50`))
-          .turns,
+        (
+          await api<{
+            turns: Turn[];
+          }>(`${base}/turns?after=${after}&limit=50`)
+        ).turns,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Turn history unavailable.");
     }
   };
-
   const request = useRef(0);
   const invalidate = useCallback(() => {
     request.current++;
@@ -86,7 +89,9 @@ export function SessionPanel({
       );
       if (serial !== request.current) return;
       setView((current) => acceptSnapshot(current, next));
-      const records = await api<{ records: AgentRecord[] }>(
+      const records = await api<{
+        records: AgentRecord[];
+      }>(
         `${base}/records?after=${state.current.snapshot ? state.current.cursor : next.record_cursor}`,
       );
       if (serial === request.current)
@@ -173,24 +178,26 @@ export function SessionPanel({
         </div>
         <div className="row-actions">
           <button
-            title="Rename this Agent Session"
+            title={tr("Rename this Agent Session")}
             onClick={() => {
-              const title = window.prompt("Session title", current.title);
+              const title = window.prompt(tr("Session title"), current.title);
               if (title?.trim())
                 void act(() =>
                   command(base, { title, revision: current.revision }, "PATCH"),
                 );
             }}
           >
-            Rename
+            {tr("Rename")}
           </button>
-          <button onClick={onClose}>Close view</button>
+          <button onClick={onClose}>{tr("Close view")}</button>
           <button
             className="danger"
             onClick={() => {
               if (
                 window.confirm(
-                  "Delete this Agent Session and its conversation? Project files and other Sessions remain.",
+                  tr(
+                    "Delete this Agent Session and its conversation? Project files and other Sessions remain.",
+                  ),
                 )
               )
                 void act(() =>
@@ -202,7 +209,7 @@ export function SessionPanel({
                 );
             }}
           >
-            Delete
+            {tr("Delete")}
           </button>
         </div>
       </header>
@@ -214,22 +221,23 @@ export function SessionPanel({
       {current.state === "blocked" && (
         <section className="notice warning">
           <p>
-            This Session needs recovery. Unknown prior effects will not be
-            repeated.
+            {tr(
+              "This Session needs recovery. Unknown prior effects will not be repeated.",
+            )}
           </p>
           {view.snapshot?.recovery
             ?.filter((r) => r.recovery !== "none")
             .map((r) => (
               <p key={r.id}>
                 {r.recovery === "complete"
-                  ? "Journal reconciled"
+                  ? tr("Journal reconciled")
                   : r.recovery === "failed"
-                    ? "Journal recovery unavailable"
-                    : "Reconciling original journal"}{" "}
+                    ? tr("Journal recovery unavailable")
+                    : tr("Reconciling original journal")}{" "}
                 ·{" "}
                 {r.cleanup === "settled"
-                  ? "Child processes settled"
-                  : "Descendant cleanup is unknown"}
+                  ? tr("Child processes settled")
+                  : tr("Descendant cleanup is unknown")}
                 {r.error ? ` · ${r.error}` : ""}
               </p>
             ))}
@@ -245,7 +253,7 @@ export function SessionPanel({
                 )
               }
             >
-              Retry journal recovery
+              {tr("Retry journal recovery")}
             </button>
           )}
           <button
@@ -253,7 +261,9 @@ export function SessionPanel({
             onClick={() => {
               if (
                 window.confirm(
-                  "Continue from the retained native history? Prior unknown effects remain unknown and queued prompts will stay held.",
+                  tr(
+                    "Continue from the retained native history? Prior unknown effects remain unknown and queued prompts will stay held.",
+                  ),
                 )
               )
                 void act(() =>
@@ -264,7 +274,7 @@ export function SessionPanel({
                 );
             }}
           >
-            Continue from history
+            {tr("Continue from history")}
           </button>
         </section>
       )}
@@ -286,7 +296,7 @@ export function SessionPanel({
               setBefore(view.snapshot?.messages[0]?.sequence || 0);
             }}
           >
-            Earlier messages
+            {tr("Earlier messages")}
           </button>
         )}
         {(before > 0 || focusMessage) && (
@@ -296,15 +306,16 @@ export function SessionPanel({
               setBefore(0);
             }}
           >
-            Return to latest
+            {tr("Return to latest")}
           </button>
         )}
         {!view.snapshot?.messages.length && (
           <div className="empty-state">
-            <h3>Start a conversation</h3>
+            <h3>{tr("Start a conversation")}</h3>
             <p>
-              This agent shares the Project workspace with your other agents and
-              terminals.
+              {tr(
+                "This agent shares the Project workspace with your other agents and terminals.",
+              )}
             </p>
           </div>
         )}
@@ -314,7 +325,7 @@ export function SessionPanel({
             key={message.id}
             data-message-id={message.id}
           >
-            <small>{message.role === "user" ? "You" : "Agent"}</small>
+            <small>{message.role === "user" ? tr("You") : tr("Agent")}</small>
             <MarkdownView content={message.content.slice(0, 64000)} />
             {message.content.length > 64000 && (
               <button
@@ -331,7 +342,7 @@ export function SessionPanel({
                   setTimeout(() => URL.revokeObjectURL(url), 1000);
                 }}
               >
-                Download full message
+                {tr("Download full message")}
               </button>
             )}
             {[
@@ -356,13 +367,16 @@ export function SessionPanel({
             className="chat-message assistant streaming"
             aria-live="polite"
           >
-            <small>Agent · latest output</small>
+            <small>{tr("Agent \u00B7 latest output")}</small>
             <MarkdownView content={view.partial} highlight={false} />
           </article>
         )}
         {view.tools.length > 0 && (
           <details className="tool-trace">
-            <summary>Recent activity ({view.tools.length})</summary>
+            <summary>
+              {tr("Recent activity (")}
+              {view.tools.length})
+            </summary>
             {view.tools.map((tool) => (
               <details key={tool.id}>
                 <summary>
@@ -375,7 +389,7 @@ export function SessionPanel({
         )}
         {active && !view.partial && (
           <p className="working-indicator" role="status">
-            Agent is working…
+            {tr("Agent is working\u2026")}
           </p>
         )}
       </div>
@@ -383,22 +397,29 @@ export function SessionPanel({
         .filter((turn) => turn.state === "unknown")
         .map((turn) => (
           <p className="notice warning" key={turn.id}>
-            Unknown outcome: {turn.content.slice(0, 180)}. Inspect any files or
-            external effects before repeating this work.
+            {tr("Unknown outcome:")}
+            {turn.content.slice(0, 180)}
+            {tr(
+              ". Inspect any files or external effects before repeating this work.",
+            )}
           </p>
         ))}
       {turnHistory && (
-        <section className="prompt-queue" aria-label="Turn history">
+        <section className="prompt-queue" aria-label={tr("Turn history")}>
           <div className="row-actions">
-            <button onClick={() => setTurnHistory(null)}>Close history</button>
-            <button onClick={() => void loadTurns()}>First turns</button>
+            <button onClick={() => setTurnHistory(null)}>
+              {tr("Close history")}
+            </button>
+            <button onClick={() => void loadTurns()}>
+              {tr("First turns")}
+            </button>
             {turnHistory.length === 50 && (
               <button
                 onClick={() =>
                   void loadTurns(turnHistory.at(-1)?.sequence || 0)
                 }
               >
-                Next turns
+                {tr("Next turns")}
               </button>
             )}
           </div>
@@ -413,7 +434,7 @@ export function SessionPanel({
                   disabled={busy}
                   onClick={() => control(turn, "release")}
                 >
-                  Release prompt
+                  {tr("Release prompt")}
                 </button>
               )}
               {["held", "queued"].includes(turn.state) && (
@@ -421,7 +442,7 @@ export function SessionPanel({
                   disabled={busy}
                   onClick={() => control(turn, "canceled")}
                 >
-                  Cancel prompt
+                  {tr("Cancel prompt")}
                 </button>
               )}
             </details>
@@ -442,7 +463,7 @@ export function SessionPanel({
                       disabled={busy}
                       onClick={() => control(turn, "release")}
                     >
-                      Release
+                      {tr("Release")}
                     </button>
                     {active && (
                       <button
@@ -458,20 +479,20 @@ export function SessionPanel({
                           )
                         }
                       >
-                        Steer
+                        {tr("Steer")}
                       </button>
                     )}
                   </>
                 ) : (
                   <button disabled={busy} onClick={() => control(turn, "held")}>
-                    Hold
+                    {tr("Hold")}
                   </button>
                 )}
                 <button
                   disabled={busy}
                   onClick={() => control(turn, "canceled")}
                 >
-                  Cancel prompt
+                  {tr("Cancel prompt")}
                 </button>
               </div>
             </div>
@@ -490,7 +511,7 @@ export function SessionPanel({
           value={draft}
           maxLength={64000}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Ask this agent to work in your Project…"
+          placeholder={tr("Ask this agent to work in your Project\u2026")}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
               e.preventDefault();
@@ -500,9 +521,9 @@ export function SessionPanel({
         />
         <div className="composer-actions">
           <div className="row-actions">
-            <small>Shared /workspace · Ctrl ↵ to send</small>
+            <small>{tr("Shared /workspace \u00B7 Ctrl \u21B5 to send")}</small>
             <button type="button" onClick={() => void loadTurns()}>
-              Turn history
+              {tr("Turn history")}
             </button>
           </div>
           <div className="row-actions">
@@ -520,7 +541,7 @@ export function SessionPanel({
                   )
                 }
               >
-                Stop turn
+                {tr("Stop turn")}
               </button>
             )}
             <button
@@ -528,13 +549,13 @@ export function SessionPanel({
               disabled={busy || !draft.trim()}
               onClick={() => send(true)}
             >
-              Hold prompt
+              {tr("Hold prompt")}
             </button>
             <button
               className="primary"
               disabled={busy || !draft.trim() || current.state === "blocked"}
             >
-              Send
+              {tr("Send")}
             </button>
           </div>
         </div>

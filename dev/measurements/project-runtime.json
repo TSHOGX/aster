@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "date": "2026-09-22",
+  "platform": "linux/arm64",
+  "engine_module": "v0.0.2-0.20260920024301-e8cd021a9c7c",
+  "runtime_digest": "sha256:c764b0da5f33fb935e8858917842336edcfae40af999ab3f8e139f5b5c00a607",
+  "scenario": "TestReleasedMixedWorkload",
+  "workload": {
+    "projects": 2,
+    "agents": 4,
+    "retained_ptys": 2,
+    "sustained_seconds_minimum": 300,
+    "rounds": 60,
+    "project_cpu_millis": 2000,
+    "project_memory_bytes": 2147483648,
+    "workspace_capacity_bytes": 134217728,
+    "runtime_capacity_bytes": 134217728,
+    "idle_after_seconds": 10,
+    "capture_failure": "one Session host directory temporarily unwritable",
+    "scheduled_turns": "one existing Session each minute",
+    "owner_fault": "SIGKILL and restart after 90 seconds"
+  },
+  "measurements": {
+    "http_samples": 1012,
+    "http_p95_ms": 9.870127,
+    "http_p99_ms": 15.869009,
+    "projection_samples": 249,
+    "projection_p95_ms": 266.906941,
+    "rss_max_kib": 39744,
+    "round_max_seconds": 0.548362389,
+    "idle_seconds": 12.707790284,
+    "cpu_max_process_seconds": 31.55,
+    "database_bytes_after_workload": 4112384,
+    "unfinished_capture_files_lifecycle_recovery": 0
+  },
+  "limits": [
+    "RSS is sampled once per round.",
+    "CPU is the maximum cumulative CPU time of either owner process, not their sum.",
+    "File-tree allocated bytes include shared template/reflink views and are not exclusive physical usage.",
+    "No physical power loss or active-active claim."
+  ]
+}

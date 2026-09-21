@@ -440,3 +440,25 @@ END;
 CREATE TRIGGER command_control_update AFTER UPDATE OF state ON agent_commands WHEN NEW.state<>OLD.state BEGIN
  UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
 END;
+
+
+CREATE TABLE content_publications (
+ store_id TEXT NOT NULL,
+ purpose TEXT NOT NULL CHECK(purpose IN ('assets','config')),
+ revision_digest TEXT NOT NULL CHECK(revision_digest LIKE 'sha256:%'),
+ capacity INTEGER NOT NULL CHECK(capacity>0),
+ entries TEXT NOT NULL,
+ staging_volume_id TEXT NOT NULL DEFAULT '',
+ derived_volume_id TEXT NOT NULL DEFAULT '',
+ published_volume_id TEXT NOT NULL DEFAULT '',
+ stage TEXT NOT NULL CHECK(stage IN ('preparing','staged','derived','published','failed')),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(store_id,purpose,revision_digest),
+ CHECK((stage='published') = (published_volume_id<>'')),
+ CHECK(published_volume_id='' OR published_volume_id=derived_volume_id),
+ CHECK((stage IN ('preparing','staged','failed')) OR derived_volume_id<>''),
+ CHECK((stage IN ('preparing','failed')) OR staging_volume_id<>''),
+ CHECK(staging_volume_id='' OR staging_volume_id<>derived_volume_id)
+);

@@ -128,6 +128,9 @@ func (s *Store) AuthorizeService(ctx context.Context, audience, token string) (A
 }
 
 // HoldsAttribution reports whether one already attributed request may continue.
+// A stopping turn retains its existing request until native abort settles.
+// Dropping it at abort admission races Pi and turns cancellation into a network
+// error. Fresh requests still require starting/running in AuthorizeService.
 // A request drains when its own turn leaves admission, even though the grant
 // itself survives for the Session's next turn.
 func (s *Store) HoldsAttribution(ctx context.Context, a Attribution) error {
@@ -136,7 +139,7 @@ func (s *Store) HoldsAttribution(ctx context.Context, a Attribution) error {
  JOIN service_grants g ON g.id=? AND g.state='active' AND g.expires_at>? AND g.session_id=t.session_id
  JOIN projects p ON p.id=g.project_id AND p.state='active'
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.state='running'
- WHERE t.id=? AND t.state IN ('starting','running')`, a.Grant.ID, s.timestamp(), a.TurnID).Scan(&state)
+ WHERE t.id=? AND t.state IN ('starting','running','stopping')`, a.Grant.ID, s.timestamp(), a.TurnID).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}

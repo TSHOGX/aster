@@ -13,7 +13,7 @@ import (
 // The runner replaces it once per incarnation with this Session's application
 // token. Authored configuration that already holds a real secret is rejected:
 // a provider credential must never be checked into product configuration.
-const credentialPlaceholder = "harness-placeholder"
+const credentialPlaceholder = "project-service-token"
 
 // materializeCredential rewrites every provider apiKey in this Session's authored
 // models.json. It runs before Pi starts, so a turn never races a configuration

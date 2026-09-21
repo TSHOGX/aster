@@ -1,74 +1,33 @@
-# Development helpers
+# Isolated runtime verification
 
-`verify-khora.sh` runs real application tests inside disposable mount, network,
-PID and cgroup namespaces with a private `/run` and btrfs backing storage. It builds
-or accepts the pinned engine. No private script, sibling checkout or fixed gateway
-account is required. Application code still uses only public engine APIs.
+Prerequisites: Linux with mount/network/PID namespaces, cgroup v2 delegation,
+btrfs with simple quotas, runsc, iproute2/nftables, Go, Python, sudo and sufficient
+disposable disk/memory. The harness creates a sparse 16 GiB btrfs image, an isolated
+network and private engine state. It never attaches an existing engine database.
 
-## Prerequisites
+Build an immutable [Project image](../docs/sandbox-image.md), then run as the
+normal build user (the script invokes `sudo -n` for the substrate):
 
-The host needs Go, Python, runsc, iproute2, btrfs tools, Linux namespaces and writable
-cgroup v2 delegation. Gateway identity requires `SO_PEERPIDFD` (Linux 6.5+).
-Private module access or a populated Go cache is needed for the pinned Khora build.
-Build a fresh [application template](../docs/sandbox-image.md) first.
-
-From the repository root (replace the template and output paths):
-
-```bash
-sudo env "PATH=$PATH" "GOPATH=$(go env GOPATH)" "GOCACHE=$(go env GOCACHE)" \
-  bash dev/verify-khora.sh \
-  --template-dir /absolute/path/templates/battery \
-  --manifest /absolute/path/templates/battery.manifest.json \
-  --output /absolute/path/private/verification-output
+```sh
+dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-`--engine FILE` accepts an existing pinned engine. Without it the script builds
-from `orchestrator/go.mod` with the required engine version ldflag. `--via-user`
-selects an existing non-root account (default `nobody`). The script exports that
-account's UID/GID to tests; the root engine and gateway must have distinct UIDs.
+Suites are `release`, `mixed`, `browser`, `faults` and `all`. The default is the
+actual executable/image release gate. `mixed` runs over five minutes. `browser`
+requires `npm run build` in the frontend and an installed Playwright Chromium.
+Provide `PLAYWRIGHT_BROWSERS_PATH` if using a nondefault cache. The script builds
+the pinned engine or accepts `--engine FILE`; module caches remain with the build
+user. No private checkout path is compiled into the public test harness.
 
-The template is mounted read-only. The script creates an 8 GiB sparse btrfs image
-and disposable engine volumes, cgroups, sockets and network interfaces; cleanup
-removes the substrate after tests. Its controlled upstreams are inside the isolated
-network. Raw `tests.log`, `engine.log` and `revisions.json` are copied to `--output`
-on success or failure. Keep that directory private and separate from user storage.
+Logs, revision metadata, screenshots and workload measurements go to the explicit
+output directory. The disposable filesystem is removed after namespace teardown;
+the named output directory is retained. Use an untracked location and review its
+contents before sharing. Never place secrets in test fixture arguments.
 
-## Selection and browser checks
+`project-substrate.sh COMMAND...` can run an already built test command with
+`PROJECT_TEST_ENGINE`, `PROJECT_TEST_TEMPLATE` and `PROJECT_TEST_OUTPUT` set.
+Optional `PROJECT_TEST_VIA_UID/GID` select its non-engine gateway identity; defaults
+use UID/GID 65534. The executable gate configures an owner-only private API socket,
+a disposable mTLS engine proxy and reachable non-loopback model/frontend origins.
 
-`--run REGEX` defaults to `^TestKhora`. `--timeout DURATION` defaults to a five-minute
-per-package test deadline. Packages run serially against one engine; workload tests
-create explicit concurrency internally. See [verification](../docs/verification.md)
-for the full source and integration matrix.
-
-`--browser` enables the daemon test's real Chromium journey. Install frontend
-packages and Chromium as the ordinary user first, then pass the executable path
-through sudo so the root test process can use that installation:
-
-```bash
-(cd frontend && npm ci && npx --no-install playwright install chromium)
-khora_browser=$(cd frontend && node --input-type=module -e 'import { chromium } from "playwright"; console.log(chromium.executablePath())')
-sudo env "PATH=$PATH" "GOPATH=$(go env GOPATH)" "GOCACHE=$(go env GOCACHE)" \
-  "PLAYWRIGHT_CHROMIUM_EXECUTABLE=$khora_browser" \
-  bash dev/verify-khora.sh \
-  --template-dir /absolute/path/templates/battery \
-  --manifest /absolute/path/templates/battery.manifest.json \
-  --run '^TestKhoraDaemonStartsWithoutEmbeddedRuntime$' --browser \
-  --output /absolute/path/private/browser-output
-```
-
-Chromium also needs its host shared libraries. The browser script starts Next on
-an ephemeral port in the test namespace and uses the real daemon through its proxy.
-It shares `frontend/.next` with ordinary Next runs, so stop other frontend dev/build
-processes before running it. The six fixture browser checks are a separate suite.
-
-## Sustained workload
-
-Select `--run '^TestKhoraSustainedRetainedWorkload$'` to run at least 60 seconds with
-two shell sessions, 32 KiB output per normal turn, repeated pause/resume and owner
-replacement during two eight-second turns. It checks exact workspace counters and
-message identities, then prints `SUSTAINED_RESULT` with latency, logical storage
-accounting and released execution capacity. Capture and model gateway interruptions
-are tested separately. See [measurements](../docs/development-evidence.md).
-
-`build-dns-pin.sh` is an optional DNS helper for rootfs build hosts. These development
-scripts do not perform production migration or deployment.
+See [verification](../docs/verification.md) for acceptance criteria and coverage.

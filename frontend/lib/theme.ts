@@ -1,6 +1,6 @@
 export type Theme = "light" | "dark";
 
-export const THEME_STORAGE_KEY = "art-theme";
+export const THEME_STORAGE_KEY = "project-theme";
 
 /** Page background per theme; mirrors --bg in globals.css. Used for mobile chrome. */
 const THEME_COLOR: Record<Theme, string> = {

@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
-# Build a new immutable application template; Khora owns PID 1 and placements.
+# Assemble a new immutable Project runtime template and export its Go manifest.
 set -euo pipefail
-khora_template=${1:?usage: build-khora-template.sh NEW_TEMPLATE_DIRECTORY}
-khora_template=$(realpath -m -- "$khora_template")
-khora_repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
-[[ $EUID == 0 ]] || { echo 'template build requires root in a disposable builder' >&2; exit 1; }
-[[ ! -e "$khora_template" ]] || { echo 'template destination already exists; choose a new revision directory' >&2; exit 1; }
-[[ ! -e "$khora_template.manifest.json" && ! -e "$khora_template.manifest.sha256" ]] || { echo 'template release metadata already exists; choose a new revision' >&2; exit 1; }
-[[ -z $(git -C "$khora_repo" ls-files --others --ignored --exclude-standard sandbox-image/files) ]] || {
-  echo 'ignored guest overlay files present; use a clean source checkout' >&2
-  exit 1
-}
-khora_module_dir=$(go -C "$khora_repo/orchestrator" list -m -f '{{.Dir}}' github.com/TSHOGX/khora)
-khora_module_version=$(go -C "$khora_repo/orchestrator" list -m -f '{{.Version}}' github.com/TSHOGX/khora)
-[[ "$khora_module_version" == v0.0.2-0.20260920024301-e8cd021a9c7c ]] || { echo 'unsupported engine module pin' >&2; exit 1; }
-ROOTFS_DIR="$khora_template" FORCE=1 SANDBOX_BUILD_ENV=/dev/null \
-SANDBOX_AGENT_DRIVERS=pi,sh HARNESS_GENERIC_ROOTFS=1 \
-  "$khora_repo/sandbox-image/build-rootfs.sh"
-mkdir -p "$khora_template/usr/sbin"
-CGO_ENABLED=0 go -C "$khora_module_dir" build -mod=readonly -trimpath \
-  -o "$khora_template/usr/sbin/sandboxd" ./cmd/sandboxd
-python3 "$khora_repo/sandbox-image/finalize-khora-template.py" "$khora_template" "$khora_module_version"
-install -m 0644 "$khora_template/etc/harness-image/agents.json" "$khora_template.manifest.json"
-install -m 0644 "$khora_template/etc/harness-image/agents.sha256" "$khora_template.manifest.sha256"
+repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
+destination=$(realpath -m -- "${1:?usage: build-khora-template.sh NEW_DIRECTORY [OS_PI_BASE]}")
+base=${2:-}
+[[ $EUID == 0 && $destination != / && ! -e $destination && ! -e $destination.manifest.json ]] || { echo 'choose a new template directory in a disposable privileged builder' >&2; exit 2; }
+[[ -z $(git -C "$repo" ls-files --others --ignored --exclude-standard sandbox-image/files) ]] || { echo 'ignored guest overlay files present; use a clean source checkout' >&2; exit 2; }
+module=$(go -C "$repo/orchestrator" list -m -f '{{.Dir}}' github.com/TSHOGX/khora)
+version=$(go -C "$repo/orchestrator" list -m -f '{{.Version}}' github.com/TSHOGX/khora)
+[[ $version == v0.0.2-0.20260920024301-e8cd021a9c7c ]] || { echo 'unsupported engine module pin' >&2; exit 2; }
+if [[ -n $base ]]; then
+ base=$(realpath -- "$base")
+ [[ -d $base && ! -e $base/etc/project-runtime/manifest.json && ! -e $base/etc/harness-image && ! -e $base/usr/local/bin/harness-khora-launcher ]] || { echo 'base must be an OS/Pi filesystem, not an application template' >&2; exit 2; }
+ cp -a --reflink=auto "$base" "$destination"
+else
+ ROOTFS_DIR="$destination" "$repo/sandbox-image/build-rootfs.sh"
+fi
+install -d -m 0755 "$destination/usr/local/bin" "$destination/usr/sbin" "$destination/workspace" "$destination/runtime" "$destination/opt/agent-config" "$destination/opt/shared-assets"
+cp -a "$repo/sandbox-image/files/." "$destination/"
+CGO_ENABLED=0 go -C "$module" build -mod=readonly -trimpath -buildvcs=false -o "$destination/usr/sbin/sandboxd" ./cmd/sandboxd
+for binary in agent-runner workspace-files runtime-cleanup runtime-verify; do
+ CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -buildvcs=false -o "$destination/usr/local/bin/$binary" "./cmd/$binary"
+ chmod 0755 "$destination/usr/local/bin/$binary"
+done
+CGO_ENABLED=0 go -C "$repo/orchestrator" run ./cmd/runtime-release --root "$destination" --output "$destination.manifest.json"
+chmod -R a-w "$destination/etc/project-runtime" "$destination/usr/local/share/project-runtime"
+printf 'Template: %s\nManifest: %s\n' "$destination" "$destination.manifest.json"

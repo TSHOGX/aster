@@ -85,7 +85,6 @@ type Lifecycle interface {
 	Inspect(context.Context, Reference) (Observation, error)
 	Pause(context.Context, Reference) (Observation, error)
 	Resume(context.Context, Reference) (Observation, error)
-	Configure(context.Context, Reference, Network, []Mount) (Observation, error)
 }
 
 type VolumeReference struct{ StoreID, VolumeID string }

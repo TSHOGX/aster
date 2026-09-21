@@ -1,4 +1,5 @@
 "use client";
+import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
@@ -17,7 +18,6 @@ import {
   type Share,
 } from "@/lib/project-api";
 import { MarkdownView } from "@/components/workbench/markdown-view";
-
 export function SchedulePanel({
   project,
   sessions,
@@ -27,6 +27,7 @@ export function SchedulePanel({
   sessions: AgentSession[];
   onOpen: (id: string) => void;
 }) {
+  const tr = useT();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [runs, setRuns] = useState<ScheduleRun[]>([]);
   const [error, setError] = useState("");
@@ -38,7 +39,13 @@ export function SchedulePanel({
   const base = `${projectURL(project)}/schedules`;
   const refresh = useCallback(async () => {
     try {
-      setSchedules((await api<{ schedules: Schedule[] }>(base)).schedules);
+      setSchedules(
+        (
+          await api<{
+            schedules: Schedule[];
+          }>(base)
+        ).schedules,
+      );
     } catch (e) {
       setError(String(e));
     }
@@ -60,10 +67,11 @@ export function SchedulePanel({
   };
   return (
     <section className="adjacent-panel">
-      <h2>Project schedules</h2>
+      <h2>{tr("Project schedules")}</h2>
       <p>
-        Runs share this Project’s workspace. Disabling a schedule stops future
-        admissions.
+        {tr(
+          "Runs share this Project\u2019s workspace. Disabling a schedule stops future admissions.",
+        )}
       </p>
       {error && (
         <p role="alert" className="notice error">
@@ -90,7 +98,7 @@ export function SchedulePanel({
         }}
       >
         <label>
-          Schedule name
+          {tr("Schedule name")}
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -99,7 +107,7 @@ export function SchedulePanel({
           />
         </label>
         <label>
-          Prompt
+          {tr("Prompt")}
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -108,9 +116,9 @@ export function SchedulePanel({
           />
         </label>
         <label>
-          Target Session
+          {tr("Target Session")}
           <select value={session} onChange={(e) => setSession(e.target.value)}>
-            <option value="">Create a new Session per run</option>
+            <option value="">{tr("Create a new Session per run")}</option>
             {sessions.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.title}
@@ -119,18 +127,19 @@ export function SchedulePanel({
           </select>
         </label>
         <label>
-          Cron expression
+          {tr("Cron expression")}
           <input
             value={cron}
             onChange={(e) => setCron(e.target.value)}
-            placeholder="Leave empty for manual runs"
+            placeholder={tr("Leave empty for manual runs")}
           />
           <small>
-            Five fields, in {Intl.DateTimeFormat().resolvedOptions().timeZone}
+            {tr("Five fields, in")}
+            {Intl.DateTimeFormat().resolvedOptions().timeZone}
           </small>
         </label>
         <button className="primary" disabled={busy}>
-          Create schedule
+          {tr("Create schedule")}
         </button>
       </form>
       {schedules.map((s) => (
@@ -138,7 +147,7 @@ export function SchedulePanel({
           <h3>{s.title}</h3>
           <p>{s.prompt}</p>
           <small>
-            {s.cron || "Manual only"} · {s.timezone} ·{" "}
+            {s.cron || tr("Manual only")} · {s.timezone} ·{" "}
             {s.enabled ? "enabled" : "disabled"}
             {s.next_at ? ` · next ${new Date(s.next_at).toLocaleString()}` : ""}
           </small>
@@ -155,7 +164,7 @@ export function SchedulePanel({
                 })
               }
             >
-              Run now
+              {tr("Run now")}
             </button>
             <button
               disabled={busy}
@@ -169,13 +178,13 @@ export function SchedulePanel({
                 )
               }
             >
-              {s.enabled ? "Disable" : "Enable"}
+              {s.enabled ? tr("Disable") : tr("Enable")}
             </button>
             <button
               disabled={busy}
               onClick={() =>
                 void act(async () => {
-                  const prompt = window.prompt("Schedule prompt", s.prompt);
+                  const prompt = window.prompt(tr("Schedule prompt"), s.prompt);
                   if (prompt)
                     await command(
                       `${base}/${encode(s.id)}`,
@@ -185,29 +194,31 @@ export function SchedulePanel({
                 })
               }
             >
-              Edit prompt
+              {tr("Edit prompt")}
             </button>
             <button
               onClick={() =>
                 void act(async () =>
                   setRuns(
                     (
-                      await api<{ runs: ScheduleRun[] }>(
-                        `${base}/${encode(s.id)}/runs`,
-                      )
+                      await api<{
+                        runs: ScheduleRun[];
+                      }>(`${base}/${encode(s.id)}/runs`)
                     ).runs,
                   ),
                 )
               }
             >
-              Run history
+              {tr("Run history")}
             </button>
             <button
               className="danger"
               onClick={() => {
                 if (
                   window.confirm(
-                    "Delete this schedule? Admitted runs retain their own controls.",
+                    tr(
+                      "Delete this schedule? Admitted runs retain their own controls.",
+                    ),
                   )
                 )
                   void act(() =>
@@ -219,14 +230,14 @@ export function SchedulePanel({
                   );
               }}
             >
-              Delete schedule
+              {tr("Delete schedule")}
             </button>
           </div>
         </article>
       ))}
       {runs.length > 0 && (
         <section>
-          <h3>Run history</h3>
+          <h3>{tr("Run history")}</h3>
           {runs.map((run) => (
             <button
               className="history-row"
@@ -235,7 +246,7 @@ export function SchedulePanel({
             >
               {run.due_at
                 ? new Date(run.due_at).toLocaleString()
-                : "Manual run"}{" "}
+                : tr("Manual run")}{" "}
               · {run.state}
             </button>
           ))}
@@ -251,6 +262,7 @@ export function SharePanel({
   project: string;
   sessions: AgentSession[];
 }) {
+  const tr = useT();
   const [session, setSession] = useState(sessions[0]?.id || "");
   const [reader, setReader] = useState("");
   const [paths, setPaths] = useState("");
@@ -262,9 +274,9 @@ export function SharePanel({
     try {
       setShares(
         (
-          await api<{ shares: Share[] }>(
-            `${sessionURL(project, session)}/shares`,
-          )
+          await api<{
+            shares: Share[];
+          }>(`${sessionURL(project, session)}/shares`)
         ).shares,
       );
     } catch (e) {
@@ -285,10 +297,11 @@ export function SharePanel({
   };
   return (
     <section className="adjacent-panel">
-      <h2>Share a conversation</h2>
+      <h2>{tr("Share a conversation")}</h2>
       <p>
-        Readers receive the conversation and explicitly frozen files. Live
-        Project resources stay private.
+        {tr(
+          "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.",
+        )}
       </p>
       {error && (
         <p className="notice error" role="alert">
@@ -296,9 +309,9 @@ export function SharePanel({
         </p>
       )}
       <label>
-        Agent Session
+        {tr("Agent Session")}
         <select value={session} onChange={(e) => setSession(e.target.value)}>
-          <option value="">Choose a Session</option>
+          <option value="">{tr("Choose a Session")}</option>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.title}
@@ -315,7 +328,7 @@ export function SharePanel({
         }}
       >
         <label>
-          Read-only reader username
+          {tr("Read-only reader username")}
           <input
             value={reader}
             onChange={(e) => setReader(e.target.value)}
@@ -323,7 +336,7 @@ export function SharePanel({
           />
         </label>
         <div className="row-actions">
-          <button disabled={!session}>Grant conversation access</button>
+          <button disabled={!session}>{tr("Grant conversation access")}</button>
           <button
             type="button"
             disabled={!session || !reader}
@@ -337,7 +350,7 @@ export function SharePanel({
               )
             }
           >
-            Revoke reader
+            {tr("Revoke reader")}
           </button>
         </div>
       </form>
@@ -345,21 +358,20 @@ export function SharePanel({
         onSubmit={(e) => {
           e.preventDefault();
           void act(async () => {
-            const result = await command<{ token: string }>(
-              `${sessionURL(project, session)}/shares`,
-              {
-                paths: paths
-                  .split("\n")
-                  .map((p) => p.trim().replace(/^\/workspace\//, ""))
-                  .filter(Boolean),
-              },
-            );
+            const result = await command<{
+              token: string;
+            }>(`${sessionURL(project, session)}/shares`, {
+              paths: paths
+                .split("\n")
+                .map((p) => p.trim().replace(/^\/workspace\//, ""))
+                .filter(Boolean),
+            });
             setLink(`${location.origin}/s/${result.token}`);
           });
         }}
       >
         <label>
-          Frozen files (one Project path per line)
+          {tr("Frozen files (one Project path per line)")}
           <textarea
             value={paths}
             onChange={(e) => setPaths(e.target.value)}
@@ -367,7 +379,7 @@ export function SharePanel({
           />
         </label>
         <button disabled={!session} className="primary">
-          Create public snapshot · 7 days
+          {tr("Create public snapshot \u00B7 7 days")}
         </button>
       </form>
       {link && (
@@ -376,27 +388,32 @@ export function SharePanel({
             {link}
           </a>
           <button onClick={() => void navigator.clipboard.writeText(link)}>
-            Copy link
+            {tr("Copy link")}
           </button>
         </p>
       )}
       {shares.map((share) => (
         <article className="schedule-card" key={share.id}>
           <strong>{share.title}</strong> · {share.state}
-          <small>Expires {new Date(share.expires_at).toLocaleString()}</small>
+          <small>
+            {tr("Expires")}
+            {new Date(share.expires_at).toLocaleString()}
+          </small>
           <div className="row-actions">
             {share.state === "published" && (
               <button
                 onClick={() =>
                   void act(async () => {
-                    const result = await command<{ token: string }>(
+                    const result = await command<{
+                      token: string;
+                    }>(
                       `${projectURL(project)}/shares/${encode(share.id)}/rotate`,
                     );
                     setLink(`${location.origin}/s/${result.token}`);
                   })
                 }
               >
-                Rotate link
+                {tr("Rotate link")}
               </button>
             )}
             <button
@@ -410,7 +427,7 @@ export function SharePanel({
                 )
               }
             >
-              Revoke snapshot
+              {tr("Revoke snapshot")}
             </button>
           </div>
         </article>
@@ -423,14 +440,16 @@ export function Inbox({
 }: {
   onOpen: (project: string, session?: string) => void;
 }) {
+  const tr = useT();
   const [items, setItems] = useState<Notice[]>([]);
   const [error, setError] = useState("");
   const [unread, setUnread] = useState(0);
   const load = useCallback(async (after = "") => {
     try {
-      const result = await api<{ notifications: Notice[]; unread: number }>(
-        `/api/notifications?after=${encode(after)}&limit=50`,
-      );
+      const result = await api<{
+        notifications: Notice[];
+        unread: number;
+      }>(`/api/notifications?after=${encode(after)}&limit=50`);
       setItems(result.notifications);
       setUnread(result.unread);
     } catch (e) {
@@ -443,10 +462,14 @@ export function Inbox({
   return (
     <section className="adjacent-panel">
       <h2>
-        Inbox <small>{unread} unread</small>
+        {tr("Inbox")}
+        <small>
+          {unread}
+          {tr("unread")}
+        </small>
       </h2>
       {error && <p className="notice error">{error}</p>}
-      {!items.length && <p>No notifications.</p>}
+      {!items.length && <p>{tr("No notifications.")}</p>}
       {items.map((notice) => (
         <article className="schedule-card" key={notice.id}>
           <strong>
@@ -460,7 +483,7 @@ export function Inbox({
               <button
                 onClick={() => onOpen(notice.project_id!, notice.session_id)}
               >
-                Open conversation
+                {tr("Open conversation")}
               </button>
             )}
             <button
@@ -470,16 +493,16 @@ export function Inbox({
                 ).then(() => load())
               }
             >
-              Mark read
+              {tr("Mark read")}
             </button>
           </div>
         </article>
       ))}
       <div className="row-actions">
-        <button onClick={() => void load()}>Latest</button>
+        <button onClick={() => void load()}>{tr("Latest")}</button>
         {items.length === 50 && (
           <button onClick={() => void load(items.at(-1)?.id)}>
-            Older notifications
+            {tr("Older notifications")}
           </button>
         )}
       </div>
@@ -491,6 +514,7 @@ export function SearchPanel({
 }: {
   onOpen: (project: string, session: string, message?: string) => void;
 }) {
+  const tr = useT();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [error, setError] = useState("");
@@ -498,9 +522,9 @@ export function SearchPanel({
     try {
       setResults(
         (
-          await api<{ results: SearchResult[] }>(
-            `/api/search?q=${encode(query)}&after=${encode(after)}`,
-          )
+          await api<{
+            results: SearchResult[];
+          }>(`/api/search?q=${encode(query)}&after=${encode(after)}`)
         ).results,
       );
       setError("");
@@ -510,7 +534,7 @@ export function SearchPanel({
   };
   return (
     <section className="adjacent-panel">
-      <h2>Search conversations</h2>
+      <h2>{tr("Search conversations")}</h2>
       <form
         className="search-form"
         onSubmit={(e) => {
@@ -519,14 +543,14 @@ export function SearchPanel({
         }}
       >
         <input
-          aria-label="Search conversations"
+          aria-label={tr("Search conversations")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           required
           maxLength={256}
-          placeholder="Search a topic, decision, or result…"
+          placeholder={tr("Search a topic, decision, or result\u2026")}
         />
-        <button className="primary">Search</button>
+        <button className="primary">{tr("Search")}</button>
       </form>
       {error && <p className="notice error">{error}</p>}
       {results.map((result) => (
@@ -539,12 +563,15 @@ export function SearchPanel({
         >
           <strong>{result.title}</strong>
           <span>{result.snippet}</span>
-          <small>Project {result.project_id.slice(0, 8)}</small>
+          <small>
+            {tr("Project")}
+            {result.project_id.slice(0, 8)}
+          </small>
         </button>
       ))}
       {results.length === 50 && (
         <button onClick={() => void search(results.at(-1)?.key)}>
-          More results
+          {tr("More results")}
         </button>
       )}
     </section>
@@ -555,13 +582,16 @@ export function SharedConversations({
 }: {
   initialSession?: string;
 }) {
+  const tr = useT();
   const [items, setItems] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState(initialSession);
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState("");
   const [after, setAfter] = useState(0);
   useEffect(() => {
-    void api<{ conversations: Conversation[] }>("/api/conversations")
+    void api<{
+      conversations: Conversation[];
+    }>("/api/conversations")
       .then((data) => setItems(data.conversations))
       .catch((e) => setError(String(e)));
   }, []);
@@ -570,7 +600,9 @@ export function SharedConversations({
     let canceled = false;
     const refresh = async () => {
       try {
-        const data = await api<{ messages: Message[] }>(
+        const data = await api<{
+          messages: Message[];
+        }>(
           `/api/conversations/${encode(selected)}/messages?after=${after}&limit=100`,
         );
         if (!canceled) setMessages(data.messages);
@@ -594,7 +626,7 @@ export function SharedConversations({
   }, [selected, after]);
   return (
     <section className="adjacent-panel">
-      <h2>Shared with me</h2>
+      <h2>{tr("Shared with me")}</h2>
       {error && <p className="notice error">{error}</p>}
       <div className="row-actions">
         {items.map((item) => (
@@ -609,17 +641,21 @@ export function SharedConversations({
           </button>
         ))}
       </div>
-      {!items.length && <p>No conversations have been shared with you.</p>}
+      {!items.length && (
+        <p>{tr("No conversations have been shared with you.")}</p>
+      )}
       {messages.map((message) => (
         <article className={`chat-message ${message.role}`} key={message.id}>
           <small>{message.role}</small>
           <MarkdownView content={message.content} />
         </article>
       ))}
-      {after > 0 && <button onClick={() => setAfter(0)}>First page</button>}
+      {after > 0 && (
+        <button onClick={() => setAfter(0)}>{tr("First page")}</button>
+      )}
       {messages.length === 100 && (
         <button onClick={() => setAfter(messages.at(-1)?.sequence || 0)}>
-          Next messages
+          {tr("Next messages")}
         </button>
       )}
     </section>

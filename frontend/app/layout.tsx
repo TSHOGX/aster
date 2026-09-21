@@ -1,22 +1,22 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ThemedToaster } from "@/components/theme/themed-toaster";
 import { themeInitScript } from "@/lib/theme";
 import { localeInitScript } from "@/lib/i18n/locale";
 import { brandName } from "@/lib/ui-config";
 
 export const metadata: Metadata = {
   title: brandName,
-  description: "AI agent workbench for battery research and engineering — shared Project workspaces with independent agents, terminals, and files",
+  description:
+    "AI agent workbench for battery research and engineering — shared Project workspaces with independent agents, terminals, and files",
   applicationName: brandName,
   icons: {
     icon: "/favicon.svg",
-    shortcut: "/favicon.svg"
-  }
+    shortcut: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
-  children
+  children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
@@ -36,10 +36,7 @@ export default function RootLayout({
             lib/i18n (useT). */}
         <script dangerouslySetInnerHTML={{ __html: localeInitScript }} />
       </head>
-      <body>
-        {children}
-        <ThemedToaster />
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

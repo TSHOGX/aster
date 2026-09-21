@@ -1,24 +1,18 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
-  testDir: "./e2e",
-  reporter: [["list"], ["json", { outputFile: "test-results/results.json" }]],
-  fullyParallel: false,
+  testDir: "./e2e/project",
   workers: 1,
+  timeout: 120000,
+  expect: { timeout: 20000 },
+  reporter: [["list"]],
+  outputDir: "test-results/project",
   use: {
-    baseURL: "http://127.0.0.1:3187",
-    viewport: { width: 1440, height: 900 },
+    baseURL: process.env.PROJECT_BROWSER_URL,
+    viewport: { width: 1600, height: 1000 },
     trace: "retain-on-failure",
     launchOptions: {
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
     },
-  },
-  webServer: {
-    command:
-      process.env.HARNESS_PERF_PRODUCTION === "1"
-        ? "HARNESS_PERF_FIXTURES=1 npm run build && node e2e/start-production.mjs"
-        : "HARNESS_DEV_ORIGINS=127.0.0.1 HARNESS_PERF_FIXTURES=1 npm run dev -- --port 3187",
-    url: "http://127.0.0.1:3187/perf-fixtures/virtual",
-    reuseExistingServer: false,
-    timeout: 240000,
   },
 });

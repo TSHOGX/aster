@@ -353,7 +353,7 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 			// The credential travels in the start environment, not in a protocol
 			// frame: the framed stream is journaled durable evidence and must not
 			// retain a secret, and a reconnect must not need to resend one.
-			environment = append(environment, "HARNESS_SERVICE_CREDENTIAL="+attachment.credential)
+			environment = append(environment, "PROJECT_SERVICE_CREDENTIAL="+attachment.credential)
 		}
 		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: []string{"--session", i.SessionID, "--incarnation", i.ID}, Directory: "/workspace", Environment: environment})
 	} else {
