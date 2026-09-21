@@ -1,0 +1,92 @@
+"use client";
+import { useEffect, useState } from "react";
+import { api, encode, type Message, type Share } from "@/lib/project-api";
+import { MarkdownView } from "@/components/workbench/markdown-view";
+import { FilePreview } from "./file-preview";
+import "./workbench.css";
+export function PublicShare({ token }: { token: string }) {
+  const [share, setShare] = useState<Share | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [after, setAfter] = useState(0);
+  const [selected, setSelected] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const abort = new AbortController();
+    void Promise.all([
+      api<Share>(`/api/shared/${encode(token)}`, { signal: abort.signal }),
+      api<{ messages: Message[] }>(
+        `/api/shared/${encode(token)}/messages?after=${after}&limit=100`,
+        { signal: abort.signal },
+      ),
+    ])
+      .then(([share, response]) => {
+        setShare(share);
+        setMessages(response.messages);
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) {
+          setShare(null);
+          setMessages([]);
+          setError(
+            e instanceof Error ? e.message : "This share is unavailable.",
+          );
+        }
+      });
+    return () => abort.abort();
+  }, [token, after]);
+  const url = `/api/shared/${encode(token)}/files?path=${encode(selected)}`;
+  return (
+    <main className="public-share">
+      <header>
+        <small>BATTERYGPT · SHARED SNAPSHOT</small>
+        <h1>{share?.title || "Shared conversation"}</h1>
+        <p>A frozen conversation and its selected files.</p>
+      </header>
+      {error && (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      )}
+      {messages.map((message) => (
+        <article className={`chat-message ${message.role}`} key={message.id}>
+          <small>{message.role}</small>
+          <MarkdownView content={message.content} />
+        </article>
+      ))}
+      <div className="row-actions">
+        {after > 0 && (
+          <button onClick={() => setAfter(0)}>First messages</button>
+        )}
+        {messages.length === 100 && (
+          <button onClick={() => setAfter(messages.at(-1)?.sequence || 0)}>
+            Next messages
+          </button>
+        )}
+      </div>
+      {share?.files.length ? (
+        <section>
+          <h2>Frozen files</h2>
+          <div className="row-actions">
+            {share.files.map((file) => (
+              <button key={file.path} onClick={() => setSelected(file.path)}>
+                {file.path}
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {selected && share && (
+        <section className="selected-file">
+          <header className="panel-heading">
+            <strong>{selected}</strong>
+            <a href={url} download>
+              Download
+            </a>
+            <button onClick={() => setSelected("")}>Close file</button>
+          </header>
+          <FilePreview key={selected} path={selected} href={url} />
+        </section>
+      )}
+    </main>
+  );
+}

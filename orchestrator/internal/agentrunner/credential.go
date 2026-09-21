@@ -29,7 +29,10 @@ func materializeCredential(root, credential string) error {
 		return errors.New("invalid service credential")
 	}
 	path := filepath.Join(root, "models.json")
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Join(root, "authored-models.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		raw, err = os.ReadFile(path)
+	}
 	if err != nil {
 		// No authored catalog means this Session was not configured for a model
 		// service. That is not a runner failure; it simply reaches no upstream.

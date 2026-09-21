@@ -1,8 +1,9 @@
 # Project product contracts
 
 The `orchestrator/internal/product` application module defines the Project
-aggregate and its fresh SQLite schema. Its contract tests exercise this module
-directly; they do not qualify the deployed HTTP or sandbox runtime.
+aggregate and its fresh SQLite schema. Application, guest and Chromium tests
+exercise the composed modules through the Go transport and edge proxy. Release
+command/configuration qualification remains separate from these module tests.
 
 A Project owns live resource permission. Agent Sessions and native Terminals
 have immutable Project parents and independent revisions. Sessions describe
@@ -121,8 +122,8 @@ Terminal contracts are verified against real PTYs in an isolated pinned engine:
 concurrent terminals sharing one workspace, raw byte fidelity in both directions
 including input split inside a UTF-8 sequence, guest-observed resize, interrupt
 sparing the shell, detach past the engine ring rejoining the same process, and
-cleanup that waits for termination evidence while sparing siblings. No Chromium
-journey renders a live terminal yet.
+cleanup that waits for termination evidence while sparing siblings. The Chromium workbench journey verifies the renderer through the Go edge with
+real native PTYs and two overlapping Pi Sessions.
 
 ## Project Files
 
@@ -210,3 +211,44 @@ any delayed result. Notifications retain their audience and independent per-user
 read markers. Turn outcomes and conversation grants produce directed notices;
 operators can insert broadcast notices through an internal application port.
 Neither titles nor notifications retain Project runtime activity.
+
+
+## Workbench and browser convergence
+
+The browser opens Projects with up to four independent Agent views, retained
+Terminal panels, and Project Files. Closing an Agent or Terminal view changes
+only browser state. Stop turn, terminate Terminal, delete Session and delete
+Project are separate commands. Files remain available while Agents work and
+stay mounted when Agent views change. Browser drafts, open views and selected
+files are bounded and scoped by authenticated actor and Project.
+
+Session snapshots use one database read transaction with a Session revision,
+100-message and 100-turn windows, and an Agent-record frontier. Older history
+has explicit pages. The browser rejects stale or foreign snapshots and deduplicates
+record replay. Provisional text and tool displays are bounded; committed messages
+remain authoritative. Search can locate an older message in its parent Session.
+New event subscriptions start from a snapshot frontier, and invalid or unavailable
+cursors cause a gap/resnapshot response. Product projections remain separate from
+terminal output and Files invalidation streams.
+
+Go owns credential login, expiring HttpOnly cookies, token digests, login limits,
+exact-origin checks, and reauthorization of subscriptions. Password changes and
+logout invalidate old cookies. Missing credentials do not silently enable open
+access; local development requires an explicit actor configuration. The Next.js
+API and artifact fetch proxies are removed; the Go edge forwards the original
+browser origin and carries WebSocket upgrades.
+
+Application workers run independently of HTTP in bounded classes for runtime
+control, Files recovery, capture, schedules and adjacent work. Reconciling one
+Project does not detach another Project's terminals. Cold placement loss fences
+old Agent owners and ends process incarnations while preserving logical Sessions
+and retained native state. Each Session atomically selects its authored Agent
+configuration; a later incarnation can replace its service credential without
+losing that selection or affecting siblings.
+
+The real-browser qualification uses a production frontend build, cookie login,
+the Go edge and application workers, isolated Khora, native Pi and deterministic
+local model fixtures. It covers overlapping Agent turns, shared-file edits from
+Files and a PTY, independent view closure, retained input ownership, reload,
+Unicode/paste, resize, Ctrl-C, explicit output gaps and foreign-origin rejection.
+The rendered result is inspected as part of that qualification.

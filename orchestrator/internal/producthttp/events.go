@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"harness-platform/orchestrator/internal/product"
 )
 
 // eventPoll bounds how long a subscriber waits between outbox reads. The product
@@ -34,6 +32,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	controller := http.NewResponseController(w)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
@@ -45,9 +44,29 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	first, last, err := s.Store.EventBounds(r.Context(), scope)
+	if err != nil {
+		return
+	}
+	if after == 0 || after > last || (first > 0 && after < first-1) {
+		kind := "snapshot"
+		if after != 0 {
+			kind = "gap"
+		}
+		after = last
+		if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", last, kind, encode(map[string]int64{"cursor": last})); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
 	ticker := time.NewTicker(eventPoll)
 	defer ticker.Stop()
 	for {
+		actor, err := s.Auth.Actor(r)
+		if err != nil || actor != scope.Actor {
+			return
+		}
+		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		batch, err := s.Store.Events(r.Context(), scope, after, 200)
 		if err != nil {
 			// Authorization loss and deletion both end the stream. The client
@@ -58,7 +77,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, e := range batch {
 			after = e.ID
-			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Kind, encode(e))
+			fmt.Fprintf(w, "id: %d\nevent: projection\ndata: %s\n\n", e.ID, encode(e))
 		}
 		if len(batch) > 0 {
 			flusher.Flush()
@@ -83,5 +102,3 @@ func encode(v any) []byte {
 	}
 	return raw
 }
-
-var _ = product.Event{}

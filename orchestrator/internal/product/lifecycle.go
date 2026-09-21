@@ -486,6 +486,9 @@ func (l *Lifecycle) commit(ctx context.Context, o operation, obs sandbox.Observa
 		if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET sandbox_id=?,mutation_revision=?,epoch=?,occupied=1 WHERE project_id=?`, obs.SandboxID, obs.MutationRevision, obs.Epoch, o.ProjectID); err != nil {
 			return err
 		}
+		if err := l.Store.loseStaleAgents(ctx, tx, o.ProjectID, obs.Epoch, "placement replaced; Agent process did not survive"); err != nil {
+			return err
+		}
 		// A new epoch is a new guest: any PTY recorded against the old placement is
 		// gone. Settling here, in the transaction that commits the epoch, means no
 		// window exists where a dead process still pins an idle Project.
@@ -510,6 +513,9 @@ func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observa
 		current, reason := obs.Epoch, "placement replaced; PTY process did not survive"
 		if state == "paused" {
 			current, reason = 0, "Project paused; PTY process did not survive"
+		}
+		if err := l.Store.loseStaleAgents(ctx, tx, o.ProjectID, current, reason); err != nil {
+			return err
 		}
 		if _, err := l.Store.loseStalePTYs(ctx, tx, o.ProjectID, current, reason); err != nil {
 			return err

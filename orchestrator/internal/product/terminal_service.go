@@ -659,7 +659,7 @@ func (t *Terminals) Reconcile(ctx context.Context, project string) error {
 	t.mu.Lock()
 	var stale []*terminalAttachment
 	for terminal, a := range t.attachments {
-		if recognized[terminal] != a.incarnation.ID {
+		if a.incarnation.ProjectID == project && recognized[terminal] != a.incarnation.ID {
 			stale = append(stale, a)
 			delete(t.attachments, terminal)
 		}

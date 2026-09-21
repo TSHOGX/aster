@@ -384,6 +384,13 @@ func (a *Agents) recordExit(ctx context.Context, i Incarnation, code int32) {
 	settle, done := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer done()
 	_ = a.Store.write(settle, func(tx *sql.Tx) error {
+		var owner uint64
+		if err := tx.QueryRowContext(settle, `SELECT owner FROM agent_incarnations WHERE id=?`, i.ID).Scan(&owner); err != nil {
+			return err
+		}
+		if owner != i.Owner {
+			return ErrConflict
+		}
 		// Exit 0 is emitted only after the runner verifies descendant cleanup and
 		// has no unresolved native commands. Nonzero exit retains ambiguity.
 		if code == 0 {

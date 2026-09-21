@@ -529,3 +529,28 @@ func TestTerminalAuthorizationAndDeletionFences(t *testing.T) {
 	must(t, s.SettleTerminalExit(ctx, i, 0))
 	must(t, s.SettleChild(ctx, pending[0]))
 }
+
+func TestTerminalReconcilePreservesOtherProjects(t *testing.T) {
+	terminals, backend, scope := terminalFixture(t)
+	terminals.Lifecycle.MaxProjects = 3
+	other := Scope{Actor: scope.Actor, ProjectID: "other"}
+	_, err := terminals.Store.CreateProject(ctx, other.Actor, other.ProjectID, "Other")
+	must(t, err)
+	must(t, terminals.Lifecycle.EnsureActive(ctx, other, testProfile()))
+	drive(t, terminals.Lifecycle, other.ProjectID)
+	first := startTerminal(t, terminals, backend, scope, "first-project-pty", 24, 80)
+	second := startTerminal(t, terminals, backend, other, "other-project-pty", 24, 80)
+	observer, err := terminals.Attach(ctx, other, "other-project-pty", true)
+	must(t, err)
+	defer observer.Close()
+	must(t, terminals.Reconcile(ctx, scope.ProjectID))
+	backend.stream(second.Reference.Handle).frames <- sandbox.ProcessFrame{Kind: "data", Stream: "stdout", Data: []byte("sibling Project stays attached")}
+	frame := awaitFrame(t, observer, func(frame TerminalFrame) bool { return frame.Kind == "data" })
+	if string(frame.Data) != "sibling Project stays attached" {
+		t.Fatal(frame)
+	}
+	must(t, terminals.Input(ctx, observer, []byte("still active")))
+	if first.ProjectID == second.ProjectID {
+		t.Fatal("test needs distinct Projects")
+	}
+}

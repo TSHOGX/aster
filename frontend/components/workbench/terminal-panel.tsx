@@ -22,7 +22,7 @@ export function TerminalPanel({
   terminalId,
   title,
   wantInput = true,
-  onClose
+  onClose,
 }: {
   projectId: string;
   terminalId: string;
@@ -35,6 +35,7 @@ export function TerminalPanel({
   const [attachment, setAttachment] = useState<Attachment>("connecting");
   const [notice, setNotice] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const [reconnect, setReconnect] = useState(0);
 
   useEffect(() => {
     const element = host.current;
@@ -46,7 +47,7 @@ export function TerminalPanel({
       fontFamily: "var(--font-mono, ui-monospace), monospace",
       fontSize: 13,
       scrollback: 5000,
-      allowProposedApi: true
+      allowProposedApi: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -63,7 +64,6 @@ export function TerminalPanel({
       },
       onStatus: ({ input }) => {
         setAttachment(input ? "live" : "readonly");
-        setNotice(null);
       },
       onExit: (code) => {
         setExitCode(code);
@@ -72,7 +72,7 @@ export function TerminalPanel({
       onDetach: (reason) => {
         setAttachment("detached");
         setNotice(reason);
-      }
+      },
     });
     socket.current = connection;
 
@@ -96,7 +96,7 @@ export function TerminalPanel({
       socket.current = null;
       term.dispose();
     };
-  }, [projectId, terminalId, wantInput]);
+  }, [projectId, terminalId, wantInput, reconnect]);
 
   const claimInput = useCallback(() => socket.current?.claimInput(), []);
   const interrupt = useCallback(() => socket.current?.interrupt(), []);
@@ -107,9 +107,16 @@ export function TerminalPanel({
       <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-xs font-medium">{title}</span>
-          <span className="text-2xs text-[var(--color-foreground-muted)]">{describe(attachment, exitCode)}</span>
+          <span className="text-2xs text-[var(--color-foreground-muted)]">
+            {describe(attachment, exitCode)}
+          </span>
         </div>
         <div className="flex items-center gap-1.5">
+          {attachment === "detached" ? (
+            <button onClick={() => setReconnect((n) => n + 1)}>
+              Reconnect view
+            </button>
+          ) : null}
           {attachment === "readonly" ? (
             <button
               type="button"

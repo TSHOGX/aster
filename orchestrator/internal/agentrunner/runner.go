@@ -94,6 +94,9 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 	if err = becomeSubreaper(); err != nil {
 		return err
 	}
+	if err = materializeConfig("/opt/agent-config/pi", root); err != nil {
+		return err
+	}
 	if err = materializeCredential(root, c.ServiceCredential); err != nil {
 		return err
 	}

@@ -7,7 +7,7 @@ import { brandName } from "@/lib/ui-config";
 
 export const metadata: Metadata = {
   title: brandName,
-  description: "AI agent workbench for battery research and engineering — sandboxed sessions for data analysis, modeling, and diagnostics",
+  description: "AI agent workbench for battery research and engineering — shared Project workspaces with independent agents, terminals, and files",
   applicationName: brandName,
   icons: {
     icon: "/favicon.svg",

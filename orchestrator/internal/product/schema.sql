@@ -393,3 +393,12 @@ END;
 CREATE TRIGGER index_message_delete AFTER DELETE ON messages BEGIN
  INSERT INTO message_search(message_search,rowid,content) VALUES('delete',OLD.rowid,OLD.content);
 END;
+
+-- Login sessions are authentication records, unrelated to Agent Sessions.
+CREATE TABLE auth_sessions (
+ token_digest TEXT PRIMARY KEY,
+ actor TEXT NOT NULL,
+ credential_digest TEXT NOT NULL,
+ expires_at TEXT NOT NULL
+);
+CREATE INDEX auth_sessions_expiry ON auth_sessions(expires_at);

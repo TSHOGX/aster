@@ -70,3 +70,11 @@ func (s *Store) CanReadConversation(ctx context.Context, actor, session string) 
 	var id string
 	return missing(s.reader.QueryRowContext(ctx, `SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, session, actor, actor).Scan(&id))
 }
+
+func (s *Store) EventBounds(ctx context.Context, scope Scope) (first, last int64, err error) {
+	if _, err = authorizedProject(ctx, s.reader, scope); err != nil {
+		return
+	}
+	err = s.reader.QueryRowContext(ctx, `SELECT coalesce(min(id),0),coalesce(max(id),0) FROM events WHERE project_id=?`, scope.ProjectID).Scan(&first, &last)
+	return
+}

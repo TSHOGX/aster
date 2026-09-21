@@ -115,3 +115,9 @@ func pbkdf2SHA256(password, salt []byte, iterations, keyLength int) []byte {
 	}
 	return out[:keyLength]
 }
+
+// ValidPasswordHash validates operator-supplied encodings before enabling login.
+func ValidPasswordHash(encoded string) bool {
+	iterations, salt, key, err := decodeHash(encoded)
+	return err == nil && iterations <= 10000000 && len(salt) >= 16 && len(key) == 32
+}

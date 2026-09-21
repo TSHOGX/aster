@@ -123,7 +123,14 @@ func (c Config) originAllowed(r *http.Request) bool {
 		// Unparseable Origin is not something a browser produces.
 		return false
 	}
-	return strings.EqualFold(parsed, c.expectedHost(r))
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if c.TrustForwardedHost && r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return strings.EqualFold(parsed, scheme+"://"+c.expectedHost(r))
 }
 
 func (c Config) expectedHost(r *http.Request) string {
@@ -137,10 +144,10 @@ func (c Config) expectedHost(r *http.Request) string {
 
 func parseOriginHost(origin string) (string, error) {
 	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", errors.New("origin is not an absolute URL")
 	}
-	return u.Host, nil
+	return u.Scheme + "://" + u.Host, nil
 }
 
 func decode(w http.ResponseWriter, r *http.Request, limit int64, out any) bool {
