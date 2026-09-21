@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,17 +26,18 @@ type agentAttachment struct {
 // Agents owns one output attachment per runner and fans committed projections
 // out through the product outbox. HTTP requests never own this stream context.
 type Agents struct {
-	Store        *Store
-	Lifecycle    *Lifecycle
-	Backend      sandbox.Processes
-	RunnerBinary string
-	Profile      Profile
-	MaxProcesses int
-	mu           sync.Mutex
-	attachments  map[string]*agentAttachment
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
+	ServiceAudience string
+	Store           *Store
+	Lifecycle       *Lifecycle
+	Backend         sandbox.Processes
+	RunnerBinary    string
+	Profile         Profile
+	MaxProcesses    int
+	mu              sync.Mutex
+	attachments     map[string]*agentAttachment
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
 }
 
 func NewAgents(ctx context.Context, s *Store, l *Lifecycle, b sandbox.Processes, profile Profile, max int) *Agents {
@@ -122,6 +124,19 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 	f, err := a.Store.agentCommand(ctx, attachment.incarnation)
 	if err != nil {
 		return err
+	}
+	if a.ServiceAudience != "" {
+		var command struct{ Type string }
+		if err := json.Unmarshal(f.Payload, &command); err != nil {
+			return err
+		}
+		if command.Type == "prompt" {
+			_, token, err := a.Store.GrantService(ctx, scope, session, f.TurnID, attachment.incarnation.ID, a.ServiceAudience, time.Hour)
+			if err != nil {
+				return err
+			}
+			f.Credential = token
+		}
 	}
 	if err = a.send(ctx, attachment, f); err != nil {
 		// SendInput may have delivered a prefix. No automatic resend is safe on this

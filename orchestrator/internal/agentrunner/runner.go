@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -265,6 +266,21 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 		_, err = r.journal.Result(ctx, c.ID, "rejected", json.RawMessage(`{"error":"no running turn"}`))
 		r.notify()
 		return err
+	}
+	// The per-turn service credential is published to the retained Session root
+	// before dispatch so the native process can read it for this turn only. It is
+	// an application credential, never a boundary between sibling processes.
+	if kind == "prompt" && f.Credential != "" {
+		if len(f.Credential) > 256 || strings.ContainsAny(f.Credential, "\r\n\x00") {
+			return agentwire.ErrFrame
+		}
+		path := filepath.Join(r.config.StateRoot, "sessions", r.config.Session, "service-token")
+		if err := os.WriteFile(path+".tmp", []byte(f.Credential), 0600); err != nil {
+			return err
+		}
+		if err := os.Rename(path+".tmp", path); err != nil {
+			return err
+		}
 	}
 	if err = r.journal.Dispatch(ctx, f.Owner, c.ID); err != nil {
 		return err
