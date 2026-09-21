@@ -16,7 +16,7 @@ func TestUnprovisionedSessionRetirementIsAtomicAndIdempotent(t *testing.T) {
 	ctx := context.Background()
 	st, owner := openOwnedStore(t, ctx)
 	leaseOwner := GenerationLeaseOwner(owner.UUID)
-	createStoreSessionBackend(t, ctx, st, "unstarted", "sh", "khora")
+	createStoreSessionBackend(t, ctx, st, "unstarted", "pi", "khora")
 	queued, err := st.EnqueueTurn(ctx, "unstarted", "park until deletion", time.Now())
 	if err != nil {
 		t.Fatal(err)

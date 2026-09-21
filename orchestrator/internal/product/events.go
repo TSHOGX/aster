@@ -38,7 +38,7 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		if err != nil {
 			return err
 		}
-		if child.State == "deleting" || child.State == "deleted" {
+		if child.Deletion != Live {
 			return ErrDeleting
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0`, session, reader); err != nil {
@@ -65,5 +65,5 @@ func (s *Store) CanReadConversation(ctx context.Context, actor, session string) 
 		return ErrNotFound
 	}
 	var id string
-	return missing(s.reader.QueryRowContext(ctx, `SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.state NOT IN ('deleting','deleted') AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, session, actor, actor).Scan(&id))
+	return missing(s.reader.QueryRowContext(ctx, `SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, session, actor, actor).Scan(&id))
 }

@@ -197,7 +197,7 @@ func runKhoraWorker(t *testing.T, driver string, truncated ...bool) {
 		requirements = append(requirements, execution.ContentRequirement{Purpose: "config", Destination: "/harness-config", RevisionDigest: revision.Digest})
 
 	}
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, hub: events.NewHub(), log: slog.Default(), cfg: testServerConfig(directory)}
 	srv.cfg.MaxEditBytes = 1 << 20
 	srv.SetWorkspaceReader(sessionfiles.Reader{Repository: st, Backend: backend})
 	configureInventory := func(owner string) {
@@ -1437,7 +1437,7 @@ func verifyKhoraWorkspaceDownload(t *testing.T, ctx context.Context, srv *Server
 		t.Fatalf("workspace open paused=%t: %d %s", paused, status, message)
 	}
 	if paused {
-		if _, err := controller.Ensure(ctx, execution.Session{ID: session, Driver: "sh"}, owner); !errors.Is(err, execution.ErrBusy) {
+		if _, err := controller.Ensure(ctx, execution.Session{ID: session, Driver: "pi"}, owner); !errors.Is(err, execution.ErrBusy) {
 			t.Fatalf("offline download did not fence resume: %v", err)
 		}
 	}

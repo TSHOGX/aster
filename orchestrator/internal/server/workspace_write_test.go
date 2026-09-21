@@ -38,7 +38,7 @@ func newWorkspaceWriteServer(t *testing.T, sessionID string) (*Server, *store.St
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	createServerTestSession(t, ctx, st, dir, sessionID, string(sessionstate.Created), time.Now().UTC(), nil)
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: cfg, store: st}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, cfg: cfg, store: st}
 	root := filepath.Join(dir, "workspace")
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatal(err)

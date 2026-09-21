@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"harness-platform/orchestrator/internal/agents"
 	"math/big"
 	"net"
 	"net/http"
@@ -30,10 +31,10 @@ func deploymentFixture(t *testing.T) (string, map[string]any) {
 	root := t.TempDir()
 	digest := "sha256:" + strings.Repeat("a", 64)
 	files := map[string]string{}
-	for _, path := range []string{"/usr/sbin/sandboxd", "/usr/local/bin/harness-khora-launcher", "/usr/local/bin/harness-bridge-client", "/usr/local/bin/harness-shell-agent", "/usr/local/bin/harness-workspace-helper", "/usr/local/bin/harness-journal-replay", "/usr/local/lib/harness_files.py", "/usr/local/lib/harness_launch.py", "/usr/local/lib/harness_stream.py", "/usr/local/lib/harness_recovery.py"} {
+	for _, path := range []string{"/usr/sbin/sandboxd", "/usr/local/bin/harness-khora-launcher", "/usr/local/bin/harness-bridge-client", "/usr/local/bin/harness-workspace-helper", "/usr/local/bin/harness-journal-replay", "/usr/local/lib/harness_files.py", "/usr/local/lib/harness_launch.py", "/usr/local/lib/harness_stream.py", "/usr/local/lib/harness_recovery.py"} {
 		files[path] = digest
 	}
-	manifest := map[string]any{"schema_version": 1, "runtime": map[string]any{"backend": "khora", "engine_revision": launchplan.EngineRevision, "engine_module": launchplan.EngineModule, "bridge_stream_version": 1, "home": "/root", "retained_overlay": true, "launcher": "/usr/local/bin/harness-khora-launcher", "files": files}, "drivers": []any{map[string]any{"driver_id": "sh", "bridge_protocol": "harness_bridge_v2", "bridge_protocol_version": 2, "turn_input_schema": "RunTurn", "binary_path": "/usr/local/bin/harness-shell-agent", "installed_binary_digest": digest, "capabilities": []string{"process_stream", "filesystem", "durable_workspace", "cold_restart", "signal", "pty"}}}}
+	manifest := map[string]any{"schema_version": 1, "runtime": map[string]any{"backend": "khora", "engine_revision": launchplan.EngineRevision, "engine_module": launchplan.EngineModule, "bridge_stream_version": 1, "home": "/root", "retained_overlay": true, "launcher": "/usr/local/bin/harness-khora-launcher", "files": files}, "drivers": []any{map[string]any{"driver_id": "pi", "bridge_protocol": "harness_bridge_v2", "bridge_protocol_version": 2, "turn_input_schema": "RunTurn", "binary_path": "/usr/local/bin/pi", "installed_binary_digest": digest, "capabilities": []string{"process_stream", "filesystem", "durable_workspace", "cold_restart", "signal", "native_history_restore"}, "package_name": agents.PiPackageName, "package_version": agents.PiPackageVersion, "package_integrity": agents.PiPackageIntegrity}}}
 	raw, _ := json.Marshal(manifest)
 	pin, err := launchplan.Digest(raw)
 	if err != nil {
@@ -45,12 +46,17 @@ func deploymentFixture(t *testing.T) (string, map[string]any) {
 	if err := os.MkdirAll(filepath.Join(root, "assets", "skills"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"assets/AGENTS.md": "shared context\n", "assets/skills/one.md": "step\n"} {
+	// A Pi plan pins both authored trees: its native configuration is part of the
+	// release identity, not something the launch discovers.
+	for name, body := range map[string]string{"assets/AGENTS.md": "shared context\n", "assets/skills/one.md": "step\n", "config/pi/settings.json": "{}\n"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	value := map[string]any{"version": 1, "backend_name": "engine", "engine": map[string]any{"endpoint": "http://127.0.0.1:18191", "store_id": "pinned-store"}, "manifest": "manifest.json", "manifest_digest": pin, "prepared_root": "prepared", "authorization": map[string]any{"socket": "authorization.sock", "peer_uid": os.Getuid(), "group": os.Getgid()}, "gateways": []any{map[string]any{"id": "data", "socket": "data.sock", "peer_uid": os.Getuid()}}, "plans": map[string]any{"sh": map[string]any{"template": "battery", "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": "assets"}}, "content_bytes": 8 << 20, "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "100ms", "event_interval": "1s", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "1s", "idle_interval": "1m", "idle_threshold": "30m"}
+	value := map[string]any{"version": 1, "backend_name": "engine", "engine": map[string]any{"endpoint": "http://127.0.0.1:18191", "store_id": "pinned-store"}, "manifest": "manifest.json", "manifest_digest": pin, "prepared_root": "prepared", "authorization": map[string]any{"socket": "authorization.sock", "peer_uid": os.Getuid(), "group": os.Getgid()}, "gateways": []any{map[string]any{"id": "data", "socket": "data.sock", "peer_uid": os.Getuid()}}, "plans": map[string]any{"pi": map[string]any{"template": "battery", "cpu_millis": 1000, "memory_bytes": 1 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 64 << 20, "journal_bytes": 64 << 20, "assets": "assets", "config": "config"}}, "content_bytes": 8 << 20, "max_active": 2, "inventory_limit": 1000, "lease_ttl": "1m", "poll_interval": "100ms", "event_interval": "1s", "action_timeout": "5s", "capture_window": "1m", "inventory_interval": "1s", "idle_interval": "1m", "idle_threshold": "30m"}
 	return filepath.Join(root, "deployment.json"), value
 }
 func writeDeployment(t *testing.T, path string, value map[string]any) {
@@ -73,25 +79,46 @@ func TestDeploymentPinsReleaseAndResolvesPathsBesideFile(t *testing.T) {
 	if deployment.PreparedRoot != filepath.Join(filepath.Dir(path), "prepared") || deployment.Gateways[0].Socket != filepath.Join(filepath.Dir(path), "data.sock") || deployment.Engine.StoreID != "pinned-store" {
 		t.Fatalf("deployment identity/path mismatch: %+v", deployment)
 	}
-	if len(deployment.Content) != 1 || deployment.Content[0].Purpose != "assets" || !content.ValidDigest(deployment.Content[0].Revision.Digest) {
-		t.Fatalf("authored content was not read from its reviewed tree: %+v", deployment.Content)
+	// Both authored trees are read from their reviewed roots, and each carries the
+	// digest of the bytes rather than a claim the deployment file could make alone.
+	authored := map[string]string{}
+	for _, tree := range deployment.Content {
+		if !content.ValidDigest(tree.Revision.Digest) {
+			t.Fatalf("authored content was not read from its reviewed tree: %+v", deployment.Content)
+		}
+		authored[tree.Purpose] = tree.Revision.Digest
 	}
-	published := publishedContent{"pinned-store|assets|" + deployment.Content[0].Revision.Digest: "vol_assets"}
+	if len(authored) != 2 || authored["assets"] == "" || authored["config"] == "" {
+		t.Fatalf("authored content purposes: %+v", deployment.Content)
+	}
+	published := publishedContent{
+		"pinned-store|assets|" + authored["assets"]: "vol_assets",
+		"pinned-store|config|" + authored["config"]: "vol_config",
+	}
 	bound, err := deployment.Plans.WithPublishedContent("pinned-store", published)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := bound.Plan(context.Background(), execution.Session{Driver: "sh"}, "generation")
+	plan, err := bound.Plan(context.Background(), execution.Session{Driver: "pi"}, "generation")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Mounts) != 1 || plan.Mounts[0].Destination != "/root/.agents" || plan.Mounts[0].VolumeID != "vol_assets" || !strings.HasPrefix(plan.SpecDigest, "sha256:") {
+	mounted := map[string]string{}
+	for _, mount := range plan.Mounts {
+		if mount.Access != "shared-ro" {
+			t.Fatalf("authored content must mount read-only: %+v", mount)
+		}
+		mounted[mount.Destination] = mount.VolumeID
+	}
+	if len(mounted) != 2 || mounted["/root/.agents"] != "vol_assets" || mounted["/harness-config"] != "vol_config" || !strings.HasPrefix(plan.SpecDigest, "sha256:") {
 		t.Fatalf("unpinned assets/plan: %+v", plan)
 	}
-	// The declared revision must be the authored tree's, not something the
+	// Each declared revision must be the authored tree's, not something the
 	// deployment document could assert independently of the bytes.
-	if plan.Content[0].RevisionDigest != deployment.Content[0].Revision.Digest {
-		t.Fatalf("plan revision differs from authored content: %+v", plan.Content)
+	for _, requirement := range plan.Content {
+		if requirement.RevisionDigest != authored[requirement.Purpose] {
+			t.Fatalf("plan revision differs from authored content: %+v", plan.Content)
+		}
 	}
 }
 
@@ -104,7 +131,7 @@ func (p publishedContent) FindPublishedContent(_ context.Context, store, purpose
 
 func TestDeploymentRefusesUnreadableAuthoredContent(t *testing.T) {
 	path, value := deploymentFixture(t)
-	plans := value["plans"].(map[string]any)["sh"].(map[string]any)
+	plans := value["plans"].(map[string]any)["pi"].(map[string]any)
 	plans["assets"] = "absent-assets"
 	writeDeployment(t, path, value)
 	if _, err := LoadDeployment(path); err == nil {
@@ -139,7 +166,7 @@ func TestDeploymentRejectsImplicitCredentialsAndIncompleteBounds(t *testing.T) {
 			case "lease":
 				value["lease_ttl"] = "0s"
 			case "zero-cpu":
-				value["plans"].(map[string]any)["sh"].(map[string]any)["cpu_millis"] = 0
+				value["plans"].(map[string]any)["pi"].(map[string]any)["cpu_millis"] = 0
 			case "manifest":
 				value["manifest_digest"] = "sha256:" + strings.Repeat("f", 64)
 			case "gateway-uid":
@@ -240,7 +267,7 @@ func TestDeploymentSupportsLocalOnlyAndDirectOnlyWithoutGateways(t *testing.T) {
 		delete(value, "gateways")
 		delete(value, "authorization")
 		if direct {
-			value["connectivity"] = map[string]any{"revision": "direct-v1", "synthetic_range": "10.80.0.0/24", "policies": map[string]any{"sh": map[string]any{"direct": []any{map[string]any{"cidr": "198.51.100.8/32", "port": 9030, "proto": "tcp"}}}}}
+			value["connectivity"] = map[string]any{"revision": "direct-v1", "synthetic_range": "10.80.0.0/24", "policies": map[string]any{"pi": map[string]any{"direct": []any{map[string]any{"cidr": "198.51.100.8/32", "port": 9030, "proto": "tcp"}}}}}
 		}
 		writeDeployment(t, path, value)
 		deployment, err := LoadDeployment(path)
@@ -250,7 +277,7 @@ func TestDeploymentSupportsLocalOnlyAndDirectOnlyWithoutGateways(t *testing.T) {
 		if len(deployment.Gateways) != 0 || deployment.AuthorizationSocket != "" {
 			t.Fatal("local deployment requires a gateway")
 		}
-		if direct && len(deployment.Connectivity.Policies["sh"].Direct) != 1 {
+		if direct && len(deployment.Connectivity.Policies["pi"].Direct) != 1 {
 			t.Fatal("direct policy lost")
 		}
 	}

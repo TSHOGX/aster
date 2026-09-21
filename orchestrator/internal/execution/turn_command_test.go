@@ -47,7 +47,7 @@ func TestControllerRetriesAmbiguousControlWithSameCommandIdentity(t *testing.T) 
 	controller, st, _, _, owner := controllerFixture(t)
 	launcher := &commandLauncher{store: st}
 	controller.Agents = launcher
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -121,7 +121,9 @@ var fixedProtected = []netip.Prefix{
 // be represented by an explicitly granted service or validated direct rules.
 func Compile(policy Policy, catalog []Endpoint, bindings []RuntimeBinding, deployment Deployment) (Compilation, error) {
 	out := Compilation{BackendID: deployment.BackendID, Version: 2, PolicyRevision: policy.Revision, Driver: policy.Driver, Default: "deny"}
-	if policy.Revision == "" || (policy.Driver != "pi" && policy.Driver != "sh") {
+	// Pi is the only Agent driver. Terminals reach direct tuples under Project
+	// policy and are never compiled as a driver here.
+	if policy.Revision == "" || policy.Driver != "pi" {
 		return out, fmt.Errorf("policy revision and supported driver required")
 	}
 	reserved := deployment.SyntheticRange

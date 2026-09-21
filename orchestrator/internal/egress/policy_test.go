@@ -179,11 +179,16 @@ func TestSemanticInputsChangePolicyDigest(t *testing.T) {
 	}
 }
 
-func TestEndpointPurposeDoesNotRestrictDriver(t *testing.T) {
+// Pi is the only compilable driver. An endpoint's purpose still does not
+// restrict it: entitlement is the policy's business, not the endpoint's.
+func TestUnsupportedDriverIsRefusedAndPiCompiles(t *testing.T) {
 	p, c, b, d := fixture()
-	p.Driver = "sh"
 	if _, err := Compile(p, c, b, d); err != nil {
 		t.Fatal(err)
+	}
+	p.Driver = "sh"
+	if _, err := Compile(p, c, b, d); err == nil {
+		t.Fatal("a retired shell driver must not compile a policy")
 	}
 }
 

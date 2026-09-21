@@ -94,7 +94,7 @@ func TestInterruptedRecoveryResumesEachDurableStageWithoutRedispatch(t *testing.
 		t.Run(fault, func(t *testing.T) {
 			ctx := context.Background()
 			controller, st, backend, launcher, owner := controllerFixture(t)
-			binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+			binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -139,7 +139,7 @@ func TestInterruptedRecoveryResumesEachDurableStageWithoutRedispatch(t *testing.
 				}
 			}
 			revoker := &recordingRevoker{fail: fault == "drain"}
-			service := execution.InterruptedRecoveryService{Repository: interruptedRoutesRepository{st}, Backend: backend, Routes: revoker, Reader: reader, Projector: projector}
+			service := execution.InterruptedRecoveryService{Repository: interruptedRoutesRepository{st}, Backend: backend, Routes: revoker, Reader: reader, Projector: projector, Native: &nativeRepair{}}
 			before := backend.calls
 			if err := service.Run(ctx, binding.GenerationID, owner, "transport interrupted"); err == nil {
 				t.Fatal("injected failure ignored")

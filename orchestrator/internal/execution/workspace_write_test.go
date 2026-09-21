@@ -14,7 +14,7 @@ import (
 func TestPreparedGuestMutationFencesTurnsLifecycleAndStaleOwner(t *testing.T) {
 	ctx := context.Background()
 	controller, st, _, _, owner := controllerFixture(t)
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}

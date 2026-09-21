@@ -30,7 +30,7 @@ func (s *Store) AdmitTurn(ctx context.Context, scope Scope, session, request, co
 		if err != nil {
 			return err
 		}
-		if child.State == "deleting" || child.State == "deleted" {
+		if child.Deletion != Live {
 			return ErrDeleting
 		}
 		old, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND request_id=?`, session, request))
@@ -108,7 +108,7 @@ func (s *Store) ReleaseTurn(ctx context.Context, scope Scope, session, id string
 		if err != nil {
 			return err
 		}
-		if child.State == "deleting" || child.State == "deleted" {
+		if child.Deletion != Live {
 			return ErrDeleting
 		}
 		if child.Revision != revision {

@@ -53,7 +53,7 @@ func (s *Store) BeginActivity(ctx context.Context, scope Scope, a Activity) erro
 			if err != nil {
 				return err
 			}
-			if child.State == "deleting" || child.State == "deleted" {
+			if child.Deletion != Live {
 				return ErrDeleting
 			}
 		}
@@ -62,7 +62,7 @@ func (s *Store) BeginActivity(ctx context.Context, scope Scope, a Activity) erro
 			if err != nil {
 				return err
 			}
-			if child.State == "deleting" || child.State == "deleted" {
+			if child.Deletion != Live {
 				return ErrDeleting
 			}
 		}
@@ -112,13 +112,17 @@ func (s *Store) SettleActivity(ctx context.Context, project, id, state string) e
 	})
 }
 func blockers(ctx context.Context, q queryer, project string) ([]Blocker, error) {
+	// Every row here is a reason the Project needs its sandbox. A live PTY is read
+	// from terminal_incarnations, not from the Terminal row: a created or exited
+	// Terminal owns no process and must not pin anything, while a running PTY pins
+	// even when it is silent and every browser has detached.
 	rows, err := q.QueryContext(ctx, `
  SELECT 'turn',id,state FROM turns WHERE project_id=? AND state IN ('queued','starting','running','stopping')
- UNION ALL SELECT 'terminal',id,state FROM terminals WHERE project_id=? AND state IN ('starting','running','stopping')
+ UNION ALL SELECT 'terminal_process',id,state FROM terminal_incarnations WHERE project_id=? AND state IN ('starting','running')
  UNION ALL SELECT kind,id,detail FROM project_activity WHERE project_id=? AND state<>'complete'
  UNION ALL SELECT 'agent_process',id,state FROM agent_incarnations WHERE project_id=? AND state IN ('starting','stopping','unknown')
- UNION ALL SELECT 'session_cleanup',id,state FROM sessions WHERE project_id=? AND state='deleting'
- UNION ALL SELECT 'terminal_cleanup',id,state FROM terminals WHERE project_id=? AND state='deleting'
+ UNION ALL SELECT 'session_cleanup',id,'requested' FROM sessions WHERE project_id=? AND deletion_intent=1
+ UNION ALL SELECT 'terminal_cleanup',id,'requested' FROM terminals WHERE project_id=? AND deletion_intent=1
  LIMIT 501`, project, project, project, project, project, project)
 	if err != nil {
 		return nil, err

@@ -134,14 +134,17 @@ func Load(manifest io.Reader, expected string, plans map[string]execution.Launch
 	if r.Backend != "khora" || r.Revision != EngineRevision || r.Module != EngineModule || r.Version != 1 || r.Home != "/root" || !r.Retained || r.Launcher != "/usr/local/bin/harness-khora-launcher" {
 		return nil, fmt.Errorf("template runtime contract is incompatible")
 	}
-	for _, path := range []string{"/usr/sbin/sandboxd", "/usr/local/bin/harness-khora-launcher", "/usr/local/bin/harness-bridge-client", "/usr/local/bin/harness-shell-agent", "/usr/local/bin/harness-workspace-helper", "/usr/local/bin/harness-journal-replay", "/usr/local/lib/harness_files.py", "/usr/local/lib/harness_launch.py", "/usr/local/lib/harness_stream.py", "/usr/local/lib/harness_recovery.py"} {
+	for _, path := range []string{"/usr/sbin/sandboxd", "/usr/local/bin/harness-khora-launcher", "/usr/local/bin/harness-bridge-client", "/usr/local/bin/harness-workspace-helper", "/usr/local/bin/harness-journal-replay", "/usr/local/lib/harness_files.py", "/usr/local/lib/harness_launch.py", "/usr/local/lib/harness_stream.py", "/usr/local/lib/harness_recovery.py"} {
 		if !validDigest(r.Files[path]) {
 			return nil, fmt.Errorf("template component digest missing: %s", path)
 		}
 	}
 	known := map[string]bool{}
 	for _, d := range metadata.Drivers {
-		if known[d.ID] || (d.ID != "pi" && d.ID != "sh") {
+		// Pi is the only Agent driver. A template that still declares a shell driver
+		// belongs to the retired shell-as-agent model and is refused rather than
+		// tolerated: the shell is a Terminal capability now, not a driver.
+		if known[d.ID] || d.ID != "pi" {
 			return nil, fmt.Errorf("template driver identity is ambiguous")
 		}
 		known[d.ID] = true
@@ -157,12 +160,8 @@ func Load(manifest io.Reader, expected string, plans map[string]execution.Launch
 				return nil, fmt.Errorf("template driver lacks %s", required)
 			}
 		}
-		if d.ID == "pi" {
-			if d.Binary != agents.PiBinaryPath || !caps["native_history_restore"] || d.PackageName != agents.PiPackageName || d.PackageVersion != agents.PiPackageVersion || d.PackageIntegrity != agents.PiPackageIntegrity {
-				return nil, fmt.Errorf("template Pi package/restore contract is incompatible")
-			}
-		} else if d.Binary != agents.ShellBinaryPath || !caps["pty"] || d.BinaryDigest != r.Files[d.Binary] {
-			return nil, fmt.Errorf("template shell contract is incompatible")
+		if d.Binary != agents.PiBinaryPath || !caps["native_history_restore"] || d.PackageName != agents.PiPackageName || d.PackageVersion != agents.PiPackageVersion || d.PackageIntegrity != agents.PiPackageIntegrity {
+			return nil, fmt.Errorf("template Pi package/restore contract is incompatible")
 		}
 	}
 	result := &Source{plans: map[string]execution.LaunchPlan{}}

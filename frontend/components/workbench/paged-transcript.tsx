@@ -15,17 +15,10 @@ import {
 import { dayKey, formatDayDivider } from "@/lib/format";
 import { isFinalReply } from "@/lib/message-grouping";
 import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
-import { ShellEntry } from "./shell-entry";
 import { VirtualTranscript } from "./virtual-transcript";
 import type { ApiMessage } from "@/lib/types";
 
-export function PagedTranscript({
-  sessionId,
-  shell = false,
-}: {
-  sessionId: string;
-  shell?: boolean;
-}) {
+export function PagedTranscript({ sessionId }: { sessionId: string }) {
   const t = useT();
   const c = useTranscriptState(sessionId);
   const readOnly = useSelectedSession()?.access === "reader";
@@ -42,24 +35,21 @@ export function PagedTranscript({
       void loadMessageWindow(sessionId, target);
   }, [target, c.messages, loadMessageWindow, sessionId]);
   const render = useCallback(
-    (m: ApiMessage, index: number) =>
-      shell ? (
-        <ShellEntry message={m} />
-      ) : (
-        <>
-          {(index === 0 ||
-            dayKey(c.messages[index - 1]?.created_at) !==
-              dayKey(m.created_at)) && (
-            <DayDivider label={formatDayDivider(m.created_at)} />
-          )}
-          <MessageBubble
-            message={m}
-            sessionId={sessionId}
-            showActions={!readOnly && (m.is_final_reply ?? isFinalReply(m, c.messages[index + 1]))}
-          />
-        </>
-      ),
-    [c.messages, shell, sessionId, readOnly],
+    (m: ApiMessage, index: number) => (
+      <>
+        {(index === 0 ||
+          dayKey(c.messages[index - 1]?.created_at) !==
+            dayKey(m.created_at)) && (
+          <DayDivider label={formatDayDivider(m.created_at)} />
+        )}
+        <MessageBubble
+          message={m}
+          sessionId={sessionId}
+          showActions={!readOnly && (m.is_final_reply ?? isFinalReply(m, c.messages[index + 1]))}
+        />
+      </>
+    ),
+    [c.messages, sessionId, readOnly],
   );
   if (!c.historyLoaded || !c.messages.length)
     return (

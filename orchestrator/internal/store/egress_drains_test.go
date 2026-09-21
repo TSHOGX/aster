@@ -37,7 +37,7 @@ func TestTurnCompletionRequiresConfirmedFlowDrainAndKeepsLateOutcome(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion := CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: turn.TurnID, TerminalStatus: "completed"}
+	completion := piCompletion(t, st, binding, turn)
 	if _, err := bridge.CompleteTurn(ctx, completion); err == nil {
 		t.Fatal("completion admitted live flows")
 	}
@@ -92,6 +92,12 @@ func TestAcceptedAbortClassifiesConcurrentNativeFailureAndPreservesSuccess(t *te
 				t.Fatal(err)
 			}
 			completion := CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: turn.TurnID, TerminalStatus: terminal, EventType: "ack_turn_completed", EventPayload: map[string]any{"status": terminal}}
+			if terminal == "completed" {
+				// Only a completed Pi turn must advance native state. A failed turn
+				// carries no such claim, which is the distinction under test here.
+				native := piCompletion(t, st, binding, turn)
+				completion.DriverStateUpdate, completion.DriverStateEvidence = native.DriverStateUpdate, native.DriverStateEvidence
+			}
 			if err := st.PrepareBridgeCompletion(ctx, completion); err != nil {
 				t.Fatal(err)
 			}

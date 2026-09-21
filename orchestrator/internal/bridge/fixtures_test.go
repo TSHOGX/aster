@@ -86,7 +86,7 @@ func setupBridgeRunningTurn(t *testing.T, ctx context.Context, session string) (
 	}
 	t.Cleanup(func() { st.Close() })
 	now := time.Now().UTC()
-	if err := st.CreateSession(ctx, store.Session{ID: session, UserID: "lab", Agent: "sh", Status: "created", Workspace: "opaque", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := st.CreateSession(ctx, store.Session{ID: session, UserID: "lab", Agent: "pi", Status: "created", Workspace: "opaque", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	owner := store.GenerationLeaseOwner("test-owner")

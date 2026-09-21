@@ -19,7 +19,6 @@ func compositionCatalog() egress.Catalog {
 		},
 		Policies: map[string]egress.Policy{
 			"pi": {Revision: "catalog-v1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "model"}, {EndpointID: "data"}}},
-			"sh": {Revision: "catalog-v1", Driver: "sh", Endpoints: []egress.EndpointAccess{{EndpointID: "data"}}},
 		},
 		Deployment: egress.Deployment{
 			BackendID: "engine-store", SyntheticRange: netip.MustParsePrefix("10.80.0.0/24"),
@@ -88,20 +87,35 @@ func TestNetworkCompositionDeclaresEntitledDestinationsOnly(t *testing.T) {
 	}
 }
 
-func TestNetworkCompositionRestrictsByDriverEntitlement(t *testing.T) {
+// Entitlement comes from the driver's policy, not from the catalog's endpoint
+// list. A driver the catalog does not name receives nothing.
+func TestNetworkCompositionRestrictsToEntitledServices(t *testing.T) {
 	ctx := context.Background()
-	_, composer, _, request := compositionFixture(t, "sh")
+	_, composer, _, request := compositionFixture(t, "pi")
 	composition, err := composer.ComposeGenerationNetwork(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(composition.Hosts) != 1 || composition.Hosts[0].Name != "data.internal" {
-		t.Fatalf("shell received unentitled services: %+v", composition.Hosts)
-	}
+	// The fixture policy entitles both declared services and nothing else.
+	names := map[string]bool{}
 	for _, host := range composition.Hosts {
-		if host.Name == "model.internal" {
-			t.Fatal("shell received model access")
-		}
+		names[host.Name] = true
+	}
+	if len(names) != 2 || !names["data.internal"] || !names["model.internal"] {
+		t.Fatalf("composed hosts do not match the declared entitlement: %+v", composition.Hosts)
+	}
+	// A driver with no declared policy reaches nothing. That is an empty
+	// composition rather than an error: default-deny is the normal outcome, not a
+	// fault, and it must not reserve a synthetic destination either.
+	unlisted := request
+	unlisted.Driver = "unlisted"
+	unlisted.GenerationID = "unlisted-generation"
+	empty, err := composer.ComposeGenerationNetwork(ctx, unlisted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Hosts) != 0 || len(empty.Network.Via) != 0 {
+		t.Fatalf("an unentitled driver received reachability: %+v", empty)
 	}
 }
 
@@ -182,8 +196,9 @@ func TestDeclaredCatalogValidationRejectsUnsatisfiableDeclarations(t *testing.T)
 		"revision mismatch": func(c *egress.Catalog) {
 			c.Policies["pi"] = egress.Policy{Revision: "other", Driver: "pi", Endpoints: c.Policies["pi"].Endpoints}
 		},
+		// A policy filed under one driver must not claim to be another's.
 		"driver mismatch": func(c *egress.Catalog) {
-			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "sh", Endpoints: c.Policies["pi"].Endpoints}
+			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "other", Endpoints: c.Policies["pi"].Endpoints}
 		},
 		"undeclared service": func(c *egress.Catalog) {
 			c.Policies["pi"] = egress.Policy{Revision: c.Revision, Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "absent"}}}
@@ -220,11 +235,11 @@ func TestDeclaredCatalogValidationRejectsUnsatisfiableDeclarations(t *testing.T)
 
 func TestNetworkCompositionPreservesDirectOnlyPolicyWithoutGateways(t *testing.T) {
 	ctx := context.Background()
-	st, composer, _, request := compositionFixture(t, "sh")
+	st, composer, _, request := compositionFixture(t, "pi")
 	composer.Catalog.Endpoints = nil
 	composer.Catalog.Deployment.Gateways = nil
 	rule := egress.Tuple{CIDR: netip.MustParsePrefix("198.51.100.8/32"), Port: 9030, Protocol: "tcp"}
-	composer.Catalog.Policies = map[string]egress.Policy{"sh": {Revision: composer.Catalog.Revision, Driver: "sh", Direct: []egress.Tuple{rule}}}
+	composer.Catalog.Policies = map[string]egress.Policy{"pi": {Revision: composer.Catalog.Revision, Driver: "pi", Direct: []egress.Tuple{rule}}}
 	if err := egress.ValidateCatalog(composer.Catalog); err != nil {
 		t.Fatal(err)
 	}

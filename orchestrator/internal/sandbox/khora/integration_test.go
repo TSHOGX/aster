@@ -72,7 +72,7 @@ func TestKhoraTemplateShellAndNativeHistory(t *testing.T) {
 		}
 	})
 	reference := sandbox.ProcessReference{StoreID: observed.StoreID, SandboxID: observed.SandboxID, Handle: "template-shell", Epoch: observed.Epoch}
-	stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: reference, IdempotencyKey: "template-shell-start", Command: "/usr/local/bin/harness-khora-launcher", Arguments: []string{"--session-id", "session", "--generation-id", "execution", "--driver-id", "sh", "--max-turns", "0"}, Directory: "/workspace"})
+	stream, err := backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: reference, IdempotencyKey: "template-shell-start", Command: "/usr/local/bin/harness-khora-launcher", Arguments: []string{"--session-id", "session", "--generation-id", "execution", "--driver-id", "pi", "--max-turns", "0"}, Directory: "/workspace"})
 	if err != nil {
 		t.Fatal(err)
 	}

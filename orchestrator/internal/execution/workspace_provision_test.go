@@ -38,7 +38,7 @@ func TestNewWorkspaceProvisioningRetainsVolumeWithoutAgentAndRetriesLostReplies(
 			if count, err := st.CountSandboxOccupyingSessions(ctx); err != nil || count != 0 {
 				t.Fatalf("provisioning leaked active capacity: %d %v", count, err)
 			}
-			binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+			binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +112,7 @@ func TestWorkspaceProvisioningHonorsActiveSessionLimit(t *testing.T) {
 	if count, err := st.CountSandboxOccupyingSessions(ctx); err != nil || count != 1 {
 		t.Fatalf("initial resume uncharged: %d %v", count, err)
 	}
-	if err := st.CreateSession(ctx, store.Session{ID: "second", UserID: "synthetic", Agent: "sh", Mode: "shell", Status: "created", Workspace: "opaque", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+	if err := st.CreateSession(ctx, store.Session{ID: "second", UserID: "synthetic", Agent: "pi", Mode: "shell", Status: "created", Workspace: "opaque", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := controller.EnsureWorkspace(ctx, "second", owner, 1); !sandbox.Is(err, sandbox.Capacity) {

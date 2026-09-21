@@ -23,7 +23,7 @@ func TestScheduleAPIUpdatesRoutingAndClearsCron(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st}
 	withUser := func(r *http.Request) *http.Request {
 		return r.WithContext(context.WithValue(r.Context(), userContextKey{}, "alice"))
 	}
@@ -68,7 +68,7 @@ func TestScheduleAPIRejectsArchivedManualRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st}
 	now := time.Now().UTC()
 	sc := store.AgentSchedule{ID: "sched_archived_api", UserID: "alice", Name: "Archived", Prompt: "run", Enabled: true, Mode: "agent", Archived: true, CreatedAt: now, UpdatedAt: now}
 	if err := st.CreateSchedule(ctx, sc); err != nil {

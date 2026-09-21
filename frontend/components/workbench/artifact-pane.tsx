@@ -71,7 +71,7 @@ function LegacyArtifactPane({ onExpandedChange }: ArtifactPaneProps) {
       // A shell session has no reply: its entries are command output, written
       // with an empty stop_reason, which the structural fallback would read as a
       // final reply. Nothing there is prose that mentions a file.
-      lastReplyContent={session.mode === "shell" ? "" : lastReply?.content ?? ""}
+      lastReplyContent={lastReply?.content ?? ""}
       onExpandedChange={onExpandedChange}
     />
   );

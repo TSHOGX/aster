@@ -23,7 +23,7 @@ func allocationFixture(t *testing.T) (*Store, string, egress.AllocationRequest) 
 		t.Fatal(err)
 	}
 	p := egress.AllocationRequest{SessionID: "session", EnvironmentID: "env", GenerationID: "planned-generation", Epoch: 1, EnvironmentFence: 0,
-		Policy:     egress.Policy{Revision: "policy-v1", Driver: "sh", Endpoints: []egress.EndpointAccess{{EndpointID: "data"}}},
+		Policy:     egress.Policy{Revision: "policy-v1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "data"}}},
 		Catalog:    []egress.Endpoint{{ID: "data", NextHop: "data", Transport: "tcp", Hostname: "data.internal", Port: 9030}},
 		Deployment: egress.Deployment{BackendID: "engine-store", SyntheticRange: netip.MustParsePrefix("10.80.0.0/29"), Protected: []netip.Prefix{netip.MustParsePrefix("10.200.0.0/16")}, Gateways: []egress.Gateway{{Endpoint: netip.MustParseAddrPort("192.0.2.1:19030"), ID: "data"}}},
 		Gateways:   map[string]netip.AddrPort{"data": netip.MustParseAddrPort("192.0.2.1:19030")}}
@@ -33,7 +33,7 @@ func allocationFixture(t *testing.T) (*Store, string, egress.AllocationRequest) 
 func allocationEnvironment(t *testing.T, st *Store, p egress.AllocationRequest) {
 	t.Helper()
 	ctx := context.Background()
-	createStoreSessionBackend(t, ctx, st, p.SessionID, "sh", "khora")
+	createStoreSessionBackend(t, ctx, st, p.SessionID, "pi", "khora")
 	if err := st.CreateEnvironmentBinding(ctx, execution.Environment{ID: p.EnvironmentID, SessionID: p.SessionID, BackendName: "engine", StoreID: p.Deployment.BackendID, Desired: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestAllocatedServiceRoutesOnlyAuthorizeAfterExecutionAndTurnAcceptance(t *t
 	if err := st.RecordEnvironmentOperationOutcome(ctx, execution.OperationOutcome{ID: op.ID, Fence: op.Fence, State: execution.OperationSucceeded, SandboxID: "sandbox", Epoch: 1, MutationRevision: "created"}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.ReserveExecutionBinding(ctx, execution.ReserveBindingParams{GenerationID: p.GenerationID, SessionID: p.SessionID, EnvironmentID: p.EnvironmentID, Owner: owner, Driver: "sh", SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), LeaseTTL: time.Minute})
+	b, err := st.ReserveExecutionBinding(ctx, execution.ReserveBindingParams{GenerationID: p.GenerationID, SessionID: p.SessionID, EnvironmentID: p.EnvironmentID, Owner: owner, Driver: "pi", SpecDigest: "sha256:" + strings.Repeat("a", 64), ManifestDigest: "sha256:" + strings.Repeat("b", 64), LeaseTTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}

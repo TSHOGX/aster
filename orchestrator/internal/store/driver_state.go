@@ -55,17 +55,6 @@ type driverStateCodec struct {
 
 func driverStateCodecRegistry() map[agents.ID]driverStateCodec {
 	return map[agents.ID]driverStateCodec{
-		agents.Shell: {
-			driverID: agents.Shell,
-			bootstrap: func(driverStateBootstrapContext) (any, error) {
-				return map[string]any{
-					"schema_version": 1,
-					"driver_id":      string(agents.Shell),
-					"state_kind":     emptyDriverStateKind,
-				}, nil
-			},
-			validatePayload: validateEmptyDriverStatePayload,
-		},
 		agents.Pi: {
 			driverID:        agents.Pi,
 			bootstrap:       bootstrapPiDriverState,

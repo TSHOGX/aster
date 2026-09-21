@@ -32,7 +32,7 @@ func TestCookieSameSiteRequiresSecure(t *testing.T) {
 		{"insecure cookies stay strict", true, false, true, http.SameSiteStrictMode},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: config.Config{
+			s := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, cfg: config.Config{
 				CookieSameSiteNone:  tc.sameSiteNone,
 				CookieSecure:        tc.cookieSecure,
 				TrustForwardedProto: true,

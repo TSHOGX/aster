@@ -463,8 +463,6 @@ for driver in drivers:
                 "/root/.pi/agent/sessions",
             ],
         })
-    elif driver == "sh":
-        entry = common("sh", "Shell", "shell", "/usr/local/bin/harness-shell-agent", "shell_pty_v1", False)
     else:
         raise SystemExit(f"unsupported selected driver: {driver}")
     entries.append(entry)

@@ -8,10 +8,10 @@ import (
 
 type ID string
 
-const (
-	Pi    ID = "pi"
-	Shell ID = "sh"
-)
+// Pi is the only Agent driver. A shell is not an agent: Terminals are a native
+// Project capability with their own PTY processes, so there is no shell driver,
+// no shell Session mode, and no conversion of terminal bytes into turns.
+const Pi ID = "pi"
 
 const (
 	PiCodingAgentDir     = "/root/.pi/agent"
@@ -22,23 +22,15 @@ const (
 	PiPackageIntegrity   = "sha512-huS+k+dhQRR9PlTK7crLfeSRUw3a96V6JYfP0ZH3Zkko/m10gsYk8dKQmwScSy5Dll516pXorz19BURfD6S2qQ=="
 	PiEventSchemaVersion = "pi_rpc_events_v1.0"
 	PiBinaryPath         = "/usr/local/bin/pi"
-
-	ShellBinaryPath = "/usr/local/bin/harness-shell-agent"
 )
 
 type Protocol string
 
-const (
-	ProtocolPiRPC    Protocol = "pi_rpc"
-	ProtocolShellPTY Protocol = "shell_pty"
-)
+const ProtocolPiRPC Protocol = "pi_rpc"
 
 type DriverKind string
 
-const (
-	DriverKindAgent DriverKind = "agent"
-	DriverKindShell DriverKind = "shell"
-)
+const DriverKindAgent DriverKind = "agent"
 
 type Definition struct {
 	ID       ID
@@ -47,9 +39,7 @@ type Definition struct {
 }
 
 // DriverPackageFacts captures the verifiable package identity for a driver as
-// it is installed into the agent image. Empty fields mean the driver does not
-// pin that fact (e.g. a bundled driver carries only a name, a shell driver
-// carries none).
+// it is installed into the agent image.
 type DriverPackageFacts struct {
 	Name               string
 	Version            string
@@ -74,8 +64,7 @@ type DriverSpec struct {
 }
 
 var driverSpecs = map[ID]DriverSpec{
-	Pi:    {ID: Pi, Label: "Pi", Kind: DriverKindAgent, BridgeProtocol: "harness_bridge_v2", BridgeProtocolVersion: 2, TurnInputSchema: "RunTurn", OutputSchema: PiEventSchemaVersion, RequiredRuntimeCapabilities: []string{"exec_stream", "filesystem_rw", "kill", "logs", "network_policy", "stdin"}, ModelAccess: true, OutputFormat: PiEventSchemaVersion, SupportsInterrupt: true, BinaryPath: PiBinaryPath, PackageFacts: DriverPackageFacts{Name: PiPackageName, Version: PiPackageVersion, Shasum: PiPackageShasum, Integrity: PiPackageIntegrity, EventSchemaVersion: PiEventSchemaVersion}},
-	Shell: {ID: Shell, Label: "Shell", Kind: DriverKindShell, BridgeProtocol: "harness_bridge_v2", BridgeProtocolVersion: 2, TurnInputSchema: "RunTurn", OutputSchema: "shell_pty_v1", RequiredRuntimeCapabilities: []string{"exec_stream", "filesystem_rw", "kill", "logs", "network_policy", "stdin"}, OutputFormat: "shell_pty", SupportsInterrupt: true, BinaryPath: ShellBinaryPath},
+	Pi: {ID: Pi, Label: "Pi", Kind: DriverKindAgent, BridgeProtocol: "harness_bridge_v2", BridgeProtocolVersion: 2, TurnInputSchema: "RunTurn", OutputSchema: PiEventSchemaVersion, RequiredRuntimeCapabilities: []string{"exec_stream", "filesystem_rw", "kill", "logs", "network_policy", "stdin"}, ModelAccess: true, OutputFormat: PiEventSchemaVersion, SupportsInterrupt: true, BinaryPath: PiBinaryPath, PackageFacts: DriverPackageFacts{Name: PiPackageName, Version: PiPackageVersion, Shasum: PiPackageShasum, Integrity: PiPackageIntegrity, EventSchemaVersion: PiEventSchemaVersion}},
 }
 
 func cloneDriverSpec(s DriverSpec) DriverSpec {
@@ -87,12 +76,7 @@ func Lookup(value string) (Definition, bool) {
 	if !ok {
 		return Definition{}, false
 	}
-	protocol := ProtocolPiRPC
-	switch spec.ID {
-	case Shell:
-		protocol = ProtocolShellPTY
-	}
-	return Definition{ID: spec.ID, Label: spec.Label, Protocol: protocol}, true
+	return Definition{ID: spec.ID, Label: spec.Label, Protocol: ProtocolPiRPC}, true
 }
 func DriverSpecFor(value string) (DriverSpec, bool) {
 	spec, ok := driverSpecs[ID(strings.TrimSpace(value))]
@@ -114,11 +98,8 @@ func AllDriverSpecs() []DriverSpec {
 	return specs
 }
 func CanonicalDriverID(value string) (ID, error) {
-	trimmed := strings.TrimSpace(value)
-	switch ID(trimmed) {
-	case Pi, Shell:
-		return ID(trimmed), nil
-	default:
-		return "", fmt.Errorf("unsupported driver %q", value)
+	if ID(strings.TrimSpace(value)) == Pi {
+		return Pi, nil
 	}
+	return "", fmt.Errorf("unsupported driver %q", value)
 }

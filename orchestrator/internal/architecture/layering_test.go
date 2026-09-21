@@ -83,6 +83,51 @@ var rules = []rule{
 		why:       "bridge sits below the HTTP layer and reaches persistence only through bridge.Store.",
 	},
 	{
+		pkg: "internal/product",
+		forbidden: []string{
+			"internal/server",
+			"internal/producthttp",
+			"internal/edge",
+			"internal/store",
+			"internal/execution",
+			"internal/bridge",
+			"internal/agentbridge",
+			"internal/egress",
+			"internal/gateway",
+			"internal/sandbox/khora",
+			"internal/retainedapp",
+			"internal/launchplan",
+			"internal/agents",
+		},
+		why: "product owns Project/Session/Terminal intent behind narrow ports. It must not " +
+			"reach the HTTP layer, the retired Session-owned daemon packages, or a concrete " +
+			"engine adapter: a browser boundary or a substrate client that could call back " +
+			"into the product model is how execution ownership leaks out of it.",
+	},
+	{
+		pkg: "internal/producthttp",
+		forbidden: []string{
+			"internal/server",
+			"internal/store",
+			"internal/execution",
+			"internal/bridge",
+			"internal/egress",
+			"internal/gateway",
+			"internal/sandbox/khora",
+			"internal/retainedapp",
+		},
+		why: "the product browser boundary translates authorized requests into product calls " +
+			"and returns projections. It owns no execution or recovery loop, holds no engine " +
+			"client, and shares nothing with the legacy Session daemon.",
+	},
+	{
+		pkg:       "internal/edge",
+		forbidden: []string{"internal/product", "internal/producthttp", "internal/server", "internal/store", "internal/sandbox/khora"},
+		why: "the edge is the single browser origin and nothing more: it routes by path prefix " +
+			"to two configured upstreams. A reverse proxy that could read product state would " +
+			"be a second place where authorization decisions live.",
+	},
+	{
 		pkg: "internal/shareblob",
 		forbidden: []string{
 			"internal/store",

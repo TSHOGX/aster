@@ -63,7 +63,7 @@ func TestKhoraApplicationCompositionServesHTTPWithoutEmbeddedRuntime(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := launchplan.Load(strings.NewReader(string(raw)), digest, map[string]execution.LaunchPlan{"sh": {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: []execution.ContentRequirement{{Purpose: "assets", Destination: "/root/.agents", RevisionDigest: revision.Digest}}}})
+	plans, err := launchplan.Load(strings.NewReader(string(raw)), digest, map[string]execution.LaunchPlan{"pi": {TemplateID: template, CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: []execution.ContentRequirement{{Purpose: "assets", Destination: "/root/.agents", RevisionDigest: revision.Digest}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

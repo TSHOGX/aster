@@ -52,7 +52,7 @@ func TestResumeScheduleRunReconcilesCompletedTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub()}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, hub: events.NewHub()}
 	srv.resumeScheduleRun(ctx, store.ScheduleRun{ID: "run_schedule_recovery", ScheduleID: schedule.ID, UserID: schedule.UserID, SessionID: sessionID, TurnID: &enqueued.TurnID, ScheduledAt: started, StartedAt: &started, Status: "running", CreatedAt: started}, schedule)
 
 	run, err := st.GetScheduleRun(ctx, "run_schedule_recovery", "alice")

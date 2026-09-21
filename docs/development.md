@@ -59,13 +59,13 @@ engine storage and test storage separate.
    ```
 
 Open `http://localhost:8000`. Creation waits for deployment capabilities and uses
-the advertised default mode; a shell-only deployment creates shell sessions.
+the advertised default mode, which is always `agent`.
 `GET /healthz` identifies the daemon process. Use
 [diagnostics](operations.md) to inspect worker, capacity and dependency state.
 
 ## Pi, gateways and native capture
 
-Use [khora-model.example.json](../config/khora-model.example.json) for Pi and shell.
+Use [khora-model.example.json](../config/khora-model.example.json) for Pi.
 Copy the [authored Pi configuration](../config/agent-config.example/README.md) and
 [model gateway configuration](../config/model-gateway.example.json), replacing all
 placeholder paths, peers and network addresses. Start the gateway under the engine's

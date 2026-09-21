@@ -29,7 +29,7 @@ func (r *lateStartupEvent) AcceptExecutionBinding(ctx context.Context, p executi
 func TestStartupRevalidatesLateEngineEventUsingOriginalStartIdentity(t *testing.T) {
 	controller, st, _, launcher, owner := controllerFixture(t)
 	controller.Repository = &lateStartupEvent{Store: st}
-	binding, err := controller.Ensure(context.Background(), execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(context.Background(), execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}

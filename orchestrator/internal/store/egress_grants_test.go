@@ -25,7 +25,7 @@ func grantFixture(t *testing.T) (*Store, *Store, execution.Binding, egress.Compi
 	gateway := netip.MustParseAddrPort("192.0.2.10:19030")
 	catalog := []egress.Endpoint{{ID: "analytics", NextHop: "data", Transport: "tcp", Hostname: "data.internal", Port: 9030}}
 	routes := []egress.RuntimeBinding{{ID: "route", BackendID: binding.StoreID, GenerationID: binding.GenerationID, Epoch: binding.Epoch, Revision: 1, EndpointID: "analytics", Destination: netip.MustParseAddrPort("10.80.0.1:9030"), Gateway: gateway}}
-	compilation, err := egress.Compile(egress.Policy{Revision: "policy", Driver: "sh", Endpoints: []egress.EndpointAccess{{EndpointID: "analytics"}}}, catalog, routes, egress.Deployment{BackendID: binding.StoreID, SyntheticRange: netip.MustParsePrefix("10.80.0.0/16"), Gateways: []egress.Gateway{{Endpoint: gateway, ID: "data"}}})
+	compilation, err := egress.Compile(egress.Policy{Revision: "policy", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "analytics"}}}, catalog, routes, egress.Deployment{BackendID: binding.StoreID, SyntheticRange: netip.MustParsePrefix("10.80.0.0/16"), Gateways: []egress.Gateway{{Endpoint: gateway, ID: "data"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestEgressLateFinishRetainsOriginalTurnAndRevocationLeavesTupleTombstone(t 
 	if _, err := st.AuthorizeEgressRequest(ctx, request); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := completeDrainedTurn(ctx, bridge, CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: first.TurnID, TerminalStatus: "completed"}); err != nil {
+	if _, err := completeDrainedTurn(ctx, bridge, piCompletion(t, st, binding, first)); err != nil {
 		t.Fatal(err)
 	}
 	second := claimGrantTurn(t, st, bridge, binding, "claim-second")

@@ -98,7 +98,9 @@ export type ApiSessionRuntime = {
   queued_turns: ApiTurn[];
 };
 
-export type SessionMode = "agent" | "shell";
+// A Session is always an agent. A terminal is a separate Project capability
+// with its own PTY process, not a Session mode.
+export type SessionMode = "agent";
 
 /**
  * How much of a session a share exposes. `summary` keeps the conversation but

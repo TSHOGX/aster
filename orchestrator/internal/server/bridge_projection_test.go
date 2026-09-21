@@ -39,7 +39,7 @@ func projectionFixture(t *testing.T) (*Server, *store.Store, store.CompleteTurnP
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, hub: events.NewHub(), log: slog.Default()}
 	return srv, st, store.CompleteTurnParams{SessionID: session.ID, GenerationID: allocation.GenerationID, TurnID: turn, Owner: allocation.Owner, TerminalStatus: "failed", EventType: bridge.TypeAckTurnCompleted, EventDedupeKey: "projection-complete", EventPayload: map[string]string{"status": "failed"}, Now: time.Now().UTC()}
 }
 
@@ -66,7 +66,7 @@ func TestBridgeProjectionRecoversAfterIngestAndCheckpointRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Restart drops all parser memory, including partial text and pending tool.
-	srv = &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
+	srv = &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, hub: events.NewHub(), log: slog.Default()}
 	appendProjectionLine(t, st, p, 3, `{"type":"tool_execution_end","toolCallId":"tool-1","result":"synthetic result"}`)
 	appendProjectionLine(t, st, p, 4, `{"type":"message_end","messageId":"native-message","message":{"role":"assistant","content":[],"stopReason":"stop"}}`)
 	if err := srv.projectBeforeBridgeCompletion(ctx, &p); err != nil {
@@ -90,7 +90,7 @@ func TestBridgeProjectionRecoversAfterIngestAndCheckpointRestart(t *testing.T) {
 	}
 	id := assistant[0].ID
 	trace := string(assistant[0].Trace)
-	srv = &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
+	srv = &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, hub: events.NewHub(), log: slog.Default()}
 	if err := srv.projectBridgeRecords(ctx, 128); err != nil {
 		t.Fatal(err)
 	}

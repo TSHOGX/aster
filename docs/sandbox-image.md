@@ -1,7 +1,7 @@
 # Khora template
 
 `sandbox-image/build-khora-template.sh` builds a template containing the pinned
-sandboxd, Pi and shell drivers, launcher, workspace helper and journal recovery reader.
+sandboxd, the Pi driver, launcher, workspace helper and journal recovery reader.
 The base rootfs builder installs generic tools and driver packages. The finalizer
 writes an immutable component manifest and pins the exact Khora module/revision.
 
@@ -32,7 +32,7 @@ sudo env "PATH=$PATH" "GOPATH=$(go env GOPATH)" "GOCACHE=$(go env GOCACHE)" \
 ```
 
 The builder rejects ignored files in `sandbox-image/files`, installs both Pi and
-shell, builds the pinned `sandboxd`, and finalizes component hashes. It exports:
+the Pi driver, builds the pinned `sandboxd`, and finalizes component hashes. It exports:
 
 - `/absolute/path/templates/battery`: template directory for engine registration.
 - `/absolute/path/templates/battery.manifest.json`: manifest consumed by the daemon.

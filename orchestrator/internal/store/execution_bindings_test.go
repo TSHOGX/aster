@@ -14,7 +14,7 @@ import (
 )
 
 func boundExecutionFixture(t *testing.T) (*Store, *Store, execution.Binding, execution.ObserveBindingParams) {
-	return boundExecutionFixtureForDriver(t, "sh")
+	return boundExecutionFixtureForDriver(t, "pi")
 }
 
 func boundExecutionFixtureForDriver(t *testing.T, driver string) (*Store, *Store, execution.Binding, execution.ObserveBindingParams) {
@@ -59,12 +59,12 @@ func TestOpaqueExecutionDrivesTurnWithoutLegacyRuntimeOrIPAuthority(t *testing.T
 	if err := st.AcceptExecutionBinding(ctx, observation); err != nil {
 		t.Fatal(err)
 	}
-	enqueued, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "synthetic shell turn"})
+	enqueued, err := st.EnqueueTurnMessage(ctx, EnqueueTurnMessageParams{SessionID: binding.SessionID, Content: "synthetic turn"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	grant, ok, err := bridge.ClaimNextTurn(ctx, request)
-	if err != nil || !ok || grant.TurnID != enqueued.TurnID || grant.DriverState.DriverID != "sh" {
+	if err != nil || !ok || grant.TurnID != enqueued.TurnID || grant.DriverState.DriverID != "pi" {
 		t.Fatalf("bound claim: %+v %t %v", grant, ok, err)
 	}
 	replay, ok, err := bridge.ClaimNextTurn(ctx, request)
@@ -74,7 +74,7 @@ func TestOpaqueExecutionDrivesTurnWithoutLegacyRuntimeOrIPAuthority(t *testing.T
 	if _, err := bridge.AckTurnStarted(ctx, AckStartedParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: grant.TurnID, LeaseTTL: time.Minute, EventType: "ack_turn_started", EventDedupeKey: "bound-start"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bridge.CompleteTurn(ctx, CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: grant.TurnID, TerminalStatus: "completed"}); err != nil {
+	if _, err := bridge.CompleteTurn(ctx, piCompletion(t, st, binding, grant)); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"network_profiles", "runtime_generation_resources", "runtime_resource_instances", "active_model_request_contexts", "agent_runtime_profiles", "sandbox_contracts"} {

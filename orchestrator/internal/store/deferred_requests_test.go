@@ -138,7 +138,7 @@ func TestDeferredCursorSkipsTerminalGrantsWithoutHidingLaterRequests(t *testing.
 	ctx := context.Background()
 	st, bridge, b, observed := deferredFixture(t)
 	turn := claimGrantTurn(t, st, bridge, b, "old-grant")
-	if _, err := bridge.CompleteTurn(ctx, CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, TerminalStatus: "completed"}); err != nil {
+	if _, err := bridge.CompleteTurn(ctx, piCompletion(t, st, b, turn)); err != nil {
 		t.Fatal(err)
 	}
 	b = beginDeferred(t, st, b, &observed)

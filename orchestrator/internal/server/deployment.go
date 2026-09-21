@@ -22,12 +22,12 @@ func (s *Server) resolveModeDeployment(mode string) (deploymentResolution, *depl
 		mode = "agent"
 	}
 
-	driver := agents.Pi
-	if mode == "shell" {
-		driver = agents.Shell
-	} else if mode != "agent" {
+	// "agent" is the only Session mode. A shell is a Terminal, which is a separate
+	// Project capability with its own PTY process rather than a Session driver.
+	if mode != "agent" {
 		return deploymentResolution{}, capabilityError("unsupported_mode", "unsupported mode")
 	}
+	driver := agents.Pi
 	if !s.retainedDrivers[driver] {
 		return deploymentResolution{}, capabilityError("driver_disabled", "driver is not enabled in the retained release")
 	}

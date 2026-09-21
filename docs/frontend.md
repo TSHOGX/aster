@@ -78,13 +78,13 @@ allow consumers to subscribe to just the state they render. `lib/api.ts` returns
 
 The workbench first calls `/api/me`. After authentication it fetches capabilities
 and sessions and connects SSE. Both sidebar creation controls wait for capabilities
-and submit `default_mode`, including `shell` on a shell-only deployment. Creation
-selects the new session and loads its initial durable history window.
+and submit `default_mode`; `agent` is the only Session mode. Creation selects the
+new session and loads its initial durable history window.
 
 The chat composer supports queued turns and individual release/cancel actions.
 Stop aborts the active turn and parks its queue; sending a parked prompt either
-steers into the active Pi turn or releases it as a new turn. Shell has Run/Stop
-controls and cannot accept Pi steering. Busy and stoppable state are distinct;
+steers into the active Pi turn or releases it as a new turn. Busy and stoppable
+state are distinct;
 queued work alone is not a running turn. Turn admission/control errors are shown
 without discarding the user's draft. See [runtime synchronization](runtime-state-synchronization.md).
 

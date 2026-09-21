@@ -44,7 +44,7 @@ func TestClientIPTrustProxyHeaders(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: config.Config{TrustProxyHeaders: tc.trust}}
+			s := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, cfg: config.Config{TrustProxyHeaders: tc.trust}}
 			r := httptest.NewRequest("POST", "/api/login", nil)
 			r.RemoteAddr = tc.remoteAddr
 			if tc.xRealIP != "" {

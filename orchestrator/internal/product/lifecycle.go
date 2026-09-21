@@ -58,6 +58,12 @@ func resources(ctx context.Context, q queryer, project string) (r Resources, err
 	}
 	return
 }
+
+// resourcesFor reads a Project's binding without an actor scope. Workers use it:
+// reconciliation must keep running after user admission closed.
+func (s *Store) resourcesFor(ctx context.Context, project string) (Resources, error) {
+	return resources(ctx, s.reader, project)
+}
 func (s *Store) Resources(ctx context.Context, scope Scope) (Resources, error) {
 	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
 		return Resources{}, err
@@ -468,6 +474,7 @@ func (l *Lifecycle) transition(ctx context.Context, o operation, r Resources) er
 	o.Phase = "reachability"
 	return l.reachability(ctx, o, r.Profile, observed.Reference)
 }
+
 // commit records the observed placement binding and advances the operation to a
 // later phase without completing it. The binding must be durable before any
 // further remote work so a lost reply retries that work, not the placement.
@@ -479,6 +486,12 @@ func (l *Lifecycle) commit(ctx context.Context, o operation, obs sandbox.Observa
 		if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET sandbox_id=?,mutation_revision=?,epoch=?,occupied=1 WHERE project_id=?`, obs.SandboxID, obs.MutationRevision, obs.Epoch, o.ProjectID); err != nil {
 			return err
 		}
+		// A new epoch is a new guest: any PTY recorded against the old placement is
+		// gone. Settling here, in the transaction that commits the epoch, means no
+		// window exists where a dead process still pins an idle Project.
+		if _, err := l.Store.loseStalePTYs(ctx, tx, o.ProjectID, obs.Epoch, "placement replaced; PTY process did not survive"); err != nil {
+			return err
+		}
 		return changed(tx.ExecContext(ctx, `UPDATE project_operations SET phase=?,state='pending',error='' WHERE id=? AND phase=? AND state<>'succeeded'`, next, o.ID, o.Phase))
 	})
 }
@@ -488,6 +501,17 @@ func (l *Lifecycle) finish(ctx context.Context, o operation, obs sandbox.Observa
 			return ErrConflict
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET sandbox_id=?,mutation_revision=?,epoch=?,occupied=? WHERE project_id=?`, obs.SandboxID, obs.MutationRevision, obs.Epoch, occupied, o.ProjectID); err != nil {
+			return err
+		}
+		// A paused placement holds no processes. Any PTY still recorded as running
+		// is lost, with no exit code: it did not exit, it became unobservable.
+		// Pause keeps the epoch, so "current" cannot be the criterion here; epoch 0
+		// is not a legal incarnation epoch, so every live PTY qualifies as stale.
+		current, reason := obs.Epoch, "placement replaced; PTY process did not survive"
+		if state == "paused" {
+			current, reason = 0, "Project paused; PTY process did not survive"
+		}
+		if _, err := l.Store.loseStalePTYs(ctx, tx, o.ProjectID, current, reason); err != nil {
 			return err
 		}
 		return l.settle(ctx, tx, o, state, occupied, restart, obs.Reference)

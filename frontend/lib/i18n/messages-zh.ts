@@ -271,8 +271,6 @@ export const ZH: Record<MessageKey, string> = {
   "share.publicLink": "公开链接",
   "share.publicLinkBody":
     "拿到链接的人无需登录即可查看此对话。链接会过期，且只显示当前内容，后续新增的消息不会包含在内。",
-  "share.shellAlwaysFull":
-    "Shell 会话始终以完整内容分享：命令输出本身就是内容。",
   "share.fullIncludes": "「完整」包含执行过程中的 shell 命令、文件内容和查询。",
   "share.filesNote":
     "只有你勾选的内容可以通过链接访问，且会冻结当前副本，之后对这些文件的改动不会显示。不勾选则只分享对话。",

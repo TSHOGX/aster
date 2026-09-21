@@ -35,7 +35,7 @@ func configurationFixture(t *testing.T) (*execution.Controller, *store.Store, *c
 func TestRetainedEnvironmentAdoptsNewContentRevision(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, _, plans, owner := configurationFixture(t)
-	session := execution.Session{ID: "session", Driver: "sh"}
+	session := execution.Session{ID: "session", Driver: "pi"}
 	first, err := controller.Ensure(ctx, session, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestRetainedEnvironmentAdoptsNewContentRevision(t *testing.T) {
 func TestGenerationConfigurationPinsSuccessorAndDoesNotReapplyAcceptedGeneration(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, _, _, owner := configurationFixture(t)
-	session := execution.Session{ID: "session", Driver: "sh"}
+	session := execution.Session{ID: "session", Driver: "pi"}
 	binding, err := controller.Ensure(ctx, session, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestEnvironmentIdentityStillConflictsExactly(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			controller, _, _, _, plans, owner := configurationFixture(t)
-			session := execution.Session{ID: "session", Driver: "sh"}
+			session := execution.Session{ID: "session", Driver: "pi"}
 			binding, err := controller.Ensure(ctx, session, owner)
 			if err != nil {
 				t.Fatal(err)
@@ -169,7 +169,7 @@ func TestEnvironmentIdentityStillConflictsExactly(t *testing.T) {
 func TestGenerationConfigurationRefusesRunningEnvironment(t *testing.T) {
 	ctx := context.Background()
 	controller, st, _, _, plans, owner := configurationFixture(t)
-	session := execution.Session{ID: "session", Driver: "sh"}
+	session := execution.Session{ID: "session", Driver: "pi"}
 	binding, err := controller.Ensure(ctx, session, owner)
 	if err != nil {
 		t.Fatal(err)

@@ -1290,15 +1290,6 @@ class EntrypointStaticTest(unittest.TestCase):
         runner.set_turn_context({'turn_id': 8})
         self.assertFalse(runner.deliver_control('abort', 7))
 
-    def test_shell_control_before_process_start_is_retained_for_current_turn(self):
-        runner = bridge.ShellTurnRunner()
-        runner.set_turn_context({'turn_id': 7})
-        self.assertTrue(runner.deliver_control('abort', 7))
-        self.assertTrue(runner.aborted)
-        runner.set_turn_context({'turn_id': 8})
-        self.assertFalse(runner.deliver_control('abort', 7))
-        self.assertFalse(runner.aborted)
-
     def test_set_turn_context_clears_a_previous_abort_marker(self):
         """Otherwise the turn after a stopped one is cancelled on arrival."""
         runner = bridge.PiRPCTurnRunner()

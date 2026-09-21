@@ -209,79 +209,6 @@ class BridgeClient:
 
 
 
-class ShellTurnRunner:
-    def __init__(self):
-        self.proc = None
-        self.write_lock = threading.Lock()
-        self.aborted = False
-        self.current_turn_id = None
-        self.running_turn = False
-
-    def set_turn_context(self, grant):
-        with self.write_lock:
-            self.current_turn_id = int(grant['turn_id'])
-            self.aborted = False
-            self.running_turn = False
-
-    def deliver_control(self, command, turn_id, message=''):
-        with self.write_lock:
-            if command != 'abort' or turn_id != self.current_turn_id:
-                return False
-            self.aborted = True
-            if self.running_turn and self.proc is not None and self.proc.poll() is None:
-                self.proc.stdin.write('{"type":"interrupt"}\n')
-                self.proc.stdin.flush()
-            return True
-
-    def _start(self):
-        if self.proc is not None and self.proc.poll() is None:
-            return
-        self.proc = subprocess.Popen(
-            ["/usr/local/bin/harness-shell-agent"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-
-    def run_turn(self, content, emit):
-        self._start()
-        frame = json.dumps({"type": "turn", "content": content}, ensure_ascii=False, separators=(",", ":"))
-        with self.write_lock:
-            self.proc.stdin.write(frame + "\n")
-            self.running_turn = True
-            if self.aborted:
-                self.proc.stdin.write('{"type":"interrupt"}\n')
-            self.proc.stdin.flush()
-        while True:
-            line = self.proc.stdout.readline()
-            if line == "":
-                raise RuntimeError("shell agent exited before turn completed")
-            stripped = line.rstrip("\n")
-            try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError:
-                emit("stdout", stripped)
-                continue
-            if payload.get("type") == "harness.turn_done":
-                with self.write_lock:
-                    self.running_turn = False
-                    aborted = self.aborted
-                if aborted:
-                    return 'canceled', 'user_interrupted', 'interrupted by user'
-                return "completed", "", ""
-            emit("stdout", stripped)
-
-    def close(self):
-        if self.proc is None:
-            return
-        try:
-            self.proc.terminate()
-        except OSError:
-            pass
-
-
 def validate_pi_runtime_environment():
     required = {
         "PI_CODING_AGENT_DIR": PI_CODING_AGENT_DIR,
@@ -785,7 +712,6 @@ class NativeEventsProbeRunner:
 
 RUNNER_FACTORIES = {
     "pi": PiRPCTurnRunner,
-    "sh": ShellTurnRunner,
     "native_events_probe": NativeEventsProbeRunner,
 }
 

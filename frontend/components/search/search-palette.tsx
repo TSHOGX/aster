@@ -62,7 +62,7 @@ function parseSnippet(snippet: string): SnippetPart[] {
 function HitIcon({ hit }: { hit: SearchHit }) {
   const className = "h-4 w-4 shrink-0 text-[var(--color-foreground-muted)]";
   if (hit.kind === "title") {
-    return hit.mode === "shell" ? <Hash className={className} /> : <MessageSquare className={className} />;
+    return <MessageSquare className={className} />;
   }
   return hit.role === "assistant" ? <Bot className={className} /> : <User className={className} />;
 }

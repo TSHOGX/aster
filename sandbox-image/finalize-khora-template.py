@@ -24,7 +24,7 @@ def finalize(root, engine_module):
         (root / relative).mkdir(parents=True, exist_ok=True)
     files = {}
     for relative in ('usr/sbin/sandboxd', 'usr/local/bin/harness-khora-launcher',
-                     'usr/local/bin/harness-bridge-client', 'usr/local/bin/harness-shell-agent',
+                     'usr/local/bin/harness-bridge-client',
                      'usr/local/lib/harness_stream.py', 'usr/local/lib/harness_launch.py',
                      'usr/local/lib/harness_files.py', 'usr/local/bin/harness-workspace-helper',
                      'usr/local/lib/harness_recovery.py', 'usr/local/bin/harness-journal-replay'):

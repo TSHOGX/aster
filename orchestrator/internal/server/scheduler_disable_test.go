@@ -54,7 +54,7 @@ func TestQueuedRunDoesNotStartAfterScheduleDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, schedulerRunsActive: map[string]struct{}{run.ID: {}}}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, schedulerRunsActive: map[string]struct{}{run.ID: {}}}
 	srv.startScheduleRunFromQueue(ctx, run.ID)
 
 	got, err := st.GetScheduleRun(ctx, run.ID, "alice")
@@ -93,7 +93,7 @@ func TestCanceledRunIsNotStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, schedulerRunsActive: map[string]struct{}{run.ID: {}}}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, schedulerRunsActive: map[string]struct{}{run.ID: {}}}
 	srv.startScheduleRunFromQueue(ctx, run.ID)
 
 	got, _ := st.GetScheduleRun(ctx, run.ID, "alice")
@@ -143,7 +143,7 @@ func TestDisablingScheduleCancelsQueuedBacklog(t *testing.T) {
 		}
 	}
 
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st}
 	req := httptest.NewRequest(http.MethodPatch, "/api/schedules/"+sc.ID, strings.NewReader(`{"enabled":false}`))
 	req = req.WithContext(context.WithValue(req.Context(), userContextKey{}, "alice"))
 	rec := httptest.NewRecorder()
@@ -186,7 +186,7 @@ func TestManualRunRejectedWhenBacklogAtLimit(t *testing.T) {
 	if err := st.CreateSchedule(ctx, sc); err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, schedulerWake: make(chan struct{}, 1)}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, schedulerWake: make(chan struct{}, 1)}
 	srv.cfg.Harness.Scheduler.MaxPendingRunsPerSchedule = 2
 
 	for i := 0; i < 2; i++ {

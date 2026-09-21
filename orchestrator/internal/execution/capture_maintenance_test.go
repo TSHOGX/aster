@@ -19,7 +19,7 @@ func captureMaintenanceFixture(t *testing.T) (*execution.Controller, *store.Stor
 	ctx := context.Background()
 	controller, st, backend, launcher, owner := controllerFixture(t)
 	controller.Routes = &recordingRevoker{}
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestCaptureMaintenanceRetriesConditionalMutationsWithoutAgentOrGrants(t *te
 	if len(launcher.requests) != 1 {
 		t.Fatal("maintenance launched agent")
 	}
-	if _, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "sh"}, owner); err == nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "pi"}, owner); err == nil {
 		t.Fatal("normal execution crossed maintenance lane")
 	}
 	if err := st.BeginWorkspaceMutation(ctx, workspace.Mutation{ID: "upload", SessionID: binding.SessionID, Owner: owner, Path: "file"}); err == nil {
@@ -90,7 +90,7 @@ func TestCaptureMaintenanceRetriesConditionalMutationsWithoutAgentOrGrants(t *te
 	if n, err := st.CountSandboxOccupyingSessions(ctx); err != nil || n != 0 {
 		t.Fatalf("maintenance did not release active slot: %d %v", n, err)
 	}
-	successor, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "sh"}, owner)
+	successor, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "pi"}, owner)
 	if err != nil || successor.Epoch != binding.Epoch+2 {
 		t.Fatalf("ordinary resume after capture: %+v %v", successor, err)
 	}
@@ -124,7 +124,7 @@ func TestCaptureMaintenanceYieldsOnDeadlineOrQueuedWork(t *testing.T) {
 			if err := st.DBForTest().QueryRow(`SELECT attempt FROM native_capture_activations`).Scan(&attempt); err != nil || attempt != 2 {
 				t.Fatalf("repeated activation did not allocate new keys: %d %v", attempt, err)
 			}
-			if _, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "sh"}, owner); err != nil {
+			if _, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "pi"}, owner); err != nil {
 				t.Fatalf("capture request blocked user resume after yielding: %v", err)
 			}
 		})
@@ -135,7 +135,7 @@ func TestCaptureMaintenanceReservesCapacityBeforeDispatch(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, _, owner, binding, _ := captureMaintenanceFixture(t)
 	// A second uncertain create consumes the only available product slot.
-	if err := st.CreateSession(ctx, store.Session{ID: "other", UserID: "synthetic", Agent: "sh", Mode: "shell", Status: "created", Workspace: "opaque", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+	if err := st.CreateSession(ctx, store.Session{ID: "other", UserID: "synthetic", Agent: "pi", Mode: "shell", Status: "created", Workspace: "opaque", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateEnvironmentBinding(ctx, execution.Environment{ID: "other-env", SessionID: "other", BackendName: "engine", StoreID: binding.StoreID}); err != nil {
@@ -176,7 +176,7 @@ func TestCaptureMaintenanceSettlesDefinitiveResumeFailure(t *testing.T) {
 	if err != nil || state.Stage != "complete" {
 		t.Fatalf("rejected resume left maintenance lane stuck: %+v %v", state, err)
 	}
-	if _, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "sh"}, owner); err != nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: binding.SessionID, Driver: "pi"}, owner); err != nil {
 		t.Fatalf("normal activation blocked after settled rejection: %v", err)
 	}
 }

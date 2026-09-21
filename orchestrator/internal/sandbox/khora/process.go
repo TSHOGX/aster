@@ -156,3 +156,61 @@ func (b *Backend) CloseProcessInput(ctx context.Context, reference sandbox.Proce
 	_, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).CloseStdin(ctx, request)
 	return processError("close process input", err)
 }
+
+// StartPTY launches a process attached to a PTY of the given size. PTY is a
+// field on the engine's Start request rather than a separate service, so this
+// shares every identity and idempotency guarantee with StartProcess: the handle
+// and epoch are supplied by the application before the first output frame.
+func (b *Backend) StartPTY(ctx context.Context, request sandbox.StartProcessRequest, rows, cols int) (sandbox.ProcessStream, error) {
+	if err := b.validateProcess(ctx, request.ProcessReference); err != nil {
+		return nil, err
+	}
+	if request.IdempotencyKey == "" || request.Command == "" {
+		return nil, failure("start pty", sandbox.Invalid, fmt.Errorf("persisted process key and command required"))
+	}
+	if rows < 1 || rows > 500 || cols < 1 || cols > 1000 {
+		return nil, failure("start pty", sandbox.Invalid, fmt.Errorf("PTY dimensions out of range"))
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	message := connect.NewRequest(&v1.StartRequest{Cmd: request.Command, Args: request.Arguments, Env: request.Environment, Cwd: request.Directory, IdempotencyKey: request.IdempotencyKey, PlacementEpoch: request.Epoch, ProcessHandle: request.Handle, Pty: &v1.PtySize{Rows: uint32(rows), Cols: uint32(cols)}})
+	message.Header().Set(sandboxHeader, request.SandboxID)
+	stream, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).Start(streamCtx, message)
+	if err != nil {
+		cancel()
+		return nil, processError("start pty", err)
+	}
+	return &processStream{stream: stream, reference: request.ProcessReference, cancel: cancel}, nil
+}
+
+// ResizePTY converges a live PTY to new dimensions. It is idempotent and carries
+// the placement epoch, so a resize can never land on a successor placement's
+// process that happens to reuse a handle.
+func (b *Backend) ResizePTY(ctx context.Context, reference sandbox.ProcessReference, rows, cols int) error {
+	if err := b.validateProcess(ctx, reference); err != nil {
+		return err
+	}
+	if rows < 1 || rows > 500 || cols < 1 || cols > 1000 {
+		return failure("resize pty", sandbox.Invalid, fmt.Errorf("PTY dimensions out of range"))
+	}
+	request := connect.NewRequest(&v1.UpdateRequest{ProcessHandle: reference.Handle, PlacementEpoch: reference.Epoch, Pty: &v1.PtySize{Rows: uint32(rows), Cols: uint32(cols)}})
+	request.Header().Set(sandboxHeader, reference.SandboxID)
+	_, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).Update(ctx, request)
+	return processError("resize pty", err)
+}
+
+// SendPTYInput writes bytes to a PTY master. It sets pty_in explicitly rather
+// than relying on the guest's stdin handle happening to be the same descriptor
+// for a PTY process: these are different input branches in the engine, and a
+// terminal's keystrokes belong on the PTY one.
+//
+// A failed send may have written a prefix. The caller must not blindly retry: a
+// repeated keystroke in a live shell is a new side effect, not a recovery.
+func (b *Backend) SendPTYInput(ctx context.Context, reference sandbox.ProcessReference, data []byte) error {
+	if err := b.validateProcess(ctx, reference); err != nil {
+		return err
+	}
+	request := connect.NewRequest(&v1.SendInputRequest{ProcessHandle: reference.Handle, PlacementEpoch: reference.Epoch, Data: data, PtyIn: true})
+	request.Header().Set(sandboxHeader, reference.SandboxID)
+	_, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).SendInput(ctx, request)
+	return processError("send pty input", err)
+}

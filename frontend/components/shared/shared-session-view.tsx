@@ -20,7 +20,6 @@ import {
   DayDivider,
   MessageBubble,
 } from "@/components/workbench/message-bubble";
-import { ShellEntry } from "@/components/workbench/shell-entry";
 import { SharedFilePanel } from "./shared-file-panel";
 
 type LoadState =
@@ -141,7 +140,6 @@ export function LegacySharedSessionView({ token }: { token: string }) {
   }
 
   const { session, messages, files } = state;
-  const isShell = session.mode === "shell";
 
   return (
     <main className="flex h-dvh min-h-0 flex-col bg-[var(--color-background)]">
@@ -188,18 +186,6 @@ export function LegacySharedSessionView({ token }: { token: string }) {
                 </p>
               </div>
             </div>
-          ) : isShell ? (
-            /* MessageBubble and ShellEntry own only their vertical rhythm, so the
-               centering + horizontal padding wrapper has to be repeated here —
-               the workbench conversation does the same. */
-            <div className="mx-auto w-full max-w-[var(--measure)] divide-y divide-[var(--color-border)] px-4 sm:px-6">
-              {messages.map((message) => (
-                <ShellEntry
-                  key={message.id}
-                  message={sharedToApiMessage(message)}
-                />
-              ))}
-            </div>
           ) : (
             <div className="mx-auto w-full max-w-[var(--measure)] px-4 sm:px-6">
               {messages.map((message, index) => {
@@ -233,7 +219,7 @@ export function LegacySharedSessionView({ token }: { token: string }) {
         <SharedFilePanel
           token={token}
           files={files}
-          lastReplyContent={isShell ? "" : lastReplyContent(messages)}
+          lastReplyContent={lastReplyContent(messages)}
         />
       </div>
 

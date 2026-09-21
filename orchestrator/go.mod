@@ -8,6 +8,7 @@ require (
 	connectrpc.com/connect v1.17.0
 	github.com/TSHOGX/khora v0.0.2-0.20260920024301-e8cd021a9c7c
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/sys v0.33.0
 	gopkg.in/yaml.v3 v3.0.1

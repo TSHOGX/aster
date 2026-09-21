@@ -32,11 +32,11 @@ func TestExecutionControllerRequiredAndFailuresPropagate(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	st, owner := openServerOwnedStore(t, ctx, directory)
-	session := store.Session{ID: "khora-session", UserID: "lab", Agent: "sh", Mode: "shell", Status: "created", Workspace: "workspace:khora-session", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	session := store.Session{ID: "khora-session", UserID: "lab", Agent: "pi", Mode: "shell", Status: "created", Workspace: "workspace:khora-session", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := st.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, cfg: testServerConfig(directory), hub: events.NewHub(), log: slog.Default(), ownerUUID: owner.UUID}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, cfg: testServerConfig(directory), hub: events.NewHub(), log: slog.Default(), ownerUUID: owner.UUID}
 	leaseOwner := store.GenerationLeaseOwner(owner.UUID)
 	if _, err := srv.ensureActiveGeneration(ctx, session, leaseOwner); err == nil {
 		t.Fatal("missing Khora controller fell back to embedded runtime")
@@ -69,7 +69,7 @@ func TestScheduledSessionsUseControllerForNewAndExistingTargets(t *testing.T) {
 			st, owner := openServerOwnedStore(t, ctx, directory)
 			now := time.Now().UTC()
 			controller := &routedController{fail: true}
-			srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, cfg: testServerConfig(directory), hub: events.NewHub(), log: slog.Default(), ownerUUID: owner.UUID}
+			srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, cfg: testServerConfig(directory), hub: events.NewHub(), log: slog.Default(), ownerUUID: owner.UUID}
 			target := ""
 			if mode == "existing_session" {
 				target = "existing-khora"

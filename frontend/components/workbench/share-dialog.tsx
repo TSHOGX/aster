@@ -34,12 +34,10 @@ import { useT } from "@/lib/i18n";
 export function ShareDialog({
   sessionId,
   sessionTitle,
-  isShell,
   onClose
 }: {
   sessionId: string;
   sessionTitle: string;
-  isShell: boolean;
   onClose: () => void;
 }) {
   const t = useT();
@@ -54,11 +52,8 @@ export function ShareDialog({
   const [grantee, setGrantee] = useState("");
   // Identity shares default to full: inside the org, seeing the work is the point.
   const [shareVisibility, setShareVisibility] = useState<ShareVisibility>("full");
-  // A public link defaults to summary. Shell sessions cannot be summarized at
-  // all (the command output IS the content), so the server forces full there and
-  // rejects an explicit summary; mirror that here instead of offering a choice
-  // that would 400.
-  const [linkVisibility, setLinkVisibility] = useState<ShareVisibility>(isShell ? "full" : "summary");
+  // A public link defaults to summary.
+  const [linkVisibility, setLinkVisibility] = useState<ShareVisibility>("summary");
   const [busy, setBusy] = useState(false);
   // The raw token, held only in memory and only until the dialog closes. The
   // server keeps a hash, so this is the one chance to copy it.
@@ -288,7 +283,6 @@ export function ShareDialog({
                 <select
                   value={linkVisibility}
                   onChange={(event) => setLinkVisibility(event.target.value as ShareVisibility)}
-                  disabled={isShell}
                   aria-label={t("share.linkVisibility")}
                   className="rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-xs disabled:opacity-60"
                 >
@@ -300,11 +294,7 @@ export function ShareDialog({
                   {t("share.createLink")}
                 </Button>
               </div>
-              {isShell ? (
-                <p className="mt-1.5 text-2xs text-[var(--color-foreground-muted)]">
-                  {t("share.shellAlwaysFull")}
-                </p>
-              ) : linkVisibility === "full" ? (
+              {linkVisibility === "full" ? (
                 <p className="mt-1.5 text-2xs text-[var(--color-warning,var(--color-foreground-muted))]">
                   {t("share.fullIncludes")}
                 </p>

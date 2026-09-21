@@ -18,7 +18,7 @@ func TestPausedWorkspaceWriteKeepsFenceThroughLostResumeAndPause(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, launcher, owner := controllerFixture(t)
 	controller.Routes = &recordingRevoker{}
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestPausedWorkspaceWriteKeepsFenceThroughLostResumeAndPause(t *testing.T) {
 	if _, err := st.EnqueueTurn(ctx, p.SessionID, "must wait for pause", time.Now()); err == nil {
 		t.Fatal("file success released admission before pause")
 	}
-	if _, err := controller.Ensure(ctx, execution.Session{ID: p.SessionID, Driver: "sh"}, owner); err == nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: p.SessionID, Driver: "pi"}, owner); err == nil {
 		t.Fatal("agent resumed during write maintenance")
 	}
 	state, err = st.NextGuestWorkspaceMaintenance(ctx, p.ID, owner)
@@ -110,7 +110,7 @@ func TestPausedWorkspaceWriteKeepsFenceThroughLostResumeAndPause(t *testing.T) {
 	if count, err := st.CountSandboxOccupyingSessions(ctx); err != nil || count != 0 {
 		t.Fatalf("write maintenance retained active capacity: %d %v", count, err)
 	}
-	if successor, err := controller.Ensure(ctx, execution.Session{ID: p.SessionID, Driver: "sh"}, owner); err != nil || successor.Epoch != binding.Epoch+2 {
+	if successor, err := controller.Ensure(ctx, execution.Session{ID: p.SessionID, Driver: "pi"}, owner); err != nil || successor.Epoch != binding.Epoch+2 {
 		t.Fatalf("session resume after offline upload: %+v %v", successor, err)
 	}
 }
@@ -119,7 +119,7 @@ func TestPausedWorkspaceResumeFailurePausesBeforeReleasingMutation(t *testing.T)
 	ctx := context.Background()
 	controller, st, backend, _, owner := controllerFixture(t)
 	controller.Routes = &recordingRevoker{}
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestPausedWritePreparationFailureStillReleasesMaintenanceCompute(t *testing
 	ctx := context.Background()
 	controller, st, backend, _, owner := controllerFixture(t)
 	controller.Routes = &recordingRevoker{}
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}

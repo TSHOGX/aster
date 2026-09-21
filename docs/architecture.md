@@ -60,6 +60,6 @@ See [gateway contracts](gateway-contract.md) and [recovery](recovery.md).
 
 The daemon publishes content and supervises product/execution maintenance. A separate
 capture worker archives completed native snapshots. Optional gateways own external
-service access; a local shell deployment can run with zero gateways. See
+service access; a local deployment can run with zero gateways. See
 [development setup](development.md) for startup order and [operations](operations.md)
 for diagnostics and retained-data accounting.

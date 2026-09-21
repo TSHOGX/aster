@@ -230,7 +230,6 @@ const SessionRow = memo(function SessionRow({
         <ShareDialog
           sessionId={session.id}
           sessionTitle={displayTitle}
-          isShell={session.mode === "shell"}
           onClose={() => setShareOpen(false)}
         />
       ) : null}

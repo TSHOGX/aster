@@ -35,7 +35,7 @@ func TestIdleAttachmentFailureClassificationRequiresExactInspection(t *testing.T
 		t.Run(fault, func(t *testing.T) {
 			ctx := context.Background()
 			original, st, backend, launcher, owner := controllerFixture(t)
-			binding, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+			binding, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 			if err != nil {
 				t.Fatal(err)
 			}

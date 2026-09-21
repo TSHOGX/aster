@@ -755,24 +755,15 @@ func (s *Server) deploymentCapabilities(w http.ResponseWriter, r *http.Request) 
 		agentEnabled = false
 		agentReason = disabled(err.code)
 	}
-	shellReason := (*string)(nil)
-	shellEnabled := true
-	if _, err := s.resolveModeDeployment("shell"); err != nil {
-		shellEnabled = false
-		shellReason = disabled(err.code)
-	}
-	defaultMode := "agent"
-	if !agentEnabled && shellEnabled {
-		defaultMode = "shell"
-	}
+	// There is one Session mode. A terminal is not a Session mode any more, so the
+	// client has no mode chooser to populate.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schema_version": 1,
 		"message_pages":  true,
 		"artifact_pages": true,
-		"default_mode":   defaultMode,
+		"default_mode":   "agent",
 		"session_modes": []modeDTO{
 			{Mode: "agent", Label: "Agent", Visible: true, CreateEnabled: agentEnabled, DisabledReason: agentReason},
-			{Mode: "shell", Label: "Shell", Visible: shellEnabled, CreateEnabled: shellEnabled, DisabledReason: shellReason},
 		},
 	})
 }

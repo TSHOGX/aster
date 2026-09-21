@@ -71,7 +71,6 @@ type nativeBridgeEventPayload struct {
 }
 
 type piOutputNormalizer struct{}
-type shellOutputNormalizer struct{}
 type nativeEventsOutputNormalizer struct{}
 type unsupportedOutputNormalizer struct {
 	driverID string
@@ -199,7 +198,6 @@ func outputNormalizerForDriver(driverID string) outputNormalizer {
 
 var outputNormalizers = map[string]outputNormalizerFactory{
 	string(agents.Pi):     func() outputNormalizer { return piOutputNormalizer{} },
-	string(agents.Shell):  func() outputNormalizer { return shellOutputNormalizer{} },
 	"native_events_probe": func() outputNormalizer { return nativeEventsOutputNormalizer{} },
 }
 
@@ -212,41 +210,6 @@ func (n unsupportedOutputNormalizer) Handle(p *streamParser, output normalizerBr
 		p.projectionErr = p.err
 	}
 	p.complete()
-}
-
-func (shellOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput) {
-	rawLine, ok := output.line()
-	if !ok {
-		return
-	}
-	line := strings.TrimSpace(rawLine)
-	if strings.HasPrefix(line, "{") {
-		var event struct {
-			Type     string `json:"type"`
-			Stream   string `json:"stream,omitempty"`
-			Text     string `json:"text,omitempty"`
-			Line     string `json:"line,omitempty"`
-			ExitCode int    `json:"exit_code,omitempty"`
-		}
-		if err := json.Unmarshal([]byte(line), &event); err == nil {
-			switch event.Type {
-			case "harness.shell_output":
-				text := event.Text
-				if text == "" {
-					text = event.Line
-				}
-				p.handleShellOutput(event.Stream, text)
-				return
-			case "harness.turn_done":
-				p.handleShellTurnDone(event.ExitCode)
-				return
-			default:
-				p.publish("agent.output", agentOutput{Stream: output.Stream, Line: rawLine})
-				return
-			}
-		}
-	}
-	p.persistAssistant(rawLine, "")
 }
 
 func (piOutputNormalizer) Handle(p *streamParser, output normalizerBridgeOutput) {
@@ -578,25 +541,6 @@ func nativeEventPublicPayload(raw json.RawMessage) any {
 		return map[string]string{"raw": string(raw)}
 	}
 	return payload
-}
-
-func (p *streamParser) handleShellOutput(stream, text string) {
-	if stream == "" {
-		stream = "stdout"
-	}
-	if text == "" {
-		return
-	}
-	out := agentOutput{Stream: stream, Line: text}
-	p.publish("agent.output", out)
-	p.persistShellOutput(text)
-}
-
-func (p *streamParser) handleShellTurnDone(exitCode int) {
-	if exitCode != 0 {
-		p.srv.log.Info("shell turn completed", "session_id", p.sessionID, "exit_code", exitCode)
-	}
-	p.complete()
 }
 
 // recordLifecyclePhase maps a pi lifecycle event onto the durable phase.

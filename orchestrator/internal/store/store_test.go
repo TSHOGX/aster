@@ -16,7 +16,7 @@ func TestModeForDriverUsesDriverRegistryKind(t *testing.T) {
 		want     string
 	}{
 		{driverID: "pi", want: "agent"},
-		{driverID: "sh", want: "shell"},
+
 		{driverID: "unknown", want: ""},
 	}
 	for _, tt := range tests {

@@ -87,14 +87,6 @@ func validateCreateShareLink(input createShareLinkInput, session store.Session, 
 	if err != nil {
 		return createShareLinkRequest{}, err
 	}
-	if isShellSession(session) {
-		if strings.TrimSpace(input.Visibility) == store.ShareVisibilitySummary {
-			return createShareLinkRequest{}, fmt.Errorf(
-				"shell sessions cannot be shared with %q visibility: the command output is the content",
-				store.ShareVisibilitySummary)
-		}
-		normalized = store.ShareVisibilityFull
-	}
 	ttl := input.TTL
 	if ttl < 0 {
 		return createShareLinkRequest{}, fmt.Errorf("ttl must not be negative")
@@ -146,16 +138,6 @@ func validateShareLinkFiles(paths []string, maxFiles int) ([]string, error) {
 		return nil, fmt.Errorf("a share link may include at most %d files", maxFiles)
 	}
 	return files, nil
-}
-
-// isShellSession reports whether a session is a shell session, by mode with a
-// driver fallback for rows written before mode was populated.
-func isShellSession(session store.Session) bool {
-	mode := strings.TrimSpace(session.Mode)
-	if mode == "" {
-		mode = store.ModeForDriver(session.Agent)
-	}
-	return mode == "shell"
 }
 
 // validateShareVisibility normalizes the visibility enum, substituting fallback

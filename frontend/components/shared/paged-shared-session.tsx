@@ -10,7 +10,6 @@ import type {
 } from "@/lib/types";
 import { VirtualTranscript } from "../workbench/virtual-transcript";
 import { MessageBubble } from "../workbench/message-bubble";
-import { ShellEntry } from "../workbench/shell-entry";
 import { LegacySharedSessionView } from "./shared-session-view";
 import { SharedFilePanel } from "./shared-file-panel";
 
@@ -116,17 +115,14 @@ export function PagedSharedSession({ token }: { token: string }) {
   }, [base, page?.latest_final_id]);
   const rows = page?.messages ?? [];
   const render = useCallback(
-    (message: ApiMessage) =>
-      session?.mode === "shell" ? (
-        <ShellEntry message={message} resourceBase={base} />
-      ) : (
-        <MessageBubble
-          message={message}
-          sessionId={session?.id ?? ""}
-          resourceBase={base}
-          showActions={false}
-        />
-      ),
+    (message: ApiMessage) => (
+      <MessageBubble
+        message={message}
+        sessionId={session?.id ?? ""}
+        resourceBase={base}
+        showActions={false}
+      />
+    ),
     [session, base],
   );
   if (session && !session.message_pages)

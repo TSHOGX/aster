@@ -151,7 +151,7 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 			if _, e := tx.ExecContext(settle, `UPDATE agent_commands SET state='unknown',error=? WHERE id=? AND state='sending'`, err.Error(), f.CommandID); e != nil {
 				return e
 			}
-			if _, e := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='native input outcome unknown' WHERE id=? AND state NOT IN ('deleting','deleted')`, session); e != nil {
+			if _, e := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='native input outcome unknown' WHERE id=? AND deletion_intent<2`, session); e != nil {
 				return e
 			}
 			return a.Store.bumpSession(settle, tx, scope.ProjectID, session, "session.blocked")
@@ -160,6 +160,7 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 	}
 	return nil
 }
+
 // serviceCredential mints this incarnation's grant for the configured audience.
 // It is issued once per incarnation, before Pi starts, and revoked when the
 // incarnation stops running. Its authority still requires an admitted turn at
@@ -394,7 +395,7 @@ func (a *Agents) recordExit(ctx context.Context, i Incarnation, code int32) {
 				if _, err := tx.ExecContext(settle, `UPDATE agent_incarnations SET state='exited',error='' WHERE id=? AND owner=?`, i.ID, i.Owner); err != nil {
 					return err
 				}
-				if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='idle',failure='' WHERE id=? AND state NOT IN ('deleting','deleted')`, i.SessionID); err != nil {
+				if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='idle',failure='' WHERE id=? AND deletion_intent<2`, i.SessionID); err != nil {
 					return err
 				}
 				return a.Store.bumpSession(settle, tx, i.ProjectID, i.SessionID, "session.exited")
@@ -410,7 +411,7 @@ func (a *Agents) recordExit(ctx context.Context, i Incarnation, code int32) {
 		if _, err := tx.ExecContext(settle, `UPDATE turns SET state='unknown',updated_at=? WHERE session_id=? AND state IN ('starting','running','stopping')`, a.Store.timestamp(), i.SessionID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='runner exited; reconcile journal and descendants' WHERE id=? AND state NOT IN ('deleting','deleted')`, i.SessionID); err != nil {
+		if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='runner exited; reconcile journal and descendants' WHERE id=? AND deletion_intent<2`, i.SessionID); err != nil {
 			return err
 		}
 		return a.Store.bumpSession(settle, tx, i.ProjectID, i.SessionID, "session.blocked")

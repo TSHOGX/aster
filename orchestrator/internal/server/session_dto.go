@@ -84,14 +84,9 @@ func publicSearchHits(hits []store.SearchHit) []apiSearchHit {
 	return items
 }
 
-func modeLabel(mode string) string {
-	switch mode {
-	case "shell":
-		return "Shell"
-	default:
-		return "Agent"
-	}
-}
+// modeLabel renders the only Session mode. It is kept as a function because the
+// DTOs carry the label, not because more than one mode exists.
+func modeLabel(string) string { return "Agent" }
 
 func publicSessions(sessions []store.Session) []apiSession {
 	items := make([]apiSession, 0, len(sessions))

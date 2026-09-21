@@ -10,8 +10,8 @@ import (
 )
 
 const projectColumns = `id,owner_id,title,state,revision,activity_revision,coalesce(idle_deadline,''),failure,created_at,updated_at`
-const sessionColumns = `id,project_id,title,state,revision,failure,created_at,updated_at`
-const terminalColumns = `id,project_id,title,state,revision,rows,cols,failure,created_at,updated_at`
+const sessionColumns = `id,project_id,title,state,deletion_intent,revision,failure,created_at,updated_at`
+const terminalColumns = `id,project_id,title,state,deletion_intent,revision,rows,cols,exit_code,failure,created_at,updated_at`
 
 type scanner interface{ Scan(...any) error }
 
@@ -20,11 +20,11 @@ func scanProject(row scanner) (p Project, err error) {
 	return
 }
 func scanSession(row scanner) (p Session, err error) {
-	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Revision, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
+	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Deletion, &p.Revision, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
 	return
 }
 func scanTerminal(row scanner) (p Terminal, err error) {
-	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Revision, &p.Rows, &p.Cols, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
+	err = missing(row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.State, &p.Deletion, &p.Revision, &p.Rows, &p.Cols, &p.ExitCode, &p.Failure, &p.CreatedAt, &p.UpdatedAt))
 	return
 }
 
@@ -139,7 +139,7 @@ func (s *Store) Sessions(ctx context.Context, scope Scope, after string, limit i
 	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
 		return nil, err
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE project_id=? AND id>? AND state<>'deleted' ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE project_id=? AND id>? AND deletion_intent<2 ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func (s *Store) Terminals(ctx context.Context, scope Scope, after string, limit 
 	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
 		return nil, err
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT `+terminalColumns+` FROM terminals WHERE project_id=? AND id>? AND state<>'deleted' ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT `+terminalColumns+` FROM terminals WHERE project_id=? AND id>? AND deletion_intent<2 ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -294,31 +294,34 @@ func (s *Store) editChild(ctx context.Context, scope Scope, id, kind string, rev
 		if _, err := writableProject(ctx, tx, scope); err != nil {
 			return err
 		}
-		var state string
+		var deletion Deletion
 		var rev int64
 		if kind == "session" {
 			p, err := sessionIn(ctx, tx, scope, id)
 			if err != nil {
 				return err
 			}
-			state, rev = p.State, p.Revision
+			deletion, rev = p.Deletion, p.Revision
 		} else {
 			p, err := terminalIn(ctx, tx, scope, id)
 			if err != nil {
 				return err
 			}
-			state, rev = p.State, p.Revision
+			deletion, rev = p.Deletion, p.Revision
 		}
-		if state == "deleting" || state == "deleted" {
+		if deletion != Live {
 			return ErrDeleting
 		}
 		if revision != rev {
 			return ErrConflict
 		}
 		table := kind + "s" // kind is an internal constant, never user input.
-		field, value := "title", title
+		// Deletion records intent in its own column. The child's execution state is
+		// left alone, so how it was running, blocked or exited stays visible while
+		// cleanup runs and after it finishes.
+		field, value := "title", any(title)
 		if deleting {
-			field, value = "state", "deleting"
+			field, value = "deletion_intent", any(int(Requested))
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE `+table+` SET `+field+`=?,revision=revision+1,updated_at=? WHERE id=? AND project_id=? AND revision=?`, value, s.timestamp(), id, scope.ProjectID, revision)); err != nil {
 			return err

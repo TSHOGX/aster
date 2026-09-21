@@ -912,12 +912,10 @@ func ModeForDriver(driverID string) string {
 	if !ok {
 		return ""
 	}
-	switch spec.Kind {
-	case agents.DriverKindAgent, agents.DriverKindShell:
+	if spec.Kind == agents.DriverKindAgent {
 		return string(spec.Kind)
-	default:
-		return ""
 	}
+	return ""
 }
 
 // The time/null/placeholder helpers below are the package-local spelling of the

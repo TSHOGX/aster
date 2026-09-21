@@ -48,7 +48,8 @@ func TestEngineInvalidationAllowsOriginalTurnSettlementWithoutNewAuthority(t *te
 			t.Fatalf("original output/replay rejected: %v", err)
 		}
 	}
-	completion := CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: turn.TurnID, TerminalStatus: "completed", FinalOutputSequence: &sequence}
+	completion := piCompletion(t, st, b, turn)
+	completion.FinalOutputSequence = &sequence
 	for range 2 {
 		if _, err := completeDrainedTurn(ctx, bridge, completion); err != nil {
 			t.Fatalf("original completion/replay rejected: %v", err)

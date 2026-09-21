@@ -214,45 +214,30 @@ func TestSharedLinkDefaultsToSummaryAndStripsTrace(t *testing.T) {
 	}
 }
 
-// A shell session's "summary" would be an empty page, so it is rejected rather
-// than silently satisfied.
-func TestShareLinkForcesFullOnShellSessions(t *testing.T) {
+// Every Session is an agent conversation, so a public link's visibility is the
+// user's choice with a summary default. There is no session kind that forces it.
+func TestShareLinkVisibilityDefaultsToSummaryAndHonorsFull(t *testing.T) {
 	f := newShareFixture(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	shell := store.Session{
-		ID: "sess_shell", UserID: "alice", Status: "created", Agent: "sh", Mode: "shell",
-		Workspace: f.dir, CreatedAt: now, UpdatedAt: now,
-	}
-	if err := f.store.CreateSession(ctx, shell); err != nil {
-		t.Fatalf("create shell session: %v", err)
-	}
-
-	// An explicit summary request is a 400.
-	rec := httptest.NewRecorder()
-	req := asUser(httptest.NewRequest(http.MethodPost, "/api/sessions/sess_shell/share-links",
-		strings.NewReader(`{"visibility":"summary"}`)), "alice")
-	f.srv.createShareLink(rec, req, "sess_shell")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("shell + summary: want 400 got %d (%s)", rec.Code, rec.Body.String())
-	}
-
-	// Omitting visibility yields full rather than the usual summary default.
-	rec = httptest.NewRecorder()
-	req = asUser(httptest.NewRequest(http.MethodPost, "/api/sessions/sess_shell/share-links",
-		strings.NewReader(`{}`)), "alice")
-	f.srv.createShareLink(rec, req, "sess_shell")
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("shell default: want 201 got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var payload struct {
-		Link apiShareLink `json:"link"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if payload.Link.Visibility != store.ShareVisibilityFull {
-		t.Fatalf("a shell link must be full, got %q", payload.Link.Visibility)
+	for body, want := range map[string]string{
+		`{}`:                       store.ShareVisibilitySummary,
+		`{"visibility":"summary"}`: store.ShareVisibilitySummary,
+		`{"visibility":"full"}`:    store.ShareVisibilityFull,
+	} {
+		rec := httptest.NewRecorder()
+		req := asUser(httptest.NewRequest(http.MethodPost, "/api/sessions/sess_alice/share-links", strings.NewReader(body)), "alice")
+		f.srv.createShareLink(rec, req, "sess_alice")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%s: want 201 got %d (%s)", body, rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Link apiShareLink `json:"link"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Link.Visibility != want {
+			t.Fatalf("%s: visibility %q, want %q", body, payload.Link.Visibility, want)
+		}
 	}
 }
 

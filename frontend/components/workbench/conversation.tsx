@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { useActivity, useCapabilities, useConversation, useHarness, useSelectedSession, useSessionRuntime } from "@/components/harness-provider";
 import { clearMessageJump, getMessageJump, subscribeMessageJump } from "@/lib/message-jump";
 import { PagedTranscript } from "./paged-transcript";
-import { ShellConversation } from "./shell-conversation";
 import { DayDivider, MessageBubble, StreamingBubble } from "./message-bubble";
 import { ActivityIndicator } from "./activity-indicator";
 import { Composer } from "./composer";
@@ -23,10 +22,6 @@ import { sessionModeLabel } from "@/lib/agents";
 import { dayKey, formatDayDivider, isAcceptingInput, isTerminal, statusLabel } from "@/lib/format";
 
 export function Conversation() {
-  const session = useSelectedSession();
-  if (session?.mode === "shell") {
-    return <ShellConversation />;
-  }
   return <ChatConversation />;
 }
 

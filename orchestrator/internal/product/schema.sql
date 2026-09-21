@@ -13,12 +13,17 @@ CREATE TABLE projects (
 );
 CREATE INDEX projects_owner ON projects(owner_id,created_at,id);
 
+-- state describes how the child is executing; deletion_intent describes whether
+-- the user asked for it to go away. They are separate columns on purpose: a
+-- blocked Session stays visibly blocked while its cleanup runs, and settling a
+-- child never erases the evidence of how it ended.
 CREATE TABLE sessions (
  id TEXT PRIMARY KEY CHECK(id<>''),
  project_id TEXT NOT NULL REFERENCES projects(id),
  title TEXT NOT NULL,
  creation_digest TEXT NOT NULL,
- state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','starting','running','stopping','blocked','deleting','deleted')),
+ state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','starting','running','stopping','blocked')),
+ deletion_intent INTEGER NOT NULL DEFAULT 0 CHECK(deletion_intent IN (0,1,2)),
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
  failure TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
@@ -29,15 +34,20 @@ CREATE INDEX sessions_project ON sessions(project_id,created_at,id);
 CREATE TRIGGER sessions_parent_immutable BEFORE UPDATE OF project_id ON sessions
 WHEN NEW.project_id<>OLD.project_id BEGIN SELECT RAISE(ABORT,'immutable Session parent'); END;
 
+-- rows/cols are the Terminal's persistent dimensions: a later incarnation starts
+-- at the size the user last chose. exit_code and state describe the most recent
+-- incarnation's outcome and survive deletion.
 CREATE TABLE terminals (
  id TEXT PRIMARY KEY CHECK(id<>''),
  project_id TEXT NOT NULL REFERENCES projects(id),
  title TEXT NOT NULL,
  creation_digest TEXT NOT NULL,
- state TEXT NOT NULL DEFAULT 'created' CHECK(state IN ('created','starting','running','stopping','exited','lost','deleting','deleted')),
+ state TEXT NOT NULL DEFAULT 'created' CHECK(state IN ('created','starting','running','exited','lost')),
+ deletion_intent INTEGER NOT NULL DEFAULT 0 CHECK(deletion_intent IN (0,1,2)),
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
  rows INTEGER NOT NULL CHECK(rows BETWEEN 1 AND 500),
  cols INTEGER NOT NULL CHECK(cols BETWEEN 1 AND 1000),
+ exit_code INTEGER,
  failure TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
@@ -88,8 +98,8 @@ CREATE TABLE conversation_grants (
  revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
  PRIMARY KEY(session_id,reader_id)
 );
-CREATE TRIGGER revoke_session_grants AFTER UPDATE OF state ON sessions
-WHEN NEW.state IN ('deleting','deleted')
+CREATE TRIGGER revoke_session_grants AFTER UPDATE OF deletion_intent ON sessions
+WHEN NEW.deletion_intent>0
 BEGIN UPDATE conversation_grants SET revoked=1 WHERE session_id=NEW.id; END;
 CREATE TRIGGER revoke_project_grants AFTER UPDATE OF state ON projects
 WHEN NEW.state IN ('deleting','deleted')
@@ -158,6 +168,36 @@ CREATE TABLE agent_incarnations (
  UNIQUE(store_id,sandbox_id,epoch,handle)
 );
 CREATE UNIQUE INDEX agent_incarnation_live ON agent_incarnations(session_id) WHERE state IN ('starting','running','stopping','unknown');
+-- A Terminal's PTY process record, the exact analogue of agent_incarnations. A
+-- Terminal row alone owns no process and pins nothing; a live incarnation here is
+-- what keeps the Project awake, including while silent and browser-detached.
+--
+-- exit_code is written only from the process stream's terminal frame. 'lost'
+-- means the placement that held this PTY is gone: the process did not exit, its
+-- outcome is simply unobservable, so no code is recorded.
+CREATE TABLE terminal_incarnations (
+ id TEXT PRIMARY KEY,
+ project_id TEXT NOT NULL,
+ terminal_id TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ sandbox_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL CHECK(epoch>0),
+ handle TEXT NOT NULL,
+ owner INTEGER NOT NULL CHECK(owner>0),
+ state TEXT NOT NULL CHECK(state IN ('starting','running','exited','lost')),
+ rows INTEGER NOT NULL CHECK(rows BETWEEN 1 AND 500),
+ cols INTEGER NOT NULL CHECK(cols BETWEEN 1 AND 1000),
+ exit_code INTEGER,
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ FOREIGN KEY(project_id,terminal_id) REFERENCES terminals(project_id,id),
+ UNIQUE(project_id,terminal_id,id),
+ UNIQUE(store_id,sandbox_id,epoch,handle),
+ CHECK((state IN ('exited') AND exit_code IS NOT NULL) OR (state NOT IN ('exited') AND exit_code IS NULL))
+);
+CREATE UNIQUE INDEX terminal_incarnation_live ON terminal_incarnations(terminal_id) WHERE state IN ('starting','running');
+CREATE INDEX terminal_incarnations_project ON terminal_incarnations(project_id,state);
+
 CREATE TABLE agent_commands (
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL,
@@ -234,6 +274,6 @@ BEGIN UPDATE service_grants SET state='revoked' WHERE project_id=NEW.id AND stat
 CREATE TRIGGER revoke_incarnation_services AFTER UPDATE OF state ON agent_incarnations
 WHEN NEW.state<>'running' AND NEW.state<>'starting'
 BEGIN UPDATE service_grants SET state='revoked' WHERE incarnation_id=NEW.id AND state='active'; END;
-CREATE TRIGGER revoke_session_services AFTER UPDATE OF state ON sessions
-WHEN NEW.state IN ('deleting','deleted')
+CREATE TRIGGER revoke_session_services AFTER UPDATE OF deletion_intent ON sessions
+WHEN NEW.deletion_intent>0
 BEGIN UPDATE service_grants SET state='revoked' WHERE session_id=NEW.id AND state='active'; END;

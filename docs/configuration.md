@@ -57,8 +57,8 @@ schemas are rejected before writable access.
 
 Versioned examples:
 
-- [Local shell deployment](../config/khora-local.example.json): no gateways or network access.
-- [Pi and shell deployment](../config/khora-model.example.json): managed model endpoint, local shell.
+- [Local deployment](../config/khora-local.example.json): no gateways or network access.
+- [Model deployment](../config/khora-model.example.json): managed model endpoint.
 - [Separate model proxy](../config/model-gateway.example.json): upstream URL, model allowlist and credential file.
 
 Copy examples to private files and replace engine store ID, exported manifest path

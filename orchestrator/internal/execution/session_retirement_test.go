@@ -12,7 +12,7 @@ import (
 func TestRetirementRetriesJournalRecoveryBeforeProductFinalization(t *testing.T) {
 	ctx := context.Background()
 	original, st, backend, launcher, owner := controllerFixture(t)
-	b, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	b, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestRetirementRetriesJournalRecoveryBeforeProductFinalization(t *testing.T)
 		t.Fatal(err)
 	}
 	reader := &retainedReader{store: st, turn: turn, fail: true}
-	controller := &execution.Controller{Repository: st, Backend: backend, Routes: &recordingRevoker{}, RecoveryReader: reader, RecoveryProjector: &recoveryProjector{store: st}, Lifetime: ctx}
+	controller := &execution.Controller{Repository: st, Backend: backend, Routes: &recordingRevoker{}, RecoveryReader: reader, RecoveryProjector: &recoveryProjector{store: st}, NativeRestorer: &nativeRepair{}, Lifetime: ctx}
 	defer controller.Close()
 	if _, err := controller.RetireSession(ctx, b.SessionID, owner); err == nil {
 		t.Fatal("retirement ignored failed replay")

@@ -71,7 +71,7 @@ func TestBoundBusyDecisionDoesNotClaimAfterCurrentTurnCompletes(t *testing.T) {
 	if _, err := st.EnqueueTurn(ctx, b.SessionID, "next prompt", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bridge.CompleteTurn(ctx, CompleteTurnParams{SessionID: b.SessionID, GenerationID: b.GenerationID, Owner: b.Owner, TurnID: first.TurnID, TerminalStatus: "completed"}); err != nil {
+	if _, err := bridge.CompleteTurn(ctx, piCompletion(t, st, b, first)); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := bridge.ClaimNextTurn(ctx, p); err != nil || ok {

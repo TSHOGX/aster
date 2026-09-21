@@ -68,7 +68,7 @@ A later documentation commit does not become a tested revision. Distinguish HTTP
 handler composition from a launched daemon and fixture browsers from real browsers.
 See [development evidence](development-evidence.md) for the recorded runs and limits.
 
-Tests cover policy/store invariants, owner/epoch fencing, lost replies, Pi and shell
+Tests cover policy/store invariants, owner/epoch fencing, lost replies, Pi
 turns, control, native restore, capture restart, workspace mutations, sharing/auth,
 SSE replay, gateway expiry/teardown and retained retirement. Power-loss durability
 and production migration/deployment acceptance are separate from these development checks.

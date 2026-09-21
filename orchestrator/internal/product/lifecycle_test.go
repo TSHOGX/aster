@@ -249,19 +249,27 @@ func TestIdleRevisionsQueuedSessionsHeldAndRetainedTerminal(t *testing.T) {
 	_, err = l.Store.ArmIdle(ctx, a, time.Second)
 	must(t, err) // row alone isn't live.
 	must(t, l.Store.BeginActivity(ctx, a, Activity{ID: "start", TerminalID: term.ID, Kind: "terminal_start"}))
-	_, err = l.Store.db.Exec(`UPDATE terminals SET state='running' WHERE id=?`, term.ID)
+	i, err := l.Store.reserveTerminal(ctx, a, term.ID, 24, 80)
 	must(t, err)
+	must(t, l.Store.TerminalRunning(ctx, i))
 	must(t, l.Store.SettleActivity(ctx, a.ProjectID, "start", "complete"))
+	// The live PTY process is the blocker, not the Terminal row and not the
+	// settled start activity.
 	bs, err = l.Store.Blockers(ctx, a)
 	must(t, err)
-	if len(bs) != 1 || bs[0].Kind != "terminal" {
+	if len(bs) != 1 || bs[0].Kind != "terminal_process" {
 		t.Fatal(bs)
 	}
 	_, err = l.Store.ArmIdle(ctx, a, time.Second)
 	wantError(t, err, ErrBusy)
-	// A silent terminal has no browser state to clear. Only exit settles it.
-	_, err = l.Store.db.Exec(`UPDATE terminals SET state='exited' WHERE id=?`, term.ID)
+	// A silent terminal has no browser state to clear. Only its observed exit
+	// settles it, and the recorded code survives.
+	must(t, l.Store.SettleTerminalExit(ctx, i, 0))
+	settled, err := l.Store.Terminal(ctx, a, term.ID)
 	must(t, err)
+	if settled.State != "exited" || settled.ExitCode == nil || *settled.ExitCode != 0 {
+		t.Fatal(settled)
+	}
 	timer, err = l.Store.ArmIdle(ctx, a, time.Second)
 	must(t, err)
 	now = now.Add(2 * time.Second)

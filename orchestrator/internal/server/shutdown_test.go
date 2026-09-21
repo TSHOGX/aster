@@ -13,7 +13,7 @@ import (
 )
 
 func TestEventsStreamReturnsWhenApplicationShutdownBegins(t *testing.T) {
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		hub:        events.NewHub(),
 		shutdownCh: make(chan struct{}),
 	}

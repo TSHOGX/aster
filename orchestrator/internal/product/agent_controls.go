@@ -32,7 +32,7 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 		if err != nil {
 			return err
 		}
-		if child.State == "deleting" || child.State == "deleted" {
+		if child.Deletion != Live {
 			return ErrDeleting
 		}
 		i, err := liveIncarnation(ctx, tx, session)

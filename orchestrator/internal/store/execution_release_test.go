@@ -45,7 +45,7 @@ func TestIdleReleaseRetainsUnprojectedOutput(t *testing.T) {
 	if _, err := st.AppendEvent(ctx, AppendEventParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: &turn.TurnID, OutputSequence: &seq, Type: "emit_output", Payload: map[string]string{"line": "retained output"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bridge.CompleteTurn(ctx, CompleteTurnParams{SessionID: binding.SessionID, GenerationID: binding.GenerationID, Owner: binding.Owner, TurnID: turn.TurnID, TerminalStatus: "completed"}); err != nil {
+	if _, err := bridge.CompleteTurn(ctx, piCompletion(t, st, binding, turn)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.BeginIdleExecutionRelease(ctx, binding.GenerationID, binding.Owner, time.Now()); !errors.Is(err, execution.ErrBusy) {

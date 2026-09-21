@@ -278,8 +278,6 @@ export const EN = {
   "share.publicLink": "Public link",
   "share.publicLinkBody":
     "Anyone with the link can read this conversation without logging in. The link expires, and shows the conversation as it stands now — later messages are not included.",
-  "share.shellAlwaysFull":
-    "Shell sessions are always shared in full: the command output is the content.",
   "share.fullIncludes":
     "Full includes shell commands, file contents and queries from the execution trace.",
   "share.filesNote":

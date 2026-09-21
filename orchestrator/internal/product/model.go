@@ -25,25 +25,40 @@ type Project struct {
 	UpdatedAt        string `json:"updated_at"`
 }
 
+// Deletion is a child's cleanup progress, held separately from its execution
+// state so settling a child never erases how it ended.
+type Deletion int
+
+const (
+	Live      Deletion = 0
+	Requested Deletion = 1
+	Settled   Deletion = 2
+)
+
 type Session struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	Revision  int64  `json:"revision"`
-	Failure   string `json:"failure,omitempty"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID        string   `json:"id"`
+	ProjectID string   `json:"project_id"`
+	Title     string   `json:"title"`
+	State     string   `json:"state"`
+	Deletion  Deletion `json:"deletion"`
+	Revision  int64    `json:"revision"`
+	Failure   string   `json:"failure,omitempty"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
 }
 
 type Terminal struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	Revision  int64  `json:"revision"`
-	Rows      int    `json:"rows"`
-	Cols      int    `json:"cols"`
+	ID        string   `json:"id"`
+	ProjectID string   `json:"project_id"`
+	Title     string   `json:"title"`
+	State     string   `json:"state"`
+	Deletion  Deletion `json:"deletion"`
+	Revision  int64    `json:"revision"`
+	Rows      int      `json:"rows"`
+	Cols      int      `json:"cols"`
+	// ExitCode is the last incarnation's observed exit status, absent when no
+	// process has ended. A lost placement leaves it absent: the PTY did not exit.
+	ExitCode  *int   `json:"exit_code,omitempty"`
 	Failure   string `json:"failure,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`

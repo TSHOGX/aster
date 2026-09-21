@@ -1,10 +1,9 @@
-import { Bot, TerminalSquare, type LucideIcon } from "lucide-react";
+import { Bot, type LucideIcon } from "lucide-react";
 
 import type { DeploymentCapabilities, DeploymentSessionMode, SessionMode } from "./types";
 
 const MODE_ICONS: Record<SessionMode, LucideIcon> = {
-  agent: Bot,
-  shell: TerminalSquare
+  agent: Bot
 };
 
 export type NewSessionOption = {
@@ -23,8 +22,8 @@ export const FALLBACK_DEPLOYMENT_CAPABILITIES: DeploymentCapabilities = {
   ]
 };
 
-export function sessionModeLabel(mode: SessionMode | string, label?: string) {
-  return label || (mode === "shell" ? "Shell" : "Agent");
+export function sessionModeLabel(_mode: SessionMode | string, label?: string) {
+  return label || "Agent";
 }
 
 function optionFromCapability(capability: DeploymentSessionMode): NewSessionOption {

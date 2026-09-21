@@ -44,7 +44,7 @@ func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (
 		if err != nil {
 			return err
 		}
-		if child.State == "deleting" || child.State == "deleted" {
+		if child.Deletion != Live {
 			return ErrDeleting
 		}
 		if child.State == "blocked" {
@@ -81,10 +81,11 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 	var f agentwire.Frame
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var projectState, sessionState string
-		if err := tx.QueryRowContext(ctx, `SELECT p.state,s.state FROM projects p JOIN sessions s ON s.project_id=p.id WHERE p.id=? AND s.id=?`, i.ProjectID, i.SessionID).Scan(&projectState, &sessionState); err != nil {
+		var deletion Deletion
+		if err := tx.QueryRowContext(ctx, `SELECT p.state,s.state,s.deletion_intent FROM projects p JOIN sessions s ON s.project_id=p.id WHERE p.id=? AND s.id=?`, i.ProjectID, i.SessionID).Scan(&projectState, &sessionState, &deletion); err != nil {
 			return err
 		}
-		if projectState != "active" || sessionState == "blocked" || sessionState == "deleting" || sessionState == "deleted" {
+		if projectState != "active" || sessionState == "blocked" || deletion != Live {
 			return ErrPending
 		}
 		current, err := liveIncarnation(ctx, tx, i.SessionID)
@@ -256,7 +257,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='running',updated_at=? WHERE id=? AND state='starting'`, s.timestamp(), turn); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE sessions SET state='running' WHERE id=? AND state NOT IN ('deleting','deleted')`, i.SessionID)
+		_, err := tx.ExecContext(ctx, `UPDATE sessions SET state='running' WHERE id=? AND deletion_intent<2`, i.SessionID)
 		return err
 	case "rejected":
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='failed',updated_at=? WHERE id=?`, s.timestamp(), turn); err != nil {
@@ -266,7 +267,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='unknown',updated_at=? WHERE id=?`, s.timestamp(), turn); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE sessions SET state='blocked',failure='native command outcome unknown' WHERE id=? AND state NOT IN ('deleting','deleted')`, i.SessionID)
+		_, err := tx.ExecContext(ctx, `UPDATE sessions SET state='blocked',failure='native command outcome unknown' WHERE id=? AND deletion_intent<2`, i.SessionID)
 		return err
 	case "completed":
 		var capture struct {
@@ -294,7 +295,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state='idle' WHERE id=? AND state NOT IN ('deleting','deleted','blocked')`, i.SessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state='idle' WHERE id=? AND deletion_intent<2 AND state<>'blocked'`, i.SessionID); err != nil {
 		return err
 	}
 	return s.activity(ctx, tx, i.ProjectID)

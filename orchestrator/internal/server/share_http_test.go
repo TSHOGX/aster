@@ -380,7 +380,7 @@ func newArtifactShareFixture(t *testing.T) (*shareFixture, string) {
 	if err := st.CreateSession(ctx, session); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg: cfg, store: st, hub: events.NewHub(), log: slog.Default(),
 		creds:             newAuthRegistry(cfg, slog.Default()),
 		sessionOwnerCache: map[string]sessionOwnerEntry{},

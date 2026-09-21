@@ -3,6 +3,7 @@ package launchplan
 import (
 	"context"
 	"encoding/json"
+	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sandbox"
 	"strings"
@@ -11,16 +12,23 @@ import (
 
 func manifestFixture() map[string]any {
 	files := map[string]string{}
-	for _, path := range []string{"/usr/sbin/sandboxd", "/usr/local/bin/harness-khora-launcher", "/usr/local/bin/harness-bridge-client", "/usr/local/bin/harness-shell-agent", "/usr/local/bin/harness-workspace-helper", "/usr/local/bin/harness-journal-replay", "/usr/local/lib/harness_files.py", "/usr/local/lib/harness_launch.py", "/usr/local/lib/harness_stream.py", "/usr/local/lib/harness_recovery.py"} {
+	for _, path := range []string{"/usr/sbin/sandboxd", "/usr/local/bin/harness-khora-launcher", "/usr/local/bin/harness-bridge-client", "/usr/local/bin/harness-workspace-helper", "/usr/local/bin/harness-journal-replay", "/usr/local/lib/harness_files.py", "/usr/local/lib/harness_launch.py", "/usr/local/lib/harness_stream.py", "/usr/local/lib/harness_recovery.py"} {
 		files[path] = "sha256:" + strings.Repeat("a", 64)
 	}
-	return map[string]any{"schema_version": 1, "runtime": map[string]any{"backend": "khora", "engine_revision": EngineRevision, "engine_module": EngineModule, "bridge_stream_version": 1, "home": "/root", "retained_overlay": true, "launcher": "/usr/local/bin/harness-khora-launcher", "files": files}, "drivers": []map[string]any{{"driver_id": "sh", "bridge_protocol": "harness_bridge_v2", "bridge_protocol_version": 2, "turn_input_schema": "RunTurn", "binary_path": "/usr/local/bin/harness-shell-agent", "installed_binary_digest": "sha256:" + strings.Repeat("a", 64), "capabilities": []string{"process_stream", "filesystem", "durable_workspace", "cold_restart", "signal", "pty"}}}}
+	return map[string]any{"schema_version": 1, "runtime": map[string]any{"backend": "khora", "engine_revision": EngineRevision, "engine_module": EngineModule, "bridge_stream_version": 1, "home": "/root", "retained_overlay": true, "launcher": "/usr/local/bin/harness-khora-launcher", "files": files}, "drivers": []map[string]any{{"driver_id": "pi", "bridge_protocol": "harness_bridge_v2", "bridge_protocol_version": 2, "turn_input_schema": "RunTurn", "binary_path": "/usr/local/bin/pi", "installed_binary_digest": "sha256:" + strings.Repeat("a", 64), "capabilities": []string{"process_stream", "filesystem", "durable_workspace", "cold_restart", "signal", "native_history_restore"}, "package_name": agents.PiPackageName, "package_version": agents.PiPackageVersion, "package_integrity": agents.PiPackageIntegrity}}}
 }
+
+// A Pi plan must pin a configuration revision: its authored native settings are
+// part of the release identity, not something a launch discovers.
 func basePlan() execution.LaunchPlan {
-	return execution.LaunchPlan{TemplateID: "battery", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: []execution.ContentRequirement{{Purpose: "assets", Destination: "/root/.agents", RevisionDigest: assetsRevision}}}
+	return execution.LaunchPlan{TemplateID: "battery", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 64 << 20, JournalBytes: 64 << 20, Content: []execution.ContentRequirement{
+		{Purpose: "assets", Destination: "/root/.agents", RevisionDigest: assetsRevision},
+		{Purpose: "config", Destination: "/harness-config", RevisionDigest: configRevision},
+	}}
 }
 
 const assetsRevision = "sha256:" + "1111111111111111111111111111111111111111111111111111111111111111"
+const configRevision = "sha256:" + "2222222222222222222222222222222222222222222222222222222222222222"
 
 // publishedContent is the engine store's publication record as the plan source
 // sees it: a revision resolves to a volume only once this store published it.
@@ -43,14 +51,14 @@ func TestReleasePlansRemainImmutableAndDigestBound(t *testing.T) {
 	raw, _ := json.Marshal(manifestFixture())
 	hash, _ := Digest(raw)
 	plan := basePlan()
-	loaded, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"sh": plan})
+	loaded, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"pi": plan})
 	if err != nil {
 		t.Fatal(err)
 	}
-	published := publishedContent{"store|assets|" + assetsRevision: "vol_assets"}
+	published := publishedContent{"store|assets|" + assetsRevision: "vol_assets", "store|config|" + configRevision: "vol_config"}
 	source := boundSource(t, loaded, published)
 	plan.Content[0].RevisionDigest = "sha256:" + strings.Repeat("9", 64)
-	first, err := source.Plan(context.Background(), execution.Session{Driver: "sh"}, "one")
+	first, err := source.Plan(context.Background(), execution.Session{Driver: "pi"}, "one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,20 +67,24 @@ func TestReleasePlansRemainImmutableAndDigestBound(t *testing.T) {
 	}
 	first.Mounts[0].VolumeID = "other"
 	first.Content[0].RevisionDigest = "tampered"
-	second, err := source.Plan(context.Background(), execution.Session{Driver: "sh"}, "two")
+	second, err := source.Plan(context.Background(), execution.Session{Driver: "pi"}, "two")
 	if err != nil || second.Mounts[0].VolumeID != "vol_assets" || second.SpecDigest != first.SpecDigest {
 		t.Fatalf("caller changed frozen plan: %+v %v", second, err)
 	}
-	if _, err := source.Plan(context.Background(), execution.Session{Driver: "pi"}, "three"); err == nil {
-		t.Fatal("unconfigured driver started")
+	// A driver with no plan in this release cannot start, including the retired
+	// shell driver a stale deployment file might still name.
+	for _, driver := range []string{"sh", "unknown"} {
+		if _, err := source.Plan(context.Background(), execution.Session{Driver: driver}, "three"); err == nil {
+			t.Fatalf("unconfigured driver %q started", driver)
+		}
 	}
 	// An unpublished revision must refuse the launch rather than mount nothing.
 	unpublished := boundSource(t, loaded, publishedContent{})
-	if _, err := unpublished.Plan(context.Background(), execution.Session{Driver: "sh"}, "four"); err == nil {
+	if _, err := unpublished.Plan(context.Background(), execution.Session{Driver: "pi"}, "four"); err == nil {
 		t.Fatal("plan mounted content this engine store never published")
 	}
 	// An unbound source cannot resolve content at all.
-	if _, err := loaded.Plan(context.Background(), execution.Session{Driver: "sh"}, "five"); err == nil {
+	if _, err := loaded.Plan(context.Background(), execution.Session{Driver: "pi"}, "five"); err == nil {
 		t.Fatal("unbound plan source resolved content")
 	}
 }
@@ -82,15 +94,15 @@ func TestReleasePlansRemainImmutableAndDigestBound(t *testing.T) {
 func TestSpecDigestCoversRevisionsNotVolumeIdentities(t *testing.T) {
 	raw, _ := json.Marshal(manifestFixture())
 	hash, _ := Digest(raw)
-	loaded, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"sh": basePlan()})
+	loaded, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"pi": basePlan()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	one, err := boundSource(t, loaded, publishedContent{"store|assets|" + assetsRevision: "vol_a"}).Plan(context.Background(), execution.Session{Driver: "sh"}, "one")
+	one, err := boundSource(t, loaded, publishedContent{"store|assets|" + assetsRevision: "vol_a", "store|config|" + configRevision: "vol_config"}).Plan(context.Background(), execution.Session{Driver: "pi"}, "one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	two, err := boundSource(t, loaded, publishedContent{"store|assets|" + assetsRevision: "vol_b"}).Plan(context.Background(), execution.Session{Driver: "sh"}, "two")
+	two, err := boundSource(t, loaded, publishedContent{"store|assets|" + assetsRevision: "vol_b", "store|config|" + configRevision: "vol_config"}).Plan(context.Background(), execution.Session{Driver: "pi"}, "two")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,11 +114,11 @@ func TestSpecDigestCoversRevisionsNotVolumeIdentities(t *testing.T) {
 	}
 	changed := basePlan()
 	changed.Content[0].RevisionDigest = "sha256:" + strings.Repeat("2", 64)
-	other, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"sh": changed})
+	other, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"pi": changed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := boundSource(t, other, publishedContent{"store|assets|" + changed.Content[0].RevisionDigest: "vol_a"}).Plan(context.Background(), execution.Session{Driver: "sh"}, "three")
+	third, err := boundSource(t, other, publishedContent{"store|assets|" + changed.Content[0].RevisionDigest: "vol_a", "store|config|" + configRevision: "vol_config"}).Plan(context.Background(), execution.Session{Driver: "pi"}, "three")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +157,7 @@ func TestReleasePlansRejectLegacyTemplatesAndUnpinnedConfiguration(t *testing.T)
 			if fault == "manifest" {
 				hash = "sha256:" + strings.Repeat("f", 64)
 			}
-			if _, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"sh": plan}); err == nil {
+			if _, err := Load(strings.NewReader(string(raw)), hash, map[string]execution.LaunchPlan{"pi": plan}); err == nil {
 				t.Fatalf("invalid %s release plan accepted", fault)
 			}
 		})

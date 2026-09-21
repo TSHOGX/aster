@@ -88,7 +88,7 @@ func (l *scriptedLauncher) Start(_ context.Context, _ execution.Binding, request
 }
 
 func controllerFixture(t *testing.T) (*execution.Controller, *store.Store, *controllerBackend, *scriptedLauncher, string) {
-	return controllerFixtureDriver(t, "sh")
+	return controllerFixtureDriver(t, "pi")
 }
 func controllerFixtureDriver(t *testing.T, driver string) (*execution.Controller, *store.Store, *controllerBackend, *scriptedLauncher, string) {
 	t.Helper()
@@ -114,14 +114,16 @@ func controllerFixtureDriver(t *testing.T, driver string) (*execution.Controller
 	launcher := &scriptedLauncher{}
 	lifetime, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
-	controller := &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: staticPlan{}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: lifetime}
+	// Pi recovery requires a completed-native restorer. Every driver is an agent
+	// with native history now, so the fixture always supplies one.
+	controller := &execution.Controller{Repository: st, Backend: backend, Agents: launcher, Plans: staticPlan{}, BackendName: "engine", LeaseTTL: time.Minute, Lifetime: lifetime, NativeRestorer: &nativeRepair{}}
 	t.Cleanup(func() { controller.Close() })
 	return controller, st, backend, launcher, store.GenerationLeaseOwner(owner.UUID)
 }
 
 func TestControllerProvisionStartAndReuseRequireOneExecution(t *testing.T) {
 	controller, st, backend, launcher, owner := controllerFixture(t)
-	session := execution.Session{ID: "session", Driver: "sh"}
+	session := execution.Session{ID: "session", Driver: "pi"}
 	first, err := controller.Ensure(context.Background(), session, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +149,7 @@ func TestControllerRetriesLostCreateAndStartWithOriginalIdentities(t *testing.T)
 			controller, _, backend, launcher, owner := controllerFixture(t)
 			backend.loseCreate = failure == "create"
 			launcher.fail = failure == "start"
-			session := execution.Session{ID: "session", Driver: "sh"}
+			session := execution.Session{ID: "session", Driver: "pi"}
 			if _, err := controller.Ensure(context.Background(), session, owner); err == nil {
 				t.Fatal("injected failure ignored")
 			}
@@ -180,7 +182,7 @@ func TestControllerCloseCancelsBlockedProvisionAndReadiness(t *testing.T) {
 			}
 			result := make(chan error, 1)
 			go func() {
-				_, err := controller.Ensure(context.Background(), execution.Session{ID: "session", Driver: "sh"}, owner)
+				_, err := controller.Ensure(context.Background(), execution.Session{ID: "session", Driver: "pi"}, owner)
 				result <- err
 			}()
 			select {
@@ -198,7 +200,7 @@ func TestControllerCloseCancelsBlockedProvisionAndReadiness(t *testing.T) {
 			if err := <-result; !errors.Is(err, context.Canceled) {
 				t.Fatalf("shutdown did not cancel startup: %v", err)
 			}
-			if _, err := controller.Ensure(context.Background(), execution.Session{ID: "session", Driver: "sh"}, owner); err == nil {
+			if _, err := controller.Ensure(context.Background(), execution.Session{ID: "session", Driver: "pi"}, owner); err == nil {
 				t.Fatal("closed controller admitted a new start")
 			}
 		})

@@ -81,23 +81,42 @@ func TestTerminalCleanupWaitsForItsProcessAndSpareSiblings(t *testing.T) {
 		_, err := s.CreateTerminal(ctx, scope, id, "Terminal", 24, 80)
 		must(t, err)
 	}
-	_, err := s.db.Exec(`UPDATE terminals SET state='running' WHERE id IN ('keep','drop')`)
-	must(t, err)
-	// A live PTY's activity is what pins the Project and blocks cleanup. The
-	// Terminal row's own state is not that evidence: recording a deletion intent
-	// overwrites it, which is exactly why the process must be tracked separately.
-	must(t, s.BeginActivity(ctx, scope, Activity{ID: "pty/drop", TerminalID: "drop", Kind: "terminal_control", Detail: "live PTY"}))
+	live := map[string]TerminalIncarnation{}
+	for _, id := range []string{"keep", "drop"} {
+		i, err := s.reserveTerminal(ctx, scope, id, 24, 80)
+		must(t, err)
+		must(t, s.TerminalRunning(ctx, i))
+		live[id] = i
+	}
+	// The live PTY process is what pins the Project and blocks cleanup. Recording
+	// a deletion intent leaves the Terminal's execution state alone, which is why
+	// the process must have its own record rather than borrowing that column.
 	child, err := s.Terminal(ctx, scope, "drop")
 	must(t, err)
 	must(t, s.DeleteTerminal(ctx, scope, "drop", child.Revision))
+	deleting, err := s.Terminal(ctx, scope, "drop")
+	must(t, err)
+	if deleting.State != "running" || deleting.Deletion != Requested {
+		t.Fatal("deletion intent must not overwrite how the terminal is running", deleting)
+	}
 	pending, err := s.PendingChildren(ctx, 10)
 	must(t, err)
 	if len(pending) != 1 || pending[0].ID != "drop" {
 		t.Fatal(pending)
 	}
 	wantError(t, s.SettleChild(ctx, pending[0]), ErrBusy)
-	must(t, s.SettleActivity(ctx, scope.ProjectID, "pty/drop", "complete"))
+	// Deleting a Terminal did not end its process; only the observed exit does.
+	must(t, s.SettleTerminalExit(ctx, live["drop"], 130))
 	must(t, s.SettleChild(ctx, pending[0]))
+	// Cleanup preserved how this terminal ended. QueryRow, not Query: the writer
+	// pool is one connection, so an open cursor here would block the next write.
+	var state string
+	var code *int
+	var intent Deletion
+	must(t, s.db.QueryRow(`SELECT state,exit_code,deletion_intent FROM terminals WHERE id='drop'`).Scan(&state, &code, &intent))
+	if state != "exited" || code == nil || *code != 130 || intent != Settled {
+		t.Fatal(state, code, intent)
+	}
 	// The sibling terminal is untouched and still pins the Project.
 	sibling, err := s.Terminal(ctx, scope, "keep")
 	must(t, err)

@@ -17,7 +17,7 @@ import (
 
 func managedController(t *testing.T) (*execution.Controller, *store.Store, *controllerBackend, *scriptedLauncher, string) {
 	c, st, b, l, owner := controllerFixture(t)
-	c.Connectivity = store.NetworkComposer{Allocator: st, Catalog: egress.Catalog{Revision: "r1", Endpoints: []egress.Endpoint{{ID: "endpoint", Hostname: "remote.internal", Port: 443, Transport: "tcp", NextHop: "hop"}}, Policies: map[string]egress.Policy{"sh": {Revision: "r1", Driver: "sh", Endpoints: []egress.EndpointAccess{{EndpointID: "endpoint"}}}}, Deployment: egress.Deployment{BackendID: "store", SyntheticRange: netip.MustParsePrefix("10.80.0.0/24"), Gateways: []egress.Gateway{{ID: "hop", Endpoint: netip.MustParseAddrPort("192.0.2.1:8443")}}}}}
+	c.Connectivity = store.NetworkComposer{Allocator: st, Catalog: egress.Catalog{Revision: "r1", Endpoints: []egress.Endpoint{{ID: "endpoint", Hostname: "remote.internal", Port: 443, Transport: "tcp", NextHop: "hop"}}, Policies: map[string]egress.Policy{"pi": {Revision: "r1", Driver: "pi", Endpoints: []egress.EndpointAccess{{EndpointID: "endpoint"}}}}, Deployment: egress.Deployment{BackendID: "store", SyntheticRange: netip.MustParsePrefix("10.80.0.0/24"), Gateways: []egress.Gateway{{ID: "hop", Endpoint: netip.MustParseAddrPort("192.0.2.1:8443")}}}}}
 	c.Activator = &recordingActivator{}
 	c.Routes = &recordingRevoker{}
 	c.MaxActive = 2
@@ -28,7 +28,7 @@ func TestBackgroundDiscoversAndReplaysLostCreateWithoutChangingNetworkIdentity(t
 	c, st, b, l, owner := managedController(t)
 	b.loseCreate = true
 	ctx := context.Background()
-	if _, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner); err == nil {
+	if _, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner); err == nil {
 		t.Fatal("lost create ignored")
 	}
 	work, err := st.PendingExecutionWork(ctx, execution.ReconcileOperation, owner, "", 16)
@@ -61,7 +61,7 @@ func TestBackgroundAdoptsStartingExecutionUnderNewOwnerAndOriginalProcess(t *tes
 	c, st, _, l, owner := managedController(t)
 	l.fail = true
 	ctx := context.Background()
-	first, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	first, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err == nil {
 		t.Fatal("lost readiness ignored")
 	}
@@ -93,7 +93,7 @@ func TestBackgroundAdoptsStartingExecutionUnderNewOwnerAndOriginalProcess(t *tes
 func TestBackgroundSettlesIdlePauseAndManagedNetworkChangesEveryGeneration(t *testing.T) {
 	c, st, b, _, owner := managedController(t)
 	ctx := context.Background()
-	first, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	first, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestBackgroundSettlesIdlePauseAndManagedNetworkChangesEveryGeneration(t *te
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		next, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+		next, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -139,7 +139,7 @@ func TestCanceledAdmissionBoundsStartupWithoutAbandoningIntent(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		binding, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+		binding, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 		done <- result{binding, err}
 	}()
 	select {
@@ -179,7 +179,7 @@ func TestExitedUnacceptedProcessConvergesThroughRetainedRecovery(t *testing.T) {
 	c, st, _, _, owner := managedController(t)
 	c.Agents = exitedStartup{}
 	ctx := context.Background()
-	binding, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err == nil {
 		t.Fatal("exited startup accepted")
 	}
@@ -208,7 +208,7 @@ func TestExitedUnacceptedProcessConvergesThroughRetainedRecovery(t *testing.T) {
 		t.Fatalf("startup resources not released: %+v %v", environment, err)
 	}
 	c.Agents = &scriptedLauncher{}
-	next, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	next, err := c.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil || next.GenerationID == binding.GenerationID {
 		t.Fatalf("fresh generation could not continue: %+v %v", next, err)
 	}

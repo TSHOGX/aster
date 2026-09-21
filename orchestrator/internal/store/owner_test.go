@@ -33,7 +33,7 @@ func createActiveGeneration(t *testing.T, ctx context.Context, st *Store, sessio
 	testfixture.Bind(t, st.db, session, generation, owner)
 }
 func createRunningTurn(t *testing.T, ctx context.Context, st *Store, owner, session string, now time.Time) (execution.Binding, int64, string) {
-	createStoreSessionWithAgent(t, ctx, st, session, "sh")
+	createStoreSessionWithAgent(t, ctx, st, session, "pi")
 	generation := "gen-" + session
 	leaseOwner := GenerationLeaseOwner(owner)
 	createActiveGeneration(t, ctx, st, session, generation, leaseOwner)

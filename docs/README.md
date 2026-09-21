@@ -19,7 +19,7 @@ for real-engine tests, or [operations](operations.md) to diagnose a running inst
 | [Session lifecycle](session-lifecycle.md) | Retained storage and turn recovery |
 | [Sandbox runtime](sandbox-runtime.md) | Public Khora API boundary |
 | [Sandbox image](sandbox-image.md) | Template and manually maintained assets |
-| [Drivers](drivers.md) | Pi and shell contracts |
+| [Drivers](drivers.md) | Pi Agent driver contract |
 | [HTTP API](api.md) | Product routes and streams |
 | [Frontend](frontend.md) | Workbench behavior |
 | [Runtime synchronization](runtime-state-synchronization.md) | Revisioned client state |

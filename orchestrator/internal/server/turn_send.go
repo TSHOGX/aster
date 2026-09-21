@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"harness-platform/orchestrator/internal/agents"
 	"harness-platform/orchestrator/internal/execution"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
@@ -59,10 +58,6 @@ func (s *Server) sendQueuedTurn(w http.ResponseWriter, r *http.Request, sessionI
 	}
 	if snapshot.ActiveTurn == nil {
 		s.releaseQueuedTurn(w, r, session, turnID)
-		return
-	}
-	if session.Agent == string(agents.Shell) {
-		writeError(w, http.StatusConflict, "shell turns cannot steer a running command")
 		return
 	}
 	s.steerQueuedTurn(w, r, session, snapshot, *target)

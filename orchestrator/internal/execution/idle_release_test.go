@@ -28,7 +28,7 @@ func (r releaseWithRoute) BeginIdleExecutionRelease(ctx context.Context, generat
 func TestIdleReleaseWaitsForGatewayTerminationBeforePause(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, _, owner := controllerFixture(t)
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func (r *recordingRevoker) Revoke(context.Context, string) error {
 func TestIdleReleaseRetainsEnvironmentAndRetriesLostPause(t *testing.T) {
 	ctx := context.Background()
 	controller, st, backend, _, owner := controllerFixture(t)
-	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestIdleReleaseDoesNotPausePendingWorkOrMutation(t *testing.T) {
 		t.Run(busy, func(t *testing.T) {
 			ctx := context.Background()
 			controller, st, backend, _, owner := controllerFixture(t)
-			binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+			binding, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestControllerResumesRetainedEnvironmentWithNewExecutionAndSameVolumes(t *t
 			ctx := context.Background()
 			controller, st, backend, launcher, owner := controllerFixture(t)
 			controller.Routes = &recordingRevoker{}
-			session := execution.Session{ID: "session", Driver: "sh"}
+			session := execution.Session{ID: "session", Driver: "pi"}
 			first, err := controller.Ensure(ctx, session, owner)
 			if err != nil {
 				t.Fatal(err)
@@ -181,7 +181,7 @@ func TestControllerColdRecoversAbandonedIdleOwnerWithoutRedispatch(t *testing.T)
 		t.Run(map[bool]string{false: "queued", true: "leased"}[inflight], func(t *testing.T) {
 			ctx := context.Background()
 			controller, st, backend, launcher, owner := controllerFixture(t)
-			first, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+			first, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -213,7 +213,7 @@ func TestControllerColdRecoversAbandonedIdleOwnerWithoutRedispatch(t *testing.T)
 			defer next.Close()
 			before := backend.calls
 			backend.loseResume = !inflight
-			second, err := next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "sh"}, first.GenerationID, nextOwner)
+			second, err := next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "pi"}, first.GenerationID, nextOwner)
 			if inflight {
 				if err == nil || backend.calls != before {
 					t.Fatalf("live turn silently recovered or paused: %v", err)
@@ -223,7 +223,7 @@ func TestControllerColdRecoversAbandonedIdleOwnerWithoutRedispatch(t *testing.T)
 			if err == nil {
 				t.Fatal("lost recovery resume reply ignored")
 			}
-			second, err = next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "sh"}, first.GenerationID, nextOwner)
+			second, err = next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "pi"}, first.GenerationID, nextOwner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -238,7 +238,7 @@ func TestControllerColdRecoversAbandonedIdleOwnerWithoutRedispatch(t *testing.T)
 			if err := st.DBForTest().QueryRow(`SELECT attempt FROM turns WHERE id=?`, queued.TurnID).Scan(&attempt); err != nil || attempt != 0 {
 				t.Fatalf("recovery redispatched input: %d %v", attempt, err)
 			}
-			replayed, err := next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "sh"}, first.GenerationID, nextOwner)
+			replayed, err := next.RecoverIdle(ctx, execution.Session{ID: first.SessionID, Driver: "pi"}, first.GenerationID, nextOwner)
 			if err != nil || replayed.GenerationID != second.GenerationID {
 				t.Fatalf("recovery retry replaced successor: %+v %v", replayed, err)
 			}

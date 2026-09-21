@@ -59,7 +59,7 @@ func (a *activeAttacher) AttachActive(ctx context.Context, b execution.Binding, 
 func TestActiveControllerDrainsBeforeAttachmentAndRetriesSameAttempt(t *testing.T) {
 	ctx := context.Background()
 	original, st, backend, launcher, owner := controllerFixture(t)
-	b, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	b, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestActiveControllerDrainsBeforeAttachmentAndRetriesSameAttempt(t *testing.
 	if attacher.calls != 0 {
 		t.Fatal("attachment preceded flow drain")
 	}
-	if _, err := controller.Ensure(ctx, execution.Session{ID: b.SessionID, Driver: "sh"}, owner); err == nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: b.SessionID, Driver: "pi"}, owner); err == nil {
 		t.Fatal("failed adoption fell through process startup")
 	}
 	drain.fail = false
@@ -100,7 +100,7 @@ func TestActiveControllerDrainsBeforeAttachmentAndRetriesSameAttempt(t *testing.
 func TestActiveControllerWaitsForRemoteGatewayDrain(t *testing.T) {
 	ctx := context.Background()
 	original, st, backend, launcher, owner := controllerFixture(t)
-	b, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner)
+	b, err := original.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner)
 	if err != nil {
 		t.Fatal(err)
 	}

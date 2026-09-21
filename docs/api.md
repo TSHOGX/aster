@@ -26,7 +26,7 @@ handler for embedders; the shipped daemon does not start a separate operator ser
 | GET | `/api/me` | none | `{auth_required, user_id}` (never 401s) |
 | POST | `/api/logout` | required | revoke the session, expire the cookie |
 | GET | `/api/sessions` | required | list the caller's sessions |
-| POST | `/api/sessions` | required | create a session (`{"mode":"agent"\|"shell"}`) |
+| POST | `/api/sessions` | required | create a session (`{"mode":"agent"}`) |
 | GET | `/api/sessions/{id}` | required | session detail |
 | PATCH | `/api/sessions/{id}` | required | rename session (`{"title":"..."}`) |
 | DELETE | `/api/sessions/{id}` | required | close session, reclaim runtime resources |
@@ -38,7 +38,7 @@ handler for embedders; the shipped daemon does not start a separate operator ser
 | POST | `/api/sessions/{id}/messages/{mid}/feedback` | required | set/clear the caller's 👍/👎 on a message |
 | GET | `/api/sessions/{id}/artifacts` | required | list workspace artifacts |
 | POST | `/api/sessions/{id}/artifacts` | required | multipart upload into the workspace |
-| POST | `/api/sessions/{id}/interrupt` | required | stop the running turn (shell signal; agent abort delivered into the live sandbox) |
+| POST | `/api/sessions/{id}/interrupt` | required | stop the running turn (abort delivered into the live sandbox) |
 | POST | `/api/sessions/{id}/shares` | required (owner) | share the session read-only with a user |
 | GET | `/api/sessions/{id}/shares` | required (owner) | list live grants on the session |
 | DELETE | `/api/sessions/{id}/shares/{shareID}` | required (owner) | revoke one grant |
@@ -112,8 +112,8 @@ users. Only a hot-reloaded credential with `role: admin` can enter
 `{"enabled":bool,"description":"...","reason":"..."}`. Audit pagination is
 bounded to 200 rows (`limit` and `offset` query parameters).
 
-**`POST /api/sessions`** — `{"mode":"agent"|"shell"}` (default `agent`; raw `agent`
-field rejected with `400`). → `201` an `apiSession`. `503 {"error_class":"pool_exhausted"}`
+**`POST /api/sessions`** — `{"mode":"agent"}` (the only mode, and the default; a
+raw `agent` field is rejected with `400`). → `201` an `apiSession`. `503 {"error_class":"pool_exhausted"}`
 when the live sandbox ceiling is reached.
 
 **`PATCH /api/sessions/{id}`** — `{"title":"..."}`. Renames the session and marks
@@ -210,8 +210,6 @@ turn_not_releasable` is the release-side counterpart: the row is queued but not
 parked, so it is already on its way to the worker and "send it" would be a no-op
 the user could not tell from success.
 
-Shell commands may be queued and released; steering a running shell command returns `409`.
-
 **Schedules.** `POST /api/schedules` accepts `name`, `prompt`, optional
 `cron_expr` (five-field standard cron), `timezone` (IANA name), `enabled`,
 `timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `result_mode`
@@ -242,13 +240,13 @@ network tuple usage is exposed through admin diagnostics, not this endpoint.
 ```json
 {"schema_version":1,"default_mode":"agent",
  "session_modes":[
-   {"mode":"agent","label":"Agent","visible":true,"create_enabled":true,"disabled_reason":null},
-   {"mode":"shell","label":"Shell","visible":true,"create_enabled":true,"disabled_reason":null}]}
+   {"mode":"agent","label":"Agent","visible":true,"create_enabled":true,"disabled_reason":null}]}
 ```
 `disabled_reason` carries the capability error code when a mode is not creatable.
 The response also advertises `message_pages` and `artifact_pages`. `default_mode`
-is `shell` when Pi is unavailable and shell is enabled; clients should wait for
-capabilities and submit that mode explicitly.
+is always `agent`: a terminal is a Project capability with its own PTY process,
+not a Session mode. Clients should still wait for capabilities and submit the
+advertised mode explicitly.
 
 **`GET /api/search`** — `?q=<text>&limit=<1..50>` (default 50). Full-text search
 scoped by the store to the caller's own sessions. →
@@ -304,9 +302,7 @@ The caller's own sessions come first, then sessions shared with them.
 **`POST /api/sessions/{id}/share-links`** — `{"visibility":"summary"|"full",
 "ttl_seconds":<int>}`. Owner-only. Defaults: `summary`, and `ttl_seconds` of 0 or
 omitted means the configured cap (`HARNESS_MAX_SHARE_LINK_TTL`, default 30 days).
-A TTL above the cap is `400`; **a link can never be permanent**. A shell session
-is forced to `full` and an explicit `summary` is rejected with `400` — in shell
-mode the command output *is* the content, so a summary would be an empty page. →
+A TTL above the cap is `400`; **a link can never be permanent**. →
 `201 {"link": apiShareLink, "token": "<raw>", "path": "/s/<raw>"}`.
 
 The raw token is returned **only here** (and from rotate). Only its SHA-256 is
@@ -390,8 +386,8 @@ Message trimming follows the grant's `visibility`: `full` returns the messages t
 owner sees minus `feedback` (per-viewer state a reader cannot set); `summary` also
 drops `trace` and the intermediate `stop_reason: "toolUse"` steps. `summary` is
 defined by *excluding* `toolUse` rather than requiring `stop_reason == "stop"`,
-because shell output and pre-trace history carry an empty `stop_reason` and would
-otherwise vanish from a shared shell session.
+because pre-trace history carries an empty `stop_reason` and would otherwise
+vanish from a shared session.
 
 ## Message DTO
 
@@ -405,7 +401,7 @@ otherwise vanish from a shared shell session.
   projection's `queued_turns` until the worker claims it, which is what makes it
   impossible for one prompt to appear in both places.
 - `stop_reason` — pi's terminator for an assistant message: `stop` (final reply),
-  `toolUse` (intermediate tool step), or empty (user/shell output). Lets the
+  `toolUse` (intermediate tool step), or empty (user message). Lets the
   client distinguish a completed answer from an interstitial.
 - `trace` — execution-trace nodes (thinking phases + tool calls) that produced the
   message; opaque JSON passed through verbatim, absent when there is no stored trace.

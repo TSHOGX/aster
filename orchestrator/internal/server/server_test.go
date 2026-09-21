@@ -33,7 +33,7 @@ func TestCreateSessionRejectsLegacyAgentInput(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg: config.Config{
 
 			MaxSessions:  10,
@@ -70,7 +70,8 @@ func TestCreateSessionModeMapping(t *testing.T) {
 		{name: "omitted body", wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "pi"},
 		{name: "empty object", body: `{}`, wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "pi"},
 		{name: "agent mode", body: `{"mode":"agent"}`, wantStatus: http.StatusCreated, wantMode: "agent", wantDriver: "pi"},
-		{name: "shell mode", body: `{"mode":"shell"}`, wantStatus: http.StatusCreated, wantMode: "shell", wantDriver: "sh"},
+		// "shell" is no longer a Session mode: a terminal is its own Project child.
+		{name: "retired shell mode", body: `{"mode":"shell"}`, wantStatus: http.StatusBadRequest, wantError: "unsupported mode"},
 		{name: "unknown mode", body: `{"mode":"pi"}`, wantStatus: http.StatusBadRequest, wantError: "unsupported mode"},
 	}
 	for _, tc := range tests {
@@ -82,7 +83,7 @@ func TestCreateSessionModeMapping(t *testing.T) {
 				t.Fatalf("open store: %v", err)
 			}
 			t.Cleanup(func() { _ = st.Close() })
-			srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+			srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 				cfg: config.Config{
 
 					MaxSessions:  10,
@@ -139,7 +140,7 @@ func TestCreateSessionModeMapping(t *testing.T) {
 }
 
 func TestDeploymentCapabilitiesAreProductSafe(t *testing.T) {
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg: config.Config{DefaultAgent: "pi"},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/deployment-capabilities", nil)
@@ -168,11 +169,13 @@ func TestDeploymentCapabilitiesAreProductSafe(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode capabilities: %v", err)
 	}
-	if payload.SchemaVersion != 1 || payload.DefaultMode != "agent" || len(payload.SessionModes) != 2 {
+	// One Session mode. A terminal is a Project capability, not a mode a client
+	// chooses when creating a Session.
+	if payload.SchemaVersion != 1 || payload.DefaultMode != "agent" || len(payload.SessionModes) != 1 {
 		t.Fatalf("unexpected capabilities: %+v", payload)
 	}
 	for _, mode := range payload.SessionModes {
-		if mode.Mode != "agent" && mode.Mode != "shell" {
+		if mode.Mode != "agent" {
 			t.Fatalf("capabilities exposed non-product mode: %+v", mode)
 		}
 		if !mode.CreateEnabled || mode.DisabledReason != nil {
@@ -182,7 +185,7 @@ func TestDeploymentCapabilitiesAreProductSafe(t *testing.T) {
 }
 
 func TestAgentsCatalogIsOperatorOnly(t *testing.T) {
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, cfg: config.Config{CookieName: "sid"}}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, cfg: config.Config{CookieName: "sid"}}
 	productReq := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
 	productRec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(productRec, productReq)
@@ -204,9 +207,7 @@ func TestAgentsCatalogIsOperatorOnly(t *testing.T) {
 	if err := json.Unmarshal(operatorRec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode operator catalog: %v", err)
 	}
-	if len(payload.Drivers) != 2 ||
-		payload.Drivers[0].DriverID != "pi" ||
-		payload.Drivers[1].DriverID != "sh" {
+	if len(payload.Drivers) != 1 || payload.Drivers[0].DriverID != "pi" {
 		t.Fatalf("unexpected operator catalog: %+v", payload.Drivers)
 	}
 }
@@ -223,7 +224,7 @@ func TestCreateSessionUsesPublicSessionDTO(t *testing.T) {
 	hub := events.NewHub()
 	eventsCh, cancelEvents := hub.Subscribe("")
 	defer cancelEvents()
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg: config.Config{
 
 			MaxSessions:  10,
@@ -277,7 +278,7 @@ func TestSessionReadResponsesUsePublicSessionDTO(t *testing.T) {
 
 	now := time.Now().UTC()
 	session := createServerTestSession(t, ctx, st, dir, "sess_public", string(sessionstate.RunningIdle), now, nil)
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		store: st,
 		hub:   events.NewHub(),
 		log:   slog.Default(),
@@ -357,7 +358,7 @@ func TestRenameSession(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := openServerOwnedStore(t, ctx, dir)
 	session := createServerTestSession(t, ctx, st, dir, "sess_rename", string(sessionstate.Created), time.Now().UTC(), nil)
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg:   testServerConfig(dir),
 		store: st,
 		hub:   events.NewHub(),
@@ -419,7 +420,7 @@ func TestGenerateLLMTitle(t *testing.T) {
 	defer mock.Close()
 
 	hub := events.NewHub()
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg:   testServerConfig(dir),
 		store: st,
 		hub:   hub,
@@ -458,7 +459,7 @@ func TestStartLLMTitleGenerationDisabled(t *testing.T) {
 	session := createServerTestSession(t, ctx, st, dir, "sess_llm_off", string(sessionstate.Created), time.Now().UTC(), nil)
 
 	// No titler configured -> feature is a no-op, must not panic or change title.
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg:    testServerConfig(dir),
 		store:  st,
 		hub:    events.NewHub(),
@@ -534,7 +535,7 @@ func TestEventsStreamReplaysDurableEventsAfterLastEventID(t *testing.T) {
 		t.Fatalf("append third event: %v", err)
 	}
 
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true}, store: st, hub: events.NewHub(), log: slog.Default()}
+	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true}, store: st, hub: events.NewHub(), log: slog.Default()}
 	req := httptest.NewRequest(http.MethodGet, "/api/events/stream?last_event_id="+strconv.FormatInt(firstID, 10), nil)
 	lastEventID, ok, err := parseLastEventID(req)
 	if err != nil || !ok || lastEventID != firstID {
@@ -692,14 +693,27 @@ func assertPublicSessionJSONOmitsHostFields(t *testing.T, payload []byte) {
 	}
 }
 
-func TestShellOnlyDeploymentAdvertisesCreatableDefault(t *testing.T) {
-	srv := &Server{retainedDrivers: map[agents.ID]bool{agents.Shell: true}}
+// A deployment with no enabled driver still advertises the one mode it has, and
+// reports it as not creatable rather than inventing an alternative.
+func TestDeploymentWithoutEnabledDriverAdvertisesDisabledAgentMode(t *testing.T) {
+	srv := &Server{retainedDrivers: map[agents.ID]bool{}}
 	response := httptest.NewRecorder()
 	srv.deploymentCapabilities(response, httptest.NewRequest(http.MethodGet, "/api/deployment-capabilities", nil))
 	var capabilities struct {
 		Default string `json:"default_mode"`
+		Modes   []struct {
+			Mode           string  `json:"mode"`
+			CreateEnabled  bool    `json:"create_enabled"`
+			DisabledReason *string `json:"disabled_reason"`
+		} `json:"session_modes"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil || capabilities.Default != "shell" {
-		t.Fatalf("unavailable default mode: %s %v", response.Body, err)
+	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil {
+		t.Fatal(err)
+	}
+	if capabilities.Default != "agent" || len(capabilities.Modes) != 1 || capabilities.Modes[0].Mode != "agent" {
+		t.Fatalf("unexpected capabilities: %s", response.Body)
+	}
+	if capabilities.Modes[0].CreateEnabled || capabilities.Modes[0].DisabledReason == nil {
+		t.Fatalf("a disabled driver must be reported as not creatable: %s", response.Body)
 	}
 }

@@ -32,7 +32,7 @@ func newAuthTestServer(t *testing.T, dir string, st *store.Store, users []config
 		AuthSessionTTL:  time.Hour,
 		MaxShareLinkTTL: 30 * 24 * time.Hour,
 	}
-	return &Server{workspaceInventory: fixtureInventory{}, retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	return &Server{workspaceInventory: fixtureInventory{}, retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		cfg:   cfg,
 		store: st,
 

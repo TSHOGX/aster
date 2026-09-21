@@ -51,7 +51,7 @@ func newParserTestServer(t *testing.T) (*Server, *store.Store) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	return &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true, agents.Shell: true},
+	return &Server{retainedDrivers: map[agents.ID]bool{agents.Pi: true},
 		store: st,
 		hub:   events.NewHub(),
 		log:   slog.Default(),
@@ -116,31 +116,6 @@ func bridgeOutputPayload(t *testing.T, sequence int64, line string) json.RawMess
 		t.Fatalf("marshal bridge output: %v", err)
 	}
 	return payload
-}
-
-func TestStreamParserPersistsShellOutputAndCompletesOnTurnDone(t *testing.T) {
-	srv, st := newParserTestServer(t)
-	parser := newStreamParser(srv, "sess_1", "sh")
-
-	parser.handle(agentOutput{Stream: "stdout", Line: `{"type":"harness.shell_output","stream":"stdout","text":"hello from shell\n"}`})
-	parser.handle(agentOutput{Stream: "stdout", Line: `{"type":"harness.turn_done","exit_code":0}`})
-
-	select {
-	case <-parser.Done():
-	case <-time.After(time.Second):
-		t.Fatal("parser did not complete after shell turn_done event")
-	}
-
-	messages, err := st.ListMessages(context.Background(), "sess_1")
-	if err != nil {
-		t.Fatalf("list messages: %v", err)
-	}
-	if len(messages) != 1 {
-		t.Fatalf("expected one shell output message, got %d: %+v", len(messages), messages)
-	}
-	if messages[0].Role != "assistant" || messages[0].Content != "hello from shell\n" {
-		t.Fatalf("unexpected shell output message: %+v", messages[0])
-	}
 }
 
 func TestPiOutputNormalizerConsumesPinnedCorpus(t *testing.T) {

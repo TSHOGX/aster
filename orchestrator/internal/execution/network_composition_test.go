@@ -82,7 +82,7 @@ func compositionControllerFixture(t *testing.T) (*execution.Controller, *control
 func TestComposedEndpointsReachEngineAndGateways(t *testing.T) {
 	ctx := context.Background()
 	controller, backend, launcher, composer, activator, owner := compositionControllerFixture(t)
-	session := execution.Session{ID: "session", Driver: "sh"}
+	session := execution.Session{ID: "session", Driver: "pi"}
 	if _, err := controller.Ensure(ctx, session, owner); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestUnentitledDriverReceivesNoServiceAuthority(t *testing.T) {
 	ctx := context.Background()
 	controller, backend, launcher, composer, activator, owner := compositionControllerFixture(t)
 	composer.absent = true
-	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner); err != nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner); err != nil {
 		t.Fatal(err)
 	}
 	if len(backend.created) != 1 || len(backend.created[0].Network.Via) != 0 || len(backend.created[0].Network.Allow) != 0 {
@@ -146,7 +146,7 @@ func TestFailedCompositionStopsLaunch(t *testing.T) {
 	ctx := context.Background()
 	controller, backend, launcher, composer, activator, owner := compositionControllerFixture(t)
 	composer.fail = errors.New("synthetic range exhausted")
-	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner); err == nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner); err == nil {
 		t.Fatal("launch proceeded without a composed declaration")
 	}
 	if len(backend.created) != 0 {
@@ -163,7 +163,7 @@ func TestFailedActivationStopsLaunch(t *testing.T) {
 	ctx := context.Background()
 	controller, _, launcher, _, activator, owner := compositionControllerFixture(t)
 	activator.fail = errors.New("gateway did not acknowledge activation")
-	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner); err == nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner); err == nil {
 		t.Fatal("launch proceeded with unactivated routes")
 	}
 	if len(launcher.requests) != 0 {
@@ -177,7 +177,7 @@ func TestComposedEndpointsRequireAnActivator(t *testing.T) {
 	ctx := context.Background()
 	controller, _, _, _, _, owner := compositionControllerFixture(t)
 	controller.Activator = nil
-	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "sh"}, owner); err == nil {
+	if _, err := controller.Ensure(ctx, execution.Session{ID: "session", Driver: "pi"}, owner); err == nil {
 		t.Fatal("composition without an activator started an execution")
 	}
 }
