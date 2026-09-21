@@ -46,7 +46,11 @@ pages grew by approximately 12.0 MiB. Retained configured overlay capacity was
 512 MiB and session volume capacity was 256 MiB across the two sessions. These
 capacity figures are reservations; they are not physical CoW byte measurements.
 The [machine-readable result](../dev/measurements/retained-2026-09-21.json) records
-the exact inputs and dirty-source status; the final tagged suite below is the revision validation gate.
+the exact inputs and dirty-source status. The final tagged suite at `cd49e6d` ran
+with a clean tree and passed every selected test. Its sustained run measured 66 turns
+in 61.1 seconds, p50 1.22 seconds, p95 2.59 seconds, 2,164,058 committed history
+bytes, 11.9 MiB database allocation growth, and zero running placements/turns at
+completion.
 
 Native history/capture and gateway outages use separate real tests because those
 roles have different deadlines and failure behavior. The composed model test
@@ -64,7 +68,7 @@ establish power-loss durability.
 
 ## Final product journey
 
-At application revision `7608a31`, the public harness ran the real daemon journey with
+At application revision `cd49e6d`, the public harness ran the real daemon journey with
 Chromium and the pinned engine. It passed the shell workspace, streaming, interruption,
 restart, authentication, sharing, public frozen files, SSE replay and browser checks.
 The composed gateway test also passed real Pi scheduling through the daemon: two queued
