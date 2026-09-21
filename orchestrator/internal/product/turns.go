@@ -1,0 +1,132 @@
+package product
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/google/uuid"
+)
+
+const turnColumns = `id,project_id,session_id,request_id,content,initially_held,state,sequence,created_at,updated_at`
+
+func scanTurn(row scanner) (t Turn, err error) {
+	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt))
+	return
+}
+
+// AdmitTurn persists intent before a worker can dispatch. A held prompt is not
+// admitted until ReleaseTurn succeeds. Request identity survives state changes.
+func (s *Store) AdmitTurn(ctx context.Context, scope Scope, session, request, content string, held bool) (Turn, error) {
+	if !validText(request, 128) || !validText(content, 1<<20) {
+		return Turn{}, ErrInvalid
+	}
+	var t Turn
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := writableProject(ctx, tx, scope); err != nil {
+			return err
+		}
+		child, err := sessionIn(ctx, tx, scope, session)
+		if err != nil {
+			return err
+		}
+		if child.State == "deleting" || child.State == "deleted" {
+			return ErrDeleting
+		}
+		old, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND request_id=?`, session, request))
+		if err == nil {
+			if old.Content != content || old.InitiallyHeld != held {
+				return ErrConflict
+			}
+			t = old
+			return nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		state := "queued"
+		if held {
+			state = "held"
+		}
+		now := s.timestamp()
+		id := uuid.NewString()
+		_, err = tx.ExecContext(ctx, `INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,state,sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM turns WHERE session_id=?),?,?)`, id, scope.ProjectID, session, request, content, held, state, session, now, now)
+		if err != nil {
+			return err
+		}
+		if !held {
+			if err = s.activity(ctx, tx, scope.ProjectID); err != nil {
+				return err
+			}
+		}
+		if err = s.bumpSession(ctx, tx, scope.ProjectID, session, "turn."+state); err != nil {
+			return err
+		}
+		t, err = scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE id=?`, id))
+		return err
+	})
+	return t, err
+}
+func (s *Store) bumpSession(ctx context.Context, tx *sql.Tx, project, session, kind string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET revision=revision+1,updated_at=? WHERE id=? AND project_id=?`, s.timestamp(), session, project); err != nil {
+		return err
+	}
+	var rev int64
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM sessions WHERE id=? AND project_id=?`, session, project).Scan(&rev); err != nil {
+		return err
+	}
+	return s.event(ctx, tx, project, session, "", kind, rev)
+}
+func (s *Store) Turns(ctx context.Context, scope Scope, session string, after int64, limit int) ([]Turn, error) {
+	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
+		return nil, err
+	}
+	rows, err := s.reader.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE project_id=? AND session_id=? AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, pageSize(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Turn{}
+	for rows.Next() {
+		t, err := scanTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ReleaseTurn requires the Session revision, because it changes that Session's
+// ordered queue. A stale browser cannot release work using a sibling revision.
+func (s *Store) ReleaseTurn(ctx context.Context, scope Scope, session, id string, revision int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := writableProject(ctx, tx, scope); err != nil {
+			return err
+		}
+		child, err := sessionIn(ctx, tx, scope, session)
+		if err != nil {
+			return err
+		}
+		if child.State == "deleting" || child.State == "deleted" {
+			return ErrDeleting
+		}
+		if child.Revision != revision {
+			return ErrConflict
+		}
+		t, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE project_id=? AND session_id=? AND id=?`, scope.ProjectID, session, id))
+		if err != nil {
+			return err
+		}
+		if t.State != "held" {
+			return ErrConflict
+		}
+		if err := changed(tx.ExecContext(ctx, `UPDATE turns SET state='queued',updated_at=? WHERE id=? AND state='held'`, s.timestamp(), id)); err != nil {
+			return err
+		}
+		if err := s.activity(ctx, tx, scope.ProjectID); err != nil {
+			return err
+		}
+		return s.bumpSession(ctx, tx, scope.ProjectID, session, "turn.queued")
+	})
+}
