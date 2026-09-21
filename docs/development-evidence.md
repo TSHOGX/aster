@@ -14,11 +14,16 @@ revision, dirty status, engine binary hash and both raw/canonical manifest hashe
 | Retained execution | Lost operation replies, owner replacement, start recovery, repeated generations, journal replay, native restore and retained retirement |
 | Capture/projection | Independent failure backoff, ordered projection CAS, capture process kill/restart, exact archive/receipt hashes |
 | Operations | Read-only diagnostics command, administrator-only API, stale worker/owner tests, bounded continuation and supervised workers |
-| Frontend baseline | Lint/typecheck, 228 unit tests, production build and six browser fixture correctness journeys |
+| Frontend baseline | Lint/typecheck, 228 unit tests, production build, six fixture journeys, and a real Chromium daemon journey |
 
-Tests with synthetic API interception are frontend evidence; they do not prove a
-browser-to-daemon journey. The remaining product/browser and final revision audit
-are tracked separately until executed.
+The fixture tests use API interception; the real daemon journey separately runs
+Chromium through the Next proxy against the daemon and real shell session. The daemon
+journey verified login, capability-selected shell creation, streamed output, reload
+persistence, workspace retrieval, interruption, and three SSE connections. The same
+real product run verified cookie/session persistence across daemon restart, admin and
+owner boundaries, reader/public share revocation, and SSE replay. A composed real Pi
+run verified two scheduled existing-session turns after worker restart and rejected
+foreign schedule targets.
 
 ## Finite retained workload
 
@@ -41,8 +46,7 @@ pages grew by approximately 12.0 MiB. Retained configured overlay capacity was
 512 MiB and session volume capacity was 256 MiB across the two sessions. These
 capacity figures are reservations; they are not physical CoW byte measurements.
 The [machine-readable result](../dev/measurements/retained-2026-09-21.json) records
-the exact inputs and dirty-source status; final overall revision validation is
-still required.
+the exact inputs and dirty-source status; the final tagged suite below is the revision validation gate.
 
 Native history/capture and gateway outages use separate real tests because those
 roles have different deadlines and failure behavior. The composed model test
@@ -57,3 +61,12 @@ unbounded history or storage. Prepared uploads are collected separately from use
 storage. Host/storage-crash guarantees remain those of the pinned engine and the
 archive/publication durability boundaries; process-restart evidence alone does not
 establish power-loss durability.
+
+## Final product journey
+
+At application revision `7608a31`, the public harness ran the real daemon journey with
+Chromium and the pinned engine. It passed the shell workspace, streaming, interruption,
+restart, authentication, sharing, public frozen files, SSE replay and browser checks.
+The composed gateway test also passed real Pi scheduling through the daemon: two queued
+manual runs completed as `succeeded` after maintenance worker restart, while foreign
+users and targets were rejected.
