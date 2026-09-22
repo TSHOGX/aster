@@ -57,6 +57,18 @@ func (a *Agents) QuiesceIdle(ctx context.Context, project string, delay time.Dur
 // ReconcileControls rediscovers stop intents after owner loss, independently of
 // whether the logical Session is blocked or has another queued prompt.
 func (a *Agents) ReconcileControls(ctx context.Context, project string) error {
+	// A native abort should finish promptly. If it cannot be delivered or the
+	// runner never settles it, request guardian termination independently of the
+	// attachment's readiness. SIGTERM retains journal/descendant cleanup; this
+	// transition alone does not assert that the turn or process has ended.
+	_, err := a.Store.db.ExecContext(ctx, `UPDATE agent_incarnations SET state='stopping' WHERE project_id=? AND state='running' AND EXISTS (
+		SELECT 1 FROM turns t JOIN agent_commands c ON c.turn_id=t.id
+		WHERE t.session_id=agent_incarnations.session_id AND t.state='stopping'
+		AND c.incarnation_id=agent_incarnations.id AND c.kind='abort' AND c.created_at<?
+	)`, project, sqlitex.FormatTime(a.Store.now().Add(-30*time.Second)))
+	if err != nil {
+		return err
+	}
 	rows, err := a.Store.reader.QueryContext(ctx, `SELECT id,session_id FROM agent_incarnations WHERE project_id=? AND state='stopping' ORDER BY last_work_at,id LIMIT 8`, project)
 	if err != nil {
 		return err

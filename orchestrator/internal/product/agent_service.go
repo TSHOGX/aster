@@ -23,7 +23,8 @@ type agentAttachment struct {
 	// opening sync frame. It is empty when the deployment declares no service.
 	credential string
 	cancel     context.CancelFunc
-	input      sync.Mutex
+	input      chan struct{}
+	inputOnce  sync.Once
 	ready      bool
 	err        error
 }
@@ -284,6 +285,7 @@ func (a *Agents) Stop(ctx context.Context, project, session string) error {
 		// A process the engine no longer holds is already gone. Its durable exit is
 		// still recorded by the attachment's stream, never manufactured here.
 		if sandbox.Is(err, sandbox.NotFound) || sandbox.Is(err, sandbox.Precondition) {
+			a.inspectEnded(ctx, incarnation, err)
 			return nil
 		}
 		return err
@@ -334,8 +336,15 @@ func (a *Agents) takeOwnership(ctx context.Context, i Incarnation) (Incarnation,
 	return i, err
 }
 func (a *Agents) send(ctx context.Context, attachment *agentAttachment, f agentwire.Frame) error {
-	attachment.input.Lock()
-	defer attachment.input.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	attachment.inputOnce.Do(func() { attachment.input = make(chan struct{}, 1) })
+	select {
+	case attachment.input <- struct{}{}:
+		defer func() { <-attachment.input }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	var buf bytes.Buffer
 	f.Session, f.Incarnation, f.Owner = attachment.incarnation.SessionID, attachment.incarnation.ID, attachment.incarnation.Owner
 	if err := agentwire.Encode(&buf, f); err != nil {
@@ -344,6 +353,12 @@ func (a *Agents) send(ctx context.Context, attachment *agentAttachment, f agentw
 	return a.Backend.SendProcessInput(ctx, attachment.incarnation.Reference, buf.Bytes())
 }
 func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// Bound connection establishment, initial sync send, and journal handshake
+	// together. Once synchronized, healthy long turns have no lifetime timeout.
+	syncTimer := time.AfterFunc(10*time.Second, cancel)
+	defer syncTimer.Stop()
 	i := attachment.incarnation
 	var stream sandbox.ProcessStream
 	var err error
@@ -367,8 +382,6 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	defer writer.Close()
-	_, cancel := context.WithCancel(ctx)
-	defer cancel()
 	var synchronized atomic.Bool
 	pumpDone := make(chan struct{})
 	go func() {
@@ -404,11 +417,17 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 	}()
 	defer func() { cancel(); reader.Close(); stream.Close(); <-pumpDone }()
 	if err = a.send(ctx, attachment, agentwire.Frame{Kind: "sync", After: i.Ingested}); err != nil {
+		a.inspectEnded(ctx, i, err)
 		return err
 	}
+	var committed atomic.Uint64
+	ackDone := make(chan struct{})
+	go func() {
+		defer close(ackDone)
+		a.acknowledge(ctx, attachment, &committed, func(err error) { _ = writer.CloseWithError(err) })
+	}()
+	defer func() { cancel(); <-ackDone }()
 	decoder := agentwire.NewDecoder(reader)
-	syncTimer := time.AfterFunc(10*time.Second, func() { _ = stream.Close() })
-	defer syncTimer.Stop()
 	for {
 		f, err := decoder.Next()
 		if err != nil {
@@ -459,9 +478,7 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 			if err != nil {
 				return err
 			}
-			if err = a.send(ctx, attachment, agentwire.Frame{Kind: "ack", Sequence: sequence}); err != nil {
-				return err
-			}
+			committed.Store(sequence)
 		case "command_status":
 			if err = a.Store.commandStatus(ctx, i, f.CommandID, f.State); err != nil {
 				return err
@@ -525,7 +542,7 @@ func (a *Agents) recordExit(ctx context.Context, i Incarnation, code int32) {
 }
 
 func (a *Agents) inspectEnded(ctx context.Context, i Incarnation, cause error) {
-	if ctx.Err() != nil || (!sandbox.Is(cause, sandbox.NotFound) && !sandbox.Is(cause, sandbox.Precondition)) {
+	if ctx.Err() != nil || cause == nil {
 		return
 	}
 	observed, err := a.Backend.InspectProcess(ctx, i.Reference)
