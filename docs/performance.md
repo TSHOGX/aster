@@ -868,7 +868,8 @@ source cannot reopen its own gate. Completed retries must match the recorded
 finished digest, and stale coordinator IDs cannot create another attempt.
 
 The replacement hashes its running executable inode and refuses a mismatched
-activation target before publication/reconciliation. Explicit rollback-candidate
+activation target before opening a database writer or migrating schema, as well
+as before publication/reconciliation. Explicit rollback-candidate
 startup may use a different compatible executable but stays fenced until rollback
 is acknowledged. New content publication is limited to the replacement while
 activating; resume for pending original-journal recovery has a narrow exception.
@@ -924,3 +925,13 @@ busy gateway stop, replaces the gateway after drain, and completes a subsequent
 native turn. The model is deterministic and the owner replacement uses the same
 build: this does not qualify the active-update coordinator, arbitrary schema
 migration, an older rollback binary or a real external provider.
+
+
+Application startup validates activation identity under the exclusive database
+lock through a read-only connection before any schema upgrade. Tests start from
+schema 10 and prove that a wrong executable, missing source or invalid target
+leaves the database byte-for-byte unchanged, including its schema and source
+instance. Expected and explicitly acknowledged rollback candidates can still
+upgrade recognized schemas without losing accepted turns. An activating state
+from before executable-bound handoff is refused. Real executable activation,
+rollback and independent gateway/native outage fixtures pass with this ordering.

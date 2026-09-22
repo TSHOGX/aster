@@ -39,6 +39,21 @@ type Store struct {
 }
 
 func Open(ctx context.Context, path string) (result *Store, resultErr error) {
+	return open(ctx, path, nil)
+}
+
+// OpenApplication checks the measured executable against a pending activation
+// under the exclusive lifetime lock, before opening a writer or migrating DDL.
+// Open remains the lower-level Store constructor for fixtures and repository use.
+func OpenApplication(ctx context.Context, path, executableDigest string, rollback bool) (*Store, error) {
+	identity := startupIdentity{digest: executableDigest, rollback: rollback}
+	if err := identity.validate(); err != nil {
+		return nil, err
+	}
+	return open(ctx, path, &identity)
+}
+
+func open(ctx context.Context, path string, identity *startupIdentity) (result *Store, resultErr error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -58,7 +73,11 @@ func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = knownSchema(ctx, check)
+		version, schemaErr := knownSchema(ctx, check)
+		err = schemaErr
+		if err == nil && identity != nil {
+			err = identity.check(ctx, check, version)
+		}
 		closeErr := check.Close()
 		if err = errors.Join(err, closeErr); err != nil {
 			return nil, err

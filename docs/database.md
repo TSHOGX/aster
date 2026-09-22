@@ -12,7 +12,11 @@ version 9 adds [indexed readiness and transactional revocation](../orchestrator/
 version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql);
 version 11 adds [bounded durable gateway request slots](../orchestrator/internal/product/gateway_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
-lock. One application owns all writes; operator control commands use that owner.
+lock. Application startup uses `product.OpenApplication`: it validates a pending
+activation against the measured executable through a read-only connection under
+that same lock, before opening a writer, migrating DDL or replacing the Store
+instance. A rejected candidate cannot change schema or ownership metadata.
+One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
 product database.
 

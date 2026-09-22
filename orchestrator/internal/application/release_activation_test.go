@@ -53,22 +53,3 @@ func TestActivationFinishesControlResponseBeforeRetiring(t *testing.T) {
 		t.Fatal("owner retirement did not start")
 	}
 }
-
-func TestReplacementIdentityRequiresExplicitRollbackOnMismatch(t *testing.T) {
-	target := "sha256:" + strings.Repeat("a", 64)
-	other := "sha256:" + strings.Repeat("b", 64)
-	state := product.ReleaseState{Phase: "activating", ActivationInstance: "original", TargetDigest: target}
-	if err := validateReleaseExecutable(state, target, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateReleaseExecutable(state, other, false); err == nil {
-		t.Fatal("unexpected executable admitted")
-	}
-	if err := validateReleaseExecutable(state, other, true); err != nil {
-		t.Fatal(err)
-	}
-	state.ActivationInstance = ""
-	if err := validateReleaseExecutable(state, target, true); err == nil {
-		t.Fatal("invalid activation accepted")
-	}
-}

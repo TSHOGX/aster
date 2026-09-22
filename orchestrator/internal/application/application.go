@@ -93,18 +93,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err := os.MkdirAll(cfg.StateDirectory, 0700); err != nil {
 		return app, err
 	}
-	store, err := product.Open(ctx, cfg.DatabasePath())
+	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), app.executableDigest, cfg.RollbackCandidate)
 	if err != nil {
 		return app, err
 	}
 	app.Store = store
-	releaseState, err := store.ReleaseState(ctx)
-	if err != nil {
-		return app, err
-	}
-	if err = validateReleaseExecutable(releaseState, app.executableDigest, cfg.RollbackCandidate); err != nil {
-		return app, err
-	}
 	engineConfig, err := cfg.Engine.Build(cfg.base)
 	if err != nil {
 		return app, err
@@ -318,18 +311,6 @@ func (a *Application) retireAfterActivation() {
 	})
 }
 
-func validateReleaseExecutable(state product.ReleaseState, digest string, rollback bool) error {
-	if state.Phase != "activating" {
-		return nil
-	}
-	if state.ActivationInstance == "" || !content.ValidDigest(state.TargetDigest) {
-		return errors.New("activating release has no valid source or target identity")
-	}
-	if state.TargetDigest != digest && !rollback {
-		return errors.New("replacement executable differs from the release target; use the expected build or explicitly start a rollback candidate")
-	}
-	return nil
-}
 func (a *Application) watchCredentials() {
 	timer := time.NewTicker(2 * time.Second)
 	defer timer.Stop()

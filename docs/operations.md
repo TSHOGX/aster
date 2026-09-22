@@ -181,6 +181,10 @@ starts. Complete the handoff through the replacement's control socket:
 orchestrator drain-complete --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
 ```
 
+Startup checks the expected executable under the database lifetime lock before
+opening a writer or migrating schema. An unexpected candidate leaves the database
+and current Store identity unchanged.
+
 Completion requires a different Store instance, matching executable digest, and
 settled durable/runtime work. It then reopens admission and records the actual
 finished digest. New configuration publication and original-journal recovery may
