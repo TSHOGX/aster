@@ -16,7 +16,8 @@ active-model deployment continuity.
 | P02e | Verified locally | Browser cutover; raw snapshot reconstruction and routes removed |
 | P03a/b | Verified locally | Resource scopes and bounded shared server replay hub |
 | P03c–e | Verified locally | Incremental browser views, shared transport, idle windows and disposable runtime qualification |
-| P04 | Pending | Reusable confined readers and immutable representations |
+| P04a protocol | Verified locally | Reusable confined guest reader and multiplexed host client |
+| P04b–e | Pending | Host lifecycle, capture/version APIs, read cutover and helper retirement |
 | P05 | Pending | Fair byte budgets, control reserve and retention |
 | P06 | Pending | Measured browser and document rendering budgets |
 | P07 | Pending | Admission/drain, independent gateway and combined qualification |
@@ -260,3 +261,27 @@ checks confirm that the former snapshot/raw-record query and independent owner
 SSE/watch routes no longer exist; route-removal tests return 404. Full fifty-cycle
 browser heap plateaus, constrained document budgets, saturation and a final
 real-provider owner-release continuity test remain explicit outstanding work.
+
+
+## Reusable reader protocol qualification
+
+The workspace helper has a versioned read-only service mode using framed process
+stdin/stdout. The guest reuses its confined root descriptor, multiplexes at most
+two read/stat/list operations and cancels requests independently. Frames are
+bounded before decode; content chunks are 32 KiB, request frames 16 KiB and reply
+frames 256 KiB. Idle readers exit after thirty seconds. Requests have a two-minute
+operation deadline. No mutation operation is accepted by this protocol.
+
+Directory continuations use immutable sorted metadata observations: up to 100,000
+names, 32 MiB estimated metadata per snapshot, sixteen snapshots and 64 MiB retained
+metadata per reader. Expired/evicted cursors explicitly resync; initial lists
+create a new observation. Nanosecond timestamps are hints only. Read completion
+carries exact captured size/SHA-256; observable file changes during transfer
+prevent success. Strong HTTP semantics await the host capture stage.
+
+The guest and host-client race tests passed. Disposable runsc tests passed the
+100,000/100,001 boundary, concurrent symlink substitution, frozen pagination under
+mutation, cancellation, fifty requests through one process, and existing runtime
+fault/recovery/service gates. In one disposable run the cold reader handshake took
+11.15 ms; fifty warm stat requests took 208.59 ms total. These are prototype
+measurements; HTTP still uses the old file-operation path until the next cutover.

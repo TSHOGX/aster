@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--reader" {
+		if err := projectfiles.ServeReader(context.Background(), "/workspace", os.Stdin, os.Stdout, 0); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	var request projectfiles.Request
 	if len(os.Args) != 2 || json.Unmarshal([]byte(os.Args[1]), &request) != nil {
 		fmt.Fprintln(os.Stderr, "one operation document required")

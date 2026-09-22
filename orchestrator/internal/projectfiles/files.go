@@ -82,14 +82,16 @@ func (r Request) Validate() error {
 }
 
 type Entry struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-	Size     int64  `json:"size"`
-	Modified int64  `json:"modified"`
+	ModifiedNano int64  `json:"modified_nano,string,omitempty"`
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	Size         int64  `json:"size"`
+	Modified     int64  `json:"modified"`
 }
 type Page struct {
-	Entries []Entry `json:"entries"`
-	Next    string  `json:"next,omitempty"`
+	Snapshot string  `json:"snapshot,omitempty"`
+	Entries  []Entry `json:"entries"`
+	Next     string  `json:"next,omitempty"`
 }
 
 // A max heap retains just the next page, even for very large directories.

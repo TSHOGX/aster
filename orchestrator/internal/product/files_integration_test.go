@@ -17,6 +17,7 @@ import (
 	"harness-platform/orchestrator/internal/projectfiles"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
+	"harness-platform/orchestrator/internal/workspacereader"
 )
 
 type loseFileReply struct {
@@ -122,11 +123,68 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		}
 	})
 	t.Run("confinement-and-races-inside-runsc", func(t *testing.T) {
-		output := shell(t, "/tmp/projectfiles.test -test.v -test.timeout=45s")
+		output := shell(t, "/tmp/projectfiles.test -test.v -test.timeout=2m")
 		if !strings.Contains(output, "PASS") {
 			t.Fatal(output)
 		}
 		t.Log(output)
+	})
+	t.Run("reusable-reader-protocol", func(t *testing.T) {
+		shell(t, "printf immutable > /workspace/reader-data; mkdir -p /workspace/reader-dir; touch /workspace/reader-dir/a /workspace/reader-dir/b /workspace/reader-dir/c")
+		ref := sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: "reader-prototype"}
+		started := time.Now()
+		stream, e := backend.StartProcess(runctx, sandbox.StartProcessRequest{ProcessReference: ref, IdempotencyKey: ref.Handle, Command: "/tmp/workspace-files", Arguments: []string{"--reader"}, Directory: "/workspace"})
+		must(t, e)
+		client, e := workspacereader.New(runctx, stream, func(ctx context.Context, data []byte) error { return backend.SendProcessInput(ctx, ref, data) })
+		must(t, e)
+		defer client.Close()
+		defer backend.SignalProcess(runctx, ref, 9)
+		cold := time.Since(started)
+		var page projectfiles.Page
+		e = client.Call(runctx, projectfiles.ReadRequest{Operation: "list", Path: "reader-dir", Limit: 1}, func(frame projectfiles.ReadFrame) error {
+			if frame.Page != nil {
+				page = *frame.Page
+			}
+			return nil
+		})
+		must(t, e)
+		if page.Next == "" || len(page.Entries) != 1 || page.Entries[0].Name != "a" {
+			t.Fatal(page)
+		}
+		shell(t, "rm /workspace/reader-dir/b; touch /workspace/reader-dir/aa")
+		e = client.Call(runctx, projectfiles.ReadRequest{Operation: "list", Path: "reader-dir", Limit: 1, Cursor: page.Next}, func(frame projectfiles.ReadFrame) error {
+			if frame.Page != nil {
+				page = *frame.Page
+			}
+			return nil
+		})
+		must(t, e)
+		if len(page.Entries) != 1 || page.Entries[0].Name != "b" {
+			t.Fatal("directory observation changed", page)
+		}
+		var bytesRead strings.Builder
+		var hash string
+		e = client.Call(runctx, projectfiles.ReadRequest{Operation: "read", Path: "reader-data"}, func(frame projectfiles.ReadFrame) error {
+			bytesRead.Write(frame.Data)
+			if frame.Kind == "complete" {
+				hash = frame.Digest
+			}
+			return nil
+		})
+		must(t, e)
+		if bytesRead.String() != "immutable" || hash != fmt.Sprintf("%x", sha256.Sum256([]byte("immutable"))) {
+			t.Fatal("reader capture mismatch")
+		}
+		warm := time.Now()
+		for n := 0; n < 50; n++ {
+			must(t, client.Call(runctx, projectfiles.ReadRequest{Operation: "stat", Path: "reader-data"}, func(frame projectfiles.ReadFrame) error {
+				if frame.Metadata == nil || frame.Metadata.Size != 9 {
+					t.Error("stat metadata missing")
+				}
+				return nil
+			}))
+		}
+		t.Logf("reused one reader: cold handshake=%s, 50 stat requests=%s", cold, time.Since(warm))
 	})
 	t.Run("large-stream-and-native-PTY-concurrency", func(t *testing.T) {
 		terminals := NewTerminals(runctx, s, l, backend, profile, 4)
