@@ -49,12 +49,15 @@ for (const name of [
       : name.endsWith("xlsx")
         ? ".x-spreadsheet"
         : ".pptx-preview-slide-wrapper-0";
-    await expect(page.locator(selector).first()).toBeVisible({
+    await expect(
+      page.frameLocator(".office-frame").locator(selector).first(),
+    ).toBeVisible({
       timeout: 20000,
     });
     const useful = performance.now() - start;
     const readiness = page.locator(".office-preview[data-preview-phase]");
-    if (await readiness.count()) await expect(readiness).toHaveAttribute("data-preview-phase", "ready");
+    if (await readiness.count())
+      await expect(readiness).toHaveAttribute("data-preview-phase", "ready");
     const complete = performance.now() - start;
     await page.waitForTimeout(500);
     const profile = await cdp.send("Profiler.stop");
@@ -66,7 +69,11 @@ for (const name of [
     mkdirSync(output!, { recursive: true });
     writeFileSync(
       resolve(output!, `${name}.json`),
-      JSON.stringify({ useful, complete, metrics, resources, longTasks }, null, 2),
+      JSON.stringify(
+        { useful, complete, metrics, resources, longTasks },
+        null,
+        2,
+      ),
     );
     writeFileSync(
       resolve(output!, `${name}.cpuprofile`),

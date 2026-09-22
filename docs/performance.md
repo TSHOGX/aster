@@ -22,7 +22,8 @@ active-model deployment continuity.
 | P05 journal/flow | Verified locally | Guest reserve, bounded delivery, safe command compaction and delayed-ACK qualification |
 | P05 combined resource audit | Pending | Final cross-phase queue/resource matrix and deployment qualification |
 | P06 admission | Verified locally | Bounded format validation in a Worker and preview parse/resource admission |
-| P06 lifecycle/interaction | Partial | Fifty desktop cycles locally verified; prepared replacements and constrained-profile qualification remain open |
+| P06 Office ownership | Verified locally | Prepared replacements, cancellation, chart lifecycle and localized keyboard controls |
+| P06 interaction qualification | Partial | Office cycles and constrained presentation checks pass; history and comparative latency matrix remain open |
 | P07 | Pending | Admission/drain, independent gateway and combined qualification |
 
 ## Diagnostics
@@ -107,9 +108,10 @@ rotations, including sequence-zero empty workspaces.
 
 Preview validation hashes actual returned bytes. Identical bytes retain the same
 representation; changed versions of the same file retain readable prior content
-while downloading. Renderer leases hold object URLs through asynchronous cleanup.
-Each Office parse owns a separate stage, preventing late callbacks from mutating
-its replacement. Denied/missing file reads clear retained preview pixels. Unsaved
+while downloading and preparing. Each Office renderer owns an isolated browser
+document with a transferred input buffer. The old document stays visible until
+the replacement reports ready; removing a document ends its URL, timer and global
+handler scope. Late callbacks cannot mutate the replacement. Denied/missing file reads clear retained preview pixels. Unsaved
 editor text is separately owned and compared against external bytes without being
 overwritten by watch events or delayed saves.
 
@@ -478,7 +480,7 @@ limited to 1 MiB. Downloads retain the complete original file.
 | Document | 2,000 paragraphs, 100 explicit page/section boundaries |
 | Image | 8 million pixels each, 16 million across an Office package |
 | Parse admission | One active operation, two queued operations |
-| Retained Office renderers | Two, including a renderer awaiting teardown |
+| Retained Office renderers | Two documents: displayed and preparing |
 
 ZIP validation checks central/local names, bounded byte spans, actual decompressed
 length and CRC, XML well-formedness, structural counts, and raster dimensions.
@@ -493,8 +495,8 @@ Validation runs in a dedicated Worker using native bounded decompression and
 `saxes` 6.0.0 (ISC; `xmlchars` 2.2.0, MIT). Its input buffer is transferred, not
 cloned between contexts. Cancellation and a ten-second deadline terminate the
 Worker. Office rendering still executes on the main thread; asynchronous library
-APIs do not imply a Worker. Running renderer work retains its URL and reservation
-until settlement and teardown; canceled queued work never starts. Same-byte
+APIs do not imply a Worker. Renderer reservations last through document removal; the parent does not pass
+its blob URLs into renderer documents. Canceled queued work never starts. Same-byte
 revalidation skips validation and renderer replacement. Diagnostic builds expose
 `batteryPreviewUsage()` with aggregate reservation, URL, Worker, observer,
 renderer and queue counts; it contains no file names or contents.
@@ -515,8 +517,8 @@ Office files with [the document generator](../frontend/e2e/preview-documents.py)
 and run [the opt-in profile](../frontend/e2e/ui/preview-profile.spec.ts) with
 `PREVIEW_FIXTURES` and `PREVIEW_PROFILE_OUTPUT` pointing to separate input and new
 output directories. Use `NEXT_PUBLIC_INTERACTION_METRICS=1` for resource counters.
-Full lifecycle plateau, replacement rendering and constrained-profile interaction
-qualification remain open; this slice does not close P06.
+The ownership and lifecycle qualification below follows this admission slice.
+The complete history, interaction and comparative latency matrix remains open.
 
 ## Repeated preview lifecycle
 
@@ -543,5 +545,57 @@ parses or queued parses at these checkpoints. Heap growth stayed within the
 predeclared 20% /2 MiB allowance; most earlier growth was compiled-code warmup.
 The final ten cycles added approximately 93 KiB, with no resource-count growth.
 These observations qualify this fixture and stable point, not every Office
-feature or constrained device. Rich replacement, chart-heavy repeated journeys,
-locales/narrow profiles and the complete interaction matrix remain open.
+feature or constrained device. The following ownership stage extends this
+qualification to prepared replacements and repeated chart-bearing documents.
+
+## Prepared Office rendering
+
+Office renderers now run in separate same-origin browser documents. This isolates
+spreadsheet media globals and the presentation library's chart callback bus.
+One admitted parse can prepare a candidate while the displayed document stays
+interactive. A successful candidate restores document scroll and slide position and takes over;
+cancellation, failure or a fifteen-second preparation deadline leaves the prior
+version available with retry/download. Same-byte revalidation creates no new
+document. Pending documents are hidden from keyboard and accessibility navigation.
+The parent accepts readiness only from the candidate's window and origin.
+
+Buffers are transferred into these documents; renderer-created URLs belong to
+that document and are revoked when its browsing context is removed. The old
+shared-document renderer and global listener interception are removed. This is
+lifecycle isolation, not off-thread DOM rendering or a separate security origin.
+Two renderer/document reservations remain the maximum. Diagnostic counters now
+include live documents as `frames`.
+
+Presentation controls use native buttons with English/Chinese labels and a live
+slide counter. They restore slide position on replacement and forward Escape to
+the workspace. Viewer theme follows application theme changes, and resizing
+scales the slide to its available width. The pinned presentation source also
+needed a scoped lifecycle fix: its no-argument unsubscribe retained callbacks,
+and deferred chart initialization could target an already removed slide.
+The build/dev hook verifies the exact upstream source digest, removes those
+callback roots on slide changes/destruction, and skips detached chart targets. Missing explicit fills now use document theme
+colors, absent chart titles stay absent, and preview chart animation is disabled.
+Slide viewport height follows the actual aspect ratio, avoiding cropped 4:3
+slides. Paint checks require nontransparent bars rather than only an SVG shell.
+No library version or license changed (pptx-preview 1.0.7, ISC); an upstream
+source change fails the hook until reviewed. A regression executes the actual
+patched event methods through one hundred slide retirements.
+
+Six equal-fixture production CPU profiles passed before/after document isolation.
+Single-run adapter completion added approximately 30–140 ms, with no observed
+long task above 100 ms in that comparison. Fifty ordinary and fifty chart-bearing
+file/session/fullscreen/theme cycles passed, including repeated chart slide
+navigation. In the chart run the final checkpoint retained one application
+document, one Markdown URL, 147 reservation bytes, and zero Office documents,
+renderers, Workers or queued/running parses. Post-GC heap increased from 10.66 MB
+to 12.29 MB; the final ten cycles added 47.8 kB. The earlier shared-document
+comparison ended near 20.87 MB. These are local fixture observations, not field
+memory or latency guarantees.
+
+Replacement tests hold the new document's response while interacting with the
+old one, then check takeover, chart preservation, canceled/expired preparation,
+explicit retry, same-byte reuse and a late canceled request after text selection.
+Presentation keyboard/theme/resize checks pass in English and Chinese, light and
+dark, desktop and narrow viewports, with reduced motion and four-times CPU
+throttling on narrow cases. Remaining P06 work includes history/Markdown profiles,
+complete-answer/anchor/accessibility qualification and repeated latency trials.

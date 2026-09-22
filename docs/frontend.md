@@ -22,10 +22,16 @@ colors follow the application theme.
 Files use a wide preview with a lazy directory tree on the right. Each directory
 has independent pagination and refresh; filtering covers loaded entries only.
 Workspace links reveal ancestor directories. Files support watches, upload,
-download, mutation, text editing and dedicated Markdown, code, image, PDF,
-spreadsheet, Word and PowerPoint previews. Preview bytes and text editing remain
-bounded. Unsupported files remain downloadable, and unsupported workbook drawings
-are identified. Object URLs and document renderers are disposed when replaced.
+download, mutation, text editing and bounded Markdown, code, PNG/JPEG, XLSX,
+DOCX and PPTX previews. Other formats (including PDF, legacy XLS and SVG) remain
+downloadable. Unsupported workbook drawings are identified. Office bytes pass
+bounded format validation in a cancellable Worker before rendering. Each Office
+renderer owns a disposable browser document; the old document stays readable
+until its prepared replacement is ready. Cancel, timeout and explicit retry keep
+that displayed version. Frame removal releases the renderer's URLs and global
+handlers. Presentation controls support keyboard navigation, localized labels,
+reading-position restoration, theme updates and Escape back to the workspace.
+See [preview budgets and qualification](performance.md#preview-admission-and-validation).
 
 Application fullscreen expands the file workspace without browser fullscreen or
 losing its editor. Escape restores the layout and focus. Hiding files or changing

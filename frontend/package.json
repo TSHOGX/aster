@@ -2,6 +2,8 @@
   "name": "agent-runtime-frontend",
   "private": true,
   "scripts": {
+    "predev": "node scripts/patch-office-viewers.mjs",
+    "prebuild": "node scripts/patch-office-viewers.mjs",
     "dev": "next dev --webpack --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",

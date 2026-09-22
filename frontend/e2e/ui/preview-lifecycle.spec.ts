@@ -16,7 +16,10 @@ test("fifty preview, session, fullscreen and theme cycles release owned resource
 }) => {
   test.setTimeout(180_000);
   const f = await workspaceFixture(page);
-  const names = ["small.docx", "small.xlsx", "small.pptx"];
+  const names =
+    process.env.PREVIEW_CHARTS === "1"
+      ? ["small.docx", "charts.xlsx", "charts.pptx"]
+      : ["small.docx", "small.xlsx", "small.pptx"];
   f.messages.analysis[1].content = names
     .map((name) => `[${name}](/workspace/${name})`)
     .join("\n\n");
@@ -93,6 +96,7 @@ test("fifty preview, session, fullscreen and theme cycles release owned resource
     }
     expect(resources.owned).toMatchObject({
       workers: 0,
+      frames: 0,
       renderers: 0,
       observers: 0,
       parses: 0,
@@ -110,6 +114,19 @@ test("fifty preview, session, fullscreen and theme cycles release owned resource
       "data-preview-phase",
       "ready",
     );
+    if (names[i % names.length] === "charts.pptx") {
+      const presentation = page.frameLocator(".office-frame");
+      for (let slide = 0; slide < 3; slide++) {
+        await presentation
+          .getByRole("button", { name: "Next slide", exact: true })
+          .click();
+        await expect(presentation.locator(".chart-node svg")).toHaveCount(1);
+        await presentation
+          .getByRole("button", { name: "Previous slide", exact: true })
+          .click();
+        await expect(presentation.locator(".chart-node svg")).toHaveCount(1);
+      }
+    }
     {
       await page.getByLabel("Enter Full Screen", { exact: true }).click();
       await page.keyboard.press("Escape");

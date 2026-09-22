@@ -35,6 +35,7 @@ type Usage = {
   renderers: number;
   observers: number;
   workers: number;
+  frames: number;
   parses: number;
   queued: number;
 };
@@ -44,6 +45,7 @@ const usage: Usage = {
   renderers: 0,
   observers: 0,
   workers: 0,
+  frames: 0,
   parses: 0,
   queued: 0,
 };
@@ -62,13 +64,14 @@ if (
 
 export function reservePreview(
   bytes: number,
-  kind?: "urls" | "renderers" | "observers" | "workers",
+  kind?: "urls" | "renderers" | "observers" | "workers" | "frames",
 ) {
   if (
     !Number.isSafeInteger(bytes) ||
     bytes < 0 ||
     usage.bytes + bytes > PREVIEW_LIMITS.retainedBytes ||
-    (kind === "renderers" && usage.renderers >= PREVIEW_LIMITS.renderers)
+    ((kind === "renderers" || kind === "frames") &&
+      usage[kind] >= PREVIEW_LIMITS.renderers)
   )
     throw new PreviewLimitError();
   usage.bytes += bytes;

@@ -1,0 +1,166 @@
+"use client";
+import { useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n";
+import {
+  acquirePreviewParse,
+  PREVIEW_LIMITS,
+  reservePreview,
+} from "@/lib/preview-budget";
+import {
+  prepareOfficeFrame,
+  type OfficeFrame,
+  type OfficeKind,
+} from "@/lib/office-frame";
+import type { PreviewRepresentation } from "@/lib/preview-representation";
+
+type Phase = "queued" | "parsing" | "ready" | "failed" | "canceled";
+
+export function OfficePreview({
+  representation,
+  kind,
+  path,
+  href,
+}: {
+  representation: PreviewRepresentation;
+  kind: OfficeKind;
+  path: string;
+  href: string;
+}) {
+  const tr = useT();
+  const host = useRef<HTMLDivElement>(null);
+  const active = useRef<OfficeFrame | null>(null);
+  const frames = useRef(new Set<OfficeFrame>());
+  const cancel = useRef(() => {});
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<{ phase: Phase; drawings: boolean }>({
+    phase: "queued",
+    drawings: false,
+  });
+  useEffect(() => {
+    const owned = frames.current;
+    return () => {
+      for (const frame of owned) frame.dispose();
+      owned.clear();
+      active.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    const element = host.current;
+    if (!element) return;
+    const abort = new AbortController();
+    // Adoption transfers cancellation ownership to the displayed frame. A new
+    // candidate cancels only its predecessor's pending parse, not displayed data.
+    const frameAbort = new AbortController();
+    let candidate: OfficeFrame | undefined,
+      adopted = false;
+    cancel.current = () => {
+      if (adopted) return;
+      abort.abort();
+      frameAbort.abort();
+      setState((old) => ({ ...old, phase: "canceled" }));
+    };
+    const releaseRepresentation = representation.retain();
+    let releaseRenderer = () => {};
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseRenderer();
+      releaseRepresentation();
+    };
+    void (async () => {
+      let unlock = () => {};
+      try {
+        await Promise.resolve();
+        abort.signal.throwIfAborted();
+        setState((old) => ({ ...old, phase: "queued" }));
+        unlock = await acquirePreviewParse(abort.signal);
+        abort.signal.throwIfAborted();
+        releaseRenderer = reservePreview(
+          representation.blob.size +
+            (representation.plan?.renderBytes ?? PREVIEW_LIMITS.renderBytes),
+          "renderers",
+        );
+        setState((old) => ({ ...old, phase: "parsing" }));
+        const frame = prepareOfficeFrame(
+          element,
+          representation,
+          kind,
+          frameAbort.signal,
+        );
+        candidate = {
+          ready: frame.ready,
+          position: frame.position,
+          activate: (previous) => frame.activate(previous),
+          dispose() {
+            frame.dispose();
+            release();
+            frames.current.delete(candidate!);
+          },
+        };
+        frames.current.add(candidate);
+        const result = await frame.ready;
+        abort.signal.throwIfAborted();
+        const previous = active.current;
+        candidate.activate(previous ?? undefined);
+        active.current = candidate;
+        adopted = true;
+        previous?.dispose();
+        setState({ phase: "ready", drawings: result.drawingsUnavailable });
+      } catch {
+        if (!abort.signal.aborted)
+          setState((old) => ({ ...old, phase: "failed" }));
+      } finally {
+        if (!adopted) {
+          candidate?.dispose();
+          release();
+        }
+        unlock();
+      }
+    })();
+    return () => {
+      abort.abort();
+      if (!adopted) frameAbort.abort();
+    };
+  }, [representation, kind, path, attempt]);
+  return (
+    <>
+      {state.drawings && (
+        <p className="notice">
+          {tr(
+            "Some drawings are unavailable in this preview. Download the workbook to view them.",
+          )}
+        </p>
+      )}
+      {(state.phase === "failed" || state.phase === "canceled") && (
+        <div className="notice" role="status">
+          <p>
+            {state.phase === "canceled"
+              ? tr("Preview canceled.")
+              : tr("Preview is not available for this file.")}
+          </p>
+          <button onClick={() => setAttempt((value) => value + 1)}>
+            {tr("Retry")}
+          </button>{" "}
+          <a href={href} download>
+            {tr("Download")}
+          </a>
+        </div>
+      )}
+      {(state.phase === "queued" || state.phase === "parsing") && (
+        <p className="notice" role="status">
+          {tr("Preparing preview…")}{" "}
+          <button onClick={() => cancel.current()}>
+            {tr("Cancel preview")}
+          </button>
+        </p>
+      )}
+      <div
+        className="office-preview"
+        ref={host}
+        data-preview-phase={state.phase}
+        aria-busy={state.phase === "queued" || state.phase === "parsing"}
+      />
+    </>
+  );
+}
