@@ -21,23 +21,21 @@ func (b *Backend) WatchWorkspace(ctx context.Context, ref sandbox.Reference, aft
 		cancel()
 		return nil, processError("watch workspace", err)
 	}
-	return &fileWatch{stream: stream, cancel: cancel, epoch: ref.Epoch}, nil
+	return &fileWatch{receiveStream: receiveStream[v1.WatchEvent]{stream: stream, cancel: cancel}, epoch: ref.Epoch}, nil
 }
 
 type fileWatch struct {
-	stream *connect.ServerStreamForClient[v1.WatchEvent]
-	cancel context.CancelFunc
-	epoch  uint64
+	receiveStream[v1.WatchEvent]
+	epoch uint64
 }
 
-func (w *fileWatch) Close() error { w.cancel(); return w.stream.Close() }
 func (w *fileWatch) Next() (sandbox.FileInvalidation, error) {
-	if !w.stream.Receive() {
-		if err := w.stream.Err(); err != nil {
-			return sandbox.FileInvalidation{}, processError("watch workspace", err)
+	e, err := w.receive()
+	if err != nil {
+		if err == io.EOF {
+			return sandbox.FileInvalidation{}, io.EOF
 		}
-		return sandbox.FileInvalidation{}, io.EOF
+		return sandbox.FileInvalidation{}, processError("watch workspace", err)
 	}
-	e := w.stream.Msg()
 	return sandbox.FileInvalidation{Sequence: e.Sequence, Epoch: e.PlacementEpoch, Reset: e.Overflow || e.Reset_ || e.PlacementEpoch != w.epoch}, nil
 }

@@ -18,15 +18,17 @@ import (
 
 type processFixture struct {
 	transport.UnimplementedProcessServiceHandler
-	mu       sync.Mutex
-	start    *v1.StartRequest
-	connect  *v1.ConnectRequest
-	header   string
-	signals  []int32
-	inputs   [][]byte
-	frames   []*v1.ProcessEvent
-	live     []*v1.ProcessInfo
-	snapshot map[string]any
+	mu            sync.Mutex
+	start         *v1.StartRequest
+	connect       *v1.ConnectRequest
+	header        string
+	signals       []int32
+	inputs        [][]byte
+	frames        []*v1.ProcessEvent
+	live          []*v1.ProcessInfo
+	pids          []int32
+	afterSnapshot []*v1.ProcessInfo
+	snapshot      map[string]any
 }
 
 func (f *processFixture) Start(_ context.Context, request *connect.Request[v1.StartRequest], stream *connect.ServerStream[v1.ProcessEvent]) error {
@@ -86,6 +88,10 @@ func processBackend(t *testing.T, frames ...*v1.ProcessEvent) (*Backend, *proces
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(fixture.snapshot)
+		if fixture.afterSnapshot != nil {
+			fixture.live = fixture.afterSnapshot
+			fixture.afterSnapshot = nil
+		}
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -195,7 +201,7 @@ func (f *processFixture) List(_ context.Context, request *connect.Request[v1.Lis
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.header = request.Header().Get(sandboxHeader)
-	return connect.NewResponse(&v1.ListResponse{Processes: f.live}), nil
+	return connect.NewResponse(&v1.ListResponse{Processes: f.live, Pids: f.pids}), nil
 }
 func TestProcessInspectionUsesLiveEvidenceAndFencesRetainedIdentity(t *testing.T) {
 	backend, fixture, ref := processBackend(t)
@@ -214,6 +220,22 @@ func TestProcessInspectionUsesLiveEvidenceAndFencesRetainedIdentity(t *testing.T
 	if err != nil || observed.State != "unknown" || observed.ExitCode != nil {
 		t.Fatal("invented termination from stale control-plane snapshot", observed, err)
 	}
+	fixture.snapshot["pid"] = 42
+	fixture.pids = []int32{1, 10, 42}
+	observed, err = backend.InspectProcess(context.Background(), ref)
+	if err != nil || observed.State != "unknown" {
+		t.Fatal("PID still exists", observed, err)
+	}
+	fixture.pids = []int32{1, 10}
+	observed, err = backend.InspectProcess(context.Background(), ref)
+	if err != nil || observed.State != "lost" || observed.ExitCode != nil {
+		t.Fatal("absent handle and PID not reconciled", observed, err)
+	}
+	fixture.frames = []*v1.ProcessEvent{{ProcessHandle: ref.Handle, PlacementEpoch: ref.Epoch, Kind: &v1.ProcessEvent_End{End: &v1.EndEvent{ExitCode: 10}}}}
+	observed, err = backend.InspectProcess(context.Background(), ref)
+	if err != nil || observed.State != "exited" || observed.ExitCode == nil || *observed.ExitCode != 10 {
+		t.Fatal("lost retained terminal evidence", observed, err)
+	}
 	fixture.snapshot["state"] = "exited"
 	fixture.snapshot["exit_code"] = 7
 	observed, err = backend.InspectProcess(context.Background(), ref)
@@ -223,5 +245,15 @@ func TestProcessInspectionUsesLiveEvidenceAndFencesRetainedIdentity(t *testing.T
 	fixture.snapshot["process_id"] = "sibling"
 	if _, err = backend.InspectProcess(context.Background(), ref); !sandbox.Is(err, sandbox.Precondition) {
 		t.Fatal("accepted another process's exit", err)
+	}
+}
+
+func TestProcessInspectionDoesNotLoseConcurrentStart(t *testing.T) {
+	backend, fixture, ref := processBackend(t)
+	fixture.snapshot = map[string]any{"process_id": ref.Handle, "sandbox_id": ref.SandboxID, "placement_epoch": ref.Epoch, "state": "running", "pid": 42}
+	fixture.afterSnapshot = []*v1.ProcessInfo{{ProcessHandle: ref.Handle, PlacementEpoch: ref.Epoch, Pid: 42, State: "running"}}
+	observed, err := backend.InspectProcess(context.Background(), ref)
+	if err != nil || observed.State != "running" || observed.PID != 42 {
+		t.Fatal("start after initial scan falsely lost", observed, err)
 	}
 }

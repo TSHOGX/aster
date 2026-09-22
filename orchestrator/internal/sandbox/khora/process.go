@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"harness-platform/orchestrator/internal/sandbox"
 
@@ -29,7 +30,7 @@ func (b *Backend) StartProcess(ctx context.Context, request sandbox.StartProcess
 		cancel()
 		return nil, processError("start process", err)
 	}
-	return &processStream{stream: stream, reference: request.ProcessReference, cancel: cancel}, nil
+	return &processStream{receiveStream: receiveStream[v1.ProcessEvent]{stream: stream, cancel: cancel}, reference: request.ProcessReference}, nil
 }
 
 func (b *Backend) ConnectProcess(ctx context.Context, reference sandbox.ProcessReference, after uint64) (sandbox.ProcessStream, error) {
@@ -44,7 +45,7 @@ func (b *Backend) ConnectProcess(ctx context.Context, reference sandbox.ProcessR
 		cancel()
 		return nil, processError("connect process", err)
 	}
-	return &processStream{stream: stream, reference: reference, cancel: cancel}, nil
+	return &processStream{receiveStream: receiveStream[v1.ProcessEvent]{stream: stream, cancel: cancel}, reference: reference}, nil
 }
 
 func (b *Backend) SendProcessInput(ctx context.Context, reference sandbox.ProcessReference, data []byte) error {
@@ -78,19 +79,18 @@ func (b *Backend) validateProcess(ctx context.Context, reference sandbox.Process
 }
 
 type processStream struct {
-	stream    *connect.ServerStreamForClient[v1.ProcessEvent]
+	receiveStream[v1.ProcessEvent]
 	reference sandbox.ProcessReference
-	cancel    context.CancelFunc
 }
 
 func (s *processStream) Next() (sandbox.ProcessFrame, error) {
-	if !s.stream.Receive() {
-		if err := s.stream.Err(); err != nil {
-			return sandbox.ProcessFrame{}, processError("receive process output", err)
+	event, err := s.receive()
+	if err != nil {
+		if err == io.EOF {
+			return sandbox.ProcessFrame{}, io.EOF
 		}
-		return sandbox.ProcessFrame{}, io.EOF
+		return sandbox.ProcessFrame{}, processError("receive process output", err)
 	}
-	event := s.stream.Msg()
 	if event.ProcessHandle != s.reference.Handle || event.PlacementEpoch != s.reference.Epoch {
 		_ = s.Close()
 		return sandbox.ProcessFrame{}, failure("receive process output", sandbox.Precondition, fmt.Errorf("process frame belongs to another handle or placement"))
@@ -118,7 +118,6 @@ func (s *processStream) Next() (sandbox.ProcessFrame, error) {
 	}
 	return frame, nil
 }
-func (s *processStream) Close() error { s.cancel(); return s.stream.Close() }
 
 func processError(operation string, err error) error {
 	if err == nil {
@@ -179,7 +178,7 @@ func (b *Backend) StartPTY(ctx context.Context, request sandbox.StartProcessRequ
 		cancel()
 		return nil, processError("start pty", err)
 	}
-	return &processStream{stream: stream, reference: request.ProcessReference, cancel: cancel}, nil
+	return &processStream{receiveStream: receiveStream[v1.ProcessEvent]{stream: stream, cancel: cancel}, reference: request.ProcessReference}, nil
 }
 
 // ResizePTY converges a live PTY to new dimensions. It is idempotent and carries
@@ -249,7 +248,64 @@ func (b *Backend) InspectProcess(ctx context.Context, ref sandbox.ProcessReferen
 		return sandbox.ProcessObservation{}, failure("inspect process", sandbox.Precondition, fmt.Errorf("retained process identity changed"))
 	}
 	if snapshot.State != "exited" && snapshot.State != "lost" {
+		// A retained running row is not liveness. Only classify it as lost when
+		// both its handle and its known PID are absent from the guest scan.
+		// No exit code or descendant-cleanup outcome follows from this evidence.
+		if snapshot.PID > 0 {
+			// Start may have completed between the first scan and the retained
+			// snapshot. Establish absence after observing that PID, not before.
+			confirmed, err := transport.NewProcessServiceClient(b.httpClient, b.endpoint).List(ctx, request)
+			if err != nil {
+				return sandbox.ProcessObservation{}, processError("inspect process", err)
+			}
+			for _, process := range confirmed.Msg.Processes {
+				if process.ProcessHandle == ref.Handle {
+					if process.PlacementEpoch != ref.Epoch {
+						return sandbox.ProcessObservation{}, failure("inspect process", sandbox.Precondition, fmt.Errorf("process placement changed"))
+					}
+					observation := sandbox.ProcessObservation{ProcessReference: ref, State: process.State, PID: int(process.Pid)}
+					if process.ExitCode != nil {
+						code := int(*process.ExitCode)
+						observation.ExitCode = &code
+					}
+					return observation, nil
+				}
+			}
+			present := false
+			for _, pid := range confirmed.Msg.Pids {
+				present = present || int(pid) == snapshot.PID
+			}
+			if !present {
+				// The guest may have retired its live registry entry while the
+				// transport still retains the terminal frame. Prefer that exact
+				// evidence over an unknown exit/cleanup result.
+				if code, ok := b.retainedProcessExit(ctx, ref); ok {
+					return sandbox.ProcessObservation{ProcessReference: ref, State: "exited", ExitCode: &code}, nil
+				}
+				return sandbox.ProcessObservation{ProcessReference: ref, State: "lost"}, nil
+			}
+		}
 		return sandbox.ProcessObservation{ProcessReference: ref, State: "unknown"}, nil
 	}
 	return sandbox.ProcessObservation{ProcessReference: ref, State: snapshot.State, PID: snapshot.PID, ExitCode: snapshot.ExitCode}, nil
+}
+
+func (b *Backend) retainedProcessExit(ctx context.Context, ref sandbox.ProcessReference) (int, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	stream, err := b.ConnectProcess(ctx, ref, 0)
+	if err != nil {
+		return 0, false
+	}
+	defer stream.Close()
+	for n := 0; n < 4096; n++ {
+		frame, err := stream.Next()
+		if err != nil {
+			return 0, false
+		}
+		if frame.Kind == "end" {
+			return int(frame.ExitCode), true
+		}
+	}
+	return 0, false
 }
