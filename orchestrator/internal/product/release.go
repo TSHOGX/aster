@@ -42,6 +42,8 @@ func (s *Store) BeginReleaseDrain(ctx context.Context, owner string, timeout tim
 	if !validID(owner) || timeout < time.Second || timeout > time.Hour {
 		return out, ErrInvalid
 	}
+	s.runtime.mu.Lock()
+	defer s.runtime.mu.Unlock()
 	err = s.writeClass(ctx, urgentWrite, "", 1024, func(tx *sql.Tx) error {
 		current, e := releaseState(ctx, tx)
 		if e != nil {
@@ -67,6 +69,8 @@ func (s *Store) BeginReleaseDrain(ctx context.Context, owner string, timeout tim
 	return
 }
 func (s *Store) AbortReleaseDrain(ctx context.Context, owner string, generation int64) (out ReleaseState, err error) {
+	s.runtime.mu.Lock()
+	defer s.runtime.mu.Unlock()
 	err = s.writeClass(ctx, urgentWrite, "", 1024, func(tx *sql.Tx) error {
 		current, e := releaseState(ctx, tx)
 		if e != nil {
@@ -102,6 +106,8 @@ func (s *Store) ExpireReleaseDrain(ctx context.Context) error {
 	if current.Phase != "draining" || current.Deadline > s.timestamp() {
 		return nil
 	}
+	s.runtime.mu.Lock()
+	defer s.runtime.mu.Unlock()
 	return s.writeClass(ctx, urgentWrite, "", 1024, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE application_release SET phase='open',deadline='',reason='deadline',updated_at=? WHERE id=1 AND generation=? AND owner=? AND phase='draining' AND deadline<=?`, s.timestamp(), current.Generation, current.Owner, s.timestamp())
 		return err
@@ -113,9 +119,11 @@ func (s *Store) ExpireReleaseDrain(ctx context.Context) error {
 type ReleaseDrainStatus struct {
 	ReleaseState
 	DurableBlockers map[string]int64 `json:"durable_blockers"`
+	RuntimeWork     map[string]int   `json:"runtime_work"`
 }
 
 func (s *Store) ReleaseDrainStatus(ctx context.Context) (out ReleaseDrainStatus, err error) {
+	out.RuntimeWork = s.RuntimeWorkStats()
 	tx, err := s.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return out, err

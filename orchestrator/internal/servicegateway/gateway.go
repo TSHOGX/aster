@@ -24,7 +24,7 @@ import (
 // Authority is the product store. The gateway never caches a decision: a
 // revoked grant or a completed turn must stop the next request immediately.
 type Authority interface {
-	AuthorizeService(context.Context, string, string) (product.Attribution, error)
+	AcquireService(context.Context, string, string) (product.Attribution, func(), error)
 	HoldsAttribution(context.Context, product.Attribution) error
 }
 type Config struct {
@@ -77,11 +77,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		token = r.Header.Get("X-Api-Key")
 	}
-	attribution, err := g.authority.AuthorizeService(r.Context(), g.config.Audience, token)
+	attribution, release, err := g.authority.AcquireService(r.Context(), g.config.Audience, token)
 	if err != nil {
+		if errors.Is(err, product.ErrDraining) {
+			http.Error(w, "gateway release pending", http.StatusServiceUnavailable)
+			return
+		}
+		if errors.Is(err, product.ErrCapacity) {
+			http.Error(w, "service capacity exhausted", http.StatusTooManyRequests)
+			return
+		}
 		http.Error(w, "service authorization denied", http.StatusUnauthorized)
 		return
 	}
+	defer release()
 	select {
 	case g.slots <- struct{}{}:
 		defer func() { <-g.slots }()

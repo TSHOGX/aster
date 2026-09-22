@@ -104,6 +104,7 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		out["release"] = release
 		out["writer"] = a.Store.WriterStats()
+		out["runtime_work"] = a.Store.RuntimeWorkStats()
 		if a.Agents != nil {
 			out["agent_pressure"] = a.Agents.AgentPressure()
 		}

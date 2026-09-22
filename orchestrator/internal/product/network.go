@@ -127,6 +127,22 @@ func (s *Store) AuthorizeService(ctx context.Context, audience, token string) (A
 	return a, nil
 }
 
+// AcquireService accounts for the complete forwarded request. A draining owner
+// may still authorize additional requests for already admitted turns; later
+// release phases close this lease boundary before quiescence is asserted.
+func (s *Store) AcquireService(ctx context.Context, audience, token string) (Attribution, func(), error) {
+	release, err := s.beginRuntimeWork(ctx, runtimeModel)
+	if err != nil {
+		return Attribution{}, nil, err
+	}
+	attribution, err := s.AuthorizeService(ctx, audience, token)
+	if err != nil {
+		release()
+		return Attribution{}, nil, err
+	}
+	return attribution, release, nil
+}
+
 // HoldsAttribution reports whether one already attributed request may continue.
 // A stopping turn retains its existing request until native abort settles.
 // Dropping it at abort admission races Pi and turns cancellation into a network

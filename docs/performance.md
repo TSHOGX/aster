@@ -785,7 +785,34 @@ schemas 6 and 7 is checked for pre-commit interruption and retained authoritativ
 turns. An executable fixture closes admission, restarts the owner, confirms the
 same generation remains closed, aborts it and completes new native turns.
 
-The next release slice must coordinate in-flight gateway, reader, terminal-input
-and title-generation work before a ready transition, preserve existing admitted
-model requests, and qualify bootstrap and rollback. No deployment is inferred
+The runtime leases below account for gateway, reader, terminal-input and
+title-generation work. An atomic ready/activation transition, independent gateway
+lifetime, bootstrap and rollback qualification remain. No deployment is inferred
 from these disposable fixture results.
+
+## In-flight release work
+
+Runtime lease admission now shares a mutex with persisted release transitions.
+The phase read and slot reservation occur under that mutex; drain closure holds
+it through the SQLite commit. Remote calls never hold the mutex. Ordinary input
+and reads gain no durable per-operation ledger writes. Six fixed categories bound
+the owner: 8 title calls, 64 terminal inputs, 32 resizes, 32 signal/EOF/termination
+operations, 16 workspace reads and 256 model requests. Existing per-resource and
+per-gateway limits still apply independently.
+
+Title/input work requires open admission. Ctrl-C, signals, resize, reads and model
+requests for already admitted turns may continue during draining; the later
+ready/activating phases reject new leases. Counts remain positive through backend
+return and settlement, even if a caller has canceled. Workspace captures transfer
+lease ownership to the captured body and release it on Close. Title leases span
+both the model request and conditional title write, preserving user-rename rules.
+Gateway authorization now acquires an attributed lease and releases it only when
+forwarding returns; there is no optional uncounted authority path.
+
+Tests hold title/input backends across closure, reject new work, preserve Ctrl-C
+and termination, verify canceled work stays counted, check idempotent release and
+capacity, and confirm read bodies own their leases. Gateway tests observe two
+concurrent leases and wait for actual handler settlement before requiring zero.
+Runtime status and durable blocker counts are observations, not one atomic
+readiness snapshot. Gateway process separation and readiness coordination remain
+open. The database schema remains version 8.

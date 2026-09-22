@@ -178,34 +178,44 @@ func (s *Store) GenerateTitles(ctx context.Context, generator TitleGenerator, li
 	}
 	count := 0
 	for _, w := range work {
-		title := strings.Join(strings.Fields(w.prompt), " ")
-		runes := []rune(title)
-		if len(runes) > 60 {
-			title = string(runes[:60]) + "…"
-		}
-		if generator != nil {
-			attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
-			generated, e := generator.GenerateTitle(attempt, w.prompt)
-			cancel()
-			if e == nil && validText(generated, 256) && utf8.ValidString(generated) {
-				title = generated
+		err = func() error {
+			if generator != nil {
+				release, err := s.beginRuntimeWork(ctx, runtimeTitle)
+				if err != nil {
+					return err
+				}
+				defer release()
 			}
-		}
-		err = s.write(ctx, func(tx *sql.Tx) error {
-			result, e := tx.ExecContext(ctx, `UPDATE sessions SET title=?,title_source='automatic' WHERE id=? AND title_source='pending' AND deletion_intent=0 AND EXISTS(SELECT 1 FROM projects p WHERE p.id=sessions.project_id AND p.state NOT IN ('deleting','deleted'))`, title, w.id)
-			if e != nil {
-				return e
+			title := strings.Join(strings.Fields(w.prompt), " ")
+			runes := []rune(title)
+			if len(runes) > 60 {
+				title = string(runes[:60]) + "…"
 			}
-			n, e := result.RowsAffected()
-			if e != nil {
-				return e
+			if generator != nil {
+				attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+				generated, e := generator.GenerateTitle(attempt, w.prompt)
+				cancel()
+				if e == nil && validText(generated, 256) && utf8.ValidString(generated) {
+					title = generated
+				}
 			}
-			if n == 0 {
-				return nil
-			}
-			count++
-			return s.bumpSession(ctx, tx, w.project, w.id, "session.title")
-		})
+			err = s.write(ctx, func(tx *sql.Tx) error {
+				result, e := tx.ExecContext(ctx, `UPDATE sessions SET title=?,title_source='automatic' WHERE id=? AND title_source='pending' AND deletion_intent=0 AND EXISTS(SELECT 1 FROM projects p WHERE p.id=sessions.project_id AND p.state NOT IN ('deleting','deleted'))`, title, w.id)
+				if e != nil {
+					return e
+				}
+				n, e := result.RowsAffected()
+				if e != nil {
+					return e
+				}
+				if n == 0 {
+					return nil
+				}
+				count++
+				return s.bumpSession(ctx, tx, w.project, w.id, "session.title")
+			})
+			return err
+		}()
 		if err != nil {
 			return count, err
 		}

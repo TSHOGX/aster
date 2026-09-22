@@ -17,10 +17,34 @@ import (
 // authority stands in for the product store. Tokens map to a Session, and the
 // Session's live turn is resolved at each call, exactly as the store resolves it.
 type authority struct {
-	mu      sync.Mutex
-	grants  map[string]product.ServiceGrant
-	turns   map[string]string
-	queries int
+	mu       sync.Mutex
+	grants   map[string]product.ServiceGrant
+	turns    map[string]string
+	queries  int
+	requests int
+	released chan struct{}
+}
+
+func (a *authority) AcquireService(ctx context.Context, audience, token string) (product.Attribution, func(), error) {
+	held, err := a.AuthorizeService(ctx, audience, token)
+	if err != nil {
+		return held, nil, err
+	}
+	a.mu.Lock()
+	a.requests++
+	a.mu.Unlock()
+	var once sync.Once
+	return held, func() {
+		once.Do(func() {
+			a.mu.Lock()
+			a.requests--
+			a.mu.Unlock()
+			select {
+			case a.released <- struct{}{}:
+			default:
+			}
+		})
+	}, nil
 }
 
 func (a *authority) AuthorizeService(_ context.Context, audience, token string) (product.Attribution, error) {
@@ -62,6 +86,7 @@ func newAuthority() *authority {
 
 func TestConcurrentRequestsAreAttributedAndDrainOnlyTheirOwnTurn(t *testing.T) {
 	a := newAuthority()
+	a.released = make(chan struct{}, 2)
 	arrived := make(chan string, 2)
 	release := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +147,9 @@ func TestConcurrentRequestsAreAttributedAndDrainOnlyTheirOwnTurn(t *testing.T) {
 	// Session A's turn completes. Only A's in-flight request drains; A's grant
 	// survives for its next turn and B is untouched.
 	a.mu.Lock()
+	if a.requests != 2 {
+		t.Errorf("request leases not retained: %d", a.requests)
+	}
 	a.turns["a"] = "turn-a-next"
 	a.mu.Unlock()
 	select {
@@ -140,6 +168,19 @@ func TestConcurrentRequestsAreAttributedAndDrainOnlyTheirOwnTurn(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("sibling Session's request stalled")
+	}
+	for n := 0; n < 2; n++ {
+		select {
+		case <-a.released:
+		case <-time.After(time.Second):
+			t.Fatal("request handler did not release lease")
+		}
+	}
+	a.mu.Lock()
+	remaining := a.requests
+	a.mu.Unlock()
+	if remaining != 0 {
+		t.Fatal("request leases not released", remaining)
 	}
 }
 

@@ -124,8 +124,18 @@ unknown command outcomes and unacknowledged unknown turns are blockers.
 
 This admission slice does **not** report readiness or authorize an update or
 shutdown. Runtime gateway requests, read leases, terminal input and metadata
-model calls still need coordinated quiescence. Gateways currently share the
+model calls are counted, but an atomic quiescence/activation transition is still
+required. Gateways currently share the
 owner's lifetime, so restarting it can terminate an active upstream stream.
 Independent gateway lifetime, ready/activating transitions and the first-deploy
 bootstrap remain unqualified. Restart recovery uses the same published content
 configuration; introducing a new content revision while draining is rejected.
+
+`drain-status.runtime_work` and `diagnostics.runtime_work` report fixed-category
+in-flight operation counts without credentials or content. Title-generation calls
+and ordinary terminal input cannot acquire new work slots while draining; exact
+Ctrl-C, termination, resizing and read access remain available during that phase.
+Existing model turns may make further authorized requests while settling. A
+captured file keeps its slot until its response body closes. Cancellation alone
+does not decrement an operation whose backend has not returned. These counts are
+process-local observations and must not be treated as update readiness.

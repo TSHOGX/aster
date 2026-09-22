@@ -230,6 +230,16 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 	}
 }
 func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, content, list bool) (*readerCarrier, context.Context, func(), error) {
+	releaseWork, err := w.Store.beginRuntimeWork(ctx, runtimeRead)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			releaseWork()
+		}
+	}()
 	if content {
 		if err := w.Lifecycle.EnsureConfiguredActive(ctx, scope, w.Profile); err != nil {
 			return nil, nil, nil, err
@@ -302,6 +312,7 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, content, lis
 			}
 			w.requests--
 			w.mu.Unlock()
+			releaseWork()
 		})
 	}
 	select {
@@ -314,6 +325,7 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, content, lis
 		release()
 		return nil, nil, nil, entry.err
 	}
+	transferred = true
 	return entry, requestCtx, release, nil
 }
 func (w *WorkspaceReader) validate(ctx context.Context, entry *readerCarrier) error {

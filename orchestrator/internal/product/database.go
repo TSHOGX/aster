@@ -32,6 +32,7 @@ type Store struct {
 	now        func() time.Time
 	retention  retentionCursor
 	writer     writeAdmission
+	runtime    runtimeAdmission
 }
 
 func Open(ctx context.Context, path string) (result *Store, resultErr error) {

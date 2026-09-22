@@ -423,6 +423,15 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 	if !ready {
 		return ErrPending
 	}
+	kind := runtimeInput
+	if len(data) == 1 && data[0] == 0x03 {
+		kind = runtimeSignal
+	} // Ctrl-C remains a cancellation path during drain.
+	release, err := t.Store.beginRuntimeWork(ctx, kind)
+	if err != nil {
+		return err
+	}
+	defer release()
 	a.input.Lock()
 	defer a.input.Unlock()
 	if !o.input.Load() {
@@ -438,6 +447,11 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 // from any observer: the window size is a property of the terminal, and a
 // read-only viewer resizing its own pane is not an input side effect.
 func (t *Terminals) Resize(ctx context.Context, scope Scope, terminal string, rows, cols int) error {
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeResize)
+	if err != nil {
+		return err
+	}
+	defer release()
 	i, err := t.Store.ResizeTerminal(ctx, scope, terminal, rows, cols)
 	if err != nil {
 		return err
@@ -483,6 +497,11 @@ func (t *Terminals) Interrupt(ctx context.Context, o *TerminalObserver) error {
 // Signal delivers a directed signal to the PTY's process group. It is the
 // termination path, not the interrupt path: use Interrupt for Ctrl-C.
 func (t *Terminals) Signal(ctx context.Context, scope Scope, terminal string, signal int32) error {
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
+	if err != nil {
+		return err
+	}
+	defer release()
 	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
 	if err != nil {
 		return err
@@ -493,6 +512,11 @@ func (t *Terminals) Signal(ctx context.Context, scope Scope, terminal string, si
 // EOF closes the PTY's input, which a shell sees as Ctrl-D. It is a request: the
 // shell decides whether to exit, and only its exit frame settles the incarnation.
 func (t *Terminals) EOF(ctx context.Context, scope Scope, terminal string) error {
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
+	if err != nil {
+		return err
+	}
+	defer release()
 	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
 	if err != nil {
 		return err
@@ -505,6 +529,11 @@ func (t *Terminals) EOF(ctx context.Context, scope Scope, terminal string) error
 // stream observes the terminal exit frame: that frame is the only evidence that
 // records the exit code, and a cancelled transport is not an exit.
 func (t *Terminals) Stop(ctx context.Context, project, terminal string) error {
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
+	if err != nil {
+		return err
+	}
+	defer release()
 	i, err := liveTerminalIncarnation(ctx, t.Store.reader, terminal)
 	if errors.Is(err, ErrNotFound) {
 		// Nothing is running. That is the settled state Stop asks for.
@@ -776,6 +805,11 @@ func (t *Terminals) observerIdentity(ctx context.Context, o *TerminalObserver, i
 	return i, t.Store.terminalAuthority(ctx, i)
 }
 func (t *Terminals) ObserverEOF(ctx context.Context, o *TerminalObserver) error {
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
+	if err != nil {
+		return err
+	}
+	defer release()
 	i, err := t.observerIdentity(ctx, o, true)
 	if err != nil {
 		return err
@@ -786,6 +820,11 @@ func (t *Terminals) ObserverSignal(ctx context.Context, o *TerminalObserver, sig
 	if signal != 15 && signal != 9 {
 		return ErrInvalid
 	}
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
+	if err != nil {
+		return err
+	}
+	defer release()
 	i, err := t.observerIdentity(ctx, o, true)
 	if err != nil {
 		return err
@@ -793,6 +832,11 @@ func (t *Terminals) ObserverSignal(ctx context.Context, o *TerminalObserver, sig
 	return t.Backend.SignalProcess(ctx, i.Reference, signal)
 }
 func (t *Terminals) ObserverResize(ctx context.Context, scope Scope, o *TerminalObserver, rows, cols int) error {
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeResize)
+	if err != nil {
+		return err
+	}
+	defer release()
 	i, err := t.observerIdentity(ctx, o, false)
 	if err != nil {
 		return err

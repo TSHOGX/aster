@@ -252,6 +252,11 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 	}
 	// Admission closure is durable across a real owner crash. It is not yet an
 	// activation/readiness claim: this gate deliberately leaves gateways coupled.
+	a.await(5*time.Second, "runtime operation leases settle", func() bool {
+		report := a.cli("drain-status", "--socket", socket)
+		work, ok := report["runtime_work"].(map[string]any)
+		return ok && len(work) == 0
+	})
 	release := a.cli("drain", "--socket", socket, "--owner", "release-fixture", "--timeout-seconds", "60")
 	if release["phase"] != "draining" {
 		t.Fatal(release)
