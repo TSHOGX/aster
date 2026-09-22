@@ -14,7 +14,8 @@ active-model deployment continuity.
 | P02a | Verified locally | Atomic known-schema migration and durable display storage |
 | P02b–d | Verified locally | Durable projector, bounded view APIs and controlled scale comparison |
 | P02e | Pending | Browser cutover and removal of raw snapshot queries |
-| P03 | Pending | Shared replayable resource events and incremental views |
+| P03a/b | Verified locally | Resource scopes and bounded shared server replay hub |
+| P03c–e | Pending | Browser incremental repository, event cutover and idle/runtime qualification |
 | P04 | Pending | Reusable confined readers and immutable representations |
 | P05 | Pending | Fair byte budgets, control reserve and retention |
 | P06 | Pending | Measured browser and document rendering budgets |
@@ -172,3 +173,28 @@ suites and the disposable Khora fault suite passed. A full-suite PTY test failur
 exposed stale resize-frame synchronization in the test; the corrected case passed
 ten consecutive race runs. Schema-compatible deployment rollback and browser
 cutover remain open.
+
+## Shared resource event hub
+
+`GET /api/projects/{project}/resources/events` multiplexes content, control,
+summary, terminal, lifecycle, authorization and file hints. Each active actor/
+Project scope shares one product-outbox poller and one advisory upstream watch.
+The application owns hub shutdown before closing the Store. Last-reference release
+keeps a thirty-second rotation grace period, then cancels the watch; subscriptions
+never create lifecycle activity or activate a paused Project.
+
+An opaque replay cursor binds protocol, Project, hub incarnation and sequence.
+The ring holds at most 4 MiB / 4,096 events / ninety seconds. Each subscriber holds
+at most 256 envelopes / 1 MiB; overflow requests resync and disconnects that reader.
+Each hub admits at most 64 subscribers and an application at most 128 hubs.
+Write deadlines are five seconds. Reauthorization remains every 250 ms, heartbeats
+arrive every five seconds and planned rotation after twenty-five seconds. Rotation
+preserves the hub and watcher. Hub restart, replay expiry, upstream gaps and
+placement changes explicitly invalidate continuity. Product/file/transport cursors
+remain separate domains. Native raw events do not send redundant content hints;
+authoritative command records publish control hints independently of display work.
+
+Race tests verify empty-scope rotations, replay, expiration, incarnation/resource
+fencing, overflow isolation, HTTP reauthorization, fifty attach/detach cycles and
+cleanup without Project activation. Browser transport cutover and real-substrate
+hub qualification remain in the next slice; old routes are transitional only.

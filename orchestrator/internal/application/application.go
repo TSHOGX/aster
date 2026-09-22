@@ -39,6 +39,7 @@ type Application struct {
 	Workers        *product.Workers
 	BrowserAddress string
 	logger         *slog.Logger
+	API            *producthttp.Server
 	ctx            context.Context
 	cancel         context.CancelFunc
 	group          sync.WaitGroup
@@ -147,7 +148,8 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err != nil {
 		return app, err
 	}
-	api := (&producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Profile: profile, Auth: app.Auth, Config: transportConfig}).Handler()
+	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Profile: profile, Auth: app.Auth, Config: transportConfig}
+	api := app.API.Handler()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -286,6 +288,9 @@ func (a *Application) Close() {
 		}
 		if a.Terminals != nil {
 			a.Terminals.Close()
+		}
+		if a.API != nil {
+			a.API.Close()
 		}
 		if a.Store != nil {
 			_ = a.Store.Close()

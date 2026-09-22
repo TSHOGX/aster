@@ -224,6 +224,7 @@ func newHarness(t *testing.T) *harness {
 		}),
 	}
 	h.server = httptest.NewServer(s.Handler())
+	t.Cleanup(s.Close)
 	t.Cleanup(h.server.Close)
 	return h
 }

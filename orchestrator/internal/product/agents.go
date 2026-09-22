@@ -208,7 +208,11 @@ func (s *Store) ingestAgent(ctx context.Context, i Incarnation, f agentwire.Fram
 			return err
 		}
 		watermark = f.Sequence
-		return s.bumpSession(ctx, tx, i.ProjectID, i.SessionID, "agent.record")
+		kind := "agent.record"
+		if f.State != "native" {
+			kind = "session.control"
+		}
+		return s.bumpSession(ctx, tx, i.ProjectID, i.SessionID, kind)
 	})
 	return watermark, err
 }

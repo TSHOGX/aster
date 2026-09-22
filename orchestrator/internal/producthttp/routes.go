@@ -3,6 +3,7 @@ package producthttp
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	"harness-platform/orchestrator/internal/product"
 )
@@ -20,6 +21,8 @@ type Server struct {
 	Auth      Authenticator
 	Config    Config
 	Profile   product.Profile
+	hubsOnce  sync.Once
+	hubs      *resourceHubs
 }
 
 // Store is the product store surface this transport needs. Declaring it narrowly
@@ -70,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{project}/pause", s.pauseProject)
 	mux.HandleFunc("POST /api/projects/{project}/restart", s.restartProject)
 	mux.HandleFunc("GET /api/projects/{project}/events", s.events)
+	mux.HandleFunc("GET /api/projects/{project}/resources/events", s.resources)
 
 	mux.HandleFunc("GET /api/projects/{project}/sessions", s.listSessions)
 	mux.HandleFunc("POST /api/projects/{project}/sessions", s.createSession)
