@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -35,6 +36,7 @@ import {
   type FilePage,
   type Project,
 } from "@/lib/project-api";
+import { useResources } from "./resource-provider";
 import { FilePreview } from "./file-preview";
 import { IconButton, Menu, Splitter, useDialog } from "./ui";
 const CodeEditor = dynamic(
@@ -74,9 +76,13 @@ export function FilesPanel({
   guard?: RefObject<() => Promise<boolean>>;
   fullButton?: RefObject<HTMLButtonElement | null>;
 }) {
+  const resources = useResources();
+  const reads = useRef(new AbortController());
+  const loads = useRef(new Map<string, {after: string; promise: Promise<FilePage | undefined>}>());
+  const treeKey = useMemo(() => ({project: project.id, kind: "directory" as const, identity: "directory-tree"}), [project.id]);
   const tr = useT(),
     ask = useDialog();
-  const [tree, setTree] = useState<Record<string, Directory>>({}),
+  const [tree, setTree] = useState<Record<string, Directory>>(() => resources.peek(treeKey) || {}),
     [treeOpen, setTreeOpen] = useState(true),
     [filter, setFilter] = useState("");
   const [error, setError] = useState(""),
@@ -104,12 +110,28 @@ export function FilesPanel({
   }, [edit, directories, selected, tree]);
   useEffect(() => {
     alive.current = true;
+    reads.current = new AbortController();
     return () => {
       alive.current = false;
+      reads.current.abort();
     };
   }, []);
+  const readDirectory = useCallback((url: string) => resources.read<FilePage>(
+    {project: project.id, kind: "directory", identity: url},
+    signal => api<FilePage>(url, {signal}), reads.current.signal,
+  ), [resources, project.id]);
+  useEffect(() => resources.pin(treeKey), [resources, treeKey]);
+  useEffect(() => { resources.put(treeKey, tree); }, [resources, treeKey, tree]);
   const load = useCallback(
-    async (path: string, after = "") => {
+    async function load(path: string, after = ""): Promise<FilePage | undefined> {
+      const pending = loads.current.get(path);
+      if (pending) {
+        if (pending.after === after) return pending.promise;
+        await pending.promise;
+        if (!alive.current) return;
+        return load(path, after);
+      }
+      const flight = (async () => {
       const id = (serial.current[path] = (serial.current[path] || 0) + 1);
       setTree((t) => ({
         ...t,
@@ -120,13 +142,13 @@ export function FilesPanel({
         },
       }));
       try {
-        let page = await api<FilePage>(
+        let page = await readDirectory(
           `${base}?path=${encode(path)}&after=${encode(after)}&limit=100`,
         );
         if (!after) {
           const retain = treeRef.current[path]?.entries.length || 0;
           while (page.next && page.entries.length < retain) {
-            const next = await api<FilePage>(
+            const next = await readDirectory(
               `${base}?path=${encode(path)}&after=${encode(page.next)}&limit=100`,
             );
             page = { ...next, entries: [...page.entries, ...next.entries] };
@@ -157,8 +179,12 @@ export function FilesPanel({
             [path]: { entries: t[path]?.entries || [], error: String(e) },
           }));
       }
+      })();
+      loads.current.set(path, {after, promise: flight});
+      try { return await flight; }
+      finally { if (loads.current.get(path)?.promise === flight) loads.current.delete(path); }
     },
-    [base],
+    [base, readDirectory],
   );
   const dirsKey = directories.join("\n");
   useEffect(() => {
@@ -171,6 +197,7 @@ export function FilesPanel({
     const source = new EventSource(`${base}/watch`);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const invalidate = () => {
+      resources.invalidate(k => k.project === project.id && k.kind === "directory");
       if (!timer)
         timer = setTimeout(() => {
           timer = undefined;
@@ -185,7 +212,7 @@ export function FilesPanel({
       source.close();
       clearTimeout(timer);
     };
-  }, [base, load, visible, project.state]);
+  }, [base, load, visible, project.state, project.id, resources]);
   // Reveal deep links without walking unrelated directories. Continue paging each ancestor until found.
   useEffect(() => {
     if (!selected || !visible || project.state !== "active") return;

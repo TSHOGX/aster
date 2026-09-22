@@ -7,7 +7,8 @@ active-model deployment continuity.
 | Stage | Status | Scope |
 | --- | --- | --- |
 | P01a | Verified | Truthful initial conversation loading; bounded opt-in request timings |
-| P01b–e | Pending | Shared authenticated resources, file invalidation, stable previews, lazy rendering, comparison |
+| P01b | Verified locally | Authenticated read sharing, bounded scheduling and cached conversation return |
+| P01c–e | Pending | File invalidation, stable previews, lazy rendering and comparison |
 | P02 | Pending | Schema migration and durable bounded conversation views |
 | P03 | Pending | Shared replayable resource events and incremental views |
 | P04 | Pending | Reusable confined readers and immutable representations |
@@ -41,3 +42,25 @@ Validation: frontend lint, typecheck, 124 unit tests, production build and five
 loading browser tests passed. Product HTTP race tests and vet passed.
 Remaining phase acceptance, real runtime benchmarks and release qualification
 are pending; no deployment has been performed as part of this refactor.
+
+## Shared read lifecycle
+
+An authenticated application owns one memory-only resource store. Unmount and
+reauthentication cancel its reads and clear content. Keys distinguish project,
+resource kind, identity/page and optional placement epoch. Exact-key consumers
+share a request; only the last cancellation aborts it. Dirty generations coalesce
+finite invalidation bursts. Commands and terminal streams bypass this store.
+
+The scheduler permits four concurrent reads, at most two file/directory reads per
+project, and 128 waiting requests. Saturation returns a visible capacity error.
+The memory cache estimates decoded overhead, caps entries at 256 and content at
+32 MiB, evicts inactive entries, and refuses oversized entries. Drafts and pending
+command identities remain independently owned. Session return restores its cached
+reading window before validation; directory refresh preserves visible rows and
+serializes distinct continuation demands.
+
+Validation: 128 frontend unit tests, lint/typecheck, production build, six loading
+and cache browser cases, and the existing navigation/draft/edit/terminal case
+passed. A delayed-load browser test caught polling incorrectly marking in-flight
+reads dirty; polling now shares the read without manufacturing an invalidation.
+Live watch performance and fifty-cycle resource qualification remain pending.

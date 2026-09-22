@@ -53,6 +53,7 @@ import { ProjectWorkspace } from "./workspace";
 import { Inbox, SearchPanel, SharedConversations } from "./adjacent-panels";
 import { Schedules } from "./schedules";
 import "./workbench.css";
+import { ResourceProvider } from "./resource-provider";
 
 export function ProjectWorkbench() {
   const tr = useT();
@@ -144,6 +145,7 @@ export function ProjectWorkbench() {
     );
   return (
     <DialogProvider key={identity.username}>
+      <ResourceProvider actor={identity.username}>
       <Application
         identity={identity}
         onLogout={() => {
@@ -151,6 +153,7 @@ export function ProjectWorkbench() {
           setIdentity(null);
         }}
       />
+      </ResourceProvider>
     </DialogProvider>
   );
 }

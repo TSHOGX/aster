@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -33,6 +34,7 @@ import {
   type Turn,
 } from "@/lib/project-api";
 import { emptySessionView, type SessionView } from "@/lib/project-projections";
+import { useResources } from "./resource-provider";
 import { startTiming } from "@/lib/interaction-metrics";
 export function SessionPanel({
   actor,
@@ -53,6 +55,10 @@ export function SessionPanel({
 }) {
   const tr = useT();
   const ask = useDialog();
+  const resources = useResources();
+  const windowKey = useMemo(() => ({project: session.project_id, kind: "conversation" as const, identity: `window:${session.id}`}), [session.project_id, session.id]);
+  const cachedWindow = resources.peek<SessionSnapshot>(windowKey);
+  const readAbort = useRef(new AbortController());
   const key = `project-view:${actor}:${session.project_id}:draft:${session.id}`;
   const [draft, setDraft] = useState(() =>
     (() => {
@@ -60,8 +66,8 @@ export function SessionPanel({
       return typeof saved === "string" ? saved.slice(0, 64000) : "";
     })(),
   );
-  const [view, setView] = useState<SessionView>(emptySessionView);
-  const [readState, setReadState] = useState<"loading" | "ready" | "pending" | "error" | "denied">("loading");
+  const [view, setView] = useState<SessionView>(() => ({...emptySessionView(), snapshot: cachedWindow || null}));
+  const [readState, setReadState] = useState<"loading" | "ready" | "pending" | "error" | "denied">(cachedWindow ? "ready" : "loading");
   const [readError, setReadError] = useState("");
   const positionKey = key + ":position";
   const scroll = useRef<HTMLDivElement>(null);
@@ -87,7 +93,7 @@ export function SessionPanel({
       ? ""
       : recalled<{ turn?: string }>(positionKey, {}).turn || "",
   );
-  const snapshot = useRef<SessionSnapshot | null>(null);
+  const snapshot = useRef<SessionSnapshot | null>(cachedWindow || null);
   const navigationSerial = useRef(0);
   const navigationPending = useRef(false);
   const alive = useRef(true);
@@ -179,6 +185,11 @@ export function SessionPanel({
     request.current++;
   }, []);
   const base = sessionURL(session.project_id, session.id);
+  const readPage = useCallback((url: string) => resources.read<SessionSnapshot>(
+    {project: session.project_id, kind: "conversation", identity: url},
+    signal => api<SessionSnapshot>(url, {signal}), readAbort.current.signal,
+  ), [resources, session.project_id]);
+  useEffect(() => resources.pin(windowKey), [resources, windowKey]);
   const applyPage = useCallback(
     (next: SessionSnapshot, older = false, replace = false) => {
       const done = startTiming("conversation", "commit");
@@ -186,24 +197,26 @@ export function SessionPanel({
         ? next
         : mergeConversationPage(snapshot.current, next, older);
       snapshot.current = merged;
+      resources.put(windowKey, merged);
       setView((current) => ({ ...current, snapshot: merged }));
       setReadState("ready");
       setReadError("");
       done();
     },
-    [],
+    [resources, windowKey],
   );
   const refresh = useCallback(async () => {
     if (navigationPending.current) return;
     if (
       snapshotFlight.current?.key === base &&
       snapshotFlight.current.serial === request.current
-    )
+    ) {
       return;
+    }
     const serial = ++request.current;
     snapshotFlight.current = { key: base, serial };
     try {
-      const next = await api<SessionSnapshot>(
+      const next = await readPage(
         `${base}/snapshot?before=0&records=0`,
       );
       if (serial === request.current && alive.current) {
@@ -224,6 +237,11 @@ export function SessionPanel({
       }
     } catch (e) {
       if (serial === request.current && alive.current) {
+        if (e instanceof APIError && [401, 403, 404].includes(e.status)) {
+          resources.clear(session.project_id);
+          snapshot.current = null;
+          setView(emptySessionView());
+        }
         setReadState(e instanceof APIError && e.status === 202 ? "pending" : e instanceof APIError && [401, 403, 404].includes(e.status) ? "denied" : "error");
         setReadError(
           e instanceof Error
@@ -235,7 +253,7 @@ export function SessionPanel({
       if (snapshotFlight.current?.serial === serial)
         snapshotFlight.current = null;
     }
-  }, [base, applyPage]);
+  }, [base, applyPage, readPage, resources, session.project_id]);
   const loadAdjacent = useCallback(
     async (direction: "older" | "newer"): Promise<boolean> => {
       if (historyFlight.current) return historyFlight.current;
@@ -253,7 +271,7 @@ export function SessionPanel({
       following.current = false;
       const flight = (async () => {
         try {
-          const next = await api<SessionSnapshot>(
+          const next = await readPage(
             `${base}/snapshot?${older ? "before" : "after"}=${sequence}&records=0`,
           );
           if (!alive.current || windowEpoch.current !== epoch) return false;
@@ -304,7 +322,7 @@ export function SessionPanel({
       historyFlight.current = flight;
       return flight;
     },
-    [base, applyPage],
+    [base, applyPage, readPage],
   );
   const requestEdge = (direction: "older" | "newer") => {
     const el = scroll.current;
@@ -332,7 +350,7 @@ export function SessionPanel({
     setFocusMessage("");
 
     try {
-      const latest = await api<SessionSnapshot>(
+      const latest = await readPage(
         `${base}/snapshot?before=0&records=0`,
       );
       if (!alive.current || serial !== navigationSerial.current) return;
@@ -355,8 +373,9 @@ export function SessionPanel({
   };
   useEffect(() => {
     alive.current = true;
-    void Promise.resolve().then(refresh);
+    readAbort.current = new AbortController();
     return () => {
+      readAbort.current.abort();
       alive.current = false;
       invalidate();
     };
@@ -392,7 +411,7 @@ export function SessionPanel({
     void (async () => {
       try {
         if (!locate(navigationTarget.kind, navigationTarget.id)) {
-          const next = await api<SessionSnapshot>(
+          const next = await readPage(
             `${base}/snapshot?${navigationTarget.kind}=${encodeURIComponent(navigationTarget.id)}&records=0`,
           );
           if (gone || !alive.current || serial !== navigationSerial.current)
@@ -418,7 +437,7 @@ export function SessionPanel({
     return () => {
       gone = true;
     };
-  }, [navigationTarget, base, applyPage, tr]);
+  }, [navigationTarget, base, applyPage, readPage, tr]);
   useEffect(() => {
     const saved = recalled<{ scroll?: number; follow?: boolean }>(
       positionKey,
