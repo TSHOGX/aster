@@ -69,10 +69,21 @@ export function Menu({
         setPosition(null);
     };
     const dismiss = () => setPosition(null);
+    // Preview renderers can move focus while this portal is open. Escape still
+    // belongs to the visible menu rather than its former focused subtree.
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPosition(null);
+      trigger.current?.focus();
+    };
     document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape, true);
     window.addEventListener("resize", dismiss);
     return () => {
       document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape, true);
       window.removeEventListener("resize", dismiss);
     };
   }, [position]);
