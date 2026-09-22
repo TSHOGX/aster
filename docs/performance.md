@@ -11,7 +11,8 @@ active-model deployment continuity.
 | P01c | Verified with reset fallback | Scoped file invalidation, truthful watch health and immutable preview ownership |
 | P01e | Pending | Comparative latency, idle and resource qualification |
 | P01d | Verified locally | Lazy process mounting, stable Markdown file inputs and indexed message lookup |
-| P02 | Pending | Schema migration and durable bounded conversation views |
+| P02a | Verified locally | Atomic known-schema migration and durable display storage |
+| P02b–e | Pending | Projector, bounded view APIs, comparisons and cutover |
 | P03 | Pending | Shared replayable resource events and incremental views |
 | P04 | Pending | Reusable confined readers and immutable representations |
 | P05 | Pending | Fair byte budgets, control reserve and retention |
@@ -113,3 +114,18 @@ PTY, lifecycle, recovery and service authority cases, including two watch resume
 The first runtime run exposed a quiet resumed-watch attachment deadlock; its fixed
 rerun passed. These checks do not establish final performance SLOs or Office
 format/resource limits.
+
+## Display storage migration
+
+The exact original schema upgrades to version 2 under the exclusive owner lock.
+All schema steps and version changes share one transaction; unknown schemas are
+rejected without repair. Display tables hold immutable source identities, derived
+items, versioned details, changes, turn summaries and checkpoints. A source-index
+trigger records ingestion identity without moving ACK responsibility into the
+projector. Existing raw data, messages and command state remain authoritative.
+
+Validation includes interruption before commit, baseline data preservation,
+backup restoration to a separate database, post-upgrade writes surviving reopen,
+foreign schema rejection and owner-lock alias checks. Product and HTTP race suites
+and vet passed. The new tables are not yet served by HTTP; bounded projector and
+consumer cutover are the next stage. Old binaries are not a supported downgrade.

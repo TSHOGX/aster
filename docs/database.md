@@ -1,7 +1,8 @@
 # Product database
 
-The fresh SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-`product.Open` creates and validates it while holding an exclusive path/alias
+The core SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
+Version 2 adds [conversation display storage](../orchestrator/internal/product/display_schema.sql).
+`product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
 product database.
@@ -28,6 +29,23 @@ and Project retirement purge private rows and host/guest artifacts after evidenc
 permits cleanup. Tombstones retain identity and deletion outcome without keeping
 conversation payloads. Shared content publications remain separately owned.
 
-Use a fresh schema. There is no production migration path, old-schema importer or
-second implementation selected by a configuration flag. Inspect live state through
-operator diagnostics; direct writes bypass authorization and reconciliation.
+Startup recognizes the exact original unversioned core schema and numbered
+supported versions using their complete DDL fingerprints. Unknown versions or
+modified DDL are rejected before a writer is opened. Known upgrades run atomically
+before readers/workers start; DDL and `PRAGMA user_version` commit together.
+Interruption before commit rolls back the whole upgrade. New databases run the
+same ordered schema steps. Migration copies source identity metadata once in
+original ingestion order; raw payloads and command evidence remain untouched.
+The source identity index then appends inside each ingestion transaction.
+
+Back up the database with SQLite's backup mechanism or `VACUUM INTO` while the
+exclusive owner is stopped, and rehearse restoration to a separate path. Do not
+copy just the main database file while WAL writes are active. Once version 2 has
+accepted writes, rollback requires a schema-compatible executable. The original
+unversioned executable cannot read the new schema. Restoring a pre-upgrade backup
+over new accepted writes is not a supported rollback. Deployment must first close
+and drain admission; the release gate is still under implementation.
+
+Display tables are derived and currently await projector/HTTP cutover. They do not
+change execution state or ACK semantics. Inspect live state through operator
+diagnostics; direct writes bypass authorization and reconciliation.

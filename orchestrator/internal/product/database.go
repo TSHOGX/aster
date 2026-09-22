@@ -22,7 +22,8 @@ import (
 var schema string
 
 // Store is a single product database, with serialized immediate transactions
-// and independent bounded readers. There is no migration or legacy fallback.
+// and independent bounded readers. Known schemas migrate atomically under the
+// exclusive application/schema lock before workers or readers are opened.
 type Store struct {
 	release    func()
 	closeOnce  sync.Once
@@ -51,7 +52,7 @@ func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 		if err != nil {
 			return nil, err
 		}
-		err = verifySchema(ctx, check)
+		_, err = knownSchema(ctx, check)
 		closeErr := check.Close()
 		if err = errors.Join(err, closeErr); err != nil {
 			return nil, err
@@ -73,19 +74,7 @@ func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	fail := func(err error) (*Store, error) { db.Close(); return nil, err }
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fail(err)
-	}
-	var count int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&count); err == nil && count == 0 {
-		_, err = tx.ExecContext(ctx, schema)
-	}
-	if err != nil {
-		tx.Rollback()
-		return fail(err)
-	}
-	if err = tx.Commit(); err != nil {
+	if err = upgradeSchema(ctx, db, nil); err != nil {
 		return fail(err)
 	}
 	if err = verifySchema(ctx, db); err != nil {
@@ -116,7 +105,7 @@ type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-func schemaDigest(ctx context.Context, db *sql.DB) (string, error) {
+func schemaDigest(ctx context.Context, db queryer) (string, error) {
 	rows, err := db.QueryContext(ctx, `SELECT type,name,tbl_name,coalesce(sql,'') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name`)
 	if err != nil {
 		return "", err
@@ -133,32 +122,12 @@ func schemaDigest(ctx context.Context, db *sql.DB) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), rows.Err()
 }
 
-var expectedSchema = sync.OnceValues(func() (string, error) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		return "", err
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	if _, err = db.Exec(schema); err != nil {
-		return "", err
-	}
-	return schemaDigest(context.Background(), db)
-})
-
 func verifySchema(ctx context.Context, db *sql.DB) error {
-	expected, err := expectedSchema()
-	if err != nil {
-		return err
+	version, err := knownSchema(ctx, db)
+	if err == nil && version != len(schemaSteps) {
+		return fmt.Errorf("product schema needs migration")
 	}
-	actual, err := schemaDigest(ctx, db)
-	if err != nil {
-		return err
-	}
-	if actual != expected {
-		return fmt.Errorf("database schema differs from this build; use a fresh development database")
-	}
-	return nil
+	return err
 }
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
