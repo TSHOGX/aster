@@ -151,3 +151,10 @@ Running call summaries remain visible. Opening a detail mounts its content;
 closing the group releases those bodies while retaining row state and detail
 scroll. Truncated details provide a full-content download from their immutable
 version only when explicitly requested.
+
+Rich Markdown has a separate 8 KiB and syntax-density admission budget. Larger or
+unusually dense content is shown as complete plain text within the existing
+preview/excerpt bounds, with a notice; markup and links remain literal. Selection,
+original-file download and model-based answer copying stay available. See
+[Markdown qualification](performance.md#bounded-markdown-rendering) for the limits
+and the measured large-file layout cost.

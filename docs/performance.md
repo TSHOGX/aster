@@ -683,3 +683,44 @@ fetch full content; only the download action reads its bounded chunks. Regressio
 checks verify exact downloaded text, running-call visibility, updated open output,
 closed-body release and restored detail scroll. The shared decoded download
 budget remains 16 MiB; this is not an arbitrary-size output guarantee.
+
+## Bounded Markdown rendering
+
+Rich Markdown now passes a linear pre-parser check: at most 8 KiB of UTF-8,
+1,024 lines, 2,048 markup characters, 1,024 table separators, 32 consecutive
+delimiters and 16 quote markers on a line. These are conservative admission
+limits, not a complete Markdown grammar. Larger or unusually dense input renders
+as escaped, selectable plain text with a localized notice. No source text is
+silently removed by this decision. File text previews retain their 1 MiB bound;
+conversation excerpts and complete-answer/download limits remain separately
+defined. Links, tables and code formatting are literal in the plain-text mode.
+
+The selected fallback avoids constructing a large syntax tree merely to discover
+its size. The previous four-times-CPU table-heavy file profile measured a 978 ms
+main-thread task at 64 KiB and an 11.3-second task at 256 KiB. A 16 KiB rich input
+varied from 190 to 298 ms in repeated diagnostic runs, motivating the smaller
+8 KiB rich ceiling. In the final comparison, the 8 KiB rich file's largest task
+was 128 ms; 16/64/256 KiB plain-text files had no observed long tasks. The 256 KiB
+preview completed in 446 ms versus about 13 seconds before. The 1 MiB boundary
+still required a 275 ms text-layout task and approximately 1.6 seconds to complete
+under this constrained profile. This is a reported limitation, not a universal
+sub-200-ms guarantee.
+
+The [Markdown harness](../frontend/e2e/ui/markdown-budget.spec.ts) separates CPU
+profiles (`MARKDOWN_PROFILE_OUTPUT`) from independent latency trials
+(`MARKDOWN_LATENCY_OUTPUT`). Each latency sample uses a new browser context,
+waits until the application is ready, and measures selection to complete visible
+text. It excludes application startup and uses loopback fixture responses with
+four-times CPU throttling; it does not measure field INP or shaped-network/server
+latency. Raw samples include failures and nearest-rank quantiles. Full-source
+selection, literal markup handling and dirty-edit retention are checked at the
+file-preview boundary; original-file download bytes are checked through the real
+Go edge rather than inferred from a mocked browser download response.
+
+The independent loopback run completed 30 trials per size with zero failures.
+Nearest-rank selection-to-complete-text p95 was 463 ms for the rich 8 KiB fixture,
+247 ms for plain 64 KiB and 1.57 seconds for plain 1 MiB (maximum 2.22 seconds).
+Each size had one excluded warmup; browser contexts and application resource
+caches were fresh per trial. CPU throttling was four-times, production assets
+were prebuilt, and no CPU profiler ran during these latency trials. These figures
+qualify those synthetic files and that environment only.

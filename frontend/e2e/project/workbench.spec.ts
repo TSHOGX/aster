@@ -138,6 +138,13 @@ test("Project agents, retained terminals and Files through the Go edge", async (
     page,
     "cat /workspace/browser.txt; printf 'READ-FILES-DONE\\n'",
   );
+  await page.getByRole("button", { name: "File actions", exact: true }).click();
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+  const original = await downloaded;
+  expect(readFileSync((await original.path())!, "utf8")).toBe(
+    "Files edit while a terminal stays live\n",
+  );
   await expect
     .poll(() => terminalText(page))
     .toContain("Files edit while a terminal stays live");
@@ -290,6 +297,22 @@ test("Project agents, retained terminals and Files through the Go edge", async (
       "test-results/project/workbench.png",
     fullPage: true,
   });
+  await page
+    .getByRole("button", { name: "large-preview.md", exact: true })
+    .click();
+  const plain = page.locator(".file-markdown .markdown-plain");
+  await expect(plain).toContainText("Complete large document.");
+  const completeMarkdown =
+    "# Large Markdown\n\n" +
+    "| Sample | Value |\n| --- | --- |\n| A | 100 |\n\n".repeat(20000) +
+    "\nComplete large document.\n";
+  expect(await plain.textContent()).toBe(completeMarkdown);
+  await page.getByRole("button", { name: "File actions", exact: true }).click();
+  const largeDownload = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+  expect(readFileSync((await (await largeDownload).path())!, "utf8")).toBe(
+    completeMarkdown,
+  );
   await page
     .getByRole("button", { name: /browser.txt/ })
     .first()

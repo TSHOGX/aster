@@ -13,6 +13,7 @@ import { workspaceLinkPlugin } from "@/lib/workspace-links";
 import { cn } from "@/lib/cn";
 import { useT } from "@/lib/i18n";
 import { isNumericText } from "@/lib/table-cells";
+import { richMarkdownAllowed } from "@/lib/markdown-budget";
 
 /*
   Minimal structural view of the hast nodes react-markdown hands to component
@@ -180,8 +181,23 @@ function MarkdownViewImpl({
   highlight?: boolean;
   workspaceFiles?: readonly string[];
 }) {
+  const tr = useT();
+  if (!richMarkdownAllowed(content))
+    return (
+      <div
+        className={cn("markdown-body", className)}
+        data-markdown-mode="plain"
+      >
+        <p className="notice" role="status">
+          {tr(
+            "This Markdown is shown as plain text to keep the preview responsive.",
+          )}
+        </p>
+        <pre className="markdown-plain">{content}</pre>
+      </div>
+    );
   return (
-    <div className={cn("markdown-body", className)}>
+    <div className={cn("markdown-body", className)} data-markdown-mode="rich">
       <ReactMarkdown
         remarkPlugins={
           workspaceFiles

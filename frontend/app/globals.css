@@ -2,6 +2,13 @@
 
 @import "@fontsource-variable/jetbrains-mono/wght.css";
 
+.markdown-body pre.markdown-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+  font: inherit;
+}
+
 @theme {
 
   --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",

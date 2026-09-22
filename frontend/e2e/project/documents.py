@@ -9,6 +9,7 @@ from pptx.enum.chart import XL_CHART_TYPE
 from pptx.util import Inches
 
 root = Path('/workspace')
+(root / 'large-preview.md').write_text('# Large Markdown\n\n' + '| Sample | Value |\n| --- | --- |\n| A | 100 |\n\n' * 20000 + '\nComplete large document.\n')
 doc = Document()
 doc.add_heading('Reviewed document preview', 0)
 doc.add_paragraph('Project document rendering includes 中文 and ordinary text.')
