@@ -16,8 +16,12 @@ const byID = <T extends { id: string }>(
     for (const item of items) {
       if (!revisions.has(item)) revisions.set(item, revision);
       const old = rows.get(item.id);
-      if (!old || revisions.get(item)! >= revisions.get(old)!)
-        rows.set(item.id, item);
+      if (!old || revisions.get(item)! >= revisions.get(old)!) {
+        const equal = old && Object.keys(item).length === Object.keys(old).length &&
+          Object.keys(item).every(k => item[k as keyof T] === old[k as keyof T]);
+        if (equal) revisions.set(old, revisions.get(item)!);
+        rows.set(item.id, equal ? old : item);
+      }
     }
   }
   return [...rows.values()];

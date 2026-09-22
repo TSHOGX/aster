@@ -36,6 +36,9 @@ import {
 import { emptySessionView, type SessionView } from "@/lib/project-projections";
 import { useResources } from "./resource-provider";
 import { startTiming } from "@/lib/interaction-metrics";
+function useWorkspaceFiles(key: string) {
+  return useMemo(() => key ? key.split("\n") : [], [key]);
+}
 export function SessionPanel({
   actor,
   session,
@@ -542,13 +545,15 @@ export function SessionPanel({
               .slice(0, 1200)
           : "",
     }));
-  const workspaceFiles = knownWorkspaceFiles(
+  const workspaceFileKey = knownWorkspaceFiles(
     timeline.flatMap((item) => [
       item.content || "",
       "arguments" in item ? item.arguments || "" : "",
       "result" in item ? item.result || "" : "",
     ]),
-  );
+  ).join("\n");
+  const workspaceFiles = useWorkspaceFiles(workspaceFileKey);
+  const messageIndex = useMemo(() => new Map(view.snapshot?.messages.map(m => [m.id,m])), [view.snapshot?.messages]);
   const act = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
@@ -801,7 +806,7 @@ export function SessionPanel({
               turn={turn}
               files={workspaceFiles}
               activeTurns={activeTurns}
-              messages={view.snapshot?.messages || []}
+              messages={messageIndex}
               actor={actor}
               project={session.project_id}
               session={session.id}

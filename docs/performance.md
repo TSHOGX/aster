@@ -8,7 +8,8 @@ active-model deployment continuity.
 | --- | --- | --- |
 | P01a | Verified | Truthful initial conversation loading; bounded opt-in request timings |
 | P01b | Verified locally | Authenticated read sharing, bounded scheduling and cached conversation return |
-| P01c–e | Pending | File invalidation, stable previews, lazy rendering and comparison |
+| P01c/e | Pending | File invalidation, stable previews and comparative qualification |
+| P01d | Verified locally | Lazy process mounting, stable Markdown file inputs and indexed message lookup |
 | P02 | Pending | Schema migration and durable bounded conversation views |
 | P03 | Pending | Shared replayable resource events and incremental views |
 | P04 | Pending | Reusable confined readers and immutable representations |
@@ -64,3 +65,17 @@ and cache browser cases, and the existing navigation/draft/edit/terminal case
 passed. A delayed-load browser test caught polling incorrectly marking in-flight
 reads dirty; polling now shares the read without manufacturing an invalidation.
 Live watch performance and fifty-cycle resource qualification remain pending.
+
+## Conversation rendering
+
+Completed turns mount process content only while expanded or when a message
+navigation target requires it. Final answer copy reads the complete message model.
+Workspace link arrays retain identity when their paths do not change, and message
+lookup uses one indexed map per window. Equal timeline rows retain object identity
+across refreshes. Browser find and print cover mounted content; expand a completed
+turn or use turn navigation to inspect its process history.
+
+Validation: the completed-turn production browser case verifies zero collapsed
+process containers, expansion, target navigation, final-answer copy, elapsed time
+and feedback. Frontend lint/typecheck and 128 unit tests passed. Full CPU/heap
+profiles and comparative performance targets remain unqualified.

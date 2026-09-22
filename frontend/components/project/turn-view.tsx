@@ -50,7 +50,7 @@ function Transcript({
   items: TimelineItem[];
   files: readonly string[];
   activeTurns: ReadonlySet<string>;
-  messages: Message[];
+  messages: ReadonlyMap<string, Message>;
 }) {
   const tr = useT();
   return (
@@ -65,7 +65,7 @@ function Transcript({
             />
           );
         const item = segment.item;
-        const full = messages.find((m) => m.id === item.message_id);
+        const full = messages.get(item.message_id || "");
         return (
           <article
             key={item.id}
@@ -115,7 +115,7 @@ export function TurnView({
   turn: ConversationTurn;
   files: readonly string[];
   activeTurns: ReadonlySet<string>;
-  messages: Message[];
+  messages: ReadonlyMap<string, Message>;
   actor: string;
   project: string;
   session: string;
@@ -147,7 +147,7 @@ export function TurnView({
     (targetInHistory && collapsedTarget !== targetMessage);
   const running = !!turn.summary && runningTurn(summary!.state);
   const fullFinal =
-    messages.find((m) => m.id === turn.summary?.final_message_id)?.content ||
+    messages.get(turn.summary?.final_message_id || "")?.content ||
     final.map((i) => i.content || "").join("\n\n");
   const vote = (value: "up" | "down") => {
     const next = feedback === value ? null : value;
@@ -228,14 +228,14 @@ export function TurnView({
           )}
         </div>
       )}
-      <div className="turn-process" hidden={!open}>
+      {open && <div className="turn-process">
         <Transcript
           items={completed ? intermediate : body}
           files={files}
           activeTurns={activeTurns}
           messages={messages}
         />
-      </div>
+      </div>}
       {completed && (
         <>
           <div className="turn-final">

@@ -677,7 +677,7 @@ test("completed turn folds intermediate output, freezes elapsed time and provide
   await expect(page.locator(".working-indicator")).toHaveCount(0);
   phase = "completed";
   await expect(page.locator(".turn-work-toggle")).toHaveText("Worked for 54s");
-  await expect(page.locator(".turn-process")).not.toBeVisible();
+  await expect(page.locator(".turn-process")).toHaveCount(0);
   await expect(page.locator(".turn-final")).toContainText("Final answer");
   await expect(page.locator(".answer-actions button")).toHaveCount(3);
   await expect(page.locator(".answer-actions time")).toHaveAttribute(
@@ -705,7 +705,7 @@ test("completed turn folds intermediate output, freezes elapsed time and provide
   });
   await page.reload();
   await expect(page.locator(".turn-work-toggle")).toHaveText("Worked for 54s");
-  await expect(page.locator(".turn-process")).not.toBeVisible();
+  await expect(page.locator(".turn-process")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Dislike", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
