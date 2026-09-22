@@ -655,3 +655,31 @@ The regressions cover warm Session return, page reload with an empty cache,
 complete draft retention, nested process scroll, pending/missing/denied anchors
 and explicit-link priority. The full default UI suite passes 63 cases; 22 Office
 and profile cases remain opt-in and retain their separate qualification evidence.
+
+## Collapsed activity bodies
+
+Active turns now mount a thinking/tool output body only while its row is open
+and its activity group is visible. Closed rows retain their summaries, native
+open state and scroll metadata. Every pending/running tool summary remains
+visible when the group is collapsed; hiding its body does not remove execution
+status or cancel a command. Reopening a group restores its previously opened
+row and detail scroll. Reading-bookmark restoration follows the same path.
+
+This closes a gap left by turn-level lazy mounting: an unfinished turn previously
+parsed thinking Markdown and formatted tool output even inside closed details.
+A controlled four-times-CPU profile of forty thinking/tool pairs measured one
+524 ms long task, 80 output bodies and 22,198 DOM nodes. With lazy detail bodies,
+the equal-fixture run had no observed long tasks, zero output bodies and 5,918
+DOM nodes. Time from the synthetic update to the last active summary fell from
+750 ms to 119 ms. These are single profiled laboratory runs, not p95 or field INP.
+The script retains raw CPU profiles and DOM counts under a caller-selected
+`ACTIVITY_PROFILE_OUTPUT` directory; `ACTIVITY_CPU_RATE=4` selects the constrained
+profile. No additional virtualization is inferred from this comparison.
+
+Truncated thinking and tool details now offer the existing full-content download
+inside the open body. The request uses the immutable detail version, not a
+message ID shared with adjacent native blocks. Opening the excerpt does not
+fetch full content; only the download action reads its bounded chunks. Regression
+checks verify exact downloaded text, running-call visibility, updated open output,
+closed-body release and restored detail scroll. The shared decoded download
+budget remains 16 MiB; this is not an arbitrary-size output guarantee.

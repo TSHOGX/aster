@@ -1,8 +1,9 @@
 "use client";
-import { useId, useState } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import { Brain, ChevronRight, TerminalSquare } from "lucide-react";
 import { MarkdownView } from "@/components/workbench/markdown-view";
 import { useT } from "@/lib/i18n";
+import type { TimelineItem } from "@/lib/project-api";
 import {
   activityArguments,
   activityPreview,
@@ -15,17 +16,18 @@ export function ActivityGroup({
   workspaceFiles,
   targetItem = "",
   targetItemOpen = false,
+  download,
 }: {
   segment: Extract<TimelineSegment, { kind: "activity" }>;
   workspaceFiles: readonly string[];
   targetItem?: string;
   targetItemOpen?: boolean;
+  download: (item: TimelineItem) => Promise<void>;
 }) {
   const tr = useT();
   const [expanded, setExpanded] = useState(() =>
     segment.items.some((item) => item.id === targetItem),
   );
-  const [initialOpen] = useState(targetItemOpen ? targetItem : "");
   const detailsId = useId();
   const { items, live, active } = segment;
   const tools = items.filter((item) => item.kind === "tool");
@@ -68,31 +70,40 @@ export function ActivityGroup({
           const isActive = active.includes(item);
           if (item.kind !== "tool")
             return (
-              <details
+              <ActivityDetail
                 key={item.id}
                 className="thinking-trace"
-                open={item.id === initialOpen || undefined}
+                initialOpen={item.id === targetItem && targetItemOpen}
                 data-timeline-id={item.id}
                 hidden={!expanded}
+                summary={
+                  <summary
+                    className={`activity-row ${isActive ? "is-active" : ""}`}
+                  >
+                    <Brain className="activity-icon" size={16} aria-hidden />
+                    <span className="activity-line">{tr("Thinking")}</span>
+                    <ChevronRight
+                      className="activity-chevron"
+                      size={13}
+                      aria-hidden
+                    />
+                  </summary>
+                }
               >
-                <summary
-                  className={`activity-row ${isActive ? "is-active" : ""}`}
-                >
-                  <Brain className="activity-icon" size={16} aria-hidden />
-                  <span className="activity-line">{tr("Thinking")}</span>
-                  <ChevronRight
-                    className="activity-chevron"
-                    size={13}
-                    aria-hidden
-                  />
-                </summary>
-                <div className="activity-output">
-                  <MarkdownView
-                    content={item.content || ""}
-                    workspaceFiles={workspaceFiles}
-                  />
-                </div>
-              </details>
+                {() => (
+                  <div className="activity-output">
+                    <MarkdownView
+                      content={item.content || ""}
+                      workspaceFiles={workspaceFiles}
+                    />
+                    {item.truncated && (
+                      <button onClick={() => void download(item)}>
+                        {tr("Download full message")}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </ActivityDetail>
             );
           const status =
             item.state === "failed"
@@ -106,10 +117,10 @@ export function ActivityGroup({
                   : tr("Outcome unknown");
           const detail = activityPreview(item);
           return (
-            <details
+            <ActivityDetail
               key={item.id}
               className="tool-trace"
-              open={item.id === initialOpen || undefined}
+              initialOpen={item.id === targetItem && targetItemOpen}
               data-timeline-id={item.id}
               data-state={
                 isActive
@@ -119,68 +130,132 @@ export function ActivityGroup({
                     : item.state
               }
               hidden={!expanded && !isActive}
+              summary={
+                <summary
+                  className={`activity-row ${isActive ? "is-active" : ""}`}
+                  title={`${item.name || "Tool"} · ${status}${detail ? ` — ${detail}` : ""}`}
+                >
+                  <TerminalSquare
+                    className="activity-icon"
+                    size={16}
+                    aria-hidden
+                  />
+                  <span className="activity-line">
+                    <span className="activity-label">
+                      {isActive ? `${status} ` : ""}
+                      {item.name || "Tool"}
+                    </span>
+                    {detail && (
+                      <span className="activity-preview">{detail}</span>
+                    )}
+                  </span>
+                  {!isActive && (
+                    <span
+                      className={`activity-state ${item.state === "failed" ? "is-failed" : ""}`}
+                    >
+                      {status}
+                    </span>
+                  )}
+                  <ChevronRight
+                    className="activity-chevron"
+                    size={13}
+                    aria-hidden
+                  />
+                </summary>
+              }
             >
-              <summary
-                className={`activity-row ${isActive ? "is-active" : ""}`}
-                title={`${item.name || "Tool"} · ${status}${detail ? ` — ${detail}` : ""}`}
-              >
-                <TerminalSquare
-                  className="activity-icon"
-                  size={16}
-                  aria-hidden
-                />
-                <span className="activity-line">
-                  <span className="activity-label">
-                    {isActive ? `${status} ` : ""}
-                    {item.name || "Tool"}
-                  </span>
-                  {detail && <span className="activity-preview">{detail}</span>}
-                </span>
-                {!isActive && (
-                  <span
-                    className={`activity-state ${item.state === "failed" ? "is-failed" : ""}`}
-                  >
-                    {status}
-                  </span>
-                )}
-                <ChevronRight
-                  className="activity-chevron"
-                  size={13}
-                  aria-hidden
-                />
-              </summary>
-              <div className="tool-panel">
-                <div className="tool-panel-heading">
-                  <span>{item.name || "Tool"}</span>
-                  <span>{status}</span>
-                </div>
-                <div className="activity-output">
-                  {item.arguments && (
-                    <section>
-                      <h4>{tr("Tool call")}</h4>
-                      <pre>{activityArguments(item.arguments)}</pre>
-                    </section>
+              {() => (
+                <div className="tool-panel">
+                  <div className="tool-panel-heading">
+                    <span>{item.name || "Tool"}</span>
+                    <span>{status}</span>
+                  </div>
+                  {item.truncated && (
+                    <button onClick={() => void download(item)}>
+                      {tr("Download full message")}
+                    </button>
                   )}
-                  {item.result ? (
-                    <section>
-                      <h4>{tr("Tool result")}</h4>
-                      <pre>{activityResult(item.result)}</pre>
-                    </section>
-                  ) : (
-                    <p className="tool-pending">
-                      {isActive
-                        ? item.state === "pending"
-                          ? tr("Waiting to execute…")
-                          : tr("Waiting for tool result…")
-                        : tr("No tool result")}
-                    </p>
-                  )}
+                  <div className="activity-output">
+                    {item.arguments && (
+                      <section>
+                        <h4>{tr("Tool call")}</h4>
+                        <pre>{activityArguments(item.arguments)}</pre>
+                      </section>
+                    )}
+                    {item.result ? (
+                      <section>
+                        <h4>{tr("Tool result")}</h4>
+                        <pre>{activityResult(item.result)}</pre>
+                      </section>
+                    ) : (
+                      <p className="tool-pending">
+                        {isActive
+                          ? item.state === "pending"
+                            ? tr("Waiting to execute…")
+                            : tr("Waiting for tool result…")
+                          : tr("No tool result")}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </details>
+              )}
+            </ActivityDetail>
           );
         })}
       </div>
     </div>
+  );
+}
+
+/** Closed output bodies do not parse Markdown or format JSON. The row retains
+ * its native open state and scroll metadata while a containing group is hidden. */
+function ActivityDetail({
+  initialOpen,
+  hidden,
+  summary,
+  children,
+  ...props
+}: {
+  initialOpen: boolean;
+  hidden: boolean;
+  summary: ReactNode;
+  children: () => ReactNode;
+} & Omit<React.ComponentPropsWithoutRef<"details">, "children" | "hidden">) {
+  const [open, setOpen] = useState(initialOpen);
+  const position = useRef({ top: 0, left: 0 });
+  const restore = useCallback((node: HTMLDivElement | null) => {
+    const output = node?.querySelector<HTMLElement>(".activity-output");
+    if (output) {
+      output.scrollTop = position.current.top;
+      output.scrollLeft = position.current.left;
+    }
+  }, []);
+  return (
+    <details
+      {...props}
+      hidden={hidden}
+      open={open}
+      onToggle={(event) => {
+        if (event.target === event.currentTarget)
+          setOpen(event.currentTarget.open);
+      }}
+    >
+      {summary}
+      {!hidden && open && (
+        <div
+          ref={restore}
+          onScrollCapture={(event) => {
+            const output = event.target as HTMLElement;
+            if (output.matches(".activity-output"))
+              position.current = {
+                top: output.scrollTop,
+                left: output.scrollLeft,
+              };
+          }}
+        >
+          {children()}
+        </div>
+      )}
+    </details>
   );
 }

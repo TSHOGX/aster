@@ -145,3 +145,9 @@ or returning after cache eviction reloads the surrounding item and restores the
 visible block, including an open process detail. Bookmarks contain position
 metadata only. Explicit message links override them; a removed item produces a
 notice before showing latest. Pending or denied reads do not erase the bookmark.
+
+Within an unfinished turn, collapsed tool/thinking bodies are also unmounted.
+Running call summaries remain visible. Opening a detail mounts its content;
+closing the group releases those bodies while retaining row state and detail
+scroll. Truncated details provide a full-content download from their immutable
+version only when explicitly requested.

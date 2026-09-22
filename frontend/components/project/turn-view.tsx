@@ -55,6 +55,26 @@ function Transcript({
 }) {
   const tr = useT();
   const [downloadError, setDownloadError] = useState("");
+  const download = async (item: TimelineItem) => {
+    try {
+      const text =
+        item.kind === "tool" || item.kind === "thinking"
+          ? await loadDetail(item)
+          : item.message_id
+            ? await loadMessage(item.message_id)
+            : await loadDetail(item);
+      const url = URL.createObjectURL(
+        new Blob([text], { type: "text/plain;charset=utf-8" }),
+      );
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "conversation-content.txt";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : String(error));
+    }
+  };
   return (
     <>
       {downloadError && (
@@ -71,6 +91,7 @@ function Transcript({
               workspaceFiles={files}
               targetItem={targetItem}
               targetItemOpen={targetItemOpen}
+              download={download}
             />
           );
         const item = segment.item;
@@ -87,29 +108,7 @@ function Transcript({
               highlight={item.state !== "streaming"}
             />
             {item.truncated && (
-              <button
-                onClick={() =>
-                  void (async () => {
-                    try {
-                      const text = item.message_id
-                        ? await loadMessage(item.message_id)
-                        : await loadDetail(item);
-                      const url = URL.createObjectURL(
-                        new Blob([text], { type: "text/plain;charset=utf-8" }),
-                      );
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "conversation-content.txt";
-                      a.click();
-                      setTimeout(() => URL.revokeObjectURL(url), 1000);
-                    } catch (error) {
-                      setDownloadError(
-                        error instanceof Error ? error.message : String(error),
-                      );
-                    }
-                  })()
-                }
-              >
+              <button onClick={() => void download(item)}>
                 {tr("Download full message")}
               </button>
             )}
