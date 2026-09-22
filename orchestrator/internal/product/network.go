@@ -37,6 +37,7 @@ type Attribution struct {
 	Grant     ServiceGrant
 	TurnID    string
 	TurnState string
+	Request   *ServiceRequest `json:",omitempty"`
 }
 
 func credentialDigest(value string) string {
@@ -103,18 +104,21 @@ func (s *Store) GrantService(ctx context.Context, scope Scope, session, incarnat
 // admitted turn on that Session. Absent an admitted turn there is no service
 // authority at all, so an idle agent cannot reach an upstream on its own.
 func (s *Store) AuthorizeService(ctx context.Context, audience, token string) (Attribution, error) {
+	return authorizeService(ctx, s.reader, s.timestamp(), audience, token)
+}
+func authorizeService(ctx context.Context, q queryer, now, audience, token string) (Attribution, error) {
 	id, _, ok := strings.Cut(token, ".")
 	if !ok || len(token) > 256 || !validID(id) {
 		return Attribution{}, ErrNotFound
 	}
 	var a Attribution
 	var digest string
-	err := s.reader.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,t.id,t.state
+	err := q.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,t.id,t.state
  FROM service_grants g
  JOIN projects p ON p.id=g.project_id
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.session_id=g.session_id
  JOIN turns t ON t.session_id=g.session_id AND t.project_id=g.project_id AND t.state IN ('starting','running')
- WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running'`, id, audience, s.timestamp()).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.TurnState)
+ WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running'`, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.TurnState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Attribution{}, ErrNotFound
 	}
@@ -150,12 +154,15 @@ func (s *Store) AcquireService(ctx context.Context, audience, token string) (Att
 // A request drains when its own turn leaves admission, even though the grant
 // itself survives for the Session's next turn.
 func (s *Store) HoldsAttribution(ctx context.Context, a Attribution) error {
+	return holdsAttribution(ctx, s.reader, s.timestamp(), a)
+}
+func holdsAttribution(ctx context.Context, q queryer, now string, a Attribution) error {
 	var state string
-	err := s.reader.QueryRowContext(ctx, `SELECT t.state FROM turns t
+	err := q.QueryRowContext(ctx, `SELECT t.state FROM turns t
  JOIN service_grants g ON g.id=? AND g.state='active' AND g.expires_at>? AND g.session_id=t.session_id
  JOIN projects p ON p.id=g.project_id AND p.state='active'
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.state='running'
- WHERE t.id=? AND t.state IN ('starting','running','stopping')`, a.Grant.ID, s.timestamp(), a.TurnID).Scan(&state)
+ WHERE t.id=? AND t.state IN ('starting','running','stopping')`, a.Grant.ID, now, a.TurnID).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}

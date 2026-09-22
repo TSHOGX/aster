@@ -885,3 +885,14 @@ the previously accepted held turn survives unchanged. These tests qualify the
 handoff mechanism on compatible schema-10 code; they do not certify an older
 schema-incompatible executable as a rollback build or real-provider active-stream
 continuity. Gateway separation and first-deployment bootstrap remain open.
+
+
+Schema 11 and the protected gateway authority protocol establish durable request
+accounting for process separation. Reusable slots fence delayed acquire/release
+messages, enforce a global 256-request bound, and retain release blockers across
+owner restart. Existing-stream continuation is bounded to five seconds since a
+successful check began; confirmed denial cancels immediately and unavailable
+checks cannot renew authority. Focused tests cover temporary outage recovery,
+expiry, stalled checks, revocation, lost replies, bounded cleanup, registration
+replacement and schema-10 migration. Gateway lifecycle extraction and actual
+provider continuity remain separate qualification gates.

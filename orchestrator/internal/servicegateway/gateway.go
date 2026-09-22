@@ -21,8 +21,8 @@ import (
 	"harness-platform/orchestrator/internal/product"
 )
 
-// Authority is the product store. The gateway never caches a decision: a
-// revoked grant or a completed turn must stop the next request immediately.
+// Authority resolves each new request against the owner. Existing requests
+// may bridge only a bounded unavailable interval; confirmed denial ends them.
 type Authority interface {
 	AcquireService(context.Context, string, string) (product.Attribution, func(), error)
 	HoldsAttribution(context.Context, product.Attribution) error
@@ -34,7 +34,10 @@ type Config struct {
 	MaxRequests                int
 	// RecheckInterval bounds how long an in-flight request may outlive its turn.
 	RecheckInterval time.Duration
-	Transport       http.RoundTripper
+	// AuthorityGrace bounds continuation since the last successful check began.
+	// Zero selects five seconds; deployments cannot increase this ceiling.
+	AuthorityGrace time.Duration
+	Transport      http.RoundTripper
 }
 type Gateway struct {
 	authority Authority
@@ -52,14 +55,20 @@ func New(authority Authority, config Config) (*Gateway, error) {
 	if err != nil || target.Host == "" || target.User != nil || target.RawQuery != "" || target.Fragment != "" || (target.Scheme != "http" && target.Scheme != "https") || config.Audience == "" || config.MaxRequests < 1 {
 		return nil, errors.New("invalid service gateway configuration")
 	}
+	if authority == nil || config.AuthorityGrace < 0 || config.AuthorityGrace > AuthorityGrace {
+		return nil, errors.New("invalid authority continuation window")
+	}
+	if config.AuthorityGrace == 0 {
+		config.AuthorityGrace = AuthorityGrace
+	}
 	if config.RecheckInterval <= 0 {
 		config.RecheckInterval = 100 * time.Millisecond
 	}
 	return &Gateway{authority: authority, config: config, target: target, slots: make(chan struct{}, config.MaxRequests), active: map[uint64]context.CancelFunc{}}, nil
 }
 
-// Close drains this process. Authority itself is durable, so a restart loses no
-// grant: the next request re-authorizes against the store.
+// Close cancels forwarding. A graceful gateway update first stops admission and
+// waits for all handlers; cancellation is not a successful drain.
 func (g *Gateway) Close() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -77,9 +86,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		token = r.Header.Get("X-Api-Key")
 	}
+	// Bound requests before any authority I/O.
+	select {
+	case g.slots <- struct{}{}:
+		defer func() { <-g.slots }()
+	default:
+		http.Error(w, "service capacity exhausted", http.StatusTooManyRequests)
+		return
+	}
+	authorizedAt := time.Now()
 	attribution, release, err := g.authority.AcquireService(r.Context(), g.config.Audience, token)
 	if err != nil {
-		if errors.Is(err, product.ErrDraining) {
+		if errors.Is(err, product.ErrDraining) || errors.Is(err, ErrAuthorityUnavailable) {
 			http.Error(w, "gateway release pending", http.StatusServiceUnavailable)
 			return
 		}
@@ -91,13 +109,6 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	select {
-	case g.slots <- struct{}{}:
-		defer func() { <-g.slots }()
-	default:
-		http.Error(w, "service capacity exhausted", http.StatusTooManyRequests)
-		return
-	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	g.mu.Lock()
@@ -118,6 +129,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// later turn on the same Session is a new attribution rather than an
 	// inheritance of this one.
 	go func() {
+		expires := authorizedAt.Add(g.config.AuthorityGrace)
+		deadline := time.NewTimer(time.Until(expires))
+		defer deadline.Stop()
 		ticker := time.NewTicker(g.config.RecheckInterval)
 		defer ticker.Stop()
 		for {
@@ -126,10 +140,28 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			case <-ctx.Done():
 				return
+			case <-deadline.C:
+				cancel()
+				return
 			case <-ticker.C:
-				if err := g.authority.HoldsAttribution(ctx, attribution); err != nil {
+				started := time.Now()
+				checkCtx, checkCancel := context.WithDeadline(ctx, expires)
+				err := g.authority.HoldsAttribution(checkCtx, attribution)
+				checkCancel()
+				if !time.Now().Before(expires) || (err != nil && !errors.Is(err, ErrAuthorityUnavailable)) {
 					cancel()
 					return
+				}
+				if err == nil {
+					// Count RPC latency inside the window, never after it.
+					expires = started.Add(g.config.AuthorityGrace)
+					if !deadline.Stop() {
+						select {
+						case <-deadline.C:
+						default:
+						}
+					}
+					deadline.Reset(time.Until(expires))
 				}
 			}
 		}

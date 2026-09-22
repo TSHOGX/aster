@@ -9,7 +9,8 @@ version 6 adds [retention accounting and cleanup](../orchestrator/internal/produ
 version 7 adds [turn-scoped final-message lookup](../orchestrator/internal/product/navigation_schema.sql);
 version 8 adds [the durable release admission fence](../orchestrator/internal/product/release_schema.sql);
 version 9 adds [indexed readiness and transactional revocation](../orchestrator/internal/product/readiness_schema.sql);
-version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql).
+version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql);
+version 11 adds [bounded durable gateway request slots](../orchestrator/internal/product/gateway_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
@@ -90,3 +91,12 @@ identity or result. Uncertain commands and active prompts are excluded. The host
 retains authoritative raw execution evidence independently of this guest
 reclamation. SQLite FULL is the direct connection default and is verified; there
 is no weaker durability path selected for reconnect recovery.
+
+Independent gateway authority uses `service_gateways` and `service_request_slots`.
+An audience has one registered process instance and at most 256 reusable slots;
+all audiences share a 256-active-request ceiling. Closed slots retain sequence
+numbers to reject delayed acquisition and cleanup replies. Credentials and
+request bodies are never stored in these tables. Active slots are indexed release
+blockers even after owner restart or turn completion. They have no expiry: only
+acknowledged forwarding settlement or a replacement gateway that has acquired the
+exclusive lifetime lock can retire them. Registration uses generation CAS.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/sandbox"
+	"harness-platform/orchestrator/internal/servicegateway"
 	"io"
 	"net"
 	"net/http"
@@ -44,6 +45,11 @@ func listenControl(name string) (net.Listener, error) {
 }
 func (a *Application) controlHandler() http.Handler {
 	mux := http.NewServeMux()
+	audiences := make(map[string]int, len(a.Config.Gateways))
+	for _, gateway := range a.Config.Gateways {
+		audiences[gateway.Audience] = gateway.MaxRequests
+	}
+	mux.Handle(servicegateway.AuthorityPath, servicegateway.AuthorityHandler(a.Store, audiences))
 	mux.HandleFunc("GET /release", func(w http.ResponseWriter, r *http.Request) {
 		status, err := a.Store.ReleaseDrainStatus(r.Context())
 		if err != nil {
