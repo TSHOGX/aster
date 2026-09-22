@@ -5,8 +5,12 @@ import { useEffect, useState } from "react";
 import { api, encode, type Message, type Share } from "@/lib/project-api";
 import { MarkdownView } from "@/components/workbench/markdown-view";
 import { FilePreview } from "./file-preview";
+import { ResourceProvider } from "./resource-provider";
 import "./workbench.css";
 export function PublicShare({ token }: { token: string }) {
+  return <ResourceProvider key={token} actor="public-share"><ShareContent token={token} /></ResourceProvider>;
+}
+function ShareContent({ token }: { token: string }) {
   const tr = useT();
   const [share, setShare] = useState<Share | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -90,7 +94,7 @@ export function PublicShare({ token }: { token: string }) {
             </a>
             <button onClick={() => setSelected("")}>{tr("Close file")}</button>
           </header>
-          <FilePreview key={selected} path={selected} href={url} />
+          <FilePreview key={selected} project="public-share" path={selected} href={url} />
         </section>
       )}
     </main>

@@ -8,7 +8,8 @@ active-model deployment continuity.
 | --- | --- | --- |
 | P01a | Verified | Truthful initial conversation loading; bounded opt-in request timings |
 | P01b | Verified locally | Authenticated read sharing, bounded scheduling and cached conversation return |
-| P01c/e | Pending | File invalidation, stable previews and comparative qualification |
+| P01c | Verified with reset fallback | Scoped file invalidation, truthful watch health and immutable preview ownership |
+| P01e | Pending | Comparative latency, idle and resource qualification |
 | P01d | Verified locally | Lazy process mounting, stable Markdown file inputs and indexed message lookup |
 | P02 | Pending | Schema migration and durable bounded conversation views |
 | P03 | Pending | Shared replayable resource events and incremental views |
@@ -79,3 +80,36 @@ Validation: the completed-turn production browser case verifies zero collapsed
 process containers, expansion, target navigation, final-answer copy, elapsed time
 and feedback. Frontend lint/typecheck and 128 unit tests passed. Full CPU/heap
 profiles and comparative performance targets remain unqualified.
+
+## File events and preview ownership
+
+File events retain workspace-relative current/old paths, operation, entry type,
+placement epoch, sequence and reset reason. Epochs/sequences serialize as decimal
+strings. Invalid paths produce a reset rather than exposing an unconfined path.
+The browser validates only affected directories and selected files; unknown scope
+validates at most sixteen visible directory candidates, with a 64-path dirty set.
+
+Watch reconnects currently use explicit reset validation. They do not claim
+continuous replay or count as external edits. Reconnection indicators begin after
+five seconds; fifteen seconds exposes delayed state. Heartbeats carry no content
+invalidation. The adapter acquires quiet subscriptions asynchronously, with `Next`
+owning the wait for the first frame; cancellation also covers pending attachment.
+A shared replay hub is still P03 work.
+
+Preview validation hashes actual returned bytes. Identical bytes retain the same
+representation; changed versions of the same file retain readable prior content
+while downloading. Renderer leases hold object URLs through asynchronous cleanup.
+Each Office parse owns a separate stage, preventing late callbacks from mutating
+its replacement. Denied/missing file reads clear retained preview pixels. Unsaved
+editor text is separately owned and compared against external bytes without being
+overwritten by watch events or delayed saves.
+
+Validation: all 47 production-build browser tests passed, including two simulated
+rotations, 100 unrelated writes producing zero selected-body reads, same-size
+external edits, pending-save edit protection, keyboard navigation, and both
+locales/themes across desktop/narrow viewports. The 130 unit tests and Go HTTP/Khora
+race tests passed. The disposable Khora fault suite passed native runner, files,
+PTY, lifecycle, recovery and service authority cases, including two watch resumes.
+The first runtime run exposed a quiet resumed-watch attachment deadlock; its fixed
+rerun passed. These checks do not establish final performance SLOs or Office
+format/resource limits.

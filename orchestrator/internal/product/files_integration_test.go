@@ -217,11 +217,30 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		watch, err := files.Watch(watchctx, scope, 0)
 		must(t, err)
 		defer watch.Close()
-		shell(t, "printf watched > /workspace/watched")
-		e, err := watch.Next()
-		must(t, err)
-		if e.Epoch != r.Reference.Epoch {
-			t.Fatal(e)
+		var sequence uint64
+		for rotation := 0; rotation < 3; rotation++ {
+			if rotation > 0 {
+				watch, err = files.Watch(watchctx, scope, sequence)
+				must(t, err)
+			}
+			name := fmt.Sprintf("watched-%d", rotation)
+			shell(t, "printf watched > /workspace/"+name)
+			for {
+				e, err := watch.Next()
+				must(t, err)
+				if e.Epoch != r.Reference.Epoch {
+					t.Fatal(e)
+				}
+				if e.Path != name {
+					continue
+				}
+				if e.Operation == "" || e.EntryType != "file" || e.Sequence == 0 {
+					t.Fatalf("lost watch metadata: %+v", e)
+				}
+				sequence = e.Sequence
+				break
+			}
+			must(t, watch.Close())
 		}
 		watch.Close()
 		p, err := s.Project(runctx, scope)

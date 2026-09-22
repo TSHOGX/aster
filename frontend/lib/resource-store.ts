@@ -31,7 +31,7 @@ export class ResourceStore {
   put<T>(key: ResourceKey, value: T): boolean {
     const id = keyID(key), previous = this.entries.get(id);
     // Estimate UTF-16 strings plus decoded/object overhead, not wire bytes alone.
-    const bytes = JSON.stringify(value).length * 3 + 256;
+    const bytes = value instanceof Blob ? value.size + 256 : JSON.stringify(value).length * 3 + 256;
     const otherPinned = [...this.entries.values()].reduce((n,e)=>n+(e !== previous && e.pins ? e.bytes : 0),0);
     if (bytes + otherPinned > this.byteLimit) return false;
     this.bytes -= previous?.bytes || 0;

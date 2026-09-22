@@ -12,11 +12,19 @@ export async function workspaceFixture(
       readyState = 1;
       onopen: (() => void) | null = null;
       onerror: (() => void) | null = null;
+      private fileEvent = (event: Event) => {
+        if (!this.url.endsWith("/watch")) return;
+        const payload = (event as CustomEvent).detail;
+        if (payload === "connection-error") this.onerror?.();
+        else this.dispatchEvent(new MessageEvent("invalidate", {data: JSON.stringify(payload)}));
+      };
       constructor(public url: string) {
         super();
+        window.addEventListener("fixture-file-event", this.fileEvent);
         setTimeout(() => this.onopen?.(), 0);
       }
       close() {
+        window.removeEventListener("fixture-file-event", this.fileEvent);
         this.readyState = 2;
       }
     } as unknown as typeof EventSource;

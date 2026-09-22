@@ -36,6 +36,7 @@ import {
   type FilePage,
   type Project,
 } from "@/lib/project-api";
+import { fileImpact, type FileInvalidation } from "@/lib/file-invalidation";
 import { useResources } from "./resource-provider";
 import { FilePreview } from "./file-preview";
 import { IconButton, Menu, Splitter, useDialog } from "./ui";
@@ -85,6 +86,8 @@ export function FilesPanel({
   const [tree, setTree] = useState<Record<string, Directory>>(() => resources.peek(treeKey) || {}),
     [treeOpen, setTreeOpen] = useState(true),
     [filter, setFilter] = useState("");
+  const [watchHealth, setWatchHealth] = useState<"live" | "reconnecting" | "stale">("live");
+  const originalRef = useRef("");
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [edit, setEdit] = useState<string | null>(null),
@@ -104,10 +107,11 @@ export function FilesPanel({
     dirty = edit !== null && edit !== original;
   useEffect(() => {
     editor.current = edit;
+    originalRef.current = original;
     expanded.current = directories;
     selectedRef.current = selected;
     treeRef.current = tree;
-  }, [edit, directories, selected, tree]);
+  }, [edit, original, directories, selected, tree]);
   useEffect(() => {
     alive.current = true;
     reads.current = new AbortController();
@@ -192,27 +196,61 @@ export function FilesPanel({
     for (const d of new Set(["", ...dirsKey.split("\n")]))
       if (!treeRef.current[d]) void load(d);
   }, [visible, project.state, dirsKey, load]);
+  const validateSelected = useCallback(async () => {
+    const path=selectedRef.current;
+    if(!path) return true;
+    if(editor.current===null) {setVersion(n=>n+1);return true;}
+    try {
+      const blob=await resources.read({project:project.id,kind:"file",identity:fileURL(project.id,path)},
+        signal=>readPreview(fileURL(project.id,path),signal,1<<20), reads.current.signal,0);
+      const text=await blob.text();
+      if(alive.current && selectedRef.current===path && editor.current!==null)
+        setChanged(text!==originalRef.current);
+      return true;
+    } catch {
+      if(alive.current && selectedRef.current===path) setWatchHealth("stale");
+      return false;
+    }
+  }, [resources,project.id]);
   useEffect(() => {
     if (!visible || project.state !== "active") return;
     const source = new EventSource(`${base}/watch`);
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const invalidate = () => {
-      resources.invalidate(k => k.project === project.id && k.kind === "directory");
-      if (!timer)
-        timer = setTimeout(() => {
-          timer = undefined;
-          for (const dir of new Set(["", ...expanded.current])) void load(dir);
-          if (editor.current !== null) setChanged(true);
-          else setVersion((n) => n + 1);
-        }, 400);
+    let healthTimer: ReturnType<typeof setTimeout> | undefined;
+    let delayedTimer: ReturnType<typeof setTimeout> | undefined;
+    const dirtyDirectories=new Set<string>();
+    let selectedDirty=false;
+    const invalidate = (message: Event) => {
+      let event: FileInvalidation;
+      try {event=JSON.parse((message as MessageEvent).data);} catch {event={reset:true,reason:"invalid_event"};}
+      const impact=fileImpact(event,selectedRef.current,["",...expanded.current]);
+      for(const dir of impact.directories) {
+        if(dirtyDirectories.size>=64) {dirtyDirectories.clear();dirtyDirectories.add("");break;}
+        dirtyDirectories.add(dir);
+      }
+      selectedDirty ||= impact.selected;
+      resources.invalidate(k=>k.project===project.id && (
+        k.kind==="directory" && impact.directories.some(dir=>new URL(k.identity,location.origin).searchParams.get("path")===dir) ||
+        k.kind==="file" && impact.selected && k.identity===fileURL(project.id,selectedRef.current)));
+      if(impact.gap && event.reason!=="attachment" && event.reason!=="initial") setWatchHealth("stale");
+      if (!timer) timer=setTimeout(() => {
+        timer=undefined;
+        const dirs=[...dirtyDirectories];dirtyDirectories.clear();
+        const check=selectedDirty;selectedDirty=false;
+        void Promise.all([...dirs.map(dir=>load(dir)), ...(check?[validateSelected()]:[])]).then(results=> {
+          if(alive.current && source.readyState===EventSource.OPEN) setWatchHealth(results.every(Boolean)?"live":"stale");
+        });
+      },100);
     };
-    source.addEventListener("invalidate", invalidate);
-    source.onerror = () => setChanged(true);
-    return () => {
-      source.close();
-      clearTimeout(timer);
+    source.addEventListener("invalidate",invalidate);
+    source.onopen=()=> {clearTimeout(healthTimer);clearTimeout(delayedTimer);setWatchHealth("live");};
+    source.onerror=()=> {
+      clearTimeout(healthTimer);clearTimeout(delayedTimer);
+      healthTimer=setTimeout(()=>setWatchHealth("reconnecting"),5000);
+      delayedTimer=setTimeout(()=>setWatchHealth("stale"),15000);
     };
-  }, [base, load, visible, project.state, project.id, resources]);
+    return () => {source.close();clearTimeout(timer);clearTimeout(healthTimer);clearTimeout(delayedTimer);};
+  }, [base, load, validateSelected, visible, project.state, project.id, resources]);
   // Reveal deep links without walking unrelated directories. Continue paging each ancestor until found.
   useEffect(() => {
     if (!selected || !visible || project.state !== "active") return;
@@ -340,7 +378,7 @@ export function FilesPanel({
   const refresh = () => {
     for (const d of new Set(["", ...directories])) void load(d);
     if (edit === null) setVersion((v) => v + 1);
-    else setChanged(true);
+    else void validateSelected();
   };
   const mkdir = async (dir: string) => {
     const name = await ask({
@@ -616,6 +654,7 @@ export function FilesPanel({
           )}
         </p>
       )}
+      {watchHealth !== "live" && <p className="notice" role="status">{tr("File updates may be delayed. Refresh to check.")}</p>}
       {changed && (
         <p className="notice warning">
           {edit !== null
@@ -707,7 +746,9 @@ export function FilesPanel({
               </>
             ) : (
               <FilePreview
-                key={`${selected}:${version}`}
+                key={`${project.id}:${selected}`}
+                project={project.id}
+                validation={version}
                 path={selected}
                 href={fileURL(project.id, selected)}
               />

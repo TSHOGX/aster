@@ -178,7 +178,7 @@ func (s *Server) watchFiles(w http.ResponseWriter, r *http.Request) {
 		_, err := fmt.Fprintf(w, "event: invalidate\ndata: %s\n\n", raw)
 		return err == nil && controller.Flush() == nil
 	}
-	if !send(sandbox.FileInvalidation{Reset: true}) {
+	if !send(sandbox.FileInvalidation{Reset: true, Reason: "attachment"}) {
 		return
 	}
 	ticker := time.NewTicker(time.Second)
@@ -194,6 +194,10 @@ func (s *Server) watchFiles(w http.ResponseWriter, r *http.Request) {
 			}
 			p, err := s.Store.Project(ctx, s.scope(r))
 			if err != nil || p.State != "active" {
+				return
+			}
+			_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil || controller.Flush() != nil {
 				return
 			}
 		case e, ok := <-frames:
