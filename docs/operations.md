@@ -103,6 +103,7 @@ control socket. Use a unique owner ID for each attempt:
 ```sh
 orchestrator drain --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --timeout-seconds 120
 orchestrator drain-status --socket /var/lib/batterygpt/control.sock
+orchestrator drain-ready --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
 orchestrator drain-abort --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
 ```
 
@@ -120,16 +121,23 @@ the release attempt and reopens admission; it does not terminate admitted work.
 The worker checks expiry once per second. A process crash leaves the gate closed
 in the database, and reopening the same configuration retains it until abort or
 expiry reconciliation. Status reports fixed-category durable blocker counts;
-unknown command outcomes and unacknowledged unknown turns are blockers.
+unacknowledged unknown outcomes are blockers. An explicitly acknowledged command
+can cease blocking only after its original process exited, cleanup settled, and
+replay is no longer pending. Its unknown outcome is preserved.
 
-This admission slice does **not** report readiness or authorize an update or
-shutdown. Runtime gateway requests, read leases, terminal input and metadata
-model calls are counted, but an atomic quiescence/activation transition is still
-required. Gateways currently share the
-owner's lifetime, so restarting it can terminate an active upstream stream.
-Independent gateway lifetime, ready/activating transitions and the first-deploy
-bootstrap remain unqualified. Restart recovery uses the same published content
-configuration; introducing a new content revision while draining is rejected.
+`drain-ready` checks durable blockers and in-flight counts atomically with runtime
+admission and the database writer. It reports a revocable ready checkpoint only
+when both are empty. Reads, model requests and resizing cannot acquire new leases
+while ready. Stop/Ctrl-C remains available: authorized cancellation returns ready
+to draining before it issues. New cleanup or unresolved evidence also revokes
+ready in the same transaction. Ready retains the original deadline and supports
+abort; a stale owner/generation cannot advance it.
+
+Ready does **not** authorize shutdown by itself. The activation/handoff transition,
+independent gateway lifetime and first-deploy bootstrap remain unqualified.
+Gateways currently share the owner's lifetime, so restarting it can terminate an
+active upstream stream. Restart recovery uses the same published content
+configuration; introducing a new revision while the gate is closed is rejected.
 
 `drain-status.runtime_work` and `diagnostics.runtime_work` report fixed-category
 in-flight operation counts without credentials or content. Title-generation calls

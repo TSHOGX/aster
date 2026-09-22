@@ -139,12 +139,12 @@ func TestReleaseDeadlineAndStaleCoordinatorSurviveReopen(t *testing.T) {
 	if latest != next {
 		t.Fatal("stale abort changed release", latest, next)
 	}
-	_, err = s.db.Exec(`UPDATE application_release SET phase='ready',deadline=? WHERE id=1`, state.Deadline)
+	_, err = s.db.Exec(`UPDATE application_release SET phase='activating',deadline=? WHERE id=1`, state.Deadline)
 	must(t, err)
 	must(t, s.ExpireReleaseDrain(ctx))
 	latest, err = s.ReleaseState(ctx)
 	must(t, err)
-	if latest.Phase != "ready" {
+	if latest.Phase != "activating" {
 		t.Fatal("expiry reopened a later release phase", latest)
 	}
 }

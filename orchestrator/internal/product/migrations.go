@@ -30,9 +30,12 @@ var navigationSchema string
 //go:embed release_schema.sql
 var releaseSchema string
 
+//go:embed readiness_schema.sql
+var readinessSchema string
+
 // Immutable, ordered schema steps. The original unversioned schema is recognized
 // only by its complete digest. Unknown versions or DDL never enter a writer.
-var schemaSteps = []string{schema, displaySchema, projectorSchema, eventFrontierSchema, readerSchema, retentionSchema, navigationSchema, releaseSchema}
+var schemaSteps = []string{schema, displaySchema, projectorSchema, eventFrontierSchema, readerSchema, retentionSchema, navigationSchema, releaseSchema, readinessSchema}
 
 var expectedSchemas = sync.OnceValues(func() ([]string, error) {
 	db, err := sql.Open("sqlite", ":memory:")

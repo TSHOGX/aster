@@ -2,18 +2,20 @@ package product
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 )
 
 type runtimeWork string
 
 const (
-	runtimeTitle  runtimeWork = "title"
-	runtimeInput  runtimeWork = "terminal_input"
-	runtimeResize runtimeWork = "terminal_resize"
-	runtimeSignal runtimeWork = "terminal_signal"
-	runtimeRead   runtimeWork = "workspace_read"
-	runtimeModel  runtimeWork = "model_request"
+	runtimeTitle       runtimeWork = "title"
+	runtimeInput       runtimeWork = "terminal_input"
+	runtimeResize      runtimeWork = "terminal_resize"
+	runtimeSignal      runtimeWork = "terminal_signal"
+	runtimeRead        runtimeWork = "workspace_read"
+	runtimeModel       runtimeWork = "model_request"
+	runtimeReaderStart runtimeWork = "reader_start"
 )
 
 type runtimeAdmission struct {
@@ -43,6 +45,9 @@ func (s *Store) beginRuntimeWork(ctx context.Context, kind runtimeWork) (func(),
 	case runtimeModel:
 		limit = 256
 		allowDraining = true
+	case runtimeReaderStart:
+		limit = 16
+		allowDraining = true
 	default:
 		return nil, ErrInvalid
 	}
@@ -54,6 +59,18 @@ func (s *Store) beginRuntimeWork(ctx context.Context, kind runtimeWork) (func(),
 	state, err := s.ReleaseState(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if state.Phase == "ready" && kind == runtimeSignal {
+		// Authorized cancellation cannot be held behind readiness. Revoke the
+		// checkpoint before the signal can issue, using the same runtime fence.
+		err = s.writeClass(ctx, urgentWrite, "", 1024, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE application_release SET phase='draining',reason='cancellation_requested',updated_at=? WHERE id=1 AND phase='ready'`, s.timestamp())
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		state.Phase = "draining"
 	}
 	if state.Phase != "open" && !(state.Phase == "draining" && allowDraining) {
 		return nil, ErrDraining

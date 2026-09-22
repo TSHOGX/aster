@@ -81,6 +81,13 @@ func TestPrivateControlSocketUsesTheApplicationWriter(t *testing.T) {
 		t.Fatal("stale coordinator reopened admission")
 	}
 	output.Reset()
+	if err = Control(ctx, socket, "POST", "/release/ready", map[string]any{"owner": "operator-test", "generation": release.Generation}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(output.Bytes(), []byte(`"phase":"ready"`)) {
+		t.Fatal(output.String())
+	}
+	output.Reset()
 	if err = Control(ctx, socket, "POST", "/release/abort", map[string]any{"owner": "operator-test", "generation": release.Generation}, &output); err != nil {
 		t.Fatal(err)
 	}

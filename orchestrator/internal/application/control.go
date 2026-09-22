@@ -90,6 +90,21 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		writeControl(w, state)
 	})
+	mux.HandleFunc("POST /release/ready", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Owner      string `json:"owner"`
+			Generation int64  `json:"generation"`
+		}
+		if !decodeControl(w, r, &body) {
+			return
+		}
+		state, err := a.Store.TryReleaseReady(r.Context(), body.Owner, body.Generation)
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, state)
+	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		report, err := a.Store.OperatorDiagnostics(r.Context())
 		if err != nil {

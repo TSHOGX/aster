@@ -11,6 +11,7 @@ import (
 )
 
 var ErrDraining = errors.New("application update is draining; new work is temporarily unavailable")
+var ErrReleaseExpired = errors.New("release deadline expired; admission reopened")
 
 func releaseFenceError(err error) error {
 	if err != nil && strings.Contains(err.Error(), "application_admission_closed") {
@@ -83,7 +84,7 @@ func (s *Store) AbortReleaseDrain(ctx context.Context, owner string, generation 
 			out = current
 			return nil
 		}
-		if current.Phase != "draining" {
+		if current.Phase != "draining" && current.Phase != "ready" {
 			return ErrConflict
 		}
 		_, e = tx.ExecContext(ctx, `UPDATE application_release SET phase='open',deadline='',reason='aborted',updated_at=? WHERE id=1`, s.timestamp())
@@ -96,26 +97,72 @@ func (s *Store) AbortReleaseDrain(ctx context.Context, owner string, generation 
 	return
 }
 
-// Expiry aborts an update, not its admitted work. It never reopens ready or
-// activating generations from a stale timer. No boot-time implicit open exists.
+// Expiry aborts an update, not its admitted work. It never reopens
+// activating generations from a stale timer. Ready still uses the drain deadline.
 func (s *Store) ExpireReleaseDrain(ctx context.Context) error {
 	current, err := s.ReleaseState(ctx)
 	if err != nil {
 		return err
 	}
-	if current.Phase != "draining" || current.Deadline > s.timestamp() {
+	if (current.Phase != "draining" && current.Phase != "ready") || current.Deadline > s.timestamp() {
 		return nil
 	}
 	s.runtime.mu.Lock()
 	defer s.runtime.mu.Unlock()
 	return s.writeClass(ctx, urgentWrite, "", 1024, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE application_release SET phase='open',deadline='',reason='deadline',updated_at=? WHERE id=1 AND generation=? AND owner=? AND phase='draining' AND deadline<=?`, s.timestamp(), current.Generation, current.Owner, s.timestamp())
+		_, err := tx.ExecContext(ctx, `UPDATE application_release SET phase='open',deadline='',reason='deadline',updated_at=? WHERE id=1 AND generation=? AND owner=? AND phase IN ('draining','ready') AND deadline<=?`, s.timestamp(), current.Generation, current.Owner, s.timestamp())
 		return err
 	})
 }
 
-// Persisted counts are not permission to shut down. Runtime requests and read/
-// input leases need separate quiescence checks before ready or activation.
+// TryReleaseReady closes runtime admission only after one atomic check of both
+// lease counts and durable evidence. A ready result is revocable, not activation.
+func (s *Store) TryReleaseReady(ctx context.Context, owner string, generation int64) (out ReleaseState, err error) {
+	s.runtime.mu.Lock()
+	defer s.runtime.mu.Unlock()
+	err = s.writeClass(ctx, urgentWrite, "", 1024, func(tx *sql.Tx) error {
+		current, e := releaseState(ctx, tx)
+		if e != nil {
+			return e
+		}
+		if generation < 1 || current.Owner != owner || current.Generation != generation || (current.Phase != "draining" && current.Phase != "ready") {
+			return ErrConflict
+		}
+		if current.Deadline <= s.timestamp() {
+			_, e = tx.ExecContext(ctx, `UPDATE application_release SET phase='open',deadline='',reason='deadline',updated_at=? WHERE id=1`, s.timestamp())
+			if e != nil {
+				return e
+			}
+			out, e = releaseState(ctx, tx)
+			return e
+		}
+		for _, count := range s.runtime.counts {
+			if count > 0 {
+				return ErrBusy
+			}
+		}
+		var blocked bool
+		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM release_blockers)`).Scan(&blocked); e != nil {
+			return e
+		}
+		if blocked {
+			return ErrBusy
+		}
+		_, e = tx.ExecContext(ctx, `UPDATE application_release SET phase='ready',reason='',updated_at=? WHERE id=1`, s.timestamp())
+		if e != nil {
+			return e
+		}
+		out, e = releaseState(ctx, tx)
+		return e
+	})
+	if err == nil && out.Phase == "open" {
+		err = ErrReleaseExpired
+	}
+	return
+}
+
+// Status is observational; only TryReleaseReady checks both sources atomically.
+// A ready generation is revocable and still requires activation coordination.
 type ReleaseDrainStatus struct {
 	ReleaseState
 	DurableBlockers map[string]int64 `json:"durable_blockers"`
@@ -134,17 +181,7 @@ func (s *Store) ReleaseDrainStatus(ctx context.Context) (out ReleaseDrainStatus,
 		return out, err
 	}
 	out.DurableBlockers = map[string]int64{}
-	rows, err := tx.QueryContext(ctx, `
- SELECT 'turn',count(*) FROM turns WHERE state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0)
- UNION ALL SELECT 'command',count(*) FROM agent_commands WHERE state IN ('pending','sending','dispatching','unknown')
- UNION ALL SELECT 'activity',count(*) FROM project_activity WHERE state<>'complete'
- UNION ALL SELECT 'agent_transition',count(*) FROM agent_incarnations WHERE state IN ('starting','stopping','unknown') OR recovery_state IN ('pending','replaying','failed')
- UNION ALL SELECT 'terminal_start',count(*) FROM terminal_incarnations WHERE state='starting'
- UNION ALL SELECT 'project_operation',count(*) FROM project_operations WHERE state<>'succeeded'
- UNION ALL SELECT 'file_write',count(*) FROM file_operations WHERE settled=0
- UNION ALL SELECT 'session_cleanup',count(*) FROM sessions WHERE deletion_intent=1
- UNION ALL SELECT 'terminal_cleanup',count(*) FROM terminals WHERE deletion_intent=1
- UNION ALL SELECT 'content_publication',count(*) FROM content_publications WHERE stage NOT IN ('published','failed')`)
+	rows, err := tx.QueryContext(ctx, `SELECT kind,count(*) FROM release_blockers GROUP BY kind`)
 	if err != nil {
 		return out, err
 	}

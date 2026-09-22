@@ -32,7 +32,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-abort --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
 		return err
 	}
 	action := args[0]
@@ -45,7 +45,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	flags.SetOutput(output)
 	switch action {
-	case "drain", "drain-status", "drain-abort":
+	case "drain", "drain-status", "drain-abort", "drain-ready":
 		socket := flags.String("socket", "", "protected application control socket")
 		owner := flags.String("owner", "", "unique coordinator attempt identity")
 		generation := flags.Int64("generation", 0, "generation returned by drain")
@@ -62,11 +62,11 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		if *owner == "" {
 			return errors.New("drain commands require --owner ID")
 		}
-		if action == "drain-abort" {
+		if action == "drain-abort" || action == "drain-ready" {
 			if *generation < 1 {
-				return errors.New("drain-abort requires --generation NUMBER")
+				return fmt.Errorf("%s requires --generation NUMBER", action)
 			}
-			return application.Control(ctx, *socket, "POST", "/release/abort", map[string]any{"owner": *owner, "generation": *generation}, output)
+			return application.Control(ctx, *socket, "POST", "/release/"+strings.TrimPrefix(action, "drain-"), map[string]any{"owner": *owner, "generation": *generation}, output)
 		}
 		if *timeout < 1 || *timeout > 3600 {
 			return errors.New("timeout-seconds must be between 1 and 3600")

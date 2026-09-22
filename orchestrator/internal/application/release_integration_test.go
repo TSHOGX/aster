@@ -250,8 +250,12 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 			t.Fatalf("published mounts or network differ: %v", report)
 		}
 	}
-	// Admission closure is durable across a real owner crash. It is not yet an
-	// activation/readiness claim: this gate deliberately leaves gateways coupled.
+	// Wait for the existing idle policy to settle before taking a revocable ready
+	// checkpoint. This is a quiescent restart, not active-stream handoff.
+	for p := 0; p < 2; p++ {
+		base := fmt.Sprintf("/api/projects/release-%d", p)
+		a.await(20*time.Second, "pre-release idle pause", func() bool { return a.request("GET", base, nil, 200)["state"] == "paused" })
+	}
 	a.await(5*time.Second, "runtime operation leases settle", func() bool {
 		report := a.cli("drain-status", "--socket", socket)
 		work, ok := report["runtime_work"].(map[string]any)
@@ -263,12 +267,16 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 	}
 	a.request("POST", paths[0]+"/turns", map[string]string{"request_id": "during-drain", "content": "blocked until abort"}, 503)
 	a.request("POST", paths[0]+"/turns", map[string]any{"request_id": "held-during-drain", "content": "held intent", "held": true}, 201)
+	ready := a.cli("drain-ready", "--socket", socket, "--owner", "release-fixture", "--generation", fmt.Sprint(release["generation"]))
+	if ready["phase"] != "ready" {
+		t.Fatal(ready)
+	}
 	// A real owner crash retains the credential session and reconciles durable state.
 	start := time.Now()
 	a.stop()
 	a.start()
 	retained := a.cli("drain-status", "--socket", socket)
-	if retained["phase"] != "draining" || retained["generation"] != release["generation"] {
+	if retained["phase"] != "ready" || retained["generation"] != release["generation"] {
 		t.Fatal("release fence lost across restart", release, retained)
 	}
 	a.request("POST", paths[0]+"/turns", map[string]string{"request_id": "during-drain", "content": "blocked until abort"}, 503)

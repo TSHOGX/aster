@@ -150,6 +150,13 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 	defer w.group.Done()
 	attempt, cancel := context.WithTimeout(entry.ctx, 10*time.Second)
 	defer cancel()
+	releaseStart, err := w.Store.beginRuntimeWork(attempt, runtimeReaderStart)
+	if err != nil {
+		entry.err = err
+		close(entry.ready)
+		return
+	}
+	defer releaseStart()
 	if previous, err := w.saved(attempt, entry.scope.ProjectID); err == nil {
 		if err = w.retire(attempt, entry.scope.ProjectID, previous); err != nil {
 			entry.err = err
@@ -196,11 +203,13 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 	}
 	stop()
 	entry.err = err
-	close(entry.ready)
 	if err != nil {
+		close(entry.ready)
 		entry.cancel()
 		return
 	}
+	releaseStart() // Handshake is settled; idle carriers are not release blockers.
+	close(entry.ready)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	defer entry.client.Close()

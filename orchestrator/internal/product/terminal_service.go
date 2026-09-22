@@ -423,6 +423,9 @@ func (t *Terminals) Input(ctx context.Context, o *TerminalObserver, data []byte)
 	if !ready {
 		return ErrPending
 	}
+	if err = t.Store.terminalAuthority(ctx, i); err != nil {
+		return err
+	}
 	kind := runtimeInput
 	if len(data) == 1 && data[0] == 0x03 {
 		kind = runtimeSignal
@@ -497,30 +500,30 @@ func (t *Terminals) Interrupt(ctx context.Context, o *TerminalObserver) error {
 // Signal delivers a directed signal to the PTY's process group. It is the
 // termination path, not the interrupt path: use Interrupt for Ctrl-C.
 func (t *Terminals) Signal(ctx context.Context, scope Scope, terminal string, signal int32) error {
+	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
+	if err != nil {
+		return err
+	}
 	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
 	if err != nil {
 		return err
 	}
 	defer release()
-	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
-	if err != nil {
-		return err
-	}
 	return t.Backend.SignalProcess(ctx, i.Reference, signal)
 }
 
 // EOF closes the PTY's input, which a shell sees as Ctrl-D. It is a request: the
 // shell decides whether to exit, and only its exit frame settles the incarnation.
 func (t *Terminals) EOF(ctx context.Context, scope Scope, terminal string) error {
+	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
+	if err != nil {
+		return err
+	}
 	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
 	if err != nil {
 		return err
 	}
 	defer release()
-	i, err := t.Store.LiveTerminal(ctx, scope, terminal)
-	if err != nil {
-		return err
-	}
 	return t.Backend.CloseProcessInput(ctx, i.Reference)
 }
 
@@ -529,11 +532,6 @@ func (t *Terminals) EOF(ctx context.Context, scope Scope, terminal string) error
 // stream observes the terminal exit frame: that frame is the only evidence that
 // records the exit code, and a cancelled transport is not an exit.
 func (t *Terminals) Stop(ctx context.Context, project, terminal string) error {
-	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
-	if err != nil {
-		return err
-	}
-	defer release()
 	i, err := liveTerminalIncarnation(ctx, t.Store.reader, terminal)
 	if errors.Is(err, ErrNotFound) {
 		// Nothing is running. That is the settled state Stop asks for.
@@ -545,6 +543,11 @@ func (t *Terminals) Stop(ctx context.Context, project, terminal string) error {
 	if i.ProjectID != project {
 		return ErrNotFound
 	}
+	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
+	if err != nil {
+		return err
+	}
+	defer release()
 	t.mu.Lock()
 	if t.attachments[terminal] == nil {
 		owned, e := t.Store.takeTerminalOwnership(ctx, i)
@@ -805,30 +808,30 @@ func (t *Terminals) observerIdentity(ctx context.Context, o *TerminalObserver, i
 	return i, t.Store.terminalAuthority(ctx, i)
 }
 func (t *Terminals) ObserverEOF(ctx context.Context, o *TerminalObserver) error {
+	i, err := t.observerIdentity(ctx, o, true)
+	if err != nil {
+		return err
+	}
 	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
 	if err != nil {
 		return err
 	}
 	defer release()
-	i, err := t.observerIdentity(ctx, o, true)
-	if err != nil {
-		return err
-	}
 	return t.Backend.CloseProcessInput(ctx, i.Reference)
 }
 func (t *Terminals) ObserverSignal(ctx context.Context, o *TerminalObserver, signal int32) error {
 	if signal != 15 && signal != 9 {
 		return ErrInvalid
 	}
+	i, err := t.observerIdentity(ctx, o, true)
+	if err != nil {
+		return err
+	}
 	release, err := t.Store.beginRuntimeWork(ctx, runtimeSignal)
 	if err != nil {
 		return err
 	}
 	defer release()
-	i, err := t.observerIdentity(ctx, o, true)
-	if err != nil {
-		return err
-	}
 	return t.Backend.SignalProcess(ctx, i.Reference, signal)
 }
 func (t *Terminals) ObserverResize(ctx context.Context, scope Scope, o *TerminalObserver, rows, cols int) error {

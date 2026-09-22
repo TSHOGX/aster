@@ -25,7 +25,8 @@ active-model deployment continuity.
 | P06 Office ownership | Verified locally | Prepared replacements, cancellation, chart lifecycle and localized keyboard controls |
 | P06 interaction qualification | Partial | Office cycles and constrained presentation checks pass; history and comparative latency matrix remain open |
 | P07 admission fence | Verified locally | Persisted drain ownership/deadline and atomic new-work fencing |
-| P07 readiness/gateway | Pending | Runtime quiescence, independent gateway and combined release qualification |
+| P07 readiness | Verified locally | Atomic blocker/lease check and revocation by new evidence or cancellation |
+| P07 activation/gateway | Pending | Handoff, independent gateway and combined release qualification |
 
 ## Diagnostics
 
@@ -771,8 +772,7 @@ new native work. Explicit held prompts and metadata creation remain available.
 The operator drain/status/abort surface uses the existing mode-0600 control
 socket and application writer. Stale owner/generation aborts fail. The persisted
 fence survives reopening; a one-second worker aborts expired draining attempts
-without killing existing work. Ready/activating are reserved schema states with
-no exposed transition in this slice. Durable status counts do not substitute
+without killing existing work. The readiness transition is qualified below; activation remains unavailable. Durable status counts do not substitute
 for runtime quiescence, and this implementation does not claim active-stream
 update continuity. See [operations](operations.md#admission-drain).
 
@@ -786,8 +786,8 @@ turns. An executable fixture closes admission, restarts the owner, confirms the
 same generation remains closed, aborts it and completes new native turns.
 
 The runtime leases below account for gateway, reader, terminal-input and
-title-generation work. An atomic ready/activation transition, independent gateway
-lifetime, bootstrap and rollback qualification remain. No deployment is inferred
+title-generation work. Readiness is qualified below; activation, independent
+gateway lifetime, bootstrap and rollback qualification remain. No deployment is inferred
 from these disposable fixture results.
 
 ## In-flight release work
@@ -814,5 +814,39 @@ and termination, verify canceled work stays counted, check idempotent release an
 capacity, and confirm read bodies own their leases. Gateway tests observe two
 concurrent leases and wait for actual handler settlement before requiring zero.
 Runtime status and durable blocker counts are observations, not one atomic
-readiness snapshot. Gateway process separation and readiness coordination remain
-open. The database schema remains version 8.
+readiness snapshot. The transition below performs that check under the shared
+fence; gateway process separation and activation remain open. The lease stage requires schema 8 or later.
+
+## Revocable release readiness
+
+Schema 9 centralizes durable release predicates in `release_blockers`, including
+Project transitions, guest captures and pending/uncleaned share publications.
+Partial indexes contain unsettled candidates, and the readiness view explicitly
+uses them so ordinary completed history is not scanned under the writer. New
+share publication is fenced while admission is closed. Unknown evidence remains
+a blocker unless its turn was explicitly acknowledged and its original process
+exited with cleanup settled and no pending replay; acknowledgment never rewrites
+the recorded outcome.
+
+`drain-ready` holds the runtime-admission mutex and immediate SQLite writer while
+checking owner/generation, deadline, live leases and durable blockers. It commits
+ready only when no blocker remains. Expiry aborts the release and reopens admission
+without killing work. Ready survives owner restart, retains the same deadline,
+and can be explicitly aborted. Activating is not exposed yet.
+
+Readiness is revocable. Cleanup, new unresolved evidence, or pending publication
+returns ready to draining in the same transaction that records that work. This
+revocation rolls back if the work transaction rolls back. Authorized terminal
+cancellation revokes ready before acquiring its signal lease; unauthorized
+requests cannot do so. Reader-helper startup now owns a separate 16-slot lease
+through its handshake, preventing a canceled first reader from concealing an
+in-flight startup. Idle reusable readers do not permanently block readiness.
+
+Tests race readiness against reader admission, persist/reopen a ready generation,
+exercise expiry/stale generations, introduce cleanup and unknown evidence,
+verify revocation rollback and acknowledgment, and hold reader startup after its
+consumer cancels. Query-plan checks require the unsettled indexes. The executable
+fixture first lets normal idle work settle, marks ready, restarts the real owner,
+confirms the same ready generation, aborts it, then completes new native turns.
+This qualifies a quiescent checkpoint and restart; it does not qualify active
+model-stream handoff, deployment bootstrap or an activation/shutdown procedure.
