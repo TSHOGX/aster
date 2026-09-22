@@ -131,3 +131,11 @@ The transcript has no permanent Earlier/Later/Return-to-latest text buttons.
 History edges load through scrolling (including wheel/keyboard at short-window
 boundaries), and the floating down-arrow is the single return-to-live control.
 Only active page requests display a transient loading label.
+
+Reading position follows explicit user intent. The transcript compensates for
+page insertion and layout/font changes, and keeps followers at the bottom when
+the viewport or composer changes height. Opening process details pauses following;
+Return to latest resumes it. Browser find/print sees only loaded pages and mounted
+process history: navigate to a turn/message and expand it first. Complete-answer
+copy uses model data rather than the visible excerpt, within the documented copy
+budget in [performance](performance.md#conversation-layout-and-reading-intent).

@@ -68,6 +68,17 @@ export function SessionPanel({
   );
   const positionKey = key + ":position";
   const scroll = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const layoutAnchor = useRef<{ node: HTMLElement; top: number } | null>(null);
+  const layoutSize = useRef("");
+  const manualScroll = useRef(false);
+  const sizeKey = useCallback(() => {
+    const el = scroll.current,
+      body = content.current;
+    return el && body
+      ? `${el.clientWidth}:${el.clientHeight}:${body.getBoundingClientRect().height}`
+      : "";
+  }, []);
   const following = useRef(
     recalled<{ follow: boolean }>(positionKey, { follow: true }).follow,
   );
@@ -180,6 +191,14 @@ export function SessionPanel({
   const captureAnchor = useCallback(() => {
     const el = scroll.current;
     if (!el) return;
+    const size = sizeKey();
+    // A native scroll caused by reflow must not replace the pre-reflow bookmark.
+    if (
+      layoutAnchor.current?.node.isConnected &&
+      layoutSize.current !== size &&
+      !manualScroll.current
+    )
+      return;
     const top = el.getBoundingClientRect().top;
     const anchor = [
       ...el.querySelectorAll<HTMLElement>("[data-timeline-id]"),
@@ -189,6 +208,17 @@ export function SessionPanel({
         node.getBoundingClientRect().bottom > top,
     );
     if (anchor) {
+      const block =
+        [...anchor.querySelectorAll<HTMLElement>(".markdown-body > *")].find(
+          (node) =>
+            node.getBoundingClientRect().height > 0 &&
+            node.getBoundingClientRect().bottom > top,
+        ) || anchor;
+      layoutAnchor.current = {
+        node: block,
+        top: block.getBoundingClientRect().top - top,
+      };
+      layoutSize.current = size;
       repository.setAnchor(anchor.dataset.timelineId!, following.current);
       if (!following.current)
         scrollAnchor.current = {
@@ -196,7 +226,7 @@ export function SessionPanel({
           top: anchor.getBoundingClientRect().top,
         };
     }
-  }, [repository]);
+  }, [repository, sizeKey]);
   const loadAdjacent = useCallback(
     async (direction: "older" | "newer"): Promise<boolean> => {
       const pending = historyFlights.current.get(direction);
@@ -528,6 +558,41 @@ export function SessionPanel({
     positionKey,
     navigationTarget,
   ]);
+  useEffect(() => {
+    const el = scroll.current,
+      body = content.current;
+    if (!el || !body) return;
+    // Viewport/composer resizing, fonts and process expansion can change layout
+    // without a new view revision. Preserve the reader's existing follow intent.
+    // One content observer covers the bounded window, not one per message.
+    const resize = new ResizeObserver(() => {
+      if (!restored.current || navigationPending.current) {
+        layoutSize.current = sizeKey();
+        return;
+      }
+      const anchor = layoutAnchor.current;
+      const delta = anchor?.node.isConnected
+        ? anchor.node.getBoundingClientRect().top -
+          el.getBoundingClientRect().top -
+          anchor.top
+        : 0;
+      if (following.current || Math.abs(delta) > 0.5) {
+        programmaticUntil.current = performance.now() + 150;
+        el.scrollTop = following.current
+          ? el.scrollHeight
+          : el.scrollTop + delta;
+      }
+      layoutSize.current = sizeKey();
+      captureAnchor();
+      manualScroll.current = false;
+    });
+    resize.observe(el);
+    resize.observe(body);
+    return () => {
+      resize.disconnect();
+      layoutAnchor.current = null;
+    };
+  }, [captureAnchor, sizeKey]);
   const control = (turn: Turn, action: string) =>
     void act(() =>
       command(`${base}/turns/${encodeURIComponent(turn.id)}/control`, {
@@ -629,25 +694,59 @@ export function SessionPanel({
                 "pre,.table-scroll,textarea",
               ) &&
               e.deltaY !== 0
-            )
+            ) {
+              manualScroll.current = true;
               requestEdge(e.deltaY < 0 ? "older" : "newer");
+            }
           }}
           onKeyDown={(e) => {
             if ((e.target as HTMLElement).closest("pre,.table-scroll,textarea"))
               return;
+            if (
+              [
+                "PageUp",
+                "PageDown",
+                "ArrowUp",
+                "ArrowDown",
+                "Home",
+                "End",
+                " ",
+              ].includes(e.key)
+            ) {
+              programmaticUntil.current = 0;
+              manualScroll.current = true;
+            }
             if (e.key === "PageUp" || e.key === "ArrowUp") requestEdge("older");
             if (e.key === "PageDown" || e.key === "ArrowDown")
               requestEdge("newer");
           }}
           onTouchMove={() => {
             programmaticUntil.current = 0;
+            manualScroll.current = true;
+          }}
+          onPointerDown={(event) => {
+            programmaticUntil.current = 0;
+            manualScroll.current = event.target === event.currentTarget;
           }}
           onScroll={() => {
             const el = scroll.current!;
-            following.current =
+            const size = sizeKey(),
+              manual = manualScroll.current;
+            if (
+              !manual &&
+              layoutAnchor.current?.node.isConnected &&
+              layoutSize.current !== size
+            )
+              return;
+            layoutSize.current = size;
+            manualScroll.current = false;
+            if (
               !navigationPending.current &&
-              !repository.getSnapshot().after &&
-              el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+              (manual || performance.now() > programmaticUntil.current)
+            )
+              following.current =
+                !repository.getSnapshot().after &&
+                el.scrollHeight - el.scrollTop - el.clientHeight < 64;
             setAtBottom(following.current);
             if (
               !navigationPending.current &&
@@ -669,6 +768,20 @@ export function SessionPanel({
             });
           }}
           onClick={(event) => {
+            if (
+              (event.target as HTMLElement).closest(
+                "button[aria-expanded],summary",
+              )
+            ) {
+              following.current = false;
+              setAtBottom(false);
+              captureAnchor();
+              remember(positionKey, {
+                turn: focusTurn,
+                scroll: scroll.current!.scrollTop,
+                follow: false,
+              });
+            }
             const link = (event.target as HTMLElement).closest("a");
             const href = link?.getAttribute("href");
             if (href) {
@@ -685,48 +798,50 @@ export function SessionPanel({
             }
           }}
         >
-          {(navigationTarget || loadingHistory) && (
-            <p className="history-loading" role="status">
-              {tr("Loading earlier conversation…")}
-            </p>
-          )}
-          {["uninitialized", "loading"].includes(view.status) &&
-            !view.items.length && (
+          <div ref={content} className="conversation-content">
+            {(navigationTarget || loadingHistory) && (
+              <p className="history-loading" role="status">
+                {tr("Loading earlier conversation…")}
+              </p>
+            )}
+            {["uninitialized", "loading"].includes(view.status) &&
+              !view.items.length && (
+                <p className="history-loading" role="status">
+                  {tr("Loading…")}
+                </p>
+              )}
+            {!timeline.length && view.status === "empty" && (
+              <div className="empty-state">
+                <h3>{tr("Start a conversation")}</h3>
+                <p>
+                  {tr(
+                    "This agent shares the Project workspace with your other agents and terminals.",
+                  )}
+                </p>
+              </div>
+            )}
+            {turns.map((turn) => (
+              <TurnView
+                key={turn.id}
+                turn={turn}
+                files={workspaceFiles}
+                activeTurns={activeTurns}
+                loadMessage={(id) => repository.messageText(id)}
+                loadDetail={(item) =>
+                  repository.detailText(item.id, item.detail_version!)
+                }
+                actor={actor}
+                project={session.project_id}
+                session={session.id}
+                targetMessage={focusMessage}
+              />
+            ))}
+            {loadingNewer && (
               <p className="history-loading" role="status">
                 {tr("Loading…")}
               </p>
             )}
-          {!timeline.length && view.status === "empty" && (
-            <div className="empty-state">
-              <h3>{tr("Start a conversation")}</h3>
-              <p>
-                {tr(
-                  "This agent shares the Project workspace with your other agents and terminals.",
-                )}
-              </p>
-            </div>
-          )}
-          {turns.map((turn) => (
-            <TurnView
-              key={turn.id}
-              turn={turn}
-              files={workspaceFiles}
-              activeTurns={activeTurns}
-              loadMessage={(id) => repository.messageText(id)}
-              loadDetail={(item) =>
-                repository.detailText(item.id, item.detail_version!)
-              }
-              actor={actor}
-              project={session.project_id}
-              session={session.id}
-              targetMessage={focusMessage}
-            />
-          ))}
-          {loadingNewer && (
-            <p className="history-loading" role="status">
-              {tr("Loading…")}
-            </p>
-          )}
+          </div>
         </div>
         <TurnNavigator
           base={base}

@@ -599,3 +599,37 @@ Presentation keyboard/theme/resize checks pass in English and Chinese, light and
 dark, desktop and narrow viewports, with reduced motion and four-times CPU
 throttling on narrow cases. Remaining P06 work includes history/Markdown profiles,
 complete-answer/anchor/accessibility qualification and repeated latency trials.
+
+## Conversation layout and reading intent
+
+The conversation now keeps a visible block as its layout bookmark and observes
+the scroll viewport plus one content container. Font changes, viewport resizing,
+composer growth and process expansion can alter height without a view revision;
+they no longer leave an opted-in follower above the bottom or displace a paused
+reader. Browser scroll anchoring is disabled for this container so it does not
+compete with the application's page and block compensation. Automatic layout
+scrolls cannot overwrite the pre-layout bookmark or silently change follow mode.
+Pointer, wheel, touch and paging-key input supersede navigation suppression.
+Opening process details pauses following; Return to latest resumes it.
+
+A 1,000-turn synthetic fixture exercises bounded surrounding windows, older/newer
+paging, real font-size changes, viewport/composer resize, appended streaming turns
+and complete-answer copying beyond the displayed excerpt. A separate controlled
+profile loads sixty turns with collapsed process history: approximately 32,834
+DOM nodes, with no process containers mounted. Thirty profiled keydown-to-next-
+animation-frame samples under four-times CPU throttling had a nearest-rank p95
+of 34.3 ms and maximum 35.7 ms, with no observed long tasks in that typing window.
+This measures a lab feedback signal, not field INP, end-to-end page latency or
+thirty independent page-load journeys. Much sampled CPU belongs to Playwright
+DOM inspection; it is not attributed to the application parser. These results
+do not justify adding turn virtualization for this fixture. Large single-message,
+initial-render and full comparative journey qualification remain separate gates.
+
+Browser find can discover only loaded pages and mounted process content. Print
+is also limited to rendered content and can clip scroll containers. Neither can
+discover an unloaded turn or unmounted folded history. Use the turn rail
+or a message deep link to load the desired window, expand its process history,
+and then use browser find/print. Copy answer fetches complete model text even
+when its visible excerpt is truncated. Copy and message-text downloads currently
+share the 16 MiB decoded working limit; the workbench does not imply unlimited
+full-conversation printing or export.

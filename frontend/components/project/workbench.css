@@ -372,6 +372,8 @@
   padding: 24px;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
+  /* The reading controller preserves a visible block across reflow and paging. */
+  overflow-anchor: none;
 }
 .conversation-scroll > article,
 .conversation-scroll > .tool-trace,
