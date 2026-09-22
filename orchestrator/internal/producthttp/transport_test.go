@@ -462,7 +462,11 @@ func TestTerminalSocketFanOutOwnershipAndControl(t *testing.T) {
 	// Control frames: resize converges, signals are restricted, EOF is a request.
 	must(t, writer.WriteMessage(websocket.TextMessage, []byte(`{"type":"resize","rows":40,"cols":120}`)))
 	readText(t, writer, func(f map[string]any) bool { return f["kind"] == "status" && f["rows"] == float64(40) })
-	must(t, writer.WriteMessage(websocket.TextMessage, []byte(`{"type":"signal","signal":2}`)))
+	// Drain the observer's resize status before waiting for the distinct detach
+	// status below. Both are read-only statuses; consuming the former after close
+	// can race input claim against the old writer's actual detachment.
+	readText(t, reader, func(f map[string]any) bool { return f["kind"] == "status" && f["rows"] == float64(40) })
+	must(t, writer.WriteMessage(websocket.TextMessage, []byte(`{"type":"signal","signal":15}`)))
 	must(t, writer.WriteMessage(websocket.TextMessage, []byte(`{"type":"signal","signal":99}`)))
 	must(t, writer.WriteMessage(websocket.TextMessage, []byte(`{"type":"eof"}`)))
 	deadline = time.Now().Add(3 * time.Second)
@@ -470,7 +474,7 @@ func TestTerminalSocketFanOutOwnershipAndControl(t *testing.T) {
 		h.backend.mu.Lock()
 		signals, eof := append([]int32(nil), h.backend.signals...), h.backend.eof
 		h.backend.mu.Unlock()
-		if len(signals) == 1 && signals[0] == 2 && eof == 1 {
+		if len(signals) == 1 && signals[0] == 15 && eof == 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -479,7 +483,7 @@ func TestTerminalSocketFanOutOwnershipAndControl(t *testing.T) {
 	signals := append([]int32(nil), h.backend.signals...)
 	h.backend.mu.Unlock()
 	for _, signal := range signals {
-		if signal != 2 && signal != 15 && signal != 9 {
+		if signal != 15 && signal != 9 {
 			t.Fatal("an arbitrary signal must not be expressible from a browser", signals)
 		}
 	}
