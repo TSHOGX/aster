@@ -220,6 +220,11 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 // A signal is a request. Only the runner's exit frame settles the incarnation, so
 // a caller must still observe the durable state rather than assume success.
 func (a *Agents) Stop(ctx context.Context, project, session string) error {
+	releaseMaintenance, admissionErr := a.Store.beginRuntimeWork(ctx, runtimeMaintenance)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseMaintenance()
 	a.mu.Lock()
 	attachment := a.attachments[session]
 	incarnation := Incarnation{}

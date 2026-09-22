@@ -42,12 +42,12 @@ type releaseApp struct {
 	uid, gid                     uint32
 }
 
-func (a *releaseApp) start() {
+func (a *releaseApp) start(extra ...string) {
 	a.t.Helper()
 	log, err := os.OpenFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "application.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	require(a.t, err)
 	defer log.Close()
-	a.command = exec.CommandContext(a.ctx, a.binary, "serve", "--config", a.config)
+	a.command = exec.CommandContext(a.ctx, a.binary, append([]string{"serve", "--config", a.config}, extra...)...)
 	a.command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
 	a.command.Env = append(os.Environ(), "PROJECT_RELEASE_SECRET=release-fixture-secret")
 	a.command.Stdout, a.command.Stderr = log, log
@@ -280,7 +280,31 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 		t.Fatal("release fence lost across restart", release, retained)
 	}
 	a.request("POST", paths[0]+"/turns", map[string]string{"request_id": "during-drain", "content": "blocked until abort"}, 503)
-	a.cli("drain-abort", "--socket", socket, "--owner", "release-fixture", "--generation", fmt.Sprint(release["generation"]))
+	digest := a.cli("diagnostics", "--socket", socket)["application_digest"].(string)
+	activation := a.cli("drain-activate", "--socket", socket, "--owner", "release-fixture", "--generation", fmt.Sprint(release["generation"]), "--target", digest)
+	if activation["phase"] != "activating" || activation["target_digest"] != digest {
+		t.Fatal(activation)
+	}
+	a.awaitRetired()
+	a.start()
+	activating := a.cli("drain-status", "--socket", socket)
+	if activating["phase"] != "activating" || activating["activation_instance"] != activation["activation_instance"] {
+		t.Fatal(activating)
+	}
+	a.await(10*time.Second, "replacement completes activation", func() bool {
+		command := exec.CommandContext(a.ctx, a.binary, "drain-complete", "--socket", socket, "--owner", "release-fixture", "--generation", fmt.Sprint(release["generation"]))
+		raw, err := command.CombinedOutput()
+		if err != nil && bytes.Contains(raw, []byte("project has admitted activity")) {
+			return false
+		}
+		require(t, err)
+		var finished map[string]any
+		require(t, json.Unmarshal(raw, &finished))
+		if finished["phase"] != "open" || finished["finished_digest"] != digest {
+			t.Fatal(finished)
+		}
+		return true
+	})
 	a.request("GET", "/api/projects", nil, 200)
 	if time.Since(start) > 15*time.Second {
 		t.Fatal("owner restart exceeded target")
@@ -329,5 +353,70 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 	out, _ := cmd.CombinedOutput()
 	if strings.Contains(string(out), "session-db") {
 		t.Fatal("legacy CLI survived")
+	}
+}
+
+func (a *releaseApp) awaitRetired() {
+	a.t.Helper()
+	command := a.command
+	ended := make(chan error, 1)
+	go func() { ended <- command.Wait() }()
+	select {
+	case err := <-ended:
+		a.command = nil
+		require(a.t, err)
+	case <-time.After(15 * time.Second):
+		_ = command.Process.Kill()
+		<-ended
+		a.command = nil
+		a.t.Fatal("activated owner did not retire")
+	}
+}
+
+func TestReleasedActivationRollback(t *testing.T) {
+	a := newReleasedApp(t)
+	socket := filepath.Join(a.root, "state/control.sock")
+	a.request("POST", "/api/projects", map[string]string{"id": "rollback", "title": "Rollback"}, 201)
+	a.request("POST", "/api/projects/rollback/sessions", map[string]string{"id": "session", "title": "Session"}, 201)
+	base := "/api/projects/rollback/sessions/session"
+	original := a.request("POST", base+"/turns", map[string]any{"request_id": "preserved", "content": "retained accepted intent", "held": true}, 201)
+	drain := a.cli("drain", "--socket", socket, "--owner", "rollback-fixture", "--timeout-seconds", "60")
+	a.cli("drain-ready", "--socket", socket, "--owner", "rollback-fixture", "--generation", fmt.Sprint(drain["generation"]))
+	a.cli("drain-activate", "--socket", socket, "--owner", "rollback-fixture", "--generation", fmt.Sprint(drain["generation"]), "--target", "sha256:"+strings.Repeat("f", 64))
+	a.awaitRetired()
+	// An ordinary startup with the wrong executable must refuse before any new
+	// configuration publication or reconciliation can run.
+	attempt, done := context.WithTimeout(a.ctx, 10*time.Second)
+	unexpected := exec.CommandContext(attempt, a.binary, "serve", "--config", a.config)
+	unexpected.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
+	raw, err := unexpected.CombinedOutput()
+	done()
+	if err == nil || !bytes.Contains(raw, []byte("differs from the release target")) {
+		t.Fatalf("unexpected candidate not fenced: %v %s", err, raw)
+	}
+	a.start("--rollback-candidate")
+	state := a.cli("drain-status", "--socket", socket)
+	if state["phase"] != "activating" {
+		t.Fatal(state)
+	}
+	a.request("POST", base+"/turns", map[string]string{"request_id": "not-yet", "content": "blocked"}, 503)
+	a.await(10*time.Second, "compatible rollback completes", func() bool {
+		command := exec.CommandContext(a.ctx, a.binary, "drain-rollback", "--socket", socket, "--owner", "rollback-fixture", "--generation", fmt.Sprint(drain["generation"]))
+		raw, err := command.CombinedOutput()
+		if err != nil && bytes.Contains(raw, []byte("project has admitted activity")) {
+			return false
+		}
+		require(t, err)
+		var completed map[string]any
+		require(t, json.Unmarshal(raw, &completed))
+		if completed["phase"] != "open" || completed["reason"] != "rolled_back" {
+			t.Fatal(completed)
+		}
+		return true
+	})
+	reply := a.request("GET", base+"/turns", nil, 200)
+	rows := reply["turns"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != original["id"] || rows[0].(map[string]any)["state"] != "held" {
+		t.Fatal("rollback discarded or dispatched accepted intent", reply)
 	}
 }

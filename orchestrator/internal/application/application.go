@@ -2,9 +2,11 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -26,28 +28,31 @@ import (
 )
 
 type Application struct {
-	Config         Config
-	Store          *product.Store
-	Backend        *khora.Backend
-	Lifecycle      *product.Lifecycle
-	Agents         *product.Agents
-	Terminals      *product.Terminals
-	Files          *product.Files
-	Shares         *product.Shares
-	Captures       *product.Captures
-	Auth           *producthttp.Authentication
-	Workers        *product.Workers
-	BrowserAddress string
-	logger         *slog.Logger
-	API            *producthttp.Server
-	ctx            context.Context
-	cancel         context.CancelFunc
-	group          sync.WaitGroup
-	servers        []*http.Server
-	listeners      []net.Listener
-	gateways       []*servicegateway.Gateway
-	publication    sync.Mutex
-	closeOnce      sync.Once
+	Config           Config
+	Store            *product.Store
+	Backend          *khora.Backend
+	Lifecycle        *product.Lifecycle
+	Agents           *product.Agents
+	Terminals        *product.Terminals
+	Files            *product.Files
+	Shares           *product.Shares
+	Captures         *product.Captures
+	Auth             *producthttp.Authentication
+	Workers          *product.Workers
+	BrowserAddress   string
+	logger           *slog.Logger
+	API              *producthttp.Server
+	ctx              context.Context
+	cancel           context.CancelFunc
+	group            sync.WaitGroup
+	servers          []*http.Server
+	listeners        []net.Listener
+	gateways         []*servicegateway.Gateway
+	publication      sync.Mutex
+	closeOnce        sync.Once
+	controlServer    *http.Server
+	executableDigest string
+	retireOnce       sync.Once
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application, result error) {
@@ -64,6 +69,18 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err := cfg.Validate(); err != nil {
 		return app, err
 	}
+	// /proc/self/exe names the running inode even if the deployment path changes.
+	executable, err := os.Open("/proc/self/exe")
+	if err != nil {
+		return app, err
+	}
+	hash := sha256.New()
+	_, err = io.Copy(hash, executable)
+	err = errors.Join(err, executable.Close())
+	if err != nil {
+		return app, err
+	}
+	app.executableDigest = fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	manifestFile, err := os.Open(cfg.Template.Manifest)
 	if err != nil {
 		return app, err
@@ -83,6 +100,13 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		return app, err
 	}
 	app.Store = store
+	releaseState, err := store.ReleaseState(ctx)
+	if err != nil {
+		return app, err
+	}
+	if err = validateReleaseExecutable(releaseState, app.executableDigest, cfg.RollbackCandidate); err != nil {
+		return app, err
+	}
 	engineConfig, err := cfg.Engine.Build(cfg.base)
 	if err != nil {
 		return app, err
@@ -185,7 +209,8 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		return app, err
 	}
 	app.listeners = append(app.listeners, control)
-	app.servers = append(app.servers, app.server(app.controlHandler()))
+	app.controlServer = app.server(app.controlHandler())
+	app.servers = append(app.servers, app.controlServer)
 	if len(cfg.Gateways) > 0 && os.Geteuid() == 0 {
 		return app, errors.New("Project gateways require a non-engine application UID; run the application unprivileged and configure engine --via-uid accordingly")
 	}
@@ -303,6 +328,32 @@ func (a *Application) Close() {
 			_ = a.Store.Close()
 		}
 	})
+}
+
+func (a *Application) retireAfterActivation() {
+	a.retireOnce.Do(func() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Finish the control response before closing the application. Other long
+			// transports are closed by the normal lifecycle after their admission fence.
+			_ = a.controlServer.Shutdown(ctx)
+			a.cancel()
+		}()
+	})
+}
+
+func validateReleaseExecutable(state product.ReleaseState, digest string, rollback bool) error {
+	if state.Phase != "activating" {
+		return nil
+	}
+	if state.ActivationInstance == "" || !content.ValidDigest(state.TargetDigest) {
+		return errors.New("activating release has no valid source or target identity")
+	}
+	if state.TargetDigest != digest && !rollback {
+		return errors.New("replacement executable differs from the release target; use the expected build or explicitly start a rollback candidate")
+	}
+	return nil
 }
 func (a *Application) watchCredentials() {
 	timer := time.NewTicker(2 * time.Second)

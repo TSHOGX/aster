@@ -336,6 +336,12 @@ func (f *Files) transfer(ctx context.Context, stream sandbox.ProcessStream, o Fi
 // Reconcile never reissues a file mutation. It terminates abandoned original
 // helpers and releases activity only with end/placement-loss evidence.
 func (f *Files) Reconcile(ctx context.Context, limit int) error {
+	releaseMaintenance, admissionErr := f.Store.beginRuntimeWork(ctx, runtimeMaintenance)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseMaintenance()
+
 	readerErr := f.workspaceReader().Reconcile(ctx)
 	if limit < 1 || limit > 100 {
 		limit = 32

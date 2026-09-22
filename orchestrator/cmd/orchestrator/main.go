@@ -32,7 +32,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
 		return err
 	}
 	action := args[0]
@@ -45,11 +45,12 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	flags.SetOutput(output)
 	switch action {
-	case "drain", "drain-status", "drain-abort", "drain-ready":
+	case "drain", "drain-status", "drain-abort", "drain-ready", "drain-activate", "drain-complete", "drain-rollback":
 		socket := flags.String("socket", "", "protected application control socket")
 		owner := flags.String("owner", "", "unique coordinator attempt identity")
 		generation := flags.Int64("generation", 0, "generation returned by drain")
 		timeout := flags.Int64("timeout-seconds", 120, "admission drain timeout, at most 3600 seconds")
+		target := flags.String("target", "", "expected replacement executable sha256 digest")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -62,11 +63,18 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		if *owner == "" {
 			return errors.New("drain commands require --owner ID")
 		}
-		if action == "drain-abort" || action == "drain-ready" {
+		if action != "drain" {
 			if *generation < 1 {
 				return fmt.Errorf("%s requires --generation NUMBER", action)
 			}
-			return application.Control(ctx, *socket, "POST", "/release/"+strings.TrimPrefix(action, "drain-"), map[string]any{"owner": *owner, "generation": *generation}, output)
+			body := map[string]any{"owner": *owner, "generation": *generation}
+			if action == "drain-activate" {
+				if *target == "" {
+					return errors.New("drain-activate requires --target sha256:DIGEST")
+				}
+				body["target"] = *target
+			}
+			return application.Control(ctx, *socket, "POST", "/release/"+strings.TrimPrefix(action, "drain-"), body, output)
 		}
 		if *timeout < 1 || *timeout > 3600 {
 			return errors.New("timeout-seconds must be between 1 and 3600")
@@ -74,6 +82,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		return application.Control(ctx, *socket, "POST", "/release/drain", map[string]any{"owner": *owner, "timeout_seconds": *timeout}, output)
 	case "serve":
 		name := flags.String("config", "", "versioned Project application configuration")
+		rollback := flags.Bool("rollback-candidate", false, "permit a compatible rollback build to start behind an activating fence")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -84,6 +93,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		if err != nil {
 			return err
 		}
+		cfg.RollbackCandidate = *rollback
 		logger := slog.New(slog.NewTextHandler(output, nil))
 		app, err := application.New(ctx, cfg, logger)
 		if err != nil {

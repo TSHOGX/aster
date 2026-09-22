@@ -50,6 +50,12 @@ func (s *Store) PendingCaptures(ctx context.Context, limit int) ([]NativeCapture
 	return out, rows.Err()
 }
 func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
+	releaseMaintenance, admissionErr := c.Store.beginRuntimeWork(ctx, runtimeMaintenance)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseMaintenance()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if _, err := c.Store.exec(ctx, `UPDATE native_captures SET attempted_at=? WHERE turn_id=?`, c.Store.timestamp(), capture.TurnID); err != nil {

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"harness-platform/orchestrator/internal/schemastate"
 	"harness-platform/orchestrator/internal/sqlitex"
 )
@@ -33,6 +35,7 @@ type Store struct {
 	retention  retentionCursor
 	writer     writeAdmission
 	runtime    runtimeAdmission
+	instance   string
 }
 
 func Open(ctx context.Context, path string) (result *Store, resultErr error) {
@@ -86,11 +89,15 @@ func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 	if err = sqlitex.VerifyPragmas(ctx, db, 1); err != nil {
 		return fail(err)
 	}
+	instance := uuid.NewString()
+	if _, err = db.ExecContext(ctx, `UPDATE application_release SET current_instance=? WHERE id=1`, instance); err != nil {
+		return fail(err)
+	}
 	reader, err := sqlitex.OpenReader(ctx, path, 4)
 	if err != nil {
 		return fail(err)
 	}
-	return &Store{db: db, reader: reader, now: time.Now, release: release}, nil
+	return &Store{db: db, reader: reader, now: time.Now, release: release, instance: instance}, nil
 }
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() {

@@ -16,6 +16,7 @@ const (
 	runtimeRead        runtimeWork = "workspace_read"
 	runtimeModel       runtimeWork = "model_request"
 	runtimeReaderStart runtimeWork = "reader_start"
+	runtimeMaintenance runtimeWork = "maintenance"
 )
 
 type runtimeAdmission struct {
@@ -48,6 +49,9 @@ func (s *Store) beginRuntimeWork(ctx context.Context, kind runtimeWork) (func(),
 	case runtimeReaderStart:
 		limit = 16
 		allowDraining = true
+	case runtimeMaintenance:
+		limit = 64
+		allowDraining = true
 	default:
 		return nil, ErrInvalid
 	}
@@ -72,7 +76,8 @@ func (s *Store) beginRuntimeWork(ctx context.Context, kind runtimeWork) (func(),
 		}
 		state.Phase = "draining"
 	}
-	if state.Phase != "open" && !(state.Phase == "draining" && allowDraining) {
+	replacementMaintenance := state.Phase == "activating" && s.instance != "" && state.ActivationInstance != "" && s.instance != state.ActivationInstance && (kind == runtimeMaintenance || kind == runtimeSignal)
+	if state.Phase != "open" && !(state.Phase == "draining" && allowDraining) && !replacementMaintenance {
 		return nil, ErrDraining
 	}
 	if s.runtime.counts[kind] >= limit {

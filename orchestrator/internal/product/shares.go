@@ -312,6 +312,12 @@ func (sh *Shares) OpenFile(ctx context.Context, token, path string) (*os.File, S
 // Reconcile reclaims only per-share host storage. Pending publications from a
 // previous owner are failed, never published from partial file selections.
 func (sh *Shares) Reconcile(ctx context.Context, limit int) error {
+	releaseMaintenance, admissionErr := sh.Store.beginRuntimeWork(ctx, runtimeMaintenance)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseMaintenance()
+
 	rows, err := sh.Store.reader.QueryContext(ctx, `SELECT id FROM shares WHERE cleaned=0 AND (state IN ('pending','failed','revoked') OR expires_at<=?) ORDER BY created_at,id LIMIT ?`, sh.Store.timestamp(), pageSize(limit))
 	if err != nil {
 		return err

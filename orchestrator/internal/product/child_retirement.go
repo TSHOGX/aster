@@ -22,6 +22,12 @@ type ChildRetirement struct {
 }
 
 func (c *ChildRetirement) Step(ctx context.Context, child Child) error {
+	releaseMaintenance, admissionErr := c.Store.beginRuntimeWork(ctx, runtimeMaintenance)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseMaintenance()
+
 	if child.Kind != "session" {
 		return c.Store.SettleChild(ctx, child)
 	}

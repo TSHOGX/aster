@@ -26,7 +26,8 @@ active-model deployment continuity.
 | P06 interaction qualification | Partial | Office cycles and constrained presentation checks pass; history and comparative latency matrix remain open |
 | P07 admission fence | Verified locally | Persisted drain ownership/deadline and atomic new-work fencing |
 | P07 readiness | Verified locally | Atomic blocker/lease check and revocation by new evidence or cancellation |
-| P07 activation/gateway | Pending | Handoff, independent gateway and combined release qualification |
+| P07 activation | Verified locally | Digest-bound quiescent handoff and explicit compatible rollback |
+| P07 gateway/bootstrap | Pending | Independent gateway, first-deploy bootstrap and combined release qualification |
 
 ## Diagnostics
 
@@ -772,7 +773,7 @@ new native work. Explicit held prompts and metadata creation remain available.
 The operator drain/status/abort surface uses the existing mode-0600 control
 socket and application writer. Stale owner/generation aborts fail. The persisted
 fence survives reopening; a one-second worker aborts expired draining attempts
-without killing existing work. The readiness transition is qualified below; activation remains unavailable. Durable status counts do not substitute
+without killing existing work. Readiness and quiescent activation are qualified below. Durable status counts do not substitute
 for runtime quiescence, and this implementation does not claim active-stream
 update continuity. See [operations](operations.md#admission-drain).
 
@@ -815,7 +816,8 @@ capacity, and confirm read bodies own their leases. Gateway tests observe two
 concurrent leases and wait for actual handler settlement before requiring zero.
 Runtime status and durable blocker counts are observations, not one atomic
 readiness snapshot. The transition below performs that check under the shared
-fence; gateway process separation and activation remain open. The lease stage requires schema 8 or later.
+fence. Quiescent activation is described below; gateway process separation remains
+open. The lease stage requires schema 8 or later.
 
 ## Revocable release readiness
 
@@ -832,7 +834,7 @@ the recorded outcome.
 checking owner/generation, deadline, live leases and durable blockers. It commits
 ready only when no blocker remains. Expiry aborts the release and reopens admission
 without killing work. Ready survives owner restart, retains the same deadline,
-and can be explicitly aborted. Activating is not exposed yet.
+and can be explicitly aborted. The handoff stage below consumes ready before activation.
 
 Readiness is revocable. Cleanup, new unresolved evidence, or pending publication
 returns ready to draining in the same transaction that records that work. This
@@ -849,4 +851,37 @@ consumer cancels. Query-plan checks require the unsettled indexes. The executabl
 fixture first lets normal idle work settle, marks ready, restarts the real owner,
 confirms the same ready generation, aborts it, then completes new native turns.
 This qualifies a quiescent checkpoint and restart; it does not qualify active
-model-stream handoff, deployment bootstrap or an activation/shutdown procedure.
+model-stream handoff or deployment bootstrap. Quiescent activation follows below.
+
+## Quiescent activation handoff
+
+Schema 10 adds the current Store instance, activating source instance, target and
+finished executable digests, plus retained coordinator identities. Activation
+requires a current ready generation and another atomic work check. The protected
+control command persists activating, finishes its HTTP response, and retires the
+source application. Activating never expires into open admission. Completion and
+rollback require a distinct replacement instance and empty work checks; the
+source cannot reopen its own gate. Completed retries must match the recorded
+finished digest, and stale coordinator IDs cannot create another attempt.
+
+The replacement hashes its running executable inode and refuses a mismatched
+activation target before publication/reconciliation. Explicit rollback-candidate
+startup may use a different compatible executable but stays fenced until rollback
+is acknowledged. New content publication is limited to the replacement while
+activating; resume for pending original-journal recovery has a narrow exception.
+All other new execution remains closed. A 64-slot maintenance category covers
+lifecycle effects, recovery, capture export, share/file cleanup and Agent stopping,
+so the source cannot begin those effects after activation while the replacement
+can settle outstanding evidence. The procedure preserves the original database;
+there is no restore-over-writes rollback path.
+
+Unit/race tests cover source-instance refusal, stale generation, digest mismatch,
+retained accepted intent, late blockers, replacement maintenance/publication,
+explicit rollback, coordinator reuse and complete control-response delivery.
+The executable fixture activates and observes the source exit itself, starts a
+replacement, completes handoff, and executes new native turns. A separate fixture
+refuses an unexpected startup, permits an explicit rollback candidate, and proves
+the previously accepted held turn survives unchanged. These tests qualify the
+handoff mechanism on compatible schema-10 code; they do not certify an older
+schema-incompatible executable as a rollback build or real-provider active-stream
+continuity. Gateway separation and first-deployment bootstrap remain open.

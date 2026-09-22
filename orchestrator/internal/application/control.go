@@ -105,6 +105,44 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		writeControl(w, state)
 	})
+	mux.HandleFunc("POST /release/activate", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Owner      string `json:"owner"`
+			Generation int64  `json:"generation"`
+			Target     string `json:"target"`
+		}
+		if !decodeControl(w, r, &body) {
+			return
+		}
+		if a.controlServer == nil || a.cancel == nil {
+			http.Error(w, "application retirement is unavailable", 503)
+			return
+		}
+		state, err := a.Store.ActivateRelease(r.Context(), body.Owner, body.Generation, body.Target)
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, state)
+		a.retireAfterActivation()
+	})
+	for _, action := range []string{"complete", "rollback"} {
+		mux.HandleFunc("POST /release/"+action, func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Owner      string `json:"owner"`
+				Generation int64  `json:"generation"`
+			}
+			if !decodeControl(w, r, &body) {
+				return
+			}
+			state, err := a.Store.FinishRelease(r.Context(), body.Owner, body.Generation, a.executableDigest, action == "rollback")
+			if err != nil {
+				http.Error(w, err.Error(), 409)
+				return
+			}
+			writeControl(w, state)
+		})
+	}
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		report, err := a.Store.OperatorDiagnostics(r.Context())
 		if err != nil {
@@ -112,6 +150,7 @@ func (a *Application) controlHandler() http.Handler {
 			return
 		}
 		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
+		out["application_digest"] = a.executableDigest
 		release, err := a.Store.ReleaseState(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), 500)

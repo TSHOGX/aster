@@ -52,6 +52,12 @@ func (r *AgentRecovery) Step(ctx context.Context, limit int) error {
 	return errors.Join(failures...)
 }
 func (r *AgentRecovery) recover(ctx context.Context, id string) error {
+	releaseMaintenance, admissionErr := r.Store.beginRuntimeWork(ctx, runtimeMaintenance)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseMaintenance()
+
 	var i Incarnation
 	err := r.Store.write(ctx, func(tx *sql.Tx) error {
 		var err error

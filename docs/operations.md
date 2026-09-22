@@ -133,11 +133,11 @@ to draining before it issues. New cleanup or unresolved evidence also revokes
 ready in the same transaction. Ready retains the original deadline and supports
 abort; a stale owner/generation cannot advance it.
 
-Ready does **not** authorize shutdown by itself. The activation/handoff transition,
-independent gateway lifetime and first-deploy bootstrap remain unqualified.
-Gateways currently share the owner's lifetime, so restarting it can terminate an
-active upstream stream. Restart recovery uses the same published content
-configuration; introducing a new revision while the gate is closed is rejected.
+Ready does **not** authorize a separate unchecked shutdown. The activation command
+below consumes a fresh readiness check and retires the owner itself. Independent
+gateway lifetime and first-deploy bootstrap remain unqualified; this workflow is
+for quiescent replacement, not a claim that active model streams survive owner
+replacement. Gateways still share the owner's lifetime.
 
 `drain-status.runtime_work` and `diagnostics.runtime_work` report fixed-category
 in-flight operation counts without credentials or content. Title-generation calls
@@ -147,3 +147,51 @@ Existing model turns may make further authorized requests while settling. A
 captured file keeps its slot until its response body closes. Cancellation alone
 does not decrement an operation whose backend has not returned. These counts are
 process-local observations and must not be treated as update readiness.
+
+
+## Activation handoff
+
+Prepare and verify a replacement executable and configuration before closing
+admission. Use the same state directory/database and engine bindings. Compute the
+replacement executable's SHA-256, prefixed with `sha256:`; this is distinct from
+the guest runtime manifest digest. After `drain-ready` succeeds:
+
+```sh
+orchestrator drain-activate --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION --target sha256:EXECUTABLE_DIGEST
+```
+
+Activation rechecks generation, deadline, durable blockers and runtime work under
+the fence. A busy or revoked checkpoint must be settled and checked again. Once
+activation commits, it does not timeout-open. The retiring owner finishes the
+control response, closes its listeners/workers and exits. Wait for that process
+to exit before starting the verified replacement under the service supervisor.
+The replacement starts behind the closed gate; its running Linux executable
+inode (`/proc/self/exe`) must match the target before maintenance or publication
+starts. Complete the handoff through the replacement's control socket:
+
+```sh
+orchestrator drain-complete --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+```
+
+Completion requires a different Store instance, matching executable digest, and
+settled durable/runtime work. It then reopens admission and records the actual
+finished digest. New configuration publication and original-journal recovery may
+run on the replacement while ordinary work remains fenced. Maintenance cannot
+start on the retiring instance. Late evidence remains durable and can block
+completion. Coordinator identities cannot be reused, even after later attempts.
+
+If the selected build fails startup, use a rollback build compatible with the
+current schema and saved runtime protocols. Start it explicitly as a candidate,
+using the original state directory, then acknowledge rollback:
+
+```sh
+orchestrator serve --config /etc/batterygpt/application.json --rollback-candidate
+orchestrator drain-rollback --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+```
+
+The flag permits an executable different from the planned target to start behind
+the closed fence; it does not reopen admission. Rollback still requires a distinct
+owner instance and settled work. It preserves accepted writes and records the
+running digest; it never replaces the database with a backup. A schema-incompatible
+build is refused before it can write. `drain-abort` applies before activation;
+once activating, use the replacement completion or rollback path.

@@ -8,7 +8,8 @@ version 5 adds [reusable reader bindings](../orchestrator/internal/product/reade
 version 6 adds [retention accounting and cleanup](../orchestrator/internal/product/retention_schema.sql);
 version 7 adds [turn-scoped final-message lookup](../orchestrator/internal/product/navigation_schema.sql);
 version 8 adds [the durable release admission fence](../orchestrator/internal/product/release_schema.sql);
-version 9 adds [indexed readiness and transactional revocation](../orchestrator/internal/product/readiness_schema.sql).
+version 9 adds [indexed readiness and transactional revocation](../orchestrator/internal/product/readiness_schema.sql);
+version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second

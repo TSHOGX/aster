@@ -263,6 +263,12 @@ func (l *Lifecycle) requestPause(ctx context.Context, scope Scope, revision int6
 // Reconcile performs at most one remote phase. Fair workers page pending
 // Projects; one failed volume/export cannot monopolize the whole loop.
 func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
+	releaseMaintenance, admissionErr := l.Store.beginRuntimeWork(ctx, runtimeMaintenance)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseMaintenance()
+
 	lock := l.lane(project)
 	lock.Lock()
 	defer lock.Unlock()

@@ -54,7 +54,7 @@ run() {
  sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" \
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
-if [[ $suite == release || $suite == all ]]; then run application '^TestReleasedExecutableOnKhora$' release 4m;fi
+if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationRollback)$' release 4m;fi
 if [[ $suite == mixed || $suite == all ]]; then run application '^TestReleasedMixedWorkload$' mixed 9m;fi
 if [[ $suite == browser || $suite == all ]]; then run application '^TestReleasedBrowser$' browser 6m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi
