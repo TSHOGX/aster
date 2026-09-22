@@ -42,7 +42,9 @@ export function PublicShare({ token }: { token: string }) {
   return (
     <main className="public-share">
       <header>
-        <small>{brandName} · {tr("Shared snapshot")}</small>
+        <small>
+          {brandName} · {tr("Shared snapshot")}
+        </small>
         <h1>{share?.title || tr("Shared conversation")}</h1>
         <p>{tr("A frozen conversation and its selected files.")}</p>
       </header>

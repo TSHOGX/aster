@@ -9,6 +9,7 @@ import { Check, Copy } from "lucide-react";
 
 import { HIGHLIGHT_LANGUAGES } from "@/lib/highlight-languages";
 
+import { workspaceLinkPlugin } from "@/lib/workspace-links";
 import { cn } from "@/lib/cn";
 import { useT } from "@/lib/i18n";
 import { isNumericText } from "@/lib/table-cells";
@@ -50,7 +51,11 @@ const LANGUAGE_CLASS = /^language-(.+)$/;
 function codeLanguage(pre: HastNode | undefined): string | null {
   const code = (pre?.children ?? []).find((child) => child.tagName === "code");
   const classes = code?.properties?.className;
-  const list = Array.isArray(classes) ? classes : typeof classes === "string" ? [classes] : [];
+  const list = Array.isArray(classes)
+    ? classes
+    : typeof classes === "string"
+      ? [classes]
+      : [];
   for (const entry of list) {
     if (typeof entry !== "string") continue;
     const match = LANGUAGE_CLASS.exec(entry);
@@ -96,7 +101,11 @@ function CodeBlock({
           aria-label={copied ? t("code.copied") : t("code.copyCode")}
           title={copied ? t("code.copied") : t("code.copyCode")}
         >
-          {copied ? <Check className="h-3 w-3" aria-hidden /> : <Copy className="h-3 w-3" aria-hidden />}
+          {copied ? (
+            <Check className="h-3 w-3" aria-hidden />
+          ) : (
+            <Copy className="h-3 w-3" aria-hidden />
+          )}
           {copied ? t("code.copied") : t("code.copy")}
         </button>
       </div>
@@ -115,23 +124,33 @@ const COMPONENTS: Components = {
     </div>
   ),
   td: ({ node, children, ...rest }) => (
-    <td data-numeric={isNumericCell(node as HastNode) ? "true" : undefined} {...rest}>
+    <td
+      data-numeric={isNumericCell(node as HastNode) ? "true" : undefined}
+      {...rest}
+    >
       {children}
     </td>
   ),
   // Header cells mirror their column's alignment, so a numeric column's label
   // sits over the digits instead of drifting to the far side.
   th: ({ node, children, ...rest }) => (
-    <th data-numeric={isNumericCell(node as HastNode) ? "true" : undefined} {...rest}>
+    <th
+      data-numeric={isNumericCell(node as HastNode) ? "true" : undefined}
+      {...rest}
+    >
       {children}
     </th>
-  )
+  ),
 };
 
 const REHYPE_PLUGINS: PluggableList = [
   () => (tree: HastNode) => {
     const walk = (node: HastNode) => {
-      if (node.tagName === "code" && new TextEncoder().encode(nodeText(node)).length > 8192) node.properties = { ...node.properties, className: ["no-highlight"] };
+      if (
+        node.tagName === "code" &&
+        new TextEncoder().encode(nodeText(node)).length > 8192
+      )
+        node.properties = { ...node.properties, className: ["no-highlight"] };
       node.children?.forEach(walk);
     };
     walk(tree);
@@ -142,19 +161,33 @@ const REHYPE_PLUGINS: PluggableList = [
       detect: false,
       // Includes lowlight's `common` set — this option replaces the plugin's
       // registry rather than extending it. See lib/highlight-languages.ts.
-      languages: HIGHLIGHT_LANGUAGES
-    }
-  ]
+      languages: HIGHLIGHT_LANGUAGES,
+    },
+  ],
 ];
 
 // Parsing markdown + syntax highlighting is expensive, so we memoize: with a
 // shallow prop compare a committed bubble never re-parses, and during a stream
 // this only re-renders when `content` actually changes.
-function MarkdownViewImpl({ content, className, highlight = true }: { content: string; className?: string; highlight?: boolean }) {
+function MarkdownViewImpl({
+  content,
+  className,
+  highlight = true,
+  workspaceFiles,
+}: {
+  content: string;
+  className?: string;
+  highlight?: boolean;
+  workspaceFiles?: readonly string[];
+}) {
   return (
     <div className={cn("markdown-body", className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={
+          workspaceFiles
+            ? [remarkGfm, [workspaceLinkPlugin, { known: workspaceFiles }]]
+            : [remarkGfm]
+        }
         rehypePlugins={highlight ? REHYPE_PLUGINS : []}
         components={COMPONENTS}
       >

@@ -30,7 +30,7 @@ change.
 The released-executable gate exercises four overlapping Pi Sessions on two
 Projects, content publication, binding observation, actual owner SIGKILL/restart,
 continued turns, scope rejection, idle pause and cleanup. The browser journey
-covers concurrent conversation views, native Stop, CodeMirror file editing,
+covers single-conversation navigation with concurrent background Sessions, native Stop, CodeMirror file editing,
 retained PTY detach/reload/input handoff, output gaps and fairness under output.
 These use the final guest binaries, not injected application replacements.
 
@@ -45,3 +45,9 @@ active-active deployment. The supported deployment has one authoritative owner.
 A sanitized [mixed-workload result](../dev/measurements/project-runtime.json)
 records the qualified ARM64 workload and its sampling limits. These are measured
 results for the declared workload, not hardware-independent service guarantees.
+
+The frontend UI suite (`npm run test:ui`) separately checks per-project drafts,
+first-send lost-response identity, paged navigation, dirty-file guards, layout
+switches and fullscreen focus restoration. Its locale/theme/viewport captures
+are UI evidence, not runtime integration evidence. The browser qualification
+continues to exercise the real Go edge and native PTYs after selector changes.

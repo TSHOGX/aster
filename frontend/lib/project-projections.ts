@@ -4,7 +4,16 @@ export type SessionView = {
   cursor: number;
   partial: string;
   partialTurn: string;
-  tools: { id: string; name: string; state: string; detail: string }[];
+  tools: {
+    id: string;
+    turnId: string;
+    cursor: number;
+    name: string;
+    state: string;
+    detail: string;
+    arguments: string;
+    result: string;
+  }[];
 };
 export const emptySessionView = (): SessionView => ({
   snapshot: null,
@@ -71,8 +80,7 @@ export function acceptRecords(
         partialTurn = record.turn_id;
       }
       const delta = event.assistantMessageEvent as
-        | { type?: string; delta?: string }
-        | undefined;
+        { type?: string; delta?: string } | undefined;
       if (delta?.type === "text_delta" && typeof delta.delta === "string")
         partial = (partial + delta.delta).slice(-64 * 1024);
     }
@@ -92,6 +100,16 @@ export function acceptRecords(
       const prior = tools.find((tool) => tool.id === id);
       const tool = {
         id,
+        turnId: record.turn_id,
+        cursor: prior?.cursor ?? record.cursor,
+        arguments:
+          event.type === "tool_execution_start"
+            ? JSON.stringify(event.args || {}).slice(0, 8192)
+            : prior?.arguments || "",
+        result:
+          event.type === "tool_execution_end"
+            ? JSON.stringify(event.result || {}).slice(0, 8192)
+            : prior?.result || "",
         name: String(event.toolName || prior?.name || "Tool"),
         state:
           event.type === "tool_execution_start"
@@ -101,7 +119,9 @@ export function acceptRecords(
               : "completed",
         detail: JSON.stringify(event.args || event.result || {}).slice(0, 8192),
       };
-      tools = [...tools.filter((entry) => entry.id !== id), tool].slice(-50);
+      tools = [...tools.filter((entry) => entry.id !== id), tool]
+        .sort((a, b) => a.cursor - b.cursor)
+        .slice(-50);
     }
   }
   return { ...current, cursor, partial, partialTurn, tools };

@@ -16,8 +16,12 @@ type AgentRecoveryStatus struct {
 	Error    string `json:"error,omitempty"`
 }
 type SessionSnapshot struct {
-	Recovery []AgentRecoveryStatus `json:"recovery"`
-	Records  []AgentRecord         `json:"records,omitempty"`
+	TurnSummaries     []TurnSummary         `json:"turn_summaries"`
+	Timeline          []TimelineItem        `json:"timeline"`
+	HasLater          bool                  `json:"has_later"`
+	TimelineTruncated bool                  `json:"timeline_truncated"`
+	Recovery          []AgentRecoveryStatus `json:"recovery"`
+	Records           []AgentRecord         `json:"records,omitempty"`
 
 	Session      Session   `json:"session"`
 	Messages     []Message `json:"messages"`
@@ -29,7 +33,14 @@ type SessionSnapshot struct {
 
 // Snapshot is one SQLite read transaction. Its own Session revision fences slow
 // browser responses; Project/Terminal state is deliberately not copied into it.
-func (s *Store) SessionSnapshot(ctx context.Context, scope Scope, session string, before int64, withRecords bool) (SessionSnapshot, error) {
+func (s *Store) SessionSnapshot(ctx context.Context, scope Scope, session string, before int64, withRecords bool, target ...string) (SessionSnapshot, error) {
+	anchor := ""
+	if len(target) > 0 {
+		anchor = target[0]
+	}
+	return s.SessionSnapshotPage(ctx, scope, session, before, 0, withRecords, anchor)
+}
+func (s *Store) SessionSnapshotPage(ctx context.Context, scope Scope, session string, before, after int64, withRecords bool, anchor string) (SessionSnapshot, error) {
 	var out SessionSnapshot
 	tx, err := s.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -40,9 +51,31 @@ func (s *Store) SessionSnapshot(ctx context.Context, scope Scope, session string
 	if err != nil {
 		return out, err
 	}
+	var selected *Turn
+	targetID := ""
+	var anchorSequence int64
+	if anchor != "" {
+		t, e := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND id=?`, session, anchor))
+		if e != nil {
+			return out, e
+		}
+		selected = &t
+		targetID = t.ID
+		if e = tx.QueryRowContext(ctx, `SELECT coalesce(min(sequence),0) FROM messages WHERE session_id=? AND turn_id=?`, session, t.ID).Scan(&anchorSequence); e != nil {
+			return out, e
+		}
+		if anchorSequence > 0 {
+			before = anchorSequence + 51
+			after = 0
+		}
+	}
 	out.Messages = []Message{}
 	out.Turns = []Turn{}
-	rows, err := tx.QueryContext(ctx, `SELECT id,project_id,session_id,turn_id,role,content,NULL,sequence,created_at FROM messages WHERE session_id=? AND (?=0 OR sequence<?) ORDER BY sequence DESC LIMIT 101`, session, before, before)
+	order := "DESC"
+	if after > 0 {
+		order = "ASC"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,project_id,session_id,turn_id,role,content,NULL,sequence,created_at FROM messages WHERE session_id=? AND (?=0 OR sequence<?) AND (?=0 OR sequence>?) ORDER BY sequence `+order+` LIMIT 101`, session, before, before, after, after)
 	if err != nil {
 		return out, err
 	}
@@ -70,7 +103,29 @@ func (s *Store) SessionSnapshot(ctx context.Context, scope Scope, session string
 		out.HasEarlier = true
 		out.Messages = out.Messages[:100]
 	}
-	slices.Reverse(out.Messages)
+	if after == 0 {
+		slices.Reverse(out.Messages)
+	}
+	if selected != nil {
+		found := false
+		for _, m := range out.Messages {
+			if m.Role == "user" && m.TurnID == selected.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out.Messages = append([]Message{{ID: selected.ID + "/user", ProjectID: scope.ProjectID, SessionID: session, TurnID: selected.ID, Role: "user", Content: selected.Content, Sequence: anchorSequence, CreatedAt: selected.CreatedAt}}, out.Messages...)
+		}
+	}
+
+	slices.SortFunc(out.Messages, func(a, b Message) int { return cmp.Compare(a.Sequence, b.Sequence) })
+	if len(out.Messages) > 0 {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=? AND sequence<?),EXISTS(SELECT 1 FROM messages WHERE session_id=? AND sequence>?)`, session, out.Messages[0].Sequence, session, out.Messages[len(out.Messages)-1].Sequence).Scan(&out.HasEarlier, &out.HasLater); err != nil {
+			return out, err
+		}
+	}
+
 	rows, err = tx.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? ORDER BY CASE WHEN state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0) THEN 0 WHEN state IN ('queued','held') THEN 1 ELSE 2 END,CASE WHEN state IN ('queued','held') THEN sequence ELSE 0 END,sequence DESC LIMIT 101`, session)
 	if err != nil {
 		return out, err
@@ -97,6 +152,18 @@ func (s *Store) SessionSnapshot(ctx context.Context, scope Scope, session string
 	if len(out.Turns) > 100 {
 		out.HasMoreTurns = true
 		out.Turns = out.Turns[:100]
+	}
+	if selected != nil {
+		found := false
+		for _, t := range out.Turns {
+			if t.ID == selected.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out.Turns = append(out.Turns, *selected)
+		}
 	}
 	slices.SortFunc(out.Turns, func(a, b Turn) int { return cmp.Compare(a.Sequence, b.Sequence) })
 	err = tx.QueryRowContext(ctx, `SELECT coalesce(max(r.rowid),0) FROM agent_records r JOIN agent_incarnations i ON i.id=r.incarnation_id WHERE i.session_id=?`, session).Scan(&out.RecordCursor)
@@ -126,6 +193,14 @@ func (s *Store) SessionSnapshot(ctx context.Context, scope Scope, session string
 		if err != nil {
 			return out, err
 		}
+	}
+	out.Timeline, out.TimelineTruncated, err = sessionTimeline(ctx, tx, session, out.Messages, out.Turns, before == 0 && after == 0 && targetID == "")
+	if err != nil {
+		return out, err
+	}
+	out.TurnSummaries, err = turnSummaries(ctx, tx, session, out.Messages, out.Turns)
+	if err != nil {
+		return out, err
 	}
 	return out, tx.Commit()
 }

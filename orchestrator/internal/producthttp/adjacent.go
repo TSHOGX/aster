@@ -311,3 +311,13 @@ func (s *Server) publicFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+func (s *Server) scheduleOverview(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, err := s.Store.ScheduleOverviewPage(r.Context(), actorFrom(r.Context()), q.Get("project_id"), q.Get("after"), intParam(q, "limit", 50))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}

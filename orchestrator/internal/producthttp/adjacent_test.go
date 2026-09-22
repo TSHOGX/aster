@@ -43,8 +43,16 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 	if status != 201 {
 		t.Fatal(status, string(body))
 	}
+	status, body = do("GET", "/api/schedules?limit=1", "")
+	if status != 200 || !strings.Contains(string(body), `"project_title":"Project"`) {
+		t.Fatal(status, string(body))
+	}
 	status, body = do("POST", "/api/projects/project/schedules/scheduled/run", `{"request_id":"one"}`)
 	if status != 201 || !strings.Contains(string(body), `"project_id":"project"`) {
+		t.Fatal(status, string(body))
+	}
+	status, body = do("GET", "/api/projects/project/sessions/session/turn-index", "")
+	if status != 200 || !strings.Contains(string(body), `"turns":[]`) {
 		t.Fatal(status, string(body))
 	}
 	status, body = do("GET", "/api/projects/project/schedules/scheduled/runs", "")
@@ -56,6 +64,16 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 		t.Fatal(status, string(body))
 	}
 	actor.Store("bob")
+	status, _ = do("GET", "/api/projects/project/sessions/session/turn-index", "")
+	if status != 404 {
+		t.Fatal("reader accessed owner turn index", status)
+	}
+
+	status, body = do("GET", "/api/schedules?project_id=project", "")
+	if status != 200 || !strings.Contains(string(body), `"schedules":[]`) {
+		t.Fatal("reader got schedule overview", status, string(body))
+	}
+
 	status, body = do("GET", "/api/conversations", "")
 	if status != 200 || !strings.Contains(string(body), "Conversation") {
 		t.Fatal(status, string(body))

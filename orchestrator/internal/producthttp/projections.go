@@ -14,7 +14,11 @@ func (s *Server) resumeProject(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) sessionSnapshot(w http.ResponseWriter, r *http.Request) {
 	before := int64Param(r.URL.Query(), "before")
+	after := int64Param(r.URL.Query(), "after")
+	targetTurn := r.URL.Query().Get("turn")
 	if message := r.URL.Query().Get("message"); message != "" {
+		targetTurn = ""
+		after = 0
 		sequence, err := s.Store.MessageSequence(r.Context(), s.scope(r), r.PathValue("session"), message)
 		if err != nil {
 			fail(w, err)
@@ -22,7 +26,7 @@ func (s *Server) sessionSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		before = sequence + 51
 	}
-	snapshot, err := s.Store.SessionSnapshot(r.Context(), s.scope(r), r.PathValue("session"), before, r.URL.Query().Get("records") == "1")
+	snapshot, err := s.Store.SessionSnapshotPage(r.Context(), s.scope(r), r.PathValue("session"), before, after, r.URL.Query().Get("records") == "1", targetTurn)
 	if err != nil {
 		fail(w, err)
 		return
@@ -87,4 +91,14 @@ func (s *Server) queuedControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "updated"})
+}
+
+func (s *Server) turnIndex(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, err := s.Store.TurnIndex(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "before"), intParam(q, "limit", 100))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }

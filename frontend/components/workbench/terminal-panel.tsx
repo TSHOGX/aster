@@ -1,4 +1,5 @@
 "use client";
+import { Menu } from "@/components/project/ui";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
@@ -41,6 +42,10 @@ export function TerminalPanel({
   useEffect(() => {
     const element = host.current;
     if (!element) return;
+    let detached = false;
+    const stage = document.createElement("div");
+    stage.style.height = "100%";
+    element.appendChild(stage);
     const term = new Terminal({
       convertEol: false,
       cursorBlink: true,
@@ -51,24 +56,45 @@ export function TerminalPanel({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(element);
+    term.open(stage);
+    const applyTheme = () => {
+      const css = getComputedStyle(document.documentElement);
+      term.options.theme = {
+        background: css.getPropertyValue("--surface").trim(),
+        foreground: css.getPropertyValue("--foreground").trim(),
+        cursor: css.getPropertyValue("--foreground").trim(),
+        selectionBackground: css.getPropertyValue("--selection-bg").trim(),
+      };
+    };
+    applyTheme();
+    const themeObserver = new MutationObserver(applyTheme);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
     fit.fit();
     const connection = attachTerminal(projectId, terminalId, wantInput, {
-      onData: (bytes) => term.write(bytes),
+      onData: (bytes) => {
+        if (!detached) term.write(bytes);
+      },
       onGap: (reason) => {
+        if (detached) return;
         // Missing output cannot be rendered. Reset rather than draw a screen that
         // looks plausible but is wrong, and say so.
         term.reset();
         setNotice(`Output is missing (${reason}). The screen was reset.`);
       },
       onStatus: ({ input }) => {
+        if (detached) return;
         setAttachment(input ? "live" : "readonly");
       },
       onExit: (code) => {
+        if (detached) return;
         setExitCode(code);
         setAttachment("ended");
       },
       onDetach: (reason) => {
+        if (detached) return;
         setAttachment("detached");
         setNotice(reason);
       },
@@ -78,6 +104,8 @@ export function TerminalPanel({
     // paste, control characters and escape sequences pass through unchanged.
     const input = term.onData((data) => connection.send(data));
     const resize = () => {
+      if (detached || element.clientWidth === 0 || element.clientHeight === 0)
+        return;
       fit.fit();
       connection.resize(term.rows, term.cols);
     };
@@ -85,20 +113,25 @@ export function TerminalPanel({
     observer.observe(element);
     connection.resize(term.rows, term.cols);
     return () => {
+      detached = true;
       observer.disconnect();
+      themeObserver.disconnect();
       input.dispose();
       // Closing the socket detaches this view. It never stops the PTY.
       connection.close();
       socket.current = null;
-      term.dispose();
+      stage.remove();
+      // xterm 5 queues viewport initialization/reset outside its disposable store.
+      // Drain those callbacks before disposing, including StrictMode remounts.
+      requestAnimationFrame(() => setTimeout(() => term.dispose(), 0));
     };
   }, [projectId, terminalId, wantInput, reconnect]);
   const claimInput = useCallback(() => socket.current?.claimInput(), []);
   const interrupt = useCallback(() => socket.current?.interrupt(), []);
   const eof = useCallback(() => socket.current?.eof(), []);
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2">
+    <section className="terminal-panel">
+      <header className="terminal-status">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-xs font-medium">{title}</span>
           <span className="text-2xs text-[var(--color-foreground-muted)]">
@@ -124,26 +157,15 @@ export function TerminalPanel({
               {tr("Take input")}
             </button>
           ) : null}
-          {attachment === "live" ? (
-            <>
-              <button
-                type="button"
-                onClick={interrupt}
-                title={tr("Send an interrupt to the foreground process")}
-                className="rounded-md border border-[var(--color-border)] px-2 py-1 text-2xs hover:bg-[var(--color-surface-muted)]"
-              >
-                Ctrl-C
-              </button>
-              <button
-                type="button"
-                onClick={eof}
-                title={tr("Close the terminal's input")}
-                className="rounded-md border border-[var(--color-border)] px-2 py-1 text-2xs hover:bg-[var(--color-surface-muted)]"
-              >
-                Ctrl-D
-              </button>
-            </>
-          ) : null}
+          {attachment === "live" && (
+            <Menu
+              label={tr("Terminal input")}
+              items={[
+                { label: "Ctrl-C", action: interrupt },
+                { label: "Ctrl-D", action: eof },
+              ]}
+            />
+          )}
           {onClose ? (
             <button
               type="button"

@@ -4,8 +4,8 @@ export const THEME_STORAGE_KEY = "project-theme";
 
 /** Page background per theme; mirrors --bg in globals.css. Used for mobile chrome. */
 const THEME_COLOR: Record<Theme, string> = {
-  light: "#f6f8fb",
-  dark: "#0f1419"
+  light: "#f7f7f8",
+  dark: "#191a1c"
 };
 
 /** Persist a user-selected theme and reflect it onto <html> so the CSS variables switch. */

@@ -9,6 +9,7 @@ Resource paths below use stored Project and child identities.
 | --- | --- |
 | `/api/auth/login`, `/logout`, `/me` | Sign in, sign out and inspect current identity |
 | `/api/projects` | List and create Projects |
+| `/api/schedules` | Owner-scoped, paginated schedule overview across Projects |
 | `/api/projects/{project}` | Inspect, rename and request deletion |
 | `…/resume`, `…/pause`, `…/restart`, `…/blockers` | Project lifecycle and admission state |
 | `…/sessions` and `…/sessions/{session}` | List/create/inspect/rename/retire Agent Sessions |
@@ -64,3 +65,42 @@ Missing and foreign resources return `404`; absent login returns `401`; Origin
 violations return `403`; stale/conflicting intent returns `409`. Capacity and
 pending outcomes remain distinct from successful completion. Browser access does
 not expose engine handles or operator control routes.
+
+`GET /api/schedules?project_id=OPTIONAL&after=ID&limit=50` returns
+`{schedules: [...], next?: ID}`. Entries include existing schedule fields plus
+`project_title`. Ownership, project deletion state and schedule deletion are
+filtered before stable ID pagination; conversation reader grants do not grant
+schedule access. Continue with `next` until absent. Task mutations and run history
+use the existing Project-scoped routes.
+
+Owner Session snapshots include `timeline` and `timeline_truncated`. Timeline items carry a stable `id`, native `cursor`, `turn_id`, `kind` and bounded display fields. They are derived from the existing journal inside the authorized snapshot transaction; no database migration or new sharing permission is introduced.
+
+Tool-call content in native assistant messages is projected immediately as a
+`tool` row with `state: "pending"`, before execution starts. Execution start,
+partial updates, and end events merge into the same turn-scoped call ID, yielding
+`running`, `completed`, or `failed`. Rows retain the original call order even
+when parallel executions start or finish in a different order. Text-only tool
+results are extracted before the display limit is applied, preserving line
+breaks in long output; other results retain their bounded JSON representation.
+
+`turn_summaries` in owner snapshots supplies `id`, `state`, `created_at`, optional
+`finished_at`, and `final_message_id` only for completed turns. It includes turns
+referenced by the visible history page even when they are outside the live
+control window. These are projections of existing turns/messages, not new
+lifecycle authority or a database migration.
+
+`GET …/sessions/{session}/turn-index?before=SEQUENCE&limit=100` supplies a bounded
+owner-only navigation index. `turns` are chronological within each page, initially
+the newest 100; `next_before` loads the preceding page. Each entry includes turn
+ID/sequence/state/time, up to 600 prompt characters, and up to 1200 characters of
+the last assistant message only after successful turn completion. Shared reader
+grants do not authorize this endpoint. `snapshot?turn=ID` validates the turn's
+session membership and loads surrounding messages anchored at its user message
+(including adjacent turns), with the target prompt retained;
+`message` targeting takes precedence when both are supplied. Turn summaries also
+include `sequence` for stable numbering of off-page navigation targets.
+
+Owner snapshots accept `before` for preceding messages or `after` for following
+messages, and return `has_earlier` / `has_later` for the two page boundaries.
+The client merges only adjacent pages in its current reading window; turn IDs
+identify scroll destinations rather than conversation filters.

@@ -1,0 +1,293 @@
+"use client";
+import { useEffect, useState } from "react";
+import { Check, ChevronRight, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
+import { MarkdownView } from "@/components/workbench/markdown-view";
+import { useT } from "@/lib/i18n";
+import {
+  recalled,
+  remember,
+  type TimelineItem,
+  type Message,
+} from "@/lib/project-api";
+import {
+  elapsedLabel,
+  finalItems,
+  runningTurn,
+  type ConversationTurn,
+} from "@/lib/conversation-turns";
+import { groupTimeline } from "@/lib/timeline-activity";
+import { ActivityGroup } from "./activity-group";
+import { IconButton } from "./ui";
+
+export function TurnClock({
+  start,
+  end,
+  running,
+}: {
+  start?: string;
+  end?: string;
+  running: boolean;
+}) {
+  const tr = useT();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
+  return (
+    <span>
+      {tr("Worked for {duration}", { duration: elapsedLabel(start, end, now) })}
+    </span>
+  );
+}
+function Transcript({
+  items,
+  files,
+  activeTurns,
+  messages,
+}: {
+  items: TimelineItem[];
+  files: readonly string[];
+  activeTurns: ReadonlySet<string>;
+  messages: Message[];
+}) {
+  const tr = useT();
+  return (
+    <>
+      {groupTimeline(items, activeTurns).map((segment) => {
+        if (segment.kind === "activity")
+          return (
+            <ActivityGroup
+              key={segment.id}
+              segment={segment}
+              workspaceFiles={files}
+            />
+          );
+        const item = segment.item;
+        const full = messages.find((m) => m.id === item.message_id);
+        return (
+          <article
+            key={item.id}
+            className={`chat-message ${item.kind} ${item.state === "streaming" ? "streaming" : ""}`}
+            data-message-id={item.message_id}
+            data-timeline-id={item.id}
+          >
+            <MarkdownView
+              content={(item.content || "").slice(0, 64000)}
+              workspaceFiles={files}
+              highlight={item.state !== "streaming"}
+            />
+            {(full?.content.length || 0) > 64000 && (
+              <button
+                onClick={() => {
+                  const url = URL.createObjectURL(
+                    new Blob([full!.content], {
+                      type: "text/plain;charset=utf-8",
+                    }),
+                  );
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `message-${full!.sequence}.txt`;
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}
+              >
+                {tr("Download full message")}
+              </button>
+            )}
+          </article>
+        );
+      })}
+    </>
+  );
+}
+export function TurnView({
+  turn,
+  files,
+  activeTurns,
+  messages,
+  actor,
+  project,
+  session,
+  targetMessage,
+}: {
+  turn: ConversationTurn;
+  files: readonly string[];
+  activeTurns: ReadonlySet<string>;
+  messages: Message[];
+  actor: string;
+  project: string;
+  session: string;
+  targetMessage: string;
+}) {
+  const tr = useT();
+  const final = finalItems(turn);
+  const summary = turn.summary;
+  const finishedAt = summary?.finished_at;
+  const completed = turn.summary?.state === "completed" && final.length > 0;
+  const [expanded, setExpanded] = useState(false);
+  const [collapsedTarget, setCollapsedTarget] = useState("");
+  const [copied, setCopied] = useState(false),
+    [copyError, setCopyError] = useState(false);
+  const feedbackKey = `project-view:${actor}:${project}:feedback:${session}:${turn.turnId}`;
+  const [feedback, setFeedback] = useState<"up" | "down" | null>(() => {
+    const value = recalled<unknown>(feedbackKey, null);
+    return value === "up" || value === "down" ? value : null;
+  });
+  const users = turn.items.filter((i) => i.kind === "user");
+  const body = turn.items.filter((i) => i.kind !== "user");
+  const finalIDs = new Set(final.map((i) => i.id));
+  const intermediate = body.filter((i) => !finalIDs.has(i.id));
+  const targetInHistory =
+    !!targetMessage && intermediate.some((i) => i.message_id === targetMessage);
+  const open =
+    !completed ||
+    expanded ||
+    (targetInHistory && collapsedTarget !== targetMessage);
+  const running = !!turn.summary && runningTurn(summary!.state);
+  const fullFinal =
+    messages.find((m) => m.id === turn.summary?.final_message_id)?.content ||
+    final.map((i) => i.content || "").join("\n\n");
+  const vote = (value: "up" | "down") => {
+    const next = feedback === value ? null : value;
+    setFeedback(next);
+    remember(feedbackKey, next);
+  };
+  const copy = async () => {
+    setCopyError(false);
+    try {
+      if (navigator.clipboard?.writeText)
+        await navigator.clipboard.writeText(fullFinal);
+      else {
+        const el = document.createElement("textarea");
+        el.value = fullFinal;
+        el.style.position = "fixed";
+        el.style.opacity = "0";
+        document.body.appendChild(el);
+        el.select();
+        const ok = document.execCommand("copy");
+        el.remove();
+        if (!ok) throw new Error("Copy unavailable");
+      }
+      setCopied(true);
+    } catch {
+      setCopyError(true);
+    }
+  };
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1800);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <section className="conversation-turn" data-turn-id={turn.turnId}>
+      <Transcript
+        items={users}
+        files={files}
+        activeTurns={activeTurns}
+        messages={messages}
+      />
+      {summary && (
+        <div className={`turn-work ${running ? "is-running" : ""}`}>
+          <button
+            type="button"
+            className="turn-work-toggle"
+            aria-expanded={open}
+            disabled={!completed || !intermediate.length}
+            onClick={() => {
+              setExpanded(!open);
+              if (open) setCollapsedTarget(targetMessage);
+            }}
+          >
+            <TurnClock
+              start={summary.created_at}
+              end={finishedAt}
+              running={running}
+            />
+            {intermediate.length > 0 && (
+              <ChevronRight
+                size={14}
+                className={open ? "expanded" : ""}
+                aria-hidden
+              />
+            )}
+          </button>
+          {!["completed", "queued", "starting", "running", "sending"].includes(
+            summary!.state,
+          ) && (
+            <span className="turn-outcome">
+              {summary!.state === "canceled"
+                ? tr("Interrupted")
+                : summary!.state === "failed"
+                  ? tr("Failed")
+                  : summary!.state === "stopping"
+                    ? tr("Stopping…")
+                    : tr("Outcome unknown")}
+            </span>
+          )}
+        </div>
+      )}
+      <div className="turn-process" hidden={!open}>
+        <Transcript
+          items={completed ? intermediate : body}
+          files={files}
+          activeTurns={activeTurns}
+          messages={messages}
+        />
+      </div>
+      {completed && (
+        <>
+          <div className="turn-final">
+            <Transcript
+              items={final}
+              files={files}
+              activeTurns={activeTurns}
+              messages={messages}
+            />
+          </div>
+          <footer className="answer-actions">
+            <IconButton
+              label={copied ? tr("code.copied") : tr("Copy answer")}
+              onClick={() => void copy()}
+            >
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+            </IconButton>
+            <IconButton
+              label={tr("Like")}
+              aria-pressed={feedback === "up"}
+              title={tr("Feedback is saved in this browser")}
+              onClick={() => vote("up")}
+            >
+              <ThumbsUp size={16} />
+            </IconButton>
+            <IconButton
+              label={tr("Dislike")}
+              aria-pressed={feedback === "down"}
+              title={tr("Feedback is saved in this browser")}
+              onClick={() => vote("down")}
+            >
+              <ThumbsDown size={16} />
+            </IconButton>
+            {finishedAt && Number.isFinite(Date.parse(finishedAt)) && (
+              <time
+                dateTime={finishedAt}
+                title={new Date(finishedAt).toLocaleString()}
+              >
+                {new Date(finishedAt).toLocaleTimeString(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </time>
+            )}
+            {copyError && (
+              <span role="status">
+                {tr("Copy failed. Select the answer to copy it.")}
+              </span>
+            )}
+          </footer>
+        </>
+      )}
+    </section>
+  );
+}

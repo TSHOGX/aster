@@ -1,7 +1,23 @@
 "use client";
+import { ComposerInput } from "./composer-input";
 import { useT } from "@/lib/i18n";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { MarkdownView } from "@/components/workbench/markdown-view";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { ArrowDown, ArrowUp, Square } from "lucide-react";
+import {
+  mergeConversationPage,
+  oldestMessageSequence,
+} from "@/lib/conversation-cache";
+import { TurnNavigator } from "./turn-navigator";
+import { TurnView } from "./turn-view";
+import { conversationTurns } from "@/lib/conversation-turns";
+import { Menu, useDialog } from "./ui";
+import { knownWorkspaceFiles, workspacePath } from "@/lib/workspace-links";
 import {
   api,
   command,
@@ -9,35 +25,32 @@ import {
   recalled,
   remember,
   sessionURL,
-  type AgentRecord,
   type AgentSession,
   type SessionSnapshot,
+  type TimelineItem,
+  type TurnIndexItem,
   type Turn,
 } from "@/lib/project-api";
-import {
-  acceptRecords,
-  acceptSnapshot,
-  emptySessionView,
-  type SessionView,
-} from "@/lib/project-projections";
+import { emptySessionView, type SessionView } from "@/lib/project-projections";
 export function SessionPanel({
   actor,
   session,
   tick,
-  onClose,
   onChanged,
   onFile,
   targetMessage,
+  showHistory = false,
 }: {
   actor: string;
   session: AgentSession;
   tick: number;
-  onClose: () => void;
   onChanged: () => void;
   onFile: (path: string) => void;
   targetMessage: string;
+  showHistory?: boolean;
 }) {
   const tr = useT();
+  const ask = useDialog();
   const key = `project-view:${actor}:${session.project_id}:draft:${session.id}`;
   const [draft, setDraft] = useState(() =>
     (() => {
@@ -46,17 +59,97 @@ export function SessionPanel({
     })(),
   );
   const [view, setView] = useState<SessionView>(emptySessionView);
-  const state = useRef(view);
-  useEffect(() => {
-    state.current = view;
-  }, [view]);
-  const [before, setBefore] = useState(0);
+  const positionKey = key + ":position";
+  const scroll = useRef<HTMLDivElement>(null);
+  const following = useRef(
+    recalled<{ follow: boolean }>(positionKey, { follow: true }).follow,
+  );
+  const restored = useRef(false);
+  const [atBottom, setAtBottom] = useState(true);
+  const sendLock = useRef(false);
+  const [pendingSend, setPendingSend] = useState(() =>
+    recalled<{
+      id: string;
+      content: string;
+      held: boolean;
+      startedAt?: string;
+    } | null>(key + ":send", null),
+  );
+  const hasPending = !!pendingSend;
+  const [sentTurn, setSentTurn] = useState<Turn | null>(null);
   const [focusMessage, setFocusMessage] = useState(targetMessage);
+  const [focusTurn, setFocusTurn] = useState(() =>
+    targetMessage
+      ? ""
+      : recalled<{ turn?: string }>(positionKey, {}).turn || "",
+  );
+  const snapshot = useRef<SessionSnapshot | null>(null);
+  const navigationSerial = useRef(0);
+  const navigationPending = useRef(false);
+  const alive = useRef(true);
+  const windowEpoch = useRef(0);
+  const programmaticUntil = useRef(0);
+  const historyFlight = useRef<Promise<boolean> | null>(null);
+  const scrollAnchor = useRef<{ id: string; top: number } | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingNewer, setLoadingNewer] = useState(false);
+  const [navigationTarget, setNavigationTarget] = useState<{
+    kind: "turn" | "message";
+    id: string;
+  } | null>(() =>
+    targetMessage
+      ? { kind: "message", id: targetMessage }
+      : focusTurn
+        ? { kind: "turn", id: focusTurn }
+        : null,
+  );
+  const locate = (kind: "turn" | "message", id: string): HTMLElement | null => {
+    const el = scroll.current;
+    if (!el) return null;
+    return kind === "turn"
+      ? el.querySelector<HTMLElement>(
+          `[data-turn-id="${CSS.escape(id)}"] .chat-message.user`,
+        )
+      : el.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+  };
+  const scrollToTarget = (target: HTMLElement, smooth = false) => {
+    const el = scroll.current;
+    if (!el) return;
+    following.current = false;
+    restored.current = true;
+    programmaticUntil.current = performance.now() + 450;
+    el.scrollTo({
+      top:
+        el.scrollTop +
+        target.getBoundingClientRect().top -
+        el.getBoundingClientRect().top -
+        16,
+      behavior:
+        smooth && !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "smooth"
+          : "instant",
+    });
+  };
+  const jumpTurn = (id: string) => {
+    navigationSerial.current++;
+    navigationPending.current = false;
+    following.current = false;
+    setAtBottom(false);
+    setFocusMessage("");
+    setFocusTurn(id);
+    const target = locate("turn", id);
+    if (target) {
+      setNavigationTarget(null);
+      scrollToTarget(target, true);
+    } else setNavigationTarget({ kind: "turn", id });
+  };
   useEffect(() => {
     if (!targetMessage) return;
     const timer = setTimeout(() => {
+      navigationSerial.current++;
+      setNavigationTarget({ kind: "message", id: targetMessage });
       setFocusMessage(targetMessage);
-      setBefore(0);
+      setFocusTurn("");
     }, 0);
     return () => clearTimeout(timer);
   }, [targetMessage]);
@@ -77,53 +170,356 @@ export function SessionPanel({
     }
   };
   const request = useRef(0);
+  const snapshotFlight = useRef<{ key: string; serial: number } | null>(null);
   const invalidate = useCallback(() => {
     request.current++;
   }, []);
   const base = sessionURL(session.project_id, session.id);
+  const applyPage = useCallback(
+    (next: SessionSnapshot, older = false, replace = false) => {
+      const merged = replace
+        ? next
+        : mergeConversationPage(snapshot.current, next, older);
+      snapshot.current = merged;
+      setView((current) => ({ ...current, snapshot: merged }));
+    },
+    [],
+  );
   const refresh = useCallback(async () => {
+    if (navigationPending.current) return;
+    if (
+      snapshotFlight.current?.key === base &&
+      snapshotFlight.current.serial === request.current
+    )
+      return;
     const serial = ++request.current;
+    snapshotFlight.current = { key: base, serial };
     try {
       const next = await api<SessionSnapshot>(
-        `${base}/snapshot?before=${before}&records=${state.current.snapshot ? "0" : "1"}${focusMessage ? `&message=${encodeURIComponent(focusMessage)}` : ""}`,
+        `${base}/snapshot?before=0&records=0`,
       );
-      if (serial !== request.current) return;
-      setView((current) => acceptSnapshot(current, next));
-      const records = await api<{
-        records: AgentRecord[];
-      }>(
-        `${base}/records?after=${state.current.snapshot ? state.current.cursor : next.record_cursor}`,
-      );
-      if (serial === request.current)
-        setView((current) => acceptRecords(current, records.records));
-    } catch (error) {
-      if (serial === request.current)
+      if (serial === request.current && alive.current) {
+        const history = snapshot.current;
+        // Keep live controls fresh without splicing a distant tail into a
+        // historical reading window. Only adjacent pages extend its content.
+        applyPage(
+          history?.has_later
+            ? {
+                ...next,
+                messages: history.messages,
+                timeline: history.timeline,
+                has_earlier: history.has_earlier,
+                has_later: true,
+              }
+            : next,
+        );
+      }
+    } catch (e) {
+      if (serial === request.current && alive.current)
         setError(
-          error instanceof Error
-            ? error.message
+          e instanceof Error
+            ? e.message
             : "Could not refresh this conversation.",
         );
+    } finally {
+      if (snapshotFlight.current?.serial === serial)
+        snapshotFlight.current = null;
     }
-  }, [base, before, focusMessage]);
+  }, [base, applyPage]);
+  const loadAdjacent = useCallback(
+    async (direction: "older" | "newer"): Promise<boolean> => {
+      if (historyFlight.current) return historyFlight.current;
+      const current = snapshot.current,
+        older = direction === "older",
+        epoch = windowEpoch.current;
+      if (!current || !(older ? current.has_earlier : current.has_later))
+        return false;
+      const sequence = older
+        ? oldestMessageSequence(current.messages)
+        : Math.max(...current.messages.map((m) => m.sequence), 0);
+      if (!Number.isFinite(sequence)) return false;
+      if (older) setLoadingHistory(true);
+      else setLoadingNewer(true);
+      following.current = false;
+      const flight = (async () => {
+        try {
+          const next = await api<SessionSnapshot>(
+            `${base}/snapshot?${older ? "before" : "after"}=${sequence}&records=0`,
+          );
+          if (!alive.current || windowEpoch.current !== epoch) return false;
+          const advanced = older
+            ? oldestMessageSequence(next.messages) < sequence
+            : next.messages.some((m) => m.sequence > sequence);
+          if (!advanced) {
+            applyPage(
+              {
+                ...snapshot.current!,
+                [older ? "has_earlier" : "has_later"]: false,
+              },
+              false,
+              true,
+            );
+            return false;
+          }
+          const el = scroll.current;
+          if (older && el) {
+            const top = el.getBoundingClientRect().top;
+            const anchor = [
+              ...el.querySelectorAll<HTMLElement>("[data-timeline-id]"),
+            ].find(
+              (node) =>
+                node.getBoundingClientRect().height > 0 &&
+                node.getBoundingClientRect().bottom > top,
+            );
+            if (anchor)
+              scrollAnchor.current = {
+                id: anchor.dataset.timelineId!,
+                top: anchor.getBoundingClientRect().top,
+              };
+          }
+          applyPage(next, older);
+          return true;
+        } catch (e) {
+          if (alive.current && windowEpoch.current === epoch)
+            setError(String(e));
+          return false;
+        } finally {
+          historyFlight.current = null;
+          if (alive.current) {
+            setLoadingHistory(false);
+            setLoadingNewer(false);
+          }
+        }
+      })();
+      historyFlight.current = flight;
+      return flight;
+    },
+    [base, applyPage],
+  );
+  const requestEdge = (direction: "older" | "newer") => {
+    const el = scroll.current;
+    if (!el || navigationPending.current) return;
+    if (
+      direction === "older" &&
+      el.scrollTop < 100 &&
+      snapshot.current?.has_earlier
+    )
+      void loadAdjacent("older");
+    if (
+      direction === "newer" &&
+      el.scrollHeight - el.scrollTop - el.clientHeight < 100 &&
+      snapshot.current?.has_later
+    )
+      void loadAdjacent("newer");
+  };
+  const showLatest = async () => {
+    const serial = ++navigationSerial.current;
+    windowEpoch.current++;
+    request.current++;
+    navigationPending.current = true;
+    setNavigationTarget(null);
+    setFocusTurn("");
+    setFocusMessage("");
+
+    try {
+      const latest = await api<SessionSnapshot>(
+        `${base}/snapshot?before=0&records=0`,
+      );
+      if (!alive.current || serial !== navigationSerial.current) return;
+      applyPage(latest, false, !!snapshot.current?.has_later);
+      following.current = true;
+      restored.current = true;
+      requestAnimationFrame(() => {
+        if (serial !== navigationSerial.current) return;
+        navigationPending.current = false;
+        scroll.current?.scrollTo({
+          top: scroll.current.scrollHeight,
+          behavior: "instant",
+        });
+      });
+    } catch (e) {
+      if (!alive.current || serial !== navigationSerial.current) return;
+      setError(String(e));
+      navigationPending.current = false;
+    }
+  };
+  useEffect(() => {
+    alive.current = true;
+    void Promise.resolve().then(refresh);
+    return () => {
+      alive.current = false;
+      invalidate();
+    };
+  }, [refresh, invalidate]);
   useEffect(() => {
     void Promise.resolve().then(refresh);
-    return invalidate;
-  }, [refresh, tick, invalidate]);
+  }, [tick, refresh]);
+  useLayoutEffect(() => {
+    const saved = scrollAnchor.current,
+      el = scroll.current;
+    if (saved && el) {
+      const anchor = el.querySelector<HTMLElement>(
+        `[data-timeline-id="${CSS.escape(saved.id)}"]`,
+      );
+      if (anchor) {
+        programmaticUntil.current = performance.now() + 150;
+        el.scrollTop += anchor.getBoundingClientRect().top - saved.top;
+      }
+      scrollAnchor.current = null;
+    }
+  }, [view.snapshot]);
+  // A missing destination loads a surrounding message window, not a turn filter.
+  // Keep this window contiguous by extending its two edges as the reader scrolls.
+  useEffect(() => {
+    if (!navigationTarget) return;
+    let gone = false;
+    const serial = ++navigationSerial.current;
+    windowEpoch.current++;
+    request.current++;
+    navigationPending.current = true;
+    following.current = false;
+    scrollAnchor.current = null;
+    void (async () => {
+      try {
+        if (!locate(navigationTarget.kind, navigationTarget.id)) {
+          const next = await api<SessionSnapshot>(
+            `${base}/snapshot?${navigationTarget.kind}=${encodeURIComponent(navigationTarget.id)}&records=0`,
+          );
+          if (gone || !alive.current || serial !== navigationSerial.current)
+            return;
+          applyPage(next, false, true);
+        }
+        requestAnimationFrame(() => {
+          if (gone || serial !== navigationSerial.current) return;
+          const target = locate(navigationTarget.kind, navigationTarget.id);
+          if (target) scrollToTarget(target);
+          else setError(tr("This conversation is unavailable."));
+          navigationPending.current = false;
+          setNavigationTarget(null);
+        });
+      } catch (e) {
+        if (!gone && alive.current && serial === navigationSerial.current) {
+          navigationPending.current = false;
+          setError(String(e));
+          setNavigationTarget(null);
+        }
+      }
+    })();
+    return () => {
+      gone = true;
+    };
+  }, [navigationTarget, base, applyPage, tr]);
+  useEffect(() => {
+    const saved = recalled<{ scroll?: number; follow?: boolean }>(
+      positionKey,
+      {},
+    );
+    remember(positionKey, {
+      scroll: saved.scroll || 0,
+      follow: saved.follow ?? false,
+      turn: focusTurn,
+    });
+  }, [positionKey, focusTurn]);
   useEffect(() => {
     remember(key, draft);
   }, [draft, key]);
   useEffect(() => {
-    if (!focusMessage) return;
-    const timer = setTimeout(
-      () =>
-        document
-          .querySelector(`[data-message-id="${CSS.escape(focusMessage)}"]`)
-          ?.scrollIntoView({ block: "center" }),
-      100,
-    );
-    return () => clearTimeout(timer);
-  }, [focusMessage, view.snapshot]);
+    if (sentTurn && view.snapshot?.turns.some((t) => t.id === sentTurn.id))
+      void Promise.resolve().then(() => setSentTurn(null));
+  }, [sentTurn, view.snapshot]);
   const current = view.snapshot?.session || session;
+  let timeline: TimelineItem[] =
+    view.snapshot?.timeline ??
+    view.snapshot?.messages.map((m) => ({
+      id: m.id,
+      cursor: m.sequence,
+      turn_id: m.turn_id || "",
+      kind: m.role,
+      content: m.content,
+      message_id: m.id,
+    })) ??
+    [];
+  const activeTurns = new Set(
+    view.snapshot?.turns
+      .filter((t) => ["starting", "running", "stopping"].includes(t.state))
+      .map((t) => t.id),
+  );
+  const displayTurns = [...(view.snapshot?.turns || [])];
+  if (sentTurn && !displayTurns.some((t) => t.id === sentTurn.id))
+    displayTurns.push(sentTurn);
+  if (
+    pendingSend &&
+    !pendingSend.held &&
+    !displayTurns.some((t) => t.request_id === pendingSend.id)
+  )
+    displayTurns.push({
+      id: `pending:${pendingSend.id}`,
+      session_id: session.id,
+      content: pendingSend.content,
+      state: error ? "unknown" : "sending",
+      sequence: Number.MAX_SAFE_INTEGER,
+      created_at: pendingSend.startedAt,
+    });
+  if (!view.snapshot?.has_later && !focusMessage && !focusTurn) {
+    const missing = displayTurns.filter(
+      (t) =>
+        !timeline.some((i) => i.turn_id === t.id) &&
+        (["sending", "queued", "starting", "running", "stopping"].includes(
+          t.state,
+        ) ||
+          t.id.startsWith("pending:")),
+    );
+    timeline = [
+      ...timeline,
+      ...missing.map((t) => ({
+        id: `${t.id}/user`,
+        cursor: Number.MAX_SAFE_INTEGER,
+        turn_id: t.id,
+        kind: "user",
+        content: t.content,
+      })),
+    ];
+  }
+  const turns = conversationTurns(
+    timeline,
+    view.snapshot?.turn_summaries || [],
+    displayTurns,
+  );
+  const navigationTurns: TurnIndexItem[] = turns
+    .filter((t) => t.turnId && !t.turnId.startsWith("pending:"))
+    .map((t, i) => ({
+      id: t.turnId,
+      sequence:
+        t.summary?.sequence ||
+        displayTurns.find((x) => x.id === t.turnId)?.sequence ||
+        i + 1,
+      state: t.summary?.state || "unknown",
+      created_at: t.summary?.created_at || "",
+      user_preview: (
+        t.items.find((x) => x.kind === "user")?.content ||
+        displayTurns.find((x) => x.id === t.turnId)?.content ||
+        ""
+      ).slice(0, 600),
+      assistant_preview:
+        t.summary?.state === "completed"
+          ? t.items
+              .filter(
+                (x) =>
+                  x.kind === "assistant" &&
+                  x.message_id === t.summary?.final_message_id,
+              )
+              .map((x) => x.content || "")
+              .join("\n")
+              .slice(0, 1200)
+          : "",
+    }));
+  const workspaceFiles = knownWorkspaceFiles(
+    timeline.flatMap((item) => [
+      item.content || "",
+      "arguments" in item ? item.arguments || "" : "",
+      "result" in item ? item.result || "" : "",
+    ]),
+  );
   const act = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
@@ -138,18 +534,64 @@ export function SessionPanel({
     }
   };
   const send = (held: boolean) => {
-    if (!draft.trim()) return;
-    const text = draft;
+    if (sendLock.current || busy || (!draft.trim() && !pendingSend)) return;
+    sendLock.current = true;
+    const intent = pendingSend || {
+      id: newID(),
+      content: draft,
+      held,
+      startedAt: new Date().toISOString(),
+    };
+    setPendingSend(intent);
+    remember(key + ":send", intent);
     void act(async () => {
-      await command(`${base}/turns`, {
-        request_id: newID(),
-        content: text,
-        held,
+      const accepted = await command<Turn>(`${base}/turns`, {
+        request_id: intent.id,
+        content: intent.content,
+        held: intent.held,
       });
+      if (!intent.held)
+        setSentTurn({
+          ...accepted,
+          content: intent.content,
+          request_id: intent.id,
+          created_at: accepted.created_at || intent.startedAt,
+        });
+      setPendingSend(null);
+      remember(key + ":send", null);
+      await showLatest();
       setDraft("");
-      setBefore(0);
+
+      setFocusTurn("");
+      setFocusMessage("");
+      setNavigationTarget(null);
+      navigationSerial.current++;
+      navigationPending.current = false;
+      following.current = true;
+    }).finally(() => {
+      sendLock.current = false;
     });
   };
+  useEffect(() => {
+    if (showHistory) void Promise.resolve().then(() => loadTurns());
+  }, [showHistory]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el || !view.snapshot) return;
+    if (!restored.current && !navigationTarget) {
+      const saved = recalled<{ scroll: number }>(positionKey, { scroll: 0 });
+      el.scrollTop = following.current ? el.scrollHeight : saved.scroll;
+      restored.current = true;
+    } else if (following.current && !navigationTarget)
+      el.scrollTop = el.scrollHeight;
+  }, [
+    view.snapshot,
+    view.partial,
+    focusMessage,
+    focusTurn,
+    positionKey,
+    navigationTarget,
+  ]);
   const control = (turn: Turn, action: string) =>
     void act(() =>
       command(`${base}/turns/${encodeURIComponent(turn.id)}/control`, {
@@ -170,49 +612,6 @@ export function SessionPanel({
       aria-label={`Agent ${current.title}`}
       data-session-id={session.id}
     >
-      <header className="panel-heading">
-        <div>
-          <strong>{current.title}</strong>
-          <span className={`state-dot ${current.state}`} />{" "}
-          <small>{current.state}</small>
-        </div>
-        <div className="row-actions">
-          <button
-            title={tr("Rename this Agent Session")}
-            onClick={() => {
-              const title = window.prompt(tr("Session title"), current.title);
-              if (title?.trim())
-                void act(() =>
-                  command(base, { title, revision: current.revision }, "PATCH"),
-                );
-            }}
-          >
-            {tr("Rename")}
-          </button>
-          <button onClick={onClose}>{tr("Close view")}</button>
-          <button
-            className="danger"
-            onClick={() => {
-              if (
-                window.confirm(
-                  tr(
-                    "Delete this Agent Session and its conversation? Project files and other Sessions remain.",
-                  ),
-                )
-              )
-                void act(() =>
-                  command(
-                    `${base}?revision=${current.revision}`,
-                    undefined,
-                    "DELETE",
-                  ),
-                );
-            }}
-          >
-            {tr("Delete")}
-          </button>
-        </div>
-      </header>
       {error || current.failure ? (
         <p className="notice error" role="alert">
           {error || current.failure}
@@ -259,140 +658,153 @@ export function SessionPanel({
           <button
             disabled={busy}
             onClick={() => {
-              if (
-                window.confirm(
-                  tr(
+              void (async () => {
+                const accepted = await ask({
+                  title: tr("Continue from history"),
+                  description: tr(
                     "Continue from the retained native history? Prior unknown effects remain unknown and queued prompts will stay held.",
                   ),
-                )
-              )
-                void act(() =>
-                  command(`${base}/control`, {
-                    action: "continue",
-                    revision: current.revision,
-                  }),
-                );
+                  choices: [
+                    { label: tr("Continue from history"), value: "continue" },
+                  ],
+                });
+                if (accepted)
+                  void act(() =>
+                    command(`${base}/control`, {
+                      action: "continue",
+                      revision: current.revision,
+                    }),
+                  );
+              })();
             }}
           >
             {tr("Continue from history")}
           </button>
         </section>
       )}
-      <div
-        className="conversation-scroll"
-        onClick={(event) => {
-          const link = (event.target as HTMLElement).closest("a");
-          const href = link?.getAttribute("href");
-          if (href?.startsWith("/workspace/")) {
-            event.preventDefault();
-            onFile(href.slice(11));
-          }
-        }}
-      >
-        {view.snapshot?.has_earlier && (
-          <button
-            onClick={() => {
-              setFocusMessage("");
-              setBefore(view.snapshot?.messages[0]?.sequence || 0);
-            }}
-          >
-            {tr("Earlier messages")}
-          </button>
-        )}
-        {(before > 0 || focusMessage) && (
-          <button
-            onClick={() => {
-              setFocusMessage("");
-              setBefore(0);
-            }}
-          >
-            {tr("Return to latest")}
-          </button>
-        )}
-        {!view.snapshot?.messages.length && (
-          <div className="empty-state">
-            <h3>{tr("Start a conversation")}</h3>
-            <p>
-              {tr(
-                "This agent shares the Project workspace with your other agents and terminals.",
-              )}
+      <div className="conversation-reading-area">
+        <div
+          className="conversation-scroll"
+          ref={scroll}
+          onWheel={(e) => {
+            programmaticUntil.current = 0;
+            if (
+              !(e.target as HTMLElement).closest(
+                "pre,.table-scroll,textarea",
+              ) &&
+              e.deltaY !== 0
+            )
+              requestEdge(e.deltaY < 0 ? "older" : "newer");
+          }}
+          onKeyDown={(e) => {
+            if ((e.target as HTMLElement).closest("pre,.table-scroll,textarea"))
+              return;
+            if (e.key === "PageUp" || e.key === "ArrowUp") requestEdge("older");
+            if (e.key === "PageDown" || e.key === "ArrowDown")
+              requestEdge("newer");
+          }}
+          onTouchMove={() => {
+            programmaticUntil.current = 0;
+          }}
+          onScroll={() => {
+            const el = scroll.current!;
+            following.current =
+              !navigationPending.current &&
+              !snapshot.current?.has_later &&
+              el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+            setAtBottom(following.current);
+            if (
+              !navigationPending.current &&
+              performance.now() > programmaticUntil.current
+            ) {
+              if (el.scrollTop < 100 && snapshot.current?.has_earlier)
+                void loadAdjacent("older");
+              else if (
+                el.scrollHeight - el.scrollTop - el.clientHeight < 100 &&
+                snapshot.current?.has_later
+              )
+                void loadAdjacent("newer");
+            }
+            remember(positionKey, {
+              turn: focusTurn,
+              scroll: el.scrollTop,
+              follow: following.current,
+            });
+          }}
+          onClick={(event) => {
+            const link = (event.target as HTMLElement).closest("a");
+            const href = link?.getAttribute("href");
+            if (href) {
+              let path: string | null = null;
+              try {
+                path = workspacePath(decodeURIComponent(href), workspaceFiles);
+              } catch {
+                /* Malformed links are not file targets. */
+              }
+              if (path) {
+                event.preventDefault();
+                onFile(path);
+              }
+            }
+          }}
+        >
+          {(navigationTarget || loadingHistory) && (
+            <p className="history-loading" role="status">
+              {tr("Loading earlier conversation…")}
             </p>
-          </div>
-        )}
-        {view.snapshot?.messages.map((message) => (
-          <article
-            className={`chat-message ${message.role}`}
-            key={message.id}
-            data-message-id={message.id}
-          >
-            <small>{message.role === "user" ? tr("You") : tr("Agent")}</small>
-            <MarkdownView content={message.content.slice(0, 64000)} />
-            {message.content.length > 64000 && (
-              <button
-                onClick={() => {
-                  const url = URL.createObjectURL(
-                    new Blob([message.content], {
-                      type: "text/plain;charset=utf-8",
-                    }),
-                  );
-                  const link = document.createElement("a");
-                  link.href = url;
-                  link.download = `message-${message.sequence}.txt`;
-                  link.click();
-                  setTimeout(() => URL.revokeObjectURL(url), 1000);
-                }}
-              >
-                {tr("Download full message")}
-              </button>
-            )}
-            {[
-              ...new Set(
-                message.content.match(/\/workspace\/[^\s`"'<>\])]+/g) || [],
-              ),
-            ]
-              .slice(0, 12)
-              .map((path) => (
-                <button
-                  className="file-mention"
-                  key={path}
-                  onClick={() => onFile(path.slice(11))}
-                >
-                  {path}
-                </button>
-              ))}
-          </article>
-        ))}
-        {view.partial && (
-          <article
-            className="chat-message assistant streaming"
-            aria-live="polite"
-          >
-            <small>{tr("Agent \u00B7 latest output")}</small>
-            <MarkdownView content={view.partial} highlight={false} />
-          </article>
-        )}
-        {view.tools.length > 0 && (
-          <details className="tool-trace">
-            <summary>
-              {tr("Recent activity (")}
-              {view.tools.length})
-            </summary>
-            {view.tools.map((tool) => (
-              <details key={tool.id}>
-                <summary>
-                  {tool.name} · {tool.state}
-                </summary>
-                <pre>{tool.detail}</pre>
-              </details>
-            ))}
-          </details>
-        )}
-        {active && !view.partial && (
-          <p className="working-indicator" role="status">
-            {tr("Agent is working\u2026")}
-          </p>
-        )}
+          )}
+          {!timeline.length && (
+            <div className="empty-state">
+              <h3>{tr("Start a conversation")}</h3>
+              <p>
+                {tr(
+                  "This agent shares the Project workspace with your other agents and terminals.",
+                )}
+              </p>
+            </div>
+          )}
+          {turns.map((turn) => (
+            <TurnView
+              key={turn.id}
+              turn={turn}
+              files={workspaceFiles}
+              activeTurns={activeTurns}
+              messages={view.snapshot?.messages || []}
+              actor={actor}
+              project={session.project_id}
+              session={session.id}
+              targetMessage={focusMessage}
+            />
+          ))}
+          {loadingNewer && (
+            <p className="history-loading" role="status">
+              {tr("Loading…")}
+            </p>
+          )}
+          {view.snapshot?.timeline_truncated && (
+            <small className="history-limit">
+              {tr("Only retained tool activity is shown.")}
+            </small>
+          )}
+        </div>
+        <TurnNavigator
+          base={base}
+          revision={current.revision}
+          local={navigationTurns}
+          scroll={scroll}
+          onJump={jumpTurn}
+        />
       </div>
+      {(!atBottom || view.snapshot?.has_later) && (
+        <button
+          className="jump-latest"
+          aria-label={tr("Return to latest")}
+          title={tr("Return to latest")}
+          onClick={() => void showLatest()}
+        >
+          <ArrowDown size={18} />
+        </button>
+      )}
       {view.snapshot?.turns
         .filter((turn) => turn.state === "unknown")
         .map((turn) => (
@@ -450,7 +862,10 @@ export function SessionPanel({
         </section>
       )}
       {queue.length > 0 && (
-        <div className="prompt-queue">
+        <details className="prompt-queue">
+          <summary>
+            {tr("Queued prompts")} · {queue.length}
+          </summary>
           {queue.map((turn) => (
             <div key={turn.id}>
               <span>
@@ -497,7 +912,7 @@ export function SessionPanel({
               </div>
             </div>
           ))}
-        </div>
+        </details>
       )}
       <form
         className="agent-composer"
@@ -506,30 +921,36 @@ export function SessionPanel({
           send(false);
         }}
       >
-        <textarea
+        <ComposerInput
           aria-label={`Message ${current.title}`}
-          value={draft}
+          value={pendingSend?.content || draft}
+          disabled={hasPending}
           maxLength={64000}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={tr("Ask this agent to work in your Project\u2026")}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              send(false);
-            }
+          onSend={() => {
+            if (!busy && current.state !== "blocked") send(false);
           }}
         />
         <div className="composer-actions">
-          <div className="row-actions">
-            <small>{tr("Shared /workspace \u00B7 Ctrl \u21B5 to send")}</small>
-            <button type="button" onClick={() => void loadTurns()}>
-              {tr("Turn history")}
-            </button>
-          </div>
+          <Menu
+            label={tr("Conversation actions")}
+            items={[
+              { label: tr("Turn history"), action: () => void loadTurns() },
+              {
+                label: tr("Hold prompt"),
+                disabled: busy || !draft.trim() || hasPending,
+                action: () => send(true),
+              },
+            ]}
+          />
           <div className="row-actions">
             {active && (
               <button
                 type="button"
+                className="stop-button"
+                aria-label={tr("Stop turn")}
+                title={tr("Stop turn")}
                 disabled={busy}
                 onClick={() =>
                   void act(() =>
@@ -541,21 +962,20 @@ export function SessionPanel({
                   )
                 }
               >
-                {tr("Stop turn")}
+                <Square size={14} fill="currentColor" />
               </button>
             )}
             <button
-              type="button"
-              disabled={busy || !draft.trim()}
-              onClick={() => send(true)}
+              className="send-button"
+              aria-label={hasPending ? tr("Retry") : tr("Send")}
+              title={hasPending ? tr("Retry") : tr("Send")}
+              disabled={
+                busy ||
+                (!draft.trim() && !hasPending) ||
+                current.state === "blocked"
+              }
             >
-              {tr("Hold prompt")}
-            </button>
-            <button
-              className="primary"
-              disabled={busy || !draft.trim() || current.state === "blocked"}
-            >
-              {tr("Send")}
+              <ArrowUp size={18} />
             </button>
           </div>
         </div>

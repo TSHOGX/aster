@@ -73,7 +73,14 @@ export function FilePreview({ path, href }: { path: string; href: string }) {
       />
     );
   if (["spreadsheet", "document", "presentation"].includes(kind.kind))
-    return <OfficePreview blob={loaded.blob} url={loaded.url} kind={kind.kind} path={path} />;
+    return (
+      <OfficePreview
+        blob={loaded.blob}
+        url={loaded.url}
+        kind={kind.kind}
+        path={path}
+      />
+    );
   if (kind.kind === "markdown" && loaded.blob.size <= 1 << 20)
     return (
       <div className="file-markdown">
@@ -95,7 +102,17 @@ export function FilePreview({ path, href }: { path: string; href: string }) {
     </div>
   );
 }
-function OfficePreview({ blob, url, kind, path }: { blob: Blob; url: string; kind: string; path: string }) {
+function OfficePreview({
+  blob,
+  url,
+  kind,
+  path,
+}: {
+  blob: Blob;
+  url: string;
+  kind: string;
+  path: string;
+}) {
   const tr = useT();
   const [notice, setNotice] = useState("");
   const host = useRef<HTMLDivElement>(null);
@@ -105,25 +122,40 @@ function OfficePreview({ blob, url, kind, path }: { blob: Blob; url: string; kin
     if (!element) return;
     let gone = false;
     let dispose = () => {};
+    let resize = () => {};
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!gone && element.clientWidth > 0) resize();
+      });
+    });
+    observer.observe(element);
     void (async () => {
       try {
         const buffer = await blob.arrayBuffer();
         if (gone) return;
         if (kind === "spreadsheet") {
-          const { default: renderer } = await import(
-            "@/components/workbench/viewers/office-excel-loader"
-          );
+          const { default: renderer } =
+            await import("@/components/workbench/viewers/office-excel-loader");
           if (gone) return;
-          const options = { minColLength: 10, minRowLength: 20, xls: path.toLowerCase().endsWith(".xls") };
+          const options = {
+            minColLength: 10,
+            minRowLength: 20,
+            xls: path.toLowerCase().endsWith(".xls"),
+          };
           const stage = document.createElement("div");
           stage.style.height = "100%";
           element.appendChild(stage);
           const view = renderer.init(stage, options);
+          resize = () => window.dispatchEvent(new Event("resize"));
           let rendering: Promise<unknown> = Promise.resolve();
           dispose = () => {
             // The parser queues callbacks against its workbook during load.
             // Keep its detached stage valid until those callbacks finish.
-            const finish = () => { setTimeout(() => view.destroy(), 0); };
+            const finish = () => {
+              setTimeout(() => view.destroy(), 0);
+            };
             void rendering.then(finish, finish);
           };
           try {
@@ -132,7 +164,12 @@ function OfficePreview({ blob, url, kind, path }: { blob: Blob; url: string; kin
             rendering = view.preview(url);
             await rendering;
           } catch (error) {
-            if (gone || !(error instanceof Error) || !error.message.includes("anchors")) throw error;
+            if (
+              gone ||
+              !(error instanceof Error) ||
+              !error.message.includes("anchors")
+            )
+              throw error;
             // Its embedded ExcelJS parser cannot read some chart-only drawing
             // relationships. Spreadsheet conversion preserves cells so the
             // original workbook remains useful without altering its download.
@@ -140,7 +177,12 @@ function OfficePreview({ blob, url, kind, path }: { blob: Blob; url: string; kin
             view.setOptions(converted);
             rendering = view.preview(url);
             await rendering;
-            if (!gone) setNotice(tr("Some drawings are unavailable in this preview. Download the workbook to view them."));
+            if (!gone)
+              setNotice(
+                tr(
+                  "Some drawings are unavailable in this preview. Download the workbook to view them.",
+                ),
+              );
           }
         } else if (kind === "document") {
           const renderer = await import("docx-preview");
@@ -152,12 +194,18 @@ function OfficePreview({ blob, url, kind, path }: { blob: Blob; url: string; kin
           const { init } = await import("pptx-preview");
           if (gone) return;
           const view = init(element, {
-            width: Math.max(320, element.clientWidth),
-            height: 360,
+            width: 720,
+            height: 405,
             mode: "slide",
           });
           dispose = () => view.destroy();
           await view.preview(buffer);
+          resize = () => {
+            view.wrapper.style.zoom = String(
+              Math.max(1, element.clientWidth) / 720,
+            );
+          };
+          if (!gone) resize();
         }
       } catch (e) {
         if (!gone)
@@ -166,6 +214,8 @@ function OfficePreview({ blob, url, kind, path }: { blob: Blob; url: string; kin
     })();
     return () => {
       gone = true;
+      observer.disconnect();
+      cancelAnimationFrame(frame);
       dispose();
       element.replaceChildren();
     };

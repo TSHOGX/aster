@@ -11,6 +11,7 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npm run test:ui
 ```
 
 Configure the Go application's `frontend` origin to this server and open its

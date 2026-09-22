@@ -73,20 +73,17 @@ describe("Project projections", () => {
         },
       ]).partial.length,
     ).toBe(65536);
-    const tools = Array.from(
-      { length: 200 },
-      (_, i): AgentRecord => ({
-        cursor: 10 + i,
-        turn_id: "turn",
-        kind: "native",
-        payload: {
-          type: "tool_execution_start",
-          toolCallId: String(i),
-          toolName: "read",
-          args: { file: "data" },
-        },
-      }),
-    );
+    const tools = Array.from({ length: 200 }, (_, i): AgentRecord => ({
+      cursor: 10 + i,
+      turn_id: "turn",
+      kind: "native",
+      payload: {
+        type: "tool_execution_start",
+        toolCallId: String(i),
+        toolName: "read",
+        args: { file: "data" },
+      },
+    }));
     expect(acceptRecords(next, tools).tools).toHaveLength(50);
   });
   it("keeps committed messages canonical after a turn settles", () => {
@@ -147,4 +144,50 @@ it("restores bounded tool activity and ignores old text replay after completion"
     },
   ]);
   expect(replay.partial).toBe("");
+});
+
+it("keeps arguments and results associated with their original turn", () => {
+  const view = acceptRecords(acceptSnapshot(emptySessionView(), snapshot(1)), [
+    {
+      cursor: 6,
+      turn_id: "turn",
+      kind: "native",
+      payload: {
+        type: "tool_execution_start",
+        toolCallId: "same",
+        toolName: "read",
+        args: { path: "data.csv" },
+      },
+    },
+    {
+      cursor: 7,
+      turn_id: "other",
+      kind: "native",
+      payload: {
+        type: "tool_execution_start",
+        toolCallId: "same",
+        toolName: "bash",
+        args: { command: "pwd" },
+      },
+    },
+    {
+      cursor: 8,
+      turn_id: "turn",
+      kind: "native",
+      payload: {
+        type: "tool_execution_end",
+        toolCallId: "same",
+        result: { rows: 12 },
+      },
+    },
+  ]);
+  expect(view.tools).toHaveLength(2);
+  expect(view.tools[0]).toMatchObject({
+    turnId: "turn",
+    cursor: 6,
+    arguments: '{"path":"data.csv"}',
+    result: '{"rows":12}',
+    state: "completed",
+  });
+  expect(view.tools[1]).toMatchObject({ turnId: "other", state: "running" });
 });

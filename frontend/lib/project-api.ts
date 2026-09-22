@@ -30,6 +30,9 @@ export type ProjectTerminal = {
   failure?: string;
 };
 export type Turn = {
+  request_id?: string;
+  created_at?: string;
+  updated_at?: string;
   id: string;
   session_id: string;
   content: string;
@@ -44,7 +47,32 @@ export type Message = {
   created_at: string;
   turn_id?: string;
 };
+export type TimelineItem = {
+  id: string;
+  cursor: number;
+  order?: number;
+  turn_id: string;
+  kind: string;
+  content?: string;
+  message_id?: string;
+  name?: string;
+  arguments?: string;
+  result?: string;
+  state?: string;
+};
+export type TurnSummary = {
+  sequence?: number;
+  id: string;
+  state: string;
+  created_at?: string;
+  finished_at?: string;
+  final_message_id?: string;
+};
 export type SessionSnapshot = {
+  has_later?: boolean;
+  turn_summaries?: TurnSummary[];
+  timeline?: TimelineItem[];
+  timeline_truncated?: boolean;
   records?: AgentRecord[];
   recovery?: {
     id: string;
@@ -243,6 +271,8 @@ export async function readPreview(
     cache: "no-store",
   });
   if (!response.ok || response.status === 202) {
+    if (response.status === 401 && typeof window !== "undefined")
+      window.dispatchEvent(new Event("project-auth-expired"));
     const data = await response.json().catch(() => ({}));
     throw new APIError(
       response.status,
@@ -270,50 +300,42 @@ export async function readPreview(
   }
   return new Blob(chunks);
 }
+const memoryPreferences = new Map<string, unknown>();
+export function clearPreferenceMemory() {
+  memoryPreferences.clear();
+}
 export function remember(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-    const keys = Object.keys(localStorage).filter((k) =>
-      k.startsWith("project-view:"),
-    );
-    while (keys.length > 16) {
-      const oldest = keys.shift();
-      if (oldest && oldest !== key) localStorage.removeItem(oldest);
-    }
+    memoryPreferences.delete(key);
   } catch {
-    /* A full/disabled browser store must not block runtime actions. */
+    memoryPreferences.set(key, value);
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("project-storage-unavailable"));
   }
 }
 export function recalled<T>(key: string, fallback: T): T {
+  if (memoryPreferences.has(key)) return memoryPreferences.get(key) as T;
   try {
-    return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;
+    return (
+      JSON.parse(localStorage.getItem(key) || "null") ??
+      (memoryPreferences.get(key) as T | undefined) ??
+      fallback
+    );
   } catch {
-    return fallback;
+    return (memoryPreferences.get(key) as T | undefined) ?? fallback;
   }
 }
 
-export function viewPreferences(key: string): {
-  agents: string[];
-  terminals: string[];
-  file: string;
-} {
-  const value = recalled<unknown>(key, null);
-  const data =
-    value && typeof value === "object"
-      ? (value as Record<string, unknown>)
-      : {};
-  const ids = (input: unknown) =>
-    Array.isArray(input)
-      ? input
-          .filter(
-            (id): id is string =>
-              typeof id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(id),
-          )
-          .slice(-4)
-      : [];
-  return {
-    agents: ids(data.agents),
-    terminals: ids(data.terminals),
-    file: typeof data.file === "string" ? data.file.slice(0, 4096) : "",
-  };
-}
+export type ScheduleOverview = Schedule & { project_title: string };
+export type SchedulePage = { schedules: ScheduleOverview[]; next?: string };
+
+export type TurnIndexItem = {
+  id: string;
+  sequence: number;
+  state: string;
+  created_at: string;
+  user_preview: string;
+  assistant_preview: string;
+};
+export type TurnIndexPage = { turns: TurnIndexItem[]; next_before?: number };

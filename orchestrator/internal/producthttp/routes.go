@@ -34,6 +34,7 @@ type Store = product.Store
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/schedules", s.scheduleOverview)
 	mux.HandleFunc("GET /api/projects/{project}/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/projects/{project}/schedules", s.createSchedule)
 	mux.HandleFunc("GET /api/projects/{project}/schedules/{schedule}", s.getSchedule)
@@ -80,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/control", s.agentControl)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/turns/{turn}/control", s.queuedControl)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/turns", s.listTurns)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/turn-index", s.turnIndex)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/turns", s.admitTurn)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/messages", s.listMessages)
 

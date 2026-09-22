@@ -5,265 +5,29 @@ import {
   api,
   command,
   encode,
-  newID,
   projectURL,
   sessionURL,
   type AgentSession,
   type Conversation,
   type Message,
   type Notice,
-  type Schedule,
-  type ScheduleRun,
   type SearchResult,
   type Share,
 } from "@/lib/project-api";
 import { MarkdownView } from "@/components/workbench/markdown-view";
-export function SchedulePanel({
-  project,
-  sessions,
-  onOpen,
-}: {
-  project: string;
-  sessions: AgentSession[];
-  onOpen: (id: string) => void;
-}) {
-  const tr = useT();
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [runs, setRuns] = useState<ScheduleRun[]>([]);
-  const [error, setError] = useState("");
-  const [title, setTitle] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [cron, setCron] = useState("");
-  const [session, setSession] = useState("");
-  const [busy, setBusy] = useState(false);
-  const base = `${projectURL(project)}/schedules`;
-  const refresh = useCallback(async () => {
-    try {
-      setSchedules(
-        (
-          await api<{
-            schedules: Schedule[];
-          }>(base)
-        ).schedules,
-      );
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [base]);
-  useEffect(() => {
-    void Promise.resolve().then(refresh);
-  }, [refresh]);
-  const act = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    setError("");
-    try {
-      await fn();
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Schedule action failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="adjacent-panel">
-      <h2>{tr("Project schedules")}</h2>
-      <p>
-        {tr(
-          "Runs share this Project\u2019s workspace. Disabling a schedule stops future admissions.",
-        )}
-      </p>
-      {error && (
-        <p role="alert" className="notice error">
-          {error}
-        </p>
-      )}
-      <form
-        className="schedule-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void act(async () => {
-            await command(base, {
-              id: newID(),
-              title,
-              prompt,
-              cron,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-              session_id: session,
-              enabled: true,
-            });
-            setTitle("");
-            setPrompt("");
-          });
-        }}
-      >
-        <label>
-          {tr("Schedule name")}
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            required
-            maxLength={256}
-          />
-        </label>
-        <label>
-          {tr("Prompt")}
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            required
-            maxLength={64000}
-          />
-        </label>
-        <label>
-          {tr("Target Session")}
-          <select value={session} onChange={(e) => setSession(e.target.value)}>
-            <option value="">{tr("Create a new Session per run")}</option>
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          {tr("Cron expression")}
-          <input
-            value={cron}
-            onChange={(e) => setCron(e.target.value)}
-            placeholder={tr("Leave empty for manual runs")}
-          />
-          <small>
-            {tr("Five fields, in")}
-            {Intl.DateTimeFormat().resolvedOptions().timeZone}
-          </small>
-        </label>
-        <button className="primary" disabled={busy}>
-          {tr("Create schedule")}
-        </button>
-      </form>
-      {schedules.map((s) => (
-        <article className="schedule-card" key={s.id}>
-          <h3>{s.title}</h3>
-          <p>{s.prompt}</p>
-          <small>
-            {s.cron || tr("Manual only")} · {s.timezone} ·{" "}
-            {s.enabled ? "enabled" : "disabled"}
-            {s.next_at ? ` · next ${new Date(s.next_at).toLocaleString()}` : ""}
-          </small>
-          <div className="row-actions">
-            <button
-              disabled={busy || !s.enabled}
-              onClick={() =>
-                void act(async () => {
-                  const run = await command<ScheduleRun>(
-                    `${base}/${encode(s.id)}/run`,
-                    { request_id: newID() },
-                  );
-                  onOpen(run.session_id);
-                })
-              }
-            >
-              {tr("Run now")}
-            </button>
-            <button
-              disabled={busy}
-              onClick={() =>
-                void act(() =>
-                  command(
-                    `${base}/${encode(s.id)}`,
-                    { ...s, enabled: !s.enabled },
-                    "PATCH",
-                  ),
-                )
-              }
-            >
-              {s.enabled ? tr("Disable") : tr("Enable")}
-            </button>
-            <button
-              disabled={busy}
-              onClick={() =>
-                void act(async () => {
-                  const prompt = window.prompt(tr("Schedule prompt"), s.prompt);
-                  if (prompt)
-                    await command(
-                      `${base}/${encode(s.id)}`,
-                      { ...s, prompt },
-                      "PATCH",
-                    );
-                })
-              }
-            >
-              {tr("Edit prompt")}
-            </button>
-            <button
-              onClick={() =>
-                void act(async () =>
-                  setRuns(
-                    (
-                      await api<{
-                        runs: ScheduleRun[];
-                      }>(`${base}/${encode(s.id)}/runs`)
-                    ).runs,
-                  ),
-                )
-              }
-            >
-              {tr("Run history")}
-            </button>
-            <button
-              className="danger"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    tr(
-                      "Delete this schedule? Admitted runs retain their own controls.",
-                    ),
-                  )
-                )
-                  void act(() =>
-                    command(
-                      `${base}/${encode(s.id)}?revision=${s.revision}`,
-                      undefined,
-                      "DELETE",
-                    ),
-                  );
-              }}
-            >
-              {tr("Delete schedule")}
-            </button>
-          </div>
-        </article>
-      ))}
-      {runs.length > 0 && (
-        <section>
-          <h3>{tr("Run history")}</h3>
-          {runs.map((run) => (
-            <button
-              className="history-row"
-              key={run.id}
-              onClick={() => onOpen(run.session_id)}
-            >
-              {run.due_at
-                ? new Date(run.due_at).toLocaleString()
-                : tr("Manual run")}{" "}
-              · {run.state}
-            </button>
-          ))}
-        </section>
-      )}
-    </section>
-  );
-}
 export function SharePanel({
   project,
   sessions,
+  initialSession,
 }: {
   project: string;
   sessions: AgentSession[];
+  initialSession?: string;
 }) {
   const tr = useT();
-  const [session, setSession] = useState(sessions[0]?.id || "");
+  const [session, setSession] = useState(
+    initialSession || sessions[0]?.id || "",
+  );
   const [reader, setReader] = useState("");
   const [paths, setPaths] = useState("");
   const [shares, setShares] = useState<Share[]>([]);
