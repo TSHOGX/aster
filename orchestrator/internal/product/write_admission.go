@@ -202,7 +202,7 @@ func (s *Store) writeClass(ctx context.Context, class writeClass, project string
 	}
 	defer tx.Rollback()
 	if err = fn(tx); err != nil {
-		return err
+		return releaseFenceError(err)
 	}
 	return tx.Commit()
 }

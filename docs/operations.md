@@ -94,3 +94,38 @@ reserve; `journal_disk_bytes` includes the SQLite database and WAL. Runtime-volu
 capacity must also cover native history and captures across sibling Sessions.
 Send-window and control-queue bytes are reservations, not exact network traffic.
 Samples disappear when their attachment ends and never authorize command replay.
+
+## Admission drain
+
+The application supports a persistent admission fence through its protected
+control socket. Use a unique owner ID for each attempt:
+
+```sh
+orchestrator drain --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --timeout-seconds 120
+orchestrator drain-status --socket /var/lib/batterygpt/control.sock
+orchestrator drain-abort --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+```
+
+`drain` returns the persisted generation, owner, phase and deadline. Repeating
+that owner while draining returns the same deadline. New execution admissions
+receive HTTP 503 with a draining explanation; explicit held prompts remain held.
+Already queued prompts cannot dispatch until admission reopens. Original request
+identities remain reusable, and replaying an already accepted request still
+returns its recorded intent. Stop, evidence ingestion, observation and cleanup
+continue. Abort/state-query dispatch takes priority over blocked steering and
+can proceed without discarding another command's unknown outcome.
+
+`drain-abort` requires the matching owner and generation. Deadline expiry aborts
+the release attempt and reopens admission; it does not terminate admitted work.
+The worker checks expiry once per second. A process crash leaves the gate closed
+in the database, and reopening the same configuration retains it until abort or
+expiry reconciliation. Status reports fixed-category durable blocker counts;
+unknown command outcomes and unacknowledged unknown turns are blockers.
+
+This admission slice does **not** report readiness or authorize an update or
+shutdown. Runtime gateway requests, read leases, terminal input and metadata
+model calls still need coordinated quiescence. Gateways currently share the
+owner's lifetime, so restarting it can terminate an active upstream stream.
+Independent gateway lifetime, ready/activating transitions and the first-deploy
+bootstrap remain unqualified. Restart recovery uses the same published content
+configuration; introducing a new content revision while draining is rejected.

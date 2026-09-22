@@ -106,13 +106,13 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_commands WHERE incarnation_id=? AND state='unknown'`, i.ID).Scan(&unknown); err != nil {
 			return err
 		}
-		if unknown > 0 {
-			return ErrPending
-		}
 		var id, turn, kind string
 		var payload []byte
-		err = tx.QueryRowContext(ctx, `SELECT id,coalesce(turn_id,''),kind,payload FROM agent_commands WHERE incarnation_id=? AND state='pending' ORDER BY created_at,id LIMIT 1`, i.ID).Scan(&id, &turn, &kind, &payload)
+		err = tx.QueryRowContext(ctx, `SELECT id,coalesce(turn_id,''),kind,payload FROM agent_commands WHERE incarnation_id=? AND state='pending' ORDER BY CASE kind WHEN 'abort' THEN 0 WHEN 'get_state' THEN 1 ELSE 2 END,created_at,id LIMIT 1`, i.ID).Scan(&id, &turn, &kind, &payload)
 		if errors.Is(err, sql.ErrNoRows) {
+			if unknown > 0 {
+				return ErrPending
+			}
 			var active int
 			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND (state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0))`, i.SessionID).Scan(&active); err != nil {
 				return err
@@ -137,6 +137,9 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 			}
 		} else if err != nil {
 			return err
+		}
+		if unknown > 0 && kind != "abort" && kind != "get_state" {
+			return ErrPending
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE agent_commands SET state='sending' WHERE id=? AND state='pending'`, id)); err != nil {
 			return err

@@ -9,39 +9,43 @@ import (
 	"time"
 )
 
-func TestNavigationIndexMigrationFromPreviousSchemaIsAtomic(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "previous.db")
-	db := baselineDatabase(t, path)
-	for _, step := range schemaSteps[1 : len(schemaSteps)-1] {
-		_, err := db.Exec(step)
-		must(t, err)
-	}
-	_, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", len(schemaSteps)-1))
-	must(t, err)
-	before, err := knownSchema(ctx, db)
-	must(t, err)
-	injected := errors.New("interrupt navigation index migration")
-	if err = upgradeSchema(ctx, db, func() error { return injected }); !errors.Is(err, injected) {
-		t.Fatal(err)
-	}
-	after, err := knownSchema(ctx, db)
-	must(t, err)
-	if before != after {
-		t.Fatal("migration partially committed", before, after)
-	}
-	must(t, db.Close())
-	s, err := Open(ctx, path)
-	must(t, err)
-	defer s.Close()
-	version, err := knownSchema(ctx, s.reader)
-	must(t, err)
-	if version != len(schemaSteps) {
-		t.Fatal(version)
-	}
-	turns, err := s.Turns(ctx, Scope{"owner", "p"}, "s", 0, 100)
-	must(t, err)
-	if len(turns) != 1 || turns[0].RequestID != "original-request" {
-		t.Fatal("lost authoritative turn", turns)
+func TestIncrementalMigrationFromRecentSchemasIsAtomic(t *testing.T) {
+	for _, previous := range []int{6, 7} {
+		t.Run(fmt.Sprint(previous), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "previous.db")
+			db := baselineDatabase(t, path)
+			for _, step := range schemaSteps[1:previous] {
+				_, err := db.Exec(step)
+				must(t, err)
+			}
+			_, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", previous))
+			must(t, err)
+			before, err := knownSchema(ctx, db)
+			must(t, err)
+			injected := errors.New("interrupt incremental migration")
+			if err = upgradeSchema(ctx, db, func() error { return injected }); !errors.Is(err, injected) {
+				t.Fatal(err)
+			}
+			after, err := knownSchema(ctx, db)
+			must(t, err)
+			if before != after {
+				t.Fatal("migration partially committed", before, after)
+			}
+			must(t, db.Close())
+			s, err := Open(ctx, path)
+			must(t, err)
+			defer s.Close()
+			version, err := knownSchema(ctx, s.reader)
+			must(t, err)
+			if version != len(schemaSteps) {
+				t.Fatal(version)
+			}
+			turns, err := s.Turns(ctx, Scope{"owner", "p"}, "s", 0, 100)
+			must(t, err)
+			if len(turns) != 1 || turns[0].RequestID != "original-request" {
+				t.Fatal("lost authoritative turn", turns)
+			}
+		})
 	}
 }
 

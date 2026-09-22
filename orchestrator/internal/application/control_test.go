@@ -3,6 +3,8 @@ package application
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -50,5 +52,40 @@ func TestPrivateControlSocketUsesTheApplicationWriter(t *testing.T) {
 	}
 	if err = Control(ctx, socket, "GET", "/status", nil, &output); err != nil || !bytes.Contains(output.Bytes(), []byte("occupied_projects")) {
 		t.Fatal(output.String(), err)
+	}
+	output.Reset()
+	if err = Control(ctx, socket, "POST", "/release/drain", map[string]any{"owner": "operator-test", "timeout_seconds": 60}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var release product.ReleaseState
+	if err = json.Unmarshal(output.Bytes(), &release); err != nil || release.Phase != "draining" {
+		t.Fatal(output.String(), err)
+	}
+	_, err = store.CreateProject(ctx, "alice", "p", "Project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.CreateSession(ctx, product.Scope{Actor: "alice", ProjectID: "p"}, "s", "Session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.AdmitTurn(ctx, product.Scope{Actor: "alice", ProjectID: "p"}, "s", "request", "work", false)
+	if !errors.Is(err, product.ErrDraining) {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err = Control(ctx, socket, "GET", "/release", nil, &output); err != nil || !bytes.Contains(output.Bytes(), []byte("durable_blockers")) {
+		t.Fatal(output.String(), err)
+	}
+	if err = Control(ctx, socket, "POST", "/release/abort", map[string]any{"owner": "stale", "generation": release.Generation}, &output); err == nil {
+		t.Fatal("stale coordinator reopened admission")
+	}
+	output.Reset()
+	if err = Control(ctx, socket, "POST", "/release/abort", map[string]any{"owner": "operator-test", "generation": release.Generation}, &output); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.AdmitTurn(ctx, product.Scope{Actor: "alice", ProjectID: "p"}, "s", "request", "work", false)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -250,10 +250,24 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 			t.Fatalf("published mounts or network differ: %v", report)
 		}
 	}
+	// Admission closure is durable across a real owner crash. It is not yet an
+	// activation/readiness claim: this gate deliberately leaves gateways coupled.
+	release := a.cli("drain", "--socket", socket, "--owner", "release-fixture", "--timeout-seconds", "60")
+	if release["phase"] != "draining" {
+		t.Fatal(release)
+	}
+	a.request("POST", paths[0]+"/turns", map[string]string{"request_id": "during-drain", "content": "blocked until abort"}, 503)
+	a.request("POST", paths[0]+"/turns", map[string]any{"request_id": "held-during-drain", "content": "held intent", "held": true}, 201)
 	// A real owner crash retains the credential session and reconciles durable state.
 	start := time.Now()
 	a.stop()
 	a.start()
+	retained := a.cli("drain-status", "--socket", socket)
+	if retained["phase"] != "draining" || retained["generation"] != release["generation"] {
+		t.Fatal("release fence lost across restart", release, retained)
+	}
+	a.request("POST", paths[0]+"/turns", map[string]string{"request_id": "during-drain", "content": "blocked until abort"}, 503)
+	a.cli("drain-abort", "--socket", socket, "--owner", "release-fixture", "--generation", fmt.Sprint(release["generation"]))
 	a.request("GET", "/api/projects", nil, 200)
 	if time.Since(start) > 15*time.Second {
 		t.Fatal("owner restart exceeded target")
@@ -265,7 +279,17 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 		a.await(30*time.Second, "post-restart native continuation", func() bool {
 			v := a.request("GET", base+"/turns", nil, 200)
 			turns, _ := v["turns"].([]any)
-			return len(turns) == 2 && turns[1].(map[string]any)["state"] == "completed"
+			completed := false
+			for _, raw := range turns {
+				turn := raw.(map[string]any)
+				if turn["request_id"] == "held-during-drain" && turn["state"] != "held" {
+					t.Fatal("held intent dispatched", turn)
+				}
+				if turn["request_id"] == "after-restart" && turn["state"] == "completed" {
+					completed = true
+				}
+			}
+			return completed
 		})
 	}
 	// Saved owner scope is required even when the caller owns both Projects.

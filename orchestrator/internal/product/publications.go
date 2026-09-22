@@ -41,7 +41,7 @@ func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publicati
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at) VALUES(?,?,?,?,?,'preparing',?,?)`, p.StoreID, p.Purpose, p.RevisionDigest, p.Capacity, string(entries), now, now)
 	if err != nil {
-		return empty, err
+		return empty, releaseFenceError(err)
 	}
 	stored, err := publicationWith(ctx, tx, p.StoreID, p.Purpose, p.RevisionDigest)
 	if err != nil {

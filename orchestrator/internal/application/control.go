@@ -44,6 +44,52 @@ func listenControl(name string) (net.Listener, error) {
 }
 func (a *Application) controlHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /release", func(w http.ResponseWriter, r *http.Request) {
+		status, err := a.Store.ReleaseDrainStatus(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeControl(w, status)
+	})
+	mux.HandleFunc("POST /release/drain", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Owner          string `json:"owner"`
+			TimeoutSeconds int64  `json:"timeout_seconds"`
+		}
+		if !decodeControl(w, r, &body) {
+			return
+		}
+		if body.TimeoutSeconds < 1 || body.TimeoutSeconds > 3600 {
+			http.Error(w, "timeout_seconds must be between 1 and 3600", 400)
+			return
+		}
+		state, err := a.Store.BeginReleaseDrain(r.Context(), body.Owner, time.Duration(body.TimeoutSeconds)*time.Second)
+		if err != nil {
+			code := 409
+			if errors.Is(err, product.ErrInvalid) {
+				code = 400
+			}
+			http.Error(w, err.Error(), code)
+			return
+		}
+		writeControl(w, state)
+	})
+	mux.HandleFunc("POST /release/abort", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Owner      string `json:"owner"`
+			Generation int64  `json:"generation"`
+		}
+		if !decodeControl(w, r, &body) {
+			return
+		}
+		state, err := a.Store.AbortReleaseDrain(r.Context(), body.Owner, body.Generation)
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, state)
+	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		report, err := a.Store.OperatorDiagnostics(r.Context())
 		if err != nil {
@@ -51,6 +97,12 @@ func (a *Application) controlHandler() http.Handler {
 			return
 		}
 		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
+		release, err := a.Store.ReleaseState(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		out["release"] = release
 		out["writer"] = a.Store.WriterStats()
 		if a.Agents != nil {
 			out["agent_pressure"] = a.Agents.AgentPressure()

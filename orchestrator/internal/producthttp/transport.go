@@ -87,6 +87,8 @@ func status(err error) (int, string) {
 		return http.StatusAccepted, "operation pending"
 	case errors.Is(err, product.ErrCapacity):
 		return http.StatusServiceUnavailable, "capacity exhausted"
+	case errors.Is(err, product.ErrDraining):
+		return http.StatusServiceUnavailable, product.ErrDraining.Error()
 	default:
 		return http.StatusInternalServerError, "internal error"
 	}

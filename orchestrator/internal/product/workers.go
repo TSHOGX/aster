@@ -31,6 +31,9 @@ type Workers struct {
 }
 
 func (w *Workers) report(kind string, err error) {
+	if errors.Is(err, ErrDraining) {
+		return
+	}
 	if err != nil && !errors.Is(err, ErrPending) && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrBusy) && !errors.Is(err, ErrConflict) && !errors.Is(err, context.Canceled) && w.Report != nil {
 		w.Report(kind, err)
 	}
@@ -60,6 +63,7 @@ func (w *Workers) Run(ctx context.Context) {
 		}()
 	}
 	loop("runtime", interval, w.Step)
+	loop("release deadline", time.Second, w.Store.ExpireReleaseDrain)
 	loop("conversation display", 100*time.Millisecond, w.displayStep)
 	loop("agent recovery", time.Second, func(ctx context.Context) error {
 		if w.Recovery != nil {

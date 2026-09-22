@@ -24,7 +24,8 @@ active-model deployment continuity.
 | P06 admission | Verified locally | Bounded format validation in a Worker and preview parse/resource admission |
 | P06 Office ownership | Verified locally | Prepared replacements, cancellation, chart lifecycle and localized keyboard controls |
 | P06 interaction qualification | Partial | Office cycles and constrained presentation checks pass; history and comparative latency matrix remain open |
-| P07 | Pending | Admission/drain, independent gateway and combined qualification |
+| P07 admission fence | Verified locally | Persisted drain ownership/deadline and atomic new-work fencing |
+| P07 readiness/gateway | Pending | Runtime quiescence, independent gateway and combined release qualification |
 
 ## Diagnostics
 
@@ -756,3 +757,35 @@ worked; latest replaced the window with ten turns. This demonstrates a resource
 plateau for that fixture, not a constrained-device scroll-latency guarantee.
 The separate navigation test traverses beyond its index limit, returns through
 later pages, follows revision changes and jumps into an evicted transcript.
+
+## Durable release admission
+
+Schema 8 persists one admission generation, coordinator owner, phase and deadline.
+SQLite BEFORE triggers fence new executable turns, held-turn release, prompt/
+steer creation and dispatch, Agent/Terminal starts, file mutations, Project
+create/resume operations and new content-publication reservations. Gate closure
+and these reservations use the same serialized writer. A side effect reserved
+before closure remains observable and may settle; queue-only intent cannot start
+new native work. Explicit held prompts and metadata creation remain available.
+
+The operator drain/status/abort surface uses the existing mode-0600 control
+socket and application writer. Stale owner/generation aborts fail. The persisted
+fence survives reopening; a one-second worker aborts expired draining attempts
+without killing existing work. Ready/activating are reserved schema states with
+no exposed transition in this slice. Durable status counts do not substitute
+for runtime quiescence, and this implementation does not claim active-stream
+update continuity. See [operations](operations.md#admission-drain).
+
+Regression cases cover concurrent admission, idempotent request replay, preexisting
+queued/pending commands, scheduler occurrences that remain unconsumed, held-turn
+release, steering, Stop during pending/unknown work, new Agent/Terminal/file/Project
+reservations, content publication, deadline/stale-generation handling, persisted
+restart state, protected control routes and public HTTP rejection. Migration from
+schemas 6 and 7 is checked for pre-commit interruption and retained authoritative
+turns. An executable fixture closes admission, restarts the owner, confirms the
+same generation remains closed, aborts it and completes new native turns.
+
+The next release slice must coordinate in-flight gateway, reader, terminal-input
+and title-generation work before a ready transition, preserve existing admitted
+model requests, and qualify bootstrap and rollback. No deployment is inferred
+from these disposable fixture results.
