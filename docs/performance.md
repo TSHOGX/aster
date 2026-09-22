@@ -22,7 +22,7 @@ active-model deployment continuity.
 | P05 journal/flow | Verified locally | Guest reserve, bounded delivery, safe command compaction and delayed-ACK qualification |
 | P05 combined resource audit | Pending | Final cross-phase queue/resource matrix and deployment qualification |
 | P06 admission | Verified locally | Bounded format validation in a Worker and preview parse/resource admission |
-| P06 lifecycle/interaction | Pending | Replacement rendering, resource plateaus and constrained-profile qualification |
+| P06 lifecycle/interaction | Partial | Fifty desktop cycles locally verified; prepared replacements and constrained-profile qualification remain open |
 | P07 | Pending | Admission/drain, independent gateway and combined qualification |
 
 ## Diagnostics
@@ -517,3 +517,31 @@ and run [the opt-in profile](../frontend/e2e/ui/preview-profile.spec.ts) with
 output directories. Use `NEXT_PUBLIC_INTERACTION_METRICS=1` for resource counters.
 Full lifecycle plateau, replacement rendering and constrained-profile interaction
 qualification remain open; this slice does not close P06.
+
+## Repeated preview lifecycle
+
+A desktop Chromium journey warms all three Office formats, both conversations
+and the account menu, then repeats fifty file/session/fullscreen/theme cycles.
+Each checkpoint returns to the same Markdown file, allows 500 ms for the viewer's
+200 ms debounced layout callback and file validation to settle, and performs GC.
+The [lifecycle test](../frontend/e2e/ui/preview-lifecycle.spec.ts) checks owned
+resources, total live object URLs, DOM nodes, listeners, retained heap, keyboard
+focus and the unsent conversation draft. Optional `PREVIEW_HEAP_SNAPSHOTS=1`
+collects heap snapshots for attribution.
+
+This exposed a workbook debug log in the pinned spreadsheet library. Browser
+DevTools retained every logged workbook, including theme XML. The frontend now
+transpiles that dependency through the console-removal compiler transform;
+workbook and clipboard debug logs are removed, while warnings/errors remain.
+The test also rejects recurrence of the workbook log. Heap retainer analysis
+confirmed zero additional theme strings from these console roots after the fix.
+
+In the qualified desktop run, all six post-GC checkpoints retained 1,091 DOM nodes,
+517–519 listeners, one Markdown URL and 147 bytes of owned preview reservations.
+There were zero retained Office renderers, preview observers, Workers, active
+parses or queued parses at these checkpoints. Heap growth stayed within the
+predeclared 20% /2 MiB allowance; most earlier growth was compiled-code warmup.
+The final ten cycles added approximately 93 KiB, with no resource-count growth.
+These observations qualify this fixture and stable point, not every Office
+feature or constrained device. Rich replacement, chart-heavy repeated journeys,
+locales/narrow profiles and the complete interaction matrix remain open.

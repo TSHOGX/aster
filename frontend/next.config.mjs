@@ -57,6 +57,11 @@ const nextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
   reactStrictMode: true,
+  // This viewer logs parsed workbook objects (and failed clipboard text).
+  // Compile it through SWC so document bodies never become console/DevTools
+  // retention roots. Preserve actionable warnings and errors.
+  transpilePackages: ["@js-preview/excel"],
+  compiler: { removeConsole: { exclude: ["warn", "error"] } },
   // Dev-only: hosts the browser may load the dev server from. Every deployment
   // is reached at a different address (a cloud VM's public IP, a local VM's LAN
   // address), so the list comes entirely from PROJECT_DEV_ORIGINS
