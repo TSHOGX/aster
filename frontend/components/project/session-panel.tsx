@@ -15,6 +15,12 @@ import { ConversationRepository } from "@/lib/conversation-repository";
 import { TurnNavigator } from "./turn-navigator";
 import { TurnView } from "./turn-view";
 import { conversationTurns } from "@/lib/conversation-turns";
+import {
+  latestReadingBookmark,
+  parseReadingBookmark,
+  readingBlockSelector,
+  type PausedReadingBookmark,
+} from "@/lib/reading-bookmark";
 import { Menu, useDialog } from "./ui";
 import { knownWorkspaceFiles, workspacePath } from "@/lib/workspace-links";
 import {
@@ -50,23 +56,33 @@ export function SessionPanel({
   const ask = useDialog();
   const resources = useResources();
   const realtime = useRealtime();
-  const repository = useMemo(
-    () => new ConversationRepository(resources, session.project_id, session.id),
-    [resources, session.project_id, session.id],
+  const key = `project-view:${actor}:${session.project_id}:draft:${session.id}`;
+  const positionKey = key + ":position";
+  const [initialBookmark] = useState(() =>
+    targetMessage
+      ? latestReadingBookmark
+      : parseReadingBookmark(recalled(positionKey, null)),
   );
+  const repository = useMemo(() => {
+    const repository = new ConversationRepository(
+      resources,
+      session.project_id,
+      session.id,
+    );
+    if (!initialBookmark.follow) repository.setAnchor(initialBookmark.item);
+    return repository;
+  }, [resources, session.project_id, session.id, initialBookmark]);
   const view = useSyncExternalStore(
     repository.subscribe,
     repository.getSnapshot,
     repository.getSnapshot,
   );
-  const key = `project-view:${actor}:${session.project_id}:draft:${session.id}`;
   const [draft, setDraft] = useState(() =>
     (() => {
       const saved = recalled<unknown>(key, "");
       return typeof saved === "string" ? saved.slice(0, 64000) : "";
     })(),
   );
-  const positionKey = key + ":position";
   const scroll = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const layoutAnchor = useRef<{ node: HTMLElement; top: number } | null>(null);
@@ -79,9 +95,7 @@ export function SessionPanel({
       ? `${el.clientWidth}:${el.clientHeight}:${body.getBoundingClientRect().height}`
       : "";
   }, []);
-  const following = useRef(
-    recalled<{ follow: boolean }>(positionKey, { follow: true }).follow,
-  );
+  const following = useRef(!targetMessage && initialBookmark.follow);
   const restored = useRef(false);
   const [atBottom, setAtBottom] = useState(true);
   const sendLock = useRef(false);
@@ -96,13 +110,12 @@ export function SessionPanel({
   const hasPending = !!pendingSend;
   const [sentTurn, setSentTurn] = useState<Turn | null>(null);
   const [focusMessage, setFocusMessage] = useState(targetMessage);
-  const [focusTurn, setFocusTurn] = useState(() =>
-    targetMessage
-      ? ""
-      : recalled<{ turn?: string }>(positionKey, {}).turn || "",
+  const [focusItem, setFocusItem] = useState(
+    !initialBookmark.follow ? initialBookmark.item : "",
   );
+  const [focusTurn, setFocusTurn] = useState("");
   const navigationSerial = useRef(0);
-  const navigationPending = useRef(false);
+  const navigationPending = useRef(!!targetMessage || !initialBookmark.follow);
   const alive = useRef(true);
   const windowEpoch = useRef(0);
   const programmaticUntil = useRef(0);
@@ -111,48 +124,76 @@ export function SessionPanel({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingNewer, setLoadingNewer] = useState(false);
   const [navigationTarget, setNavigationTarget] = useState<{
-    kind: "turn" | "message";
+    kind: "turn" | "message" | "item";
     id: string;
+    bookmark?: PausedReadingBookmark;
   } | null>(() =>
     targetMessage
       ? { kind: "message", id: targetMessage }
-      : focusTurn
-        ? { kind: "turn", id: focusTurn }
+      : !initialBookmark.follow
+        ? { kind: "item", id: initialBookmark.item, bookmark: initialBookmark }
         : null,
   );
-  const locate = (kind: "turn" | "message", id: string): HTMLElement | null => {
+  const [navigationLoaded, setNavigationLoaded] =
+    useState<typeof navigationTarget>(null);
+  const locate = (
+    kind: "turn" | "message" | "item",
+    id: string,
+  ): HTMLElement | null => {
     const el = scroll.current;
     if (!el) return null;
     return kind === "turn"
       ? el.querySelector<HTMLElement>(
           `[data-turn-id="${CSS.escape(id)}"] .chat-message.user`,
         )
-      : el.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+      : el.querySelector<HTMLElement>(
+          `[${kind === "item" ? "data-timeline-id" : "data-message-id"}="${CSS.escape(id)}"]`,
+        );
   };
-  const scrollToTarget = (target: HTMLElement, smooth = false) => {
-    const el = scroll.current;
-    if (!el) return;
-    following.current = false;
-    restored.current = true;
-    programmaticUntil.current = performance.now() + 450;
-    el.scrollTo({
-      top:
-        el.scrollTop +
-        target.getBoundingClientRect().top -
-        el.getBoundingClientRect().top -
-        16,
-      behavior:
-        smooth && !window.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "smooth"
-          : "instant",
-    });
-  };
+  const scrollToTarget = useCallback(
+    (target: HTMLElement, smooth = false, bookmark?: PausedReadingBookmark) => {
+      const el = scroll.current;
+      if (!el) return;
+      following.current = false;
+      setAtBottom(false);
+      restored.current = true;
+      programmaticUntil.current = performance.now() + 450;
+      const inner = target.querySelector<HTMLElement>(".activity-output");
+      if (bookmark && inner) {
+        inner.scrollTop = bookmark.innerTop;
+        inner.scrollLeft = bookmark.innerLeft;
+      }
+      const blocks = target.querySelectorAll<HTMLElement>(readingBlockSelector);
+      const block =
+        bookmark && bookmark.block >= 0
+          ? blocks[Math.min(bookmark.block, blocks.length - 1)] || target
+          : target;
+      const offset = bookmark?.offset ?? 16;
+      layoutSize.current = sizeKey();
+      layoutAnchor.current = { node: block, top: offset };
+      el.scrollTo({
+        top:
+          el.scrollTop +
+          block.getBoundingClientRect().top -
+          el.getBoundingClientRect().top -
+          offset,
+        behavior:
+          smooth &&
+          !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "smooth"
+            : "instant",
+      });
+    },
+    [sizeKey],
+  );
   const jumpTurn = (id: string) => {
+    setError("");
     navigationSerial.current++;
     navigationPending.current = false;
     following.current = false;
     setAtBottom(false);
     setFocusMessage("");
+    setFocusItem("");
     setFocusTurn(id);
     const target = locate("turn", id);
     if (target) {
@@ -166,6 +207,7 @@ export function SessionPanel({
       navigationSerial.current++;
       setNavigationTarget({ kind: "message", id: targetMessage });
       setFocusMessage(targetMessage);
+      setFocusItem("");
       setFocusTurn("");
     }, 0);
     return () => clearTimeout(timer);
@@ -191,6 +233,8 @@ export function SessionPanel({
   const captureAnchor = useCallback(() => {
     const el = scroll.current;
     if (!el) return;
+    if (restored.current && !navigationPending.current && following.current)
+      remember(positionKey, latestReadingBookmark);
     const size = sizeKey();
     // A native scroll caused by reflow must not replace the pre-reflow bookmark.
     if (
@@ -208,8 +252,11 @@ export function SessionPanel({
         node.getBoundingClientRect().bottom > top,
     );
     if (anchor) {
+      const blocks = [
+        ...anchor.querySelectorAll<HTMLElement>(readingBlockSelector),
+      ];
       const block =
-        [...anchor.querySelectorAll<HTMLElement>(".markdown-body > *")].find(
+        blocks.find(
           (node) =>
             node.getBoundingClientRect().height > 0 &&
             node.getBoundingClientRect().bottom > top,
@@ -220,13 +267,30 @@ export function SessionPanel({
       };
       layoutSize.current = size;
       repository.setAnchor(anchor.dataset.timelineId!, following.current);
+      if (
+        restored.current &&
+        !navigationPending.current &&
+        !following.current
+      ) {
+        const inner = anchor.querySelector<HTMLElement>(".activity-output");
+        remember(positionKey, {
+          version: 1,
+          follow: false,
+          item: anchor.dataset.timelineId!,
+          block: blocks.indexOf(block),
+          offset: block.getBoundingClientRect().top - top,
+          expanded: anchor instanceof HTMLDetailsElement && anchor.open,
+          innerTop: inner?.scrollTop || 0,
+          innerLeft: inner?.scrollLeft || 0,
+        });
+      }
       if (!following.current)
         scrollAnchor.current = {
           id: anchor.dataset.timelineId!,
           top: anchor.getBoundingClientRect().top,
         };
     }
-  }, [repository, sizeKey]);
+  }, [repository, sizeKey, positionKey]);
   const loadAdjacent = useCallback(
     async (direction: "older" | "newer"): Promise<boolean> => {
       const pending = historyFlights.current.get(direction);
@@ -277,17 +341,20 @@ export function SessionPanel({
       void loadAdjacent("newer");
   };
   const showLatest = async () => {
+    setError("");
     const serial = ++navigationSerial.current;
     windowEpoch.current++;
     navigationPending.current = true;
     setNavigationTarget(null);
     setFocusTurn("");
     setFocusMessage("");
+    setFocusItem("");
 
     try {
       await repository.load();
       if (!alive.current || serial !== navigationSerial.current) return;
       following.current = true;
+      setAtBottom(true);
       restored.current = true;
       requestAnimationFrame(() => {
         if (serial !== navigationSerial.current) return;
@@ -296,6 +363,7 @@ export function SessionPanel({
           top: scroll.current.scrollHeight,
           behavior: "instant",
         });
+        captureAnchor();
       });
     } catch (e) {
       if (!alive.current || serial !== navigationSerial.current) return;
@@ -343,8 +411,8 @@ export function SessionPanel({
       scrollAnchor.current = null;
     }
   }, [view.items, view.summaries]);
-  // A missing destination loads a surrounding message window, not a turn filter.
-  // Keep this window contiguous by extending its two edges as the reader scrolls.
+  // Fetch once per navigation demand. Page/status updates drive alignment in a
+  // separate effect, including asynchronous projector readiness and missing items.
   useEffect(() => {
     if (!navigationTarget) return;
     let gone = false;
@@ -353,49 +421,78 @@ export function SessionPanel({
     navigationPending.current = true;
     following.current = false;
     scrollAnchor.current = null;
-    void (async () => {
-      try {
-        if (!locate(navigationTarget.kind, navigationTarget.id)) {
+    if (!locate(navigationTarget.kind, navigationTarget.id)) {
+      void (async () => {
+        try {
           await repository.load(
             navigationTarget.kind === "turn"
               ? { around_turn: navigationTarget.id }
-              : { around_message: navigationTarget.id },
+              : navigationTarget.kind === "item"
+                ? { around_item: navigationTarget.id }
+                : { around_message: navigationTarget.id },
           );
-          if (gone || !alive.current || serial !== navigationSerial.current)
-            return;
-          if (repository.getSnapshot().status === "pending") return;
+          if (!gone && alive.current && serial === navigationSerial.current)
+            setNavigationLoaded(navigationTarget);
+        } catch (error) {
+          if (!gone && alive.current && serial === navigationSerial.current) {
+            setError(String(error));
+            navigationPending.current = false;
+            setNavigationTarget(null);
+          }
         }
-        requestAnimationFrame(() => {
-          if (gone || serial !== navigationSerial.current) return;
-          const target = locate(navigationTarget.kind, navigationTarget.id);
-          if (target) scrollToTarget(target);
-          else setError(tr("This conversation is unavailable."));
-          navigationPending.current = false;
-          setNavigationTarget(null);
-        });
-      } catch (e) {
-        if (!gone && alive.current && serial === navigationSerial.current) {
-          navigationPending.current = false;
-          setError(String(e));
-          setNavigationTarget(null);
-        }
-      }
-    })();
+      })();
+    }
     return () => {
       gone = true;
     };
-  }, [navigationTarget, repository, tr, view.items]);
+  }, [navigationTarget, repository]);
   useEffect(() => {
-    const saved = recalled<{ scroll?: number; follow?: boolean }>(
-      positionKey,
-      {},
-    );
-    remember(positionKey, {
-      scroll: saved.scroll || 0,
-      follow: saved.follow ?? false,
-      turn: focusTurn,
+    if (!navigationTarget) return;
+    if (
+      !locate(navigationTarget.kind, navigationTarget.id) &&
+      (navigationLoaded !== navigationTarget ||
+        ["pending", "loading", "uninitialized"].includes(view.status))
+    )
+      return;
+    const serial = navigationSerial.current;
+    const frame = requestAnimationFrame(() => {
+      if (!alive.current || serial !== navigationSerial.current) return;
+      const target = locate(navigationTarget.kind, navigationTarget.id);
+      if (target) scrollToTarget(target, false, navigationTarget.bookmark);
+      else if (
+        navigationTarget.kind === "item" &&
+        ["available", "empty"].includes(repository.getSnapshot().status)
+      ) {
+        setError(
+          tr(
+            "The saved reading position is unavailable. Showing the latest conversation.",
+          ),
+        );
+        following.current = true;
+        setAtBottom(true);
+        restored.current = true;
+        setFocusItem("");
+        setFocusMessage("");
+        scroll.current?.scrollTo({
+          top: scroll.current.scrollHeight,
+          behavior: "instant",
+        });
+      } else setError(tr("This conversation is unavailable."));
+      navigationPending.current = false;
+      setNavigationTarget(null);
+      captureAnchor();
     });
-  }, [positionKey, focusTurn]);
+    return () => cancelAnimationFrame(frame);
+  }, [
+    navigationTarget,
+    navigationLoaded,
+    repository,
+    tr,
+    view.items,
+    view.status,
+    captureAnchor,
+    scrollToTarget,
+  ]);
   useEffect(() => {
     remember(key, draft);
   }, [draft, key]);
@@ -545,8 +642,7 @@ export function SessionPanel({
     const el = scroll.current;
     if (!el || !view.head) return;
     if (!restored.current && !navigationTarget) {
-      const saved = recalled<{ scroll: number }>(positionKey, { scroll: 0 });
-      el.scrollTop = following.current ? el.scrollHeight : saved.scroll;
+      el.scrollTop = el.scrollHeight;
       restored.current = true;
     } else if (following.current && !navigationTarget)
       el.scrollTop = el.scrollHeight;
@@ -571,11 +667,13 @@ export function SessionPanel({
         return;
       }
       const anchor = layoutAnchor.current;
-      const delta = anchor?.node.isConnected
-        ? anchor.node.getBoundingClientRect().top -
-          el.getBoundingClientRect().top -
-          anchor.top
-        : 0;
+      const delta =
+        anchor?.node.isConnected &&
+        anchor.node.getBoundingClientRect().height > 0
+          ? anchor.node.getBoundingClientRect().top -
+            el.getBoundingClientRect().top -
+            anchor.top
+          : 0;
       if (following.current || Math.abs(delta) > 0.5) {
         programmaticUntil.current = performance.now() + 150;
         el.scrollTop = following.current
@@ -761,11 +859,13 @@ export function SessionPanel({
                 void loadAdjacent("newer");
             }
             captureAnchor();
-            remember(positionKey, {
-              turn: focusTurn,
-              scroll: el.scrollTop,
-              follow: following.current,
-            });
+          }}
+          onScrollCapture={(event) => {
+            if (
+              event.target !== event.currentTarget &&
+              (event.target as HTMLElement).matches(".activity-output")
+            )
+              captureAnchor();
           }}
           onClick={(event) => {
             if (
@@ -776,11 +876,6 @@ export function SessionPanel({
               following.current = false;
               setAtBottom(false);
               captureAnchor();
-              remember(positionKey, {
-                turn: focusTurn,
-                scroll: scroll.current!.scrollTop,
-                follow: false,
-              });
             }
             const link = (event.target as HTMLElement).closest("a");
             const href = link?.getAttribute("href");
@@ -834,6 +929,10 @@ export function SessionPanel({
                 project={session.project_id}
                 session={session.id}
                 targetMessage={focusMessage}
+                targetItem={focusItem}
+                targetItemOpen={
+                  !initialBookmark.follow && initialBookmark.expanded
+                }
               />
             ))}
             {loadingNewer && (

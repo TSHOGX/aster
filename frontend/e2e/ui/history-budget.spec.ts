@@ -3,6 +3,179 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { historyFixture } from "./history-fixture";
 
+const bookmarkKey = "project-view:researcher:battery:draft:analysis:position";
+const savedBookmark = {
+  version: 1,
+  follow: false,
+  item: "answer-500",
+  block: 5,
+  offset: 0,
+  expanded: false,
+  innerTop: 0,
+  innerLeft: 0,
+};
+
+test("denied restoration preserves the bookmark and displays no transcript", async ({ page }) => {
+  await historyFixture(page);
+  await page.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), { key: bookmarkKey, value: savedBookmark });
+  await page.route("**/sessions/analysis/view/pages?**", route => route.fulfill({ status: 403, json: { error: "Conversation access denied" } }));
+  await page.goto("/?project=battery&session=analysis");
+  await expect(page.locator(".agent-panel").getByRole("alert")).toBeVisible();
+  await expect(page.locator(".conversation-turn")).toHaveCount(0);
+  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), bookmarkKey)).toEqual(savedBookmark);
+});
+
+test("a missing bookmark is reported, while explicit message links take priority", async ({
+  page,
+}) => {
+  const fixture = await historyFixture(page);
+  await page.addInitScript(
+    ({ key, value }) => localStorage.setItem(key, JSON.stringify(value)),
+    { key: bookmarkKey, value: savedBookmark },
+  );
+  await page.route("**/sessions/analysis/view/pages?**", (route) =>
+    new URL(route.request().url()).searchParams.has("around_item")
+      ? route.fulfill({
+          status: 404,
+          json: { error: "Item no longer present" },
+        })
+      : route.fallback(),
+  );
+  await page.goto("/?project=battery&session=analysis");
+  await expect(page.locator(".agent-panel").getByRole("alert")).toContainText(
+    "saved reading position is unavailable",
+  );
+  await expect(page.locator('[data-turn-id="turn-1000"]')).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key)!),
+        bookmarkKey,
+      ),
+    )
+    .toEqual({ version: 1, follow: true });
+  const before = fixture.calls.length;
+  await page.goto("/?project=battery&session=analysis&message=answer-600");
+  await expect(page.locator('[data-message-id="answer-600"]')).toBeVisible();
+  expect(
+    fixture.calls.slice(before).some((url) => url.includes("around_item")),
+  ).toBe(false);
+});
+
+test("pending bookmark restoration keeps its demand until the anchored page is ready", async ({
+  page,
+}) => {
+  await historyFixture(page);
+  await page.addInitScript(
+    ({ key, value }) => localStorage.setItem(key, JSON.stringify(value)),
+    { key: bookmarkKey, value: savedBookmark },
+  );
+  let requests = 0;
+  await page.route("**/sessions/analysis/view/pages?**", (route) => {
+    if (
+      new URL(route.request().url()).searchParams.has("around_item") &&
+      ++requests <= 2
+    )
+      return route.fulfill({
+        status: 202,
+        json: { error: "Projection preparing" },
+      });
+    return route.fallback();
+  });
+  await page.goto("/?project=battery&session=analysis");
+  await expect.poll(() => requests).toBeGreaterThan(0);
+  expect(
+    await page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key)!),
+      bookmarkKey,
+    ),
+  ).toEqual(savedBookmark);
+  await expect(page.locator('[data-message-id="answer-500"]')).toBeVisible();
+  expect(requests).toBeGreaterThan(2);
+});
+
+test("a restored process bookmark reveals its item and retains detail scroll", async ({
+  page,
+}) => {
+  await historyFixture(page);
+  await page.goto("/?project=battery&session=analysis&message=answer-500");
+  const turn = page.locator('[data-turn-id="turn-500"]');
+  await turn.locator(".turn-work-toggle").click();
+  await turn.locator(".activity-summary").click();
+  const item = page.locator('[data-timeline-id="tool-500"]');
+  await item.locator(":scope > summary").click();
+  await item.evaluate((node) => node.scrollIntoView({ block: "start" }));
+  const output = item.locator(".activity-output");
+  await output.evaluate((node) => {
+    node.scrollTop = 160;
+    node.dispatchEvent(new Event("scroll"));
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key)!).innerTop,
+        bookmarkKey,
+      ),
+    )
+    .toBe(160);
+  await page
+    .getByRole("button", { name: "Prepare the research report", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Compare cycle performance", exact: true })
+    .click();
+  await expect(item).toHaveAttribute("open", "");
+  await expect
+    .poll(() => output.evaluate((node) => Math.abs(node.scrollTop - 160)))
+    .toBeLessThanOrEqual(1);
+  await page.reload();
+  await expect(item).toHaveAttribute("open", "");
+  await expect
+    .poll(() => output.evaluate((node) => Math.abs(node.scrollTop - 160)))
+    .toBeLessThanOrEqual(1);
+  await expect(page.locator(".turn-process")).toHaveCount(1);
+});
+
+test("a reading bookmark survives session return and an empty page cache", async ({
+  page,
+}) => {
+  const fixture = await historyFixture(page);
+  await page.goto("/?project=battery&session=analysis&message=answer-500");
+  const heading = () =>
+    page.locator('[data-message-id="answer-500"] h3').nth(5);
+  await expect(heading()).toBeAttached();
+  await heading().evaluate((node) => node.scrollIntoView({ block: "start" }));
+  await page.waitForTimeout(100);
+  const offset = () =>
+    heading().evaluate(
+      (node) =>
+        node.getBoundingClientRect().top -
+        document.querySelector(".conversation-scroll")!.getBoundingClientRect()
+          .top,
+    );
+  await expect.poll(offset).toBeLessThan(2);
+  await page
+    .locator(".agent-panel textarea")
+    .fill("Keep my draft and reading place");
+  await page
+    .getByRole("button", { name: "Prepare the research report", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Compare cycle performance", exact: true })
+    .click();
+  await expect(heading()).toBeVisible();
+  expect(Math.abs(await offset())).toBeLessThan(24);
+  await page.reload(); // The memory page cache is now empty; the URL has no message target.
+  await expect(heading()).toBeVisible();
+  expect(Math.abs(await offset())).toBeLessThan(24);
+  await expect(page.locator(".agent-panel textarea")).toHaveValue(
+    "Keep my draft and reading place",
+  );
+  expect(
+    fixture.calls.some((url) => url.includes("around_item=answer-500")),
+  ).toBe(true);
+});
+
 test("large history preserves model copy, bounded pages and reader intent", async ({
   page,
   context,

@@ -42,12 +42,16 @@ function Transcript({
   activeTurns,
   loadMessage,
   loadDetail,
+  targetItem,
+  targetItemOpen,
 }: {
   items: TimelineItem[];
   files: readonly string[];
   activeTurns: ReadonlySet<string>;
   loadMessage: (id: string) => Promise<string>;
   loadDetail: (item: TimelineItem) => Promise<string>;
+  targetItem?: string;
+  targetItemOpen?: boolean;
 }) {
   const tr = useT();
   const [downloadError, setDownloadError] = useState("");
@@ -65,6 +69,8 @@ function Transcript({
               key={segment.id}
               segment={segment}
               workspaceFiles={files}
+              targetItem={targetItem}
+              targetItemOpen={targetItemOpen}
             />
           );
         const item = segment.item;
@@ -123,6 +129,8 @@ export function TurnView({
   project,
   session,
   targetMessage,
+  targetItem = "",
+  targetItemOpen = false,
 }: {
   turn: ConversationTurn;
   files: readonly string[];
@@ -133,6 +141,8 @@ export function TurnView({
   project: string;
   session: string;
   targetMessage: string;
+  targetItem?: string;
+  targetItemOpen?: boolean;
 }) {
   const tr = useT();
   const final = finalItems(turn);
@@ -152,12 +162,16 @@ export function TurnView({
   const body = turn.items.filter((i) => i.kind !== "user");
   const finalIDs = new Set(final.map((i) => i.id));
   const intermediate = body.filter((i) => !finalIDs.has(i.id));
-  const targetInHistory =
-    !!targetMessage && intermediate.some((i) => i.message_id === targetMessage);
+  const targetInHistory = intermediate.some(
+    (i) =>
+      (!!targetMessage && i.message_id === targetMessage) ||
+      (!!targetItem && i.id === targetItem),
+  );
+  const targetKey = targetItem || targetMessage;
   const open =
     !completed ||
     expanded ||
-    (targetInHistory && collapsedTarget !== targetMessage);
+    (targetInHistory && collapsedTarget !== targetKey);
   const running = !!turn.summary && runningTurn(summary!.state);
   const vote = (value: "up" | "down") => {
     const next = feedback === value ? null : value;
@@ -211,7 +225,7 @@ export function TurnView({
             disabled={!completed || !intermediate.length}
             onClick={() => {
               setExpanded(!open);
-              if (open) setCollapsedTarget(targetMessage);
+              if (open) setCollapsedTarget(targetKey);
             }}
           >
             <TurnClock
@@ -250,6 +264,8 @@ export function TurnView({
             activeTurns={activeTurns}
             loadMessage={loadMessage}
             loadDetail={loadDetail}
+            targetItem={targetItem}
+            targetItemOpen={targetItemOpen}
           />
         </div>
       )}

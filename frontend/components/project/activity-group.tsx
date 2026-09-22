@@ -13,12 +13,19 @@ import {
 export function ActivityGroup({
   segment,
   workspaceFiles,
+  targetItem = "",
+  targetItemOpen = false,
 }: {
   segment: Extract<TimelineSegment, { kind: "activity" }>;
   workspaceFiles: readonly string[];
+  targetItem?: string;
+  targetItemOpen?: boolean;
 }) {
   const tr = useT();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() =>
+    segment.items.some((item) => item.id === targetItem),
+  );
+  const [initialOpen] = useState(targetItemOpen ? targetItem : "");
   const detailsId = useId();
   const { items, live, active } = segment;
   const tools = items.filter((item) => item.kind === "tool");
@@ -64,6 +71,7 @@ export function ActivityGroup({
               <details
                 key={item.id}
                 className="thinking-trace"
+                open={item.id === initialOpen || undefined}
                 data-timeline-id={item.id}
                 hidden={!expanded}
               >
@@ -101,6 +109,7 @@ export function ActivityGroup({
             <details
               key={item.id}
               className="tool-trace"
+              open={item.id === initialOpen || undefined}
               data-timeline-id={item.id}
               data-state={
                 isActive

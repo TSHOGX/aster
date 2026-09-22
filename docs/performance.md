@@ -633,3 +633,25 @@ and then use browser find/print. Copy answer fetches complete model text even
 when its visible excerpt is truncated. Copy and message-text downloads currently
 share the 16 MiB decoded working limit; the workbench does not imply unlimited
 full-conversation printing or export.
+
+## Reading bookmarks outside the page cache
+
+Reading position now uses small versioned metadata under the actor/Project/Session
+preference key. A paused bookmark contains a stable display-item ID, visible block
+index and offset, plus the selected process item's open state and detail scroll.
+Following latest stores only that intent. No message text or page bodies enter
+the bookmark. Values are bounded and validated; the old absolute-scroll and
+last-clicked-turn restoration path is removed.
+
+An explicit message URL takes priority. Otherwise a missing memory window loads
+through the existing `around_item` API, reveals the bookmarked process item if
+needed, and aligns its available block. Pending projection retains the same
+navigation demand. A removed item falls back once with a visible notice; denied
+access clears displayed content without replacing the saved bookmark. Navigation
+fetching and alignment have separate lifetimes, preventing a missing target from
+reissuing the same request on every page update. Draft ownership is unchanged.
+
+The regressions cover warm Session return, page reload with an empty cache,
+complete draft retention, nested process scroll, pending/missing/denied anchors
+and explicit-link priority. The full default UI suite passes 63 cases; 22 Office
+and profile cases remain opt-in and retain their separate qualification evidence.

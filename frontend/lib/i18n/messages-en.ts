@@ -55,6 +55,7 @@ export const EN = {
   Latest: "Latest",
   "Leave empty for manual runs": "Leave empty for manual runs",
   "Loading preview…": "Loading preview…",
+  "The saved reading position is unavailable. Showing the latest conversation.": "The saved reading position is unavailable. Showing the latest conversation.",
   "Preparing preview…": "Preparing preview…",
   "Slides": "Slides",
   "Previous slide": "Previous slide",

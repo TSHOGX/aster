@@ -942,11 +942,14 @@ test("turn rail previews with a hover wave, tracks reading and jumps across hist
   });
   await conversationRoute(page, (route) => {
     const params = new URL(route.request().url()).searchParams;
-    const target = params.get("around_turn"),
+    const target =
+        params.get("around_turn") ||
+        params.get("around_item") ||
+        params.get("around_message"),
       before = Number(params.get("before")),
       after = Number(params.get("after"));
     if (target) requestedAnchors.push(target);
-    const n = Number(target?.split("-").at(-1));
+    const n = Number(target?.match(/\d+$/)?.[0]);
     const entries = target
       ? all.filter(
           (t) => t.sequence >= Math.max(1, n - 2) && t.sequence <= n + 2,

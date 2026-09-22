@@ -139,3 +139,9 @@ Return to latest resumes it. Browser find/print sees only loaded pages and mount
 process history: navigate to a turn/message and expand it first. Complete-answer
 copy uses model data rather than the visible excerpt, within the documented copy
 budget in [performance](performance.md#conversation-layout-and-reading-intent).
+
+Reading bookmarks persist independently of cached conversation pages. Reloading
+or returning after cache eviction reloads the surrounding item and restores the
+visible block, including an open process detail. Bookmarks contain position
+metadata only. Explicit message links override them; a removed item produces a
+notice before showing latest. Pending or denied reads do not erase the bookmark.
