@@ -12,7 +12,8 @@ Real gates use the pinned engine on a disposable Linux substrate:
 2. Concurrent native Pi Sessions, journal replay, controls and uncertain dispatch.
 3. Retained PTYs, input ownership, output gaps, EOF/signals and browser detach.
 4. Confined Files under real runsc, symlink races, streaming and lost replies.
-5. Service reachability, host-derived attribution and per-turn drain.
+5. Service reachability, host-derived attribution, per-turn drain, independent
+   gateway lifetime, bounded authority outage and gated gateway replacement.
 6. Owner/worker/guardian/engine process faults and recovery/retirement settlement.
 7. The actual released executable/image and cookie-authenticated Chromium journey.
 8. A five-minute mixed workload with two Projects, four Agents, two retained PTYs,
@@ -33,6 +34,9 @@ continued turns, scope rejection, idle pause and cleanup. The browser journey
 covers single-conversation navigation with concurrent background Sessions, native Stop, CodeMirror file editing,
 retained PTY detach/reload/input handoff, output gaps and fairness under output.
 These use the final guest binaries, not injected application replacements.
+The gateway fixture verifies one original upstream request and native completion
+through an owner outage, followed by a quiescent gateway replacement. Its
+deterministic model does not qualify a real-provider active update.
 
 Use [dev/README.md](../dev/README.md) to run and collect a gate. Preserve source
 revision, release digest, engine revision, platform, commands, test names and raw

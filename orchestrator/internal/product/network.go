@@ -99,13 +99,10 @@ func (s *Store) GrantService(ctx context.Context, scope Scope, session, incarnat
 	return grant, token, err
 }
 
-// AuthorizeService resolves the live attribution for a request. It requires an
+// authorizeService resolves the live attribution for a request. It requires an
 // active Project, a running incarnation, an unexpired active grant, and an
 // admitted turn on that Session. Absent an admitted turn there is no service
 // authority at all, so an idle agent cannot reach an upstream on its own.
-func (s *Store) AuthorizeService(ctx context.Context, audience, token string) (Attribution, error) {
-	return authorizeService(ctx, s.reader, s.timestamp(), audience, token)
-}
 func authorizeService(ctx context.Context, q queryer, now, audience, token string) (Attribution, error) {
 	id, _, ok := strings.Cut(token, ".")
 	if !ok || len(token) > 256 || !validID(id) {
@@ -131,31 +128,12 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 	return a, nil
 }
 
-// AcquireService accounts for the complete forwarded request. A draining owner
-// may still authorize additional requests for already admitted turns; later
-// release phases close this lease boundary before quiescence is asserted.
-func (s *Store) AcquireService(ctx context.Context, audience, token string) (Attribution, func(), error) {
-	release, err := s.beginRuntimeWork(ctx, runtimeModel)
-	if err != nil {
-		return Attribution{}, nil, err
-	}
-	attribution, err := s.AuthorizeService(ctx, audience, token)
-	if err != nil {
-		release()
-		return Attribution{}, nil, err
-	}
-	return attribution, release, nil
-}
-
-// HoldsAttribution reports whether one already attributed request may continue.
+// holdsAttribution reports whether one already attributed request may continue.
 // A stopping turn retains its existing request until native abort settles.
 // Dropping it at abort admission races Pi and turns cancellation into a network
-// error. Fresh requests still require starting/running in AuthorizeService.
+// error. Fresh requests still require starting/running in authorizeService.
 // A request drains when its own turn leaves admission, even though the grant
 // itself survives for the Session's next turn.
-func (s *Store) HoldsAttribution(ctx context.Context, a Attribution) error {
-	return holdsAttribution(ctx, s.reader, s.timestamp(), a)
-}
 func holdsAttribution(ctx context.Context, q queryer, now string, a Attribution) error {
 	var state string
 	err := q.QueryRowContext(ctx, `SELECT t.state FROM turns t

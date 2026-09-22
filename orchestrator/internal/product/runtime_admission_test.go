@@ -217,36 +217,3 @@ func TestRuntimeAdmissionAndDrainRace(t *testing.T) {
 		t.Fatal(s.RuntimeWorkStats())
 	}
 }
-
-func TestModelLeaseTracksAdmittedRequestsDuringDrainAndRejectsLaterPhases(t *testing.T) {
-	s, scope, i, _ := agentServiceFixture(t)
-	_, token, err := s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
-	must(t, err)
-	_, first, err := s.AcquireService(ctx, "model", token)
-	must(t, err)
-	_, err = s.BeginReleaseDrain(ctx, "model-lease", time.Minute)
-	must(t, err)
-	_, second, err := s.AcquireService(ctx, "model", token)
-	must(t, err)
-	if s.RuntimeWorkStats()["model_request"] != 2 {
-		t.Fatal(s.RuntimeWorkStats())
-	}
-	_, _, err = s.AcquireService(ctx, "model", "bad-token")
-	wantError(t, err, ErrNotFound)
-	if s.RuntimeWorkStats()["model_request"] != 2 {
-		t.Fatal("denied request retained lease")
-	}
-	first()
-	second()
-	// The public coordinator does not expose this phase yet. Verify the boundary
-	// that its later atomic readiness transition will use.
-	_, err = s.db.Exec(`UPDATE application_release SET phase='ready' WHERE id=1`)
-	must(t, err)
-	_, _, err = s.AcquireService(ctx, "model", token)
-	wantError(t, err, ErrDraining)
-	_, err = s.beginRuntimeWork(ctx, runtimeRead)
-	wantError(t, err, ErrDraining)
-	if len(s.RuntimeWorkStats()) != 0 {
-		t.Fatal(s.RuntimeWorkStats())
-	}
-}

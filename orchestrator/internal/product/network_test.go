@@ -151,17 +151,17 @@ func TestServiceGrantAttributionRevocationAndTurnDrain(t *testing.T) {
 	}
 	// Attribution is host-derived: the guest's credential names no turn, and the
 	// store resolves the incarnation's currently admitted turn instead.
-	a, err := s.AuthorizeService(ctx, "model", token)
+	a, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
 	if a.TurnID != c.TurnID || a.Grant.ProjectID != scope.ProjectID || a.TurnState != "starting" {
 		t.Fatal(a)
 	}
-	must(t, s.HoldsAttribution(ctx, a))
-	_, err = s.AuthorizeService(ctx, "wrong", token)
+	must(t, holdsAttribution(ctx, s.reader, s.timestamp(), a))
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "wrong", token)
 	wantError(t, err, ErrNotFound)
-	_, err = s.AuthorizeService(ctx, "model", token+"a")
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token+"a")
 	wantError(t, err, ErrNotFound)
-	_, err = s.AuthorizeService(ctx, "model", grant.ID+".0000")
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", grant.ID+".0000")
 	wantError(t, err, ErrNotFound)
 	// An undeclared audience cannot be granted even for a live incarnation.
 	_, _, err = s.GrantService(ctx, scope, i.SessionID, i.ID, "undeclared", time.Hour)
@@ -176,8 +176,8 @@ func TestServiceGrantAttributionRevocationAndTurnDrain(t *testing.T) {
 	// grant: the credential belongs to the incarnation, not to one turn.
 	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, c.TurnID)
 	must(t, err)
-	wantError(t, s.HoldsAttribution(ctx, a), ErrNotFound)
-	_, err = s.AuthorizeService(ctx, "model", token)
+	wantError(t, holdsAttribution(ctx, s.reader, s.timestamp(), a), ErrNotFound)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	live, err := s.ServiceGrants(ctx, scope)
 	must(t, err)
@@ -190,14 +190,14 @@ func TestServiceGrantAttributionRevocationAndTurnDrain(t *testing.T) {
 	must(t, err)
 	_, err = s.db.Exec(`UPDATE turns SET state='running' WHERE id=?`, next.ID)
 	must(t, err)
-	successor, err := s.AuthorizeService(ctx, "model", token)
+	successor, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
 	if successor.TurnID != next.ID {
 		t.Fatal(successor)
 	}
 	// The old request still drains: it is pinned to its own turn.
-	wantError(t, s.HoldsAttribution(ctx, a), ErrNotFound)
-	must(t, s.HoldsAttribution(ctx, successor))
+	wantError(t, holdsAttribution(ctx, s.reader, s.timestamp(), a), ErrNotFound)
+	must(t, holdsAttribution(ctx, s.reader, s.timestamp(), successor))
 }
 
 func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
@@ -206,7 +206,7 @@ func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
 		t.Helper()
 		_, token, err := s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
 		must(t, err)
-		a, err := s.AuthorizeService(ctx, "model", token)
+		a, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 		must(t, err)
 		return a, token
 	}
@@ -225,7 +225,7 @@ func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
 	_, token := live(t)
 	_, err := s.db.Exec(`UPDATE agent_incarnations SET state='exited' WHERE id=?`, i.ID)
 	must(t, err)
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	revive(t)
 
@@ -234,7 +234,7 @@ func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
 	_, token = live(t)
 	_, err = s.db.Exec(`UPDATE projects SET state='pausing' WHERE id=?`, scope.ProjectID)
 	must(t, err)
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	revive(t)
 
@@ -243,7 +243,7 @@ func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
 	p, err := s.Project(ctx, scope)
 	must(t, err)
 	must(t, s.DeleteProject(ctx, scope, p.Revision))
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	_, _, err = s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
 	wantError(t, err, ErrDeleting)
@@ -254,7 +254,7 @@ func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
 	s.now = func() time.Time { return now }
 	_, token = live(t)
 	now = now.Add(2 * time.Hour)
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	_, _, err = s.GrantService(ctx, scope, i.SessionID, i.ID, "model", 48*time.Hour)
 	wantError(t, err, ErrInvalid)
@@ -275,17 +275,17 @@ func TestIdleAgentHasNoServiceAuthorityWithoutAdmittedTurn(t *testing.T) {
 	must(t, err)
 	// The runner holds a valid credential, but with no admitted turn there is no
 	// service authority at all: an idle agent cannot reach an upstream alone.
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	turn, err := s.AdmitTurn(ctx, scope, "idle", "first", "hello", false)
 	must(t, err)
 	// A queued turn is admitted for Project activity but is not yet dispatched, so
 	// it grants no request authority either.
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	_, err = s.db.Exec(`UPDATE turns SET state='starting' WHERE id=?`, turn.ID)
 	must(t, err)
-	a, err := s.AuthorizeService(ctx, "model", token)
+	a, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
 	if a.TurnID != turn.ID {
 		t.Fatal(a)
@@ -310,14 +310,14 @@ func TestServiceRenewalFencesOwnerAndNeverRevivesExpiredGrant(t *testing.T) {
 	clock = clock.Add(40 * time.Minute)
 	must(t, s.RenewService(ctx, i, "model", time.Hour))
 	clock = clock.Add(30 * time.Minute)
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
 	stale := i
 	stale.Owner++
 	wantError(t, s.RenewService(ctx, stale, "model", time.Hour), ErrConflict)
 	clock = clock.Add(time.Hour)
 	wantError(t, s.RenewService(ctx, i, "model", time.Hour), ErrNotFound)
-	_, err = s.AuthorizeService(ctx, "model", token)
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 }
 
@@ -325,17 +325,17 @@ func TestNativeAbortRetainsExistingRequestUntilCancellationSettles(t *testing.T)
 	s, scope, i, command := agentServiceFixture(t)
 	_, token, err := s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
 	must(t, err)
-	existing, err := s.AuthorizeService(ctx, "model", token)
+	existing, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
 	session, err := s.Session(ctx, scope, i.SessionID)
 	must(t, err)
 	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop", session.ControlRevision))
 	// A gateway check can happen after durable Stop admission but before Pi reads
 	// abort. Existing stream must survive that interval; a new request is refused.
-	must(t, s.HoldsAttribution(ctx, existing))
-	_, err = s.AuthorizeService(ctx, "model", token)
+	must(t, holdsAttribution(ctx, s.reader, s.timestamp(), existing))
+	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
 	_, err = s.db.Exec(`UPDATE turns SET state='canceled' WHERE id=?`, command.TurnID)
 	must(t, err)
-	wantError(t, s.HoldsAttribution(ctx, existing), ErrNotFound)
+	wantError(t, holdsAttribution(ctx, s.reader, s.timestamp(), existing), ErrNotFound)
 }

@@ -12,8 +12,10 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
-actual executable/image release gate. `mixed` runs over five minutes. `browser`
+Suites are `release`, `gateway`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
+actual executable/image release gate. `gateway` isolates native streaming across
+a temporary owner outage and gated gateway replacement; it uses a deterministic
+model and does not qualify an external provider. `mixed` runs over five minutes. `browser`
 requires `npm run build` in the frontend and an installed Playwright Chromium.
 Provide `PLAYWRIGHT_BROWSERS_PATH` when the build user owns the browser cache;
 the isolated substrate runs as root and otherwise searches its own cache.

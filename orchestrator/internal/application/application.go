@@ -24,7 +24,6 @@ import (
 	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
-	"harness-platform/orchestrator/internal/servicegateway"
 )
 
 type Application struct {
@@ -47,7 +46,6 @@ type Application struct {
 	group            sync.WaitGroup
 	servers          []*http.Server
 	listeners        []net.Listener
-	gateways         []*servicegateway.Gateway
 	publication      sync.Mutex
 	closeOnce        sync.Once
 	controlServer    *http.Server
@@ -214,24 +212,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if len(cfg.Gateways) > 0 && os.Geteuid() == 0 {
 		return app, errors.New("Project gateways require a non-engine application UID; run the application unprivileged and configure engine --via-uid accordingly")
 	}
-	for _, setting := range cfg.Gateways {
-		secret := os.Getenv(setting.APIKeyEnv)
-		if setting.APIKeyEnv != "" && secret == "" {
-			return app, fmt.Errorf("gateway secret environment variable %s is empty", setting.APIKeyEnv)
-		}
-		gateway, err := servicegateway.New(store, servicegateway.Config{Audience: setting.Audience, Upstream: setting.Upstream, APIKey: secret, MaxRequests: setting.MaxRequests})
-		if err != nil {
-			return app, err
-		}
-		listener, err := net.Listen("tcp", setting.Listen)
-		if err != nil {
-			gateway.Close()
-			return app, err
-		}
-		app.gateways = append(app.gateways, gateway)
-		app.listeners = append(app.listeners, listener)
-		app.servers = append(app.servers, app.server(gateway))
-	}
+
 	return app, nil
 }
 func (a *Application) server(handler http.Handler) *http.Server {
@@ -272,9 +253,6 @@ func (a *Application) Run(ctx context.Context) error {
 			var err error
 			if index == 1 && a.Config.TLSCert != "" {
 				err = server.ServeTLS(a.listeners[index], a.Config.TLSCert, a.Config.TLSKey)
-			} else if index >= 3 && a.Config.Gateways[index-3].TLSCert != "" {
-				setting := a.Config.Gateways[index-3]
-				err = server.ServeTLS(a.listeners[index], setting.TLSCert, setting.TLSKey)
 			} else {
 				err = server.Serve(a.listeners[index])
 			}
@@ -302,9 +280,6 @@ func (a *Application) Run(ctx context.Context) error {
 func (a *Application) Close() {
 	a.closeOnce.Do(func() {
 		a.cancel()
-		for _, gateway := range a.gateways {
-			gateway.Close()
-		}
 		for _, server := range a.servers {
 			_ = server.Close()
 		}

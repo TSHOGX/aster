@@ -38,6 +38,7 @@ type releaseApp struct {
 	ctx                          context.Context
 	root, binary, config, origin string
 	command                      *exec.Cmd
+	gateway                      *exec.Cmd
 	client                       *http.Client
 	uid, gid                     uint32
 }
@@ -49,7 +50,7 @@ func (a *releaseApp) start(extra ...string) {
 	defer log.Close()
 	a.command = exec.CommandContext(a.ctx, a.binary, append([]string{"serve", "--config", a.config}, extra...)...)
 	a.command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
-	a.command.Env = append(os.Environ(), "PROJECT_RELEASE_SECRET=release-fixture-secret")
+	a.command.Env = os.Environ()
 	a.command.Stdout, a.command.Stderr = log, log
 	require(a.t, a.command.Start())
 	a.await(30*time.Second, "application ready", func() bool {
@@ -60,6 +61,29 @@ func (a *releaseApp) start(extra ...string) {
 		defer response.Body.Close()
 		return response.StatusCode == 200
 	})
+}
+func (a *releaseApp) startGateway() {
+	a.t.Helper()
+	log, err := os.OpenFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "gateway.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	require(a.t, err)
+	defer log.Close()
+	a.gateway = exec.CommandContext(a.ctx, a.binary, "gateway", "--config", a.config)
+	a.gateway.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
+	a.gateway.Env = append(os.Environ(), "PROJECT_RELEASE_SECRET=release-fixture-secret")
+	a.gateway.Stdout, a.gateway.Stderr = log, log
+	require(a.t, a.gateway.Start())
+	a.await(10*time.Second, "independent gateway ready", func() bool {
+		command := exec.CommandContext(a.ctx, a.binary, "gateway-status", "--socket", filepath.Join(a.root, "state/gateway.sock"))
+		_, err := command.Output()
+		return err == nil
+	})
+}
+func (a *releaseApp) stopGateway() {
+	if a.gateway != nil {
+		_ = a.gateway.Process.Kill()
+		_ = a.gateway.Wait()
+		a.gateway = nil
+	}
 }
 func (a *releaseApp) stop() {
 	if a.command != nil {
@@ -181,10 +205,12 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	}
 	upstream := exec.CommandContext(ctx, filepath.Join(root, "runtime-fixture"), mode)
 	upstream.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
-	upstream.Env = append(os.Environ(), "PROJECT_UPSTREAM_ADDR=192.0.2.1:18890", "PROJECT_UPSTREAM_SECRET=release-fixture-secret", "PROJECT_UPSTREAM_OVERLAP=4", "PROJECT_MODEL_ADDR=192.0.2.1:18890", "PROJECT_UPSTREAM_COMPLETIONS="+filepath.Join(root, "completions.jsonl"), "PROJECT_UPSTREAM_REQUIRE_CONTEXT="+os.Getenv("PROJECT_RELEASE_CHECK_CONTEXT"))
+	upstream.Env = append(os.Environ(), "PROJECT_UPSTREAM_ADDR=192.0.2.1:18890", "PROJECT_UPSTREAM_SECRET=release-fixture-secret", "PROJECT_UPSTREAM_OVERLAP=4", "PROJECT_MODEL_ADDR=192.0.2.1:18890", "PROJECT_UPSTREAM_COMPLETIONS="+filepath.Join(root, "completions.jsonl"), "PROJECT_UPSTREAM_REPORT="+filepath.Join(root, "requests.jsonl"), "PROJECT_UPSTREAM_REQUIRE_CONTEXT="+os.Getenv("PROJECT_RELEASE_CHECK_CONTEXT"))
 	upstream.Stdout, upstream.Stderr = os.Stdout, os.Stderr
 	require(t, os.WriteFile(filepath.Join(root, "completions.jsonl"), nil, 0666))
 	require(t, os.Chown(filepath.Join(root, "completions.jsonl"), uid, gid))
+	require(t, os.WriteFile(filepath.Join(root, "requests.jsonl"), nil, 0666))
+	require(t, os.Chown(filepath.Join(root, "requests.jsonl"), uid, gid))
 	require(t, upstream.Start())
 	t.Cleanup(func() { _ = upstream.Process.Kill(); _ = upstream.Wait() })
 	engine := engineTLS(t, root, endpoint)
@@ -205,7 +231,9 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	require(t, err)
 	a := &releaseApp{t: t, ctx: ctx, root: root, binary: filepath.Join(root, "orchestrator"), config: filepath.Join(root, "application.json"), origin: "http://127.0.0.1:18192", uid: uint32(uid), gid: uint32(gid), client: &http.Client{Jar: jar, Timeout: 30 * time.Second}}
 	t.Cleanup(a.stop)
+	t.Cleanup(a.stopGateway)
 	a.start()
+	a.startGateway()
 	a.request("POST", "/api/auth/login", map[string]string{"username": "researcher", "password": "isolated-browser-fixture"}, 200)
 	return a
 }

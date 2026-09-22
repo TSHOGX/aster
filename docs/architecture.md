@@ -2,7 +2,8 @@
 
 One `orchestrator serve --config FILE` process composes the product store,
 application services and workers, cookie authentication, HTTP/SSE/WebSocket,
-operator control socket, browser edge and optional service gateways. Next.js is a
+operator control socket and browser edge. `orchestrator gateway --config FILE`
+serves declared service audiences in an independent process. Next.js is a
 separate asset/page server. The private API hop uses an owner-only Unix socket;
 the edge preserves the browser Origin and replaces forwarded identity headers.
 
@@ -19,7 +20,8 @@ flowchart LR
   Project --> PTY[Retained Terminals]
   Project --> Files[Confined workspace helper]
   Project --> Gateway[Go service gateway]
-  Gateway --> Product
+  Gateway --> Authority[Protected owner authority RPC]
+  Authority --> Product
   Gateway --> Model[Configured upstream]
 ```
 
@@ -28,7 +30,9 @@ flowchart LR
 resource event hubs; execution lifetimes remain with product services. `internal/sandbox/khora` adapts only public engine APIs and checks
 engine store identity, epochs, mutation revisions and postconditions.
 `internal/application` is the executable composition; `internal/edge` is the
-same-origin router. Package-boundary and removal tests enforce these layers.
+same-origin router. `internal/servicegateway` owns forwarding and the versioned
+authority transport. The gateway opens no product Store; durable bounded request
+slots preserve release accounting across owner replacement. Package-boundary and removal tests enforce these layers.
 
 A Project binds its template, runtime release digest, resource limits, complete
 reachability declaration and publication mounts when first configured. Every

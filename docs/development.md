@@ -31,7 +31,7 @@ See [dev/README.md](../dev/README.md) for prerequisites and output paths.
 
 The release integration package launches the actual host executable with its
 strict JSON configuration, owner-only Unix APIs, mTLS engine endpoint, published
-content, unprivileged gateway and final guest image. Model fixtures run outside
+content, independent unprivileged gateway process and final guest image. Model fixtures run outside
 the image. Lower-level fault tests may install deterministic fixture tools into
 disposable placements; those tools are never part of the release manifest.
 

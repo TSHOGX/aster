@@ -14,7 +14,6 @@ const (
 	runtimeResize      runtimeWork = "terminal_resize"
 	runtimeSignal      runtimeWork = "terminal_signal"
 	runtimeRead        runtimeWork = "workspace_read"
-	runtimeModel       runtimeWork = "model_request"
 	runtimeReaderStart runtimeWork = "reader_start"
 	runtimeMaintenance runtimeWork = "maintenance"
 )
@@ -42,9 +41,6 @@ func (s *Store) beginRuntimeWork(ctx context.Context, kind runtimeWork) (func(),
 		allowDraining = true
 	case runtimeRead:
 		limit = 16
-		allowDraining = true
-	case runtimeModel:
-		limit = 256
 		allowDraining = true
 	case runtimeReaderStart:
 		limit = 16

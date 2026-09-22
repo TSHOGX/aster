@@ -32,7 +32,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator gateway --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
 		return err
 	}
 	action := args[0]
@@ -45,6 +45,41 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	flags.SetOutput(output)
 	switch action {
+	case "gateway-status", "gateway-stop":
+		socket := flags.String("socket", "", "protected gateway control socket")
+		owner := flags.String("owner", "", "application release coordinator")
+		generation := flags.Int64("generation", 0, "application release generation")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *socket == "" || flags.NArg() != 0 {
+			return errors.New("gateway commands require --socket PATH")
+		}
+		if action == "gateway-status" {
+			return application.Control(ctx, *socket, "GET", "/status", nil, output)
+		}
+		if *owner == "" || *generation < 1 {
+			return errors.New("gateway-stop requires --owner ID and --generation N")
+		}
+		return application.Control(ctx, *socket, "POST", "/stop", map[string]any{"owner": *owner, "generation": *generation}, output)
+	case "gateway":
+		name := flags.String("config", "", "versioned Project application configuration")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *name == "" || flags.NArg() != 0 {
+			return errors.New("gateway requires --config FILE")
+		}
+		cfg, err := application.LoadConfig(*name)
+		if err != nil {
+			return err
+		}
+		app, err := application.NewGatewayApplication(ctx, cfg, slog.New(slog.NewTextHandler(output, nil)))
+		if err != nil {
+			return err
+		}
+		defer app.Close()
+		return app.Run(ctx)
 	case "drain", "drain-status", "drain-abort", "drain-ready", "drain-activate", "drain-complete", "drain-rollback":
 		socket := flags.String("socket", "", "protected application control socket")
 		owner := flags.String("owner", "", "unique coordinator attempt identity")

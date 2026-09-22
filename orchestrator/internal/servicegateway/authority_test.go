@@ -270,3 +270,34 @@ func TestAuthorityProtocolRejectsUndeclaredAudienceAndUnknownVersion(t *testing.
 		t.Fatal(response.Code)
 	}
 }
+
+func TestRemovedAudienceCanSettleOnlyItsOriginalRegistration(t *testing.T) {
+	ctx := context.Background()
+	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, err = store.RegisterGateway(ctx, "removed", "original", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := AuthorityHandler(store, map[string]int{})
+	call := func(action, instance string) int {
+		body, _ := json.Marshal(authorityCommand{Request: product.ServiceRequest{Audience: "removed", Instance: instance, Slot: 0, Sequence: 1}})
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, httptest.NewRequest("POST", AuthorityPath+action, strings.NewReader(string(body))))
+		return out.Code
+	}
+	if status := call("release", "original"); status != 200 {
+		t.Fatal("removed audience could not acknowledge settlement", status)
+	}
+	for _, action := range []string{"acquire", "check", "register"} {
+		if status := call(action, "original"); status != 403 {
+			t.Fatal(action, status)
+		}
+	}
+	if status := call("release", "foreign"); status != 403 {
+		t.Fatal("foreign registration settled original slot", status)
+	}
+}

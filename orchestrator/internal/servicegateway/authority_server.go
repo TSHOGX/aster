@@ -39,7 +39,10 @@ func AuthorityHandler(store *product.Store, audiences map[string]int) http.Handl
 			return
 		}
 		slots, ok := limits[command.Request.Audience]
-		if !ok {
+		// Configuration revocation denies new/continued authority, but settlement
+		// still belongs to the original registered instance. Otherwise a removed
+		// audience could strand a durable blocker after its stream was canceled.
+		if !ok && r.URL.Path != AuthorityPath+"release" {
 			http.Error(w, "audience denied", 403)
 			return
 		}

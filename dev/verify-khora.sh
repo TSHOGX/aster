@@ -3,7 +3,7 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|mixed|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|gateway|mixed|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
 Default suite: release. Browser/all require a frontend production build and Chromium.
 Set PLAYWRIGHT_BROWSERS_PATH when the browser cache is outside the default location.
@@ -21,7 +21,7 @@ while (($#)); do
  esac
 done
 [[ -d $template && -f $manifest && -n $output ]] || { usage >&2;exit 2; }
-case "$suite" in release|mixed|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
+case "$suite" in release|gateway|mixed|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 for program in go python3 ip unshare mount mkfs.btrfs btrfs runsc sudo; do command -v "$program" >/dev/null || { echo "missing prerequisite: $program" >&2;exit 2; }; done
 mkdir -p "$output"
 output=$(realpath "$output")
@@ -54,7 +54,8 @@ run() {
  sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" \
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
-if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationRollback)$' release 4m;fi
+if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationRollback|TestReleasedGatewaySurvivesOwnerOutage)$' release 4m;fi
+if [[ $suite == gateway ]]; then run application '^TestReleasedGatewaySurvivesOwnerOutage$' gateway 2m;fi
 if [[ $suite == mixed || $suite == all ]]; then run application '^TestReleasedMixedWorkload$' mixed 9m;fi
 if [[ $suite == browser || $suite == all ]]; then run application '^TestReleasedBrowser$' browser 6m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi

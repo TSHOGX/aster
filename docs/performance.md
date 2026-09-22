@@ -27,7 +27,8 @@ active-model deployment continuity.
 | P07 admission fence | Verified locally | Persisted drain ownership/deadline and atomic new-work fencing |
 | P07 readiness | Verified locally | Atomic blocker/lease check and revocation by new evidence or cancellation |
 | P07 activation | Verified locally | Digest-bound quiescent handoff and explicit compatible rollback |
-| P07 gateway/bootstrap | Pending | Independent gateway, first-deploy bootstrap and combined release qualification |
+| P07 gateway lifetime | Verified locally | Independent process, bounded authority and native fixture continuity across owner outage |
+| P07 deployment qualification | Pending | Active update protocol, real provider, bootstrap and combined release qualification |
 
 ## Diagnostics
 
@@ -786,9 +787,10 @@ schemas 6 and 7 is checked for pre-commit interruption and retained authoritativ
 turns. An executable fixture closes admission, restarts the owner, confirms the
 same generation remains closed, aborts it and completes new native turns.
 
-The runtime leases below account for gateway, reader, terminal-input and
-title-generation work. Readiness is qualified below; activation, independent
-gateway lifetime, bootstrap and rollback qualification remain. No deployment is inferred
+The runtime leases below account for reader, terminal-input and title-generation
+work. Model forwarding uses durable gateway slots described below. Readiness and
+quiescent activation are locally qualified; bootstrap and final rollback
+qualification remain. No deployment is inferred
 from these disposable fixture results.
 
 ## In-flight release work
@@ -796,10 +798,11 @@ from these disposable fixture results.
 Runtime lease admission now shares a mutex with persisted release transitions.
 The phase read and slot reservation occur under that mutex; drain closure holds
 it through the SQLite commit. Remote calls never hold the mutex. Ordinary input
-and reads gain no durable per-operation ledger writes. Six fixed categories bound
+and reads gain no durable per-operation ledger writes. Fixed categories bound
 the owner: 8 title calls, 64 terminal inputs, 32 resizes, 32 signal/EOF/termination
-operations, 16 workspace reads and 256 model requests. Existing per-resource and
-per-gateway limits still apply independently.
+operations, 16 workspace reads, 16 reader starts and 64 maintenance operations.
+Model requests use at most 256 durable active slots across gateways. Existing
+per-resource and per-gateway limits still apply independently.
 
 Title/input work requires open admission. Ctrl-C, signals, resize, reads and model
 requests for already admitted turns may continue during draining; the later
@@ -807,8 +810,8 @@ ready/activating phases reject new leases. Counts remain positive through backen
 return and settlement, even if a caller has canceled. Workspace captures transfer
 lease ownership to the captured body and release it on Close. Title leases span
 both the model request and conditional title write, preserving user-rename rules.
-Gateway authorization now acquires an attributed lease and releases it only when
-forwarding returns; there is no optional uncounted authority path.
+Gateway authorization records a durable attributed slot and releases it only when
+forwarding returns; owner-local model counters and embedded serving are removed.
 
 Tests hold title/input backends across closure, reject new work, preserve Ctrl-C
 and termination, verify canceled work stays counted, check idempotent release and
@@ -816,8 +819,8 @@ capacity, and confirm read bodies own their leases. Gateway tests observe two
 concurrent leases and wait for actual handler settlement before requiring zero.
 Runtime status and durable blocker counts are observations, not one atomic
 readiness snapshot. The transition below performs that check under the shared
-fence. Quiescent activation is described below; gateway process separation remains
-open. The lease stage requires schema 8 or later.
+fence. Quiescent activation is described below. Runtime leases require schema 8
+or later; independent gateway request accounting requires schema 11.
 
 ## Revocable release readiness
 
@@ -884,7 +887,7 @@ refuses an unexpected startup, permits an explicit rollback candidate, and prove
 the previously accepted held turn survives unchanged. These tests qualify the
 handoff mechanism on compatible schema-10 code; they do not certify an older
 schema-incompatible executable as a rollback build or real-provider active-stream
-continuity. Gateway separation and first-deployment bootstrap remain open.
+continuity. First-deployment bootstrap remains open.
 
 
 Schema 11 and the protected gateway authority protocol establish durable request
@@ -894,5 +897,30 @@ owner restart. Existing-stream continuation is bounded to five seconds since a
 successful check began; confirmed denial cancels immediately and unavailable
 checks cannot renew authority. Focused tests cover temporary outage recovery,
 expiry, stalled checks, revocation, lost replies, bounded cleanup, registration
-replacement and schema-10 migration. Gateway lifecycle extraction and actual
-provider continuity remain separate qualification gates.
+replacement and schema-10 migration. Actual provider continuity remains a
+separate qualification gate.
+
+
+## Independent gateway process
+
+The `gateway` command serves declared audiences in a process separate from the
+owner. The exclusive lifetime lock precedes registration and is held through all
+forwarding handlers. Embedded gateway listeners and process-local model leases
+are removed. Only the protected authority RPC can authorize forwarding; request
+slots survive owner exit and schema-compatible reopening. The owner does not load
+gateway upstream keys. Operator status reports active handlers, pending settlement
+and authority unavailable/expiry/denial counters without content or credentials.
+
+A gated `gateway-stop` asks the owner for a fresh atomic ready checkpoint using
+the supplied release identity, then requires empty local forwarding and pending
+acknowledgments. It finishes its control response before shutdown. A replacement
+registers only under the same lifetime lock; no stream is claimed resumable across
+that replacement. Forced termination can interrupt streams.
+
+A disposable native fixture keeps a single model request open through an owner
+outage and verifies the same gateway PID, original turn/incarnation identity,
+exactly one upstream request and genuine native completion. It also refuses a
+busy gateway stop, replaces the gateway after drain, and completes a subsequent
+native turn. The model is deterministic and the owner replacement uses the same
+build: this does not qualify the active-update coordinator, arbitrary schema
+migration, an older rollback binary or a real external provider.

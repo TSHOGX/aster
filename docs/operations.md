@@ -3,8 +3,9 @@
 Build the host application with `go -C orchestrator build -o bin/orchestrator
 ./cmd/orchestrator`. Prepare an immutable verified image and register it under the
 configured Khora template ID. The engine store must use manual cold recovery.
-Run Next.js and the application under service supervision with explicit state,
-configuration and credential paths. A normal shutdown uses SIGTERM.
+Run Next.js, the owner and any service gateway under independent supervision
+with explicit state, configuration and credential paths. Use the release
+commands below for orderly updates.
 
 ```sh
 cd frontend
@@ -19,8 +20,14 @@ Start the application separately:
 orchestrator serve --config /etc/batterygpt/application.json
 ```
 
-With embedded gateways, both the frontend and authenticated engine endpoint must
-be reachable on non-loopback host addresses; see [configuration](configuration.md).
+For declared service gateways, start a separate process after the owner:
+
+```sh
+orchestrator gateway --config /etc/batterygpt/application.json
+```
+
+Keep it running across owner/frontend restarts. Both the frontend and
+authenticated engine endpoint must be reachable on non-loopback host addresses; see [configuration](configuration.md).
 Protect the engine API and its TLS termination independently of browser access.
 The application user needs its state directory and reviewed configuration files,
 not engine database or volume-directory access.
@@ -134,10 +141,11 @@ ready in the same transaction. Ready retains the original deadline and supports
 abort; a stale owner/generation cannot advance it.
 
 Ready does **not** authorize a separate unchecked shutdown. The activation command
-below consumes a fresh readiness check and retires the owner itself. Independent
-gateway lifetime and first-deploy bootstrap remain unqualified; this workflow is
-for quiescent replacement, not a claim that active model streams survive owner
-replacement. Gateways still share the owner's lifetime.
+below consumes a fresh readiness check and retires the owner itself. The gateway
+has an independent process lifetime. First-deployment bootstrap and
+real-provider continuity remain unqualified; this workflow is for quiescent
+replacement. Controlled owner-outage tests do not certify arbitrary active
+updates or migrations.
 
 `drain-status.runtime_work` and `diagnostics.runtime_work` report fixed-category
 in-flight operation counts without credentials or content. Title-generation calls
@@ -195,3 +203,25 @@ owner instance and settled work. It preserves accepted writes and records the
 running digest; it never replaces the database with a backup. A schema-incompatible
 build is refused before it can write. `drain-abort` applies before activation;
 once activating, use the replacement completion or rollback path.
+
+
+## Gateway replacement
+
+Close application admission with `drain`, retain its owner/generation, and let
+existing turns settle. The gateway continues accepting authorized requests for
+those turns while the application is draining. Then run:
+
+```sh
+orchestrator gateway-status --socket /var/lib/batterygpt/gateway.sock
+orchestrator gateway-stop --socket /var/lib/batterygpt/gateway.sock --owner RELEASE_ID --generation GENERATION
+orchestrator gateway --config /etc/batterygpt/application.json
+orchestrator drain-abort --socket /var/lib/batterygpt/control.sock --owner RELEASE_ID --generation GENERATION
+```
+
+`gateway-stop` refuses active work, stale release identity or unavailable owner
+checks. Wait for the process to exit before starting its replacement; do not
+remove its lifetime lock or clear request rows. Verify the replacement's status
+before reopening admission. If the drain times out, admission reopens and the
+update is abandoned. Arrange supervision so a successful gated stop does not
+immediately restart the old executable. Forced termination is fault recovery,
+not graceful stream preservation.

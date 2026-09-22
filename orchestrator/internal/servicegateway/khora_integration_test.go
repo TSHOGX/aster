@@ -204,15 +204,37 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 		}
 	})
 
+	authorityDirectory := t.TempDir()
+	authoritySocket := filepath.Join(authorityDirectory, "authority.sock")
+	authorityListener, err := net.Listen("unix", authoritySocket)
+	must(t, err)
+	authorityServer := &http.Server{Handler: servicegateway.AuthorityHandler(store, map[string]int{"model": 8})}
+	go authorityServer.Serve(authorityListener)
+	defer authorityServer.Close()
+
 	newGateway := func(t *testing.T, listener net.Listener) func() {
 		t.Helper()
-		gateway, err := servicegateway.New(store, servicegateway.Config{Audience: "model", Upstream: "http://" + upstreamAddress, APIKey: "fixture-upstream-secret", MaxRequests: 8, RecheckInterval: 20 * time.Millisecond})
+		unlock, err := servicegateway.LockProcess(authorityDirectory)
+		must(t, err)
+		authority, err := servicegateway.NewRemoteAuthority(runctx, authoritySocket, "model", 8)
+		must(t, err)
+		gateway, err := servicegateway.New(authority, servicegateway.Config{Audience: "model", Upstream: "http://" + upstreamAddress, APIKey: "fixture-upstream-secret", MaxRequests: 8, RecheckInterval: 20 * time.Millisecond})
 		must(t, err)
 		server := &http.Server{Handler: gateway}
 		done := make(chan error, 1)
 		go func() { done <- server.Serve(listener) }()
 		var once sync.Once
-		return func() { once.Do(func() { server.Close(); <-done; gateway.Close() }) }
+		return func() {
+			once.Do(func() {
+				gateway.Close()
+				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				must(t, server.Shutdown(shutdown))
+				<-done
+				authority.Close()
+				unlock()
+			})
+		}
 	}
 	stopGateway := newGateway(t, gatewayListener)
 	defer stopGateway()

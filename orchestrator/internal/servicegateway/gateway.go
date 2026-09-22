@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"harness-platform/orchestrator/internal/product"
@@ -40,14 +41,15 @@ type Config struct {
 	Transport      http.RoundTripper
 }
 type Gateway struct {
-	authority Authority
-	config    Config
-	target    *url.URL
-	slots     chan struct{}
-	mu        sync.Mutex
-	active    map[uint64]context.CancelFunc
-	next      uint64
-	closed    bool
+	authority                                            Authority
+	config                                               Config
+	target                                               *url.URL
+	slots                                                chan struct{}
+	mu                                                   sync.Mutex
+	active                                               map[uint64]context.CancelFunc
+	next                                                 uint64
+	closed                                               bool
+	authorityFailures, authorityExpired, authorityDenied atomic.Uint64
 }
 
 func New(authority Authority, config Config) (*Gateway, error) {
@@ -76,6 +78,9 @@ func (g *Gateway) Close() {
 	for _, cancel := range g.active {
 		cancel()
 	}
+}
+func (g *Gateway) AuthorityStats() map[string]uint64 {
+	return map[string]uint64{"unavailable": g.authorityFailures.Load(), "expired": g.authorityExpired.Load(), "denied": g.authorityDenied.Load()}
 }
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -141,6 +146,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				return
 			case <-deadline.C:
+				g.authorityExpired.Add(1)
 				cancel()
 				return
 			case <-ticker.C:
@@ -148,7 +154,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				checkCtx, checkCancel := context.WithDeadline(ctx, expires)
 				err := g.authority.HoldsAttribution(checkCtx, attribution)
 				checkCancel()
+				if errors.Is(err, ErrAuthorityUnavailable) {
+					g.authorityFailures.Add(1)
+				}
 				if !time.Now().Before(expires) || (err != nil && !errors.Is(err, ErrAuthorityUnavailable)) {
+					if !time.Now().Before(expires) {
+						g.authorityExpired.Add(1)
+					} else {
+						g.authorityDenied.Add(1)
+					}
 					cancel()
 					return
 				}

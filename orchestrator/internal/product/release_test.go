@@ -298,14 +298,14 @@ func TestReleaseDrainKeepsAlreadyAdmittedModelAuthority(t *testing.T) {
 	s, scope, i, c := agentServiceFixture(t)
 	_, token, err := s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
 	must(t, err)
-	before, err := s.AuthorizeService(ctx, "model", token)
+	before, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
 	_, err = s.BeginReleaseDrain(ctx, "model-drain", time.Minute)
 	must(t, err)
-	after, err := s.AuthorizeService(ctx, "model", token)
+	after, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
 	if after.TurnID != c.TurnID || after != before {
 		t.Fatal(before, after)
 	}
-	must(t, s.HoldsAttribution(ctx, before))
+	must(t, holdsAttribution(ctx, s.reader, s.timestamp(), before))
 }

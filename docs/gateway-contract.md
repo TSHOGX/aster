@@ -18,8 +18,8 @@ turn's completion or revocation drains only that request; sibling requests
 continue. Stop admission rejects new requests but preserves the existing stream
 until native cancellation settles, so abort cannot race a gateway disconnect. Request concurrency and observer queues are bounded.
 
-Run the composed application under a non-engine host UID and configure Khora's
-`--via-uid` to that same UID. The engine's second-hop floor blocks loopback,
+Run the owner and independent gateway under the same non-engine host UID and
+configure Khora's `--via-uid` to that UID. The engine's second-hop floor blocks loopback,
 link-local and sibling-sandbox destinations from that UID. Consequently the
 application's engine endpoint must be a non-loopback authenticated TLS endpoint,
 and frontend/model upstreams must use reachable non-loopback addresses. The
@@ -30,7 +30,7 @@ An operator can terminate engine mTLS at a trusted local reverse proxy forwardin
 to the engine's loopback API. The application requires the CA and its client
 certificate/key. The gateway's upstream should likewise use TLS whenever traffic
 leaves the trusted host network. The isolated release test exercises mTLS and the
-actual unprivileged combined application.
+actual unprivileged owner and gateway processes.
 
 All processes inside one Project share a Linux trust domain. Guest root can read
 a sibling Session's application grant. Grants provide request attribution and
@@ -41,7 +41,9 @@ untrusted work in separate Projects.
 
 `POST /gateway/v1/{registration,register,acquire,check,release}` is available only
 on the mode-0600 application control socket. It is not a browser or guest API.
-The owner limits audiences and capacity from configuration. Registration is a
+The owner limits audiences and capacity from configuration. A removed audience
+loses new/continued authority, while its original registered gateway may still
+acknowledge request settlement. Registration is a
 privileged startup action requiring the gateway's exclusive lifetime lock; it is
 never automatic recovery by a request handler. Generation CAS rejects delayed
 registrations from a replaced process.
@@ -62,7 +64,28 @@ also require cleanup; closed slot sequence numbers prevent delayed acquisition
 from resurrecting a released request. Eight bounded cleanup workers retry while
 retaining the affected slots, so an owner outage cannot create unbounded cleanup
 queues. Unacknowledged slots remain release blockers across owner restart. The
-protocol is locally tested with controlled streams and faults; the default
-application still hosts the gateway in its own process pending lifecycle
-extraction. This does not yet establish independent process or real-provider
-continuity.
+protocol is locally tested with controlled streams and faults. The gateway
+process survives owner exit; real-provider active-update continuity remains a
+separate qualification gate.
+
+## Independent process and gateway updates
+
+`orchestrator gateway --config FILE` starts a separately supervised process after
+the owner is available. It binds the declared service listeners, obtains the
+exclusive state-directory lifetime lock and registers each configured audience.
+Owner/API shutdown does not touch its listeners, upstream connections or secrets.
+Restart configuration supplies keys again through the gateway environment; no key
+is persisted in product state. Gateway protocol 1 requires a schema-11-compatible
+owner. An older owner without this protocol cannot authorize new requests and
+cannot extend existing requests beyond their continuation window.
+
+`gateway-status --socket STATE/gateway.sock` reports PID, active handlers, pending
+settlements and authority failure/expiry/denial counters. A gateway update first
+uses the application's admission drain. Then `gateway-stop` takes the same owner
+and generation, obtains a fresh atomic readiness check from the owner and rejects
+shutdown unless local forwarding and pending acknowledgments are both empty.
+The process completes the control response before exit and keeps its lifetime
+lock until all forwarding handlers return. Start the replacement gateway before
+aborting the application drain to reopen admission. Signal termination or a crash
+can interrupt streams; use the gated stop command for an orderly update. HTTP
+streams are not resumed across gateway replacement.

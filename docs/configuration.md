@@ -1,6 +1,7 @@
 # Application configuration
 
-`orchestrator serve --config FILE` accepts one strict version-1 JSON document.
+`orchestrator serve --config FILE` and `orchestrator gateway --config FILE`
+accept the same strict version-1 JSON document.
 Unknown fields and trailing documents fail. Relative filesystem paths resolve
 against the configuration's directory. Start from
 [application.example.json](../config/application.example.json), replace the engine
@@ -19,7 +20,7 @@ tracked example. The example denies guest egress until reachability is declared.
 | `auth` | Credential YAML path, or an explicit loopback-only development actor |
 | `content` | Reviewed Agent configuration/shared-assets source paths and publication capacity |
 | `limits` | Global/per-Project capacities, idle deadlines and worker interval |
-| `gateways`, `agent_audience` | Optional service audience endpoints and upstream credentials |
+| `gateways`, `agent_audience` | Independent gateway endpoints and upstream credential environment names |
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
 | `tls_cert`, `tls_key` | Optional browser TLS certificate/key pair |
 
@@ -31,8 +32,8 @@ store. It never treats a fresh engine's IDs as authority over old resources.
 
 `engine.endpoint` permits plain HTTP only on a loopback IP. HTTPS requires
 `ca_file`, `client_cert` and `client_key`; ambient proxy configuration is disabled.
-When gateways are enabled, the application runs under Khora's dedicated
-non-engine `--via-uid`: use non-loopback addresses for the engine TLS edge,
+When gateways are enabled, the owner and gateway run as separate processes under
+Khora's dedicated non-engine `--via-uid`: use non-loopback addresses for the engine TLS edge,
 frontend and model upstream because Khora blocks that UID's loopback connections.
 See the [gateway contract](gateway-contract.md).
 
@@ -81,3 +82,11 @@ Credential files contain `users` entries with `username`, `password_hash` and
 retains the prior valid set on error; changed credentials invalidate existing
 sessions through their saved fingerprint. An explicit `development_actor` is
 mutually exclusive with `users_file` and requires a loopback browser listener.
+
+Start the owner before the independent `gateway` command. Only the gateway command
+loads the configured service upstream keys and binds service listeners; `serve`
+provides authority through its protected control socket. The gateway opens no
+product Store or engine connection. Its mode-0600 operator socket is
+`STATE_DIRECTORY/gateway.sock`, and `STATE_DIRECTORY/gateway.lock` excludes a
+second gateway lifetime, including directory aliases. Never unlink the lock file.
+Keep gateway supervision independent of owner/frontend restart policies.

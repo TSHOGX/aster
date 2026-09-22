@@ -172,6 +172,21 @@ func model(coordinated bool) {
 			http.Error(w, "invalid request", 400)
 			return
 		}
+		observed := map[string]string{"project": r.Header.Get("X-Project-Id"), "session": r.Header.Get("X-Session-Id"), "turn": r.Header.Get("X-Turn-Id"), "incarnation": r.Header.Get("X-Incarnation-Id")}
+		record := func(path string) {
+			if path == "" {
+				return
+			}
+			line, _ := json.Marshal(observed)
+			mu.Lock()
+			defer mu.Unlock()
+			if file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+				file.Write(append(line, '\n'))
+				file.Close()
+			}
+		}
+		record(os.Getenv("PROJECT_UPSTREAM_REPORT"))
+
 		mu.Lock()
 		count++
 		if count == 2 {
@@ -254,6 +269,9 @@ func model(coordinated bool) {
 				}
 			}
 		}
+		observed["completed_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+		record(os.Getenv("PROJECT_UPSTREAM_COMPLETIONS"))
+
 	})
 	fmt.Println("model-ready")
 	if err := http.ListenAndServe(modelAddress(), mux); err != nil {

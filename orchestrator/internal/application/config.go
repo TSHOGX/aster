@@ -214,6 +214,10 @@ func (c Config) Validate() error {
 		return errors.New("invalid runtime capacity or timing bounds")
 	}
 	if len(c.Gateways) > 0 {
+		if c.GatewaySocket() == c.ControlSocket || c.GatewaySocket() == c.ApplicationSocket {
+			return errors.New("gateway control socket must differ from owner sockets")
+		}
+
 		for name, origin := range map[string]string{"engine": c.Engine.Endpoint, "frontend": c.Frontend} {
 			if gatewayFloorOrigin(origin) {
 				return fmt.Errorf("%s origin is blocked by Khora's gateway UID network floor; use a non-loopback endpoint", name)
