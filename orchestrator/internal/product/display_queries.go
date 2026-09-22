@@ -407,11 +407,12 @@ func (s *Store) ConversationChanges(ctx context.Context, scope Scope, session st
 		}
 		out.Target = at.Target
 	}
-	var first int64
-	if err = tx.QueryRowContext(ctx, `SELECT coalesce(min(revision),0) FROM conversation_changes WHERE session_id=?`, session).Scan(&first); err != nil {
+	var pruned int64
+	var ordinal int
+	if err = tx.QueryRowContext(ctx, `SELECT coalesce((SELECT pruned_revision FROM conversation_retention WHERE session_id=?),0),coalesce((SELECT pruned_ordinal FROM conversation_retention WHERE session_id=?),-1)`, session, session).Scan(&pruned, &ordinal); err != nil {
 		return out, err
 	}
-	if base < out.Target && (first == 0 || first > base+1) {
+	if at.Revision < pruned || at.Revision == pruned && at.Ordinal < ordinal {
 		return out, ErrResync
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT revision,ordinal,item_id,operation,data FROM conversation_changes WHERE session_id=? AND (revision,ordinal)>(?,?) AND revision<=? ORDER BY revision,ordinal LIMIT 101`, session, at.Revision, at.Ordinal, out.Target)
@@ -522,7 +523,7 @@ func (s *Store) RebuildConversation(ctx context.Context, scope Scope, session st
 		if _, err := liveDisplaySession(ctx, tx, scope, session); err != nil {
 			return err
 		}
-		for _, table := range []string{"conversation_details", "conversation_changes", "conversation_items", "conversation_turns", "conversation_checkpoints", "conversation_message_groups"} {
+		for _, table := range []string{"conversation_details", "conversation_changes", "conversation_retention", "conversation_items", "conversation_detail_gc", "conversation_turns", "conversation_checkpoints", "conversation_message_groups"} {
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE session_id=?", table), session); err != nil {
 				return err
 			}

@@ -33,10 +33,11 @@ func (s *Store) ClaimContentPublication(ctx context.Context, p content.Publicati
 		return empty, fmt.Errorf("claimed entries do not produce the revision digest")
 	}
 	now := s.timestamp()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := s.beginControl(ctx)
 	if err != nil {
 		return empty, err
 	}
+	defer release()
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO content_publications(store_id,purpose,revision_digest,capacity,entries,stage,created_at,updated_at) VALUES(?,?,?,?,?,'preparing',?,?)`, p.StoreID, p.Purpose, p.RevisionDigest, p.Capacity, string(entries), now, now)
 	if err != nil {
@@ -123,10 +124,11 @@ func (s *Store) FailContentPublication(ctx context.Context, p content.Publicatio
 		return fmt.Errorf("publication failure requires a reason")
 	}
 	now := s.timestamp()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := s.beginControl(ctx)
 	if err != nil {
 		return err
 	}
+	defer release()
 	defer tx.Rollback()
 	stored, err := publicationWith(ctx, tx, p.StoreID, p.Purpose, p.RevisionDigest)
 	if err != nil {
@@ -179,10 +181,11 @@ func (s *Store) ListContentPublications(ctx context.Context, storeID string) ([]
 func (s *Store) advancePublication(ctx context.Context, p content.Publication, stage string, check func(content.Publication) error, apply func(context.Context, *sql.Tx, content.Publication, string) error) (content.Publication, error) {
 	var empty content.Publication
 	now := s.timestamp()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := s.beginControl(ctx)
 	if err != nil {
 		return empty, err
 	}
+	defer release()
 	defer tx.Rollback()
 	stored, err := publicationWith(ctx, tx, p.StoreID, p.Purpose, p.RevisionDigest)
 	if err != nil {

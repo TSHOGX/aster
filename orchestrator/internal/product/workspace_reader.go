@@ -52,6 +52,7 @@ type WorkspaceReader struct {
 	requests      int
 	closed        bool
 	cleanupCursor string
+	cleanupHandle string
 	group         sync.WaitGroup
 }
 
@@ -97,6 +98,9 @@ func (w *WorkspaceReader) saved(ctx context.Context, project string) (sandbox.Pr
 }
 func (w *WorkspaceReader) forget(ctx context.Context, project, handle string) error {
 	return w.Store.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_reader_retirements WHERE project_id=? AND handle=?`, project, handle); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM workspace_readers WHERE project_id=? AND handle=?`, project, handle)
 		return err
 	})
@@ -506,19 +510,21 @@ func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string)
 func (w *WorkspaceReader) Reconcile(ctx context.Context) error {
 	w.mu.Lock()
 	cursor := w.cleanupCursor
+	handle := w.cleanupHandle
 	w.mu.Unlock()
-	rows, err := w.Store.reader.QueryContext(ctx, `SELECT project_id,store_id,sandbox_id,epoch,handle FROM workspace_readers WHERE project_id>? ORDER BY project_id LIMIT 32`, cursor)
+	rows, err := w.Store.reader.QueryContext(ctx, `SELECT project_id,store_id,sandbox_id,epoch,handle,retired FROM (SELECT project_id,store_id,sandbox_id,epoch,handle,0 AS retired FROM workspace_readers UNION ALL SELECT project_id,store_id,sandbox_id,epoch,handle,1 FROM workspace_reader_retirements) WHERE (project_id,handle)>(?,?) ORDER BY project_id,handle LIMIT 32`, cursor, handle)
 	if err != nil {
 		return err
 	}
 	type saved struct {
 		project string
 		ref     sandbox.ProcessReference
+		retired bool
 	}
 	list := []saved{}
 	for rows.Next() {
 		var row saved
-		if err = rows.Scan(&row.project, &row.ref.StoreID, &row.ref.SandboxID, &row.ref.Epoch, &row.ref.Handle); err != nil {
+		if err = rows.Scan(&row.project, &row.ref.StoreID, &row.ref.SandboxID, &row.ref.Epoch, &row.ref.Handle, &row.retired); err != nil {
 			break
 		}
 		list = append(list, row)
@@ -530,8 +536,10 @@ func (w *WorkspaceReader) Reconcile(ctx context.Context) error {
 	w.mu.Lock()
 	if len(list) > 0 {
 		w.cleanupCursor = list[len(list)-1].project
+		w.cleanupHandle = list[len(list)-1].ref.Handle
 	} else {
 		w.cleanupCursor = ""
+		w.cleanupHandle = ""
 	}
 	w.mu.Unlock()
 	var failures []error
@@ -551,7 +559,7 @@ func (w *WorkspaceReader) Reconcile(ctx context.Context) error {
 			delete(w.entries, row.project)
 		}
 		w.mu.Unlock()
-		if !active {
+		if !active || row.retired {
 			failures = append(failures, w.retire(ctx, row.project, row.ref))
 		}
 	}
@@ -567,6 +575,7 @@ func (w *WorkspaceReader) Close() error {
 	w.group.Wait()
 	w.mu.Lock()
 	w.cleanupCursor = ""
+	w.cleanupHandle = ""
 	w.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

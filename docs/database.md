@@ -4,7 +4,8 @@ The core SQLite schema is [schema.sql](../orchestrator/internal/product/schema.s
 Version 2 adds [conversation display storage](../orchestrator/internal/product/display_schema.sql);
 version 3 adds [projector queues and ordering](../orchestrator/internal/product/projector_schema.sql);
 version 4 records [actual event retention frontiers](../orchestrator/internal/product/event_frontier_schema.sql);
-version 5 adds [reusable reader bindings](../orchestrator/internal/product/reader_schema.sql).
+version 5 adds [reusable reader bindings](../orchestrator/internal/product/reader_schema.sql);
+version 6 adds [retention accounting and cleanup](../orchestrator/internal/product/retention_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
@@ -62,3 +63,18 @@ epoch. It stores neither a command outcome nor file bytes and creates no Project
 activity. Warm reads do no product writes; startup and confirmed helper retirement
 update only the binding. Existing uncertain mutations remain independently
 recoverable and are never inferred from a reader result.
+
+
+Writer admission has separate Stop, ordinary control, ingestion and background
+capacity. Background retention/projection cannot consume reserved Stop queue slots;
+waiting ingestion is bounded by both count and bytes. Admission rejection precedes
+transaction execution. Unknown side effects remain unknown; callers must not
+interpret arbitrary transport failures as those explicit rejections.
+
+Derived replay retention removes bounded prefixes with revision/ordinal frontiers.
+Current details and retained change-version details are pinned. Raw records, source
+identity, native captures and uncertain command identities remain until their
+existing explicit retirement authority permits deletion. Schema 6 removes obsolete
+read command rows while retaining original helper identities for cleanup; no read
+is replayed through a mutation dispatcher. Product events no longer include
+per-token raw-record notifications.

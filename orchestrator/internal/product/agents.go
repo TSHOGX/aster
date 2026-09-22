@@ -158,7 +158,7 @@ func (s *Store) ingestAgent(ctx context.Context, i Incarnation, f agentwire.Fram
 	}
 	digest := creationDigest(f.CommandID, f.TurnID, f.State, string(f.Payload))
 	var watermark uint64
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeClass(ctx, ingestWrite, i.ProjectID, int64(len(f.Payload)+1024), func(tx *sql.Tx) error {
 		var current Incarnation
 		var err error
 		if recovery {
@@ -208,11 +208,13 @@ func (s *Store) ingestAgent(ctx context.Context, i Incarnation, f agentwire.Fram
 			return err
 		}
 		watermark = f.Sequence
-		kind := "agent.record"
-		if f.State != "native" {
-			kind = "session.control"
+		// Native content has its own derived frontier. Publishing a second outbox
+		// event for every raw token recreates the amplification that view commits
+		// already coalesce. Control metadata changes only with durable outcomes.
+		if f.State == "native" {
+			return nil
 		}
-		return s.bumpSession(ctx, tx, i.ProjectID, i.SessionID, kind)
+		return s.bumpSession(ctx, tx, i.ProjectID, i.SessionID, "session.control")
 	})
 	return watermark, err
 }

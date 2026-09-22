@@ -30,6 +30,8 @@ type Store struct {
 	closeError error
 	db, reader *sql.DB
 	now        func() time.Time
+	retention  retentionCursor
+	writer     writeAdmission
 }
 
 func Open(ctx context.Context, path string) (result *Store, resultErr error) {
@@ -130,16 +132,9 @@ func verifySchema(ctx context.Context, db *sql.DB) error {
 	return err
 }
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.writeClass(ctx, controlWrite, "", 1<<20, fn)
 }
+
 func missing(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

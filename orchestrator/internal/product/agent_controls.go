@@ -23,7 +23,11 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 	if !validText(request, 128) {
 		return ErrInvalid
 	}
-	return s.write(ctx, func(tx *sql.Tx) error {
+	class := controlWrite
+	if kind == "abort" {
+		class = urgentWrite
+	}
+	return s.writeClass(ctx, class, scope.ProjectID, 1<<20, func(tx *sql.Tx) error {
 		if _, err := writableProject(ctx, tx, scope); err != nil {
 			return err
 		}

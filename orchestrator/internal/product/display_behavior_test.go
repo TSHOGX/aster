@@ -95,14 +95,20 @@ func TestStreamingOutputDoesNotInvalidateExecutionControl(t *testing.T) {
 	must(t, err)
 	before, err := s.Session(ctx, scope, i.SessionID)
 	must(t, err)
+	var eventsBefore, eventsAfter int
+	must(t, s.reader.QueryRow(`SELECT count(*) FROM events WHERE project_id=?`, scope.ProjectID).Scan(&eventsBefore))
 	for sequence := uint64(2); sequence < 102; sequence++ {
 		_, err = s.IngestAgent(ctx, i, record(i, command, sequence, "native", `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"text"}}`))
 		must(t, err)
 	}
 	after, err := s.Session(ctx, scope, i.SessionID)
 	must(t, err)
-	if after.Revision <= before.Revision || after.ControlRevision != before.ControlRevision {
+	if after.Revision != before.Revision || after.ControlRevision != before.ControlRevision {
 		t.Fatal("streaming changed control authority", before, after)
+	}
+	must(t, s.reader.QueryRow(`SELECT count(*) FROM events WHERE project_id=?`, scope.ProjectID).Scan(&eventsAfter))
+	if eventsBefore != eventsAfter {
+		t.Fatal("raw frames amplified the product outbox", eventsBefore, eventsAfter)
 	}
 	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop-during-stream", before.ControlRevision))
 }

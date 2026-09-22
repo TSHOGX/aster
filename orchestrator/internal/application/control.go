@@ -51,6 +51,7 @@ func (a *Application) controlHandler() http.Handler {
 			return
 		}
 		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
+		out["writer"] = a.Store.WriterStats()
 		if a.Files != nil {
 			out["workspace_reads"] = a.Files.ReadStats()
 		}

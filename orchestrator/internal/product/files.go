@@ -371,7 +371,7 @@ func (f *Files) Reconcile(ctx context.Context, limit int) error {
 			failures = append(failures, err)
 			continue
 		}
-		_, _ = f.Store.db.ExecContext(ctx, `UPDATE file_operations SET updated_at=? WHERE id=?`, f.Store.timestamp(), id)
+		_, _ = f.Store.exec(ctx, `UPDATE file_operations SET updated_at=? WHERE id=?`, f.Store.timestamp(), id)
 		err = f.recover(ctx, o)
 		if err != nil {
 			failures = append(failures, err)

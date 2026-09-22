@@ -69,6 +69,14 @@ func checkpoint(ctx context.Context, q queryer, session string) (displayCheckpoi
 // ProjectConversation commits one bounded batch. It never wakes a Project,
 // issues a command, acknowledges a journal or infers an execution outcome.
 func (s *Store) ProjectConversation(ctx context.Context, session string) error {
+	if pressure, err := s.displayPressure(ctx, session); err != nil {
+		return err
+	} else if pressure {
+		if err = s.PruneConversation(ctx, session); err != nil {
+			return err
+		}
+		return ErrPending
+	}
 	var exists string
 	if err := s.reader.QueryRowContext(ctx, `SELECT id FROM sessions WHERE id=? AND deletion_intent<2`, session).Scan(&exists); err != nil {
 		return missing(err)
@@ -100,7 +108,7 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 	if err != nil {
 		return err
 	}
-	err = s.write(ctx, func(tx *sql.Tx) error {
+	err = s.writeClass(ctx, backgroundWrite, "", int64(bytes+len(sources)*256), func(tx *sql.Tx) error {
 		if e := tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE id=? AND deletion_intent<2`, session).Scan(&exists); e != nil {
 			return missing(e)
 		}
@@ -165,10 +173,10 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 		_, e = tx.ExecContext(ctx, `UPDATE conversation_checkpoints SET source_cursor=?,message_cursor=?,content_revision=?,index_revision=?,next_position=?,state=?,error='',updated_at=? WHERE session_id=?`, reducer.p.Source, reducer.p.Message, reducer.p.Revision, reducer.p.Index, reducer.p.Position, state, s.timestamp(), session)
 		return e
 	})
-	if err != nil && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrNotFound) && ctx.Err() == nil {
+	if err != nil && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrPending) && !errors.Is(err, ErrCapacity) && ctx.Err() == nil {
 		// A failure marker is separate from the rolled-back batch. It exposes lag
 		// without allowing the checkpoint to skip malformed evidence.
-		_ = s.write(ctx, func(tx *sql.Tx) error {
+		_ = s.writeClass(ctx, backgroundWrite, "", 0, func(tx *sql.Tx) error {
 			_, e := tx.ExecContext(ctx, `INSERT INTO conversation_checkpoints(session_id,generation,state,error,updated_at) SELECT id,?,'failed','display projection failed',? FROM sessions WHERE id=? AND deletion_intent<2 ON CONFLICT(session_id) DO UPDATE SET state='failed',error=excluded.error`, before.Generation, s.timestamp(), session)
 			return e
 		})
@@ -568,7 +576,7 @@ func (d *displayReducer) flush() error {
 				return err
 			}
 		}
-		if _, err := d.tx.ExecContext(d.ctx, `INSERT INTO conversation_changes VALUES(?,?,?,?,?,?)`, d.session, d.p.Revision, ordinal, id, operation, data); err != nil {
+		if _, err := d.tx.ExecContext(d.ctx, `INSERT INTO conversation_changes(session_id,revision,ordinal,item_id,operation,data) VALUES(?,?,?,?,?,?)`, d.session, d.p.Revision, ordinal, id, operation, data); err != nil {
 			return err
 		}
 	}

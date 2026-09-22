@@ -112,7 +112,7 @@ func TestSlowResourceSubscriberCannotBlockFastReader(t *testing.T) {
 }
 func TestResourceScopeClassification(t *testing.T) {
 	for _, c := range []struct{ event, kind string }{
-		{"agent.record", ""}, {"session.control", "control"}, {"conversation.view", "content"},
+		{"session.control", "control"}, {"conversation.view", "content"},
 		{"session.title", "sessions"}, {"terminal.exited", "terminals"}, {"project.placement_lost", "project"},
 		{"conversation.revoked", "authorization"}, {"future.event", "resync"},
 	} {

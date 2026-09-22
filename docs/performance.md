@@ -18,7 +18,8 @@ active-model deployment continuity.
 | P03c–e | Verified locally | Incremental browser views, shared transport, idle windows and disposable runtime qualification |
 | P04a protocol | Verified locally | Reusable confined guest reader and multiplexed host client |
 | P04b–e | Verified locally | Reusable host readers, immutable captures, scoped directory cursors and read-path removal |
-| P05 | Pending | Fair byte budgets, control reserve and retention |
+| P05 host writer/retention | Verified locally | Bounded priority admission, derived retention and raw-outbox removal |
+| P05 journal/qualification | Pending | Guest journal control reserve, slow ACK/send windows and encoding decision |
 | P06 | Pending | Measured browser and document rendering budgets |
 | P07 | Pending | Admission/drain, independent gateway and combined qualification |
 
@@ -332,3 +333,60 @@ final cross-phase resource plateaus and deployment continuity remain open.
 The final immutable reader image also passed its released executable and real
 browser gates after moving capture storage to unnamed state-directory inodes.
 The browser cases took 29.8 seconds; Agent completion under PTY output was 903 ms.
+
+
+## Host writer admission and derived retention
+
+SQLite transactions enter an explicit bounded admission gate. Stop has thirty-two
+reserved queue slots, independent of thirty-two ordinary control slots. Ingestion
+has at most thirty-two queued requests and 16 MiB of queued payload/overhead.
+One background batch may wait; additional background attempts return pending and
+retry without marking a projection failed. Four control admissions permit an
+ingestion opportunity, alternating Projects while preserving FIFO within each.
+Background work also receives bounded scheduling opportunities under sustained
+foreground pressure. The running transaction remains atomic and cannot be
+preempted. Operator status reports bounded-category queue peaks, wait/transaction
+time, admissions, rejections and cancellation; control byte reservations are
+fixed one-MiB estimates, while ingestion counts its retained payload bytes.
+
+Native record ingestion now updates only durable evidence, authoritative messages
+and its watermark. It no longer increments metadata revisions or emits a redundant
+raw-token outbox event. Display commits publish content frontiers; command outcomes
+publish control changes. ACK still follows committed ingestion only.
+
+Schema 6 accounts for immutable change bytes, including referenced large details,
+and records actual pruned revision/ordinal frontiers. Each session's replay high
+watermarks are 16 MiB /8,192 operations; pruning targets half those limits in batches
+of at most 256 operations. Crossing a watermark pauses further projection batches
+until bounded cleanup catches up. The just-committed input batch is the bounded
+overshoot. Current item details and versions referenced by retained changes remain
+readable. Explicit garbage candidates avoid rescanning all current detail payloads.
+Raw evidence, command identities and native captures are not pruned by this policy.
+Expired delta bases require resync; continuations beyond a pruned ordinal remain
+valid within their fixed target. Rebuild retains the same source identities.
+
+Outbox cleanup uses per-Project indexed seeks and actual count/frontier accounting,
+with hot scopes selected first and at most 1,024 deletions per Project batch. Old
+read-command rows migrate to process-only cleanup identities; mutation identities
+and uncertain write outcomes remain. The obsolete read-history retention loop is
+removed. Reader cleanup rotates across Project/handle tuples so many orphaned
+handles in one Project cannot hide later entries.
+
+Tests cover full ordinary-control and ingestion queues, independent Stop capacity,
+FIFO/Project fairness, bounded background progress, cancellation, atomic pruning,
+partial-revision delta continuation, pinned details, source rebuild, and migration
+of unresolved read helpers while preserving unknown writes. Legal cumulative
+40/80 MiB host-ingestion fixtures keep both Projects progressing. The final recorded
+80 MiB run completed in 3.35 seconds, with Stop admission 35.86/5.86 ms and 27.50 MiB
+of combined replay data across two sessions. These are local host-stage observations;
+guest journal pressure, actual native Stop delivery and encoding qualification
+are still open. Existing Go checks/race tests and the disposable runtime fault
+suite passed; no service deployment was performed.
+
+
+The final real browser run passed with 942 ms Agent completion under PTY output.
+An earlier concurrent-verification run recorded 7.5 seconds and a lifecycle
+startup deadline; the isolated retry restored 890 ms but exposed a menu that
+failed to dismiss after Office moved focus. Capture-phase Escape handling and its
+regression test fixed that defect, then both real browser workflows passed.
+These observations are retained separately from host-only pressure measurements.

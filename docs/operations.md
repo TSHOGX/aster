@@ -77,3 +77,12 @@ space. Disk exhaustion fails a read; it never changes a durable mutation outcome
 Operator status reports `workspace_reads` entries, active leases, captured bytes
 and the aggregate limit. Reader bindings in SQLite are process cleanup authority,
 not file command outcomes or activity reservations.
+
+
+Operator status also reports `writer` queues by `stop_control`, `control`, `ingest`
+and `background`: current/peak queued count and byte reservations, rejection and
+cancellation counts, cumulative/max wait and transaction nanoseconds. Control
+reservations estimate one MiB per queued request; ingestion accounts for its
+actual native payload plus fixed envelope allowance. These counters contain no
+prompt bodies, credentials or resource-ID labels. A background pending result
+means work yielded capacity, not that its projection failed.

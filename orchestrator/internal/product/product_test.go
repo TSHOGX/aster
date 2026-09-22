@@ -211,19 +211,30 @@ func TestConcurrentAdmissionDeduplicatesAndOrders(t *testing.T) {
 	_, err := s.CreateSession(ctx, a, "s", "Agent")
 	must(t, err)
 	var wg sync.WaitGroup
-	errs := make(chan error, 40)
+	type admission struct {
+		id  string
+		err error
+	}
+	errs := make(chan admission, 40)
 	for i := 0; i < 40; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := s.AdmitTurn(ctx, a, "s", fmt.Sprintf("request-%d", i%20), "hello", false)
-			errs <- err
+			id := fmt.Sprintf("request-%d", i%20)
+			_, err := s.AdmitTurn(ctx, a, "s", id, "hello", false)
+			errs <- admission{id: id, err: err}
 		}(i)
 	}
 	wg.Wait()
 	close(errs)
-	for err := range errs {
-		must(t, err)
+	for result := range errs {
+		// Capacity is an explicit rejection before transaction admission. Retry
+		// that same intent only after the bounded burst has drained; unknown
+		// outcomes are not eligible for this retry.
+		if errors.Is(result.err, ErrCapacity) {
+			_, result.err = s.AdmitTurn(ctx, a, "s", result.id, "hello", false)
+		}
+		must(t, result.err)
 	}
 	turns, err := s.Turns(ctx, a, "s", 0, 500)
 	must(t, err)

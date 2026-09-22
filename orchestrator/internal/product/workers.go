@@ -74,7 +74,7 @@ func (w *Workers) Run(ctx context.Context) {
 		return nil
 	})
 	loop("capture", time.Second, w.captureStep)
-	loop("metadata retention", time.Minute, w.Store.PruneMetadata)
+	loop("metadata retention", time.Second, w.Store.PruneMetadata)
 	loop("adjacent", time.Second, func(ctx context.Context) error {
 		_, scheduleErr := w.Store.TickSchedules(ctx, 16)
 		_, titleErr := w.Store.GenerateTitles(ctx, w.Titles, 8)

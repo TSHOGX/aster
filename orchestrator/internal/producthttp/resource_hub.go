@@ -478,8 +478,6 @@ func (m *resourceHubs) run(ctx context.Context, h *resourceHub) {
 }
 func resourceKind(e product.Event) (string, string) {
 	switch {
-	case e.Kind == "agent.record":
-		return "", "" // Display commits publish their own frontier.
 	case e.Kind == "conversation.view":
 		return "content", e.SessionID
 	case e.Kind == "session.title" || e.Kind == "session.created":

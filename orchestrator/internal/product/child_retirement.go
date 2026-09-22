@@ -79,6 +79,8 @@ func (c *ChildRetirement) Step(ctx context.Context, child Child) error {
 			`DELETE FROM conversation_message_groups WHERE session_id=?`,
 			`DELETE FROM conversation_details WHERE session_id=?`,
 			`DELETE FROM conversation_changes WHERE session_id=?`,
+			`DELETE FROM conversation_retention WHERE session_id=?`,
+			`DELETE FROM conversation_detail_gc WHERE session_id=?`,
 			`DELETE FROM conversation_items WHERE session_id=?`,
 			`DELETE FROM conversation_turns WHERE session_id=?`,
 			`DELETE FROM conversation_checkpoints WHERE session_id=?`,
@@ -102,7 +104,7 @@ func (c *ChildRetirement) privateDirectory(ctx context.Context, child Child) (re
 		if result != nil {
 			settle, done := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer done()
-			_, _ = c.Store.db.ExecContext(settle, `UPDATE session_cleanup SET error=? WHERE session_id=?`, result.Error(), child.ID)
+			_, _ = c.Store.exec(settle, `UPDATE session_cleanup SET error=? WHERE session_id=?`, result.Error(), child.ID)
 		}
 	}()
 
