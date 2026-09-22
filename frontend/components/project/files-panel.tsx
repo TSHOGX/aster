@@ -243,11 +243,10 @@ export function FilesPanel({
       },100);
     };
     source.addEventListener("invalidate",invalidate);
-    source.onopen=()=> {clearTimeout(healthTimer);clearTimeout(delayedTimer);setWatchHealth("live");};
+    source.onopen=()=> {clearTimeout(healthTimer);clearTimeout(delayedTimer);healthTimer=undefined;delayedTimer=undefined;setWatchHealth("live");};
     source.onerror=()=> {
-      clearTimeout(healthTimer);clearTimeout(delayedTimer);
-      healthTimer=setTimeout(()=>setWatchHealth("reconnecting"),5000);
-      delayedTimer=setTimeout(()=>setWatchHealth("stale"),15000);
+      if (!healthTimer) healthTimer=setTimeout(()=>setWatchHealth("reconnecting"),5000);
+      if (!delayedTimer) delayedTimer=setTimeout(()=>setWatchHealth("stale"),15000);
     };
     return () => {source.close();clearTimeout(timer);clearTimeout(healthTimer);clearTimeout(delayedTimer);};
   }, [base, load, validateSelected, visible, project.state, project.id, resources]);

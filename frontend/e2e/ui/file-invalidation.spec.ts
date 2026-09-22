@@ -37,3 +37,18 @@ test("unrelated writes skip the selected body; rotations preserve representation
  await expect(page.getByText("Files changed. Your unsaved text has been kept.",{exact:true})).toBeVisible();
  await expect(page.getByLabel("Edit reports/summary.md",{exact:true})).toContainText("local unsaved draft");
 });
+
+test("repeated reconnect failures do not postpone delayed-watch health",async({page})=>{
+ await workspaceFixture(page);
+ await page.clock.install();
+ await page.goto("/?project=battery&session=analysis");
+ await page.getByRole("link",{name:"the research report"}).click();
+ await expect(page.locator(".file-markdown")).toContainText("Cycle performance report");
+ await page.clock.pauseAt(new Date(Date.now()+1000));
+ for(let i=0;i<3;i++) {
+   await page.evaluate(()=>window.dispatchEvent(new CustomEvent("fixture-file-event",{detail:"connection-error"})));
+   await page.clock.runFor(3000);
+ }
+ await expect(page.getByText("File updates may be delayed. Refresh to check.",{exact:true})).toBeVisible();
+ await expect(page.getByText("Files changed. Your unsaved text has been kept.",{exact:true})).toHaveCount(0);
+});
