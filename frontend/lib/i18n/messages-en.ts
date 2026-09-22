@@ -55,6 +55,8 @@ export const EN = {
   Latest: "Latest",
   "Leave empty for manual runs": "Leave empty for manual runs",
   "Loading preview…": "Loading preview…",
+  "Preparing preview…": "Preparing preview…",
+  "This file exceeds the supported preview limits. Download it to view the complete file.": "This file exceeds the supported preview limits. Download it to view the complete file.",
   "Mark read": "Mark read",
   "More Projects": "More Projects",
   "More results": "More results",

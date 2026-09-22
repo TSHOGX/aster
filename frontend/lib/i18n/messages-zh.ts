@@ -53,6 +53,8 @@ export const ZH: Record<MessageKey, string> = {
   Latest: "回到最新",
   "Leave empty for manual runs": "留空以手动运行",
   "Loading preview…": "正在加载预览…",
+  "Preparing preview…": "正在准备预览…",
+  "This file exceeds the supported preview limits. Download it to view the complete file.": "此文件超出支持的预览限制。请下载以查看完整文件。",
   "Mark read": "标为已读",
   "More Projects": "更多项目",
   "More results": "更多结果",

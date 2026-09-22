@@ -8,6 +8,10 @@ export async function workspaceFixture(
   await page.addInitScript(() => {
     let offline = false;
     let sequence = 0;
+    const ready = new Set<EventTarget>();
+    Object.defineProperty(window, "fixtureReadyResources", {
+      get: () => ready.size,
+    });
     window.addEventListener("fixture-file-event", (event) => {
       const value = (event as CustomEvent).detail;
       if (value === "connection-error") offline = true;
@@ -23,6 +27,7 @@ export async function workspaceFixture(
       onerror: (() => void) | null = null;
       private rotation: ReturnType<typeof setTimeout> | undefined;
       private emit = (payload: Record<string, unknown>) => {
+        if (payload.resource_kind === "ready") ready.add(this);
         this.dispatchEvent(
           new MessageEvent("resource", {
             data: JSON.stringify({
@@ -68,6 +73,7 @@ export async function workspaceFixture(
         );
       }
       close() {
+        ready.delete(this);
         clearTimeout(this.rotation);
         window.removeEventListener("fixture-file-event", this.fileEvent);
         window.removeEventListener(

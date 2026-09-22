@@ -21,7 +21,8 @@ active-model deployment continuity.
 | P05 host writer/retention | Verified locally | Bounded priority admission, derived retention and raw-outbox removal |
 | P05 journal/flow | Verified locally | Guest reserve, bounded delivery, safe command compaction and delayed-ACK qualification |
 | P05 combined resource audit | Pending | Final cross-phase queue/resource matrix and deployment qualification |
-| P06 | Pending | Measured browser and document rendering budgets |
+| P06 admission | Verified locally | Bounded format validation in a Worker and preview parse/resource admission |
+| P06 lifecycle/interaction | Pending | Replacement rendering, resource plateaus and constrained-profile qualification |
 | P07 | Pending | Admission/drain, independent gateway and combined qualification |
 
 ## Diagnostics
@@ -455,3 +456,64 @@ exact decoded byte equality. This prototype is test-only. Compression is a viabl
 future option, but it is not selected merely from compression ratio; representative
 transport/persistence bottlenecks remain the trigger above. Final immutable runtime
 qualification passed after direct FULL verification and indexed command compaction.
+
+## Preview admission and validation
+
+Rich previews now have admission limits before the Office libraries or image
+decoders receive their bytes. PNG/JPEG and OOXML workbooks, documents and slides
+are supported within these bounds. Legacy XLS, PDF, SVG, animated/other image
+formats, embedded fonts/media and unsupported binary parts offer download; they
+have no qualified bounded decoder in this implementation. Text/Markdown remains
+limited to 1 MiB. Downloads retain the complete original file.
+
+| Resource | Admission limit |
+| --- | --- |
+| Downloaded preview | 16 MiB |
+| Retained preview reservations per tab | 128 MiB, including overlapping representations |
+| Estimated Office renderer | 64 MiB |
+| ZIP entries / expanded bytes | 1,024 /16 MiB total, 4 MiB per entry |
+| XML elements / nesting | 100,000 /64 levels |
+| Workbook | 8 sheets, 20,000 cells, 2,000 rows, 256 columns; sparse grid extent also bounded to 20,000 cells |
+| Presentation | 40 slides |
+| Document | 2,000 paragraphs, 100 explicit page/section boundaries |
+| Image | 8 million pixels each, 16 million across an Office package |
+| Parse admission | One active operation, two queued operations |
+| Retained Office renderers | Two, including a renderer awaiting teardown |
+
+ZIP validation checks central/local names, bounded byte spans, actual decompressed
+length and CRC, XML well-formedness, structural counts, and raster dimensions.
+DTD/entities, external embedded resources, nested arbitrary archives and ambiguous
+names fail validation. One level of embedded XLSX receives the same validation
+and contributes to aggregate reservations; printer metadata is bounded but ignored.
+The reservation formula estimates expanded models, elements, cells and decoded
+pixels. It is not a browser heap limit, and the separate 32 MiB resource cache,
+application code and browser overhead remain outside it.
+
+Validation runs in a dedicated Worker using native bounded decompression and
+`saxes` 6.0.0 (ISC; `xmlchars` 2.2.0, MIT). Its input buffer is transferred, not
+cloned between contexts. Cancellation and a ten-second deadline terminate the
+Worker. Office rendering still executes on the main thread; asynchronous library
+APIs do not imply a Worker. Running renderer work retains its URL and reservation
+until settlement and teardown; canceled queued work never starts. Same-byte
+revalidation skips validation and renderer replacement. Diagnostic builds expose
+`batteryPreviewUsage()` with aggregate reservation, URL, Worker, observer,
+renderer and queue counts; it contains no file names or contents.
+
+Controlled production-build profiles used 200/20,000-cell XLSX,
+10/1,000-paragraph DOCX and 2/40-slide PPTX fixtures. Initial main-thread validation
+added observable blocking; transferring validation to a Worker restored the large
+spreadsheet's observed long tasks to 83–96 ms in the comparison run (173–215 ms
+with main-thread validation). These are single diagnostic observations, not p95
+or field INP. Existing DOM-backed renderers are retained. The profile harness
+records initial visible shell and adapter completion separately; older shell
+observations alone do not prove complete spreadsheet rendering.
+
+Regressions cover dishonest ZIP sizes/checksums, malformed/deep XML, sparse grid
+bombs, external embedded content, entry limits, image dimensions, cancellation,
+queue/reservation exhaustion and visible download fallback. Generate synthetic
+Office files with [the document generator](../frontend/e2e/preview-documents.py)
+and run [the opt-in profile](../frontend/e2e/ui/preview-profile.spec.ts) with
+`PREVIEW_FIXTURES` and `PREVIEW_PROFILE_OUTPUT` pointing to separate input and new
+output directories. Use `NEXT_PUBLIC_INTERACTION_METRICS=1` for resource counters.
+Full lifecycle plateau, replacement rendering and constrained-profile interaction
+qualification remain open; this slice does not close P06.

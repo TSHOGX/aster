@@ -72,7 +72,13 @@ test("unrelated writes skip the selected body; rotations preserve representation
     }),
   ).toHaveCount(0);
   await emit("connection-open");
-  await page.waitForTimeout(500);
+  // Reconnect uses jittered backoff; emit a write only after an actual source
+  // has reattached, rather than relying on a fixed delay near that boundary.
+  await expect
+    .poll(() =>
+      page.evaluate(() => Reflect.get(window, "fixtureReadyResources")),
+    )
+    .toBeGreaterThan(0);
   f.files["reports/summary.md"] = f.files["reports/summary.md"].replace(
     "Cycle",
     "Other",
