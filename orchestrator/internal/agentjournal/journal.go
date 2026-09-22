@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
+	"sync/atomic"
 
 	"harness-platform/orchestrator/internal/agentwire"
 	"harness-platform/orchestrator/internal/sqlitex"
@@ -35,6 +35,9 @@ type Journal struct {
 	Session, Incarnation string
 	Limit                int64
 	mu                   sync.Mutex
+	peak                 atomic.Int64
+	full                 atomic.Uint64
+	path                 string
 }
 type Command struct {
 	ID, TurnID, Kind, State string
@@ -57,7 +60,7 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
-	dsn := strings.Replace(sqlitex.BuildDSN(path, true), "synchronous%28NORMAL%29", "synchronous%28FULL%29", 1)
+	dsn := sqlitex.BuildDSN(path, true)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -87,7 +90,7 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 		if err = tx.Commit(); err != nil {
 			return fail(err)
 		}
-	} else if version != 1 {
+	} else if version != 1 && version != 2 {
 		return fail(ErrConflict)
 	}
 	var storedSession, storedIncarnation, integrity string
@@ -103,7 +106,37 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 	if storedSession != session || storedIncarnation != incarnation {
 		return fail(ErrConflict)
 	}
-	return &Journal{db: db, Session: session, Incarnation: incarnation, Limit: limit}, nil
+	if version != 2 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fail(err)
+		}
+		_, err = tx.ExecContext(ctx, `ALTER TABLE commands ADD COLUMN result_sequence INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX commands_result_sequence ON commands(result_sequence,id);
+CREATE INDEX records_command ON records(command_id,kind,sequence);
+UPDATE commands SET result_sequence=coalesce((SELECT max(sequence) FROM records WHERE command_id=commands.id AND kind='command.'||commands.state),(SELECT ack FROM metadata WHERE id=1)) WHERE state IN ('applied','completed','rejected','unknown');
+PRAGMA user_version=2;`)
+		if err != nil {
+			tx.Rollback()
+			return fail(err)
+		}
+		if err = tx.Commit(); err != nil {
+			return fail(err)
+		}
+	}
+	// Only eligible rows belong to the compaction index. Repeated cumulative ACKs
+	// must not scan every already-compacted identity retained for deduplication.
+	if _, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS commands_compactable ON commands(result_sequence,id) WHERE length(payload)>2 AND (state IN ('completed','rejected') OR (state='applied' AND kind<>'prompt'))`); err != nil {
+		return fail(err)
+	}
+	if err = sqlitex.VerifyPragmas(ctx, db, 1); err != nil {
+		return fail(err)
+	}
+	journal := &Journal{db: db, Session: session, Incarnation: incarnation, Limit: limit, path: path}
+	if position, err := journal.Position(ctx); err == nil {
+		journal.peak.Store(position.Bytes)
+	}
+	return journal, nil
 }
 func (j *Journal) Close() error { return j.db.Close() }
 func (j *Journal) Position(ctx context.Context) (p Position, err error) {
@@ -121,7 +154,20 @@ func (j *Journal) transaction(ctx context.Context, fn func(*sql.Tx) error) error
 	if err = fn(tx); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	var used int64
+	if err = j.db.QueryRowContext(ctx, `SELECT bytes FROM metadata WHERE id=1`).Scan(&used); err == nil {
+		for {
+			old := j.peak.Load()
+			if used <= old || j.peak.CompareAndSwap(old, used) {
+				break
+			}
+		}
+	}
+	// Diagnostics must not turn an already committed append into a failed one.
+	return nil
 }
 func fence(ctx context.Context, tx *sql.Tx, owner uint64) error {
 	var current uint64
@@ -161,22 +207,45 @@ func (j *Journal) Ack(ctx context.Context, owner, sequence uint64) error {
 		if sequence > last {
 			return ErrGap
 		}
-		if sequence <= ack {
-			return nil
+		if sequence > ack {
+			if _, err := tx.ExecContext(ctx, `UPDATE metadata SET ack=?,bytes=bytes-(SELECT coalesce(sum(size),0) FROM records WHERE sequence<=?) WHERE id=1`, sequence, sequence); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE sequence<=?`, sequence); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE metadata SET ack=?,bytes=bytes-(SELECT coalesce(sum(size),0) FROM records WHERE sequence<=?) WHERE id=1`, sequence, sequence); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE sequence<=?`, sequence)
-		return err
+		return compactCommands(ctx, tx, max(sequence, ack))
 	})
 }
-func (j *Journal) reserve(ctx context.Context, tx *sql.Tx, size int64) error {
+func (j *Journal) ControlReserve() int64 { return min(j.Limit/4, int64(16<<20)) }
+
+type Pressure struct {
+	Bytes, PeakBytes, Limit, ControlReserve, DiskBytes int64
+	Full, Unacked                                      uint64
+}
+
+func (j *Journal) Pressure(ctx context.Context) (Pressure, error) {
+	p, err := j.Position(ctx)
+	var disk int64
+	for _, name := range []string{j.path, j.path + "-wal"} {
+		if info, e := os.Stat(name); e == nil {
+			disk += info.Size()
+		}
+	}
+	return Pressure{Bytes: p.Bytes, PeakBytes: j.peak.Load(), Limit: j.Limit, ControlReserve: j.ControlReserve(), Full: j.full.Load(), DiskBytes: disk, Unacked: p.Sequence - p.Ack}, err
+}
+func (j *Journal) reserve(ctx context.Context, tx *sql.Tx, size int64, critical bool) error {
 	var used int64
 	if err := tx.QueryRowContext(ctx, `SELECT bytes FROM metadata WHERE id=1`).Scan(&used); err != nil {
 		return err
 	}
-	if size < 0 || size > j.Limit-used {
+	limit := j.Limit
+	if !critical {
+		limit -= j.ControlReserve()
+	}
+	if size < 0 || size > limit-used {
+		j.full.Add(1)
 		return ErrFull
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE metadata SET bytes=bytes+? WHERE id=1`, size)
@@ -208,7 +277,7 @@ func (j *Journal) Receive(ctx context.Context, owner uint64, c Command) (Command
 			return err
 		}
 		size := int64(len(c.Payload) + len(c.ID) + len(c.TurnID) + len(c.Kind) + 256)
-		if err = j.reserve(ctx, tx, size); err != nil {
+		if err = j.reserve(ctx, tx, size, c.Kind == "abort" || c.Kind == "get_state"); err != nil {
 			return err
 		}
 		result.State = "received"
@@ -249,7 +318,7 @@ func (j *Journal) appendTx(ctx context.Context, tx *sql.Tx, r Record) (uint64, e
 		return 0, agentwire.ErrFrame
 	}
 	size := int64(len(r.Payload) + len(r.Kind) + len(r.CommandID) + len(r.TurnID) + 128)
-	if err := j.reserve(ctx, tx, size); err != nil {
+	if err := j.reserve(ctx, tx, size, criticalRecord(r)); err != nil {
 		return 0, err
 	}
 	var seq uint64
@@ -287,7 +356,7 @@ func (j *Journal) Result(ctx context.Context, id, state string, payload json.Raw
 		}
 		delta := int64(len(payload)) - size
 		if delta > 0 {
-			if err := j.reserve(ctx, tx, delta); err != nil {
+			if err := j.reserve(ctx, tx, delta, true); err != nil {
 				return err
 			}
 		} else {
@@ -300,6 +369,9 @@ func (j *Journal) Result(ctx context.Context, id, state string, payload json.Raw
 		}
 		var err error
 		seq, err = j.appendTx(ctx, tx, Record{CommandID: id, TurnID: turn, Kind: "command." + state, Payload: payload})
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE commands SET result_sequence=? WHERE id=?`, seq, id)
+		}
 		return err
 	})
 	return seq, err

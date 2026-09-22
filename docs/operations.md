@@ -86,3 +86,11 @@ reservations estimate one MiB per queued request; ingestion accounts for its
 actual native payload plus fixed envelope allowance. These counters contain no
 prompt bodies, credentials or resource-ID labels. A background pending result
 means work yielded capacity, not that its projection failed.
+
+
+`agent_pressure` holds advisory samples from live runner attachments. The logical
+journal limit includes retained records/command metadata, with a separate control
+reserve; `journal_disk_bytes` includes the SQLite database and WAL. Runtime-volume
+capacity must also cover native history and captures across sibling Sessions.
+Send-window and control-queue bytes are reservations, not exact network traffic.
+Samples disappear when their attachment ends and never authorize command replay.

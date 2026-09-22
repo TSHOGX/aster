@@ -19,7 +19,8 @@ active-model deployment continuity.
 | P04a protocol | Verified locally | Reusable confined guest reader and multiplexed host client |
 | P04b–e | Verified locally | Reusable host readers, immutable captures, scoped directory cursors and read-path removal |
 | P05 host writer/retention | Verified locally | Bounded priority admission, derived retention and raw-outbox removal |
-| P05 journal/qualification | Pending | Guest journal control reserve, slow ACK/send windows and encoding decision |
+| P05 journal/flow | Verified locally | Guest reserve, bounded delivery, safe command compaction and delayed-ACK qualification |
+| P05 combined resource audit | Pending | Final cross-phase queue/resource matrix and deployment qualification |
 | P06 | Pending | Measured browser and document rendering budgets |
 | P07 | Pending | Admission/drain, independent gateway and combined qualification |
 
@@ -390,3 +391,67 @@ startup deadline; the isolated retry restored 890 ms but exposed a menu that
 failed to dismiss after Office moved focus. Capture-phase Escape handling and its
 regression test fixed that defect, then both real browser workflows passed.
 These observations are retained separately from host-only pressure measurements.
+
+
+## Guest journal reserve and delivery
+
+The default 64 MiB logical journal budget reserves 16 MiB for abort/state-query
+receipts, command results and native response/message-end/tool-end/agent-end
+evidence. Ordinary updates and new prompt/steer receipts use the other 48 MiB.
+The reserve is one quarter of configured capacity, capped at 16 MiB; it does not
+raise total capacity or promise unlimited terminal output. Journal logical bytes
+are distinct from SQLite/WAL physical bytes and the Project runtime-volume quota.
+
+A pressure-blocked native append holds one legal frame and releases the command
+mutex while waiting for ACK. After five seconds without sufficient space, the
+runner records an unknown outcome where possible and fails closed; no sequence is
+assigned to unwritten data. Command dispatch remains write-ahead. On ACK, at most
+thirty-two resolved command payloads are compacted; their IDs, digests, outcomes
+and results remain. Received/dispatching/unknown and active prompt payloads remain
+intact. A partial index keeps compaction independent of accumulated resolved
+history. Known journal format 1 upgrades transactionally to format 2.
+
+Delivery reserves at most 1 MiB /64 unacknowledged records; a larger legal frame
+can progress alone under the existing 4 MiB frame limit. Control replies are
+selected between records, carry no duplicate result body, and have 32-message /
+64 KiB reservation bounds. Initial sync re-ACKs the host's durable prefix, fixing
+an idle reconnect after loss of the final ACK. Host ACKs still depend only on
+committed ingestion. Pressure telemetry cannot advance a committed watermark.
+
+Agent wire version 2 adds bounded one-second pressure telemetry. Operator status
+reports advisory live `agent_pressure` samples, including logical/physical journal
+occupancy, high water, full attempts, unacknowledged record count, delivery-window
+and control-queue reservations. No content or credentials are included; absent or
+zero initial samples are not execution evidence. Runtime images require the new
+agent protocol. SQLite connections now configure FULL durability directly; the
+unused NORMAL writer factory and override-by-string-replacement are removed.
+
+A controlled 100 ms ACK-delay fixture delivered every assigned sequence and
+matched native payload/order hashes for 40/80 MiB cumulative traffic. The 80 MiB
+run completed in 14.8 seconds, peaked around 50.2 MB logical journal usage and
+1.05 MB send reservations, waited for space 45 times, and ended with zero
+unacknowledged records. Native stdin abort writes in that fixture took less than
+0.3 ms. A real Pi/runsc case with ACK deliberately withheld filled its normal
+journal, dispatched Abort in 10.34 ms, then resumed ACK after syncing the fixture
+transcript and settled with genuine native canceled evidence. Its journal stayed
+at 1,509,513 /2,097,152 bytes with a 524,288-byte reserve.
+
+The full disposable runtime suite passed release, sixty-round mixed work,
+browser, watch continuity, Files/PTYs, recovery and service authority. Mixed HTTP
+p95 was 5.83 ms and projection p95 441.59 ms; peak owner RSS was 38,252 KiB. These
+are local workload observations, not field performance guarantees.
+
+Raw payload compression/delta encoding is deferred: the measured uncompressed
+fixtures remain within the configured budget and preserve control progress with
+bounded backpressure. Revisit if representative legal-frame workloads repeatedly
+hit the five-second stall boundary despite healthy ACK/ingestion, or measured
+sustained payload rate exceeds the qualified consumer rate. Increasing journal
+capacity alone is not the fallback; raw source and unknown outcomes stay intact.
+
+
+A bounded encoding comparison used 189 legal numeric/text snapshots: 84.07 MB raw
+became 18.34 MB with gzip best-speed, with 584 ms encode and 398 ms decode time and
+exact decoded byte equality. This prototype is test-only. Compression is a viable
+future option, but it is not selected merely from compression ratio; representative
+transport/persistence bottlenecks remain the trigger above. Final immutable runtime
+qualification passed after direct FULL verification and indexed command compaction.

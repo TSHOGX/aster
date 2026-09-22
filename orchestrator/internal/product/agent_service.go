@@ -27,6 +27,7 @@ type agentAttachment struct {
 	inputOnce  sync.Once
 	ready      bool
 	err        error
+	pressure   agentwire.Pressure
 }
 
 // Agents owns one output attachment per runner and fans committed projections
@@ -453,6 +454,9 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 		}
 		switch f.Kind {
 		case "synced":
+			// The last ACK may have been lost after host commit. Reclaim that
+			// already-durable prefix even when the reattached runner is idle.
+			committed.Store(i.Ingested)
 			synchronized.Store(true)
 			syncTimer.Stop()
 			err = a.Store.write(ctx, func(tx *sql.Tx) error {
@@ -486,6 +490,13 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 
 		case "error":
 			return fmt.Errorf("runner: %s", f.Error)
+		case "pressure":
+			if f.Pressure == nil {
+				return ErrInvalid
+			}
+			a.mu.Lock()
+			attachment.pressure = *f.Pressure
+			a.mu.Unlock()
 		default:
 			return ErrInvalid
 		}

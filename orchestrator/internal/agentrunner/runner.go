@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,17 +35,22 @@ type Config struct {
 	ServiceCredential string
 }
 type Runner struct {
-	config       Config
-	journal      *agentjournal.Journal
-	native       io.WriteCloser
-	pi           *exec.Cmd
-	mu           sync.Mutex
-	active, turn string
-	commands     map[string]agentjournal.Command
-	wake         chan struct{}
-	responses    chan agentwire.Frame
-	syncs        chan agentwire.Frame
-	fatal        chan error
+	config        Config
+	journal       *agentjournal.Journal
+	native        io.WriteCloser
+	pi            *exec.Cmd
+	mu            sync.Mutex
+	active, turn  string
+	commands      map[string]agentjournal.Command
+	wake          chan struct{}
+	responses     chan agentwire.Frame
+	syncs         chan agentwire.Frame
+	fatal         chan error
+	ackWake       chan struct{}
+	responseBytes atomic.Int64
+	responsePeak  atomic.Int64
+	sentBytes     atomic.Uint64
+	windowPeak    atomic.Int64
 }
 
 func (r *Runner) notify() {
@@ -60,9 +66,35 @@ func (r *Runner) fail(err error) {
 	}
 }
 func (r *Runner) response(f agentwire.Frame) {
+	// Receipt/status has no content payload: original results are replayable
+	// journal records. Never duplicate large native replies in this control lane.
+	f.Payload = nil
+	if len(f.CommandID) > 128 {
+		f.CommandID = ""
+	}
+	if len(f.TurnID) > 128 {
+		f.TurnID = ""
+	}
+	if len(f.Error) > 1024 {
+		f.Error = f.Error[:1024]
+	}
+	bytes := responseSize(f)
+	used := r.responseBytes.Add(bytes)
+	if used > 64<<10 {
+		r.responseBytes.Add(-bytes)
+		r.fail(errors.New("Agent control response byte budget exhausted"))
+		return
+	}
+	for {
+		old := r.responsePeak.Load()
+		if used <= old || r.responsePeak.CompareAndSwap(old, used) {
+			break
+		}
+	}
 	select {
 	case r.responses <- f:
 	default:
+		r.responseBytes.Add(-bytes)
 		r.fail(errors.New("Agent control response buffer exhausted"))
 	}
 }
@@ -140,7 +172,7 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 	stdoutWriter.Close()
 	runctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	r := &Runner{config: c, journal: j, native: stdin, pi: cmd, commands: map[string]agentjournal.Command{}, wake: make(chan struct{}, 1), responses: make(chan agentwire.Frame, 32), syncs: make(chan agentwire.Frame, 8), fatal: make(chan error, 1)}
+	r := &Runner{config: c, journal: j, native: stdin, pi: cmd, commands: map[string]agentjournal.Command{}, wake: make(chan struct{}, 1), responses: make(chan agentwire.Frame, 32), syncs: make(chan agentwire.Frame, 8), fatal: make(chan error, 1), ackWake: make(chan struct{}, 1)}
 	var workers sync.WaitGroup
 	workers.Add(1)
 	go func() { defer workers.Done(); r.nativeOutput(runctx, stdout, nativeFile) }()
@@ -224,7 +256,7 @@ func (r *Runner) input(ctx context.Context, input io.Reader) {
 			r.mu.Unlock()
 			if err == nil {
 				select {
-				case r.syncs <- f:
+				case r.syncs <- agentwire.Frame{Owner: f.Owner, After: f.After}:
 				case <-ctx.Done():
 					return
 				}
@@ -238,6 +270,13 @@ func (r *Runner) input(ctx context.Context, input io.Reader) {
 			}
 		case "ack":
 			err = r.journal.Ack(ctx, f.Owner, f.Sequence)
+			if err == nil {
+				r.notify()
+				select {
+				case r.ackWake <- struct{}{}:
+				default:
+				}
+			}
 		case "command":
 			err = r.command(ctx, f)
 		default:
@@ -267,6 +306,9 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 		return errors.New("unsupported native command")
 	}
 	if (kind == "prompt" || kind == "steer") && f.TurnID == "" {
+		return agentwire.ErrFrame
+	}
+	if (kind == "abort" || kind == "get_state") && len(native["message"]) > 0 {
 		return agentwire.ErrFrame
 	}
 	// Restrict this boundary to native RPC commands, not arbitrary configuration
@@ -320,7 +362,11 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 	return nil
 }
 func (r *Runner) emit(ctx context.Context, output io.Writer) {
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	var owner, cursor uint64
+	var window sendWindow
+	var pending *agentjournal.Record
 	send := func(f agentwire.Frame) error {
 		f.Session, f.Incarnation = r.config.Session, r.config.Incarnation
 		if f.Owner == 0 {
@@ -328,43 +374,123 @@ func (r *Runner) emit(ctx context.Context, output io.Writer) {
 		}
 		return agentwire.Encode(output, f)
 	}
+	control := func(f agentwire.Frame, sync bool) error {
+		if sync {
+			owner, cursor = f.Owner, f.After
+			window = sendWindow{}
+			pending = nil
+			return send(agentwire.Frame{Kind: "synced", Owner: owner, After: cursor})
+		}
+		r.responseBytes.Add(-responseSize(f))
+		return send(f)
+	}
+	sample := func() error {
+		if owner == 0 {
+			return nil
+		}
+		p, err := r.journal.Pressure(ctx)
+		if err != nil {
+			return nil
+		}
+		return send(agentwire.Frame{Kind: "pressure", Pressure: &agentwire.Pressure{JournalBytes: p.Bytes, JournalPeak: p.PeakBytes, JournalDiskBytes: p.DiskBytes, JournalLimit: p.Limit, ControlReserve: p.ControlReserve, FullAttempts: p.Full, UnackedRecords: p.Unacked, WindowBytes: int64(window.bytes), WindowPeak: r.windowPeak.Load(), ControlQueueBytes: r.responseBytes.Load(), ControlQueuePeak: r.responsePeak.Load(), SentReservedBytes: r.sentBytes.Load()}})
+	}
 	for {
+		// Priority is checked between records, not only after an entire record batch.
+		handled := false
 		select {
 		case <-ctx.Done():
 			return
 		case f := <-r.syncs:
-			owner, cursor = f.Owner, f.After
-			if err := send(agentwire.Frame{Kind: "synced", Owner: owner, After: cursor}); err != nil {
+			if err := control(f, true); err != nil {
+				r.fail(err)
+				return
+			}
+			handled = true
+		default:
+		}
+		if !handled {
+			select {
+			case f := <-r.responses:
+				if err := control(f, false); err != nil {
+					r.fail(err)
+					return
+				}
+				handled = true
+			default:
+			}
+		}
+		select {
+		case <-tick.C:
+			if err := sample(); err != nil {
+				r.fail(err)
+				return
+			}
+		default:
+		}
+		if owner != 0 {
+			position, err := r.journal.Position(ctx)
+			if err != nil {
+				r.fail(err)
+				return
+			}
+			window.ack(position.Ack)
+			if position.Owner == owner {
+				if pending == nil {
+					records, err := r.journal.Records(ctx, owner, cursor, 1)
+					if err != nil && !errors.Is(err, agentjournal.ErrStale) {
+						r.response(agentwire.Frame{Kind: "error", Owner: owner, Error: err.Error()})
+					}
+					if err == nil && len(records) > 0 {
+						pending = &records[0]
+					}
+				}
+				if pending != nil {
+					// Payload is already valid JSON, and identities are bounded ASCII. This
+					// reservation covers its serialized envelope without encoding it twice.
+					bytes := len(pending.Payload) + 1024
+					if window.fits(bytes) {
+						record := pending
+						if err := send(agentwire.Frame{Kind: "record", Owner: owner, Sequence: record.Sequence, CommandID: record.CommandID, TurnID: record.TurnID, State: record.Kind, Payload: record.Payload}); err != nil {
+							r.fail(err)
+							return
+						}
+						cursor = record.Sequence
+						window.add(cursor, bytes)
+						pending = nil
+						r.sentBytes.Add(uint64(bytes))
+						for {
+							old := r.windowPeak.Load()
+							if int64(window.bytes) <= old || r.windowPeak.CompareAndSwap(old, int64(window.bytes)) {
+								break
+							}
+						}
+						continue
+					}
+				}
+			}
+		}
+		if handled {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case f := <-r.syncs:
+			if err := control(f, true); err != nil {
 				r.fail(err)
 				return
 			}
 		case f := <-r.responses:
-			if err := send(f); err != nil {
+			if err := control(f, false); err != nil {
 				r.fail(err)
 				return
 			}
 		case <-r.wake:
-		}
-		if owner == 0 {
-			continue
-		}
-		records, err := r.journal.Records(ctx, owner, cursor, 32)
-		if errors.Is(err, agentjournal.ErrStale) {
-			continue
-		}
-		if err != nil {
-			r.response(agentwire.Frame{Kind: "error", Owner: owner, Error: err.Error()})
-			continue
-		}
-		for _, record := range records {
-			if err := send(agentwire.Frame{Kind: "record", Owner: owner, Sequence: record.Sequence, CommandID: record.CommandID, TurnID: record.TurnID, State: record.Kind, Payload: record.Payload}); err != nil {
+		case <-tick.C:
+			if err := sample(); err != nil {
 				r.fail(err)
 				return
 			}
-			cursor = record.Sequence
-		}
-		if len(records) > 0 {
-			r.notify()
 		}
 	}
 }
@@ -410,7 +536,7 @@ func (r *Runner) nativeOutput(ctx context.Context, output io.Reader, nativeFile 
 				r.active, r.turn = "", ""
 			}
 		}
-		if _, err := r.journal.Append(ctx, agentjournal.Record{CommandID: command, TurnID: turn, Kind: "native", Payload: raw}); err != nil {
+		if err := r.appendNative(ctx, agentjournal.Record{CommandID: command, TurnID: turn, Kind: "native", Payload: raw}); err != nil {
 			r.mu.Unlock()
 			r.fail(err)
 			return

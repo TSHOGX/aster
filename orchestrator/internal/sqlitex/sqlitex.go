@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,12 +46,9 @@ func BuildDSN(path string, writer bool) string {
 	q := url.Values{}
 	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", BusyTimeoutMS))
 	q.Add("_pragma", "journal_mode(WAL)")
-	// Under WAL, synchronous=NORMAL avoids an fsync on every commit (the
-	// default FULL does one per commit). It is crash-safe: the database cannot
-	// corrupt, and only the very last committed transaction can be lost on a
-	// power failure. That is acceptable here because bridge reconnect/replay
-	// recovers the latest state.
-	q.Add("_pragma", "synchronous(NORMAL)")
+	// A journal ACK and product command receipt require the same FULL durability
+	// contract. Connection recreation must never silently downgrade that policy.
+	q.Add("_pragma", "synchronous(FULL)")
 	q.Add("_pragma", "foreign_keys(ON)")
 	if writer {
 		// The writer pool is serialized to one connection, but immediate
@@ -85,32 +80,6 @@ func escapeDSNPath(path string) string {
 		}
 	}
 	return b.String()
-}
-
-// OpenWriter creates the database file's parent directory if needed and opens
-// the writer pool: exactly one connection, _txlock=immediate.
-//
-// Pragmas are NOT verified here. The writer owns schema creation, and a caller
-// must initialize its schema before any reader can observe a half-built schema, so
-// the sequence is OpenWriter -> initialize -> VerifyPragmas -> OpenReader.
-func OpenWriter(path string) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	writer, err := sql.Open("sqlite", BuildDSN(path, true))
-	if err != nil {
-		return nil, err
-	}
-	// One writer connection: SQLite allows only one write transaction at a
-	// time anyway, and serializing in the pool turns lock contention into
-	// queueing instead of SQLITE_BUSY.
-	writer.SetMaxOpenConns(1)
-	writer.SetMaxIdleConns(1)
-	// No lifetime cap on the writer: recycling the sole write connection buys
-	// nothing (there is no upstream proxy to age out) and would drop the WAL
-	// read mark plus the warm page cache at arbitrary points.
-	writer.SetConnMaxLifetime(0)
-	return writer, nil
 }
 
 // OpenReader opens the reader pool and verifies its per-connection pragmas. A
@@ -173,6 +142,13 @@ func VerifyPragmas(ctx context.Context, db *sql.DB, conns int) error {
 		}
 		if busyTimeout != BusyTimeoutMS {
 			return fmt.Errorf("connection %d has busy_timeout=%d, want %d", i+1, busyTimeout, BusyTimeoutMS)
+		}
+		var synchronous int
+		if err := c.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&synchronous); err != nil {
+			return err
+		}
+		if synchronous != 2 {
+			return fmt.Errorf("connection %d has synchronous=%d, want FULL", i+1, synchronous)
 		}
 	}
 	return nil

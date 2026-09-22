@@ -176,10 +176,13 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 	}
 	models := `{"providers":{"local":{"baseUrl":"http://127.0.0.1:18889","api":"anthropic-messages","apiKey":"fixture-only","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
 	observers := map[string]*runnerObserver{}
-	start := func(session, incarnation, pi string) *runnerObserver {
+	start := func(session, incarnation, pi string, budget ...int64) *runnerObserver {
 		t.Helper()
 		ref := sandbox.ProcessReference{StoreID: r.Reference.StoreID, SandboxID: r.Reference.SandboxID, Epoch: r.Reference.Epoch, Handle: session + "-" + incarnation}
 		args := []string{"--session", session, "--incarnation", incarnation}
+		if len(budget) > 0 {
+			args = append(args, "--journal-bytes", fmt.Sprint(budget[0]))
+		}
 		if pi != "" {
 			args = append(args, "--pi", pi)
 		}
@@ -311,5 +314,102 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 			}
 		}
 		t.Log("Project admission -> durable host command -> Go runner -> real Pi -> committed raw ingest/messages/capture -> journal ACK")
+	})
+	t.Run("native-abort-with-full-normal-journal", func(t *testing.T) {
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/pressure/models.json", strings.NewReader(models)))
+		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/pressure/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
+		o := start("pressure", "pressure-run", "/usr/local/bin/pi", 2<<20)
+		defer o.stop()
+		send := func(frame agentwire.Frame) {
+			t.Helper()
+			frame.Session = "pressure"
+			frame.Incarnation = "pressure-run"
+			frame.Owner = 1
+			var raw bytes.Buffer
+			must(t, agentwire.Encode(&raw, frame))
+			must(t, backend.SendProcessInput(runctx, o.ref, raw.Bytes()))
+		}
+		send(agentwire.Frame{Kind: "sync"})
+		send(agentwire.Frame{Kind: "command", CommandID: "pressure-prompt", TurnID: "pressure-turn", Payload: json.RawMessage(`{"type":"prompt","message":"pressure-native"}`)})
+		// Deliberately withhold ACK while still draining transport. Every later
+		// ACK follows a synced fixture transcript, never merely a delivered byte.
+		capture, err := os.CreateTemp(t.TempDir(), "committed-*.jsonl")
+		must(t, err)
+		defer capture.Close()
+		encoder := json.NewEncoder(capture)
+		var last uint64
+		var pressure agentwire.Pressure
+		deadline := time.NewTimer(15 * time.Second)
+		defer deadline.Stop()
+		for pressure.FullAttempts == 0 {
+			select {
+			case f := <-o.frames:
+				if f.Kind == "record" {
+					if f.Sequence != last+1 {
+						t.Fatal("sequence gap", last, f.Sequence)
+					}
+					must(t, encoder.Encode(f))
+					last = f.Sequence
+				}
+				if f.Kind == "pressure" && f.Pressure != nil {
+					pressure = *f.Pressure
+				}
+			case err := <-o.errors:
+				t.Fatal(err)
+			case <-deadline.C:
+				t.Fatal("normal journal never reached pressure")
+			}
+		}
+		if pressure.JournalBytes > pressure.JournalLimit-pressure.ControlReserve || pressure.WindowPeak > 1<<20 {
+			t.Fatal("normal traffic consumed reserve", pressure)
+		}
+		began := time.Now()
+		send(agentwire.Frame{Kind: "command", CommandID: "pressure-abort", TurnID: "pressure-turn", Payload: json.RawMessage(`{"type":"abort"}`)})
+		dispatched := false
+		for !dispatched {
+			select {
+			case f := <-o.frames:
+				if f.Kind == "command_status" && f.CommandID == "pressure-abort" && f.State == "dispatching" {
+					dispatched = true
+				}
+			case err := <-o.errors:
+				t.Fatal(err)
+			case <-deadline.C:
+				t.Fatal("full normal journal blocked Stop")
+			}
+		}
+		latency := time.Since(began)
+		must(t, capture.Sync())
+		send(agentwire.Frame{Kind: "ack", Sequence: last})
+		completed := false
+		for !completed {
+			select {
+			case f := <-o.frames:
+				if f.Kind != "record" {
+					continue
+				}
+				if f.Sequence != last+1 {
+					t.Fatal("post-Stop sequence gap", last, f.Sequence)
+				}
+				must(t, encoder.Encode(f))
+				must(t, capture.Sync())
+				last = f.Sequence
+				send(agentwire.Frame{Kind: "ack", Sequence: last})
+				if f.CommandID == "pressure-prompt" && f.State == "command.completed" {
+					var result struct{ Outcome string }
+					must(t, json.Unmarshal(f.Payload, &result))
+					if result.Outcome != "canceled" {
+						t.Fatal("native outcome wasn't interruption", result.Outcome)
+					}
+					completed = true
+				}
+			case err := <-o.errors:
+				t.Fatal(err)
+			case <-deadline.C:
+				t.Fatal("native interruption didn't settle")
+			}
+		}
+		t.Logf("real native Stop under pressure: dispatch=%s journal=%d/%d reserved=%d window_peak=%d last_committed=%d", latency, pressure.JournalBytes, pressure.JournalLimit, pressure.ControlReserve, pressure.WindowPeak, last)
+		must(t, backend.SignalProcess(runctx, o.ref, 15))
 	})
 }

@@ -10,7 +10,7 @@ import (
 	"io"
 )
 
-const Version = 1
+const Version = 2
 const MaxFrame = 4 << 20
 
 var ErrFrame = errors.New("invalid or oversized Agent protocol frame")
@@ -28,6 +28,21 @@ type Frame struct {
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	State       string          `json:"state,omitempty"`
 	Error       string          `json:"error,omitempty"`
+	Pressure    *Pressure       `json:"pressure,omitempty"`
+}
+type Pressure struct {
+	JournalBytes      int64  `json:"journal_bytes"`
+	JournalPeak       int64  `json:"journal_peak"`
+	JournalDiskBytes  int64  `json:"journal_disk_bytes"`
+	JournalLimit      int64  `json:"journal_limit"`
+	ControlReserve    int64  `json:"control_reserve"`
+	FullAttempts      uint64 `json:"full_attempts"`
+	UnackedRecords    uint64 `json:"unacked_records"`
+	WindowBytes       int64  `json:"window_bytes"`
+	WindowPeak        int64  `json:"window_peak"`
+	ControlQueueBytes int64  `json:"control_queue_bytes"`
+	ControlQueuePeak  int64  `json:"control_queue_peak"`
+	SentReservedBytes uint64 `json:"sent_reserved_bytes"`
 }
 type Decoder struct{ scanner *bufio.Scanner }
 

@@ -68,7 +68,7 @@ func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 	// Commands acknowledged from this database must survive an application crash.
 	// FULL is intentional: runner journal reclamation must not rely on NORMAL's
 	// weaker power-loss contract. Disk/controller guarantees remain external.
-	dsn := strings.Replace(sqlitex.BuildDSN(path, true), "synchronous%28NORMAL%29", "synchronous%28FULL%29", 1)
+	dsn := sqlitex.BuildDSN(path, true)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err

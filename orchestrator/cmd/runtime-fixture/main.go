@@ -200,10 +200,12 @@ func model(coordinated bool) {
 		}
 
 		slow := false
+		pressure := false
 		messages, _ := request["messages"].([]any)
 		if len(messages) > 0 {
 			last, _ := json.Marshal(messages[len(messages)-1])
 			slow = bytes.Contains(last, []byte("long-for-interrupt"))
+			pressure = bytes.Contains(last, []byte("pressure-native"))
 			if bytes.Contains(last, []byte("offline-ring")) {
 				select {
 				case <-r.Context().Done():
@@ -227,16 +229,28 @@ func model(coordinated bool) {
 			}
 			records = append(output, records[3:]...)
 		}
+		if pressure {
+			output := []string{records[0], records[1]}
+			for n := 0; n < 204; n++ {
+				raw, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": strings.Repeat("capacity-cycle ", 300)}})
+				output = append(output, string(raw))
+			}
+			records = append(output, records[3:]...)
+		}
 		for _, raw := range records {
 			var value map[string]any
 			_ = json.Unmarshal([]byte(raw), &value)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", value["type"], raw)
 			w.(http.Flusher).Flush()
-			if slow {
+			if slow || pressure {
+				delay := 20 * time.Millisecond
+				if pressure {
+					delay = 10 * time.Millisecond
+				}
 				select {
 				case <-r.Context().Done():
 					return
-				case <-time.After(20 * time.Millisecond):
+				case <-time.After(delay):
 				}
 			}
 		}

@@ -51,6 +51,84 @@ type missingSyncBackend struct{ *fakePTY }
 func (b missingSyncBackend) SendProcessInput(context.Context, sandbox.ProcessReference, []byte) error {
 	return &sandbox.Error{Class: sandbox.Precondition, Operation: "sync", Cause: errors.New("guardian absent")}
 }
+
+type quietACKBackend struct {
+	*fakePTY
+	ack chan agentwire.Frame
+}
+
+func (b *quietACKBackend) ConnectProcess(ctx context.Context, ref sandbox.ProcessReference, after uint64) (sandbox.ProcessStream, error) {
+	stream, err := b.fakePTY.ConnectProcess(ctx, ref, after)
+	if err == nil {
+		context.AfterFunc(ctx, func() { _ = stream.Close() })
+	}
+	return stream, err
+}
+
+func (b *quietACKBackend) SendProcessInput(ctx context.Context, ref sandbox.ProcessReference, data []byte) error {
+	f, err := agentwire.NewDecoder(bytes.NewReader(data)).Next()
+	if err != nil {
+		return err
+	}
+	if f.Kind == "ack" {
+		select {
+		case b.ack <- f:
+		default:
+		}
+		return nil
+	}
+	if f.Kind != "sync" {
+		return nil
+	}
+	var out bytes.Buffer
+	if err = agentwire.Encode(&out, agentwire.Frame{Kind: "synced", Session: f.Session, Incarnation: f.Incarnation, Owner: f.Owner, After: f.After}); err != nil {
+		return err
+	}
+	// Telemetry cannot raise the host's committed watermark.
+	if err = agentwire.Encode(&out, agentwire.Frame{Kind: "pressure", Session: f.Session, Incarnation: f.Incarnation, Owner: f.Owner, Sequence: 999999, Pressure: &agentwire.Pressure{JournalBytes: 500}}); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	p := b.streams[ref.Handle]
+	b.mu.Unlock()
+	select {
+	case p.frames <- sandbox.ProcessFrame{Kind: "data", Stream: "stdout", Data: out.Bytes()}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func TestReattachedQuietRunnerReceivesDurablePrefixACK(t *testing.T) {
+	s, scope, i, c := agentFixture(t)
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))
+	must(t, err)
+	i.State = "running"
+	i.Ingested = 1
+	backend := &quietACKBackend{fakePTY: newFakePTY(), ack: make(chan agentwire.Frame, 2)}
+	_, err = backend.StartPTY(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: "runner"}, 24, 80)
+	must(t, err)
+	a := NewAgents(ctx, s, nil, backend, testProfile(), 8)
+	defer a.Close()
+	runctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	attachment := &agentAttachment{projectID: scope.ProjectID, incarnation: i}
+	go func() { done <- a.attach(runctx, attachment) }()
+	select {
+	case ack := <-backend.ack:
+		if ack.Sequence != 1 {
+			t.Fatal("noncommitted telemetry was ACKed", ack.Sequence)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("lost final ACK stranded an idle journal")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attachment failed to close")
+	}
+}
 func (b missingSyncBackend) InspectProcess(_ context.Context, ref sandbox.ProcessReference) (sandbox.ProcessObservation, error) {
 	return sandbox.ProcessObservation{ProcessReference: ref, State: "lost"}, nil
 }

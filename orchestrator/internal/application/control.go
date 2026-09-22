@@ -52,6 +52,9 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
 		out["writer"] = a.Store.WriterStats()
+		if a.Agents != nil {
+			out["agent_pressure"] = a.Agents.AgentPressure()
+		}
 		if a.Files != nil {
 			out["workspace_reads"] = a.Files.ReadStats()
 		}

@@ -78,3 +78,11 @@ existing explicit retirement authority permits deletion. Schema 6 removes obsole
 read command rows while retaining original helper identities for cleanup; no read
 is replayed through a mutation dispatcher. Product events no longer include
 per-token raw-record notifications.
+
+
+Guest journal format 2 records each command result's sequence. A cumulative host
+ACK can compact a resolved command's original payload, but never its digest,
+identity or result. Uncertain commands and active prompts are excluded. The host
+retains authoritative raw execution evidence independently of this guest
+reclamation. SQLite FULL is the direct connection default and is verified; there
+is no weaker durability path selected for reconnect recovery.

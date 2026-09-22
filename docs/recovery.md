@@ -39,3 +39,12 @@ Use operator diagnostics to inspect blockers, pending work and binding mismatch.
 Repair dependencies first, then use the explicit retry/restart action appropriate
 to the observed failure. Do not open the product database with a second writer or
 edit lifecycle rows to make a failed operation appear complete.
+
+
+A successful runner resynchronization re-ACKs the host's already committed prefix,
+including when there are no new records. This recovers capacity after a lost final
+ACK. Bounded journal pressure can wait for ACK without blocking the command mutex;
+a sustained five-second capacity stall fails explicitly and leaves unresolved
+native effects unknown. A telemetry sample is never completion or ACK evidence.
+Agent wire 2 and journal format 2 belong to a newly built immutable runtime;
+protocol upgrades must follow the qualified admission/drain deployment process.
