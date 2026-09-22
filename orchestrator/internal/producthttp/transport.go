@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/projectfiles"
 )
 
 // Authenticator resolves the actor for a request. The composed deployment
@@ -92,8 +93,12 @@ func status(err error) (int, string) {
 }
 
 func fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, projectfiles.ErrChangedDuringRead) {
+		writeJSON(w, http.StatusConflict, map[string]string{"code": "changed_during_read", "error": "file changed during read"})
+		return
+	}
 	if errors.Is(err, product.ErrResync) {
-		writeJSON(w, http.StatusConflict, map[string]string{"code": "resync_required", "error": "conversation view requires resync"})
+		writeJSON(w, http.StatusConflict, map[string]string{"code": "resync_required", "error": "resource requires resync"})
 		return
 	}
 	code, message := status(err)

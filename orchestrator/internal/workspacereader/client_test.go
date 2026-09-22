@@ -123,7 +123,7 @@ func TestClientProtocolFailureFencesPendingRequests(t *testing.T) {
 	in, out := io.Pipe()
 	stream := &pipeStream{input: in}
 	go func() {
-		_ = projectfiles.WriteWire(out, projectfiles.ReaderFrameBytes, projectfiles.ReadFrame{Version: 1, Kind: "ready"})
+		_ = projectfiles.WriteWire(out, projectfiles.ReaderFrameBytes, projectfiles.ReadFrame{Version: projectfiles.ReaderProtocol, Kind: "ready"})
 		out.Close()
 	}()
 	c, err := New(context.Background(), stream, func(context.Context, []byte) error { return nil })

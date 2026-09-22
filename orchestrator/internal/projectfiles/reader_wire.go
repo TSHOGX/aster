@@ -8,7 +8,7 @@ import (
 	"io"
 )
 
-const ReaderProtocol = 1
+const ReaderProtocol = 2
 const ReaderRequestBytes = 16 << 10
 const ReaderFrameBytes = 256 << 10
 const ReaderChunkBytes = 32 << 10
@@ -20,6 +20,7 @@ type ReadRequest struct {
 	Path      string `json:"path,omitempty"`
 	Cursor    string `json:"cursor,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
+	Credits   int    `json:"credits,omitempty"`
 }
 type ReadMetadata struct {
 	Size         int64  `json:"size"`
@@ -104,18 +105,23 @@ func (r ReadRequest) Validate() error {
 		return ErrPath
 	}
 	switch r.Operation {
+	case "credit":
+		if r.Path != "" || r.Cursor != "" || r.Limit != 0 || r.Credits < 1 || r.Credits > 8 {
+			return ErrPath
+		}
+		return nil
 	case "cancel":
-		if r.Path != "" || r.Cursor != "" || r.Limit != 0 {
+		if r.Path != "" || r.Cursor != "" || r.Limit != 0 || r.Credits != 0 {
 			return ErrPath
 		}
 		return nil
 	case "list":
-		if r.Limit < 1 || r.Limit > MaxPage || len(r.Cursor) > 2048 {
+		if r.Limit < 1 || r.Limit > MaxPage || len(r.Cursor) > 2048 || r.Credits != 0 {
 			return ErrPath
 		}
 		return Path(r.Path, true)
 	case "read", "stat":
-		if r.Cursor != "" || r.Limit != 0 {
+		if r.Cursor != "" || r.Limit != 0 || r.Credits != 0 {
 			return ErrPath
 		}
 		return Path(r.Path, false)

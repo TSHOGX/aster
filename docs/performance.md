@@ -17,7 +17,7 @@ active-model deployment continuity.
 | P03a/b | Verified locally | Resource scopes and bounded shared server replay hub |
 | P03c–e | Verified locally | Incremental browser views, shared transport, idle windows and disposable runtime qualification |
 | P04a protocol | Verified locally | Reusable confined guest reader and multiplexed host client |
-| P04b–e | Pending | Host lifecycle, capture/version APIs, read cutover and helper retirement |
+| P04b–e | Verified locally | Reusable host readers, immutable captures, scoped directory cursors and read-path removal |
 | P05 | Pending | Fair byte budgets, control reserve and retention |
 | P06 | Pending | Measured browser and document rendering budgets |
 | P07 | Pending | Admission/drain, independent gateway and combined qualification |
@@ -285,3 +285,50 @@ mutation, cancellation, fifty requests through one process, and existing runtime
 fault/recovery/service gates. In one disposable run the cold reader handshake took
 11.15 ms; fifty warm stat requests took 208.59 ms total. These are prototype
 measurements; HTTP still uses the old file-operation path until the next cutover.
+
+
+## Confined file read cutover
+
+File HTTP reads and frozen-share capture now use the reusable reader exclusively.
+`Files.Execute` and the one-shot guest command dispatcher accept mutations only;
+the read/list command path, per-read mutation row and stdout transfer interface
+are removed. Schema 5 persists one helper binding per Project for orphan cleanup.
+A replacement helper first retires the original handle; uncertain cleanup never
+creates duplicate processes. List/watch do not activate Projects. Explicit content
+open retains activation intent. Placement/authority checks cancel read leases on
+pause/delete/epoch change without treating them as permanent activity blockers.
+
+Reader protocol 2 introduces per-request chunk credits. Eight chunks may be in
+flight; four credits return after consumption. Cancellation waits for its terminal
+acknowledgement before reusing that slot. An unconfirmed cancellation or partial
+input-frame send invalidates the connection. Large transfer throttling is confined
+to its request instead of rejecting ordinary disk delays. At most sixteen host
+read leases and readers, two per Project and one list per Project, are admitted.
+Leases time out after five minutes; guest operations after two minutes. Reader
+idle exit is thirty seconds and host idle retirement starts after twenty-five.
+
+Content is captured into unnamed `O_TMPFILE` inodes under the application's
+`read-captures` state directory, avoiding accidental use of a memory-backed system
+temporary directory. Captures are capped at 256 MiB each /512 MiB aggregate. They
+are hashed and reopened read-only before publication. No named files survive
+owner death, and release decrements byte/FD/lease ownership. Each stalled HTTP
+body write is bounded to thirty seconds. The operator status includes reader,
+lease and captured-byte counts. Conditional requests reacquire current bytes;
+Range uses only one complete immutable representation. ETags never imply save
+compare-and-swap or an atomic historical filesystem observation.
+
+Runtime manifest version 2 requires reader protocol 2; older runtime manifests
+are rejected. New immutable images were assembled and qualified in disposable
+substrates; no existing user template/service was replaced. In the final reader
+fixture fifty warm captures reused one helper and performed zero database writes;
+its cold capture took 25.21 ms and fifty warm captures 379.85 ms total. Encoded
+page tests include filenames whose JSON expansion exceeds raw filename size.
+The full runtime gate passed release, a five-minute sixty-round mixed workload,
+browser workflows, realtime rotations, files/PTYs, recovery and service authority.
+The mixed run recorded HTTP p95 4.81 ms/p99 8.59 ms, projection p95 337.62 ms and
+peak owner RSS 37,612 KiB. These are local observations; saturation calibration,
+final cross-phase resource plateaus and deployment continuity remain open.
+
+The final immutable reader image also passed its released executable and real
+browser gates after moving capture storage to unnamed state-directory inodes.
+The browser cases took 29.8 seconds; Agent completion under PTY output was 903 ms.

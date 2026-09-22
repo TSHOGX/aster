@@ -26,11 +26,31 @@ with `O_PATH|O_NOFOLLOW` and verifies each selected object with `fstat`; ordinar
 Regular content is opened through the selected descriptor. Symlinks, special
 files, absolute paths, traversal and private runtime access are rejected.
 
-Reads/writes stream with a 256 MiB transfer bound. Writes require length and
-SHA-256 and replace atomically after verification. Directory pages contain at
-most 200 entries, with a 100,000-entry scan bound. Watchers have bounded lifetimes
-and trigger authorized rescans. Cancellation closes the guest stream and releases
-its reservation. Unknown mutation outcomes are not retried automatically.
+Read-only access uses a reusable framed helper per Project/placement. Directory
+pages freeze a sorted metadata observation with opaque expiring cursors; they
+contain at most 200 entries and obey encoded-byte bounds. One scan observes at
+most 100,000 names; snapshots are not atomic filesystem snapshots. Reads reject
+symlink/special-file substitutions using the same descriptor traversal as writes.
+
+Each content open captures at most 256 MiB into unnamed host temporary inodes under the application state directory,
+verifies its size and SHA-256, then exposes a read-only representation. Strong
+ETags, conditional responses and single byte ranges refer to those exact bytes.
+Even matching metadata triggers a fresh capture before returning 304. The host
+bounds captures to 512 MiB, sixteen active requests/readers, two requests per
+Project and one directory scan per Project. Cancellation has request identity;
+credit flow control prevents a slow consumer from overflowing another request.
+
+Pure reads create no mutation or activity rows. Schema 5 retains only each
+Project's current helper identity for cleanup after owner loss. Placement changes,
+pause and deletion cancel reader leases; idle helpers exit, and orphan cleanup
+requires original-handle termination or placement-loss evidence. List/watch never
+activate a Project. An explicit content open retains the existing activation
+semantics. A content response interrupted after headers aborts its HTTP body.
+
+Writes still require length/SHA-256, replace atomically after verification and
+retain durable command identities/unknown outcomes. Mutation helpers cannot
+perform list/read operations; the old per-read mutation path is removed. Preview
+ETags do not implement atomic conflict detection for saves.
 
 Native journal records and user-visible projections are separate. Completion
 creates a synced immutable native capture before the next prompt can replace its

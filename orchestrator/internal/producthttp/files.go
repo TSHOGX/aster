@@ -1,14 +1,13 @@
 package producthttp
 
 import (
-	"bytes"
-	"encoding/json"
 	"io"
 	"mime"
 	"net/http"
 	"path"
+	"strings"
+	"time"
 
-	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/projectfiles"
 )
@@ -25,62 +24,54 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	request := projectfiles.Request{Operation: "list", Path: q.Get("path"), After: q.Get("after"), Limit: intParam(q, "limit", 100)}
-	var out boundedFileMetadata
-	_, err := s.Files.Run(r.Context(), s.scope(r), uuid.NewString(), request, nil, &out)
+	page, err := s.Files.List(r.Context(), s.scope(r), q.Get("path"), q.Get("after"), intParam(q, "limit", 100))
 	if err != nil {
-		fail(w, err)
-		return
-	}
-	var page projectfiles.Page
-	if err = json.Unmarshal(out.Bytes(), &page); err != nil {
 		fail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
 }
 
-type boundedFileMetadata struct{ bytes.Buffer }
+// ServeContent ignores copy errors after headers. Abort the HTTP body if a
+// canceled capture or placement loss would otherwise look like a short success.
+type captureBody struct {
+	*product.CapturedFile
+	controller *http.ResponseController
+}
 
-func (b *boundedFileMetadata) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > 256<<10 {
-		return 0, product.ErrCapacity
+func (b captureBody) Read(p []byte) (int, error) {
+	_ = b.controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	n, err := b.CapturedFile.Read(p)
+	if err != nil && err != io.EOF {
+		panic(http.ErrAbortHandler)
 	}
-	return b.Buffer.Write(p)
+	return n, err
 }
-
-type fileResponse struct {
-	w       http.ResponseWriter
-	started bool
-}
-
-func (f *fileResponse) Write(p []byte) (int, error) { f.started = true; return f.w.Write(p) }
 func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	if !s.filesAvailable(w) {
 		return
 	}
 	name := r.URL.Query().Get("path")
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(name)}))
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Trailer", "X-File-Outcome")
-	output := &fileResponse{w: w}
-	o, err := s.Files.Run(r.Context(), s.scope(r), uuid.NewString(), projectfiles.Request{Operation: "read", Path: name}, nil, output)
-	if err != nil && !output.started {
-		w.Header().Del("Content-Disposition")
-		w.Header().Del("Trailer")
+	capture, err := s.Files.Capture(r.Context(), s.scope(r), name)
+	if err != nil {
 		fail(w, err)
 		return
 	}
-	if !output.started {
-		w.WriteHeader(http.StatusOK)
+	defer capture.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(name)}))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("ETag", `"sha256:`+capture.Digest+`"`)
+	if strings.Contains(r.Header.Get("Range"), ",") {
+		r = r.Clone(r.Context())
+		r.Header.Del("Range")
 	}
-	w.Header().Set("X-File-Outcome", o.State)
-	if err != nil {
-		// A truncated transfer must fail the HTTP body, not look like a successful
-		// shorter download to a client which ignores trailers.
-		panic(http.ErrAbortHandler)
-	}
+	// Current bytes were re-acquired and verified before any conditional response.
+	// Range/If-Range refer only to this immutable capture, never separate live reads.
+	controller := http.NewResponseController(w)
+	_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	http.ServeContent(w, r, path.Base(name), time.Time{}, captureBody{CapturedFile: capture, controller: controller})
 }
 func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	if !s.filesAvailable(w) {
@@ -92,7 +83,7 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	}
 	request := projectfiles.Request{Operation: "write", Path: r.URL.Query().Get("path"), Size: r.ContentLength, Digest: r.Header.Get("X-Content-SHA256")}
 	body := http.MaxBytesReader(w, r.Body, projectfiles.MaxTransfer)
-	o, err := s.Files.Run(r.Context(), s.scope(r), r.Header.Get("Idempotency-Key"), request, body, io.Discard)
+	o, err := s.Files.Execute(r.Context(), s.scope(r), r.Header.Get("Idempotency-Key"), request, body)
 	s.fileResult(w, o, err)
 }
 func (s *Server) mutateFile(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +103,7 @@ func (s *Server) mutateFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, product.ErrInvalid)
 		return
 	}
-	o, err := s.Files.Run(r.Context(), s.scope(r), body.ID, projectfiles.Request{Operation: body.Operation, Path: body.Path, Destination: body.Destination}, nil, io.Discard)
+	o, err := s.Files.Execute(r.Context(), s.scope(r), body.ID, projectfiles.Request{Operation: body.Operation, Path: body.Path, Destination: body.Destination}, nil)
 	s.fileResult(w, o, err)
 }
 func (s *Server) fileResult(w http.ResponseWriter, o product.FileOperation, err error) {

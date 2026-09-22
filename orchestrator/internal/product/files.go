@@ -89,9 +89,6 @@ func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, r proje
 			return e
 		}
 		fresh = true
-		if r.Operation == "list" {
-			return nil
-		}
 		return s.activity(ctx, tx, scope.ProjectID)
 	})
 	return
@@ -123,9 +120,6 @@ func (s *Store) finishFile(ctx context.Context, o FileOperation, state, detail s
 		if _, err = tx.ExecContext(ctx, `UPDATE project_activity SET state=?,updated_at=? WHERE id=?`, activity, s.timestamp(), "file:"+o.ID); err != nil {
 			return err
 		}
-		if o.Request.Operation == "list" {
-			return nil
-		}
 		return s.activity(ctx, tx, o.ProjectID)
 	})
 }
@@ -135,20 +129,23 @@ type FileBackend interface {
 	WatchWorkspace(context.Context, sandbox.Reference, uint64) (sandbox.FileWatch, error)
 }
 
-// Files owns bounded one-shot helpers. No pathname or workspace locks exist.
+// Files composes read-only reusable readers and durable one-shot mutation helpers. No pathname or workspace locks exist.
 // active tracks only this owner's in-flight calls, so its reconciler never kills
 // a healthy transfer. Durable rows, not this map, discover work after restart.
 type Files struct {
-	Store     *Store
-	Lifecycle *Lifecycle
-	Backend   FileBackend
-	Profile   Profile
-	Helper    string
-	mu        sync.Mutex
-	active    map[string]bool
+	Store            *Store
+	Lifecycle        *Lifecycle
+	Backend          FileBackend
+	Profile          Profile
+	Helper           string
+	CaptureDirectory string
+	mu               sync.Mutex
+	active           map[string]bool
+	readerOnce       sync.Once
+	reader           *WorkspaceReader
 }
 
-func (f *Files) Run(ctx context.Context, scope Scope, id string, r projectfiles.Request, input io.Reader, output io.Writer) (FileOperation, error) {
+func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfiles.Request, input io.Reader) (FileOperation, error) {
 	if r.Validate() != nil || !validID(id) {
 		return FileOperation{}, ErrInvalid
 	}
@@ -166,11 +163,7 @@ func (f *Files) Run(ctx context.Context, scope Scope, id string, r projectfiles.
 	} else if !errors.Is(err, ErrNotFound) {
 		return FileOperation{}, err
 	}
-	if r.Operation == "list" {
-		if _, err := f.Lifecycle.ActiveResources(ctx, scope); err != nil {
-			return FileOperation{}, err
-		}
-	} else if err := f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile); err != nil {
+	if err := f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile); err != nil {
 		return FileOperation{}, err
 	}
 	f.mu.Lock()
@@ -196,9 +189,6 @@ func (f *Files) Run(ctx context.Context, scope Scope, id string, r projectfiles.
 	if input == nil {
 		input = strings.NewReader("")
 	}
-	if output == nil {
-		output = io.Discard
-	}
 	raw, _ := json.Marshal(r)
 	helper := f.Helper
 	if helper == "" {
@@ -216,7 +206,7 @@ func (f *Files) Run(ctx context.Context, scope Scope, id string, r projectfiles.
 		stopClose := context.AfterFunc(runctx, func() { _ = stream.Close() })
 		defer stopClose()
 		defer stream.Close()
-		err, observed = f.transfer(runctx, stream, o, input, output)
+		err, observed = f.transfer(runctx, stream, o, input)
 	}
 	state, detail := "succeeded", ""
 	if err != nil {
@@ -248,10 +238,9 @@ func fileResult(o FileOperation) error {
 	}
 	return nil
 }
-func (f *Files) transfer(ctx context.Context, stream sandbox.ProcessStream, o FileOperation, input io.Reader, output io.Writer) (error, bool) {
+func (f *Files) transfer(ctx context.Context, stream sandbox.ProcessStream, o FileOperation, input io.Reader) (error, bool) {
 	var diagnostic strings.Builder
 	started := false
-	var received int64
 	sent := make(chan error, 1)
 	for {
 		frame, err := stream.Next()
@@ -267,7 +256,7 @@ func (f *Files) transfer(ctx context.Context, stream sandbox.ProcessStream, o Fi
 				continue
 			}
 			started = true
-			// Reads and metadata operations consume no stdin. Writes use fixed chunks
+			// Non-upload commands consume no stdin. Writes use fixed chunks
 			// on the original helper; no helper-per-chunk or Agent journal payloads.
 			go func() {
 				if o.Request.Operation != "write" {
@@ -320,12 +309,8 @@ func (f *Files) transfer(ctx context.Context, stream sandbox.ProcessStream, o Fi
 					diagnostic.Write(frame.Data[:n])
 				}
 			} else {
-				received += int64(len(frame.Data))
-				if received > projectfiles.MaxTransfer {
-					return ErrCapacity, false
-				}
-				if _, err := output.Write(frame.Data); err != nil {
-					return err, false
+				if len(frame.Data) > 0 {
+					return errors.Join(ErrFileOutcomeUnknown, errors.New("unexpected mutation helper output")), false
 				}
 			}
 		case "end":
@@ -351,6 +336,7 @@ func (f *Files) transfer(ctx context.Context, stream sandbox.ProcessStream, o Fi
 // Reconcile never reissues a file mutation. It terminates abandoned original
 // helpers and releases activity only with end/placement-loss evidence.
 func (f *Files) Reconcile(ctx context.Context, limit int) error {
+	readerErr := f.workspaceReader().Reconcile(ctx)
 	if limit < 1 || limit > 100 {
 		limit = 32
 	}
@@ -391,7 +377,7 @@ func (f *Files) Reconcile(ctx context.Context, limit int) error {
 			failures = append(failures, err)
 		}
 	}
-	return errors.Join(failures...)
+	return errors.Join(readerErr, errors.Join(failures...))
 }
 func (f *Files) recover(ctx context.Context, o FileOperation) error {
 	r, err := f.Store.resourcesFor(ctx, o.ProjectID)

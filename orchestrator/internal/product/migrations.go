@@ -18,9 +18,12 @@ var projectorSchema string
 //go:embed event_frontier_schema.sql
 var eventFrontierSchema string
 
+//go:embed reader_schema.sql
+var readerSchema string
+
 // Immutable, ordered schema steps. The original unversioned schema is recognized
 // only by its complete digest. Unknown versions or DDL never enter a writer.
-var schemaSteps = []string{schema, displaySchema, projectorSchema, eventFrontierSchema}
+var schemaSteps = []string{schema, displaySchema, projectorSchema, eventFrontierSchema, readerSchema}
 
 var expectedSchemas = sync.OnceValues(func() ([]string, error) {
 	db, err := sql.Open("sqlite", ":memory:")

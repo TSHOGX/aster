@@ -121,7 +121,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	terminals := product.NewTerminals(ctx, store, lifecycle, backend, profile, cfg.Limits.Terminals)
 	terminals.MaxPerProject = cfg.Limits.TerminalsPerProject
 	app.Terminals = terminals
-	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
+	readDirectory := filepath.Join(cfg.StateDirectory, "read-captures")
+	if err := os.MkdirAll(readDirectory, 0700); err != nil {
+		return app, err
+	}
+	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile, CaptureDirectory: readDirectory}
 	app.Files = files
 	shares := &product.Shares{Store: store, Files: files, Directory: filepath.Join(cfg.StateDirectory, "shares")}
 	app.Shares = shares
@@ -291,6 +295,9 @@ func (a *Application) Close() {
 		}
 		if a.API != nil {
 			a.API.Close()
+		}
+		if a.Files != nil {
+			_ = a.Files.Close()
 		}
 		if a.Store != nil {
 			_ = a.Store.Close()

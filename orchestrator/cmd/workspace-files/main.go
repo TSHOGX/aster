@@ -22,7 +22,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "one operation document required")
 		os.Exit(2)
 	}
-	if err := projectfiles.Run("/workspace", request, os.Stdin, os.Stdout); err != nil {
+	if err := projectfiles.Execute("/workspace", request, os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, projectfiles.ErrUncertain) {
 			os.Exit(3)

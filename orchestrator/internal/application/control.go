@@ -50,7 +50,11 @@ func (a *Application) controlHandler() http.Handler {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		writeControl(w, map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report})
+		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
+		if a.Files != nil {
+			out["workspace_reads"] = a.Files.ReadStats()
+		}
+		writeControl(w, out)
 	})
 	mux.HandleFunc("GET /projects/{project}", func(w http.ResponseWriter, r *http.Request) {
 		project, err := a.Store.OperatorProject(r.Context(), r.PathValue("project"))

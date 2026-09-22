@@ -150,10 +150,10 @@ func (c *Client) write(ctx context.Context, request projectfiles.ReadRequest) er
 func (c *Client) Call(ctx context.Context, request projectfiles.ReadRequest, consume func(projectfiles.ReadFrame) error) error {
 	request.ID = uuid.NewString()
 	request.Version = projectfiles.ReaderProtocol
-	if request.Validate() != nil || request.Operation == "cancel" {
+	if request.Validate() != nil || request.Operation == "cancel" || request.Operation == "credit" {
 		return projectfiles.ErrPath
 	}
-	p := &pending{frames: make(chan projectfiles.ReadFrame, 8), done: make(chan struct{})}
+	p := &pending{frames: make(chan projectfiles.ReadFrame, 12), done: make(chan struct{})}
 	c.mu.Lock()
 	if c.closed != nil {
 		err := c.closed
@@ -169,14 +169,30 @@ func (c *Client) Call(ctx context.Context, request projectfiles.ReadRequest, con
 	complete := false
 	defer func() {
 		c.mu.Lock()
-		delete(c.pending, request.ID)
 		alive := c.closed == nil
 		c.mu.Unlock()
 		if !complete && alive {
 			cancel, done := context.WithTimeout(context.Background(), time.Second)
 			defer done()
-			_ = c.write(cancel, projectfiles.ReadRequest{Version: projectfiles.ReaderProtocol, ID: request.ID, Operation: "cancel"})
+			if c.write(cancel, projectfiles.ReadRequest{Version: projectfiles.ReaderProtocol, ID: request.ID, Operation: "cancel"}) == nil {
+				settled := false
+				for !settled {
+					select {
+					case frame := <-p.frames:
+						settled = frame.Kind == "error" || frame.Kind == "complete"
+					case <-p.done:
+						settled = true
+					case <-cancel.Done():
+						c.fail(errors.New("workspace read cancellation unconfirmed"))
+						_ = c.stream.Close()
+						settled = true
+					}
+				}
+			}
 		}
+		c.mu.Lock()
+		delete(c.pending, request.ID)
+		c.mu.Unlock()
 	}()
 	sendCtx, done := context.WithTimeout(ctx, 5*time.Second)
 	err := c.write(sendCtx, request)
@@ -184,6 +200,7 @@ func (c *Client) Call(ctx context.Context, request projectfiles.ReadRequest, con
 	if err != nil {
 		return err
 	}
+	consumed := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -200,6 +217,18 @@ func (c *Client) Call(ctx context.Context, request projectfiles.ReadRequest, con
 			}
 			if err := consume(frame); err != nil {
 				return err
+			}
+			if frame.Kind == "data" {
+				consumed++
+				if consumed == 4 {
+					creditCtx, done := context.WithTimeout(ctx, 5*time.Second)
+					err := c.write(creditCtx, projectfiles.ReadRequest{Version: projectfiles.ReaderProtocol, ID: request.ID, Operation: "credit", Credits: consumed})
+					done()
+					if err != nil {
+						return err
+					}
+					consumed = 0
+				}
 			}
 			if frame.Kind == "complete" {
 				complete = true

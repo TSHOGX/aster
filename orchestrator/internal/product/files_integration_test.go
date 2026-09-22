@@ -110,6 +110,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 	shell(t, "chmod +x /tmp/workspace-files /tmp/projectfiles.test")
 	wrapped := &loseFileReply{FileBackend: backend}
 	files := &Files{Store: s, Lifecycle: l, Backend: wrapped, Profile: profile, Helper: "/tmp/workspace-files"}
+	defer files.Close()
 	t.Cleanup(func() {
 		c, done := context.WithTimeout(context.Background(), 25*time.Second)
 		defer done()
@@ -186,6 +187,42 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		}
 		t.Logf("reused one reader: cold handshake=%s, 50 stat requests=%s", cold, time.Since(warm))
 	})
+	t.Run("host-captures-create-no-read-ledger", func(t *testing.T) {
+		cold := time.Now()
+		capture, err := files.Capture(runctx, scope, "reader-data")
+		must(t, err)
+		data, err := io.ReadAll(capture)
+		must(t, err)
+		must(t, capture.Close())
+		if string(data) != "immutable" {
+			t.Fatal(string(data))
+		}
+		coldTime := time.Since(cold)
+		binding, err := files.workspaceReader().saved(runctx, scope.ProjectID)
+		must(t, err)
+		var before, after int
+		must(t, s.db.QueryRow(`SELECT total_changes()`).Scan(&before))
+		warm := time.Now()
+		for n := 0; n < 50; n++ {
+			capture, err = files.Capture(runctx, scope, "reader-data")
+			must(t, err)
+			_, err = io.Copy(io.Discard, capture)
+			must(t, err)
+			must(t, capture.Close())
+		}
+		must(t, s.db.QueryRow(`SELECT total_changes()`).Scan(&after))
+		current, err := files.workspaceReader().saved(runctx, scope.ProjectID)
+		must(t, err)
+		if before != after || binding.Handle != current.Handle {
+			t.Fatal("warm reads wrote state or replaced helper", before, after)
+		}
+		var commands int
+		must(t, s.db.QueryRow(`SELECT count(*) FROM file_operations`).Scan(&commands))
+		if commands != 0 {
+			t.Fatal("read commands", commands)
+		}
+		t.Logf("host immutable capture: cold=%s; 50 warm=%s; database writes=0; one helper binding", coldTime, time.Since(warm))
+	})
 	t.Run("large-stream-and-native-PTY-concurrency", func(t *testing.T) {
 		terminals := NewTerminals(runctx, s, l, backend, profile, 4)
 		defer terminals.Close()
@@ -194,18 +231,24 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		defer view.Close()
 		guest.run(t, view, "printf sibling > /workspace/sibling", "SIBLING-WROTE")
 		var out bytes.Buffer
-		_, err := files.Run(runctx, scope, "read-sibling", projectfiles.Request{Operation: "read", Path: "sibling"}, nil, &out)
+		capture, err := files.Capture(runctx, scope, "sibling")
 		must(t, err)
+		_, err = io.Copy(&out, capture)
+		must(t, err)
+		must(t, capture.Close())
 		if out.String() != "sibling" {
 			t.Fatal(out.String())
 		}
 		data := bytes.Repeat([]byte("streamed-世界\x00"), 1<<19)
 		request := projectfiles.Request{Operation: "write", Path: "large", Size: int64(len(data)), Digest: fmt.Sprintf("%x", sha256.Sum256(data))}
-		_, err = files.Run(runctx, scope, "large-write", request, bytes.NewReader(data), nil)
+		_, err = files.Execute(runctx, scope, "large-write", request, bytes.NewReader(data))
 		must(t, err)
 		hash := sha256.New()
-		_, err = files.Run(runctx, scope, "large-read", projectfiles.Request{Operation: "read", Path: "large"}, nil, hash)
+		capture, err = files.Capture(runctx, scope, "large")
 		must(t, err)
+		_, err = io.Copy(hash, capture)
+		must(t, err)
+		must(t, capture.Close())
 		if fmt.Sprintf("%x", hash.Sum(nil)) != request.Digest {
 			t.Fatal("large transfer digest mismatch")
 		}
@@ -227,10 +270,10 @@ func TestProjectFilesOnKhora(t *testing.T) {
 	t.Run("lost-write-reply-and-sibling-overwrite", func(t *testing.T) {
 		wrapped.lose = true
 		request := writeRequest("contended", "original")
-		o, err := files.Run(runctx, scope, "lost-write", request, strings.NewReader("original"), nil)
+		o, err := files.Execute(runctx, scope, "lost-write", request, strings.NewReader("original"))
 		wantError(t, err, ErrFileOutcomeUnknown)
 		shell(t, "printf newer > /workspace/contended")
-		_, err = files.Run(runctx, scope, "lost-write", request, strings.NewReader("original"), nil)
+		_, err = files.Execute(runctx, scope, "lost-write", request, strings.NewReader("original"))
 		wantError(t, err, ErrFileOutcomeUnknown)
 		must(t, files.Reconcile(runctx, 32))
 		o, err = s.FileOperation(runctx, scope, o.ID)
@@ -248,7 +291,10 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		reader, writer := io.Pipe()
 		request := writeRequest("canceled", strings.Repeat("x", 1<<20))
 		result := make(chan error, 1)
-		go func() { _, err := files.Run(uploadctx, scope, "canceled-write", request, reader, nil); result <- err }()
+		go func() {
+			_, err := files.Execute(uploadctx, scope, "canceled-write", request, reader)
+			result <- err
+		}()
 		_, err := writer.Write(bytes.Repeat([]byte("x"), 32<<10))
 		must(t, err)
 		stop()
@@ -307,14 +353,14 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		drive(t, l, scope.ProjectID)
 		_, err = files.Watch(runctx, scope, 0)
 		wantError(t, err, ErrPending)
-		_, err = files.Run(runctx, scope, "paused-list", projectfiles.Request{Operation: "list", Limit: 100}, nil, io.Discard)
+		_, err = files.List(runctx, scope, "", "", 100)
 		wantError(t, err, ErrPending)
 		p, err = s.Project(runctx, scope)
 		must(t, err)
 		if p.State != "paused" {
 			t.Fatal("watch woke Project")
 		}
-		_, err = files.Run(runctx, scope, "paused-read", projectfiles.Request{Operation: "read", Path: "contended"}, nil, io.Discard)
+		_, err = files.Capture(runctx, scope, "contended")
 		wantError(t, err, ErrPending)
 		drive(t, l, scope.ProjectID)
 		r, err = l.ActiveResources(runctx, scope)
@@ -327,8 +373,11 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		file.Close()
 		shell(t, "chmod +x /tmp/workspace-files")
 		var out bytes.Buffer
-		_, err = files.Run(runctx, scope, "paused-read", projectfiles.Request{Operation: "read", Path: "contended"}, nil, &out)
+		capture, err := files.Capture(runctx, scope, "contended")
 		must(t, err)
+		_, err = io.Copy(&out, capture)
+		must(t, err)
+		must(t, capture.Close())
 		if out.String() != "newer" {
 			t.Fatal(out.String())
 		}

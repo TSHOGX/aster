@@ -68,3 +68,12 @@ Backups must include the stopped application's database and host artifacts plus
 a consistent engine/volume backup under the engine's supported procedures. A
 SQLite copy alone does not contain the workspace or native runtime volume. This
 repository does not provide cross-host failover or active-active operation.
+
+
+Workspace content captures use Linux `O_TMPFILE` under `STATE/read-captures`, with
+aggregate admission bounded to 512 MiB and no named capture files to recover.
+Place application state on a filesystem with that support and sufficient free
+space. Disk exhaustion fails a read; it never changes a durable mutation outcome.
+Operator status reports `workspace_reads` entries, active leases, captured bytes
+and the aggregate limit. Reader bindings in SQLite are process cleanup authority,
+not file command outcomes or activity reservations.

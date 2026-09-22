@@ -33,6 +33,9 @@ Node and builtin system context, and hashes the complete native dependency tree.
 Native dependency symlinks must resolve inside that hashed tree. All ELF runtime
 components must share a supported Linux architecture. The manifest records
 engine/native/protocol pins, platform and required workspace/runtime paths.
+Manifest version 2 requires reader protocol 2, including per-request chunk
+credits; a manifest missing that capability is rejected. Reader changes require
+a newly assembled immutable template, not replacement of running guest binaries.
 
 ```sh
 go -C orchestrator run ./cmd/runtime-release --root /srv/build/battery --output /srv/build/battery.manifest.json

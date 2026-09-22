@@ -174,11 +174,23 @@ export function FilesPanel({
           },
         }));
         try {
-          let page = await readDirectory(
-            `${base}?path=${encode(path)}&after=${encode(after)}&limit=100`,
-          );
-          if (!after) {
-            const retain = treeRef.current[path]?.entries.length || 0;
+          let append = !!after;
+          let page: FilePage;
+          try {
+            page = await readDirectory(
+              `${base}?path=${encode(path)}&after=${encode(after)}&limit=100`,
+            );
+          } catch (error) {
+            if (!after || !(error instanceof APIError) || error.status !== 409)
+              throw error;
+            page = await readDirectory(
+              `${base}?path=${encode(path)}&after=&limit=100`,
+            );
+            append = false;
+          }
+          if (!append) {
+            const retain =
+              (treeRef.current[path]?.entries.length || 0) + (after ? 100 : 0);
             while (page.next && page.entries.length < retain) {
               const next = await readDirectory(
                 `${base}?path=${encode(path)}&after=${encode(page.next)}&limit=100`,
@@ -191,7 +203,7 @@ export function FilesPanel({
             ...t,
             [path]: {
               ...page,
-              entries: after
+              entries: append
                 ? [
                     ...new Map(
                       [...(t[path]?.entries || []), ...page.entries].map(

@@ -293,7 +293,16 @@ func (r *Reader) List(ctx context.Context, path, cursor string, limit int) (Page
 	if ctx.Err() != nil {
 		return Page{}, ctx.Err()
 	}
-	end := min(len(current.entries), index+limit)
+	end := index
+	bytes := 4096 // Envelope, request ID and continuation cursor reserve.
+	for end < len(current.entries) && end-index < limit {
+		raw, _ := json.Marshal(current.entries[end])
+		if bytes+len(raw)+1 > ReaderFrameBytes {
+			break
+		}
+		bytes += len(raw) + 1
+		end++
+	}
 	page := Page{Entries: append([]Entry{}, current.entries[index:end]...), Snapshot: current.id}
 	if end < len(current.entries) {
 		raw, _ := json.Marshal(directoryCursor{Snapshot: current.id, Index: end})

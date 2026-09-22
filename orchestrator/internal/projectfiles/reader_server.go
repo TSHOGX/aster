@@ -42,7 +42,11 @@ func ServeReader(ctx context.Context, root string, input io.ReadCloser, output i
 		return err
 	}
 	var mu sync.Mutex
-	active := map[string]context.CancelFunc{}
+	type call struct {
+		cancel  context.CancelFunc
+		credits chan struct{}
+	}
+	active := map[string]call{}
 	var workers sync.WaitGroup
 	defer func() { cancel(); workers.Wait() }()
 	requests := make(chan ReadRequest)
@@ -93,9 +97,23 @@ func ServeReader(ctx context.Context, root string, input io.ReadCloser, output i
 				return ErrPath
 			}
 			mu.Lock()
+			if request.Operation == "credit" {
+				if current, ok := active[request.ID]; ok {
+					for n := 0; n < request.Credits; n++ {
+						select {
+						case current.credits <- struct{}{}:
+						default:
+							mu.Unlock()
+							return ErrPath
+						}
+					}
+				}
+				mu.Unlock()
+				continue
+			}
 			if request.Operation == "cancel" {
-				if done := active[request.ID]; done != nil {
-					done()
+				if current, ok := active[request.ID]; ok {
+					current.cancel()
 				}
 				mu.Unlock()
 				continue
@@ -112,7 +130,11 @@ func ServeReader(ctx context.Context, root string, input io.ReadCloser, output i
 				continue
 			}
 			requestCtx, done := context.WithTimeout(ctx, ReadOperationTimeout)
-			active[request.ID] = done
+			credits := make(chan struct{}, 8)
+			for n := 0; n < 8; n++ {
+				credits <- struct{}{}
+			}
+			active[request.ID] = call{cancel: done, credits: credits}
 			mu.Unlock()
 			workers.Add(1)
 			go func(request ReadRequest) {
@@ -120,10 +142,22 @@ func ServeReader(ctx context.Context, root string, input io.ReadCloser, output i
 				defer done()
 				defer func() { mu.Lock(); delete(active, request.ID); mu.Unlock() }()
 				emit := func(frame ReadFrame) error {
+					if frame.Kind == "data" {
+						select {
+						case <-credits:
+						case <-requestCtx.Done():
+							return requestCtx.Err()
+						}
+					}
 					if requestCtx.Err() != nil {
 						return requestCtx.Err()
 					}
 					frame.ID = request.ID
+					if frame.Kind == "complete" {
+						mu.Lock()
+						delete(active, request.ID)
+						mu.Unlock()
+					}
 					return send(frame)
 				}
 				var err error
@@ -144,6 +178,9 @@ func ServeReader(ctx context.Context, root string, input io.ReadCloser, output i
 					}
 				}
 				if err != nil {
+					mu.Lock()
+					delete(active, request.ID)
+					mu.Unlock()
 					_ = send(ReadFrame{ID: request.ID, Kind: "error", Code: readErrorCode(err)})
 				}
 			}(request)

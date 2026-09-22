@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"harness-platform/orchestrator/internal/agentwire"
+	"harness-platform/orchestrator/internal/projectfiles"
 )
 
 const EngineModule = "v0.0.2-0.20260920024301-e8cd021a9c7c"
@@ -36,6 +37,7 @@ type Manifest struct {
 	EngineModule   string            `json:"engine_module"`
 	EngineRevision string            `json:"engine_revision"`
 	AgentProtocol  int               `json:"agent_protocol"`
+	ReaderProtocol int               `json:"reader_protocol"`
 	Workspace      string            `json:"workspace"`
 	RuntimeState   string            `json:"runtime_state"`
 	PiPackage      string            `json:"pi_package"`
@@ -89,7 +91,7 @@ func Load(reader io.Reader, expected string) (Manifest, error) {
 	if err != nil || !ValidDigest(expected) || digest != expected {
 		return manifest, errors.New("runtime manifest does not match its release digest")
 	}
-	if manifest.Version != 1 || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
+	if manifest.Version != 2 || manifest.ReaderProtocol != projectfiles.ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
 		return manifest, errors.New("incompatible Project runtime release")
 	}
 	if manifest.Platform != "linux/amd64" && manifest.Platform != "linux/arm64" {
@@ -239,7 +241,7 @@ func Generate(root string) (Manifest, error) {
 	if err := cleanRoot(root); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: 1, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
+	manifest := Manifest{Version: 2, ReaderProtocol: projectfiles.ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
 	packagePath, err := resolve(root, NativeRoot+"/"+PiPackage+"/package.json")
 	if err != nil {
 		return manifest, err

@@ -137,6 +137,23 @@ func TestReaderDirectorySnapshotPaginationAndExpiry(t *testing.T) {
 	}
 }
 
+func TestReaderDirectoryEncodedPageBudget(t *testing.T) {
+	root := t.TempDir()
+	for n := 0; n < 200; n++ {
+		mustReader(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("%03d", n)+strings.Repeat("\x01", 250)), nil, 0600))
+	}
+	reader, err := NewReader(root)
+	mustReader(t, err)
+	defer reader.Close()
+	page, err := reader.List(context.Background(), "", "", 200)
+	mustReader(t, err)
+	var out bytes.Buffer
+	mustReader(t, WriteWire(&out, ReaderFrameBytes, ReadFrame{Version: ReaderProtocol, ID: strings.Repeat("a", 128), Kind: "complete", Page: &page}))
+	if len(page.Entries) >= 200 || page.Next == "" {
+		t.Fatal("escaping wasn't included in page cap", len(page.Entries))
+	}
+}
+
 func TestReaderInventoryNameBoundary(t *testing.T) {
 	if testing.Short() {
 		t.Skip("100000-entry filesystem boundary")
@@ -218,19 +235,19 @@ func TestReaderServerReuseCancellationAndIdle(t *testing.T) {
 		t.Fatal("missing protocol handshake")
 	}
 	for n := 0; n < 50; n++ {
-		mustReader(t, WriteWire(send, ReaderRequestBytes, ReadRequest{Version: 1, ID: fmt.Sprint(n), Operation: "stat", Path: "large"}))
+		mustReader(t, WriteWire(send, ReaderRequestBytes, ReadRequest{Version: ReaderProtocol, ID: fmt.Sprint(n), Operation: "stat", Path: "large"}))
 		frame := read()
 		if frame.Kind != "complete" || frame.Metadata.Size != 8<<20 {
 			t.Fatal(frame.Kind, frame.Code)
 		}
 	}
-	mustReader(t, WriteWire(send, ReaderRequestBytes, ReadRequest{Version: 1, ID: "long", Operation: "read", Path: "large"}))
+	mustReader(t, WriteWire(send, ReaderRequestBytes, ReadRequest{Version: ReaderProtocol, ID: "long", Operation: "read", Path: "large"}))
 	if read().Kind != "metadata" {
 		t.Fatal("missing metadata")
 	}
 	cancelSent := make(chan error, 1)
 	go func() {
-		cancelSent <- WriteWire(send, ReaderRequestBytes, ReadRequest{Version: 1, ID: "long", Operation: "cancel"})
+		cancelSent <- WriteWire(send, ReaderRequestBytes, ReadRequest{Version: ReaderProtocol, ID: "long", Operation: "cancel"})
 	}()
 	frames := 0
 	for {
@@ -247,7 +264,7 @@ func TestReaderServerReuseCancellationAndIdle(t *testing.T) {
 		}
 	}
 	mustReader(t, <-cancelSent)
-	mustReader(t, WriteWire(send, ReaderRequestBytes, ReadRequest{Version: 1, ID: "still-live", Operation: "stat", Path: "large"}))
+	mustReader(t, WriteWire(send, ReaderRequestBytes, ReadRequest{Version: ReaderProtocol, ID: "still-live", Operation: "stat", Path: "large"}))
 	if f := read(); f.Kind != "complete" {
 		t.Fatal("cancellation killed reader", f.Code)
 	}

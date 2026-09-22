@@ -104,6 +104,13 @@ func TestManifestRejectsWrongPinProtocolAndEscapingSymlinks(t *testing.T) {
 	if _, err := Load(bytes.NewReader(raw), changed); err == nil {
 		t.Fatal("unsupported protocol accepted")
 	}
+	manifest.AgentProtocol--
+	manifest.ReaderProtocol = 0
+	raw, _ = Bytes(manifest)
+	changed, _ = Digest(raw)
+	if _, err := Load(bytes.NewReader(raw), changed); err == nil {
+		t.Fatal("runtime without reusable reader protocol accepted")
+	}
 	target := filepath.Join(root, "usr/local/bin/pi")
 	if err := os.Remove(target); err != nil {
 		t.Fatal(err)

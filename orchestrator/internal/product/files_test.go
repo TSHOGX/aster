@@ -62,7 +62,8 @@ func (b *localFileBackend) StartProcess(_ context.Context, r sandbox.StartProces
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var request projectfiles.Request
-	if err := json.Unmarshal([]byte(r.Arguments[0]), &request); err != nil {
+	service := len(r.Arguments) == 1 && r.Arguments[0] == "--reader"
+	if err := json.Unmarshal([]byte(r.Arguments[0]), &request); err != nil && !service {
 		return nil, err
 	}
 	reader, writer := io.Pipe()
@@ -73,7 +74,12 @@ func (b *localFileBackend) StartProcess(_ context.Context, r sandbox.StartProces
 	p.frames <- sandbox.ProcessFrame{Kind: "start"}
 	go func() {
 		defer reader.Close()
-		err := projectfiles.Run(b.root, request, reader, localFileOutput{p})
+		var err error
+		if service {
+			err = projectfiles.ServeReader(context.Background(), b.root, reader, localFileOutput{p}, time.Second)
+		} else {
+			err = projectfiles.Execute(b.root, request, reader)
+		}
 		code := int32(0)
 		if err != nil {
 			code = 1
@@ -123,7 +129,9 @@ func fileFixture(t *testing.T) (*Files, Scope, *localFileBackend) {
 	must(t, l.EnsureActive(ctx, a, profile))
 	drive(t, l, a.ProjectID)
 	files := &localFileBackend{root: t.TempDir(), processes: map[string]*localFileProcess{}}
-	return &Files{Store: s, Lifecycle: l, Backend: files, Profile: profile}, a, files
+	f := &Files{Store: s, Lifecycle: l, Backend: files, Profile: profile}
+	t.Cleanup(func() { _ = f.Close() })
+	return f, a, files
 }
 func writeRequest(path, content string) projectfiles.Request {
 	return projectfiles.Request{Operation: "write", Path: path, Size: int64(len(content)), Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(content)))}
@@ -132,16 +140,16 @@ func TestFilesLostReplyNeverReplaysOverSibling(t *testing.T) {
 	f, a, b := fileFixture(t)
 	b.loseEnd = true
 	request := writeRequest("same", "first")
-	o, err := f.Run(ctx, a, "lost", request, strings.NewReader("first"), nil)
+	o, err := f.Execute(ctx, a, "lost", request, strings.NewReader("first"))
 	wantError(t, err, ErrFileOutcomeUnknown)
 	if o.State != "unknown" || o.Settled {
 		t.Fatal(o)
 	}
 	must(t, os.WriteFile(filepath.Join(b.root, "same"), []byte("sibling"), 0600))
 	// A different operation can proceed; there is no workspace lock.
-	_, err = f.Run(ctx, a, "other", writeRequest("other", "ok"), strings.NewReader("ok"), nil)
+	_, err = f.Execute(ctx, a, "other", writeRequest("other", "ok"), strings.NewReader("ok"))
 	must(t, err)
-	_, err = f.Run(ctx, a, "lost", request, strings.NewReader("first"), nil)
+	_, err = f.Execute(ctx, a, "lost", request, strings.NewReader("first"))
 	wantError(t, err, ErrFileOutcomeUnknown)
 	must(t, f.Reconcile(ctx, 32))
 	got, err := os.ReadFile(filepath.Join(b.root, "same"))
@@ -167,18 +175,21 @@ func TestFilesAdmissionOwnershipAndConcurrentTurns(t *testing.T) {
 	_, err = f.Store.AdmitTurn(ctx, a, "agent", "turn", "work", false)
 	must(t, err)
 	request := writeRequest("data", "content")
-	_, err = f.Run(ctx, Scope{"bob", a.ProjectID}, "foreign", request, strings.NewReader("content"), nil)
+	_, err = f.Execute(ctx, Scope{"bob", a.ProjectID}, "foreign", request, strings.NewReader("content"))
 	wantError(t, err, ErrNotFound)
 	if b.starts != 0 {
 		t.Fatal("unauthorized process")
 	}
-	_, err = f.Run(ctx, a, "valid", request, strings.NewReader("content"), nil)
+	_, err = f.Execute(ctx, a, "valid", request, strings.NewReader("content"))
 	must(t, err)
-	_, err = f.Run(ctx, a, "valid", writeRequest("data", "changed"), strings.NewReader("changed"), nil)
+	_, err = f.Execute(ctx, a, "valid", writeRequest("data", "changed"), strings.NewReader("changed"))
 	wantError(t, err, ErrConflict)
 	var out bytes.Buffer
-	_, err = f.Run(ctx, a, "read", projectfiles.Request{Operation: "read", Path: "data"}, nil, &out)
+	capture, err := f.Capture(ctx, a, "data")
 	must(t, err)
+	_, err = io.Copy(&out, capture)
+	must(t, err)
+	must(t, capture.Close())
 	if out.String() != "content" {
 		t.Fatal(out.String())
 	}
@@ -207,14 +218,14 @@ func TestFilesActivityRejectsStalePauseAndDoesNotWakeFromWatch(t *testing.T) {
 	drive(t, f.Lifecycle, a.ProjectID)
 	_, err = f.Watch(ctx, a, 0)
 	wantError(t, err, ErrPending)
-	_, err = f.Run(ctx, a, "poll", projectfiles.Request{Operation: "list", Limit: 100}, nil, io.Discard)
+	_, err = f.List(ctx, a, "", "", 100)
 	wantError(t, err, ErrPending)
 	p, err = f.Store.Project(ctx, a)
 	must(t, err)
 	if p.State != "paused" {
 		t.Fatal("observer woke Project")
 	}
-	_, err = f.Run(ctx, a, "resume-read", projectfiles.Request{Operation: "read", Path: "x"}, nil, io.Discard)
+	_, err = f.Capture(ctx, a, "x")
 	wantError(t, err, ErrPending)
 	drive(t, f.Lifecycle, a.ProjectID)
 	p, err = f.Store.Project(ctx, a)
@@ -228,7 +239,7 @@ func TestInventoryRefreshDoesNotKeepProjectAwake(t *testing.T) {
 	f, scope, _ := fileFixture(t)
 	timer, err := f.Store.ArmIdle(ctx, scope, time.Nanosecond)
 	must(t, err)
-	_, err = f.Run(ctx, scope, "inventory", projectfiles.Request{Operation: "list", Limit: 100}, nil, io.Discard)
+	_, err = f.List(ctx, scope, "", "", 100)
 	must(t, err)
 	current, err := f.Store.Project(ctx, scope)
 	must(t, err)

@@ -49,7 +49,9 @@ unknown outcome and must not be treated as permission to repeat an effect.
 File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
 Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase
 hexadecimal characters**. File-operation responses include `id`, `state`,
-`settled` and any error. Directory queries are paged. Paths never select private
+`settled` and any error. Directory queries return frozen, bounded metadata pages. Their opaque `next`
+cursor binds Project, path and placement; expired/evicted cursors return 409
+`resync_required`. The browser rebuilds the loaded window on that response. Paths never select private
 runtime state. Read failures after headers truncate the response instead of
 pretending a shorter successful download.
 
@@ -126,3 +128,14 @@ Unchanged streams send heartbeats; reconnect metadata checks use `/head` and
 reauthorize without reloading message bodies. Revocation closes the stream and
 clears the shared view. Shared-reader authority remains separate from Project
 resource events, live files and terminals.
+
+
+File GETs capture and hash current bytes before returning a strong SHA-256 ETag.
+`If-None-Match` returns 304 only after reauthorization and byte validation. A single
+Range uses that immutable capture; matching `If-Range` returns 206 and mismatching
+versions return full 200 content. Invalid byte ranges return 416; multipart ranges
+fall back to a full representation. Responses use authenticated private/no-cache
+semantics, and each stalled body write has a thirty-second deadline. Reads create
+no file-operation ID. A detectable mutation during capture returns 409 with
+`code: changed_during_read`; capture capacity is a read-only 503, never an unknown
+mutation outcome. Writes retain their existing idempotency/unknown-outcome contract.

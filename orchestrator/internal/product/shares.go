@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -148,17 +147,13 @@ func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths
 		if sh.Files == nil {
 			return fail(ErrInvalid)
 		}
-		read, write := io.Pipe()
-		result := make(chan error, 1)
-		go func(name string) {
-			_, err := sh.Files.Run(ctx, scope, uuid.NewString(), projectfiles.Request{Operation: "read", Path: name}, nil, write)
-			_ = write.CloseWithError(err)
-			result <- err
-		}(name)
-		digest, n, putErr := blobs.Put(read, 16<<20)
-		_ = read.CloseWithError(putErr)
-		runErr := <-result
-		if err = errors.Join(putErr, runErr); err != nil {
+		capture, captureErr := sh.Files.Capture(ctx, scope, name)
+		if captureErr != nil {
+			return fail(captureErr)
+		}
+		digest, n, putErr := blobs.Put(capture, 16<<20)
+		closeErr := capture.Close()
+		if err = errors.Join(putErr, closeErr); err != nil {
 			return fail(err)
 		}
 		total += n

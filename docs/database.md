@@ -3,7 +3,8 @@
 The core SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
 Version 2 adds [conversation display storage](../orchestrator/internal/product/display_schema.sql);
 version 3 adds [projector queues and ordering](../orchestrator/internal/product/projector_schema.sql);
-version 4 records [actual event retention frontiers](../orchestrator/internal/product/event_frontier_schema.sql).
+version 4 records [actual event retention frontiers](../orchestrator/internal/product/event_frontier_schema.sql);
+version 5 adds [reusable reader bindings](../orchestrator/internal/product/reader_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
@@ -53,3 +54,11 @@ versioned view API used by the browser. Raw records are no longer reconstructed
 inside HTTP requests. Display tables do not
 change execution state or ACK semantics. Inspect live state through operator
 diagnostics; direct writes bypass authorization and reconciliation.
+
+
+File mutation rows record writes/mkdir/move/remove only. `workspace_readers` holds
+one recoverable process identity per Project, bound to its original sandbox and
+epoch. It stores neither a command outcome nor file bytes and creates no Project
+activity. Warm reads do no product writes; startup and confirmed helper retirement
+update only the binding. Existing uncertain mutations remain independently
+recoverable and are never inferred from a reader result.

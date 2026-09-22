@@ -79,6 +79,7 @@ func (s *Store) purgeProject(ctx context.Context, tx *sql.Tx, project string) er
 		`DELETE FROM messages WHERE project_id=?`,
 		`DELETE FROM turns WHERE project_id=?`,
 		`DELETE FROM file_operations WHERE project_id=?`,
+		`DELETE FROM workspace_readers WHERE project_id=?`,
 		`DELETE FROM project_activity WHERE project_id=?`,
 		`DELETE FROM session_cleanup WHERE project_id=?`,
 		`DELETE FROM events WHERE project_id=?`,

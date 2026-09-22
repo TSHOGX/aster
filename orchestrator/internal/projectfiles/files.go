@@ -3,15 +3,12 @@
 package projectfiles
 
 import (
-	"container/heap"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -31,8 +28,6 @@ type Request struct {
 	Destination string `json:"destination,omitempty"`
 	Size        int64  `json:"size,omitempty"`
 	Digest      string `json:"digest,omitempty"`
-	After       string `json:"after,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
 }
 
 func Path(name string, root bool) error {
@@ -54,15 +49,11 @@ func Path(name string, root bool) error {
 	return nil
 }
 func (r Request) Validate() error {
-	if err := Path(r.Path, r.Operation == "list"); err != nil {
+	if err := Path(r.Path, false); err != nil {
 		return err
 	}
 	switch r.Operation {
-	case "list":
-		if r.Limit < 1 || r.Limit > MaxPage || (r.After != "" && (Path(r.After, false) != nil || strings.Contains(r.After, "/"))) {
-			return ErrPath
-		}
-	case "read", "mkdir", "remove":
+	case "mkdir", "remove":
 	case "write":
 		digest, err := hex.DecodeString(r.Digest)
 		if err != nil || len(digest) != 32 || strings.ToLower(r.Digest) != r.Digest {
@@ -93,15 +84,6 @@ type Page struct {
 	Entries  []Entry `json:"entries"`
 	Next     string  `json:"next,omitempty"`
 }
-
-// A max heap retains just the next page, even for very large directories.
-type names []string
-
-func (n names) Len() int           { return len(n) }
-func (n names) Less(i, j int) bool { return n[i] > n[j] }
-func (n names) Swap(i, j int)      { n[i], n[j] = n[j], n[i] }
-func (n *names) Push(x any)        { *n = append(*n, x.(string)) }
-func (n *names) Pop() any          { old := *n; x := old[len(old)-1]; *n = old[:len(old)-1]; return x }
 
 // directory walks from a duplicated root FD. A substituted symlink is never
 // followed, including at the leaf. Open descriptors retain Linux rename semantics.
@@ -151,7 +133,7 @@ func regular(fd int) error {
 	return nil
 }
 
-func Run(rootPath string, r Request, input io.Reader, output io.Writer) error {
+func Execute(rootPath string, r Request, input io.Reader) error {
 	if err := r.Validate(); err != nil {
 		return err
 	}
@@ -167,37 +149,12 @@ func Run(rootPath string, r Request, input io.Reader, output io.Writer) error {
 	if rootStat.Mode&unix.S_IFMT != unix.S_IFDIR {
 		return errors.New("workspace root must be a directory")
 	}
-	if r.Operation == "list" {
-		return list(root, r, output)
-	}
 	fd, leaf, err := parent(root, r.Path)
 	if err != nil {
 		return err
 	}
 	defer unix.Close(fd)
 	switch r.Operation {
-	case "read":
-		f, err := unix.Openat(fd, leaf, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		if err != nil {
-			return err
-		}
-		defer unix.Close(f)
-		if err = regular(f); err != nil {
-			return err
-		}
-		// This procfs reference names the selected inode, not a second lookup of the
-		// guest-controlled path. It also avoids opening FIFOs/devices before fstat.
-		file, err := os.Open(fmt.Sprintf("/proc/self/fd/%d", f))
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		n, err := io.Copy(output, io.LimitReader(file, MaxTransfer+1))
-		if err == nil && n > MaxTransfer {
-			return errors.New("transfer exceeds bound")
-		}
-		return err
-
 	case "write":
 		// A replacement does not open the target, so neither a target symlink nor a
 		// concurrent substitution can redirect the write outside this directory.
@@ -262,63 +219,4 @@ func Run(rootPath string, r Request, input io.Reader, output io.Writer) error {
 		return unix.Renameat(fd, leaf, dest, name)
 	}
 	return errors.New("unreachable operation")
-}
-func list(root int, r Request, out io.Writer) error {
-	fd, err := directory(root, r.Path)
-	if err != nil {
-		return err
-	}
-	dir := os.NewFile(uintptr(fd), r.Path)
-	defer dir.Close()
-	kept := &names{}
-	heap.Init(kept)
-	scanned := 0
-	for {
-		batch, err := dir.Readdirnames(128)
-		scanned += len(batch)
-		if scanned > 100000 {
-			return errors.New("directory exceeds 100000-entry inventory scan bound")
-		}
-		for _, name := range batch {
-			if name <= r.After || !utf8.ValidString(name) {
-				continue
-			}
-			heap.Push(kept, name)
-			if kept.Len() > r.Limit+1 {
-				heap.Pop(kept)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-	sort.Strings(*kept)
-	page := Page{Entries: []Entry{}}
-	if len(*kept) > r.Limit {
-		page.Next = (*kept)[r.Limit-1]
-		*kept = (*kept)[:r.Limit]
-	}
-	for _, name := range *kept {
-		var st unix.Stat_t
-		if err := unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			if errors.Is(err, unix.ENOENT) {
-				continue
-			}
-			return err
-		}
-		kind := "other"
-		switch st.Mode & unix.S_IFMT {
-		case unix.S_IFREG:
-			kind = "file"
-		case unix.S_IFDIR:
-			kind = "directory"
-		case unix.S_IFLNK:
-			kind = "symlink"
-		}
-		page.Entries = append(page.Entries, Entry{Name: name, Kind: kind, Size: st.Size, Modified: st.Mtim.Sec})
-	}
-	return json.NewEncoder(out).Encode(page)
 }
