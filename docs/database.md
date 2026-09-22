@@ -1,7 +1,8 @@
 # Product database
 
 The core SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-Version 2 adds [conversation display storage](../orchestrator/internal/product/display_schema.sql).
+Version 2 adds [conversation display storage](../orchestrator/internal/product/display_schema.sql);
+version 3 adds [projector queues and ordering](../orchestrator/internal/product/projector_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
@@ -40,12 +41,13 @@ The source identity index then appends inside each ingestion transaction.
 
 Back up the database with SQLite's backup mechanism or `VACUUM INTO` while the
 exclusive owner is stopped, and rehearse restoration to a separate path. Do not
-copy just the main database file while WAL writes are active. Once version 2 has
+copy just the main database file while WAL writes are active. Once the current schema has
 accepted writes, rollback requires a schema-compatible executable. The original
 unversioned executable cannot read the new schema. Restoring a pre-upgrade backup
 over new accepted writes is not a supported rollback. Deployment must first close
 and drain admission; the release gate is still under implementation.
 
-Display tables are derived and currently await projector/HTTP cutover. They do not
+The background display projector advances bounded session batches and serves the
+versioned view API. Browser cutover is still in progress. Display tables do not
 change execution state or ACK semantics. Inspect live state through operator
 diagnostics; direct writes bypass authorization and reconciliation.

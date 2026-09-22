@@ -12,9 +12,12 @@ import (
 //go:embed display_schema.sql
 var displaySchema string
 
+//go:embed projector_schema.sql
+var projectorSchema string
+
 // Immutable, ordered schema steps. The original unversioned schema is recognized
 // only by its complete digest. Unknown versions or DDL never enter a writer.
-var schemaSteps = []string{schema, displaySchema}
+var schemaSteps = []string{schema, displaySchema, projectorSchema}
 
 var expectedSchemas = sync.OnceValues(func() ([]string, error) {
 	db, err := sql.Open("sqlite", ":memory:")

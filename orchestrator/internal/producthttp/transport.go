@@ -92,6 +92,10 @@ func status(err error) (int, string) {
 }
 
 func fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, product.ErrResync) {
+		writeJSON(w, http.StatusConflict, map[string]string{"code": "resync_required", "error": "conversation view requires resync"})
+		return
+	}
 	code, message := status(err)
 	if code == http.StatusAccepted {
 		writeJSON(w, code, map[string]string{"status": "pending"})

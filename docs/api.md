@@ -104,3 +104,33 @@ Owner snapshots accept `before` for preceding messages or `after` for following
 messages, and return `has_earlier` / `has_later` for the two page boundaries.
 The client merges only adjacent pages in its current reading window; turn IDs
 identify scroll destinations rather than conversation filters.
+
+
+## Conversation display views
+
+Under `/api/projects/{project}/sessions/{session}/view`, all reads enforce live
+Project/session authority before accessing derived content:
+
+| Method/path | Result |
+| --- | --- |
+| `GET /head` | Control summary, independent display/index revisions, projection generation/state and source frontiers |
+| `GET /pages` | Latest bounded page; one of `before`, `after`, `around_turn` or `around_message` selects another window |
+| `GET /changes?after_revision=R` | Immutable changes to a fixed target revision; follow returned `cursor` with the same base |
+| `GET /items/{item}/detail?version=V` | A UTF-8 chunk of full item JSON; follow `cursor` until `next` is absent |
+| `POST /rebuild` | Invalidate only derived state and enqueue reconstruction; never replay execution |
+
+Page/delta responses are capped at 256 KiB encoded JSON. Pages contain at most 50
+items; delta batches contain at most 100 operations. Oversized inline items have
+`truncated` and `detail_version`, preserving complete content through the detail
+route. Encode item IDs as URL path components. Position/content/index revisions
+are decimal strings; cursors bind session, generation and position. Head returns
+at most 32 relevant control turns and flags additional turns for the existing
+turn-history route.
+
+A building projection returns `202`, never an authoritative empty conversation.
+`409` with `code: resync_required` rejects stale generations/expired changes.
+Malformed selectors/cursors return `400`; absent or unauthorized resources retain
+`404` equivalence. A failed projector leaves control available through head and
+reports its display failure separately. Read saturation returns `503`.
+Snapshot routes remain during the active browser cutover, with no raw-history
+fallback inside the new view endpoints.

@@ -1,0 +1,576 @@
+package product
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/google/uuid"
+)
+
+const displayInlineBytes = 64 << 10
+const displayBatchBytes = 1 << 20
+const displayBatchRecords = 128
+
+// DisplayItem is a complete replaceable row. All external 64-bit positions are
+// decimal strings; native source rowids never appear in cursors or identity.
+type DisplayItem struct {
+	ID            string `json:"id"`
+	TurnID        string `json:"turn_id"`
+	TurnSequence  int64  `json:"turn_sequence,string"`
+	Position      int64  `json:"position,string"`
+	Block         int    `json:"block"`
+	Revision      int64  `json:"item_revision,string"`
+	Kind          string `json:"kind"`
+	Content       string `json:"content,omitempty"`
+	MessageID     string `json:"message_id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Arguments     string `json:"arguments,omitempty"`
+	Result        string `json:"result,omitempty"`
+	State         string `json:"state,omitempty"`
+	Truncated     bool   `json:"truncated,omitempty"`
+	DetailVersion string `json:"detail_version,omitempty"`
+}
+type displayCheckpoint struct {
+	Generation                                 string
+	Source, Message, Revision, Index, Position int64
+	State, Error                               string
+}
+type displaySource struct {
+	ID, Sequence            int64
+	Incarnation, Turn, Kind string
+	Payload                 []byte
+}
+type nativeDisplayEvent struct {
+	Type                        string
+	ToolCallID                  string `json:"toolCallId"`
+	ToolName                    string
+	Args, Result, PartialResult json.RawMessage
+	IsError                     bool
+	Message                     struct {
+		Role    string
+		Content []struct {
+			Type, Text, Thinking, ID, Name string
+			Arguments                      json.RawMessage
+		}
+	}
+}
+
+func checkpoint(ctx context.Context, q queryer, session string) (displayCheckpoint, error) {
+	var p displayCheckpoint
+	err := q.QueryRowContext(ctx, `SELECT generation,source_cursor,message_cursor,content_revision,index_revision,next_position,state,error FROM conversation_checkpoints WHERE session_id=?`, session).Scan(&p.Generation, &p.Source, &p.Message, &p.Revision, &p.Index, &p.Position, &p.State, &p.Error)
+	return p, err
+}
+
+// ProjectConversation commits one bounded batch. It never wakes a Project,
+// issues a command, acknowledges a journal or infers an execution outcome.
+func (s *Store) ProjectConversation(ctx context.Context, session string) error {
+	var exists string
+	if err := s.reader.QueryRowContext(ctx, `SELECT id FROM sessions WHERE id=? AND deletion_intent<2`, session).Scan(&exists); err != nil {
+		return missing(err)
+	}
+	before, err := checkpoint(ctx, s.reader, session)
+	if errors.Is(err, sql.ErrNoRows) {
+		before = displayCheckpoint{Generation: uuid.NewString(), State: "building"}
+	} else if err != nil {
+		return err
+	}
+	sources := []displaySource{}
+	rows, err := s.reader.QueryContext(ctx, `SELECT c.source_id,c.incarnation_id,c.sequence,r.turn_id,r.kind,r.payload FROM conversation_sources c JOIN agent_records r ON r.incarnation_id=c.incarnation_id AND r.sequence=c.sequence WHERE c.session_id=? AND c.source_id>? ORDER BY c.source_id LIMIT ?`, session, before.Source, displayBatchRecords)
+	if err != nil {
+		return err
+	}
+	bytes := 0
+	for rows.Next() {
+		var r displaySource
+		if err = rows.Scan(&r.ID, &r.Incarnation, &r.Sequence, &r.Turn, &r.Kind, &r.Payload); err != nil {
+			break
+		}
+		if bytes+len(r.Payload) > displayBatchBytes && len(sources) > 0 {
+			break
+		}
+		sources = append(sources, r)
+		bytes += len(r.Payload)
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return err
+	}
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		if e := tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE id=? AND deletion_intent<2`, session).Scan(&exists); e != nil {
+			return missing(e)
+		}
+		current, e := checkpoint(ctx, tx, session)
+		if e == nil && current != before {
+			return ErrConflict
+		}
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		if _, e = tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_checkpoints(session_id,generation,updated_at) VALUES(?,?,?)`, session, before.Generation, s.timestamp()); e != nil {
+			return e
+		}
+		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, turns: map[string]int64{}}
+		for _, source := range sources {
+			if e = reducer.consume(source); e != nil {
+				return e
+			}
+			reducer.p.Source = source.ID
+			if len(reducer.changes) >= 512 {
+				break
+			}
+		}
+		// Only reconcile authoritative imported messages once their native source
+		// prefix is fully projected, avoiding duplicate fallback rows during backfill.
+		var rawPending bool
+		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_sources WHERE session_id=? AND source_id>?)`, session, reducer.p.Source).Scan(&rawPending); e != nil {
+			return e
+		}
+		if !rawPending {
+			if e = reducer.messages(); e != nil {
+				return e
+			}
+		}
+		if e = reducer.summaries(); e != nil {
+			return e
+		}
+		if e = reducer.flush(); e != nil {
+			return e
+		}
+		var messagePending, turnPending bool
+		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=? AND sequence>?),EXISTS(SELECT 1 FROM conversation_dirty_turns WHERE session_id=?)`, session, reducer.p.Message, session).Scan(&messagePending, &turnPending); e != nil {
+			return e
+		}
+		state := "ready"
+		if rawPending || messagePending || turnPending {
+			state = "catching_up"
+			if before.Revision == 0 {
+				state = "building"
+			}
+		}
+		if state == "ready" {
+			if _, e = tx.ExecContext(ctx, `DELETE FROM conversation_pending_sessions WHERE session_id=?`, session); e != nil {
+				return e
+			}
+		}
+		if reducer.p.Revision != before.Revision || reducer.p.Index != before.Index || state != before.State {
+			if _, e = tx.ExecContext(ctx, `INSERT INTO events(project_id,session_id,revision,kind,created_at) SELECT project_id,id,?,'conversation.view',? FROM sessions WHERE id=?`, max(int64(1), reducer.p.Revision), s.timestamp(), session); e != nil {
+				return e
+			}
+		}
+		_, e = tx.ExecContext(ctx, `UPDATE conversation_checkpoints SET source_cursor=?,message_cursor=?,content_revision=?,index_revision=?,next_position=?,state=?,error='',updated_at=? WHERE session_id=?`, reducer.p.Source, reducer.p.Message, reducer.p.Revision, reducer.p.Index, reducer.p.Position, state, s.timestamp(), session)
+		return e
+	})
+	if err != nil && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrNotFound) && ctx.Err() == nil {
+		// A failure marker is separate from the rolled-back batch. It exposes lag
+		// without allowing the checkpoint to skip malformed evidence.
+		_ = s.write(ctx, func(tx *sql.Tx) error {
+			_, e := tx.ExecContext(ctx, `INSERT INTO conversation_checkpoints(session_id,generation,state,error,updated_at) SELECT id,?,'failed','display projection failed',? FROM sessions WHERE id=? AND deletion_intent<2 ON CONFLICT(session_id) DO UPDATE SET state='failed',error=excluded.error`, before.Generation, s.timestamp(), session)
+			return e
+		})
+	}
+	return err
+}
+
+type displayReducer struct {
+	ctx        context.Context
+	tx         *sql.Tx
+	session    string
+	p          displayCheckpoint
+	changes    map[string]*DisplayItem
+	sourceKeys map[string]string
+	turns      map[string]int64
+}
+
+func (d *displayReducer) turnSequence(turn string) (int64, error) {
+	if n, ok := d.turns[turn]; ok {
+		return n, nil
+	}
+	var n int64
+	err := d.tx.QueryRowContext(d.ctx, `SELECT sequence FROM turns WHERE session_id=? AND id=?`, d.session, turn).Scan(&n)
+	if err == nil {
+		d.turns[turn] = n
+	}
+	return n, err
+}
+func (d *displayReducer) get(id string) (*DisplayItem, error) {
+	if v, ok := d.changes[id]; ok {
+		return v, nil
+	}
+	var data string
+	err := d.tx.QueryRowContext(d.ctx, `SELECT coalesce((SELECT content FROM conversation_details WHERE session_id=i.session_id AND item_id=i.id AND item_revision=i.item_revision),i.data) FROM conversation_items i WHERE i.session_id=? AND i.id=?`, d.session, id).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var item DisplayItem
+	err = json.Unmarshal([]byte(data), &item)
+	return &item, err
+}
+func (d *displayReducer) put(item DisplayItem, source string) error {
+	var err error
+	item.TurnSequence, err = d.turnSequence(item.TurnID)
+	if err != nil {
+		return err
+	}
+	old, err := d.get(item.ID)
+	if err != nil {
+		return err
+	}
+	if old != nil {
+		item.Position = old.Position
+		item.Block = old.Block
+		item.Revision = old.Revision
+		if item == *old {
+			return nil
+		}
+	} else if item.Position < 0 {
+		d.p.Position++
+		item.Position = d.p.Position
+	}
+	d.changes[item.ID] = &item
+	d.sourceKeys[item.ID] = source
+	return nil
+}
+func (d *displayReducer) group(r displaySource, start bool) (string, int64, error) {
+	var sequence, position int64
+	var ended bool
+	err := d.tx.QueryRowContext(d.ctx, `SELECT start_sequence,position,ended FROM conversation_message_groups WHERE session_id=? AND incarnation_id=? AND turn_id=?`, d.session, r.Incarnation, r.Turn).Scan(&sequence, &position, &ended)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", 0, err
+	}
+	if start || ended || errors.Is(err, sql.ErrNoRows) {
+		sequence = r.Sequence
+		d.p.Position++
+		position = d.p.Position
+		_, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_message_groups(session_id,incarnation_id,turn_id,start_sequence,position,ended) VALUES(?,?,?,?,?,0) ON CONFLICT(session_id,incarnation_id,turn_id) DO UPDATE SET start_sequence=excluded.start_sequence,position=excluded.position,ended=0`, d.session, r.Incarnation, r.Turn, sequence, position)
+	}
+	return fmt.Sprintf("message/%s/%s/%d", r.Incarnation, r.Turn, sequence), position, err
+}
+func (d *displayReducer) consume(r displaySource) error {
+	if r.Turn == "" {
+		return nil
+	}
+	if r.Kind == "command.applied" {
+		var content string
+		err := d.tx.QueryRowContext(d.ctx, `SELECT content FROM messages WHERE session_id=? AND id=?`, d.session, r.Turn+"/user").Scan(&content)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return d.put(DisplayItem{ID: r.Turn + "/user", TurnID: r.Turn, Position: 0, Kind: "user", Content: content, MessageID: r.Turn + "/user"}, "user/"+r.Turn)
+	}
+	if r.Kind != "native" {
+		return nil
+	}
+	var header struct{ Type string }
+	if err := json.Unmarshal(r.Payload, &header); err != nil {
+		return err
+	}
+	switch header.Type {
+	case "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end":
+	default:
+		return nil
+	}
+	var e nativeDisplayEvent
+	if err := json.Unmarshal(r.Payload, &e); err != nil {
+		return err
+	}
+	switch e.Type {
+	case "message_start", "message_update", "message_end":
+		if e.Message.Role != "assistant" {
+			return nil
+		}
+		if len(e.Message.Content) > 512 {
+			return ErrCapacity
+		}
+		key, pos, err := d.group(r, e.Type == "message_start")
+		if err != nil {
+			return err
+		}
+		keep := map[string]bool{}
+		for index, block := range e.Message.Content {
+			item := DisplayItem{ID: fmt.Sprintf("%s/%d", key, index), TurnID: r.Turn, Position: pos, Block: index, State: "streaming"}
+			if e.Type == "message_end" {
+				item.State = "completed"
+				item.MessageID = fmt.Sprintf("%s/%d", r.Incarnation, r.Sequence)
+			}
+			switch block.Type {
+			case "text":
+				item.Kind = "assistant"
+				item.Content = block.Text
+			case "thinking":
+				item.Kind = "thinking"
+				item.Content = block.Thinking
+			case "toolCall":
+				if block.ID == "" {
+					continue
+				}
+				item.ID = "tool/" + r.Incarnation + "/" + r.Turn + "/" + block.ID
+				item.Kind = "tool"
+				item.Name = block.Name
+				item.Arguments = string(block.Arguments)
+				item.State = "pending"
+				item.MessageID = ""
+				old, err := d.get(item.ID)
+				if err != nil {
+					return err
+				}
+				if old != nil && old.State != "pending" {
+					keep[item.ID] = true
+					continue
+				}
+			default:
+				continue // Unknown source blocks remain in retained raw evidence.
+			}
+			keep[item.ID] = true
+			if err = d.put(item, key); err != nil {
+				return err
+			}
+		}
+		// Snapshot replacements can remove a block. Record explicit tombstones.
+		rows, err := d.tx.QueryContext(d.ctx, `SELECT id FROM conversation_items WHERE session_id=? AND source_key=?`, d.session, key)
+		if err != nil {
+			return err
+		}
+		ids := []string{}
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				break
+			}
+			ids = append(ids, id)
+		}
+		err = errors.Join(err, rows.Err(), rows.Close())
+		if err != nil {
+			return err
+		}
+		for id, source := range d.sourceKeys {
+			if source == key {
+				ids = append(ids, id)
+			}
+		}
+		for _, id := range ids {
+			if !keep[id] {
+				old, err := d.get(id)
+				if err != nil {
+					return err
+				}
+				if old != nil && (old.Kind != "tool" || old.State == "pending") {
+					d.changes[id] = nil
+				}
+			}
+		}
+		if e.Type == "message_end" {
+			if _, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_message_groups SET ended=1 WHERE session_id=? AND incarnation_id=? AND turn_id=?`, d.session, r.Incarnation, r.Turn); err != nil {
+				return err
+			}
+		}
+	case "tool_execution_start", "tool_execution_update", "tool_execution_end":
+		id := e.ToolCallID
+		if id == "" {
+			id = fmt.Sprint(r.Sequence)
+		}
+		id = "tool/" + r.Incarnation + "/" + r.Turn + "/" + id
+		old, err := d.get(id)
+		if err != nil {
+			return err
+		}
+		item := DisplayItem{ID: id, TurnID: r.Turn, Position: -1, Kind: "tool", State: "running"}
+		if old != nil {
+			item = *old
+			item.State = "running"
+		}
+		if e.ToolName != "" {
+			item.Name = e.ToolName
+		}
+		if len(e.Args) > 0 {
+			item.Arguments = string(e.Args)
+		}
+		if len(e.Result) > 0 {
+			item.Result = displayResult(e.Result)
+		} else if len(e.PartialResult) > 0 {
+			item.Result = displayResult(e.PartialResult)
+		}
+		if e.Type == "tool_execution_end" {
+			item.State = "completed"
+			if e.IsError {
+				item.State = "failed"
+			}
+		}
+		return d.put(item, "execution/"+id)
+	}
+	return nil
+}
+func displayResult(raw json.RawMessage) string {
+	var value struct {
+		Content []struct {
+			Type string
+			Text *string
+		}
+	}
+	if json.Unmarshal(raw, &value) == nil && len(value.Content) > 0 {
+		parts := []string{}
+		for _, b := range value.Content {
+			if b.Type != "text" || b.Text == nil {
+				return string(raw)
+			}
+			parts = append(parts, *b.Text)
+		}
+		return strings.Join(parts, "\n")
+	}
+	return string(raw)
+}
+func (d *displayReducer) messages() error {
+	rows, err := d.tx.QueryContext(d.ctx, `SELECT id,turn_id,role,content,sequence FROM messages WHERE session_id=? AND sequence>? ORDER BY sequence LIMIT 64`, d.session, d.p.Message)
+	if err != nil {
+		return err
+	}
+	list := []Message{}
+	bytes := 0
+	for rows.Next() {
+		var m Message
+		if err = rows.Scan(&m.ID, &m.TurnID, &m.Role, &m.Content, &m.Sequence); err != nil {
+			break
+		}
+		if bytes+len(m.Content) > displayBatchBytes && len(list) > 0 {
+			break
+		}
+		list = append(list, m)
+		bytes += len(m.Content)
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return err
+	}
+	for _, m := range list {
+		found := false
+		for _, item := range d.changes {
+			if item != nil && item.MessageID == m.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			if err = d.tx.QueryRowContext(d.ctx, `SELECT EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND message_id=?)`, d.session, m.ID).Scan(&found); err != nil {
+				return err
+			}
+		}
+		if !found {
+			pos := int64(-1)
+			if m.Role == "user" {
+				pos = 0
+			}
+			if err = d.put(DisplayItem{ID: m.ID, TurnID: m.TurnID, Position: pos, Kind: m.Role, Content: m.Content, MessageID: m.ID, State: "completed"}, "import/"+m.ID); err != nil {
+				return err
+			}
+		}
+		d.p.Message = m.Sequence
+	}
+	return nil
+}
+func (d *displayReducer) summaries() error {
+	rows, err := d.tx.QueryContext(d.ctx, `SELECT t.id,t.sequence,t.state,t.created_at,t.updated_at,coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') FROM conversation_dirty_turns d JOIN turns t ON t.id=d.turn_id AND t.session_id=d.session_id WHERE d.session_id=? ORDER BY t.sequence LIMIT 64`, d.session)
+	if err != nil {
+		return err
+	}
+	summaries := []TurnSummary{}
+	for rows.Next() {
+		var t TurnSummary
+		var updated, final string
+		if err = rows.Scan(&t.ID, &t.Sequence, &t.State, &t.CreatedAt, &updated, &final); err != nil {
+			break
+		}
+		switch t.State {
+		case "completed":
+			t.FinalMessageID = final
+			t.FinishedAt = updated
+		case "failed", "canceled", "unknown":
+			t.FinishedAt = updated
+		}
+		summaries = append(summaries, t)
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return err
+	}
+	if len(summaries) > 0 {
+		d.p.Index++
+	}
+	for _, t := range summaries {
+		raw, _ := json.Marshal(t)
+		if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_turns VALUES(?,?,?,?,?) ON CONFLICT(session_id,turn_id) DO UPDATE SET revision=excluded.revision,data=excluded.data`, d.session, t.ID, t.Sequence, d.p.Index, string(raw)); err != nil {
+			return err
+		}
+		if _, err = d.tx.ExecContext(d.ctx, `DELETE FROM conversation_dirty_turns WHERE session_id=? AND turn_id=?`, d.session, t.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (d *displayReducer) flush() error {
+	if len(d.changes) == 0 {
+		return nil
+	}
+	d.p.Revision++
+	ids := make([]string, 0, len(d.changes))
+	for id := range d.changes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for ordinal, id := range ids {
+		item := d.changes[id]
+		operation := "upsert"
+		data := ""
+		if item == nil {
+			operation = "delete"
+			if _, err := d.tx.ExecContext(d.ctx, `DELETE FROM conversation_items WHERE session_id=? AND id=?`, d.session, id); err != nil {
+				return err
+			}
+		} else {
+			item.Revision = d.p.Revision
+			full, err := json.Marshal(item)
+			if err != nil {
+				return err
+			}
+			compact := *item
+			if len(full) > displayInlineBytes {
+				compact.Truncated = true
+				compact.DetailVersion = fmt.Sprint(item.Revision)
+				for limit := 8192; ; limit /= 2 {
+					compact.Content = clipped(item.Content, limit)
+					compact.Arguments = clipped(item.Arguments, limit)
+					compact.Result = clipped(item.Result, limit)
+					compact.Name = clipped(item.Name, 256)
+					raw, _ := json.Marshal(compact)
+					if len(raw) <= displayInlineBytes {
+						break
+					}
+					if limit <= 1 {
+						return ErrCapacity
+					}
+				}
+				if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_details VALUES(?,?,?,?)`, d.session, id, item.Revision, string(full)); err != nil {
+					return err
+				}
+			}
+			raw, _ := json.Marshal(compact)
+			data = string(raw)
+			if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_items(session_id,id,turn_id,position,block_index,item_revision,source_key,data,turn_sequence,message_id) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET item_revision=excluded.item_revision,source_key=excluded.source_key,data=excluded.data,message_id=excluded.message_id`, d.session, id, item.TurnID, item.Position, item.Block, item.Revision, d.sourceKeys[id], data, item.TurnSequence, item.MessageID); err != nil {
+				return err
+			}
+		}
+		if _, err := d.tx.ExecContext(d.ctx, `INSERT INTO conversation_changes VALUES(?,?,?,?,?,?)`, d.session, d.p.Revision, ordinal, id, operation, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}

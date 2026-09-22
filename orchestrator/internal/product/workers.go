@@ -27,6 +27,7 @@ type Workers struct {
 	Interval       time.Duration
 	Report         func(string, error)
 	cursor         string
+	displayCursor  string
 }
 
 func (w *Workers) report(kind string, err error) {
@@ -59,6 +60,7 @@ func (w *Workers) Run(ctx context.Context) {
 		}()
 	}
 	loop("runtime", interval, w.Step)
+	loop("conversation display", 100*time.Millisecond, w.displayStep)
 	loop("agent recovery", time.Second, func(ctx context.Context) error {
 		if w.Recovery != nil {
 			return w.Recovery.Step(ctx, 8)
@@ -83,6 +85,35 @@ func (w *Workers) Run(ctx context.Context) {
 		return errors.Join(scheduleErr, titleErr, shareErr)
 	})
 	group.Wait()
+}
+
+func (w *Workers) displayStep(ctx context.Context) error {
+	rows, err := w.Store.reader.QueryContext(ctx, `SELECT p.session_id FROM conversation_pending_sessions p JOIN sessions s ON s.id=p.session_id LEFT JOIN conversation_checkpoints c ON c.session_id=p.session_id WHERE p.session_id>? AND s.deletion_intent<2 AND coalesce(c.state,'')<>'failed' ORDER BY p.session_id LIMIT 8`, w.displayCursor)
+	if err != nil {
+		return err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		w.displayCursor = ""
+		return nil
+	}
+	w.displayCursor = ids[len(ids)-1]
+	var results []error
+	for _, id := range ids {
+		results = append(results, w.Store.ProjectConversation(ctx, id))
+	}
+	return errors.Join(results...)
 }
 func (w *Workers) Step(ctx context.Context) error {
 	rows, err := w.Store.reader.QueryContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE state<>'deleted' AND id>? ORDER BY id LIMIT 16`, w.cursor)

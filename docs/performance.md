@@ -12,7 +12,8 @@ active-model deployment continuity.
 | P01e | Pending | Comparative latency, idle and resource qualification |
 | P01d | Verified locally | Lazy process mounting, stable Markdown file inputs and indexed message lookup |
 | P02a | Verified locally | Atomic known-schema migration and durable display storage |
-| P02b–e | Pending | Projector, bounded view APIs, comparisons and cutover |
+| P02b–d | Verified locally | Durable projector, bounded view APIs and controlled scale comparison |
+| P02e | Pending | Browser cutover and removal of raw snapshot queries |
 | P03 | Pending | Shared replayable resource events and incremental views |
 | P04 | Pending | Reusable confined readers and immutable representations |
 | P05 | Pending | Fair byte budgets, control reserve and retention |
@@ -129,3 +130,45 @@ backup restoration to a separate database, post-upgrade writes surviving reopen,
 foreign schema rejection and owner-lock alias checks. Product and HTTP race suites
 and vet passed. The new tables are not yet served by HTTP; bounded projector and
 consumer cutover are the next stage. Old binaries are not a supported downgrade.
+
+## Durable display projector and queries
+
+Schema 3 persists incomplete native message groups and indexed pending-session
+work. A fair worker processes at most eight sessions per pass, one bounded batch
+each. A batch reads at most 128 records and approximately 1 MiB; a larger legal
+record progresses alone. It stops after 512 accumulated changes. Native messages
+with more than 512 display blocks fail projection explicitly without losing raw
+records or changing ACK/control outcomes. Unknown event types are retained and
+skipped; malformed known display fields fail without advancing the checkpoint.
+
+Items keep their first appearance positions within authoritative turn order.
+Native identity includes incarnation, turn, start sequence and block. Tool updates
+retain the original call position. Imported messages remain readable. Items,
+tombstones, versioned details, change records and checkpoint commit atomically.
+Projection status is independent of execution completion. Idle workers do not
+rewrite checkpoints. Retirement removes derived private data along with source
+state after the existing cleanup gates pass.
+
+The view API reads indexed derived rows, with 50 items per page, at most 100 delta
+operations, a 64 KiB inline item limit and a 256 KiB encoded response limit. Larger
+items expose exact full JSON through bounded UTF-8 detail chunks. Delta pages
+freeze their target revision and retain an ordinal inside partially delivered
+revisions. Old generations or expired changes require resync. Rebuild replaces
+only derived state and never dispatches commands. The browser still uses snapshot
+reads until the P03 repository/transport cutover; their removal remains required.
+
+A deterministic local comparison held output at two items across 1,000 and 10,000
+raw records, with one warmup and twenty timed samples. Snapshot query p95 grew from
+5.48 ms to 52.11 ms; derived-page p95 was 0.29 ms and 0.36 ms. These values qualify
+this fixture only. Large cumulative payloads, writer contention and combined
+workloads remain to be measured.
+
+Validation includes semantic shadow comparison, reused native runners, missing
+message starts, out-of-order tools, process close/reopen, injected transactional
+failure, replay, imported messages, tombstones, exact large-detail reconstruction,
+fixed-target deltas while new writes commit, bidirectional pages, scoped cursors,
+authorization, fair sibling progress and idle-write absence. Go product/HTTP race
+suites and the disposable Khora fault suite passed. A full-suite PTY test failure
+exposed stale resize-frame synchronization in the test; the corrected case passed
+ten consecutive race runs. Schema-compatible deployment rollback and browser
+cutover remain open.
