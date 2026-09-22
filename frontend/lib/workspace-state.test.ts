@@ -11,9 +11,13 @@ afterEach(() => {
   clearPreferenceMemory();
 });
 describe("workspace preferences", () => {
-  it("migrates the last legacy agent without opening old panels", () => {
+  it("uses only the selected Session and leaves panels initially closed", () => {
     expect(
-      parsePreferences({ agents: ["a", "b"], terminals: ["t"], file: "x.md" }),
+      parsePreferences({
+        activeSessionId: "b",
+        terminals: ["t"],
+        file: "x.md",
+      }),
     ).toMatchObject({
       version: 2,
       activeSessionId: "b",

@@ -2,7 +2,8 @@
 
 The core SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
 Version 2 adds [conversation display storage](../orchestrator/internal/product/display_schema.sql);
-version 3 adds [projector queues and ordering](../orchestrator/internal/product/projector_schema.sql).
+version 3 adds [projector queues and ordering](../orchestrator/internal/product/projector_schema.sql);
+version 4 records [actual event retention frontiers](../orchestrator/internal/product/event_frontier_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
@@ -48,6 +49,7 @@ over new accepted writes is not a supported rollback. Deployment must first clos
 and drain admission; the release gate is still under implementation.
 
 The background display projector advances bounded session batches and serves the
-versioned view API. Browser cutover is still in progress. Display tables do not
+versioned view API used by the browser. Raw records are no longer reconstructed
+inside HTTP requests. Display tables do not
 change execution state or ACK semantics. Inspect live state through operator
 diagnostics; direct writes bypass authorization and reconciliation.

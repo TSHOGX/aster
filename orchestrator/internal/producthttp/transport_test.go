@@ -1,7 +1,6 @@
 package producthttp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -589,59 +588,13 @@ func TestTerminalSocketClosesWhenAuthorizationEnds(t *testing.T) {
 	}
 }
 
-func TestProductEventsStreamIsScopedAndReplayable(t *testing.T) {
+func TestRemovedSnapshotAndIndependentStreamRoutes(t *testing.T) {
 	h := newHarness(t)
-	h.expect(t, "POST", "/api/projects", `{"ID":"p","Title":"Project"}`, 201)
-	h.expect(t, "POST", "/api/projects/p/sessions", `{"ID":"s","Title":"Agent"}`, 201)
-	scope := product.Scope{Actor: "alice", ProjectID: "p"}
-	_, frontier, err := h.store.EventBounds(ctx, scope)
-	must(t, err)
-	event := func(path string) string {
-		t.Helper()
-		stream, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		request, err := http.NewRequestWithContext(stream, "GET", h.server.URL+path, nil)
-		must(t, err)
-		response, err := h.server.Client().Do(request)
-		must(t, err)
-		defer response.Body.Close()
-		if response.StatusCode != 200 || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
-			t.Fatal(response.StatusCode)
+	for _, path := range []string{"/api/projects/p/events", "/api/projects/p/files/watch", "/api/projects/p/sessions/s/snapshot", "/api/projects/p/sessions/s/records"} {
+		code, _ := h.do(t, "GET", path, "")
+		if code != 404 {
+			t.Fatal("retired route is still registered", path, code)
 		}
-		scanner := bufio.NewScanner(response.Body)
-		var lines []string
-		for scanner.Scan() {
-			if scanner.Text() == "" {
-				break
-			}
-			lines = append(lines, scanner.Text())
-		}
-		if err := scanner.Err(); err != nil {
-			t.Fatal(err)
-		}
-		return strings.Join(lines, "\n")
-	}
-	// A new observer receives a frontier and refetches snapshots, without replaying
-	// all historical invalidations. A reconnect still replays after its own cursor.
-	initial := event("/api/projects/p/events")
-	if !strings.Contains(initial, "event: snapshot") || !strings.Contains(initial, fmt.Sprintf(`"cursor":%d`, frontier)) {
-		t.Fatal(initial)
-	}
-	child, err := h.store.Session(ctx, scope, "s")
-	must(t, err)
-	must(t, h.store.RenameSession(ctx, scope, "s", child.Revision, "New title"))
-	replay := event(fmt.Sprintf("/api/projects/p/events?after=%d", frontier))
-	if !strings.Contains(replay, "event: projection") || !strings.Contains(replay, "session.updated") || strings.Contains(replay, "terminal.output") {
-		t.Fatal(replay)
-	}
-	reset := event("/api/projects/p/events?after=999999")
-	if !strings.Contains(reset, "event: gap") {
-		t.Fatal(reset)
-	}
-	h.setActor("bob")
-	code, _ := h.do(t, "GET", "/api/projects/p/events", "")
-	if code != 404 {
-		t.Fatal(code)
 	}
 }
 

@@ -90,10 +90,18 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 	response, err := server.Client().Get(server.URL + "/api/conversations/session/events")
 	must(t, err)
 	reader := bufio.NewReader(response.Body)
-	line, err := reader.ReadString('\n')
-	must(t, err)
-	if line != "event: conversation\n" {
-		t.Fatal(line)
+	defer response.Body.Close()
+	var frame strings.Builder
+	for {
+		line, e := reader.ReadString('\n')
+		must(t, e)
+		if line == "\n" {
+			break
+		}
+		frame.WriteString(line)
+	}
+	if !strings.Contains(frame.String(), "event: conversation") {
+		t.Fatal(frame.String())
 	}
 	must(t, h.store.RevokeConversation(ctx, scope, "session", "bob"))
 	closed := make(chan error, 1)

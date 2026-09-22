@@ -78,3 +78,23 @@ func (s *Store) EventBounds(ctx context.Context, scope Scope) (first, last int64
 	err = s.reader.QueryRowContext(ctx, `SELECT coalesce(min(id),0),coalesce(max(id),0) FROM events WHERE project_id=?`, scope.ProjectID).Scan(&first, &last)
 	return
 }
+
+func (s *Store) EventRetentionFrontier(ctx context.Context, scope Scope) (int64, error) {
+	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+		return 0, err
+	}
+	var frontier int64
+	err := s.reader.QueryRowContext(ctx, `SELECT coalesce((SELECT retained_after FROM project_event_frontiers WHERE project_id=?),0)`, scope.ProjectID).Scan(&frontier)
+	return frontier, err
+}
+
+// Shared-reader freshness follows completed message content, not native token
+// traffic. This authority never grants access to live Project resources.
+func (s *Store) ConversationFrontier(ctx context.Context, actor, session string) (int64, error) {
+	if err := s.CanReadConversation(ctx, actor, session); err != nil {
+		return 0, err
+	}
+	var frontier int64
+	err := s.reader.QueryRowContext(ctx, `SELECT coalesce(max(sequence),0) FROM messages WHERE session_id=?`, session).Scan(&frontier)
+	return frontier, err
+}

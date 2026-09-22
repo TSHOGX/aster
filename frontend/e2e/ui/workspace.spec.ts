@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { workspaceFixture } from "./fixture";
+import {
+  conversationRoute,
+  invalidateConversation,
+} from "./conversation-fixture";
 const evidence = resolve(
   __dirname,
   "../../../private/uiux-refinement/evidence/screenshots",
@@ -323,7 +327,7 @@ test("native timeline retains tool/thinking/text positions during streaming, com
       state: "streaming",
     },
   ];
-  await page.route("**/sessions/analysis/snapshot?**", (route) =>
+  await conversationRoute(page, (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -356,6 +360,7 @@ test("native timeline retains tool/thinking/text positions during streaming, com
   await page.locator('[data-activity-id="m/0"] > .activity-summary').click();
   await page.locator('[data-timeline-id="tool/write"] summary').click();
   completed = true;
+  await invalidateConversation(page);
   await expect(page.locator(".streaming")).toHaveCount(0);
   expect(
     await rows.evaluateAll((nodes) =>
@@ -397,7 +402,7 @@ test("consecutive activity has one live ripple line and keeps its phase on compl
     kind: "thinking",
     content: "Checking the measurements and preparing the next experiment",
   };
-  await page.route("**/sessions/analysis/snapshot?**", (route) =>
+  await conversationRoute(page, (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -490,6 +495,7 @@ test("consecutive activity has one live ripple line and keeps its phase on compl
   await page.keyboard.press("Enter");
   await expect(summary).toHaveAttribute("aria-expanded", "true");
   phase = 1;
+  await invalidateConversation(page);
   await expect(group.locator(".tool-trace > summary")).toContainText(
     "Running bash",
   );
@@ -520,6 +526,7 @@ test("consecutive activity has one live ripple line and keeps its phase on compl
     ),
   ).toBe(true);
   phase = 2;
+  await invalidateConversation(page);
   await expect(summary).toContainText("bash, edit, read • Tool activity (3)");
   await expect(group).not.toHaveClass(/is-live/);
   await expect(page.locator(".chat-message.assistant")).toHaveText("Finished.");
@@ -621,7 +628,7 @@ test("completed turn folds intermediate output, freezes elapsed time and provide
       state: "completed",
     },
   ];
-  await page.route("**/sessions/analysis/snapshot?**", (route) =>
+  await conversationRoute(page, (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -676,6 +683,7 @@ test("completed turn folds intermediate output, freezes elapsed time and provide
   await expect(page.locator(".answer-actions")).toHaveCount(0);
   await expect(page.locator(".working-indicator")).toHaveCount(0);
   phase = "completed";
+  await invalidateConversation(page);
   await expect(page.locator(".turn-work-toggle")).toHaveText("Worked for 54s");
   await expect(page.locator(".turn-process")).toHaveCount(0);
   await expect(page.locator(".turn-final")).toContainText("Final answer");
@@ -685,9 +693,9 @@ test("completed turn folds intermediate output, freezes elapsed time and provide
     finished,
   );
   await page.getByRole("button", { name: "Copy answer", exact: true }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    "Final answer with **clear results**.",
-  );
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("Final answer with **clear results**.");
   await page.getByRole("button", { name: "Like", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Like", exact: true }),
@@ -715,6 +723,7 @@ test("completed turn folds intermediate output, freezes elapsed time and provide
     path: resolve(evidence, "turn-completed-expanded.png"),
   });
   phase = "failed";
+  await invalidateConversation(page);
   await page.reload();
   await expect(page.locator(".turn-process")).toBeVisible();
   await expect(page.locator(".answer-actions")).toHaveCount(0);
@@ -863,7 +872,7 @@ test("failed tool stays inside details without a summary badge", async ({
   page,
 }) => {
   await workspaceFixture(page);
-  await page.route("**/sessions/analysis/snapshot?**", (route) =>
+  await conversationRoute(page, (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -931,9 +940,9 @@ test("turn rail previews with a hover wave, tracks reading and jumps across hist
       }),
     });
   });
-  await page.route("**/sessions/analysis/snapshot?**", (route) => {
+  await conversationRoute(page, (route) => {
     const params = new URL(route.request().url()).searchParams;
-    const target = params.get("turn"),
+    const target = params.get("around_turn"),
       before = Number(params.get("before")),
       after = Number(params.get("after"));
     if (target) requestedAnchors.push(target);
@@ -1148,17 +1157,21 @@ test("turn rail previews with a hover wave, tracks reading and jumps across hist
   ).toHaveAttribute("aria-current", "step");
 });
 
-test("slow transcript loading is not starved by periodic refresh", async ({
+test("slow transcript loading shares its page across repeated resource hints", async ({
   page,
 }) => {
   await workspaceFixture(page);
   let calls = 0;
-  await page.route("**/sessions/analysis/snapshot?**", async (route) => {
+  await page.route("**/sessions/analysis/view/pages?**", async (route) => {
     calls++;
     await new Promise((resolve) => setTimeout(resolve, 3200));
     await route.fallback();
   });
   await page.goto("/?project=battery&session=analysis");
+  await expect(page.locator(".agent-panel")).toBeVisible();
+  await invalidateConversation(page);
+  await invalidateConversation(page);
+  await invalidateConversation(page);
   await expect(page.locator(".chat-message.assistant")).toContainText("95%");
   expect(calls).toBe(1);
   await expect(page.locator(".turn-navigator")).toBeVisible();

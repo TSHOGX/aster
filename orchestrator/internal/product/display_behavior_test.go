@@ -7,35 +7,54 @@ import (
 	"testing"
 )
 
-func TestSnapshotPagesAndRecordAuthorization(t *testing.T) {
+// Tests explicitly drive the projector; HTTP never runs backfill on demand.
+func projectedPage(t *testing.T, s *Store, scope Scope, session string, selector ViewSelector) (ViewPage, error) {
+	t.Helper()
+	for n := 0; n < 1000; n++ {
+		if err := s.ProjectConversation(ctx, session); err != nil {
+			return ViewPage{}, err
+		}
+		p, err := checkpoint(ctx, s.reader, session)
+		if err != nil {
+			return ViewPage{}, err
+		}
+		if p.State == "ready" {
+			return s.ConversationPage(ctx, scope, session, selector)
+		}
+	}
+	t.Fatal("projector did not settle")
+	return ViewPage{}, ErrPending
+}
+func TestDisplayPagesAndAuthorization(t *testing.T) {
 	s, a, b := fixture(t)
 	_, err := s.CreateSession(ctx, a, "session", "Agent")
 	must(t, err)
 	for i := 0; i < 125; i++ {
 		seedMessage(t, s, a, "session", fmt.Sprintf("m-%03d", i), fmt.Sprint("message ", i))
 	}
-	snapshot, err := s.SessionSnapshot(ctx, a, "session", 0, false)
+	page, err := projectedPage(t, s, a, "session", ViewSelector{})
 	must(t, err)
-	if len(snapshot.Messages) != 100 || snapshot.Messages[0].Sequence != 26 || !snapshot.HasEarlier || len(snapshot.Turns) != 100 {
-		t.Fatal(snapshot)
+	if len(page.Items) != 50 || page.Before == "" {
+		t.Fatal(len(page.Items), page.Before)
 	}
-	before, err := s.SessionSnapshot(ctx, a, "session", 26, false)
+	older, err := s.ConversationPage(ctx, a, "session", ViewSelector{Before: page.Before})
 	must(t, err)
-	if len(before.Messages) != 25 || before.HasEarlier || before.Session.Revision != snapshot.Session.Revision {
-		t.Fatal(before)
+	if len(older.Items) != 50 || older.Before == "" || older.Items[0].TurnSequence >= page.Items[0].TurnSequence {
+		t.Fatal("invalid preceding window")
 	}
-	seq, err := s.MessageSequence(ctx, a, "session", "m-005")
+	oldest, err := s.ConversationPage(ctx, a, "session", ViewSelector{Before: older.Before})
 	must(t, err)
-	if seq != 6 {
-		t.Fatal(seq)
+	if len(oldest.Items) != 25 || oldest.Before != "" {
+		t.Fatal(len(oldest.Items))
 	}
-	_, err = s.SessionSnapshot(ctx, b, "session", 0, false)
+	_, err = s.ConversationPage(ctx, b, "session", ViewSelector{})
 	wantError(t, err, ErrNotFound)
-	_, err = s.AgentRecords(ctx, Scope{b.Actor, a.ProjectID}, "session", 0, 200)
-	wantError(t, err, ErrNotFound)
-	turn := snapshot.Turns[0]
-	must(t, s.ChangeQueuedTurn(ctx, a, "session", turn.ID, "held", snapshot.Session.ControlRevision))
-	wantError(t, s.ChangeQueuedTurn(ctx, a, "session", turn.ID, "canceled", snapshot.Session.ControlRevision), ErrConflict)
+	turns, err := s.Turns(ctx, a, "session", 0, 1)
+	must(t, err)
+	child, err := s.Session(ctx, a, "session")
+	must(t, err)
+	must(t, s.ChangeQueuedTurn(ctx, a, "session", turns[0].ID, "held", child.ControlRevision))
+	wantError(t, s.ChangeQueuedTurn(ctx, a, "session", turns[0].ID, "canceled", child.ControlRevision), ErrConflict)
 }
 func TestPlacementLossFencesOldAgentOwner(t *testing.T) {
 	s, a, _ := fixture(t)
@@ -87,7 +106,7 @@ func TestStreamingOutputDoesNotInvalidateExecutionControl(t *testing.T) {
 	}
 	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop-during-stream", before.ControlRevision))
 }
-func TestSnapshotKeepsActiveTurnVisibleWithLargeQueue(t *testing.T) {
+func TestDisplayHeadKeepsActiveTurnVisibleWithLargeQueue(t *testing.T) {
 	s, scope, i, command := agentFixture(t)
 	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
 	must(t, err)
@@ -95,13 +114,13 @@ func TestSnapshotKeepsActiveTurnVisibleWithLargeQueue(t *testing.T) {
 		_, err = s.AdmitTurn(ctx, scope, i.SessionID, fmt.Sprintf("queued-%d", n), "next work", false)
 		must(t, err)
 	}
-	snapshot, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
+	snapshot, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
 	must(t, err)
-	if len(snapshot.Turns) != 100 || !snapshot.HasMoreTurns {
-		t.Fatal(len(snapshot.Turns), snapshot.HasMoreTurns)
+	if len(snapshot.Head.Turns) != 32 || !snapshot.Head.HasMoreTurns {
+		t.Fatal(len(snapshot.Head.Turns), snapshot.Head.HasMoreTurns)
 	}
-	if snapshot.Turns[0].ID != command.TurnID || snapshot.Turns[0].State != "running" {
-		t.Fatal("active turn disappeared behind queued work", snapshot.Turns[0])
+	if snapshot.Head.Turns[0].ID != command.TurnID || snapshot.Head.Turns[0].State != "running" {
+		t.Fatal("active turn disappeared behind queued work", snapshot.Head.Turns[0])
 	}
 }
 
@@ -116,12 +135,12 @@ func TestTimelinePreservesNativeOrderAndKeysAcrossCompletion(t *testing.T) {
 		_, err := s.IngestAgent(ctx, i, record(i, c, uint64(n+1), e.kind, e.payload))
 		must(t, err)
 	}
-	before, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
+	before, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
 	must(t, err)
-	if len(before.Timeline) != 3 || before.Timeline[1].Kind != "thinking" || before.Timeline[2].Kind != "assistant" {
-		t.Fatal(before.Timeline)
+	if len(before.Items) != 3 || before.Items[1].Kind != "thinking" || before.Items[2].Kind != "assistant" {
+		t.Fatal(before.Items)
 	}
-	stableID := before.Timeline[2].ID
+	stableID := before.Items[2].ID
 	next := []string{
 		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"consider the plot"},{"type":"text","text":"I will write a script."},{"type":"toolCall","id":"write1","name":"write"}]}}`,
 		`{"type":"tool_execution_start","toolCallId":"write1","toolName":"write","args":{"path":"/workspace/heart.py"}}`,
@@ -137,24 +156,24 @@ func TestTimelinePreservesNativeOrderAndKeysAcrossCompletion(t *testing.T) {
 		_, err = s.IngestAgent(ctx, i, record(i, c, uint64(n+4), "native", e))
 		must(t, err)
 	}
-	after, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
+	after, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
 	must(t, err)
 	kinds := []string{}
-	for _, item := range after.Timeline {
+	for _, item := range after.Items {
 		kinds = append(kinds, item.Kind)
 	}
 	if fmt.Sprint(kinds) != "[user thinking assistant tool assistant tool assistant]" {
-		t.Fatal(kinds, after.Timeline)
+		t.Fatal(kinds, after.Items)
 	}
-	if after.Timeline[2].ID != stableID {
+	if after.Items[2].ID != stableID {
 		t.Fatal("completion changed message identity")
 	}
-	if after.Timeline[3].State != "completed" || after.Timeline[3].Arguments == "" {
-		t.Fatal(after.Timeline[3])
+	if after.Items[3].State != "completed" || after.Items[3].Arguments == "" {
+		t.Fatal(after.Items[3])
 	}
-	reload, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
+	reload, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
 	must(t, err)
-	if fmt.Sprint(reload.Timeline) != fmt.Sprint(after.Timeline) {
+	if fmt.Sprint(reload.Items) != fmt.Sprint(after.Items) {
 		t.Fatal("reload changed timeline")
 	}
 }
@@ -173,10 +192,10 @@ func TestTurnSummaryRestoresOldPageTimingOutsideLiveTurnWindow(t *testing.T) {
 	must(t, err)
 	_, err = s.db.Exec(`INSERT INTO messages(id,project_id,session_id,turn_id,role,content,sequence,created_at) VALUES('final',?,'summary-session',?,'assistant','Done',126,?)`, a.ProjectID, turn, end)
 	must(t, err)
-	old, err := s.SessionSnapshot(ctx, a, "summary-session", 26, false)
+	old, err := projectedPage(t, s, a, "summary-session", ViewSelector{AroundTurn: turn})
 	must(t, err)
 	found := false
-	for _, summary := range old.TurnSummaries {
+	for _, summary := range old.Summaries {
 		if summary.ID == turn {
 			found = true
 			if summary.CreatedAt != start || summary.FinishedAt != end || summary.FinalMessageID != "final" {
@@ -187,20 +206,20 @@ func TestTurnSummaryRestoresOldPageTimingOutsideLiveTurnWindow(t *testing.T) {
 	if !found {
 		t.Fatal("old turn timing disappeared behind control page")
 	}
-	_, err = s.SessionSnapshot(ctx, b, "summary-session", 26, false)
+	_, err = s.ConversationPage(ctx, b, "summary-session", ViewSelector{AroundTurn: turn})
 	wantError(t, err, ErrNotFound)
 	_, err = s.db.Exec(`UPDATE turns SET state='running' WHERE id=?`, turn)
 	must(t, err)
-	active, err := s.SessionSnapshot(ctx, a, "summary-session", 0, false)
+	active, err := projectedPage(t, s, a, "summary-session", ViewSelector{AroundTurn: turn})
 	must(t, err)
-	for _, summary := range active.TurnSummaries {
+	for _, summary := range active.Summaries {
 		if summary.ID == turn && (summary.FinishedAt != "" || summary.FinalMessageID != "") {
 			t.Fatal("intermediate message promoted to final", summary)
 		}
 	}
 }
 
-func TestTurnIndexPaginationFinalPreviewAndTargetedSnapshot(t *testing.T) {
+func TestTurnIndexPaginationFinalPreviewAndTargetedView(t *testing.T) {
 	s, a, b := fixture(t)
 	_, err := s.CreateSession(ctx, a, "nav", "Navigation")
 	must(t, err)
@@ -226,23 +245,23 @@ func TestTurnIndexPaginationFinalPreviewAndTargetedSnapshot(t *testing.T) {
 	}
 	_, err = s.TurnIndex(ctx, b, "nav", 0, 100)
 	wantError(t, err, ErrNotFound)
-	snapshot, err := s.SessionSnapshot(ctx, a, "nav", 0, false, firstTurn)
+	snapshot, err := projectedPage(t, s, a, "nav", ViewSelector{AroundTurn: firstTurn})
 	must(t, err)
-	if len(snapshot.Messages) < 2 || snapshot.Messages[0].TurnID != firstTurn || !snapshot.HasLater {
-		t.Fatal("anchor did not include adjacent history", snapshot.Messages, snapshot.HasLater)
+	if len(snapshot.Items) < 2 || snapshot.Items[0].TurnID != firstTurn || !(snapshot.After != "") {
+		t.Fatal("anchor did not include adjacent history", snapshot.Items, (snapshot.After != ""))
 	}
-	next, err := s.SessionSnapshotPage(ctx, a, "nav", 0, snapshot.Messages[len(snapshot.Messages)-1].Sequence, false, "")
+	next, err := s.ConversationPage(ctx, a, "nav", ViewSelector{After: snapshot.After})
 	must(t, err)
-	if len(next.Messages) == 0 || next.Messages[0].Sequence <= snapshot.Messages[len(snapshot.Messages)-1].Sequence {
+	if len(next.Items) == 0 || next.Items[0].TurnSequence <= snapshot.Items[len(snapshot.Items)-1].TurnSequence {
 		t.Fatal("forward page did not advance")
 	}
-	if next.HasLater {
-		t.Fatal("unexpected later page")
+	if next.After == "" {
+		t.Fatal("missing later page")
 	}
 
-	_, err = s.SessionSnapshot(ctx, a, "nav", 0, false, "missing")
+	_, err = s.ConversationPage(ctx, a, "nav", ViewSelector{AroundTurn: "missing"})
 	wantError(t, err, ErrNotFound)
-	_, err = s.SessionSnapshot(ctx, b, "nav", 0, false, lastTurn)
+	_, err = s.ConversationPage(ctx, b, "nav", ViewSelector{AroundTurn: lastTurn})
 	wantError(t, err, ErrNotFound)
 	_, err = s.db.Exec(`UPDATE turns SET state='running' WHERE id=?`, firstTurn)
 	must(t, err)
@@ -261,11 +280,11 @@ func TestTimelineProjectsParallelCallsBeforeExecutionAndMergesPartialResults(t *
 		_, err := s.IngestAgent(ctx, i, record(i, c, sequence, kind, payload))
 		must(t, err)
 	}
-	snapshot := func() []TimelineItem {
-		page, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
+	snapshot := func() []DisplayItem {
+		page, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
 		must(t, err)
-		tools := []TimelineItem{}
-		for _, item := range page.Timeline {
+		tools := []DisplayItem{}
+		for _, item := range page.Items {
 			if item.Kind == "tool" {
 				tools = append(tools, item)
 			}
@@ -290,7 +309,7 @@ func TestTimelineProjectsParallelCallsBeforeExecutionAndMergesPartialResults(t *
 		t.Fatal(running)
 	}
 	for n, row := range running {
-		if row.ID != before[n].ID || row.Cursor != before[n].Cursor || row.State != "running" || row.Arguments != before[n].Arguments {
+		if row.ID != before[n].ID || row.Position != before[n].Position || row.State != "running" || row.Arguments != before[n].Arguments {
 			t.Fatal(before, running)
 		}
 	}
@@ -312,15 +331,15 @@ func TestTimelineProjectsParallelCallsBeforeExecutionAndMergesPartialResults(t *
 	}
 }
 
-func TestToolResultPreviewBoundsReadableOutput(t *testing.T) {
+func TestDisplayToolResultRetainsReadableOutput(t *testing.T) {
 	text := strings.Repeat("measurement\n", 1000)
 	raw, err := json.Marshal(map[string]any{"content": []map[string]string{{"type": "text", "text": text}}})
 	must(t, err)
-	if got := toolResultPreview(raw); got != clipped(text, 8192) {
-		t.Fatal("long output was not bounded as readable text", got)
+	if got := displayResult(raw); got != text {
+		t.Fatal("full tool output was not retained as readable text", got)
 	}
 	structured := json.RawMessage(`{"content":[{"type":"image","data":"abc"}],"details":{"ok":true}}`)
-	if got := toolResultPreview(structured); got != string(structured) {
+	if got := displayResult(structured); got != string(structured) {
 		t.Fatal("non-text output was discarded", got)
 	}
 }
@@ -346,9 +365,9 @@ func TestTimelineKeysRemainDistinctAcrossTurnsInSameIncarnation(t *testing.T) {
 			_, err := s.IngestAgent(ctx, i, record(i, c, seq, e.kind, e.payload))
 			must(t, err)
 		}
-		snapshot, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
+		snapshot, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
 		must(t, err)
-		for _, item := range snapshot.Timeline {
+		for _, item := range snapshot.Items {
 			if item.TurnID == c.TurnID && item.Kind == "thinking" {
 				keys = append(keys, item.ID)
 			}
@@ -357,12 +376,12 @@ func TestTimelineKeysRemainDistinctAcrossTurnsInSameIncarnation(t *testing.T) {
 	if len(keys) != 2 || keys[0] == keys[1] {
 		t.Fatal("cross-turn key collision", keys)
 	}
-	snapshot, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
+	snapshot, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
 	must(t, err)
 	counts := map[string]int{}
-	for _, item := range snapshot.Timeline {
+	for _, item := range snapshot.Items {
 		counts[item.Kind]++
-		if item.Kind == "tool" && item.Order != 2 {
+		if item.Kind == "tool" && item.Block != 2 {
 			t.Fatal("tool block position lost", item)
 		}
 	}

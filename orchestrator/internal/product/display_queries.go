@@ -16,19 +16,41 @@ var ErrResync = errors.New("conversation view requires resync")
 
 const displayResponseBytes = 256 << 10
 
-type ViewHead struct {
-	Session           Session `json:"session"`
-	ControlRevision   int64   `json:"control_revision,string"`
-	ContentRevision   int64   `json:"content_revision,string"`
-	IndexRevision     int64   `json:"index_revision,string"`
-	Generation        string  `json:"projection_generation"`
-	State             string  `json:"projection_state"`
-	SourceFrontier    string  `json:"source_frontier"`
-	ProjectedFrontier string  `json:"projected_frontier"`
-	Turns             []Turn  `json:"turns"`
-	HasMoreTurns      bool    `json:"has_more_turns"`
-	Error             string  `json:"error,omitempty"`
+type AgentRecoveryStatus struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Cleanup  string `json:"cleanup"`
+	Recovery string `json:"recovery"`
+	Error    string `json:"error,omitempty"`
 }
+
+type ViewHead struct {
+	Session           Session               `json:"session"`
+	ControlRevision   int64                 `json:"control_revision,string"`
+	ContentRevision   int64                 `json:"content_revision,string"`
+	IndexRevision     int64                 `json:"index_revision,string"`
+	Generation        string                `json:"projection_generation"`
+	State             string                `json:"projection_state"`
+	SourceFrontier    string                `json:"source_frontier"`
+	ProjectedFrontier string                `json:"projected_frontier"`
+	Turns             []Turn                `json:"turns"`
+	HasMoreTurns      bool                  `json:"has_more_turns"`
+	HasContent        bool                  `json:"has_content"`
+	Recovery          []AgentRecoveryStatus `json:"recovery"`
+	Error             string                `json:"error,omitempty"`
+}
+
+func liveDisplaySession(ctx context.Context, q queryer, scope Scope, id string) (Session, error) {
+	p, err := authorizedProject(ctx, q, scope)
+	if err != nil {
+		return Session{}, err
+	}
+	if p.State == "deleting" || p.State == "deleted" {
+		return Session{}, ErrNotFound
+	}
+	return scanSession(q.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE project_id=? AND id=? AND deletion_intent=0`, scope.ProjectID, id))
+}
+
 type ViewPage struct {
 	Head      ViewHead      `json:"head"`
 	Items     []DisplayItem `json:"items"`
@@ -98,11 +120,14 @@ func frontier(ctx context.Context, q queryer, session string, at int64, latest b
 func viewHead(ctx context.Context, q queryer, scope Scope, session string) (ViewHead, error) {
 	var out ViewHead
 	var err error
-	out.Session, err = sessionIn(ctx, q, scope, session)
+	out.Session, err = liveDisplaySession(ctx, q, scope, session)
 	if err != nil {
 		return out, err
 	}
 	out.ControlRevision = out.Session.ControlRevision
+	if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_items WHERE session_id=?)`, session).Scan(&out.HasContent); err != nil {
+		return out, err
+	}
 	out.Turns = []Turn{}
 	p, err := checkpoint(ctx, q, session)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -128,6 +153,15 @@ func viewHead(ctx context.Context, q queryer, scope Scope, session string) (View
 	if out.State == "ready" && out.SourceFrontier != out.ProjectedFrontier {
 		out.State = "catching_up"
 	}
+	if out.State == "ready" {
+		var pending bool
+		if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_pending_sessions WHERE session_id=?)`, session).Scan(&pending); err != nil {
+			return out, err
+		}
+		if pending {
+			out.State = "catching_up"
+		}
+	}
 	rows, err := q.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND (state IN ('queued','held','starting','running','stopping') OR (state='unknown' AND acknowledged=0)) ORDER BY CASE WHEN state IN ('starting','running','stopping') THEN 0 ELSE 1 END,sequence DESC LIMIT 33`, session)
 	if err != nil {
 		return out, err
@@ -145,6 +179,23 @@ func viewHead(ctx context.Context, q queryer, scope Scope, session string) (View
 		t.Content = clipped(t.Content, 256)
 		out.Turns = append(out.Turns, t)
 	}
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		return out, err
+	}
+	out.Recovery = []AgentRecoveryStatus{}
+	rows, err = q.QueryContext(ctx, `SELECT id,state,cleanup_state,recovery_state,error FROM agent_incarnations WHERE session_id=? ORDER BY created_at DESC LIMIT 8`, session)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var recovery AgentRecoveryStatus
+		if err = rows.Scan(&recovery.ID, &recovery.State, &recovery.Cleanup, &recovery.Recovery, &recovery.Error); err != nil {
+			return out, err
+		}
+		recovery.Error = clipped(recovery.Error, 1024)
+		out.Recovery = append(out.Recovery, recovery)
+	}
 	return out, rows.Err()
 }
 func (s *Store) ConversationHead(ctx context.Context, scope Scope, session string) (ViewHead, error) {
@@ -156,7 +207,7 @@ func (s *Store) ConversationHead(ctx context.Context, scope Scope, session strin
 	return viewHead(ctx, tx, scope, session)
 }
 
-type ViewSelector struct{ Before, After, AroundTurn, AroundMessage string }
+type ViewSelector struct{ Before, After, AroundTurn, AroundMessage, AroundItem string }
 
 func (s *Store) ConversationPage(ctx context.Context, scope Scope, session string, selector ViewSelector) (ViewPage, error) {
 	out := ViewPage{Items: []DisplayItem{}, Summaries: []TurnSummary{}}
@@ -170,7 +221,7 @@ func (s *Store) ConversationPage(ctx context.Context, scope Scope, session strin
 		return out, err
 	}
 	choices := 0
-	for _, v := range []string{selector.Before, selector.After, selector.AroundTurn, selector.AroundMessage} {
+	for _, v := range []string{selector.Before, selector.After, selector.AroundTurn, selector.AroundMessage, selector.AroundItem} {
 		if v != "" {
 			choices++
 		}
@@ -208,15 +259,21 @@ func (s *Store) ConversationPage(ctx context.Context, scope Scope, session strin
 		}
 		where = ` AND (turn_sequence,position,block_index,id)` + op + `(?,?,?,?)`
 		args = append(args, at.Turn, at.Position, at.Block, at.ID)
-	} else if selector.AroundTurn != "" || selector.AroundMessage != "" {
+	} else if selector.AroundTurn != "" || selector.AroundMessage != "" || selector.AroundItem != "" {
 		column, value := "turn_id", selector.AroundTurn
 		if selector.AroundMessage != "" {
 			column, value = "message_id", selector.AroundMessage
+		}
+		if selector.AroundItem != "" {
+			column, value = "id", selector.AroundItem
 		}
 		var turn, position int64
 		var block int
 		var id string
 		if err = tx.QueryRowContext(ctx, `SELECT turn_sequence,position,block_index,id FROM conversation_items WHERE session_id=? AND `+column+`=? ORDER BY turn_sequence,position,block_index,id LIMIT 1`, session, value).Scan(&turn, &position, &block, &id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) && out.Head.State == "catching_up" {
+				return out, ErrPending
+			}
 			return out, missing(err)
 		}
 		where = ` AND (turn_sequence,position,block_index,id)>=(?,?,?,?)`
@@ -321,7 +378,7 @@ func (s *Store) ConversationChanges(ctx context.Context, scope Scope, session st
 		return out, err
 	}
 	defer tx.Rollback()
-	if _, err = sessionIn(ctx, tx, scope, session); err != nil {
+	if _, err = liveDisplaySession(ctx, tx, scope, session); err != nil {
 		return out, err
 	}
 	p, err := checkpoint(ctx, tx, session)
@@ -411,7 +468,7 @@ func (s *Store) ConversationDetail(ctx context.Context, scope Scope, session, it
 		return out, err
 	}
 	defer tx.Rollback()
-	if _, err = sessionIn(ctx, tx, scope, session); err != nil {
+	if _, err = liveDisplaySession(ctx, tx, scope, session); err != nil {
 		return out, err
 	}
 	revision, err := strconv.ParseInt(version, 10, 64)
@@ -462,7 +519,7 @@ func (s *Store) ConversationDetail(ctx context.Context, scope Scope, session, it
 // Rebuild changes only derived data and generation. It cannot replay commands.
 func (s *Store) RebuildConversation(ctx context.Context, scope Scope, session string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := sessionIn(ctx, tx, scope, session); err != nil {
+		if _, err := liveDisplaySession(ctx, tx, scope, session); err != nil {
 			return err
 		}
 		for _, table := range []string{"conversation_details", "conversation_changes", "conversation_items", "conversation_turns", "conversation_checkpoints", "conversation_message_groups"} {

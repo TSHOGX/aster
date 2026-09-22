@@ -3,6 +3,7 @@ import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
+  APIError,
   command,
   encode,
   projectURL,
@@ -382,7 +383,25 @@ export function SharedConversations({
       `/api/conversations/${encode(selected)}/events`,
     );
     source.addEventListener("conversation", () => void refresh());
-    source.onerror = () => void refresh();
+    source.addEventListener("closed", () => {
+      source.close();
+      void refresh();
+    });
+    source.onerror = () => {
+      // A reconnect refusal cannot deliver a closed SSE frame. Recheck only
+      // authority/freshness metadata; keep content during ordinary network loss.
+      void api(`/api/conversations/${encode(selected)}/head`).catch((e) => {
+        if (
+          !canceled &&
+          e instanceof APIError &&
+          [401, 403, 404].includes(e.status)
+        ) {
+          source.close();
+          setMessages([]);
+          setError(String(e));
+        }
+      });
+    };
     return () => {
       canceled = true;
       source.close();

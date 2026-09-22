@@ -24,8 +24,8 @@ flowchart LR
 ```
 
 `internal/product` owns intent, permissions, projections and lifecycle decisions.
-`internal/producthttp` translates authenticated requests without owning runtime
-lifetimes. `internal/sandbox/khora` adapts only public engine APIs and checks
+`internal/producthttp` translates authenticated requests and owns advisory
+resource event hubs; execution lifetimes remain with product services. `internal/sandbox/khora` adapts only public engine APIs and checks
 engine store identity, epochs, mutation revisions and postconditions.
 `internal/application` is the executable composition; `internal/edge` is the
 same-origin router. Package-boundary and removal tests enforce these layers.
@@ -46,3 +46,12 @@ The deployment is single-owner. Database-path and alias locks reject a second
 application writer. Browser reconnect, application restart and engine process
 restart are recovery scenarios; they are not active-active or physical power-loss
 qualification.
+
+
+Durable ingestion commits source evidence and command state before ACK. A separate
+bounded display worker materializes conversation items, revisions and changes.
+Authenticated HTTP reads seek those derived indexes. The browser tracks separate
+page frontiers and loaded-window budgets rather than rebuilding native journals.
+A shared Project hub polls the durable outbox once, owns one advisory filesystem
+watch, and fans out bounded replay envelopes. Subscriber overflow and expired
+continuity require resync. No event subscription activates or pins a Project.

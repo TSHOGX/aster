@@ -146,13 +146,13 @@ export function ProjectWorkbench() {
   return (
     <DialogProvider key={identity.username}>
       <ResourceProvider actor={identity.username}>
-      <Application
-        identity={identity}
-        onLogout={() => {
-          clearPreferenceMemory();
-          setIdentity(null);
-        }}
-      />
+        <Application
+          identity={identity}
+          onLogout={() => {
+            clearPreferenceMemory();
+            setIdentity(null);
+          }}
+        />
       </ResourceProvider>
     </DialogProvider>
   );
@@ -774,7 +774,6 @@ function Application({
               sessions={data.sessions[project.id] || []}
               terminals={data.terminals[project.id] || []}
               nav={nav}
-              tick={data.tick}
               onNavigate={(next) => void navigate(next)}
               onRefresh={data.refresh}
               onError={data.setError}

@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notifications/{notification}/read", s.readNotification)
 	mux.HandleFunc("GET /api/conversations", s.sharedConversations)
 	mux.HandleFunc("GET /api/conversations/{session}/messages", s.conversationMessages)
+	mux.HandleFunc("GET /api/conversations/{session}/head", s.sharedConversationHead)
 	mux.HandleFunc("GET /api/conversations/{session}/events", s.conversationEvents)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/readers", s.grantConversation)
 	mux.HandleFunc("DELETE /api/projects/{project}/sessions/{session}/readers/{reader}", s.revokeConversation)
@@ -62,7 +63,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/projects/{project}/files/content", s.writeFile)
 	mux.HandleFunc("POST /api/projects/{project}/files", s.mutateFile)
 	mux.HandleFunc("GET /api/projects/{project}/files/operations/{operation}", s.fileOperation)
-	mux.HandleFunc("GET /api/projects/{project}/files/watch", s.watchFiles)
 	mux.HandleFunc("GET /api/projects", s.listProjects)
 	mux.HandleFunc("POST /api/projects", s.createProject)
 	mux.HandleFunc("GET /api/projects/{project}", s.getProject)
@@ -72,7 +72,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{project}/resume", s.resumeProject)
 	mux.HandleFunc("POST /api/projects/{project}/pause", s.pauseProject)
 	mux.HandleFunc("POST /api/projects/{project}/restart", s.restartProject)
-	mux.HandleFunc("GET /api/projects/{project}/events", s.events)
 	mux.HandleFunc("GET /api/projects/{project}/resources/events", s.resources)
 
 	mux.HandleFunc("GET /api/projects/{project}/sessions", s.listSessions)
@@ -80,19 +79,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}", s.getSession)
 	mux.HandleFunc("PATCH /api/projects/{project}/sessions/{session}", s.renameSession)
 	mux.HandleFunc("DELETE /api/projects/{project}/sessions/{session}", s.deleteSession)
-	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/snapshot", s.sessionSnapshot)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/view/head", s.conversationHead)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/view/pages", s.conversationPage)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/view/changes", s.conversationChanges)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/view/turns", s.conversationSummaries)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/view/messages/{message}/content", s.conversationMessageText)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/view/items/{item}/detail", s.conversationDetail)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/view/rebuild", s.rebuildConversation)
-	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/records", s.agentRecords)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/control", s.agentControl)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/turns/{turn}/control", s.queuedControl)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/turns", s.listTurns)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/turn-index", s.turnIndex)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/turns", s.admitTurn)
-	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/messages", s.listMessages)
 
 	mux.HandleFunc("GET /api/projects/{project}/terminals", s.listTerminals)
 	mux.HandleFunc("POST /api/projects/{project}/terminals", s.createTerminal)
@@ -316,16 +314,6 @@ func (s *Server) admitTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, turn)
-}
-
-func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	messages, err := s.Store.Messages(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "after"), intParam(q, "limit", 0))
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
 }
 
 func (s *Server) listTerminals(w http.ResponseWriter, r *http.Request) {

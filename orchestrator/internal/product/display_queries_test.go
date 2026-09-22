@@ -171,3 +171,48 @@ func TestDisplayReusedIncarnationAndMissingNativeStarts(t *testing.T) {
 	_, err = s.ConversationPage(ctx, scope, "other", ViewSelector{Before: foreign})
 	wantError(t, err, ErrInvalid)
 }
+
+func TestViewMessageCopyAndSummaryChunks(t *testing.T) {
+	s, scope, i, c := agentFixture(t)
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	must(t, err)
+	content := strings.Repeat("complete 世界\n", 10000)
+	raw, _ := json.Marshal(map[string]any{"type": "message_end", "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": content}}}})
+	_, err = s.IngestAgent(ctx, i, record(i, c, 2, "native", string(raw)))
+	must(t, err)
+	must(t, s.ProjectConversation(ctx, i.SessionID))
+	var full strings.Builder
+	cursor := ""
+	id := fmt.Sprintf("%s/2", i.ID)
+	for {
+		chunk, e := s.ConversationMessageText(ctx, scope, i.SessionID, id, cursor)
+		must(t, e)
+		if len(chunk.Data) > 32<<10 || !utf8.ValidString(chunk.Data) {
+			t.Fatal("unbounded or invalid message chunk")
+		}
+		full.WriteString(chunk.Data)
+		cursor = chunk.Next
+		if cursor == "" {
+			break
+		}
+	}
+	if full.String() != content {
+		t.Fatal("copy lost message content")
+	}
+	_, err = s.ConversationMessageText(ctx, Scope{Actor: "foreign", ProjectID: scope.ProjectID}, i.SessionID, id, "")
+	wantError(t, err, ErrNotFound)
+	summaries, err := s.ConversationSummaries(ctx, scope, i.SessionID, []string{c.TurnID})
+	must(t, err)
+	if len(summaries.Turns) != 1 || summaries.Turns[0].State != "running" {
+		t.Fatal(summaries)
+	}
+	_, err = s.ConversationSummaries(ctx, scope, i.SessionID, make([]string, 51))
+	wantError(t, err, ErrInvalid)
+	page, err := s.ConversationPage(ctx, scope, i.SessionID, ViewSelector{})
+	must(t, err)
+	anchor, err := s.ConversationPage(ctx, scope, i.SessionID, ViewSelector{AroundItem: page.Items[1].ID})
+	must(t, err)
+	if anchor.Items[0].ID != page.Items[1].ID {
+		t.Fatal("item anchor not retained")
+	}
+}

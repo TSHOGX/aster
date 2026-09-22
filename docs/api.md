@@ -16,20 +16,20 @@ Resource paths below use stored Project and child identities.
 | `…/sessions/{session}/turns` | Ordered turns and prompt admission |
 | `…/sessions/{session}/control` | Continue, interrupt, steer or retry recovery |
 | `…/sessions/{session}/turns/{turn}/control` | Control held/queued work |
-| `…/sessions/{session}/snapshot`, `/records`, `/messages` | Bounded conversation/history projection |
+| `…/sessions/{session}/view/*` | Bounded durable conversation views, changes, details and control head |
 | `…/terminals` and `…/terminals/{terminal}` | Retained PTY metadata and retirement |
 | `…/terminals/{terminal}/start`, `/stop`, `/attach` | Start, stop and WebSocket observation |
-| `…/files`, `/files/content`, `/files/watch`, `/files/operations/{operation}` | Directory pages, mutations, streaming content, watches and outcome inspection |
+| `…/files`, `/files/content`, `/files/operations/{operation}` | Directory pages, mutations, streaming content and outcome inspection |
 | `…/schedules`, `/schedules/{schedule}`, `/run`, `/runs` | Project schedules and their run ledger |
 | `…/sessions/{session}/readers` | Grant/revoke conversation readers |
 | `…/sessions/{session}/shares`, `…/shares/{share}`, `…/shares/{share}/rotate` | Freeze, revoke and rotate public shares |
 | `/api/shared/{token}`, `/messages`, `/files` | Frozen public projection selected by bearer token |
-| `/api/conversations`, `/api/conversations/{session}/messages`, `/events` | Conversations shared with the current actor |
+| `/api/conversations`, `/api/conversations/{session}/messages`, `/head`, `/events` | Conversations shared with the current actor |
 | `/api/search`, `/api/notifications`, `/api/notifications/{notification}/read` | Scoped search and inbox |
-| `…/events` | Project SSE invalidation/projection stream |
+| `…/resources/events` | Shared resource SSE with independent replay cursor |
 
 For exact methods and payloads, see [routes.go](../orchestrator/internal/producthttp/routes.go),
-[projections.go](../orchestrator/internal/producthttp/projections.go),
+[controls.go](../orchestrator/internal/producthttp/controls.go),
 [adjacent.go](../orchestrator/internal/producthttp/adjacent.go) and
 [project-api.ts](../frontend/lib/project-api.ts).
 
@@ -53,8 +53,9 @@ hexadecimal characters**. File-operation responses include `id`, `state`,
 runtime state. Read failures after headers truncate the response instead of
 pretending a shorter successful download.
 
-SSE uses monotonically increasing projection cursors. A reconnect or explicit
-gap requires a fresh authorized snapshot. Terminal sockets carry binary input
+Resource SSE uses opaque Project/incarnation/sequence cursors. Normal rotations
+replay without a content invalidation; an explicit resync revalidates visible
+resources. Product revisions, file positions and transport cursors are distinct. Terminal sockets carry binary input
 and JSON controls such as `claim_input`, `resize`, `interrupt`, `eof` and `signal`.
 Server frames communicate input ownership, output, gaps and exit. Controls remain
 bound to the observer's original incarnation and owner; reauthorization continues
@@ -73,38 +74,20 @@ filtered before stable ID pagination; conversation reader grants do not grant
 schedule access. Continue with `next` until absent. Task mutations and run history
 use the existing Project-scoped routes.
 
-Owner Session snapshots include `timeline` and `timeline_truncated`. Timeline items carry a stable `id`, native `cursor`, `turn_id`, `kind` and bounded display fields. They are derived from the existing journal inside the authorized snapshot transaction; no database migration or new sharing permission is introduced.
-
-Tool-call content in native assistant messages is projected immediately as a
-`tool` row with `state: "pending"`, before execution starts. Execution start,
-partial updates, and end events merge into the same turn-scoped call ID, yielding
-`running`, `completed`, or `failed`. Rows retain the original call order even
-when parallel executions start or finish in a different order. Text-only tool
-results are extracted before the display limit is applied, preserving line
-breaks in long output; other results retain their bounded JSON representation.
-
-`turn_summaries` in owner snapshots supplies `id`, `state`, `created_at`, optional
-`finished_at`, and `final_message_id` only for completed turns. It includes turns
-referenced by the visible history page even when they are outside the live
-control window. These are projections of existing turns/messages, not new
-lifecycle authority or a database migration.
+Conversation items are materialized by a bounded background projector. Native
+text/thinking blocks retain stable identities; tool calls appear while arguments
+are being prepared and keep their positions through execution updates. Complete
+oversized content remains available through versioned detail chunks. Projection
+lag never changes command outcomes or journal ACK authority.
 
 `GET …/sessions/{session}/turn-index?before=SEQUENCE&limit=100` supplies a bounded
 owner-only navigation index. `turns` are chronological within each page, initially
 the newest 100; `next_before` loads the preceding page. Each entry includes turn
 ID/sequence/state/time, up to 600 prompt characters, and up to 1200 characters of
 the last assistant message only after successful turn completion. Shared reader
-grants do not authorize this endpoint. `snapshot?turn=ID` validates the turn's
-session membership and loads surrounding messages anchored at its user message
-(including adjacent turns), with the target prompt retained;
-`message` targeting takes precedence when both are supplied. Turn summaries also
-include `sequence` for stable numbering of off-page navigation targets.
-
-Owner snapshots accept `before` for preceding messages or `after` for following
-messages, and return `has_earlier` / `has_later` for the two page boundaries.
-The client merges only adjacent pages in its current reading window; turn IDs
-identify scroll destinations rather than conversation filters.
-
+grants do not authorize this endpoint. View pages accept `around_turn`,
+`around_message` or `around_item` to seek indexed display windows. Only one selector
+is allowed. Page and change cursors bind the Session and projection generation.
 
 ## Conversation display views
 
@@ -114,7 +97,9 @@ Project/session authority before accessing derived content:
 | Method/path | Result |
 | --- | --- |
 | `GET /head` | Control summary, independent display/index revisions, projection generation/state and source frontiers |
-| `GET /pages` | Latest bounded page; one of `before`, `after`, `around_turn` or `around_message` selects another window |
+| `GET /pages` | Latest bounded page; one of `before`, `after`, `around_turn`, `around_message` or `around_item` selects another window |
+| `GET /turns?ids=ID,...` | At most fifty scoped turn summaries with their independent index revision |
+| `GET /messages/{message}/content` | Immutable final message text in bounded chunks for complete copy |
 | `GET /changes?after_revision=R` | Immutable changes to a fixed target revision; follow returned `cursor` with the same base |
 | `GET /items/{item}/detail?version=V` | A UTF-8 chunk of full item JSON; follow `cursor` until `next` is absent |
 | `POST /rebuild` | Invalidate only derived state and enqueue reconstruction; never replay execution |
@@ -132,5 +117,12 @@ A building projection returns `202`, never an authoritative empty conversation.
 Malformed selectors/cursors return `400`; absent or unauthorized resources retain
 `404` equivalence. A failed projector leaves control available through head and
 reports its display failure separately. Read saturation returns `503`.
-Snapshot routes remain during the active browser cutover, with no raw-history
-fallback inside the new view endpoints.
+The former snapshot, raw-record, separate Project-event and file-watch HTTP
+routes have been removed. There is no request-time raw-history fallback.
+
+
+Shared-reader events track finalized-message sequence, not native token traffic.
+Unchanged streams send heartbeats; reconnect metadata checks use `/head` and
+reauthorize without reloading message bodies. Revocation closes the stream and
+clears the shared view. Shared-reader authority remains separate from Project
+resource events, live files and terminals.

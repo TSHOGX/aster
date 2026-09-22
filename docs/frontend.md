@@ -9,8 +9,7 @@ preferences. Layout changes never stop a runtime resource.
 New Chat keeps a project-scoped draft and creates its Session on first send.
 Creation and first-turn request identities survive lost responses and explicit
 retries. URL project/session/message targets, browser history, saved drafts and
-reading positions remain separate from execution state. Legacy view preferences
-migrate to one selected Session. Drafts are not evicted by layout-cache limits;
+reading positions remain separate from execution state. Preferences store one selected Session. Drafts are not evicted by layout-cache limits;
 when browser storage fails, memory recovery lasts only for that page lifetime.
 
 The terminal dock displays one selected PTY tab, with creation, reopening,
@@ -34,12 +33,23 @@ Sessions retains edits; switching files/Projects offers save, discard or cancel
 for dirty text. File changes do not overwrite an active editor. Saving does not
 claim atomic conflict detection against concurrent writers.
 
-Snapshots, event cursors, tool activity and history pages remain bounded. The owner snapshot includes a cursor-ordered timeline of emitted thinking,
-assistant content blocks and tool executions. Native message updates retain
-their original keys; tool results update the execution-start position. Completion
-and reload preserve order. Thinking signatures and non-display native metadata
-are not included. Timeline responses retain at most 500 projected event groups
-and approximately 2 MiB of display text, with an explicit truncation indicator.
+Conversation state lives in an authenticated memory repository. Pages carry
+independent content frontiers; bounded deltas update loaded windows and tombstones
+remove deleted blocks. Historical pages catch up before joining newer content.
+The active window is bounded to sixteen pages and an estimated 8 MiB; edge eviction
+retains cursors and the reading anchor. The shared memory store limits inactive
+resources to 32 MiB and 256 entries. Drafts and pending command identities remain
+independently owned. Oversized answer content is retrieved in chunks for complete
+copy/download; a copy operation has a 16 MiB decoded working limit.
+
+One Project resource transport routes conversation, control, index, terminal,
+file and lifecycle changes. Healthy clients do no fixed conversation/list/file
+polling. Reconnect replays from an accepted cursor; explicit gaps rebuild only
+visible resources. Hidden tabs release transports and reconcile on return.
+A thirty-second light list fallback runs only while disconnected. Pending display
+builds retry bounded head/page reads. Control and projection status are distinct.
+The former snapshot/raw-record reducers and HTTP reads are removed.
+
 Workspace paths in prose and inline code open file previews directly; unique
 referenced basenames are resolved without changing fenced code or existing links. Recovery and unknown-outcome controls remain visible when needed.
 The composer follows output only while the reader is at the bottom and excludes
@@ -79,7 +89,7 @@ animation, without changing its identity/order. Calls left unfinished when a
 turn stops show an unknown outcome instead of continuing to animate.
 
 Each turn displays an elapsed-time header immediately on submission. Owner
-snapshots include historic `turn_summaries` independently of the bounded live
+view pages include historic `turn_summaries` independently of the bounded live
 turn-control page, so duration and completion survive navigation/reload. Timers
 use creation time (including queued wait), freeze at recorded completion, and
 collapse intermediate thinking/tools/assistant output only after confirmed

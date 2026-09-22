@@ -46,27 +46,21 @@ func TestDisplayReadScale(t *testing.T) {
 				}
 			}
 			projectTime := time.Since(start)
-			legacy, derived := []time.Duration{}, []time.Duration{}
+			derived := []time.Duration{}
 			for trial := 0; trial < 21; trial++ {
-				start = time.Now()
-				snapshot, e := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
-				must(t, e)
-				oldTime := time.Since(start)
 				start = time.Now()
 				page, e := s.ConversationPage(ctx, scope, i.SessionID, ViewSelector{})
 				must(t, e)
 				newTime := time.Since(start)
-				if len(snapshot.Timeline) != 2 || len(page.Items) != 2 {
+				if len(page.Items) != 2 {
 					t.Fatal("unequal visible fixture sizes")
 				}
 				if trial > 0 {
-					legacy = append(legacy, oldTime)
 					derived = append(derived, newTime)
 				}
 			}
-			slices.Sort(legacy)
 			slices.Sort(derived)
-			t.Logf(`{"records":%d,"visible_items":2,"samples":20,"warmup":1,"quantile":"nearest-rank","snapshot_p50_us":%d,"snapshot_p95_us":%d,"view_p50_us":%d,"view_p95_us":%d,"projector_batches":%d,"projector_total_ms":%d}`, count, legacy[9].Microseconds(), legacy[18].Microseconds(), derived[9].Microseconds(), derived[18].Microseconds(), batches, projectTime.Milliseconds())
+			t.Logf(`{"records":%d,"visible_items":2,"samples":20,"warmup":1,"quantile":"nearest-rank","view_p50_us":%d,"view_p95_us":%d,"projector_batches":%d,"projector_total_ms":%d}`, count, derived[9].Microseconds(), derived[18].Microseconds(), batches, projectTime.Milliseconds())
 		})
 	}
 }

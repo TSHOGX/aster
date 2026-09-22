@@ -37,7 +37,7 @@ import {
   type Project,
 } from "@/lib/project-api";
 import { fileImpact, type FileInvalidation } from "@/lib/file-invalidation";
-import { useResources } from "./resource-provider";
+import { useResources, useRealtime } from "./resource-provider";
 import { FilePreview } from "./file-preview";
 import { IconButton, Menu, Splitter, useDialog } from "./ui";
 const CodeEditor = dynamic(
@@ -78,15 +78,33 @@ export function FilesPanel({
   fullButton?: RefObject<HTMLButtonElement | null>;
 }) {
   const resources = useResources();
+  const realtime = useRealtime();
   const reads = useRef(new AbortController());
-  const loads = useRef(new Map<string, {after: string; promise: Promise<FilePage | undefined>}>());
-  const treeKey = useMemo(() => ({project: project.id, kind: "directory" as const, identity: "directory-tree"}), [project.id]);
+  const loads = useRef(
+    new Map<
+      string,
+      { after: string; promise: Promise<FilePage | undefined> }
+    >(),
+  );
+  const treeKey = useMemo(
+    () => ({
+      project: project.id,
+      kind: "directory" as const,
+      identity: "directory-tree",
+    }),
+    [project.id],
+  );
   const tr = useT(),
     ask = useDialog();
-  const [tree, setTree] = useState<Record<string, Directory>>(() => resources.peek(treeKey) || {}),
+  const [tree, setTree] = useState<Record<string, Directory>>(
+      () => resources.peek(treeKey) || {},
+    ),
     [treeOpen, setTreeOpen] = useState(true),
     [filter, setFilter] = useState("");
-  const [watchHealth, setWatchHealth] = useState<"live" | "reconnecting" | "stale">("live");
+  const [denied, setDenied] = useState(false);
+  const [watchHealth, setWatchHealth] = useState<
+    "live" | "reconnecting" | "stale"
+  >("live");
   const originalRef = useRef("");
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -120,14 +138,24 @@ export function FilesPanel({
       reads.current.abort();
     };
   }, []);
-  const readDirectory = useCallback((url: string) => resources.read<FilePage>(
-    {project: project.id, kind: "directory", identity: url},
-    signal => api<FilePage>(url, {signal}), reads.current.signal,
-  ), [resources, project.id]);
+  const readDirectory = useCallback(
+    (url: string) =>
+      resources.read<FilePage>(
+        { project: project.id, kind: "directory", identity: url },
+        (signal) => api<FilePage>(url, { signal }),
+        reads.current.signal,
+      ),
+    [resources, project.id],
+  );
   useEffect(() => resources.pin(treeKey), [resources, treeKey]);
-  useEffect(() => { resources.put(treeKey, tree); }, [resources, treeKey, tree]);
+  useEffect(() => {
+    resources.put(treeKey, tree);
+  }, [resources, treeKey, tree]);
   const load = useCallback(
-    async function load(path: string, after = ""): Promise<FilePage | undefined> {
+    async function load(
+      path: string,
+      after = "",
+    ): Promise<FilePage | undefined> {
       const pending = loads.current.get(path);
       if (pending) {
         if (pending.after === after) return pending.promise;
@@ -136,57 +164,60 @@ export function FilesPanel({
         return load(path, after);
       }
       const flight = (async () => {
-      const id = (serial.current[path] = (serial.current[path] || 0) + 1);
-      setTree((t) => ({
-        ...t,
-        [path]: {
-          entries: t[path]?.entries || [],
-          next: t[path]?.next,
-          loading: true,
-        },
-      }));
-      try {
-        let page = await readDirectory(
-          `${base}?path=${encode(path)}&after=${encode(after)}&limit=100`,
-        );
-        if (!after) {
-          const retain = treeRef.current[path]?.entries.length || 0;
-          while (page.next && page.entries.length < retain) {
-            const next = await readDirectory(
-              `${base}?path=${encode(path)}&after=${encode(page.next)}&limit=100`,
-            );
-            page = { ...next, entries: [...page.entries, ...next.entries] };
-          }
-        }
-        if (!alive.current || serial.current[path] !== id) return;
+        const id = (serial.current[path] = (serial.current[path] || 0) + 1);
         setTree((t) => ({
           ...t,
           [path]: {
-            ...page,
-            entries: after
-              ? [
-                  ...new Map(
-                    [...(t[path]?.entries || []), ...page.entries].map((e) => [
-                      e.name,
-                      e,
-                    ]),
-                  ).values(),
-                ]
-              : page.entries,
+            entries: t[path]?.entries || [],
+            next: t[path]?.next,
+            loading: true,
           },
         }));
-        return page;
-      } catch (e) {
-        if (alive.current && serial.current[path] === id)
+        try {
+          let page = await readDirectory(
+            `${base}?path=${encode(path)}&after=${encode(after)}&limit=100`,
+          );
+          if (!after) {
+            const retain = treeRef.current[path]?.entries.length || 0;
+            while (page.next && page.entries.length < retain) {
+              const next = await readDirectory(
+                `${base}?path=${encode(path)}&after=${encode(page.next)}&limit=100`,
+              );
+              page = { ...next, entries: [...page.entries, ...next.entries] };
+            }
+          }
+          if (!alive.current || serial.current[path] !== id) return;
           setTree((t) => ({
             ...t,
-            [path]: { entries: t[path]?.entries || [], error: String(e) },
+            [path]: {
+              ...page,
+              entries: after
+                ? [
+                    ...new Map(
+                      [...(t[path]?.entries || []), ...page.entries].map(
+                        (e) => [e.name, e],
+                      ),
+                    ).values(),
+                  ]
+                : page.entries,
+            },
           }));
-      }
+          return page;
+        } catch (e) {
+          if (alive.current && serial.current[path] === id)
+            setTree((t) => ({
+              ...t,
+              [path]: { entries: t[path]?.entries || [], error: String(e) },
+            }));
+        }
       })();
-      loads.current.set(path, {after, promise: flight});
-      try { return await flight; }
-      finally { if (loads.current.get(path)?.promise === flight) loads.current.delete(path); }
+      loads.current.set(path, { after, promise: flight });
+      try {
+        return await flight;
+      } finally {
+        if (loads.current.get(path)?.promise === flight)
+          loads.current.delete(path);
+      }
     },
     [base, readDirectory],
   );
@@ -197,59 +228,143 @@ export function FilesPanel({
       if (!treeRef.current[d]) void load(d);
   }, [visible, project.state, dirsKey, load]);
   const validateSelected = useCallback(async () => {
-    const path=selectedRef.current;
-    if(!path) return true;
-    if(editor.current===null) {setVersion(n=>n+1);return true;}
+    const path = selectedRef.current;
+    if (!path) return true;
+    if (editor.current === null) {
+      setVersion((n) => n + 1);
+      return true;
+    }
     try {
-      const blob=await resources.read({project:project.id,kind:"file",identity:fileURL(project.id,path)},
-        signal=>readPreview(fileURL(project.id,path),signal,1<<20), reads.current.signal,0);
-      const text=await blob.text();
-      if(alive.current && selectedRef.current===path && editor.current!==null)
-        setChanged(text!==originalRef.current);
+      const blob = await resources.read(
+        {
+          project: project.id,
+          kind: "file",
+          identity: fileURL(project.id, path),
+        },
+        (signal) => readPreview(fileURL(project.id, path), signal, 1 << 20),
+        reads.current.signal,
+        0,
+      );
+      const text = await blob.text();
+      if (
+        alive.current &&
+        selectedRef.current === path &&
+        editor.current !== null
+      )
+        setChanged(text !== originalRef.current);
       return true;
     } catch {
-      if(alive.current && selectedRef.current===path) setWatchHealth("stale");
+      if (alive.current && selectedRef.current === path)
+        setWatchHealth("stale");
       return false;
     }
-  }, [resources,project.id]);
+  }, [resources, project.id]);
   useEffect(() => {
     if (!visible || project.state !== "active") return;
-    const source = new EventSource(`${base}/watch`);
+    let live = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let healthTimer: ReturnType<typeof setTimeout> | undefined;
     let delayedTimer: ReturnType<typeof setTimeout> | undefined;
-    const dirtyDirectories=new Set<string>();
-    let selectedDirty=false;
-    const invalidate = (message: Event) => {
-      let event: FileInvalidation;
-      try {event=JSON.parse((message as MessageEvent).data);} catch {event={reset:true,reason:"invalid_event"};}
-      const impact=fileImpact(event,selectedRef.current,["",...expanded.current]);
-      for(const dir of impact.directories) {
-        if(dirtyDirectories.size>=64) {dirtyDirectories.clear();dirtyDirectories.add("");break;}
+    const dirtyDirectories = new Set<string>();
+    let selectedDirty = false;
+    const invalidate = (event: FileInvalidation) => {
+      const impact = fileImpact(event, selectedRef.current, [
+        "",
+        ...expanded.current,
+      ]);
+      for (const dir of impact.directories) {
+        if (dirtyDirectories.size >= 64) {
+          dirtyDirectories.clear();
+          dirtyDirectories.add("");
+          break;
+        }
         dirtyDirectories.add(dir);
       }
       selectedDirty ||= impact.selected;
-      resources.invalidate(k=>k.project===project.id && (
-        k.kind==="directory" && impact.directories.some(dir=>new URL(k.identity,location.origin).searchParams.get("path")===dir) ||
-        k.kind==="file" && impact.selected && k.identity===fileURL(project.id,selectedRef.current)));
-      if(impact.gap && event.reason!=="attachment" && event.reason!=="initial") setWatchHealth("stale");
-      if (!timer) timer=setTimeout(() => {
-        timer=undefined;
-        const dirs=[...dirtyDirectories];dirtyDirectories.clear();
-        const check=selectedDirty;selectedDirty=false;
-        void Promise.all([...dirs.map(dir=>load(dir)), ...(check?[validateSelected()]:[])]).then(results=> {
-          if(alive.current && source.readyState===EventSource.OPEN) setWatchHealth(results.every(Boolean)?"live":"stale");
-        });
-      },100);
+      resources.invalidate(
+        (k) =>
+          k.project === project.id &&
+          ((k.kind === "directory" &&
+            impact.directories.some(
+              (dir) =>
+                new URL(k.identity, location.origin).searchParams.get(
+                  "path",
+                ) === dir,
+            )) ||
+            (k.kind === "file" &&
+              impact.selected &&
+              k.identity === fileURL(project.id, selectedRef.current))),
+      );
+      if (
+        impact.gap &&
+        event.reason !== "attachment" &&
+        event.reason !== "initial"
+      )
+        setWatchHealth("stale");
+      if (!timer)
+        timer = setTimeout(() => {
+          timer = undefined;
+          const dirs = [...dirtyDirectories];
+          dirtyDirectories.clear();
+          const check = selectedDirty;
+          selectedDirty = false;
+          void Promise.all([
+            ...dirs.map((dir) => load(dir)),
+            ...(check ? [validateSelected()] : []),
+          ]).then((results) => {
+            if (alive.current && live)
+              setWatchHealth(results.every(Boolean) ? "live" : "stale");
+          });
+        }, 100);
     };
-    source.addEventListener("invalidate",invalidate);
-    source.onopen=()=> {clearTimeout(healthTimer);clearTimeout(delayedTimer);healthTimer=undefined;delayedTimer=undefined;setWatchHealth("live");};
-    source.onerror=()=> {
-      if (!healthTimer) healthTimer=setTimeout(()=>setWatchHealth("reconnecting"),5000);
-      if (!delayedTimer) delayedTimer=setTimeout(()=>setWatchHealth("stale"),15000);
+    const unsubscribe = realtime.subscribe(
+      project.id,
+      (event) => {
+        if (event.resource_kind === "files")
+          invalidate(event.payload as FileInvalidation);
+        else if (event.resource_kind === "resync")
+          invalidate({ reset: true, reason: event.reason });
+        else if (event.resource_kind === "closed") {
+          setDenied(true);
+          setTree({});
+          setWatchHealth("stale");
+        }
+      },
+      (state) => {
+        live = state === "live";
+        if (live) {
+          clearTimeout(healthTimer);
+          clearTimeout(delayedTimer);
+          healthTimer = undefined;
+          delayedTimer = undefined;
+          setWatchHealth("live");
+        } else {
+          if (!healthTimer)
+            healthTimer = setTimeout(
+              () => setWatchHealth("reconnecting"),
+              5000,
+            );
+          if (!delayedTimer)
+            delayedTimer = setTimeout(() => setWatchHealth("stale"), 15000);
+        }
+      },
+    );
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+      clearTimeout(healthTimer);
+      clearTimeout(delayedTimer);
     };
-    return () => {source.close();clearTimeout(timer);clearTimeout(healthTimer);clearTimeout(delayedTimer);};
-  }, [base, load, validateSelected, visible, project.state, project.id, resources]);
+  }, [
+    base,
+    load,
+    validateSelected,
+    visible,
+    project.state,
+    project.id,
+    resources,
+    realtime,
+  ]);
   // Reveal deep links without walking unrelated directories. Continue paging each ancestor until found.
   useEffect(() => {
     if (!selected || !visible || project.state !== "active") return;
@@ -551,6 +666,12 @@ export function FilesPanel({
       </>
     );
   };
+  if (denied)
+    return (
+      <aside className="files-panel">
+        <p role="alert">{tr("This conversation is unavailable.")}</p>
+      </aside>
+    );
   return (
     <aside
       className={`files-panel ${treeOpen ? "tree-open" : ""} ${fullscreen ? "fullscreen" : ""}`}
@@ -653,7 +774,11 @@ export function FilesPanel({
           )}
         </p>
       )}
-      {watchHealth !== "live" && <p className="notice" role="status">{tr("File updates may be delayed. Refresh to check.")}</p>}
+      {watchHealth !== "live" && (
+        <p className="notice" role="status">
+          {tr("File updates may be delayed. Refresh to check.")}
+        </p>
+      )}
       {changed && (
         <p className="notice warning">
           {edit !== null

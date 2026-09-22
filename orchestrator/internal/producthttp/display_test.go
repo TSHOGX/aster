@@ -65,4 +65,14 @@ func TestConversationViewHTTPBoundaries(t *testing.T) {
 	if code != http.StatusUnauthorized {
 		t.Fatal(code)
 	}
+	h.setActor("alice")
+	child, err := h.store.Session(ctx, scope, "s")
+	must(t, err)
+	must(t, h.store.DeleteSession(ctx, scope, "s", child.Revision))
+	for _, path := range []string{"/head", "/pages", "/changes?after_revision=0", "/turns?ids=t", "/messages/m/content", "/items/unknown/detail?version=1"} {
+		code, _ = h.do(t, "GET", base+path, "")
+		if code != http.StatusNotFound {
+			t.Fatal("deleted conversation retained content authority", path, code)
+		}
+	}
 }

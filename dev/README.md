@@ -12,10 +12,13 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `mixed`, `browser`, `faults` and `all`. The default is the
+Suites are `release`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `mixed` runs over five minutes. `browser`
 requires `npm run build` in the frontend and an installed Playwright Chromium.
-Provide `PLAYWRIGHT_BROWSERS_PATH` if using a nondefault cache. The script builds
+Provide `PLAYWRIGHT_BROWSERS_PATH` when the build user owns the browser cache;
+the isolated substrate runs as root and otherwise searches its own cache.
+`realtime` qualifies empty-workspace watch continuity over two real rotations
+and verifies that connected observers do not prevent Project pause. The script builds
 the pinned engine or accepts `--engine FILE`; module caches remain with the build
 user. No private checkout path is compiled into the public test harness.
 

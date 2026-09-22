@@ -237,7 +237,8 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 			turns, _ := v["turns"].([]any)
 			return len(turns) == 1 && turns[0].(map[string]any)["state"] == "completed"
 		})
-		v := a.request("GET", base+"/messages", nil, 200)
+		a.await(10*time.Second, "display catches native completion", func() bool { return a.request("GET", base+"/view/head", nil, 0)["projection_state"] == "ready" })
+		v := a.request("GET", base+"/view/pages", nil, 200)
 		raw, _ := json.Marshal(v)
 		if !bytes.Contains(raw, []byte("deterministic-local-reply")) {
 			t.Fatalf("native reply missing: %s", raw)

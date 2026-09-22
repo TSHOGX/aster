@@ -123,7 +123,7 @@ func TestReleasedMixedWorkload(t *testing.T) {
 	watchctx, stopWatch := context.WithCancel(a.ctx)
 	defer stopWatch()
 	for p := 0; p < 2; p++ {
-		path := fmt.Sprintf("/api/projects/mixed-%d/files/watch", p)
+		path := fmt.Sprintf("/api/projects/mixed-%d/resources/events", p)
 		go func() {
 			for watchctx.Err() == nil {
 				req, _ := http.NewRequestWithContext(watchctx, "GET", a.origin+path, nil)
@@ -190,7 +190,8 @@ func TestReleasedMixedWorkload(t *testing.T) {
 				}
 				return done
 			})
-			a.request("GET", path+"/snapshot?records=1", nil, 200)
+			a.await(10*time.Second, "display catches native completion", func() bool { return a.request("GET", path+"/view/head", nil, 0)["projection_state"] == "ready" })
+			a.request("GET", path+"/view/pages", nil, 200)
 		}
 		elapsed := time.Since(tick)
 		if elapsed > maxFairness {

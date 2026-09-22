@@ -65,7 +65,7 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 			return err
 		}
 	}
-	handle := fmt.Sprintf("browser-setup-%d", ref.Epoch)
+	handle := fmt.Sprintf("browser-setup-%s-%d", ref.SandboxID, ref.Epoch)
 	stream, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: handle}, IdempotencyKey: handle, Command: "/bin/sh", Arguments: []string{"-c", "chmod +x /usr/local/bin/agent-runner /usr/local/bin/workspace-files /usr/local/bin/runtime-fixture /usr/local/bin/runtime-cleanup; mkdir -p /opt/agent-config/pi"}, Directory: "/workspace"})
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func (b *browserSubstrate) WriteProjection(ctx context.Context, ref sandbox.Refe
 	if mode == "" {
 		mode = "model"
 	}
-	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: fmt.Sprintf("browser-model-%d", ref.Epoch)}, IdempotencyKey: fmt.Sprintf("browser-model-%d", ref.Epoch), Command: "/usr/local/bin/runtime-fixture", Arguments: []string{mode}, Directory: "/workspace"})
+	model, err := b.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: sandbox.ProcessReference{StoreID: ref.StoreID, SandboxID: ref.SandboxID, Epoch: ref.Epoch, Handle: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch)}, IdempotencyKey: fmt.Sprintf("browser-model-%s-%d", ref.SandboxID, ref.Epoch), Command: "/usr/local/bin/runtime-fixture", Arguments: []string{mode}, Directory: "/workspace"})
 	if err != nil {
 		return err
 	}

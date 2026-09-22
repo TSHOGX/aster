@@ -2,19 +2,15 @@ package producthttp
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"path"
-	"time"
 
 	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/projectfiles"
-	"harness-platform/orchestrator/internal/sandbox"
 )
 
 func (s *Server) filesAvailable(w http.ResponseWriter) bool {
@@ -137,76 +133,4 @@ func (s *Server) fileOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, o)
-}
-func (s *Server) watchFiles(w http.ResponseWriter, r *http.Request) {
-	if !s.filesAvailable(w) {
-		return
-	}
-	// A bounded watch reconnects with a fresh permission check and a rescan. It
-	// never owns Project activity. Cancellation closes the engine subscription.
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	defer cancel()
-	watch, err := s.Files.Watch(ctx, s.scope(r), 0)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	defer watch.Close()
-	stop := context.AfterFunc(ctx, func() { _ = watch.Close() })
-	defer stop()
-	frames := make(chan sandbox.FileInvalidation, 1)
-	go func() {
-		defer close(frames)
-		for {
-			e, err := watch.Next()
-			if err != nil {
-				return
-			}
-			select {
-			case frames <- e:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("X-Accel-Buffering", "no")
-	controller := http.NewResponseController(w)
-	send := func(e sandbox.FileInvalidation) bool {
-		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		raw, _ := json.Marshal(e)
-		_, err := fmt.Fprintf(w, "event: invalidate\ndata: %s\n\n", raw)
-		return err == nil && controller.Flush() == nil
-	}
-	if !send(sandbox.FileInvalidation{Reset: true, Reason: "attachment"}) {
-		return
-	}
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			actor, err := s.Auth.Actor(r)
-			if err != nil || actor != actorFrom(r.Context()) {
-				return
-			}
-			p, err := s.Store.Project(ctx, s.scope(r))
-			if err != nil || p.State != "active" {
-				return
-			}
-			_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil || controller.Flush() != nil {
-				return
-			}
-		case e, ok := <-frames:
-			if !ok {
-				return
-			}
-			if !send(e) {
-				return
-			}
-		}
-	}
 }

@@ -3,12 +3,7 @@ import { useEffect, useState } from "react";
 import { Check, ChevronRight, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
 import { MarkdownView } from "@/components/workbench/markdown-view";
 import { useT } from "@/lib/i18n";
-import {
-  recalled,
-  remember,
-  type TimelineItem,
-  type Message,
-} from "@/lib/project-api";
+import { recalled, remember, type TimelineItem } from "@/lib/project-api";
 import {
   elapsedLabel,
   finalItems,
@@ -45,16 +40,24 @@ function Transcript({
   items,
   files,
   activeTurns,
-  messages,
+  loadMessage,
+  loadDetail,
 }: {
   items: TimelineItem[];
   files: readonly string[];
   activeTurns: ReadonlySet<string>;
-  messages: ReadonlyMap<string, Message>;
+  loadMessage: (id: string) => Promise<string>;
+  loadDetail: (item: TimelineItem) => Promise<string>;
 }) {
   const tr = useT();
+  const [downloadError, setDownloadError] = useState("");
   return (
     <>
+      {downloadError && (
+        <p role="alert" className="notice error">
+          {downloadError}
+        </p>
+      )}
       {groupTimeline(items, activeTurns).map((segment) => {
         if (segment.kind === "activity")
           return (
@@ -65,7 +68,6 @@ function Transcript({
             />
           );
         const item = segment.item;
-        const full = messages.get(item.message_id || "");
         return (
           <article
             key={item.id}
@@ -78,20 +80,29 @@ function Transcript({
               workspaceFiles={files}
               highlight={item.state !== "streaming"}
             />
-            {(full?.content.length || 0) > 64000 && (
+            {item.truncated && (
               <button
-                onClick={() => {
-                  const url = URL.createObjectURL(
-                    new Blob([full!.content], {
-                      type: "text/plain;charset=utf-8",
-                    }),
-                  );
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `message-${full!.sequence}.txt`;
-                  a.click();
-                  setTimeout(() => URL.revokeObjectURL(url), 1000);
-                }}
+                onClick={() =>
+                  void (async () => {
+                    try {
+                      const text = item.message_id
+                        ? await loadMessage(item.message_id)
+                        : await loadDetail(item);
+                      const url = URL.createObjectURL(
+                        new Blob([text], { type: "text/plain;charset=utf-8" }),
+                      );
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "conversation-content.txt";
+                      a.click();
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    } catch (error) {
+                      setDownloadError(
+                        error instanceof Error ? error.message : String(error),
+                      );
+                    }
+                  })()
+                }
               >
                 {tr("Download full message")}
               </button>
@@ -106,7 +117,8 @@ export function TurnView({
   turn,
   files,
   activeTurns,
-  messages,
+  loadMessage,
+  loadDetail,
   actor,
   project,
   session,
@@ -115,7 +127,8 @@ export function TurnView({
   turn: ConversationTurn;
   files: readonly string[];
   activeTurns: ReadonlySet<string>;
-  messages: ReadonlyMap<string, Message>;
+  loadMessage: (id: string) => Promise<string>;
+  loadDetail: (item: TimelineItem) => Promise<string>;
   actor: string;
   project: string;
   session: string;
@@ -146,9 +159,6 @@ export function TurnView({
     expanded ||
     (targetInHistory && collapsedTarget !== targetMessage);
   const running = !!turn.summary && runningTurn(summary!.state);
-  const fullFinal =
-    messages.get(turn.summary?.final_message_id || "")?.content ||
-    final.map((i) => i.content || "").join("\n\n");
   const vote = (value: "up" | "down") => {
     const next = feedback === value ? null : value;
     setFeedback(next);
@@ -157,6 +167,9 @@ export function TurnView({
   const copy = async () => {
     setCopyError(false);
     try {
+      const fullFinal = turn.summary?.final_message_id
+        ? await loadMessage(turn.summary.final_message_id)
+        : final.map((i) => i.content || "").join("\n\n");
       if (navigator.clipboard?.writeText)
         await navigator.clipboard.writeText(fullFinal);
       else {
@@ -186,7 +199,8 @@ export function TurnView({
         items={users}
         files={files}
         activeTurns={activeTurns}
-        messages={messages}
+        loadMessage={loadMessage}
+        loadDetail={loadDetail}
       />
       {summary && (
         <div className={`turn-work ${running ? "is-running" : ""}`}>
@@ -228,14 +242,17 @@ export function TurnView({
           )}
         </div>
       )}
-      {open && <div className="turn-process">
-        <Transcript
-          items={completed ? intermediate : body}
-          files={files}
-          activeTurns={activeTurns}
-          messages={messages}
-        />
-      </div>}
+      {open && (
+        <div className="turn-process">
+          <Transcript
+            items={completed ? intermediate : body}
+            files={files}
+            activeTurns={activeTurns}
+            loadMessage={loadMessage}
+            loadDetail={loadDetail}
+          />
+        </div>
+      )}
       {completed && (
         <>
           <div className="turn-final">
@@ -243,7 +260,8 @@ export function TurnView({
               items={final}
               files={files}
               activeTurns={activeTurns}
-              messages={messages}
+              loadMessage={loadMessage}
+              loadDetail={loadDetail}
             />
           </div>
           <footer className="answer-actions">

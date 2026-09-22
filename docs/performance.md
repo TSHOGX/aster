@@ -13,9 +13,9 @@ active-model deployment continuity.
 | P01d | Verified locally | Lazy process mounting, stable Markdown file inputs and indexed message lookup |
 | P02a | Verified locally | Atomic known-schema migration and durable display storage |
 | P02b–d | Verified locally | Durable projector, bounded view APIs and controlled scale comparison |
-| P02e | Pending | Browser cutover and removal of raw snapshot queries |
+| P02e | Verified locally | Browser cutover; raw snapshot reconstruction and routes removed |
 | P03a/b | Verified locally | Resource scopes and bounded shared server replay hub |
-| P03c–e | Pending | Browser incremental repository, event cutover and idle/runtime qualification |
+| P03c–e | Verified locally | Incremental browser views, shared transport, idle windows and disposable runtime qualification |
 | P04 | Pending | Reusable confined readers and immutable representations |
 | P05 | Pending | Fair byte budgets, control reserve and retention |
 | P06 | Pending | Measured browser and document rendering budgets |
@@ -66,9 +66,10 @@ serializes distinct continuation demands.
 
 Validation: 128 frontend unit tests, lint/typecheck, production build, six loading
 and cache browser cases, and the existing navigation/draft/edit/terminal case
-passed. A delayed-load browser test caught polling incorrectly marking in-flight
-reads dirty; polling now shares the read without manufacturing an invalidation.
-Live watch performance and fifty-cycle resource qualification remain pending.
+passed. A delayed-load browser test caught invalidations starving in-flight reads.
+Page demands now serialize with content catch-up and retain independent anchors.
+Fifty-cycle browser heap/resource qualification remains pending; server
+subscription lifecycle tests already cover fifty attach/detach cycles.
 
 ## Conversation rendering
 
@@ -92,12 +93,13 @@ strings. Invalid paths produce a reset rather than exposing an unconfined path.
 The browser validates only affected directories and selected files; unknown scope
 validates at most sixteen visible directory candidates, with a 64-path dirty set.
 
-Watch reconnects currently use explicit reset validation. They do not claim
-continuous replay or count as external edits. Reconnection indicators begin after
+Watch reconnects use the shared resource hub replay. Expired or lost continuity
+requires explicit reset validation; connection events never imply external edits. Reconnection indicators begin after
 five seconds; fifteen seconds exposes delayed state. Heartbeats carry no content
 invalidation. The adapter acquires quiet subscriptions asynchronously, with `Next`
 owning the wait for the first frame; cancellation also covers pending attachment.
-A shared replay hub is still P03 work.
+The shared replay hub preserves a live upstream watch across planned browser
+rotations, including sequence-zero empty workspaces.
 
 Preview validation hashes actual returned bytes. Identical bytes retain the same
 representation; changed versions of the same file retain readable prior content
@@ -129,8 +131,9 @@ projector. Existing raw data, messages and command state remain authoritative.
 Validation includes interruption before commit, baseline data preservation,
 backup restoration to a separate database, post-upgrade writes surviving reopen,
 foreign schema rejection and owner-lock alias checks. Product and HTTP race suites
-and vet passed. The new tables are not yet served by HTTP; bounded projector and
-consumer cutover are the next stage. Old binaries are not a supported downgrade.
+and vet passed. The browser now uses the derived view API. Old binaries are not
+a supported downgrade; current schema steps include projector work queues and
+actual outbox retention frontiers.
 
 ## Durable display projector and queries
 
@@ -155,8 +158,8 @@ operations, a 64 KiB inline item limit and a 256 KiB encoded response limit. Lar
 items expose exact full JSON through bounded UTF-8 detail chunks. Delta pages
 freeze their target revision and retain an ordinal inside partially delivered
 revisions. Old generations or expired changes require resync. Rebuild replaces
-only derived state and never dispatches commands. The browser still uses snapshot
-reads until the P03 repository/transport cutover; their removal remains required.
+only derived state and never dispatches commands. The browser uses these pages and changes. Snapshot/raw-record HTTP routes and
+request-time raw timeline reconstruction have been removed.
 
 A deterministic local comparison held output at two items across 1,000 and 10,000
 raw records, with one warmup and twenty timed samples. Snapshot query p95 grew from
@@ -171,8 +174,8 @@ fixed-target deltas while new writes commit, bidirectional pages, scoped cursors
 authorization, fair sibling progress and idle-write absence. Go product/HTTP race
 suites and the disposable Khora fault suite passed. A full-suite PTY test failure
 exposed stale resize-frame synchronization in the test; the corrected case passed
-ten consecutive race runs. Schema-compatible deployment rollback and browser
-cutover remain open.
+ten consecutive race runs. Schema-compatible deployment rollback qualification remains open; browser
+cutover is implemented and tested.
 
 ## Shared resource event hub
 
@@ -196,5 +199,64 @@ authoritative command records publish control hints independently of display wor
 
 Race tests verify empty-scope rotations, replay, expiration, incarnation/resource
 fencing, overflow isolation, HTTP reauthorization, fifty attach/detach cycles and
-cleanup without Project activation. Browser transport cutover and real-substrate
-hub qualification remain in the next slice; old routes are transitional only.
+cleanup without Project activation. The separate Project/file streams and old
+conversation reducers are removed. Runtime hub qualification is recorded below.
+
+
+## Incremental browser cutover
+
+The browser repository tracks each loaded page's content frontier and catches it
+up before merge. Fixed-target delta continuations preserve partial revisions;
+tombstones remove rows. Off-window changes do not accumulate history. At most
+sixteen pages / an estimated 8 MiB remain active; edge eviction preserves a
+continuous reading window and its anchor. A growing live tail reacquires a bounded
+page instead of retaining every item. Generation/retention resync targets the
+current reading item. Pending target loads retain their selector through retries.
+
+Content hints refresh only the matching conversation. Sidebar child/control hints
+refresh the named child; terminal and file scopes stay independent. Normal
+rotations perform only head validation. Hidden tabs release their transport and
+revalidate visible resources on return. Disconnected tabs use a thirty-second
+light metadata fallback. Raw snapshots, raw-record reducers, separate file-watch
+streams and the old multi-Agent preference migration have been removed.
+
+The backend supplies bounded turn-summary queries, recovery/control metadata,
+exact-item anchors and immutable finalized-message chunks. Copy retrieves complete
+message text independent of mounted blocks. Missing navigation targets remain
+separate from lost Project authority. Revocation clears authorized memory and
+preview pixels. Schema 4 records actual pruned outbox IDs, so global ID gaps caused
+by other Projects do not manufacture replay loss.
+
+The full 49-case browser suite passed, followed by focused checks for added
+scope/hidden-tab/pending-target cases. The 60/120-second post-ready fixture windows
+measured zero heavy reads and zero new preview representations; rotations issued
+two/four head requests respectively. These are real elapsed windows using a
+controlled transport fixture, not field INP or real-network idle measurements.
+The released real-application browser gate passed both workflows, including
+concurrent native model fixture requests, Stop, PTY output, Files/Office previews,
+editing, sharing and Chinese navigation. Agent completion under PTY output was
+1.07 seconds in that run.
+
+A five-minute disposable mixed run completed sixty rounds with four agents,
+two PTYs, file operations, schedules and owner restart. It recorded 1,297 HTTP
+samples (p95 4.05 ms, p99 10.01 ms), 249 admission-to-projection samples (p95
+473.95 ms), and peak owner RSS 37,244 KiB. The earlier baseline used a different
+request mix: these are workload observations, not an isolated causal speedup.
+Final combined overload, document-budget, release-continuity and rollback gates
+remain P04–P07 work.
+
+
+The standalone real hub gate passed in 52.48 seconds: the initially empty workspace
+reported a zero source sequence, two browser rotations produced no extra file
+invalidations, one upstream watcher remained, and the connected observer allowed
+pause and watcher cancellation. The original recovery suite passed independently;
+the new fifty-second timing scenario is a separate test so it cannot change that
+suite's idle-agent assumptions. Runtime service authority also passed. Shared
+readers now receive content-change events only when finalized-message sequence
+advances, with metadata-only reauthorization on reconnect failures.
+
+All existing Go tests/build/vet and relevant race suites passed. Source comparison
+checks confirm that the former snapshot/raw-record query and independent owner
+SSE/watch routes no longer exist; route-removal tests return 404. Full fifty-cycle
+browser heap plateaus, constrained document budgets, saturation and a final
+real-provider owner-release continuity test remain explicit outstanding work.

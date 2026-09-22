@@ -12,36 +12,6 @@ func (s *Server) resumeProject(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
 }
-func (s *Server) sessionSnapshot(w http.ResponseWriter, r *http.Request) {
-	before := int64Param(r.URL.Query(), "before")
-	after := int64Param(r.URL.Query(), "after")
-	targetTurn := r.URL.Query().Get("turn")
-	if message := r.URL.Query().Get("message"); message != "" {
-		targetTurn = ""
-		after = 0
-		sequence, err := s.Store.MessageSequence(r.Context(), s.scope(r), r.PathValue("session"), message)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		before = sequence + 51
-	}
-	snapshot, err := s.Store.SessionSnapshotPage(r.Context(), s.scope(r), r.PathValue("session"), before, after, r.URL.Query().Get("records") == "1", targetTurn)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	writeJSON(w, 200, snapshot)
-}
-func (s *Server) agentRecords(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	records, err := s.Store.AgentRecords(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "after"), intParam(q, "limit", 200))
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	writeJSON(w, 200, map[string]any{"records": records})
-}
 func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ControlRevision int64  `json:"control_revision"`

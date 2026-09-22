@@ -21,7 +21,7 @@ export function TurnNavigator({
   onJump,
 }: {
   base: string;
-  revision: number;
+  revision: string;
   local: TurnIndexItem[];
   scroll: RefObject<HTMLDivElement | null>;
   onJump: (id: string) => void;

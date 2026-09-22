@@ -155,6 +155,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		}
 	}
 	var alphaInc, betaInc string
+
 	must(t, reader.QueryRow(`SELECT id FROM agent_incarnations WHERE session_id='alpha' AND state='running'`).Scan(&alphaInc))
 	must(t, reader.QueryRow(`SELECT id FROM agent_incarnations WHERE session_id='beta' AND state='running'`).Scan(&betaInc))
 	_, err = store.CreateTerminal(runctx, scope, "kept", "Retained", 24, 80)
@@ -188,10 +189,10 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		if id != alphaInc {
 			t.Fatal("app restart replaced Agent")
 		}
-		snapshot, err := store.SessionSnapshot(runctx, scope, "alpha", 0, false)
+		messages, err := store.Messages(runctx, scope, "alpha", 0, 100)
 		must(t, err)
-		if len(snapshot.Messages) != 4 {
-			t.Fatal("lost or duplicated messages", snapshot.Messages)
+		if len(messages) != 4 {
+			t.Fatal("lost or duplicated messages", messages)
 		}
 	})
 	t.Run("PTY-exit-during-owner-outage-retains-its-real-code", func(t *testing.T) {
@@ -247,9 +248,9 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 			}
 			return false
 		})
-		snapshot, err := store.SessionSnapshot(runctx, scope, "alpha", 0, false)
+		messages, err := store.Messages(runctx, scope, "alpha", 0, 100)
 		must(t, err)
-		if len(snapshot.Messages) != 6 || snapshot.Messages[5].Content != strings.Repeat("durable-native-output ", 12000) {
+		if len(messages) != 6 || messages[5].Content != strings.Repeat("durable-native-output ", 12000) {
 			t.Fatal("long native reply lost or duplicated")
 		}
 		var id string

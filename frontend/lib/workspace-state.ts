@@ -29,7 +29,7 @@ export function parsePreferences(value: unknown): WorkspacePreferences {
       : fallback;
   return {
     version: 2,
-    activeSessionId: id(d.activeSessionId) || ids(d.agents).at(-1) || "",
+    activeSessionId: id(d.activeSessionId),
     filesOpen: d.version === 2 && d.filesOpen === true,
     terminalOpen: d.version === 2 && d.terminalOpen === true,
     terminals: ids(d.terminals),

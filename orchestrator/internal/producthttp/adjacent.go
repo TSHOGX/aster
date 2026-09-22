@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"strconv"
 	"time"
 
 	"harness-platform/orchestrator/internal/product"
@@ -167,13 +168,36 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
+	closed := func() {
+		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_, _ = io.WriteString(w, "event: closed\ndata: {}\n\n")
+		_ = controller.Flush()
+	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	timer := time.NewTimer(25 * time.Second)
 	defer timer.Stop()
+	after := int64(-1)
+	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n >= 0 {
+			after = n
+		}
+	}
 	for {
+		frontier, err := s.Store.ConversationFrontier(r.Context(), actor, session)
+		if err != nil {
+			_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_, _ = io.WriteString(w, "event: closed\ndata: {}\n\n")
+			_ = controller.Flush()
+			return
+		}
 		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.WriteString(w, "event: conversation\ndata: {}\n\n"); err != nil {
+		frame := ": heartbeat\n\n"
+		if frontier != after {
+			frame = fmt.Sprintf("id: %d\nevent: conversation\ndata: {}\n\n", frontier)
+			after = frontier
+		}
+		if _, err := io.WriteString(w, frame); err != nil {
 			return
 		}
 		if controller.Flush() != nil {
@@ -188,12 +212,22 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		current, err := s.Auth.Actor(r)
 		if err != nil || current != actor {
+			closed()
 			return
 		}
 		if err = s.Store.CanReadConversation(r.Context(), actor, session); err != nil {
+			closed()
 			return
 		}
 	}
+}
+func (s *Server) sharedConversationHead(w http.ResponseWriter, r *http.Request) {
+	frontier, err := s.Store.ConversationFrontier(r.Context(), actorFrom(r.Context()), r.PathValue("session"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"content_revision": strconv.FormatInt(frontier, 10)})
 }
 func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 	if s.Shares == nil {

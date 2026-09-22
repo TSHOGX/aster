@@ -3,6 +3,7 @@ package producthttp
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"harness-platform/orchestrator/internal/product"
 )
@@ -22,12 +23,33 @@ func (s *Server) conversationHead(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) conversationPage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, err := s.Store.ConversationPage(r.Context(), s.scope(r), r.PathValue("session"), product.ViewSelector{Before: q.Get("before"), After: q.Get("after"), AroundTurn: q.Get("around_turn"), AroundMessage: q.Get("around_message")})
+	page, err := s.Store.ConversationPage(r.Context(), s.scope(r), r.PathValue("session"), product.ViewSelector{Before: q.Get("before"), After: q.Get("after"), AroundTurn: q.Get("around_turn"), AroundMessage: q.Get("around_message"), AroundItem: q.Get("around_item")})
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *Server) conversationSummaries(w http.ResponseWriter, r *http.Request) {
+	var ids []string
+	if raw := r.URL.Query().Get("ids"); raw != "" {
+		ids = strings.Split(raw, ",")
+	}
+	out, err := s.Store.ConversationSummaries(r.Context(), s.scope(r), r.PathValue("session"), ids)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+func (s *Server) conversationMessageText(w http.ResponseWriter, r *http.Request) {
+	out, err := s.Store.ConversationMessageText(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("message"), r.URL.Query().Get("cursor"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 func (s *Server) conversationChanges(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

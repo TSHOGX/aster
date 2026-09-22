@@ -40,7 +40,7 @@ func httpCategory(r *http.Request) string {
 		return "file"
 	case strings.HasSuffix(p, "/files"):
 		return "directory"
-	case strings.HasSuffix(p, "/snapshot"), strings.HasSuffix(p, "/messages"), strings.Contains(p, "/view/"):
+	case strings.HasSuffix(p, "/messages"), strings.Contains(p, "/view/"):
 		return "conversation"
 	default:
 		return "index"

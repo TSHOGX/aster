@@ -420,13 +420,13 @@ func (m *resourceHubs) run(ctx context.Context, h *resourceHub) {
 					}
 				}
 			}
-			first, last, e := m.server.Store.EventBounds(ctx, h.scope)
+			pruned, e := m.server.Store.EventRetentionFrontier(ctx, h.scope)
 			if e != nil {
 				h.publish("closed", "", "", "authority_lost", nil)
 				return
 			}
-			if after > last || first > 0 && after < first-1 {
-				after = last
+			if after < pruned {
+				after = pruned
 				h.publish("resync", "", "", "outbox_expired", nil)
 			}
 			batch, e := m.server.Store.Events(ctx, h.scope, after, 200)

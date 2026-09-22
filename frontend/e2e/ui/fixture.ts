@@ -1,9 +1,18 @@
 import { type Page } from "@playwright/test";
+import { ConversationFixture } from "./conversation-fixture";
 export async function workspaceFixture(
   page: Page,
   options: { lostFirstReply?: boolean; many?: boolean } = {},
 ) {
+  const views = new Map<string, ConversationFixture>();
   await page.addInitScript(() => {
+    let offline = false;
+    let sequence = 0;
+    window.addEventListener("fixture-file-event", (event) => {
+      const value = (event as CustomEvent).detail;
+      if (value === "connection-error") offline = true;
+      if (value === "connection-open") offline = false;
+    });
     // Deterministic UI fixtures keep streams open without testing SSE transport.
     window.EventSource = class extends EventTarget {
       static CONNECTING = 0;
@@ -12,19 +21,59 @@ export async function workspaceFixture(
       readyState = 1;
       onopen: (() => void) | null = null;
       onerror: (() => void) | null = null;
+      private rotation: ReturnType<typeof setTimeout> | undefined;
+      private emit = (payload: Record<string, unknown>) => {
+        this.dispatchEvent(
+          new MessageEvent("resource", {
+            data: JSON.stringify({
+              protocol_version: 1,
+              stream_incarnation: "fixture",
+              cursor: String(++sequence),
+              ...payload,
+            }),
+          }),
+        );
+      };
+      private resourceEvent = (event: Event) => {
+        const value = (event as CustomEvent).detail;
+        if (value.transport === "rotate")
+          this.dispatchEvent(new MessageEvent("rotate", { data: "{}" }));
+        else this.emit(value);
+      };
       private fileEvent = (event: Event) => {
-        if (!this.url.endsWith("/watch")) return;
         const payload = (event as CustomEvent).detail;
-        if (payload === "connection-error") this.onerror?.();
-        else this.dispatchEvent(new MessageEvent("invalidate", {data: JSON.stringify(payload)}));
+        if (payload === "connection-error") {
+          this.onerror?.();
+        } else if (payload === "connection-open") {
+          if (!this.readyState) return;
+          this.onopen?.();
+          this.emit({ resource_kind: "ready" });
+        } else this.emit({ resource_kind: "files", payload });
       };
       constructor(public url: string) {
         super();
         window.addEventListener("fixture-file-event", this.fileEvent);
-        setTimeout(() => this.onopen?.(), 0);
+        window.addEventListener("fixture-resource-event", this.resourceEvent);
+        setTimeout(() => {
+          if (offline) {
+            this.onerror?.();
+            return;
+          }
+          this.onopen?.();
+          this.emit({ resource_kind: "ready" });
+        }, 0);
+        this.rotation = setTimeout(
+          () => this.dispatchEvent(new MessageEvent("rotate", { data: "{}" })),
+          25000,
+        );
       }
       close() {
+        clearTimeout(this.rotation);
         window.removeEventListener("fixture-file-event", this.fileEvent);
+        window.removeEventListener(
+          "fixture-resource-event",
+          this.resourceEvent,
+        );
         this.readyState = 2;
       }
     } as unknown as typeof EventSource;
@@ -222,28 +271,19 @@ export async function workspaceFixture(
       const s = sessions.find((s) => s.id === id && s.project_id === project);
       if (!s) return json({ error: "Not found" }, 404);
       if (!action) return json(s);
-      if (action === "snapshot")
-        return json({
-          session: s,
-          messages: messages[id] || [],
-          turns: [],
-          record_cursor: 2,
-          has_earlier: false,
-          records: [
-            {
-              cursor: 1,
-              turn_id: "turn1",
-              kind: "native",
-              payload: {
-                type: "tool_execution_end",
-                toolCallId: "read-1",
-                toolName: "Read files",
-                result: { path: "cycles.csv", rows: 200 },
-              },
-            },
-          ],
-        });
-      if (action === "records") return json({ records: [] });
+      if (action === "view") {
+        let view = views.get(id);
+        if (!view) {
+          view = new ConversationFixture();
+          views.set(id, view);
+        }
+        return json(
+          view.reply(
+            { session: s, messages: messages[id] || [], turns: [] },
+            url,
+          ),
+        );
+      }
       if (action === "turns") {
         if (method === "POST") {
           if (!messages[id]?.some((m) => m.id === body!.request_id)) {

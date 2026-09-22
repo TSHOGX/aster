@@ -8,12 +8,10 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { ArrowDown, ArrowUp, Square } from "lucide-react";
-import {
-  mergeConversationPage,
-  oldestMessageSequence,
-} from "@/lib/conversation-cache";
+import { ConversationRepository } from "@/lib/conversation-repository";
 import { TurnNavigator } from "./turn-navigator";
 import { TurnView } from "./turn-view";
 import { conversationTurns } from "@/lib/conversation-turns";
@@ -21,37 +19,29 @@ import { Menu, useDialog } from "./ui";
 import { knownWorkspaceFiles, workspacePath } from "@/lib/workspace-links";
 import {
   api,
-  APIError,
   command,
   newID,
   recalled,
   remember,
   sessionURL,
   type AgentSession,
-  type SessionSnapshot,
   type TimelineItem,
   type TurnIndexItem,
   type Turn,
 } from "@/lib/project-api";
-import { emptySessionView, type SessionView } from "@/lib/project-projections";
-import { useResources } from "./resource-provider";
-import { startTiming } from "@/lib/interaction-metrics";
+import { useResources, useRealtime } from "./resource-provider";
 function useWorkspaceFiles(key: string) {
-  return useMemo(() => key ? key.split("\n") : [], [key]);
+  return useMemo(() => (key ? key.split("\n") : []), [key]);
 }
 export function SessionPanel({
   actor,
   session,
-  tick,
-  onChanged,
   onFile,
   targetMessage,
   showHistory = false,
 }: {
   actor: string;
   session: AgentSession;
-  tick: number;
-  onChanged: () => void;
   onFile: (path: string) => void;
   targetMessage: string;
   showHistory?: boolean;
@@ -59,9 +49,16 @@ export function SessionPanel({
   const tr = useT();
   const ask = useDialog();
   const resources = useResources();
-  const windowKey = useMemo(() => ({project: session.project_id, kind: "conversation" as const, identity: `window:${session.id}`}), [session.project_id, session.id]);
-  const cachedWindow = resources.peek<SessionSnapshot>(windowKey);
-  const readAbort = useRef(new AbortController());
+  const realtime = useRealtime();
+  const repository = useMemo(
+    () => new ConversationRepository(resources, session.project_id, session.id),
+    [resources, session.project_id, session.id],
+  );
+  const view = useSyncExternalStore(
+    repository.subscribe,
+    repository.getSnapshot,
+    repository.getSnapshot,
+  );
   const key = `project-view:${actor}:${session.project_id}:draft:${session.id}`;
   const [draft, setDraft] = useState(() =>
     (() => {
@@ -69,9 +66,6 @@ export function SessionPanel({
       return typeof saved === "string" ? saved.slice(0, 64000) : "";
     })(),
   );
-  const [view, setView] = useState<SessionView>(() => ({...emptySessionView(), snapshot: cachedWindow || null}));
-  const [readState, setReadState] = useState<"loading" | "ready" | "pending" | "error" | "denied">(cachedWindow ? "ready" : "loading");
-  const [readError, setReadError] = useState("");
   const positionKey = key + ":position";
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(
@@ -96,13 +90,12 @@ export function SessionPanel({
       ? ""
       : recalled<{ turn?: string }>(positionKey, {}).turn || "",
   );
-  const snapshot = useRef<SessionSnapshot | null>(cachedWindow || null);
   const navigationSerial = useRef(0);
   const navigationPending = useRef(false);
   const alive = useRef(true);
   const windowEpoch = useRef(0);
   const programmaticUntil = useRef(0);
-  const historyFlight = useRef<Promise<boolean> | null>(null);
+  const historyFlights = useRef(new Map<string, Promise<boolean>>());
   const scrollAnchor = useRef<{ id: string; top: number } | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingNewer, setLoadingNewer] = useState(false);
@@ -182,150 +175,60 @@ export function SessionPanel({
       setError(e instanceof Error ? e.message : "Turn history unavailable.");
     }
   };
-  const request = useRef(0);
-  const snapshotFlight = useRef<{ key: string; serial: number } | null>(null);
-  const invalidate = useCallback(() => {
-    request.current++;
-  }, []);
   const base = sessionURL(session.project_id, session.id);
-  const readPage = useCallback((url: string) => resources.read<SessionSnapshot>(
-    {project: session.project_id, kind: "conversation", identity: url},
-    signal => api<SessionSnapshot>(url, {signal}), readAbort.current.signal,
-  ), [resources, session.project_id]);
-  useEffect(() => resources.pin(windowKey), [resources, windowKey]);
-  const applyPage = useCallback(
-    (next: SessionSnapshot, older = false, replace = false) => {
-      const done = startTiming("conversation", "commit");
-      const merged = replace
-        ? next
-        : mergeConversationPage(snapshot.current, next, older);
-      snapshot.current = merged;
-      resources.put(windowKey, merged);
-      setView((current) => ({ ...current, snapshot: merged }));
-      setReadState("ready");
-      setReadError("");
-      done();
-    },
-    [resources, windowKey],
-  );
-  const refresh = useCallback(async () => {
-    if (navigationPending.current) return;
-    if (
-      snapshotFlight.current?.key === base &&
-      snapshotFlight.current.serial === request.current
-    ) {
-      return;
+  const refresh = repository.refresh;
+  const captureAnchor = useCallback(() => {
+    const el = scroll.current;
+    if (!el) return;
+    const top = el.getBoundingClientRect().top;
+    const anchor = [
+      ...el.querySelectorAll<HTMLElement>("[data-timeline-id]"),
+    ].find(
+      (node) =>
+        node.getBoundingClientRect().height > 0 &&
+        node.getBoundingClientRect().bottom > top,
+    );
+    if (anchor) {
+      repository.setAnchor(anchor.dataset.timelineId!, following.current);
+      if (!following.current)
+        scrollAnchor.current = {
+          id: anchor.dataset.timelineId!,
+          top: anchor.getBoundingClientRect().top,
+        };
     }
-    const serial = ++request.current;
-    snapshotFlight.current = { key: base, serial };
-    try {
-      const next = await readPage(
-        `${base}/snapshot?before=0&records=0`,
-      );
-      if (serial === request.current && alive.current) {
-        const history = snapshot.current;
-        // Keep live controls fresh without splicing a distant tail into a
-        // historical reading window. Only adjacent pages extend its content.
-        applyPage(
-          history?.has_later
-            ? {
-                ...next,
-                messages: history.messages,
-                timeline: history.timeline,
-                has_earlier: history.has_earlier,
-                has_later: true,
-              }
-            : next,
-        );
-      }
-    } catch (e) {
-      if (serial === request.current && alive.current) {
-        if (e instanceof APIError && [401, 403, 404].includes(e.status)) {
-          resources.clear(session.project_id);
-          snapshot.current = null;
-          setView(emptySessionView());
-        }
-        setReadState(e instanceof APIError && e.status === 202 ? "pending" : e instanceof APIError && [401, 403, 404].includes(e.status) ? "denied" : "error");
-        setReadError(
-          e instanceof Error
-            ? e.message
-            : "Could not refresh this conversation.",
-        );
-      }
-    } finally {
-      if (snapshotFlight.current?.serial === serial)
-        snapshotFlight.current = null;
-    }
-  }, [base, applyPage, readPage, resources, session.project_id]);
+  }, [repository]);
   const loadAdjacent = useCallback(
     async (direction: "older" | "newer"): Promise<boolean> => {
-      if (historyFlight.current) return historyFlight.current;
-      const current = snapshot.current,
+      const pending = historyFlights.current.get(direction);
+      if (pending) return pending;
+      const current = repository.getSnapshot(),
         older = direction === "older",
         epoch = windowEpoch.current;
-      if (!current || !(older ? current.has_earlier : current.has_later))
-        return false;
-      const sequence = older
-        ? oldestMessageSequence(current.messages)
-        : Math.max(...current.messages.map((m) => m.sequence), 0);
-      if (!Number.isFinite(sequence)) return false;
+      const cursor = older ? current.before : current.after;
+      if (!cursor) return false;
+      following.current = false;
+      captureAnchor();
       if (older) setLoadingHistory(true);
       else setLoadingNewer(true);
-      following.current = false;
       const flight = (async () => {
         try {
-          const next = await readPage(
-            `${base}/snapshot?${older ? "before" : "after"}=${sequence}&records=0`,
+          await repository.load(
+            older ? { before: cursor } : { after: cursor },
+            direction,
           );
-          if (!alive.current || windowEpoch.current !== epoch) return false;
-          const advanced = older
-            ? oldestMessageSequence(next.messages) < sequence
-            : next.messages.some((m) => m.sequence > sequence);
-          if (!advanced) {
-            applyPage(
-              {
-                ...snapshot.current!,
-                [older ? "has_earlier" : "has_later"]: false,
-              },
-              false,
-              true,
-            );
-            return false;
-          }
-          const el = scroll.current;
-          if (older && el) {
-            const top = el.getBoundingClientRect().top;
-            const anchor = [
-              ...el.querySelectorAll<HTMLElement>("[data-timeline-id]"),
-            ].find(
-              (node) =>
-                node.getBoundingClientRect().height > 0 &&
-                node.getBoundingClientRect().bottom > top,
-            );
-            if (anchor)
-              scrollAnchor.current = {
-                id: anchor.dataset.timelineId!,
-                top: anchor.getBoundingClientRect().top,
-              };
-          }
-          applyPage(next, older);
-          return true;
-        } catch (e) {
-          if (alive.current && windowEpoch.current === epoch)
-            setError(String(e));
-          return false;
+          return alive.current && windowEpoch.current === epoch;
         } finally {
-          historyFlight.current = null;
+          historyFlights.current.delete(direction);
           if (alive.current) {
-            setLoadingHistory(false);
-            setLoadingNewer(false);
+            if (older) setLoadingHistory(false);
+            else setLoadingNewer(false);
           }
         }
       })();
-      historyFlight.current = flight;
+      historyFlights.current.set(direction, flight);
       return flight;
     },
-    [base, applyPage, readPage],
+    [repository, captureAnchor],
   );
   const requestEdge = (direction: "older" | "newer") => {
     const el = scroll.current;
@@ -333,31 +236,27 @@ export function SessionPanel({
     if (
       direction === "older" &&
       el.scrollTop < 100 &&
-      snapshot.current?.has_earlier
+      repository.getSnapshot().before
     )
       void loadAdjacent("older");
     if (
       direction === "newer" &&
       el.scrollHeight - el.scrollTop - el.clientHeight < 100 &&
-      snapshot.current?.has_later
+      repository.getSnapshot().after
     )
       void loadAdjacent("newer");
   };
   const showLatest = async () => {
     const serial = ++navigationSerial.current;
     windowEpoch.current++;
-    request.current++;
     navigationPending.current = true;
     setNavigationTarget(null);
     setFocusTurn("");
     setFocusMessage("");
 
     try {
-      const latest = await readPage(
-        `${base}/snapshot?before=0&records=0`,
-      );
+      await repository.load();
       if (!alive.current || serial !== navigationSerial.current) return;
-      applyPage(latest, false, !!snapshot.current?.has_later);
       following.current = true;
       restored.current = true;
       requestAnimationFrame(() => {
@@ -376,16 +275,30 @@ export function SessionPanel({
   };
   useEffect(() => {
     alive.current = true;
-    readAbort.current = new AbortController();
+    repository.activate();
+    if (!navigationPending.current) void repository.refresh();
+    const unsubscribe = realtime.subscribe(session.project_id, (event) => {
+      if (event.resource_kind === "closed") {
+        repository.clear();
+        return;
+      }
+      if (
+        event.resource_kind === "ready" ||
+        event.resource_kind === "resync" ||
+        event.resource_kind === "authorization" ||
+        (["content", "control"].includes(event.resource_kind) &&
+          event.resource_id === session.id)
+      ) {
+        captureAnchor();
+        void repository.refresh();
+      }
+    });
     return () => {
-      readAbort.current.abort();
       alive.current = false;
-      invalidate();
+      unsubscribe();
+      repository.close();
     };
-  }, [refresh, invalidate]);
-  useEffect(() => {
-    void Promise.resolve().then(refresh);
-  }, [tick, refresh]);
+  }, [repository, realtime, session.project_id, session.id, captureAnchor]);
   useLayoutEffect(() => {
     const saved = scrollAnchor.current,
       el = scroll.current;
@@ -399,7 +312,7 @@ export function SessionPanel({
       }
       scrollAnchor.current = null;
     }
-  }, [view.snapshot]);
+  }, [view.items, view.summaries]);
   // A missing destination loads a surrounding message window, not a turn filter.
   // Keep this window contiguous by extending its two edges as the reader scrolls.
   useEffect(() => {
@@ -407,19 +320,20 @@ export function SessionPanel({
     let gone = false;
     const serial = ++navigationSerial.current;
     windowEpoch.current++;
-    request.current++;
     navigationPending.current = true;
     following.current = false;
     scrollAnchor.current = null;
     void (async () => {
       try {
         if (!locate(navigationTarget.kind, navigationTarget.id)) {
-          const next = await readPage(
-            `${base}/snapshot?${navigationTarget.kind}=${encodeURIComponent(navigationTarget.id)}&records=0`,
+          await repository.load(
+            navigationTarget.kind === "turn"
+              ? { around_turn: navigationTarget.id }
+              : { around_message: navigationTarget.id },
           );
           if (gone || !alive.current || serial !== navigationSerial.current)
             return;
-          applyPage(next, false, true);
+          if (repository.getSnapshot().status === "pending") return;
         }
         requestAnimationFrame(() => {
           if (gone || serial !== navigationSerial.current) return;
@@ -440,7 +354,7 @@ export function SessionPanel({
     return () => {
       gone = true;
     };
-  }, [navigationTarget, base, applyPage, readPage, tr]);
+  }, [navigationTarget, repository, tr, view.items]);
   useEffect(() => {
     const saved = recalled<{ scroll?: number; follow?: boolean }>(
       positionKey,
@@ -456,27 +370,21 @@ export function SessionPanel({
     remember(key, draft);
   }, [draft, key]);
   useEffect(() => {
-    if (sentTurn && view.snapshot?.turns.some((t) => t.id === sentTurn.id))
+    if (sentTurn && view.head?.turns.some((t) => t.id === sentTurn.id))
       void Promise.resolve().then(() => setSentTurn(null));
-  }, [sentTurn, view.snapshot]);
-  const current = view.snapshot?.session || session;
-  let timeline: TimelineItem[] =
-    view.snapshot?.timeline ??
-    view.snapshot?.messages.map((m) => ({
-      id: m.id,
-      cursor: m.sequence,
-      turn_id: m.turn_id || "",
-      kind: m.role,
-      content: m.content,
-      message_id: m.id,
-    })) ??
-    [];
+  }, [sentTurn, view.head?.turns]);
+  const current = view.head?.session || session;
+  let timeline: TimelineItem[] = view.items.map((item, index) => ({
+    ...item,
+    cursor: index,
+    order: item.block,
+  }));
   const activeTurns = new Set(
-    view.snapshot?.turns
+    view.head?.turns
       .filter((t) => ["starting", "running", "stopping"].includes(t.state))
       .map((t) => t.id),
   );
-  const displayTurns = [...(view.snapshot?.turns || [])];
+  const displayTurns = [...(view.head?.turns || [])];
   if (sentTurn && !displayTurns.some((t) => t.id === sentTurn.id))
     displayTurns.push(sentTurn);
   if (
@@ -492,7 +400,7 @@ export function SessionPanel({
       sequence: Number.MAX_SAFE_INTEGER,
       created_at: pendingSend.startedAt,
     });
-  if (!view.snapshot?.has_later && !focusMessage && !focusTurn) {
+  if (!view.after && !focusMessage && !focusTurn) {
     const missing = displayTurns.filter(
       (t) =>
         !timeline.some((i) => i.turn_id === t.id) &&
@@ -512,11 +420,7 @@ export function SessionPanel({
       })),
     ];
   }
-  const turns = conversationTurns(
-    timeline,
-    view.snapshot?.turn_summaries || [],
-    displayTurns,
-  );
+  const turns = conversationTurns(timeline, view.summaries || [], displayTurns);
   const navigationTurns: TurnIndexItem[] = turns
     .filter((t) => t.turnId && !t.turnId.startsWith("pending:"))
     .map((t, i) => ({
@@ -553,14 +457,12 @@ export function SessionPanel({
     ]),
   ).join("\n");
   const workspaceFiles = useWorkspaceFiles(workspaceFileKey);
-  const messageIndex = useMemo(() => new Map(view.snapshot?.messages.map(m => [m.id,m])), [view.snapshot?.messages]);
   const act = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
     try {
       await action();
       await refresh();
-      onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "The action failed.");
     } finally {
@@ -611,7 +513,7 @@ export function SessionPanel({
   }, [showHistory]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const el = scroll.current;
-    if (!el || !view.snapshot) return;
+    if (!el || !view.head) return;
     if (!restored.current && !navigationTarget) {
       const saved = recalled<{ scroll: number }>(positionKey, { scroll: 0 });
       el.scrollTop = following.current ? el.scrollHeight : saved.scroll;
@@ -619,8 +521,8 @@ export function SessionPanel({
     } else if (following.current && !navigationTarget)
       el.scrollTop = el.scrollHeight;
   }, [
-    view.snapshot,
-    view.partial,
+    view.items,
+    view.head,
     focusMessage,
     focusTurn,
     positionKey,
@@ -633,11 +535,11 @@ export function SessionPanel({
         control_revision: current.control_revision,
       }),
     );
-  const active = view.snapshot?.turns.some((turn) =>
+  const active = view.head?.turns.some((turn) =>
     ["starting", "running", "stopping"].includes(turn.state),
   );
   const queue =
-    view.snapshot?.turns.filter((turn) =>
+    view.head?.turns.filter((turn) =>
       ["queued", "held"].includes(turn.state),
     ) || [];
   return (
@@ -646,9 +548,9 @@ export function SessionPanel({
       aria-label={`Agent ${current.title}`}
       data-session-id={session.id}
     >
-      {error || readError || current.failure ? (
+      {error || view.error || current.failure ? (
         <p className="notice error" role="alert">
-          {error || readError || current.failure}
+          {error || view.error || current.failure}
         </p>
       ) : null}
       {current.state === "blocked" && (
@@ -658,7 +560,7 @@ export function SessionPanel({
               "This Session needs recovery. Unknown prior effects will not be repeated.",
             )}
           </p>
-          {view.snapshot?.recovery
+          {view.head?.recovery
             ?.filter((r) => r.recovery !== "none")
             .map((r) => (
               <p key={r.id}>
@@ -674,7 +576,7 @@ export function SessionPanel({
                 {r.error ? ` · ${r.error}` : ""}
               </p>
             ))}
-          {view.snapshot?.recovery?.some((r) => r.recovery === "failed") && (
+          {view.head?.recovery?.some((r) => r.recovery === "failed") && (
             <button
               disabled={busy}
               onClick={() =>
@@ -744,21 +646,22 @@ export function SessionPanel({
             const el = scroll.current!;
             following.current =
               !navigationPending.current &&
-              !snapshot.current?.has_later &&
+              !repository.getSnapshot().after &&
               el.scrollHeight - el.scrollTop - el.clientHeight < 64;
             setAtBottom(following.current);
             if (
               !navigationPending.current &&
               performance.now() > programmaticUntil.current
             ) {
-              if (el.scrollTop < 100 && snapshot.current?.has_earlier)
+              if (el.scrollTop < 100 && repository.getSnapshot().before)
                 void loadAdjacent("older");
               else if (
                 el.scrollHeight - el.scrollTop - el.clientHeight < 100 &&
-                snapshot.current?.has_later
+                repository.getSnapshot().after
               )
                 void loadAdjacent("newer");
             }
+            captureAnchor();
             remember(positionKey, {
               turn: focusTurn,
               scroll: el.scrollTop,
@@ -787,10 +690,13 @@ export function SessionPanel({
               {tr("Loading earlier conversation…")}
             </p>
           )}
-          {!view.snapshot && readState === "loading" && (
-            <p className="history-loading" role="status">{tr("Loading…")}</p>
-          )}
-          {!timeline.length && view.snapshot && readState === "ready" && !view.snapshot.has_earlier && !view.snapshot.has_later && (
+          {["uninitialized", "loading"].includes(view.status) &&
+            !view.items.length && (
+              <p className="history-loading" role="status">
+                {tr("Loading…")}
+              </p>
+            )}
+          {!timeline.length && view.status === "empty" && (
             <div className="empty-state">
               <h3>{tr("Start a conversation")}</h3>
               <p>
@@ -806,7 +712,10 @@ export function SessionPanel({
               turn={turn}
               files={workspaceFiles}
               activeTurns={activeTurns}
-              messages={messageIndex}
+              loadMessage={(id) => repository.messageText(id)}
+              loadDetail={(item) =>
+                repository.detailText(item.id, item.detail_version!)
+              }
               actor={actor}
               project={session.project_id}
               session={session.id}
@@ -818,21 +727,16 @@ export function SessionPanel({
               {tr("Loading…")}
             </p>
           )}
-          {view.snapshot?.timeline_truncated && (
-            <small className="history-limit">
-              {tr("Only retained tool activity is shown.")}
-            </small>
-          )}
         </div>
         <TurnNavigator
           base={base}
-          revision={current.revision}
+          revision={view.head?.index_revision || "0"}
           local={navigationTurns}
           scroll={scroll}
           onJump={jumpTurn}
         />
       </div>
-      {(!atBottom || view.snapshot?.has_later) && (
+      {(!atBottom || view.after) && (
         <button
           className="jump-latest"
           aria-label={tr("Return to latest")}
@@ -842,7 +746,7 @@ export function SessionPanel({
           <ArrowDown size={18} />
         </button>
       )}
-      {view.snapshot?.turns
+      {view.head?.turns
         .filter((turn) => turn.state === "unknown")
         .map((turn) => (
           <p className="notice warning" key={turn.id}>

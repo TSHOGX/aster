@@ -50,6 +50,8 @@ export type Message = {
   turn_id?: string;
 };
 export type TimelineItem = {
+  truncated?: boolean;
+  detail_version?: string;
   id: string;
   cursor: number;
   order?: number;
@@ -69,32 +71,6 @@ export type TurnSummary = {
   created_at?: string;
   finished_at?: string;
   final_message_id?: string;
-};
-export type SessionSnapshot = {
-  has_later?: boolean;
-  turn_summaries?: TurnSummary[];
-  timeline?: TimelineItem[];
-  timeline_truncated?: boolean;
-  records?: AgentRecord[];
-  recovery?: {
-    id: string;
-    state: string;
-    cleanup: string;
-    recovery: string;
-    error?: string;
-  }[];
-  session: AgentSession;
-  messages: Message[];
-  turns: Turn[];
-  record_cursor: number;
-  has_earlier: boolean;
-  has_more_turns?: boolean;
-};
-export type AgentRecord = {
-  cursor: number;
-  turn_id: string;
-  kind: string;
-  payload: Record<string, unknown>;
 };
 export type FileEntry = {
   name: string;
@@ -214,7 +190,11 @@ export async function api<T>(
     throw error;
   }
   networkDone(response.status);
-  if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/"))
+  if (
+    response.status === 401 &&
+    typeof window !== "undefined" &&
+    !path.startsWith("/api/auth/")
+  )
     window.dispatchEvent(new Event("project-auth-expired"));
   if (response.status === 204) return undefined as T;
   let data;

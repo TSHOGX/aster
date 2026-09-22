@@ -34,7 +34,6 @@ export function ProjectWorkspace({
   sessions,
   terminals,
   nav,
-  tick,
   onNavigate,
   onRefresh,
   onError,
@@ -50,7 +49,6 @@ export function ProjectWorkspace({
   sessions: AgentSession[];
   terminals: ProjectTerminal[];
   nav: Navigation;
-  tick: number;
   onNavigate: (n: Navigation) => void;
   onRefresh: () => Promise<void>;
   onError: (s: string) => void;
@@ -164,8 +162,6 @@ export function ProjectWorkspace({
               key={session.id}
               actor={actor}
               session={session}
-              tick={tick}
-              onChanged={() => void onRefresh()}
               onFile={selectFile}
               targetMessage={nav.message}
               showHistory={nav.history}

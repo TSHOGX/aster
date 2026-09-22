@@ -2,13 +2,17 @@ import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { workspaceFixture } from "./fixture";
+import {
+  conversationRoute,
+  invalidateConversation,
+} from "./conversation-fixture";
 
 test("parallel calls stay visible from preparation to partial output and completion", async ({
   page,
 }) => {
   await workspaceFixture(page);
   let phase = 0;
-  await page.route("**/sessions/analysis/snapshot?**", (route) =>
+  await conversationRoute(page, (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -116,6 +120,7 @@ test("parallel calls stay visible from preparation to partial output and complet
   await a.locator("summary").click();
   await expect(a.locator(".tool-panel")).toContainText("Waiting to execute…");
   phase = 1;
+  await invalidateConversation(page);
   await expect(a.locator("summary")).toContainText("Running bash");
   await expect(b.locator("summary")).toContainText("Running read");
   await expect(a).toHaveAttribute("open", "");
@@ -157,6 +162,7 @@ test("parallel calls stay visible from preparation to partial output and complet
   );
   await a.locator("summary").click();
   phase = 2;
+  await invalidateConversation(page);
   await expect(a.locator(".activity-output")).toContainText(
     "Sample 59: capacity retention 95%",
   );
@@ -189,12 +195,14 @@ test("parallel calls stay visible from preparation to partial output and complet
   ).toBe(true);
   await page.screenshot({ path: resolve(evidence, "tools-mobile.png") });
   phase = 3;
+  await invalidateConversation(page);
   await expect(a).toHaveAttribute("data-state", "completed");
   await expect(a).toHaveAttribute("open", "");
   await expect(group).not.toHaveClass(/is-live/);
   await toggle.click();
   await expect(group.locator(".tool-trace:visible")).toHaveCount(0);
   phase = 4;
+  await invalidateConversation(page);
   await toggle.click();
   await expect(a).toHaveAttribute("data-state", "unknown");
   await expect(b).toHaveAttribute("data-state", "unknown");

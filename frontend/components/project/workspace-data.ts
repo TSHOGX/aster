@@ -8,31 +8,33 @@ import {
   type AgentSession,
   type Project,
   type ProjectTerminal,
-  type Projection,
 } from "@/lib/project-api";
+import { useResources, useRealtime } from "./resource-provider";
 import { mergePage } from "@/lib/workspace-state";
 
-// Bound list traffic across all expanded projects, including slow responses.
-function limiter() {
-  let running = 0;
-  const queue: (() => void)[] = [];
-  return async <T>(fn: () => Promise<T>) => {
-    if (running >= 4) await new Promise<void>((r) => queue.push(r));
-    else running++;
-    try {
-      return await fn();
-    } finally {
-      const next = queue.shift();
-      if (next) next();
-      else running--;
-    }
-  };
-}
 export function useWorkspaceData(
   active: string,
   expanded: string[],
   targetSession: string,
 ) {
+  const resources = useResources(),
+    realtime = useRealtime();
+  const abort = useRef(new AbortController());
+  const read = useCallback(
+    <T>(url: string) =>
+      resources.read<T>(
+        {
+          project: decodeURIComponent(
+            new URL(url, "http://resource").pathname.split("/")[3] || "",
+          ),
+          kind: "index",
+          identity: url,
+        },
+        (signal) => api<T>(url, { signal }),
+        abort.current.signal,
+      ),
+    [resources],
+  );
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<Record<string, AgentSession[]>>({});
   const [terminals, setTerminals] = useState<Record<string, ProjectTerminal[]>>(
@@ -40,277 +42,344 @@ export function useWorkspaceData(
   );
   const [more, setMore] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
-  const [tick, setTick] = useState(0);
   const selection = useRef({ active, targetSession });
   useEffect(() => {
     selection.current = { active, targetSession };
   }, [active, targetSession]);
+  const projectDirty = useRef(0),
+    childDirty = useRef<Record<string, number>>({});
   const projectFlight = useRef<Promise<void> | null>(null);
   const childFlights = useRef(
     new Map<string, { promise: Promise<void>; terminals: boolean }>(),
   );
   const pages = useRef<Record<string, number>>({});
   const serial = useRef<Record<string, number>>({});
-  const limited = useRef(limiter());
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
+    abort.current = new AbortController();
     return () => {
       alive.current = false;
+      abort.current.abort();
     };
   }, []);
-  const refreshProjects = useCallback(async function refreshProjects(
-    loadMore = false,
-  ): Promise<void> {
-    if (projectFlight.current) {
-      await projectFlight.current;
-      if (loadMore) return refreshProjects(true);
-      return;
-    }
-    const flight = (async () => {
-      const id = (serial.current.projects = (serial.current.projects || 0) + 1);
-      const count = Math.max(
-        1,
-        (pages.current.projects || 1) + (loadMore ? 1 : 0),
-      );
-      try {
-        let all: Project[] = [];
-        let after = "";
-        let hasMore = false;
-        for (let n = 0; n < count; n++) {
-          const data = await limited.current(() =>
-            api<{ projects: Project[] }>(
-              `/api/projects?limit=100&after=${encode(after)}`,
-            ),
-          );
-          all = mergePage(all, data.projects);
-          hasMore = data.projects.length === 100;
-          after = data.projects.at(-1)?.id || "";
-          if (!hasMore) break;
-        }
-        if (!alive.current || serial.current.projects !== id) return;
-        if (
-          selection.current.active &&
-          !all.some((p) => p.id === selection.current.active)
-        ) {
-          try {
-            const p = await limited.current(() =>
-              api<Project>(projectURL(selection.current.active)),
-            );
-            if (p.state !== "deleted") all = mergePage(all, [p]);
-          } catch {
-            /* Missing selection stays unavailable. */
-          }
-        }
-        if (!alive.current || serial.current.projects !== id) return;
-        pages.current.projects = count;
-        setProjects((prior) =>
-          all.map(
-            (p) =>
-              prior.find((x) => x.id === p.id && x.revision > p.revision) || p,
-          ),
+  const refreshProjects = useCallback(
+    async function refreshProjects(loadMore = false): Promise<void> {
+      if (projectFlight.current) {
+        if (!loadMore) projectDirty.current++;
+        await projectFlight.current;
+        if (loadMore) return refreshProjects(true);
+        return;
+      }
+      const generation = projectDirty.current;
+      const flight = (async () => {
+        const id = (serial.current.projects =
+          (serial.current.projects || 0) + 1);
+        const count = Math.max(
+          1,
+          (pages.current.projects || 1) + (loadMore ? 1 : 0),
         );
-        setMore((m) => ({ ...m, projects: hasMore }));
-      } catch (e) {
-        if (alive.current) setError(String(e));
-      }
-    })();
-    projectFlight.current = flight;
-    try {
-      await flight;
-    } finally {
-      if (projectFlight.current === flight) projectFlight.current = null;
-    }
-  }, []);
-  const refreshChildren = useCallback(async function refreshChildren(
-    project: string,
-    loadMore = false,
-    includeTerminals = false,
-  ): Promise<void> {
-    const pending = childFlights.current.get(project);
-    if (pending) {
-      await pending.promise;
-      if (loadMore || (includeTerminals && !pending.terminals))
-        return refreshChildren(project, loadMore, includeTerminals);
-      return;
-    }
-    const flight = (async () => {
-      const id = (serial.current[project] = (serial.current[project] || 0) + 1);
-      const count = Math.max(
-        1,
-        (pages.current[project] || 1) + (loadMore ? 1 : 0),
-      );
-      try {
-        let all: AgentSession[] = [];
-        let after = "";
-        let hasMore = false;
-        for (let n = 0; n < count; n++) {
-          const data = await limited.current(() =>
-            api<{ sessions: AgentSession[] }>(
-              `${projectURL(project)}/sessions?limit=100&after=${encode(after)}`,
+        try {
+          let all: Project[] = [];
+          let after = "";
+          let hasMore = false;
+          for (let n = 0; n < count; n++) {
+            const data = await read<{ projects: Project[] }>(
+              `/api/projects?limit=100&after=${encode(after)}`,
+            );
+            all = mergePage(all, data.projects);
+            hasMore = data.projects.length === 100;
+            after = data.projects.at(-1)?.id || "";
+            if (!hasMore) break;
+          }
+          if (!alive.current || serial.current.projects !== id) return;
+          if (
+            selection.current.active &&
+            !all.some((p) => p.id === selection.current.active)
+          ) {
+            try {
+              const p = await read<Project>(
+                projectURL(selection.current.active),
+              );
+              if (p.state !== "deleted") all = mergePage(all, [p]);
+            } catch {
+              /* Missing selection stays unavailable. */
+            }
+          }
+          if (!alive.current || serial.current.projects !== id) return;
+          pages.current.projects = count;
+          setProjects((prior) =>
+            all.map(
+              (p) =>
+                prior.find((x) => x.id === p.id && x.revision > p.revision) ||
+                p,
             ),
           );
-          all = mergePage(all, data.sessions);
-          hasMore = data.sessions.length === 100;
-          after = data.sessions.at(-1)?.id || "";
-          if (!hasMore) break;
+          setMore((m) => ({ ...m, projects: hasMore }));
+        } catch (e) {
+          if (alive.current) setError(String(e));
         }
-        if (!alive.current || serial.current[project] !== id) return;
-        if (
-          selection.current.active === project &&
-          selection.current.targetSession &&
-          !all.some((s) => s.id === selection.current.targetSession)
-        ) {
-          try {
-            const s = await limited.current(() =>
-              api<AgentSession>(
+      })();
+      projectFlight.current = flight;
+      try {
+        await flight;
+      } finally {
+        if (projectFlight.current === flight) projectFlight.current = null;
+      }
+      if (alive.current && generation !== projectDirty.current)
+        return refreshProjects();
+    },
+    [read],
+  );
+  const refreshChildren = useCallback(
+    async function refreshChildren(
+      project: string,
+      loadMore = false,
+      includeTerminals = false,
+    ): Promise<void> {
+      const pending = childFlights.current.get(project);
+      if (pending) {
+        if (!loadMore)
+          childDirty.current[project] = (childDirty.current[project] || 0) + 1;
+        await pending.promise;
+        if (loadMore || (includeTerminals && !pending.terminals))
+          return refreshChildren(project, loadMore, includeTerminals);
+        return;
+      }
+      const generation = childDirty.current[project] || 0;
+      const flight = (async () => {
+        const id = (serial.current[project] =
+          (serial.current[project] || 0) + 1);
+        const count = Math.max(
+          1,
+          (pages.current[project] || 1) + (loadMore ? 1 : 0),
+        );
+        try {
+          let all: AgentSession[] = [];
+          let after = "";
+          let hasMore = false;
+          for (let n = 0; n < count; n++) {
+            const data = await read<{ sessions: AgentSession[] }>(
+              `${projectURL(project)}/sessions?limit=100&after=${encode(after)}`,
+            );
+            all = mergePage(all, data.sessions);
+            hasMore = data.sessions.length === 100;
+            after = data.sessions.at(-1)?.id || "";
+            if (!hasMore) break;
+          }
+          if (!alive.current || serial.current[project] !== id) return;
+          if (
+            selection.current.active === project &&
+            selection.current.targetSession &&
+            !all.some((s) => s.id === selection.current.targetSession)
+          ) {
+            try {
+              const s = await read<AgentSession>(
                 `${projectURL(project)}/sessions/${encode(selection.current.targetSession)}`,
-              ),
-            );
-            all = mergePage(all, [s]);
-          } catch {
-            /* Deleted selection stays unavailable. */
+              );
+              all = mergePage(all, [s]);
+            } catch {
+              /* Deleted selection stays unavailable. */
+            }
           }
-        }
-        if (!alive.current || serial.current[project] !== id) return;
-        pages.current[project] = count;
-        setSessions((s) => ({
-          ...s,
-          [project]: all.map(
-            (x) =>
-              s[project]?.find(
-                (y) => y.id === x.id && y.revision > x.revision,
-              ) || x,
-          ),
-        }));
-        setMore((m) => ({ ...m, [project]: hasMore }));
-        if (includeTerminals) {
-          let list: ProjectTerminal[] = [];
-          let cursor = "";
-          for (;;) {
-            const data = await limited.current(() =>
-              api<{ terminals: ProjectTerminal[] }>(
+          if (!alive.current || serial.current[project] !== id) return;
+          pages.current[project] = count;
+          setSessions((s) => ({
+            ...s,
+            [project]: all.map(
+              (x) =>
+                s[project]?.find(
+                  (y) => y.id === x.id && y.revision > x.revision,
+                ) || x,
+            ),
+          }));
+          setMore((m) => ({ ...m, [project]: hasMore }));
+          if (includeTerminals) {
+            let list: ProjectTerminal[] = [];
+            let cursor = "";
+            for (;;) {
+              const data = await read<{ terminals: ProjectTerminal[] }>(
                 `${projectURL(project)}/terminals?limit=100&after=${encode(cursor)}`,
-              ),
-            );
-            list = mergePage(list, data.terminals);
-            if (data.terminals.length < 100) break;
-            cursor = data.terminals.at(-1)!.id;
+              );
+              list = mergePage(list, data.terminals);
+              if (data.terminals.length < 100) break;
+              cursor = data.terminals.at(-1)!.id;
+            }
+            if (alive.current && serial.current[project] === id)
+              setTerminals((t) => ({ ...t, [project]: list }));
           }
-          if (alive.current && serial.current[project] === id)
-            setTerminals((t) => ({ ...t, [project]: list }));
+        } catch (e) {
+          if (alive.current) setError(String(e));
+        }
+      })();
+      childFlights.current.set(project, {
+        promise: flight,
+        terminals: includeTerminals,
+      });
+      try {
+        await flight;
+      } finally {
+        if (childFlights.current.get(project)?.promise === flight)
+          childFlights.current.delete(project);
+      }
+      if (alive.current && generation !== (childDirty.current[project] || 0))
+        return refreshChildren(project, false, includeTerminals);
+    },
+    [read],
+  );
+  const ensureTarget = useCallback(
+    async (project: string, session = "") => {
+      try {
+        const p = await read<Project>(projectURL(project));
+        if (!alive.current) return;
+        setProjects((old) => mergePage(old, [p]));
+        if (session) {
+          try {
+            const s = await read<AgentSession>(
+              `${projectURL(project)}/sessions/${encode(session)}`,
+            );
+            if (alive.current)
+              setSessions((old) => ({
+                ...old,
+                [project]: mergePage(old[project] || [], [s]),
+              }));
+          } catch (e) {
+            if (!(e instanceof APIError && e.status === 404)) throw e;
+            // An owned Project with a missing child is not a shared conversation.
+            if (alive.current)
+              setSessions((old) => ({
+                ...old,
+                [project]: (old[project] || []).filter((s) => s.id !== session),
+              }));
+          }
         }
       } catch (e) {
         if (alive.current) setError(String(e));
+        throw e;
       }
-    })();
-    childFlights.current.set(project, {
-      promise: flight,
-      terminals: includeTerminals,
-    });
-    try {
-      await flight;
-    } finally {
-      if (childFlights.current.get(project)?.promise === flight)
-        childFlights.current.delete(project);
-    }
-  }, []);
-  const ensureTarget = useCallback(async (project: string, session = "") => {
-    try {
-      const p = await api<Project>(projectURL(project));
-      if (!alive.current) return;
-      setProjects((old) => mergePage(old, [p]));
-      if (session) {
-        try {
-          const s = await api<AgentSession>(
-            `${projectURL(project)}/sessions/${encode(session)}`,
-          );
-          if (alive.current)
-            setSessions((old) => ({
-              ...old,
-              [project]: mergePage(old[project] || [], [s]),
-            }));
-        } catch (e) {
-          if (!(e instanceof APIError && e.status === 404)) throw e;
-          // An owned Project with a missing child is not a shared conversation.
-          if (alive.current)
-            setSessions((old) => ({
-              ...old,
-              [project]: (old[project] || []).filter((s) => s.id !== session),
-            }));
-        }
-      }
-    } catch (e) {
-      if (alive.current) setError(String(e));
-      throw e;
-    }
-  }, []);
+    },
+    [read],
+  );
   const refresh = useCallback(async () => {
     await Promise.all([
       refreshProjects(),
       active ? refreshChildren(active, false, true) : Promise.resolve(),
     ]);
-    if (alive.current) setTick((n) => n + 1);
   }, [active, refreshChildren, refreshProjects]);
   useEffect(() => {
     void refreshProjects();
-    const timer = setInterval(() => {
-      if (!document.hidden) void refreshProjects();
-    }, 10000);
-    return () => clearInterval(timer);
   }, [refreshProjects]);
   const expandedKey = expanded
     .filter((p) => p !== active)
     .sort()
     .join(",");
   useEffect(() => {
-    const ids = expandedKey.split(",").filter(Boolean);
-    const run = () => {
-      if (!document.hidden) for (const id of ids) void refreshChildren(id);
-    };
-    run();
-    const timer = setInterval(run, 10000);
-    return () => clearInterval(timer);
+    for (const id of expandedKey.split(",").filter(Boolean))
+      void refreshChildren(id);
   }, [expandedKey, refreshChildren]);
   useEffect(() => {
     if (!active) return;
+    void refreshChildren(active, false, true);
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const update = () => {
-      if (!document.hidden)
-        void refreshChildren(active, false, true).then(() => {
-          if (alive.current) setTick((n) => n + 1);
-        });
+    let live = false;
+    const pending = new Map<string, { kind: string; id: string }>();
+    const updateSession = async (id: string) => {
+      try {
+        const child = await read<AgentSession>(
+          `${projectURL(active)}/sessions/${encode(id)}`,
+        );
+        if (alive.current)
+          setSessions((old) => ({
+            ...old,
+            [active]: mergePage(old[active] || [], [child]),
+          }));
+      } catch (e) {
+        if (e instanceof APIError && e.status === 404 && alive.current)
+          setSessions((old) => ({
+            ...old,
+            [active]: (old[active] || []).filter((s) => s.id !== id),
+          }));
+        else if (alive.current) setError(String(e));
+      }
     };
-    update();
-    const interval = setInterval(update, 2500);
-    const source = new EventSource(`${projectURL(active)}/events`);
-    const invalidate = () => {
-      if (!timer)
-        timer = setTimeout(() => {
-          timer = undefined;
-          update();
+    const updateTerminal = async (id: string) => {
+      try {
+        const terminal = await read<ProjectTerminal>(
+          `${projectURL(active)}/terminals/${encode(id)}`,
+        );
+        if (alive.current)
+          setTerminals((old) => ({
+            ...old,
+            [active]: mergePage(old[active] || [], [terminal]),
+          }));
+      } catch (e) {
+        if (e instanceof APIError && e.status === 404 && alive.current)
+          setTerminals((old) => ({
+            ...old,
+            [active]: (old[active] || []).filter((t) => t.id !== id),
+          }));
+        else if (alive.current) setError(String(e));
+      }
+    };
+    const flush = () => {
+      timer = undefined;
+      const events = [...pending.values()];
+      pending.clear();
+      if (events.some((e) => e.kind === "resync")) {
+        void refreshProjects();
+        void refreshChildren(active, false, true);
+        return;
+      }
+      for (const e of events) {
+        if (["sessions", "control"].includes(e.kind) && e.id)
+          void updateSession(e.id);
+        else if (e.kind === "terminals" && e.id) void updateTerminal(e.id);
+        else if (e.kind === "project") void refreshProjects();
+      }
+    };
+    const unsubscribe = realtime.subscribe(
+      active,
+      (event) => {
+        if (event.resource_kind === "closed") {
+          resources.clear(active);
+          setSessions((old) => ({ ...old, [active]: [] }));
+          setTerminals((old) => ({ ...old, [active]: [] }));
           void refreshProjects();
-        }, 100);
-    };
-    source.addEventListener("projection", (event) => {
-      const data = JSON.parse((event as MessageEvent).data) as Projection;
-      if (data.project_id === active) invalidate();
-    });
-    source.addEventListener("snapshot", invalidate);
-    source.addEventListener("gap", invalidate);
-    source.onopen = invalidate;
-    source.addEventListener("closed", () => {
-      source.close();
-      invalidate();
-    });
-    document.addEventListener("visibilitychange", update);
+          return;
+        }
+        if (
+          !["resync", "sessions", "control", "terminals", "project"].includes(
+            event.resource_kind,
+          )
+        )
+          return;
+        if (pending.size >= 128) {
+          pending.clear();
+          pending.set("resync", { kind: "resync", id: "" });
+        } else
+          pending.set(event.resource_kind + "/" + (event.resource_id || ""), {
+            kind: event.resource_kind,
+            id: event.resource_id || "",
+          });
+        if (!timer) timer = setTimeout(flush, 100);
+      },
+      (state) => {
+        live = state === "live";
+      },
+    );
+    // Light fallback exists only while disconnected. Healthy idle does no list polling.
+    const fallback = setInterval(() => {
+      if (!live && !document.hidden) {
+        void refreshProjects();
+        void refreshChildren(active, false, true);
+      }
+    }, 30000);
     return () => {
-      source.close();
-      clearInterval(interval);
+      unsubscribe();
       clearTimeout(timer);
-      document.removeEventListener("visibilitychange", update);
+      clearInterval(fallback);
     };
-  }, [active, refreshChildren, refreshProjects]);
+  }, [active, realtime, resources, read, refreshChildren, refreshProjects]);
   return {
     projects,
     sessions,
@@ -318,7 +387,6 @@ export function useWorkspaceData(
     more,
     error,
     setError,
-    tick,
     refresh,
     refreshProjects,
     refreshChildren,

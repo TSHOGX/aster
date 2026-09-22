@@ -199,7 +199,7 @@ func TestDisplayCrashResumeAndAtomicCommit(t *testing.T) {
 	}
 }
 
-func TestDisplayShadowAndReusedRunnerTurns(t *testing.T) {
+func TestDisplayGoldenAndReusedRunnerTurns(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
 	events := []struct{ kind, payload string }{
 		{"command.applied", `{}`},
@@ -212,18 +212,20 @@ func TestDisplayShadowAndReusedRunnerTurns(t *testing.T) {
 		must(t, err)
 	}
 	must(t, s.ProjectConversation(ctx, i.SessionID))
-	old, err := s.SessionSnapshot(ctx, scope, i.SessionID, 0, false)
-	must(t, err)
 	items := displayItems(t, s, i.SessionID)
-	if len(old.Timeline) != len(items) {
-		t.Fatal("shadow row count", len(old.Timeline), len(items))
+	expected := []struct{ kind, content string }{{"user", "hello"}, {"thinking", "consider"}, {"assistant", "first answer"}, {"tool", ""}}
+	if len(items) != len(expected) {
+		t.Fatal("golden row count", len(items))
 	}
-	for n, a := range old.Timeline {
-		b := items[n]
-		if a.Kind != b.Kind || a.Content != b.Content || a.Arguments != b.Arguments || a.Result != b.Result || a.State != b.State {
-			t.Fatalf("shadow difference at %d: %s/%s", n, a.Kind, b.Kind)
+	for n, want := range expected {
+		if items[n].Kind != want.kind || items[n].Content != want.content {
+			t.Fatalf("golden display mismatch at %d", n)
 		}
 	}
+	if items[3].Arguments != `{"path":"file"}` || items[3].Result != `{"ok":true}` || items[3].State != "completed" {
+		t.Fatal("tool evidence changed")
+	}
+	var err error
 	completed := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"sha256:%064d","size":80,"outcome":"completed"}`, c.CommandID, 0)
 	_, err = s.IngestAgent(ctx, i, record(i, c, 5, "command.completed", completed))
 	must(t, err)
