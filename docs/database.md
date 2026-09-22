@@ -5,7 +5,8 @@ Version 2 adds [conversation display storage](../orchestrator/internal/product/d
 version 3 adds [projector queues and ordering](../orchestrator/internal/product/projector_schema.sql);
 version 4 records [actual event retention frontiers](../orchestrator/internal/product/event_frontier_schema.sql);
 version 5 adds [reusable reader bindings](../orchestrator/internal/product/reader_schema.sql);
-version 6 adds [retention accounting and cleanup](../orchestrator/internal/product/retention_schema.sql).
+version 6 adds [retention accounting and cleanup](../orchestrator/internal/product/retention_schema.sql);
+version 7 adds [turn-scoped final-message lookup](../orchestrator/internal/product/navigation_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second

@@ -724,3 +724,35 @@ Each size had one excluded warmup; browser contexts and application resource
 caches were fresh per trial. CPU throttling was four-times, production assets
 were prebuilt, and no CPU profiler ran during these latency trials. These figures
 qualify those synthetic files and that environment only.
+
+## Navigation and full transcript windows
+
+Turn-navigation metadata now has a 300-entry window, with at most one additional
+marker for the current transcript turn. Prompt/final-answer previews are bounded
+to 600/1200 UTF-16 units in the browser. Earlier/later paging evicts the opposite
+edge and retains its sequence continuation; revision refresh reloads the retained
+window rather than merging a disconnected latest tail. One cancellable request
+runs at a time, and a pending revision waits for that request instead of being
+lost. Marker keyboard navigation retains a tab stop even when the current turn
+is outside the index. A separated current marker preserves a route back to the
+reader's visible content without pinning an unbounded index.
+
+The owner-only turn-index API now supplies both directional continuations and
+accepts one nonzero `before` or `after` selector. Pages stay chronological; a
+refresh may request up to 300 entries. Schema 7 adds a partial
+`messages(session_id,turn_id,sequence DESC)` index for assistant messages. This
+bounds final-preview lookup by the selected turn rather than searching unrelated
+Session messages. Query-plan regression requires that index and rejects a scan
+or temporary sort. The known-schema migration from version 6 is atomic, preserves
+accepted turns, and rolls back cleanly when interrupted before commit. Rollback
+must use a build that accepts schema 7; restoring a backup over later accepted
+writes is not a supported rollback.
+
+The 1,000-turn traversal fixture loaded twenty-one ten-turn pages. At sixteen
+pages it retained 160 turns and 83,420 DOM nodes; after five further page loads
+those counts remained unchanged. Post-GC heap was 46.93 MB at sixteen pages and
+47.66 MB at twenty-one. Forward paging after eviction and Return to latest both
+worked; latest replaced the window with ten turns. This demonstrates a resource
+plateau for that fixture, not a constrained-device scroll-latency guarantee.
+The separate navigation test traverses beyond its index limit, returns through
+later pages, follows revision changes and jumps into an evicted transcript.

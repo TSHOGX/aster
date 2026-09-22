@@ -323,4 +323,8 @@ export type TurnIndexItem = {
   user_preview: string;
   assistant_preview: string;
 };
-export type TurnIndexPage = { turns: TurnIndexItem[]; next_before?: number };
+export type TurnIndexPage = {
+  turns: TurnIndexItem[];
+  next_before?: number;
+  next_after?: number;
+};

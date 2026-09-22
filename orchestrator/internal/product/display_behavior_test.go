@@ -239,17 +239,32 @@ func TestTurnIndexPaginationFinalPreviewAndTargetedView(t *testing.T) {
 	must(t, err)
 	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, firstTurn)
 	must(t, err)
-	page, err := s.TurnIndex(ctx, a, "nav", 0, 100)
+	page, err := s.TurnIndex(ctx, a, "nav", 0, 0, 100)
 	must(t, err)
 	if len(page.Turns) != 100 || page.NextBefore != 26 || page.Turns[0].Sequence != 26 {
 		t.Fatal(page)
 	}
-	older, err := s.TurnIndex(ctx, a, "nav", page.NextBefore, 100)
+	older, err := s.TurnIndex(ctx, a, "nav", page.NextBefore, 0, 100)
 	must(t, err)
 	if len(older.Turns) != 25 || older.NextBefore != 0 || older.Turns[0].AssistantPreview != "Final preview" {
 		t.Fatal(older)
 	}
-	_, err = s.TurnIndex(ctx, b, "nav", 0, 100)
+	if older.NextAfter != 25 || page.NextAfter != 0 {
+		t.Fatal("incorrect forward edges", older, page)
+	}
+	newer, err := s.TurnIndex(ctx, a, "nav", 0, older.NextAfter, 100)
+	must(t, err)
+	if len(newer.Turns) != 100 || newer.Turns[0].Sequence != 26 || newer.NextBefore != 26 || newer.NextAfter != 0 {
+		t.Fatal(newer)
+	}
+	middle, err := s.TurnIndex(ctx, a, "nav", 0, 25, 10)
+	must(t, err)
+	if middle.NextBefore != 26 || middle.NextAfter != 35 {
+		t.Fatal(middle)
+	}
+	_, err = s.TurnIndex(ctx, a, "nav", 1, 2, 10)
+	wantError(t, err, ErrInvalid)
+	_, err = s.TurnIndex(ctx, b, "nav", 0, 0, 100)
 	wantError(t, err, ErrNotFound)
 	snapshot, err := projectedPage(t, s, a, "nav", ViewSelector{AroundTurn: firstTurn})
 	must(t, err)
@@ -271,10 +286,33 @@ func TestTurnIndexPaginationFinalPreviewAndTargetedView(t *testing.T) {
 	wantError(t, err, ErrNotFound)
 	_, err = s.db.Exec(`UPDATE turns SET state='running' WHERE id=?`, firstTurn)
 	must(t, err)
-	pending, err := s.TurnIndex(ctx, a, "nav", 26, 100)
+	pending, err := s.TurnIndex(ctx, a, "nav", 26, 0, 100)
 	must(t, err)
 	if pending.Turns[0].AssistantPreview != "" {
 		t.Fatal("intermediate reply exposed as final")
+	}
+}
+
+func TestFinalTurnPreviewUsesScopedIndex(t *testing.T) {
+	s, _, _ := fixture(t)
+	rows, err := s.reader.Query(`EXPLAIN QUERY PLAN SELECT substr(content,1,1200) FROM messages WHERE session_id=? AND turn_id=? AND role='assistant' ORDER BY sequence DESC LIMIT 1`, "session", "turn")
+	must(t, err)
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		must(t, rows.Scan(&id, &parent, &unused, &detail))
+		if strings.Contains(detail, "messages_turn_final") {
+			found = true
+		}
+		if strings.Contains(detail, "SCAN") || strings.Contains(detail, "TEMP B-TREE") {
+			t.Fatal(detail)
+		}
+	}
+	must(t, rows.Err())
+	if !found {
+		t.Fatal("final preview did not use the turn-scoped index")
 	}
 }
 

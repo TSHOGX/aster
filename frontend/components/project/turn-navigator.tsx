@@ -9,9 +9,9 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { api, type TurnIndexItem, type TurnIndexPage } from "@/lib/project-api";
-import { mergeTurnIndex, turnWaveWidth } from "@/lib/turn-navigation";
+import { boundedTurnIndex, turnWaveWidth } from "@/lib/turn-navigation";
 import { useT } from "@/lib/i18n";
 export function TurnNavigator({
   base,
@@ -28,55 +28,95 @@ export function TurnNavigator({
 }) {
   const tr = useT(),
     tooltip = useId();
-  const [index, setIndex] = useState<TurnIndexItem[]>([]),
-    [older, setOlder] = useState<number | undefined>(),
+  const [indexWindow, setIndexWindow] = useState<TurnIndexPage>({ turns: [] }),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(false),
     [current, setCurrent] = useState(""),
     [hovered, setHovered] = useState<string | null>(null),
     [position, setPosition] = useState({ left: 0, top: 0, width: 320 });
+  const index = indexWindow.turns,
+    older = indexWindow.next_before,
+    newer = indexWindow.next_after;
+  const windowRef = useRef(indexWindow);
+  const request = useRef<AbortController | null>(null);
   const rail = useRef<HTMLDivElement>(null),
     closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
-    olderBusy = useRef(false),
     generation = useRef(0),
-    inFlight = useRef(false),
     first = useRef(true);
   const load = useCallback(
-    async (before = 0) => {
-      if (before && olderBusy.current) return;
+    async (direction: "older" | "newer" | "refresh" = "refresh") => {
+      if (request.current) return;
+      const old = windowRef.current;
+      const cursor =
+        direction === "older"
+          ? old.next_before
+          : direction === "newer"
+            ? old.next_after
+            : 0;
+      if (direction !== "refresh" && !cursor) return;
+      const abort = new AbortController();
+      request.current = abort;
       const version = generation.current;
-      if (before) olderBusy.current = true;
       setLoading(true);
+      const anchor =
+        rail.current &&
+        [...rail.current.querySelectorAll<HTMLElement>("[data-nav-turn]")].find(
+          (n) =>
+            n.getBoundingClientRect().bottom >
+            rail.current!.getBoundingClientRect().top,
+        );
+      const saved = anchor
+        ? {
+            id: anchor.dataset.navTurn!,
+            top: anchor.getBoundingClientRect().top,
+          }
+        : undefined;
       try {
+        const selector =
+          direction === "older"
+            ? `before=${cursor}`
+            : direction === "newer"
+              ? `after=${cursor}`
+              : old.next_after && old.turns.length
+                ? `before=${old.turns.at(-1)!.sequence + 1}`
+                : "before=0";
+        const limit =
+          direction === "refresh" ? Math.max(100, old.turns.length) : 100;
         const page = await api<TurnIndexPage>(
-          `${base}/turn-index?before=${before}&limit=100`,
+          `${base}/turn-index?${selector}&limit=${limit}`,
+          { signal: abort.signal },
         );
-        if (version !== generation.current) return;
-        const initial = first.current;
-        const previousHeight = rail.current?.scrollHeight || 0,
-          previousTop = rail.current?.scrollTop || 0;
-        setIndex((old) => mergeTurnIndex(old, page.turns || []));
-        setOlder((old) =>
-          before ? page.next_before : initial ? page.next_before : old,
+        if (version !== generation.current || abort.signal.aborted) return;
+        const next = boundedTurnIndex(
+          old,
+          page,
+          direction === "refresh" ? "replace" : direction,
         );
+        windowRef.current = next;
+        setIndexWindow(next);
         setError("");
-        if (first.current) {
-          first.current = false;
-          requestAnimationFrame(() => {
-            if (rail.current)
-              rail.current.scrollTop = rail.current.scrollHeight;
-          });
-        } else if (before)
-          requestAnimationFrame(() => {
-            if (rail.current)
-              rail.current.scrollTop =
-                previousTop + rail.current.scrollHeight - previousHeight;
-          });
+        requestAnimationFrame(() => {
+          if (version !== generation.current || !rail.current) return;
+          if (first.current) {
+            first.current = false;
+            rail.current.scrollTop = rail.current.scrollHeight;
+          } else if (saved) {
+            const node = rail.current.querySelector<HTMLElement>(
+              `[data-nav-turn="${CSS.escape(saved.id)}"]`,
+            );
+            if (node)
+              rail.current.scrollTop +=
+                node.getBoundingClientRect().top - saved.top;
+          }
+        });
       } catch (e) {
-        if (version === generation.current) setError(String(e));
+        if (version === generation.current && !abort.signal.aborted)
+          setError(String(e));
       } finally {
-        olderBusy.current = false;
-        setLoading(false);
+        if (request.current === abort) {
+          request.current = null;
+          setLoading(false);
+        }
       }
     },
     [base],
@@ -86,39 +126,47 @@ export function TurnNavigator({
     const timer = setTimeout(() => void load(), 0);
     return () => {
       generation.current = version + 1;
+      request.current?.abort();
+      request.current = null;
       clearTimeout(timer);
       if (closeTimer.current) clearTimeout(closeTimer.current);
     };
   }, [load]);
-  // Coalesce streaming revisions; do not request a navigation page for every token.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (inFlight.current || document.hidden) return;
-      inFlight.current = true;
-      void load().finally(() => {
-        inFlight.current = false;
-      });
-    }, 700);
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      if (document.hidden) return;
+      if (request.current) {
+        timer = setTimeout(refresh, 200);
+        return;
+      }
+      void load();
+    };
+    timer = setTimeout(refresh, 700);
     return () => clearTimeout(timer);
   }, [revision, load]);
-  const entries = mergeTurnIndex(
-    index,
-    local.filter((t) => !index.some((x) => x.id === t.id)),
-  );
-  // Refresh current-page previews immediately while keeping off-page history indexed.
   const localByID = new Map(local.map((t) => [t.id, t]));
-  const turns = entries.map((t) =>
-    localByID.has(t.id)
+  const turns = index.map((t) => {
+    const here = localByID.get(t.id);
+    return here
       ? {
           ...t,
-          ...localByID.get(t.id),
-          sequence: t.sequence,
-          user_preview: localByID.get(t.id)?.user_preview || t.user_preview,
-          assistant_preview:
-            localByID.get(t.id)?.assistant_preview || t.assistant_preview,
+          state: here.state,
+          user_preview: (here.user_preview || t.user_preview).slice(0, 600),
+          assistant_preview: (
+            here.assistant_preview || t.assistant_preview
+          ).slice(0, 1200),
         }
-      : t,
-  );
+      : t;
+  });
+  const pinned = localByID.get(current);
+  if (pinned && !turns.some((t) => t.id === pinned.id))
+    turns.push({
+      ...pinned,
+      user_preview: pinned.user_preview.slice(0, 600),
+      assistant_preview: pinned.assistant_preview.slice(0, 1200),
+    });
+  turns.sort((a, b) => a.sequence - b.sequence);
   const entryKey = turns.map((t) => t.id).join("|");
   useEffect(() => {
     const el = scroll.current;
@@ -191,6 +239,7 @@ export function TurnNavigator({
     <nav
       className="turn-navigator"
       aria-label={tr("Turn navigation")}
+      aria-busy={loading}
       onPointerLeave={close}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node)) close();
@@ -201,7 +250,7 @@ export function TurnNavigator({
         ref={rail}
         onScroll={() => {
           if (rail.current && rail.current.scrollTop < 12 && older && !loading)
-            void load(older);
+            void load("older");
         }}
       >
         {older && (
@@ -211,7 +260,7 @@ export function TurnNavigator({
             aria-label={tr("Earlier turns")}
             title={tr("Earlier turns")}
             disabled={loading}
-            onClick={() => void load(older)}
+            onClick={() => void load("older")}
           >
             <ChevronUp size={12} />
           </button>
@@ -220,13 +269,14 @@ export function TurnNavigator({
           <button
             key={turn.id}
             type="button"
-            className={`turn-tick ${current === turn.id ? "is-current" : ""} ${hovered === turn.id ? "is-preview" : ""}`}
+            className={`turn-tick ${current === turn.id ? "is-current" : ""} ${hovered === turn.id ? "is-preview" : ""} ${!index.some((t) => t.id === turn.id) ? "is-pinned" : ""}`}
             data-nav-turn={turn.id}
             aria-label={tr("Jump to turn {number}", { number: turn.sequence })}
             aria-current={current === turn.id ? "step" : undefined}
             aria-describedby={hovered === turn.id ? tooltip : undefined}
             tabIndex={
-              current === turn.id || (!current && i === turns.length - 1)
+              current === turn.id ||
+              (!turns.some((t) => t.id === current) && i === turns.length - 1)
                 ? 0
                 : -1
             }
@@ -270,13 +320,25 @@ export function TurnNavigator({
             <span aria-hidden />
           </button>
         ))}
+        {newer && (
+          <button
+            type="button"
+            className="turn-rail-more"
+            aria-label={tr("Later turns")}
+            title={tr("Later turns")}
+            disabled={loading}
+            onClick={() => void load("newer")}
+          >
+            <ChevronDown size={12} />
+          </button>
+        )}
         {error && (
           <button
             type="button"
             className="turn-rail-more"
             aria-label={tr("Retry turn navigation")}
             title={error}
-            onClick={() => void load(older)}
+            onClick={() => void load()}
           >
             !
           </button>

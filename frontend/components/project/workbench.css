@@ -1800,6 +1800,10 @@ details[open] > .activity-row .activity-chevron {
   padding: 5px 0;
   width: 34px;
 }
+.turn-tick.is-pinned {
+  border-top: 1px dashed var(--color-border);
+  margin-top: 4px;
+}
 .turn-rail::-webkit-scrollbar {
   display: none;
 }

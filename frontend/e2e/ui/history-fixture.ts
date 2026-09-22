@@ -44,12 +44,23 @@ export async function historyFixture(
     const before = Number(
       new URL(route.request().url()).searchParams.get("before") || 0,
     );
-    const available = turns.filter((t) => !before || t.sequence < before),
-      entries = available.slice(-100);
+    const params = new URL(route.request().url()).searchParams;
+    const after = Number(params.get("after") || 0),
+      limit = Number(params.get("limit") || 100);
+    const available = turns.filter(
+        (t) =>
+          (!before || t.sequence < before) && (!after || t.sequence > after),
+      ),
+      entries = after ? available.slice(0, limit) : available.slice(-limit);
     return route.fulfill({
       json: {
         turns: entries,
-        ...(available.length > 100 ? { next_before: entries[0].sequence } : {}),
+        ...(entries[0]?.sequence > 1
+          ? { next_before: entries[0].sequence }
+          : {}),
+        ...((entries.at(-1)?.sequence || turns.length) < turns.length
+          ? { next_after: entries.at(-1)!.sequence }
+          : {}),
       },
     });
   });

@@ -84,7 +84,10 @@ lag never changes command outcomes or journal ACK authority.
 
 `GET …/sessions/{session}/turn-index?before=SEQUENCE&limit=100` supplies a bounded
 owner-only navigation index. `turns` are chronological within each page, initially
-the newest 100; `next_before` loads the preceding page. Each entry includes turn
+the newest 100. `next_before` and `next_after` are the real page edges; pass the
+corresponding `before` or `after` sequence to page in either direction. Nonzero
+selectors are mutually exclusive. The maximum `limit` is 300, allowing refresh
+of a complete retained navigation window. Each entry includes turn
 ID/sequence/state/time, up to 600 prompt characters, and up to 1200 characters of
 the last assistant message only after successful turn completion. Shared reader
 grants do not authorize this endpoint. View pages accept `around_turn`,

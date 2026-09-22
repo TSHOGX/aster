@@ -927,16 +927,25 @@ test("turn rail previews with a hover wave, tracks reading and jumps across hist
   const requestedAnchors: string[] = [];
   await page.route("**/sessions/analysis/turn-index?**", (route) => {
     indexPages++;
+    const params = new URL(route.request().url()).searchParams;
     const before = Number(
       new URL(route.request().url()).searchParams.get("before"),
     );
-    const available = all.filter((t) => !before || t.sequence < before),
-      turns = available.slice(-100);
+    const after = Number(params.get("after") || 0),
+      limit = Number(params.get("limit") || 100);
+    const available = all.filter(
+        (t) =>
+          (!before || t.sequence < before) && (!after || t.sequence > after),
+      ),
+      turns = after ? available.slice(0, limit) : available.slice(-limit);
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
         turns,
-        ...(available.length > 100 ? { next_before: turns[0].sequence } : {}),
+        ...(turns[0]?.sequence > 1 ? { next_before: turns[0].sequence } : {}),
+        ...((turns.at(-1)?.sequence || all.length) < all.length
+          ? { next_after: turns.at(-1)!.sequence }
+          : {}),
       }),
     });
   });

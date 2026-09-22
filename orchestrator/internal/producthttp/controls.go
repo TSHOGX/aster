@@ -65,7 +65,7 @@ func (s *Server) queuedControl(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) turnIndex(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, err := s.Store.TurnIndex(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "before"), intParam(q, "limit", 100))
+	page, err := s.Store.TurnIndex(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "before"), int64Param(q, "after"), intParam(q, "limit", 100))
 	if err != nil {
 		fail(w, err)
 		return

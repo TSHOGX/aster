@@ -53,6 +53,7 @@ export const ZH: Record<MessageKey, string> = {
   Latest: "回到最新",
   "Leave empty for manual runs": "留空以手动运行",
   "Loading preview…": "正在加载预览…",
+  "Later turns": "后面的轮次",
   "This Markdown is shown as plain text to keep the preview responsive.": "此 Markdown 以纯文本显示，以保持预览流畅。",
   "The saved reading position is unavailable. Showing the latest conversation.": "保存的阅读位置已不可用。正在显示最新对话。",
   "Preparing preview…": "正在准备预览…",

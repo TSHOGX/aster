@@ -114,8 +114,10 @@ turn has a gray dash; scrolling updates the darker current-turn marker. Hover or
 keyboard focus creates a short width wave centered on that dash and shows a
 bounded prompt/final-answer preview. Arrow/Home/End keys move through markers,
 Enter jumps, and Escape dismisses previews; reduced motion disables transitions.
-The rail scrolls independently in long conversations and lazily loads earlier
-index pages. Clicking an off-page marker loads a bounded surrounding conversation window
+The rail scrolls independently and retains at most 300 index entries plus one
+current-turn marker. Earlier/later controls reload evicted edges in either
+direction; refresh updates that same window instead of accumulating a latest
+tail. The current marker remains reachable even outside the retained index. Clicking an off-page marker loads a bounded surrounding conversation window
 and immediately positions the user message, without a long scrolling animation.
 Already loaded destinations scroll directly without requesting or replacing content.
 Scrolling near either edge prepends/appends adjacent pages with deduplication;

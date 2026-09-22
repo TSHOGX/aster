@@ -2,6 +2,7 @@ package product
 
 import (
 	"context"
+	"fmt"
 	"slices"
 )
 
@@ -17,17 +18,33 @@ type TurnIndexItem struct {
 type TurnIndexPage struct {
 	Turns      []TurnIndexItem `json:"turns"`
 	NextBefore int64           `json:"next_before,omitempty"`
+	NextAfter  int64           `json:"next_after,omitempty"`
 }
 
-func (s *Store) TurnIndex(ctx context.Context, scope Scope, session string, before int64, limit int) (TurnIndexPage, error) {
+func (s *Store) TurnIndex(ctx context.Context, scope Scope, session string, before, after int64, limit int) (TurnIndexPage, error) {
 	out := TurnIndexPage{Turns: []TurnIndexItem{}}
 	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
 		return out, err
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 || limit > 300 {
 		limit = 100
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT t.id,t.sequence,t.state,t.created_at,substr(t.content,1,600),CASE WHEN t.state='completed' THEN coalesce((SELECT substr(m.content,1,1200) FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') ELSE '' END FROM turns t WHERE t.session_id=? AND (?=0 OR t.sequence<?) ORDER BY t.sequence DESC LIMIT ?`, session, before, before, limit+1)
+	if before < 0 || after < 0 || (before != 0 && after != 0) {
+		return out, ErrInvalid
+	}
+	where, order := "", "DESC"
+	args := []any{session}
+	if before != 0 {
+		where = " AND t.sequence<?"
+		args = append(args, before)
+	}
+	if after != 0 {
+		where = " AND t.sequence>?"
+		order = "ASC"
+		args = append(args, after)
+	}
+	args = append(args, limit)
+	rows, err := s.reader.QueryContext(ctx, fmt.Sprintf(`SELECT t.id,t.sequence,t.state,t.created_at,substr(t.content,1,600),CASE WHEN t.state='completed' THEN coalesce((SELECT substr(m.content,1,1200) FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') ELSE '' END FROM turns t WHERE t.session_id=?%s ORDER BY t.sequence %s LIMIT ?`, where, order), args...)
 	if err != nil {
 		return out, err
 	}
@@ -39,10 +56,28 @@ func (s *Store) TurnIndex(ctx context.Context, scope Scope, session string, befo
 		}
 		out.Turns = append(out.Turns, item)
 	}
-	if len(out.Turns) > limit {
-		out.Turns = out.Turns[:limit]
-		out.NextBefore = out.Turns[len(out.Turns)-1].Sequence
+	if err := rows.Err(); err != nil {
+		return out, err
 	}
-	slices.Reverse(out.Turns)
-	return out, rows.Err()
+	if err := rows.Close(); err != nil {
+		return out, err
+	}
+	if after == 0 {
+		slices.Reverse(out.Turns)
+	}
+	if len(out.Turns) > 0 {
+		first, last := out.Turns[0].Sequence, out.Turns[len(out.Turns)-1].Sequence
+		var older, newer bool
+		err = s.reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE session_id=? AND sequence<?),EXISTS(SELECT 1 FROM turns WHERE session_id=? AND sequence>?)`, session, first, session, last).Scan(&older, &newer)
+		if err != nil {
+			return out, err
+		}
+		if older {
+			out.NextBefore = first
+		}
+		if newer {
+			out.NextAfter = last
+		}
+	}
+	return out, nil
 }
