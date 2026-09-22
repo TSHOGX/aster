@@ -11,6 +11,7 @@
 - [Database](database.md): the single product writer and durable state.
 - [Security](security.md): trust domains, authentication and public shares.
 - [Frontend](frontend.md): workbench, bounds, previews and localization.
+- [Interaction architecture](performance.md): implementation progress and performance diagnostics.
 - [Notifications](notifications.md): outcome and operator notifications.
 - [Image build](sandbox-image.md): immutable packaging and release verification.
 - [Development](development.md) and [verification](verification.md): executable gates.

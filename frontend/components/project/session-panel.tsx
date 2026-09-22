@@ -20,6 +20,7 @@ import { Menu, useDialog } from "./ui";
 import { knownWorkspaceFiles, workspacePath } from "@/lib/workspace-links";
 import {
   api,
+  APIError,
   command,
   newID,
   recalled,
@@ -32,6 +33,7 @@ import {
   type Turn,
 } from "@/lib/project-api";
 import { emptySessionView, type SessionView } from "@/lib/project-projections";
+import { startTiming } from "@/lib/interaction-metrics";
 export function SessionPanel({
   actor,
   session,
@@ -59,6 +61,8 @@ export function SessionPanel({
     })(),
   );
   const [view, setView] = useState<SessionView>(emptySessionView);
+  const [readState, setReadState] = useState<"loading" | "ready" | "pending" | "error" | "denied">("loading");
+  const [readError, setReadError] = useState("");
   const positionKey = key + ":position";
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(
@@ -177,11 +181,15 @@ export function SessionPanel({
   const base = sessionURL(session.project_id, session.id);
   const applyPage = useCallback(
     (next: SessionSnapshot, older = false, replace = false) => {
+      const done = startTiming("conversation", "commit");
       const merged = replace
         ? next
         : mergeConversationPage(snapshot.current, next, older);
       snapshot.current = merged;
       setView((current) => ({ ...current, snapshot: merged }));
+      setReadState("ready");
+      setReadError("");
+      done();
     },
     [],
   );
@@ -215,12 +223,14 @@ export function SessionPanel({
         );
       }
     } catch (e) {
-      if (serial === request.current && alive.current)
-        setError(
+      if (serial === request.current && alive.current) {
+        setReadState(e instanceof APIError && e.status === 202 ? "pending" : e instanceof APIError && [401, 403, 404].includes(e.status) ? "denied" : "error");
+        setReadError(
           e instanceof Error
             ? e.message
             : "Could not refresh this conversation.",
         );
+      }
     } finally {
       if (snapshotFlight.current?.serial === serial)
         snapshotFlight.current = null;
@@ -612,9 +622,9 @@ export function SessionPanel({
       aria-label={`Agent ${current.title}`}
       data-session-id={session.id}
     >
-      {error || current.failure ? (
+      {error || readError || current.failure ? (
         <p className="notice error" role="alert">
-          {error || current.failure}
+          {error || readError || current.failure}
         </p>
       ) : null}
       {current.state === "blocked" && (
@@ -753,7 +763,10 @@ export function SessionPanel({
               {tr("Loading earlier conversation…")}
             </p>
           )}
-          {!timeline.length && (
+          {!view.snapshot && readState === "loading" && (
+            <p className="history-loading" role="status">{tr("Loading…")}</p>
+          )}
+          {!timeline.length && view.snapshot && readState === "ready" && !view.snapshot.has_earlier && !view.snapshot.has_later && (
             <div className="empty-state">
               <h3>{tr("Start a conversation")}</h3>
               <p>

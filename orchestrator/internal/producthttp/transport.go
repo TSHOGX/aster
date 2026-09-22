@@ -30,6 +30,8 @@ func (f AuthenticatorFunc) Actor(r *http.Request) (string, error) { return f(r) 
 
 // Config is the transport's deployment policy. Nothing here is user input.
 type Config struct {
+	// ObserveHTTP enables timing. The callback must be concurrency-safe and bounded.
+	ObserveHTTP func(HTTPObservation)
 	// AllowedOrigins are the exact origins a browser may use. Empty means
 	// same-origin only, resolved from the forwarded host.
 	AllowedOrigins []string

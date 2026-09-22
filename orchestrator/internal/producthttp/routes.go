@@ -99,7 +99,7 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("GET /api/shared/{token}/messages", s.publicMessages)
 	public.HandleFunc("GET /api/shared/{token}/files", s.publicFile)
 	public.Handle("/", s.guard(mux))
-	return public
+	return s.diagnostics(public)
 }
 
 // guard applies transport policy before any handler runs: origin for state

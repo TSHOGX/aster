@@ -1,3 +1,5 @@
+import { requestCategory, startTiming } from "./interaction-metrics";
+
 export type Project = {
   id: string;
   title: string;
@@ -187,6 +189,8 @@ export async function api<T>(
     id: new Headers(init.headers).get("Idempotency-Key") || undefined,
   };
   let response: Response;
+  const category = requestCategory(path, mutation);
+  const networkDone = startTiming(category, "network");
   try {
     response = await fetch(path, {
       ...init,
@@ -200,6 +204,7 @@ export async function api<T>(
       },
     });
   } catch (error) {
+    networkDone(0);
     if (mutation)
       throw new APIError(
         0,
@@ -208,8 +213,12 @@ export async function api<T>(
       );
     throw error;
   }
+  networkDone(response.status);
+  if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/"))
+    window.dispatchEvent(new Event("project-auth-expired"));
   if (response.status === 204) return undefined as T;
   let data;
+  const parseDone = startTiming(category, "parse");
   try {
     data = await response.json();
   } catch {
@@ -218,13 +227,9 @@ export async function api<T>(
       "The server returned an incomplete response.",
       mutation ? unknown : undefined,
     );
+  } finally {
+    parseDone(response.status);
   }
-  if (
-    response.status === 401 &&
-    typeof window !== "undefined" &&
-    !path.startsWith("/api/auth/")
-  )
-    window.dispatchEvent(new Event("project-auth-expired"));
   if (!response.ok)
     throw new APIError(
       response.status,

@@ -138,6 +138,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		}
 	}
 	transportConfig := producthttp.Config{TrustForwardedHost: true}
+	if cfg.HTTPMetrics {
+		transportConfig.ObserveHTTP = func(o producthttp.HTTPObservation) {
+			logger.Info("http timing", "category", o.Category, "status", o.Status, "bytes", o.Bytes, "duration_ms", o.Duration.Milliseconds())
+		}
+	}
 	app.Auth, err = producthttp.NewAuthentication(store, transportConfig, users, cfg.Auth.DevelopmentActor)
 	if err != nil {
 		return app, err

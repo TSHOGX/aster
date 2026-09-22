@@ -75,6 +75,7 @@ type TitleService struct {
 	APIKeyEnv string `json:"api_key_env"`
 }
 type Config struct {
+	HTTPMetrics       bool                    `json:"http_metrics"`
 	Version           int                     `json:"version"`
 	Listen            string                  `json:"listen"`
 	ApplicationSocket string                  `json:"application_socket"`
