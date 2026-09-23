@@ -51,6 +51,11 @@ type Pipeline struct {
 	// agent drives the agentic context-evolution graph (consolidate/verify/
 	// curate/critic). Nil ⇒ the scalar curateAndPublish path is used instead.
 	agent *AgentRunner
+	// prompts holds every LLM system prompt the loop uses (harvest lenses plus
+	// each graph node), loaded from prompts.yaml with an optional private
+	// override. Validated in NewPipeline so a caller that forgot to load them
+	// fails at construction instead of sending an empty prompt at 3am.
+	prompts PromptSet
 	// agentic selects the agentic graph over the scalar path when true AND agent
 	// is enabled.
 	agentic bool
@@ -83,6 +88,9 @@ type PipelineOptions struct {
 	// Agent, when enabled, runs the agentic context-evolution graph. Nil/disabled
 	// falls back to the scalar consolidation/promotion path.
 	Agent *AgentRunner
+	// Prompts carries the harvest-lens and node system prompts. Callers build it
+	// with LoadPrompts(); an incomplete set makes NewPipeline return nil.
+	Prompts PromptSet
 	// Agentic selects the agentic graph when true and Agent is enabled.
 	Agentic bool
 	// AutoPublish skips the expert-approval gate and publishes straight to
@@ -100,6 +108,16 @@ func NewPipeline(opts PipelineOptions) *Pipeline {
 	if opts.Extractor == nil || !opts.Extractor.Enabled() {
 		return nil
 	}
+	// An unset or partial prompt set is a wiring bug, not a runtime condition:
+	// refuse here rather than discovering it one node at a time overnight.
+	if err := opts.Prompts.Validate(); err != nil {
+		log := opts.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Error("memory pipeline disabled: prompts incomplete", "error", err)
+		return nil
+	}
 	interval := opts.Interval
 	if interval <= 0 {
 		interval = time.Hour
@@ -112,6 +130,7 @@ func NewPipeline(opts PipelineOptions) *Pipeline {
 		log:         opts.Log,
 		capturer:    opts.Capturer,
 		agent:       opts.Agent,
+		prompts:     opts.Prompts,
 		agentic:     opts.Agentic && opts.Agent.Enabled(),
 		autoPublish: opts.AutoPublish,
 		interval:    interval,
@@ -256,7 +275,7 @@ func (p *Pipeline) runFactsLens(ctx context.Context, sessionID string, events []
 	var out FactsResult
 	callCtx, cancel := context.WithTimeout(ctx, lensCallTimeout)
 	defer cancel()
-	if err := p.extractor.Extract(callCtx, factsSystemPrompt, sliceDialogue(events), &out); err != nil {
+	if err := p.extractor.Extract(callCtx, p.prompts.FactsPrompt(), sliceDialogue(events), &out); err != nil {
 		p.recordStage(ctx, sessionID, stageFacts, turns, "error", err)
 		return
 	}
@@ -279,7 +298,7 @@ func (p *Pipeline) runFailureLens(ctx context.Context, sessionID string, events 
 	var out FailureResult
 	callCtx, cancel := context.WithTimeout(ctx, lensCallTimeout)
 	defer cancel()
-	if err := p.extractor.Extract(callCtx, failureSystemPrompt, sliceAnnotated(events), &out); err != nil {
+	if err := p.extractor.Extract(callCtx, p.prompts.FailurePrompt(), sliceAnnotated(events), &out); err != nil {
 		p.recordStage(ctx, sessionID, stageFailure, turns, "error", err)
 		return
 	}
@@ -314,7 +333,7 @@ func (p *Pipeline) runSkillLens(ctx context.Context, sessionID string, events []
 	var out SkillResult
 	callCtx, cancel := context.WithTimeout(ctx, lensCallTimeout)
 	defer cancel()
-	if err := p.extractor.Extract(callCtx, skillSystemPrompt, sliceReasoning(events), &out); err != nil {
+	if err := p.extractor.Extract(callCtx, p.prompts.SkillPrompt(), sliceReasoning(events), &out); err != nil {
 		p.recordStage(ctx, sessionID, stageSkill, turns, "error", err)
 		return
 	}

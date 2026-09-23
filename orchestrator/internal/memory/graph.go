@@ -31,7 +31,7 @@ func (p *Pipeline) runAgenticGraph(ctx context.Context, sessionsProcessed int) e
 	if err != nil {
 		return err
 	}
-	reflect := NewReflectNode(p.agent, p.store, p.log, runID)
+	reflect := NewReflectNode(p.agent, p.prompts, p.store, p.log, runID)
 	plan, _ := reflect.Run(ctx) // never fatal; ProcessAll on failure
 
 	counts := map[string]int{"sessions": sessionsProcessed}
@@ -43,7 +43,7 @@ func (p *Pipeline) runAgenticGraph(ctx context.Context, sessionsProcessed int) e
 	}
 
 	// B. Consolidate — semantic clustering → converging support.
-	if r, err := NewConsolidateNode(p.agent, p.store, p.log, runID).Run(ctx); err != nil {
+	if r, err := NewConsolidateNode(p.agent, p.prompts, p.store, p.log, runID).Run(ctx); err != nil {
 		p.log.Warn("agentic: consolidate failed", "error", err)
 	} else {
 		counts["clusters_in"] = r.ClustersIn
@@ -58,7 +58,7 @@ func (p *Pipeline) runAgenticGraph(ctx context.Context, sessionsProcessed int) e
 	}
 
 	// C. Verify — check consolidated knowledge against the live tree.
-	if r, err := NewVerifyNode(p.agent, p.store, p.log, runID).Run(ctx); err != nil {
+	if r, err := NewVerifyNode(p.agent, p.prompts, p.store, p.log, runID).Run(ctx); err != nil {
 		p.log.Warn("agentic: verify failed", "error", err)
 	} else {
 		counts["verified_stale"] = r.Stale
@@ -71,7 +71,7 @@ func (p *Pipeline) runAgenticGraph(ctx context.Context, sessionsProcessed int) e
 	// is what keeps that node's single call bounded as the KB grows.
 	newMemoryIDs := map[int64]bool{}
 	newSkillIDs := map[int64]bool{}
-	if r, err := NewCurateNode(p.agent, p.store, p.log, runID).Run(ctx); err != nil {
+	if r, err := NewCurateNode(p.agent, p.prompts, p.store, p.log, runID).Run(ctx); err != nil {
 		p.log.Warn("agentic: curate failed", "error", err)
 	} else {
 		counts["mem_promoted"] = r.MemPromoted
@@ -100,7 +100,7 @@ func (p *Pipeline) runAgenticGraph(ctx context.Context, sessionsProcessed int) e
 		// one call — exactly the unbounded shape this scoping removes.
 		p.log.Info("agentic: critic skipped (no new promotions this cycle)")
 	default:
-		critic := NewCriticNode(p.agent, p.store, p.log, runID)
+		critic := NewCriticNode(p.agent, p.prompts, p.store, p.log, runID)
 		critic.NewMemoryIDs = newMemoryIDs
 		critic.NewSkillIDs = newSkillIDs
 		if r, err := critic.Run(ctx); err != nil {

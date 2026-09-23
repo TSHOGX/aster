@@ -36,21 +36,17 @@ type ReflectPlan struct {
 
 // ReflectNode runs the reflect/plan step.
 type ReflectNode struct {
-	agent *AgentRunner
-	store *memorystore.Store
-	log   *slog.Logger
-	runID int64
+	agent   *AgentRunner
+	prompts PromptSet
+	store   *memorystore.Store
+	log     *slog.Logger
+	runID   int64
 }
 
 // NewReflectNode builds the node.
-func NewReflectNode(agent *AgentRunner, st *memorystore.Store, log *slog.Logger, runID int64) *ReflectNode {
-	return &ReflectNode{agent: agent, store: st, log: log, runID: runID}
+func NewReflectNode(agent *AgentRunner, prompts PromptSet, st *memorystore.Store, log *slog.Logger, runID int64) *ReflectNode {
+	return &ReflectNode{agent: agent, prompts: prompts, store: st, log: log, runID: runID}
 }
-
-const reflectSystemPrompt = `你是上下文进化循环的"规划器"。给你本轮的候选记忆分布（按 scope 统计的候选条数）、上一轮的处理结果，以及当前知识库已有的 scope。请判断：本轮哪些 scope 有足够多的新候选、值得花费 agent 调用去消化（active_scopes）；哪些几乎没有变化、可以跳过（skip_scopes）；并给出本轮大致的调用预算（budget_hint，整数）。宁可少跑也不要空跑。
-
-只输出如下 JSON（不要多余文字）：
-{"active_scopes":["doris","frontend"],"skip_scopes":["..."],"budget_hint":40,"reason":"一句话说明"}`
 
 // Run produces the cycle plan. It never blocks the cycle: on any failure it
 // returns a ProcessAll plan.
@@ -67,15 +63,16 @@ func (n *ReflectNode) Run(ctx context.Context) (ReflectPlan, error) {
 	}
 
 	data := n.renderContext(ctx, scopeCounts)
+	sys := n.prompts.ReflectPrompt()
 	start := time.Now()
-	payload, err := n.agent.Run(ctx, reflectSystemPrompt, data, false)
+	payload, err := n.agent.Run(ctx, sys, data, false)
 	latency := time.Since(start).Milliseconds()
 	verdict := "ok"
 	if err != nil {
 		verdict = "error"
 	}
 	_ = n.store.RecordAgentCall(ctx, memorystore.AgentCall{
-		RunID: n.runID, Node: "reflect", Ref: "cycle", PromptSHA: promptSHA(reflectSystemPrompt, data),
+		RunID: n.runID, Node: "reflect", Ref: "cycle", PromptSHA: promptSHA(sys, data),
 		Verdict: verdict, LatencyMS: latency, OK: err == nil, Error: errString(err),
 	})
 	if err != nil {

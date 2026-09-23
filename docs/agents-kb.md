@@ -70,8 +70,12 @@ draft (`POST /api/kb-review/draft`) without changing snapshot bytes.
 `auto_publish: true` is an explicit opt-in to unreviewed publication, not the
 default guarantee.
 
-The implemented agentic graph, mermaid flow, and verbatim sub-agent prompts live
-in [kb-evolution.md](kb-evolution.md).
+The implemented agentic graph, mermaid flow, and per-node responsibilities live in
+[kb-evolution.md](kb-evolution.md). The prompts themselves are configuration,
+not prose: see `orchestrator/internal/memory/prompts.yaml` for the committed
+defaults and [configuration.md](configuration.md#kb-evolution-prompts-optional-override)
+for the private override.
+
 
 
 ```bash
