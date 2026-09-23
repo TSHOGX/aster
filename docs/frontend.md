@@ -76,7 +76,14 @@ manual resize handle. The fades affect overflowing glyphs only, not the input
 surface, and are absent for empty/whitespace-only or non-overflowing values.
 
 Scheduled tasks have an owner-scoped, paginated cross-project overview, backed by
-`GET /api/schedules`. Task mutations and run history retain Project-scoped APIs.
+`GET /api/schedules`. The overview returns metadata without full prompt bodies;
+opening an editor fetches the complete Project-scoped schedule. The browser retains
+one 50-row overview page and refreshes after its own mutations or explicit Refresh.
+Next/First controls replace pages. There is no periodic overview polling or one
+subscription per Project. Filter changes and unmount cancel reads; pending/error
+states never claim an empty schedule list. The editor retains at most 100 Session
+options plus its selected ID and 50 run-history rows, with explicit paging.
+Task mutations and run history retain Project-scoped APIs.
 Search, inbox, conversation grants and frozen public sharing remain supported;
 read-only conversation sharing does not grant live Files or PTY access. Browser
 auth expiry returns to sign-in and tears down user-scoped state/connections.

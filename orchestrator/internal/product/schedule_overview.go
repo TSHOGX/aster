@@ -3,7 +3,14 @@ package product
 import "context"
 
 type ScheduleOverview struct {
-	Schedule
+	ID           string `json:"id"`
+	ProjectID    string `json:"project_id"`
+	SessionID    string `json:"session_id,omitempty"`
+	Title        string `json:"title"`
+	Timezone     string `json:"timezone"`
+	Enabled      bool   `json:"enabled"`
+	NextAt       string `json:"next_at,omitempty"`
+	Revision     int64  `json:"revision"`
 	ProjectTitle string `json:"project_title"`
 }
 type SchedulePage struct {
@@ -19,14 +26,14 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor, project, after 
 		return out, ErrNotFound
 	}
 	limit = pageSize(limit)
-	rows, err := s.reader.QueryContext(ctx, `SELECT s.id,s.project_id,coalesce(s.session_id,''),s.title,s.prompt,s.cron,s.timezone,s.enabled,s.deleted,coalesce(s.next_at,''),s.revision,s.created_at,p.title FROM schedules s JOIN projects p ON p.id=s.project_id WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND s.deleted=0 AND (?='' OR s.project_id=?) AND s.id>? ORDER BY s.id LIMIT ?`, actor, project, project, after, limit+1)
+	rows, err := s.reader.QueryContext(ctx, `SELECT s.id,s.project_id,coalesce(s.session_id,''),s.title,s.timezone,s.enabled,coalesce(s.next_at,''),s.revision,p.title FROM schedules s JOIN projects p ON p.id=s.project_id WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND s.deleted=0 AND (?='' OR s.project_id=?) AND s.id>? ORDER BY s.id LIMIT ?`, actor, project, project, after, limit+1)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item ScheduleOverview
-		if err = rows.Scan(&item.ID, &item.ProjectID, &item.SessionID, &item.Title, &item.Prompt, &item.Cron, &item.Timezone, &item.Enabled, &item.Deleted, &item.NextAt, &item.Revision, &item.CreatedAt, &item.ProjectTitle); err != nil {
+		if err = rows.Scan(&item.ID, &item.ProjectID, &item.SessionID, &item.Title, &item.Timezone, &item.Enabled, &item.NextAt, &item.Revision, &item.ProjectTitle); err != nil {
 			return out, err
 		}
 		out.Schedules = append(out.Schedules, item)

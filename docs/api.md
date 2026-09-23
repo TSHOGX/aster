@@ -142,3 +142,11 @@ semantics, and each stalled body write has a thirty-second deadline. Reads creat
 no file-operation ID. A detectable mutation during capture returns 409 with
 `code: changed_during_read`; capture capacity is a read-only 503, never an unknown
 mutation outcome. Writes retain their existing idempotency/unknown-outcome contract.
+
+
+The owner-scoped `GET /api/schedules` overview returns schedule identity, Project
+identity/title, selected Session ID, title, timezone, enabled state, next run time
+and revision. It omits full prompt bodies and cron/edit fields. Read the existing
+Project-scoped schedule detail route before editing; mutations still validate the
+complete schedule and revision. Overview pagination continues after the returned schedule ID over
+owned, non-deleted Projects and does not grant shared readers schedule authority.

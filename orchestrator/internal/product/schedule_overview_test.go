@@ -1,7 +1,10 @@
 package product
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -51,5 +54,24 @@ func TestScheduleOverviewOwnershipPaginationAndDeletion(t *testing.T) {
 	must(t, err)
 	if len(filtered.Schedules) != 0 {
 		t.Fatal("deleting project leaked", filtered)
+	}
+}
+
+func TestScheduleOverviewDoesNotLoadPromptBodies(t *testing.T) {
+	store, scope, _ := fixture(t)
+	prompt := strings.Repeat("private-prompt-body", 50000)
+	_, err := store.CreateSchedule(ctx, scope, Schedule{ID: "large-prompt", Title: "Summary", Prompt: prompt, Timezone: "UTC", Enabled: true})
+	must(t, err)
+	page, err := store.ScheduleOverviewPage(ctx, scope.Actor, "", "", 50)
+	must(t, err)
+	raw, err := json.Marshal(page)
+	must(t, err)
+	if len(raw) > 2048 || bytes.Contains(raw, []byte("prompt"+`":`)) || bytes.Contains(raw, []byte("private-prompt-body")) {
+		t.Fatal("overview includes full prompt", len(raw))
+	}
+	detail, err := store.Schedule(ctx, scope, "large-prompt")
+	must(t, err)
+	if detail.Prompt != prompt {
+		t.Fatal("summary cutover lost editable prompt")
 	}
 }

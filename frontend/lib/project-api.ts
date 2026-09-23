@@ -312,7 +312,7 @@ export function recalled<T>(key: string, fallback: T): T {
   }
 }
 
-export type ScheduleOverview = Schedule & { project_title: string };
+export type ScheduleOverview = Pick<Schedule, "id" | "project_id" | "session_id" | "title" | "timezone" | "enabled" | "next_at" | "revision"> & { project_title: string };
 export type SchedulePage = { schedules: ScheduleOverview[]; next?: string };
 
 export type TurnIndexItem = {

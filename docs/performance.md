@@ -1215,3 +1215,21 @@ HTTP/authentication and browser rendering. They establish query scaling for the
 fixture, not contention or an end-to-end SLO. Run the largest fixture explicitly
 with `PROJECT_DISPLAY_SCALE=1`; default tests retain the two smaller scales. The
 old implementation exists only in the retained comparison checkout and evidence.
+
+
+## Bounded schedule reads
+
+The global schedule overview no longer polls every ten seconds or re-fetches all
+previously visited pages. It uses the authenticated read scheduler, cancels stale
+filter/unmount work, retains one fifty-row metadata page and refreshes explicitly
+or after a local mutation. Initial loading and errors cannot appear as an empty
+list. The API omits full prompt bodies; editing and enable/disable fetch the
+complete scoped detail first. The editor bounds Session choices and run history
+to one page each while preserving its selected Session and unsaved text.
+
+Tests hold slow responses through refresh intervals, fence late filter replies,
+traverse bounded pages, retain editor text across run-history paging and verify a
+near-megabyte prompt is absent from overview responses but intact in detail.
+The actual Go-edge browser journey opens, saves and disables a schedule without
+truncating its prompt. All three runtime browser workflows pass in 38.37 seconds;
+full Go tests/vet, scoped race, frontend unit/type/lint and focused UI checks pass.

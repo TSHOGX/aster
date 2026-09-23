@@ -10,13 +10,14 @@ import {
   type AgentSession,
   type Project,
   type ScheduleOverview,
+  type Schedule,
   type SchedulePage,
   type ScheduleRun,
 } from "@/lib/project-api";
 import { useT } from "@/lib/i18n";
 import { ProjectPicker } from "./project-picker";
 import { IconButton, Menu, useDialog } from "./ui";
-import { mergePage } from "@/lib/workspace-state";
+import { useResources } from "./resource-provider";
 export function Schedules({
   projects,
   onOpen,
@@ -26,57 +27,71 @@ export function Schedules({
 }) {
   const tr = useT(),
     ask = useDialog();
+  const resources = useResources();
   const [filter, setFilter] = useState(""),
     [page, setPage] = useState<SchedulePage>({ schedules: [] }),
     [error, setError] = useState("");
-  const [selected, setSelected] = useState<ScheduleOverview | null>(null),
+  const [selected, setSelected] = useState<(Schedule & { project_title: string }) | null>(null),
     [creating, setCreating] = useState(false),
     [busy, setBusy] = useState(false);
   const serial = useRef(0);
-  const retainedCount = useRef(0);
+  const request = useRef<AbortController | null>(null);
+  const detail = useRef<AbortController | null>(null);
+  const [loading, setLoading] = useState(true);
+  const cursor = useRef("");
+  const [hasPrevious, setHasPrevious] = useState(false);
   const load = useCallback(
-    async (after = "") => {
+    async (after = cursor.current) => {
+      request.current?.abort();
+      const abort = new AbortController();
+      request.current = abort;
       const id = ++serial.current;
+      setLoading(true);
       try {
-        let next = await api<SchedulePage>(
-          `/api/schedules?project_id=${encode(filter)}&after=${encode(after)}&limit=50`,
+        const url = `/api/schedules?project_id=${encode(filter)}&after=${encode(after)}&limit=50`;
+        const next = await resources.read<SchedulePage>(
+          { project: filter || "schedule-overview", kind: "index", identity: url },
+          signal => api<SchedulePage>(url, { signal }), abort.signal,
         );
-        if (!after)
-          while (next.next && next.schedules.length < retainedCount.current) {
-            const additional = await api<SchedulePage>(
-              `/api/schedules?project_id=${encode(filter)}&after=${encode(next.next)}&limit=50`,
-            );
-            next = {
-              ...additional,
-              schedules: [...next.schedules, ...additional.schedules],
-            };
-          }
-        if (id !== serial.current) return;
-        retainedCount.current = after
-          ? retainedCount.current + next.schedules.length
-          : next.schedules.length;
-        setPage((old) => ({
-          ...next,
-          schedules: after
-            ? mergePage(old.schedules, next.schedules)
-            : next.schedules,
-        }));
+        if (abort.signal.aborted || id !== serial.current) return;
+        if (next.schedules.length > 50 || JSON.stringify(next).length * 3 > 1024 * 1024)
+          throw new Error("Schedule page exceeds its display budget.");
+        cursor.current = after;
+        setHasPrevious(!!after);
+        setPage(next);
         setError("");
       } catch (e) {
-        if (id === serial.current) setError(String(e));
+        if (abort.signal.aborted || id !== serial.current) return;
+        setError(String(e));
+      } finally {
+        if (!abort.signal.aborted && id === serial.current) setLoading(false);
       }
-    },
-    [filter],
+    }, [filter, resources],
   );
   useEffect(() => {
-    void Promise.resolve().then(() => load());
-    const timer = setInterval(() => {
-      if (!document.hidden) void load();
-    }, 10000);
-    return () => {
-      clearInterval(timer);
-    };
+    let live = true;
+    cursor.current = "";
+    void Promise.resolve().then(() => { if (live) void load(""); });
+    return () => { live = false; request.current?.abort(); detail.current?.abort(); };
   }, [load]);
+  const fullSchedule = async (summary: ScheduleOverview) => {
+    detail.current?.abort();
+    const abort = new AbortController();
+    detail.current = abort;
+    const url = `${projectURL(summary.project_id)}/schedules/${encode(summary.id)}`;
+    const schedule = await resources.read<Schedule>(
+      { project: summary.project_id, kind: "index", identity: url },
+      signal => api<Schedule>(url, { signal }), abort.signal,
+    );
+    abort.signal.throwIfAborted();
+    return schedule;
+  };
+  const openSchedule = async (summary: ScheduleOverview) => {
+    setBusy(true);
+    try { const schedule = await fullSchedule(summary); setSelected({ ...schedule, project_title: summary.project_title }); setCreating(false); }
+    catch (e) { if (!(e instanceof DOMException && e.name === "AbortError")) setError(String(e)); }
+    finally { setBusy(false); }
+  };
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -89,7 +104,7 @@ export function Schedules({
     }
   };
   return (
-    <section className="adjacent-panel schedules-page">
+    <section className="adjacent-panel schedules-page" aria-busy={loading}>
       <header className="page-heading">
         <div>
           <h1>{tr("Scheduled")}</h1>
@@ -97,6 +112,7 @@ export function Schedules({
         </div>
         <button
           onClick={() => {
+            detail.current?.abort();
             setSelected(null);
             setCreating(true);
           }}
@@ -106,13 +122,17 @@ export function Schedules({
         </button>
       </header>
       <div className="schedule-filter">
+        <button disabled={loading} onClick={() => void load()}>{tr("Refresh")}</button>
         <ProjectPicker
           label={tr("Filter by Project")}
           projects={projects}
           value={filter}
           emptyOption={tr("All Projects")}
           onChange={(id) => {
-            retainedCount.current = 0;
+            request.current?.abort();
+            detail.current?.abort();
+            setPage({ schedules: [] });
+            setLoading(true);
             setFilter(id);
             setSelected(null);
           }}
@@ -129,10 +149,8 @@ export function Schedules({
             <Clock3 size={19} />
             <button
               className="schedule-description"
-              onClick={() => {
-                setSelected(s);
-                setCreating(false);
-              }}
+              disabled={busy}
+              onClick={() => void openSchedule(s)}
             >
               <strong>{s.title}</strong>
               <small>
@@ -171,9 +189,10 @@ export function Schedules({
                   disabled: busy,
                   action: () =>
                     void act(async () => {
+                      const full = await fullSchedule(s);
                       await command(
                         `${projectURL(s.project_id)}/schedules/${encode(s.id)}`,
-                        { ...s, enabled: !s.enabled },
+                        { ...full, enabled: !s.enabled },
                         "PATCH",
                       );
                     }),
@@ -209,15 +228,17 @@ export function Schedules({
           </div>
         ))}
       </div>
-      {!page.schedules.length && !error && (
+      {loading && <p role="status">{tr("Loading…")}</p>}
+      {!page.schedules.length && !error && !loading && (
         <div className="empty-state">
           <Clock3 size={28} />
           <p>{tr("No scheduled tasks yet.")}</p>
         </div>
       )}
-      {page.next && (
-        <button onClick={() => void load(page.next)}>{tr("Show more")}</button>
-      )}
+      <div className="schedule-pages">
+        {hasPrevious && <button disabled={loading} onClick={() => void load("")}>{tr("First page")}</button>}
+        {page.next && <button disabled={loading} onClick={() => void load(page.next)}>{tr("Next page")}</button>}
+      </div>
       {(selected || creating) && (
         <ScheduleDetails
           key={selected?.id || "new"}
@@ -247,7 +268,7 @@ function ScheduleDetails({
   onSaved,
   onOpen,
 }: {
-  schedule: ScheduleOverview | null;
+  schedule: (Schedule & { project_title: string }) | null;
   projects: Project[];
   defaultProject: string;
   onClose: () => void;
@@ -255,6 +276,12 @@ function ScheduleDetails({
   onOpen: (project: string, session: string) => void;
 }) {
   const tr = useT();
+  const resources = useResources();
+  const sessionRequest = useRef<AbortController | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionAfter, setSessionAfter] = useState("");
+  const historyRequest = useRef<AbortController | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [project, setProject] = useState(
       schedule?.project_id || defaultProject,
     ),
@@ -277,34 +304,42 @@ function ScheduleDetails({
     dialog.current?.showModal();
     return () => previous?.focus();
   }, []);
-  useEffect(() => {
-    let gone = false;
-    if (project)
-      void api<{ sessions: AgentSession[] }>(
-        `${projectURL(project)}/sessions?limit=100`,
-      )
-        .then((data) => {
-          if (!gone) {
-            setSessions(data.sessions.filter((s) => s.deletion === 0));
-            setMore(data.sessions.length === 100);
-          }
-        })
-        .catch((e) => {
-          if (!gone) setError(String(e));
-        });
-    return () => {
-      gone = true;
-    };
-  }, [project]);
-  const history = async () => {
+  const loadSessions = useCallback(async (after = "") => {
+    sessionRequest.current?.abort();
+    const abort = new AbortController();
+    sessionRequest.current = abort;
+    if (!project) return;
+    setSessionLoading(true);
     try {
-      const data = await api<{ runs: ScheduleRun[] }>(
-        `${projectURL(project)}/schedules/${encode(schedule!.id)}/runs?after=${encode(runs?.at(-1)?.id || "")}&limit=50`,
+      const url = `${projectURL(project)}/sessions?limit=100&after=${encode(after)}`;
+      const data = await resources.read<{ sessions: AgentSession[] }>(
+        { project, kind: "index", identity: url }, signal => api(url, { signal }), abort.signal,
       );
-      setRuns((old) => [...(old || []), ...data.runs]);
-    } catch (e) {
-      setError(String(e));
-    }
+      if (!abort.signal.aborted) {
+        setSessions(data.sessions.filter(s => s.deletion === 0).slice(0,100));
+        setMore(data.sessions.length === 100); setSessionAfter(after);
+      }
+    } catch (e) { if (!abort.signal.aborted) setError(String(e)); }
+    finally { if (!abort.signal.aborted) setSessionLoading(false); }
+  }, [project, resources]);
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve().then(() => { if (live) void loadSessions(); });
+    return () => { live = false; sessionRequest.current?.abort(); historyRequest.current?.abort(); };
+  }, [loadSessions]);
+  const history = async (after = "") => {
+    historyRequest.current?.abort();
+    const abort = new AbortController();
+    historyRequest.current = abort;
+    setHistoryLoading(true);
+    try {
+      const url = `${projectURL(project)}/schedules/${encode(schedule!.id)}/runs?after=${encode(after)}&limit=50`;
+      const data = await resources.read<{ runs: ScheduleRun[] }>(
+        { project, kind: "index", identity: url }, signal => api(url, { signal }), abort.signal,
+      );
+      if (!abort.signal.aborted) setRuns(data.runs.slice(0, 50));
+    } catch (e) { if (!abort.signal.aborted) setError(String(e)); }
+    finally { if (!abort.signal.aborted) setHistoryLoading(false); }
   };
   return (
     <dialog
@@ -399,23 +434,10 @@ function ScheduleDetails({
             ))}
           </select>
         </label>
-        {more && (
-          <button
-            type="button"
-            onClick={() =>
-              void api<{ sessions: AgentSession[] }>(
-                `${projectURL(project)}/sessions?after=${encode(sessions.at(-1)?.id || "")}&limit=100`,
-              )
-                .then((data) => {
-                  setSessions((old) => mergePage(old, data.sessions));
-                  setMore(data.sessions.length === 100);
-                })
-                .catch((e) => setError(String(e)))
-            }
-          >
-            {tr("Show more")}
-          </button>
-        )}
+        <div>
+          {sessionAfter && <button type="button" disabled={sessionLoading} onClick={() => void loadSessions()}>{tr("First page")}</button>}
+          {more && <button type="button" disabled={sessionLoading} onClick={() => void loadSessions(sessions.at(-1)?.id || "")}>{tr("Next page")}</button>}
+        </div>
         <label>
           {tr("Cron expression")}
           <input
@@ -434,7 +456,7 @@ function ScheduleDetails({
         </label>
         <footer>
           {schedule && (
-            <button type="button" onClick={() => void history()}>
+            <button type="button" disabled={historyLoading} onClick={() => void history()}>
               {tr("Run history")}
             </button>
           )}
@@ -464,7 +486,7 @@ function ScheduleDetails({
           ))}
           {!runs.length && <p>{tr("No runs yet.")}</p>}
           {runs.length > 0 && runs.length % 50 === 0 && (
-            <button onClick={() => void history()}>{tr("Show more")}</button>
+            <button disabled={historyLoading} onClick={() => void history(runs.at(-1)!.id)}>{tr("Next page")}</button>
           )}
         </div>
       )}

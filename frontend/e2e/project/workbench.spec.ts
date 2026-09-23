@@ -384,3 +384,39 @@ test.describe("Chinese workbench", () => {
     ).toBeVisible();
   });
 });
+
+test("schedule metadata opens complete editable prompts through the Go edge", async ({ page, context }) => {
+  await login(page);
+  const origin = new URL(process.env.PROJECT_BROWSER_URL!).origin;
+  const project = "browser-schedule-index";
+  const headers = { Origin: origin };
+  const created = await context.request.post("/api/projects", { headers, data: { id: project, title: "Scheduled research" } });
+  expect(created.status()).toBe(201);
+  const prompt = "Complete scheduled prompt\n".repeat(1000);
+  const scheduled = await context.request.post(`/api/projects/${project}/schedules`, { headers, data: { id: "browser-schedule", title: "Editable task", prompt, timezone: "UTC", cron: "", enabled: true } });
+  expect(scheduled.status()).toBe(201);
+  try {
+    await page.getByRole("button", { name: "Scheduled", exact: true }).click();
+    await expect(page.locator(".schedule-row")).toContainText("Editable task");
+    const overview = await context.request.get("/api/schedules?limit=50");
+    expect(await overview.text()).not.toContain("Complete scheduled prompt");
+    await page.locator(".schedule-description").filter({ hasText: "Editable task" }).click();
+    await expect(page.getByRole("dialog").locator("textarea")).toHaveValue(prompt);
+    const revised = prompt + "Updated without truncation\n";
+    await page.getByRole("dialog").locator("textarea").fill(revised);
+    await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const saved = await context.request.get(`/api/projects/${project}/schedules/browser-schedule`);
+    expect((await saved.json()).prompt).toBe(revised);
+    await page.getByRole("button", { name: "Schedule actions Editable task", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
+    await expect(page.locator(".schedule-row")).toContainText("Disabled");
+    const disabled = await context.request.get(`/api/projects/${project}/schedules/browser-schedule`);
+    const data = await disabled.json();
+    expect(data.prompt).toBe(revised);
+    expect(data.enabled).toBe(false);
+  } finally {
+    const current = await context.request.get(`/api/projects/${project}`);
+    expect((await context.request.delete(`/api/projects/${project}?revision=${(await current.json()).revision}`, { headers })).status()).toBe(202);
+  }
+});
