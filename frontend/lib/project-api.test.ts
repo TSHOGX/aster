@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, APIError, command } from "./project-api";
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe("Project command outcomes", () => {
   it("does not repeat a mutation when the reply is lost", async () => {
     const fetch = vi.fn().mockRejectedValue(new TypeError("connection reset"));
@@ -24,6 +24,7 @@ describe("Project command outcomes", () => {
     });
   });
   it("accepts asynchronous controls while pending reads stay distinguishable", async () => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
       vi
@@ -37,6 +38,8 @@ describe("Project command outcomes", () => {
     await expect(command("/api/projects/p/resume")).resolves.toEqual({
       status: "pending",
     });
-    await expect(api("/api/projects/p/files")).rejects.toBeInstanceOf(APIError);
+    const pending = api("/api/projects/p/files").catch(error => error);
+    await vi.runAllTimersAsync();
+    expect(await pending).toBeInstanceOf(APIError);
   });
 });

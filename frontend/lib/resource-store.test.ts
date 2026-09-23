@@ -87,3 +87,16 @@ it("serializes directory scans but lets the selected content read alongside them
   await Promise.all([a,b]);
   expect(calls).toEqual(["root", "selected", "child"]);
 });
+
+it("continuous invalidations cannot starve a directory snapshot", async () => {
+  const store = new ResourceStore("actor"), first = deferred<string>(), next = deferred<string>();
+  let calls = 0;
+  const read = store.read({...key, kind:"directory"}, () => ++calls === 1 ? first.promise : next.promise);
+  store.invalidate(() => true); first.resolve("older");
+  await Promise.resolve();
+  expect(calls).toBe(2);
+  for (let n = 0; n < 100; n++) store.invalidate(() => true);
+  next.resolve("current snapshot");
+  expect(await read).toBe("current snapshot");
+  expect(calls).toBe(2); expect(store.stats().running).toBe(0);
+});

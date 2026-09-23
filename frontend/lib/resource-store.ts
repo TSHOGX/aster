@@ -6,7 +6,7 @@ type Flight = {
   key: ResourceKey; id: string; generation: number; consumers: number;
   controller: AbortController; load: (signal: AbortSignal) => Promise<unknown>;
   promise: Promise<unknown>; resolve: (v: unknown) => void; reject: (e: unknown) => void;
-  started: boolean; queued: number; priority: number; queueDone: () => void;
+  started: boolean; refreshes: number; queued: number; priority: number; queueDone: () => void;
 };
 const abortError = () => new DOMException("Read canceled", "AbortError");
 const keyID = (key: ResourceKey) => JSON.stringify([key.project, key.kind, key.identity, key.epoch || ""]);
@@ -97,7 +97,7 @@ export class ResourceStore {
       if (this.queue.length >= 128) return Promise.reject(new Error("Read capacity exhausted. Try again shortly."));
       let resolve!: (v: unknown) => void, reject!: (e: unknown) => void;
       const promise = new Promise<unknown>((yes,no)=>{resolve=yes;reject=no;});
-      flight = {key,id,generation:0,consumers:0,controller:new AbortController(),load,promise,resolve,reject,started:false,queued:performance.now(),priority,queueDone:startTiming(key.kind,"queue")};
+      flight = {key,id,generation:0,consumers:0,controller:new AbortController(),load,promise,resolve,reject,started:false,refreshes:0,queued:performance.now(),priority,queueDone:startTiming(key.kind,"queue")};
       this.flights.set(id,flight); this.queue.push(flight);
     }
     const f = flight;
@@ -143,7 +143,9 @@ export class ResourceStore {
       // Project-scoped clears fence their flights directly, while auth clears
       // fence all callbacks, including loaders that ignore AbortSignal.
       if (generation !== this.generation && !this.flights.has(f.id)) return;
-      if (dirty!==f.generation) { again=true; return; }
+      // A continuous writer must not starve browsing. Validate one successor,
+      // then show that bounded snapshot; later hints schedule the next refresh.
+      if (dirty!==f.generation && (f.key.kind !== "directory" || f.refreshes++ < 1)) { again=true; return; }
       // Domain owners retain their useful view, tree or small preview explicitly.
       // Keeping each transport reply duplicates paged state and pins unused blobs.
       this.flights.delete(f.id); f.resolve(value);
