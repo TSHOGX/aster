@@ -285,9 +285,11 @@ test("Project agents, retained terminals and Files through the Go edge", async (
     await page
       .getByRole("button", { name: "File actions", exact: true })
       .click();
+    await expect(page.getByRole("menu", { name: "File actions", exact: true })).toBeVisible();
     await expect(
       page.getByRole("menuitem", { name: "Edit text", exact: true }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toBeEnabled();
     await page.keyboard.press("Escape");
     await expect(page.locator(".selected-file .notice.error")).toHaveCount(0);
   }
