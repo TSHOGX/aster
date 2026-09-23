@@ -19,7 +19,7 @@ Real gates use the pinned engine on a disposable Linux substrate:
 8. A five-minute mixed workload with two Projects, four Agents, two retained PTYs,
    file read/write/watch traffic, scheduled turns and an impaired capture lane.
 
-The mixed test records HTTP/projection latencies, application RSS/CPU, database
+The mixed test records HTTP/ready-page latencies, combined owner/gateway RSS and sampled CPU, database
 size, rounds, pending work, idle behavior and teardown. Targets are HTTP p95 under
 1 second/p99 under 2 seconds, completion projection p95 under 2 seconds, healthy
 work not delayed over 10 seconds by unrelated retries, RSS below 512 MiB, idle
@@ -75,3 +75,10 @@ streamed output, and requires at least ten seconds of streaming, one provider
 request and one original native completion. A [recorded GLM-5.2 run](../dev/measurements/owner-handoff.json)
 passes this gate. Credentials and prompt/response text are excluded from its
 reports. Synthetic and failed provider trials do not substitute for this evidence.
+
+
+Mixed-workload quantiles use nearest rank. Projection samples are taken after a
+ready page is observed, not when native turn state first becomes completed. Resource
+accounting includes the separate gateway and sums sampled CPU maxima across owner
+process replacement. See the [accounting-corrected observation](../dev/measurements/mixed-accounting.json)
+for values and limits; it is not the complete browser/shaped-network acceptance matrix.

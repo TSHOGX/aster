@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -61,7 +62,25 @@ func percentile(values []time.Duration, p float64) time.Duration {
 	if len(copy) == 0 {
 		return 0
 	}
-	return copy[int(float64(len(copy)-1)*p)]
+	return copy[max(0, min(len(copy)-1, int(math.Ceil(float64(len(copy))*p))-1))]
+}
+
+func TestMixedPercentilesUseNearestRank(t *testing.T) {
+	values := make([]time.Duration, 30)
+	for i := range values {
+		values[i] = time.Duration(i+1) * time.Millisecond
+	}
+	for _, test := range []struct {
+		p    float64
+		want time.Duration
+	}{{0, time.Millisecond}, {.5, 15 * time.Millisecond}, {.95, 29 * time.Millisecond}, {.99, 30 * time.Millisecond}, {1, 30 * time.Millisecond}} {
+		if got := percentile(values, test.p); got != test.want {
+			t.Fatal(test.p, got, test.want)
+		}
+	}
+	if percentile(nil, .95) != 0 {
+		t.Fatal("empty sample acquired a percentile")
+	}
 }
 
 func TestReleasedMixedWorkload(t *testing.T) {
@@ -139,6 +158,8 @@ func TestReleasedMixedWorkload(t *testing.T) {
 	projected := map[string]time.Time{}
 	var maxRSS int64
 	var maxCPU float64
+	cpuByProcess := map[int]float64{}
+	var gatewayRSSMax int64
 	round := 0
 	restarted := false
 	maxFairness := time.Duration(0)
@@ -179,10 +200,6 @@ func TestReleasedMixedWorkload(t *testing.T) {
 				for _, entry := range turns {
 					turn := entry.(map[string]any)
 					if turn["state"] == "completed" {
-						id := turn["id"].(string)
-						if _, ok := projected[id]; !ok {
-							projected[id] = time.Now()
-						}
 						if turn["request_id"] == fmt.Sprintf("round-%d", round) {
 							done = true
 						}
@@ -190,32 +207,50 @@ func TestReleasedMixedWorkload(t *testing.T) {
 				}
 				return done
 			})
-			a.await(10*time.Second, "display catches native completion", func() bool { return a.request("GET", path+"/view/head", nil, 0)["projection_state"] == "ready" })
-			a.request("GET", path+"/view/pages", nil, 200)
+			var page map[string]any
+			a.await(10*time.Second, "display catches native completion", func() bool {
+				page = a.request("GET", path+"/view/pages", nil, 0)
+				head, ok := page["head"].(map[string]any)
+				return ok && head["projection_state"] == "ready"
+			})
+			for _, raw := range page["turn_summaries"].([]any) {
+				turn := raw.(map[string]any)
+				if turn["state"] == "completed" {
+					id := turn["id"].(string)
+					if _, ok := projected[id]; !ok {
+						projected[id] = time.Now()
+					}
+				}
+			}
 		}
 		elapsed := time.Since(tick)
 		if elapsed > maxFairness {
 			maxFairness = elapsed
 		}
-		status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", a.command.Process.Pid))
-		require(t, err)
-		for _, line := range strings.Split(string(status), "\n") {
-			if strings.HasPrefix(line, "VmRSS:") {
-				fields := strings.Fields(line)
-				rss, _ := strconv.ParseInt(fields[1], 10, 64)
-				if rss > maxRSS {
-					maxRSS = rss
+		var combinedRSS int64
+		for _, pid := range []int{a.command.Process.Pid, a.gateway.Process.Pid} {
+			status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+			require(t, err)
+			for _, line := range strings.Split(string(status), "\n") {
+				if strings.HasPrefix(line, "VmRSS:") {
+					fields := strings.Fields(line)
+					rss, _ := strconv.ParseInt(fields[1], 10, 64)
+					combinedRSS += rss
+					if pid == a.gateway.Process.Pid && rss > gatewayRSSMax {
+						gatewayRSSMax = rss
+					}
 				}
 			}
+			stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+			require(t, err)
+			close := strings.LastIndexByte(string(stat), ')')
+			fields := strings.Fields(string(stat)[close+1:])
+			u, _ := strconv.ParseFloat(fields[11], 64)
+			system, _ := strconv.ParseFloat(fields[12], 64)
+			cpuByProcess[pid] = math.Max(cpuByProcess[pid], u+system)
+			maxCPU = math.Max(maxCPU, u+system)
 		}
-		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", a.command.Process.Pid))
-		require(t, err)
-		fields := strings.Fields(string(stat))
-		u, _ := strconv.ParseFloat(fields[13], 64)
-		s, _ := strconv.ParseFloat(fields[14], 64)
-		if u+s > maxCPU {
-			maxCPU = u + s
-		}
+		maxRSS = max(maxRSS, combinedRSS)
 		if maxRSS >= 512*1024 {
 			t.Fatalf("RSS exceeds target: %d KiB", maxRSS)
 		}
@@ -231,6 +266,7 @@ func TestReleasedMixedWorkload(t *testing.T) {
 			time.Sleep(left)
 		}
 	}
+	workloadEnd := time.Now()
 	stopWatch()
 	for p := 0; p < 2; p++ {
 		project := fmt.Sprintf("mixed-%d", p)
@@ -262,7 +298,9 @@ func TestReleasedMixedWorkload(t *testing.T) {
 		a.await(15*time.Second, "idle deadline plus five seconds", func() bool { return a.request("GET", base, nil, 200)["state"] == "paused" })
 	}
 	// Compare first observation of each completed turn to the deterministic
-	// upstream's final native result. Polling adds at most the 100ms observation interval.
+	// upstream's final native result. Includes observed head/page readiness and
+	// polling/request overhead; it is an upper-bound observation, not internal
+	// projector CPU time.
 	raw, err := os.ReadFile(filepath.Join(a.root, "completions.jsonl"))
 	require(t, err)
 	var projection []time.Duration
@@ -272,12 +310,16 @@ func TestReleasedMixedWorkload(t *testing.T) {
 		require(t, json.Unmarshal(scanner.Bytes(), &result))
 		at, err := time.Parse(time.RFC3339Nano, result["completed_at"])
 		require(t, err)
-		if seen, ok := projected[result["turn"]]; ok && seen.After(workloadStart) {
+		if seen, ok := projected[result["turn"]]; ok && at.After(workloadStart) {
 			projection = append(projection, seen.Sub(at))
 		}
 	}
 	report := a.cli("diagnostics", "--socket", socket)
-	metrics := map[string]any{"elapsed_seconds": time.Since(start).Seconds(), "mixed_seconds": time.Since(workloadStart).Seconds(), "rounds": round, "projects": 2, "agents": 4, "ptys": 2, "rss_max_kib": maxRSS, "cpu_ticks_max_process": maxCPU, "http_samples": len(a.latencies), "http_p95_ms": float64(percentile(a.latencies, .95)) / float64(time.Millisecond), "http_p99_ms": float64(percentile(a.latencies, .99)) / float64(time.Millisecond), "projection_samples": len(projection), "projection_p95_ms": float64(percentile(projection, .95)) / float64(time.Millisecond), "round_max_seconds": maxFairness.Seconds(), "idle_seconds": time.Since(idleStart).Seconds(), "diagnostics": report}
+	var cpuTotal float64
+	for _, ticks := range cpuByProcess {
+		cpuTotal += ticks
+	}
+	metrics := map[string]any{"quantile_method": "nearest-rank", "gateway_rss_max_kib": gatewayRSSMax, "cpu_ticks_total_sampled": cpuTotal, "resource_scope": "owner plus independent gateway", "elapsed_seconds": time.Since(start).Seconds(), "mixed_seconds": workloadEnd.Sub(workloadStart).Seconds(), "post_warmup_seconds": time.Since(workloadStart).Seconds(), "rounds": round, "projects": 2, "agents": 4, "ptys": 2, "rss_max_kib": maxRSS, "cpu_ticks_max_process": maxCPU, "http_samples": len(a.latencies), "http_p95_ms": float64(percentile(a.latencies, .95)) / float64(time.Millisecond), "http_p99_ms": float64(percentile(a.latencies, .99)) / float64(time.Millisecond), "projection_samples": len(projection), "projection_p95_ms": float64(percentile(projection, .95)) / float64(time.Millisecond), "round_max_seconds": maxFairness.Seconds(), "idle_seconds": time.Since(idleStart).Seconds(), "diagnostics": report}
 	output, _ := json.MarshalIndent(metrics, "", "  ")
 	require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "mixed-metrics.json"), output, 0644))
 	t.Log(string(output))

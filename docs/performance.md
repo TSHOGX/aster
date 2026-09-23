@@ -1058,3 +1058,24 @@ All eight accepted native turn IDs/states and workspace bytes survive, including
 work accepted under B after defaults return to A. The 78.35-second run is scoped to
 that tuple; unsupported engine builds remain refused. Bootstrap and final combined
 workload/acceptance qualification remain open.
+
+
+## Mixed-workload accounting correction
+
+The [updated mixed observation](../dev/measurements/mixed-accounting.json) runs the
+existing five-minute workload on the current native-settlement image: two Projects,
+four Agents, two retained PTYs, schedules, Files/resource events, an impaired
+capture lane and owner crash/restart. Sixty rounds pass with 1,187 HTTP samples
+(p95 5.49 ms, p99 11.34 ms), 245 observed projection samples (p95 475.51 ms),
+combined owner/gateway peak RSS 58,044 KiB and a 1.365-second maximum round.
+Capture repair and final cleanup leave no pending capture/file/lifecycle/recovery.
+
+The harness now uses nearest-rank quantiles, marks projection only from ready
+page summaries, excludes pre-workload native completions, and counts the independent
+gateway in RSS/CPU. CPU sums sampled process maxima across owner restart; sampling
+can miss final work. The measured projection delay includes polling and page reads,
+so it does not directly qualify the narrower internal projection target. The old
+baseline's rank/resource/observation definitions differ; these aggregates alone
+are not a controlled speedup comparison. Source now separates offered-workload
+duration from subsequent repair/idle time. The broader browser/network/resource
+matrix and gated owner update under the combined workload remain open.
