@@ -32,7 +32,8 @@ is qualified only for the explicitly recorded real-provider run below.
 | P07 gateway lifetime | Verified locally | Independent process, bounded authority and native fixture continuity across owner outage |
 | P07 real-provider handoff | Verified for recorded run | One GLM-5.2 stream retained across a distinct owner executable update |
 | P07 owner/gateway rollback | Verified for recorded pair | Retained revisions preserve new native history, held intent and workspace bytes |
-| P07 deployment qualification | Pending | Broader engine/template/schema matrix, bootstrap and combined release qualification |
+| P07 infrastructure rollback | Verified for recorded tuple | Pinned engine artifact and immutable template-default A→B→A with accepted data retained |
+| P07 deployment qualification | Pending | Bootstrap and combined release/final acceptance qualification |
 
 ## Diagnostics
 
@@ -1044,3 +1045,16 @@ its browser/Files/PTY workflows also pass against the retained owner. The
 [compatibility matrix](compatibility.md) states the exact pair, rollback window and
 remaining cross-version gates. No accepted-write backup restore or legacy reader
 was introduced.
+
+
+## Infrastructure rollback observation
+
+The [infrastructure record](../dev/measurements/infrastructure-rollback.json)
+qualifies two artifacts of the pinned engine and two different immutable images
+with the same supported protocols. Full admission closure and owner retirement
+precede each engine replacement; no engine database or volume snapshot is restored.
+Template defaults change A→B→A while saved Project bindings remain immutable.
+All eight accepted native turn IDs/states and workspace bytes survive, including
+work accepted under B after defaults return to A. The 78.35-second run is scoped to
+that tuple; unsupported engine builds remain refused. Bootstrap and final combined
+workload/acceptance qualification remain open.

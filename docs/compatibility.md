@@ -20,12 +20,27 @@ and Go build information are in the record.
 | Gateway | Both recorded executables, authority protocol 1 and owner handoff protocol 1 | Gated replacement A→B→A, running inode digests checked, native work after each replacement |
 | Browser/API | Client source tree `37cf927907c0445174fa010b01c548074a67313f` with either recorded owner | Client tree is identical at both revisions; native browser/Files/PTY workflows pass against the retained owner and the current owner |
 | Product schema | Schema 12 unchanged across this pair | Five completed turns, held intent and post-upgrade workspace bytes survive; no schema downgrade is implied |
-| Guest runtime | Manifest 3, native protocol 1, Agent/journal 2 and reader 2 | Both owners use the recorded immutable runtime digest; format-2 templates are refused |
-| Engine | Pinned `e8cd021a9c7c` engine/module | Existing process-recovery gate preserves resource identity; changing engine versions is outside this pair's rollback qualification |
+| Guest runtime | Two recorded immutable manifest-3 images, native protocol 1, Agent/journal 2 and reader 2 | Default A→B→A changes preserve Projects bound to either image; format-2 templates are refused |
+| Engine | Pinned `e8cd021a9c7c` engine/module, two recorded artifacts | Gated artifact A→B→A replacement reuses the same persistent engine store; other advertised engine builds are refused |
 
 The rollback run completed in 15.69 seconds. The retained-owner browser gate passed
 two workflows in a 38.15-second runtime run. These observations qualify this pair,
 not every build that reports the same protocol numbers.
+
+The [infrastructure rehearsal](../dev/measurements/infrastructure-rollback.json)
+records a separate 78.35-second run. It replaces two distinct artifacts of the
+supported engine revision on the same store and rolls template defaults A→B→A.
+The images differ in reviewed builtin context and have distinct release digests.
+Three Projects retain their saved bindings, eight completed native turn IDs/states
+and exact workspace bytes. A Project created under B continues to use B after the
+default rolls back to A; this does not rebind existing Projects or migrate their
+runtime volumes. Retain both referenced templates until their Projects retire.
+
+An attempted candidate advertising a different engine build was rejected before
+application serving. Earlier fixture attempts also exposed that a paused placement
+can still have Agent-transition/cleanup evidence outstanding. The qualified sequence
+waits for both before closing admission; it never counts a paused placement alone
+as an idle application.
 
 ## Rollback window
 
@@ -50,8 +65,8 @@ targets. Unknown/modified schema is refused before a writer opens. Candidate ide
 or pending owner-contract mismatch cannot migrate the database. No permanent legacy
 reader/decoder exists to make those combinations appear compatible.
 
-A different engine/template version, client protocol change or schema change needs
-its own forward/rollback rehearsal and accepted-write proof. The current pair does
-not finish that broader matrix. First deployment into an ungated installation also
+An engine source revision outside the pin, another template protocol, client
+protocol change or schema change needs its own forward/rollback rehearsal and
+accepted-write proof. Only the recorded combinations above are qualified. First deployment into an ungated installation also
 requires an enforceable bootstrap; a quiet observation window is insufficient.
 Those deployment gates remain open rather than being inferred from this rehearsal.

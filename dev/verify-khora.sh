@@ -3,7 +3,7 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|gateway|native|provider|rollback|mixed|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|gateway|native|provider|rollback|infrastructure|mixed|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
 Default suite: release. Browser/all require a frontend production build and Chromium.
 Set PLAYWRIGHT_BROWSERS_PATH when the browser cache is outside the default location.
@@ -21,10 +21,17 @@ while (($#)); do
  esac
 done
 [[ -d $template && -f $manifest && -n $output ]] || { usage >&2;exit 2; }
-case "$suite" in release|gateway|native|provider|rollback|mixed|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
+case "$suite" in release|gateway|native|provider|rollback|infrastructure|mixed|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 for program in go python3 ip unshare mount mkfs.btrfs btrfs runsc sudo; do command -v "$program" >/dev/null || { echo "missing prerequisite: $program" >&2;exit 2; }; done
 if [[ $suite == provider ]]; then : "${PROJECT_PROVIDER_CONFIG:?explicit host-only provider YAML required}"; fi
 if [[ $suite == rollback ]]; then : "${PROJECT_ROLLBACK_BINARY:?explicit previously built compatible owner required}"; fi
+if [[ $suite == infrastructure ]]; then
+ : "${PROJECT_TEMPLATE_CANDIDATE:?explicit second immutable template required}"
+ : "${PROJECT_TEMPLATE_CANDIDATE_MANIFEST:?candidate manifest required}"
+ [[ -d $PROJECT_TEMPLATE_CANDIDATE && -f $PROJECT_TEMPLATE_CANDIDATE_MANIFEST ]] || { echo 'candidate template/manifest missing' >&2; exit 2; }
+ PROJECT_TEMPLATE_CANDIDATE=$(realpath "$PROJECT_TEMPLATE_CANDIDATE")
+ PROJECT_TEMPLATE_CANDIDATE_MANIFEST=$(realpath "$PROJECT_TEMPLATE_CANDIDATE_MANIFEST")
+fi
 mkdir -p "$output"
 output=$(realpath "$output")
 module=$(go -C "$repo/orchestrator" list -m -f '{{.Dir}}' github.com/TSHOGX/khora)
@@ -35,6 +42,9 @@ if [[ -z $engine ]]; then
  CGO_ENABLED=0 go -C "$module" build -mod=readonly -trimpath -ldflags='-X main.version=e8cd021a9c7c' -o "$engine" ./cmd/orchestrator
 fi
 engine=$(realpath "$engine")
+if [[ $suite == infrastructure ]]; then
+ CGO_ENABLED=0 go -C "$module" build -mod=readonly -trimpath -ldflags='-X main.version=e8cd021a9c7c -buildid=qualification-engine-candidate' -o "$output/engine-candidate" ./cmd/orchestrator
+fi
 build_revision=$(git -C "$repo" rev-parse HEAD)
 for binary in orchestrator agent-runner workspace-files runtime-cleanup runtime-fixture; do
  if [[ $binary == orchestrator ]]; then
@@ -80,7 +90,7 @@ fi
 run() {
  local package=$1 selection=$2 name=$3 timeout=$4
  mkdir -p "$output/$name"
- sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" PROJECT_ROLLBACK_BINARY="${PROJECT_ROLLBACK_BINARY:-}" PROJECT_BROWSER_OWNER_BINARY="${PROJECT_BROWSER_OWNER_BINARY:-}" \
+ sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" PROJECT_ROLLBACK_BINARY="${PROJECT_ROLLBACK_BINARY:-}" PROJECT_BROWSER_OWNER_BINARY="${PROJECT_BROWSER_OWNER_BINARY:-}" PROJECT_TEST_TEMPLATE_CANDIDATE="${PROJECT_TEMPLATE_CANDIDATE:-}" PROJECT_TEST_TEMPLATE_CANDIDATE_MANIFEST="${PROJECT_TEMPLATE_CANDIDATE_MANIFEST:-}" \
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
 if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationRollback|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement)$' release 4m;fi
@@ -88,6 +98,7 @@ if [[ $suite == gateway ]]; then run application '^(TestReleasedGatewaySurvivesO
 if [[ $suite == native ]]; then run application '^(TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement)$' native 3m;fi
 if [[ $suite == provider ]]; then run application '^TestReleasedRealProviderHandoff$' provider 5m;fi
 if [[ $suite == rollback ]]; then run application '^TestReleasedRevisionRollback$' rollback 4m;fi
+if [[ $suite == infrastructure ]]; then run application '^TestReleasedInfrastructureRollback$' infrastructure 4m;fi
 if [[ $suite == mixed || $suite == all ]]; then run application '^TestReleasedMixedWorkload$' mixed 9m;fi
 if [[ $suite == browser || $suite == all ]]; then run application '^TestReleasedBrowser$' browser 6m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi

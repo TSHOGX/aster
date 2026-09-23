@@ -285,8 +285,9 @@ rollback can reopen only after all work is fully settled and the new gateway is
 observed. It cannot claim preservation of the old HTTP stream. The native fixture
 qualifies this mechanism between distinct executable artifacts with the same
 contract; the [recorded real-provider run](../dev/measurements/owner-handoff.json) also
-retained a 24.3-second GLM-5.2 stream. The complete version matrix and bootstrap
-remain separate qualification gates.
+retained a 24.3-second GLM-5.2 stream. The [recorded compatibility matrix](compatibility.md) qualifies specific owner,
+gateway, client, engine-artifact and template-default combinations. Bootstrap
+remains a separate qualification gate.
 
 ## Gateway replacement
 
@@ -314,3 +315,18 @@ The [compatibility matrix](compatibility.md) records the owner/gateway/client pa
 that has been rehearsed with post-upgrade writes and defines its seven-day artifact
 retention window. Select exact qualified artifacts; the generic rollback commands
 do not imply support for an arbitrary earlier schema or runtime.
+
+
+For engine artifact or template-default replacement, first let existing work and
+cleanup settle. A paused Project does not prove that its retained Agent evidence
+has settled. Close full application admission and obtain a current ready checkpoint;
+retire the owner through activation before replacing the engine. Keep the original
+engine store, volumes, template registry and required network UID configuration.
+Start only an artifact of the supported engine revision. Start the owner behind
+the activating fence and complete or acknowledge rollback after reconciliation.
+
+Changing the default template affects newly configured Projects. Existing Projects
+retain their immutable template/release bindings and storage; retain their images
+until those Projects are retired. Do not rewrite a saved profile or restore a
+volume snapshot to make a default rollback appear successful. The infrastructure
+rehearsal in the compatibility matrix demonstrates this boundary.

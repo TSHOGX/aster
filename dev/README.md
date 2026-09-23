@@ -12,7 +12,7 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `gateway`, `native`, `provider`, `rollback`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `gateway`, `native`, `provider`, `rollback`, `infrastructure`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
@@ -91,3 +91,22 @@ with `PROJECT_BROWSER_OWNER_BINARY=/srv/qualification/prior-owner`. The producti
 frontend build and browser prerequisites remain the same as the ordinary browser
 gate. See the [compatibility matrix](../docs/compatibility.md) for the recorded pair
 and the limits of that evidence.
+
+
+## Engine artifact and template-default rollback
+
+Provide a second newly assembled immutable template and manifest with the same
+supported native/reader protocols but different reviewed bytes:
+
+```sh
+PROJECT_TEMPLATE_CANDIDATE=/srv/build/candidate PROJECT_TEMPLATE_CANDIDATE_MANIFEST=/srv/build/candidate.manifest.json dev/verify-khora.sh --template /srv/build/original --manifest /srv/build/original.manifest.json --output /srv/qualification/infrastructure-run --suite infrastructure
+```
+
+This opt-in suite mounts both templates read-only and builds a second artifact of
+the pinned engine revision. It waits for placement and Agent settlement, closes
+admission, retires the owner, replaces the engine on its original persistent store,
+and changes the default template. The reverse sequence restores the original
+engine artifact/default. It verifies eight accepted native turns, workspace bytes
+and immutable bindings for Projects created under both defaults. An unrelated
+engine revision is not made compatible by this test. Existing application templates
+must not be edited to prepare a candidate; use a fresh isolated image assembly.
