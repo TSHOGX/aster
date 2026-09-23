@@ -68,5 +68,6 @@ reader/decoder exists to make those combinations appear compatible.
 An engine source revision outside the pin, another template protocol, client
 protocol change or schema change needs its own forward/rollback rehearsal and
 accepted-write proof. Only the recorded combinations above are qualified. First deployment into an ungated installation also
-requires an enforceable bootstrap; a quiet observation window is insufficient.
-Those deployment gates remain open rather than being inferred from this rehearsal.
+requires an [enforceable bootstrap](bootstrap.md); a quiet observation window is
+insufficient. That deployment remains pending rather than being inferred from
+these rehearsals.

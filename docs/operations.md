@@ -142,9 +142,9 @@ abort; a stale owner/generation cannot advance it.
 
 Ready does **not** authorize a separate unchecked shutdown. The activation command
 below consumes a fresh readiness check and retires the owner itself. The gateway
-has an independent process lifetime. First-deployment bootstrap remains
-unqualified; this workflow is for quiescent
-replacement. Controlled owner-outage tests do not certify arbitrary active
+has an independent process lifetime. [Ungated-owner bootstrap](bootstrap.md)
+remains a no-go pending an enforceable external boundary; this workflow is for
+quiescent replacement of an already gated owner. Controlled owner-outage tests do not certify arbitrary active
 updates or migrations.
 
 `drain-status.runtime_work` and `diagnostics.runtime_work` report fixed-category
