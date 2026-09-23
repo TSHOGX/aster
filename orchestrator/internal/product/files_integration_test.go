@@ -6,9 +6,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +191,20 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		t.Logf("reused one reader: cold handshake=%s, 50 stat requests=%s", cold, time.Since(warm))
 	})
 	t.Run("host-captures-create-no-read-ledger", func(t *testing.T) {
+		sample := func() map[string]int64 {
+			t.Helper()
+			entries, e := os.ReadDir("/proc/self/fd")
+			must(t, e)
+			raw, e := os.ReadFile("/proc/self/stat")
+			must(t, e)
+			fields := strings.Fields(string(raw)[strings.LastIndexByte(string(raw), ')')+1:])
+			user, e := strconv.ParseInt(fields[11], 10, 64)
+			must(t, e)
+			system, e := strconv.ParseInt(fields[12], 10, 64)
+			must(t, e)
+			return map[string]int64{"fds": int64(len(entries)), "cpu_ticks": user + system}
+		}
+		coldResources := sample()
 		cold := time.Now()
 		capture, err := files.Capture(runctx, scope, "reader-data")
 		must(t, err)
@@ -202,13 +219,33 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		must(t, err)
 		var before, after int
 		must(t, s.db.QueryRow(`SELECT total_changes()`).Scan(&before))
+		warmResources := sample()
+		var observations []map[string]int64
+		observations = append(observations, map[string]int64{"cycle": 0, "fds": warmResources["fds"], "cpu_ticks": warmResources["cpu_ticks"]})
+		var latencies []int64
 		warm := time.Now()
 		for n := 0; n < 50; n++ {
+			began := time.Now()
 			capture, err = files.Capture(runctx, scope, "reader-data")
 			must(t, err)
 			_, err = io.Copy(io.Discard, capture)
 			must(t, err)
 			must(t, capture.Close())
+			latencies = append(latencies, time.Since(began).Nanoseconds())
+			if (n+1)%10 == 0 {
+				observation := sample()
+				observation["cycle"] = int64(n + 1)
+				observations = append(observations, observation)
+			}
+		}
+		stats := files.ReadStats()
+		last := observations[len(observations)-1]
+		evidence := map[string]any{"cold_ns": coldTime.Nanoseconds(), "warm_ns": time.Since(warm).Nanoseconds(), "cold_resources": coldResources, "observations": observations, "warm_read_samples_ns": latencies, "warm_cpu_ticks": last["cpu_ticks"] - warmResources["cpu_ticks"], "reader_stats": stats, "scope": "host test process CPU ticks and file descriptors; excludes engine/guest CPU; fixed transport descriptors may remain warm"}
+		raw, e := json.MarshalIndent(evidence, "", "  ")
+		must(t, e)
+		must(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "reader-resources.json"), raw, 0644))
+		if last["fds"] > warmResources["fds"]+4 || stats.Leases != 0 || stats.CapturedBytes != 0 || stats.Readers != 1 {
+			t.Fatal("warm reader resources did not settle", evidence)
 		}
 		must(t, s.db.QueryRow(`SELECT total_changes()`).Scan(&after))
 		current, err := files.workspaceReader().saved(runctx, scope.ProjectID)

@@ -162,3 +162,34 @@ why action wall time and browser-local feedback are different measurements.
 `INTERACTION_BENCHMARK_OUTPUT` enables `interaction-overhead.test.ts` to measure
 bounded timing-ring call overhead in Node. Keep that microbenchmark separate from
 browser latency trials; its result is not browser instrumentation overhead.
+
+
+The mixed/combined harness retains one-second body-free diagnostic samples in
+`mixed-telemetry.jsonl`: writer admission/wait peaks, Agent ACK/journal pressure,
+runtime leases and read resources. Scheduling ticks precede the bounded RPC so a
+stalled observation is distinguishable from missing sampling. Host pressure-stall
+information is recorded only where `/proc/pressure` exists; otherwise its absence
+is explicit. These additional observations do not relax existing pass budgets.
+
+The confined Files gate also records fifty warm capture latencies, host CPU ticks,
+file-descriptor checkpoints and final reader lease/capture counts. This scope
+excludes engine and guest CPU. Required correctness remains zero per-read database
+writes, one retained helper and no unreleased captures or leases.
+
+
+Concurrent file read capacity rejections are counted separately from successful
+readback. The mixed harness retries only an explicit read-only 503 capacity reply
+for at most two seconds with 25 ms backoff; it never retries mutations or accepts
+wrong bytes. Rejected attempts remain in the report and the whole-round budget
+still applies. Exhausted retry time fails the gate.
+
+
+Final reports distinguish `provider_completion_to_view_p95_ms` from
+`projection_p95_ms`. The former starts when the provider fixture finishes HTTP
+streaming and includes native settlement, capture, transport and ingestion. The
+latter starts at the authoritative turn completion timestamp recorded in its
+committing transaction and ends at first ready-page observation. It includes
+commit and sampling overhead and must meet the existing two-second projection
+budget. Both raw distributions are retained; the ten-second round budget still
+covers the complete offered work. Older reports used the provider endpoint as an
+upper bound and must not be relabeled as the newer projection definition.

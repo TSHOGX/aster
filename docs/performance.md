@@ -4,8 +4,10 @@ The application bounds work by requested content and owned resource lifetimes.
 Conversation display reads use an indexed durable projection; file reads use a
 reusable confined reader; browser views retain bounded windows. Native command
 outcomes, authority and recovery remain separate from those display mechanisms.
-Measurements below qualify stated fixtures and build combinations, not universal
-latency or total-memory guarantees. No live deployment is implied.
+The [final qualification record](../dev/measurements/final-qualification.json)
+closes the code and documentation refactor. Measurements below qualify stated
+fixtures and build combinations, not universal latency or total-memory guarantees.
+No live deployment is implied.
 
 ## Authenticated browser reads
 
@@ -189,6 +191,16 @@ a bounded opportunity after sixteen foreground admissions. Transactions are not
 preemptible. Rejections, cancellation, queue peaks and wait/transaction durations
 are observable; control byte reservations are estimates.
 
+Live Agent ingestion batches adjacent records from one original incarnation into
+at most sixteen records or 256 KiB, with one larger legal record allowed alone.
+Collection waits at most five milliseconds. The decode queue independently admits
+sixteen records/256 KiB, with one larger legal frame alone and cancellation-aware
+byte credits.
+Controls and ownership boundaries flush the current batch. Raw records, command
+outcomes and watermark commit together; any invalid member rolls back the whole
+batch and returns no ACK. FULL durability and original record order remain.
+This reduces per-record transaction overhead when consumers accumulate a backlog.
+
 Display replay has high watermarks of 16 MiB/8,192 operations, targets half those
 limits and prunes at most 256 rows per step. Indexed outbox pruning removes at most
 1,024 rows per Project batch. Current and replay-referenced detail versions remain
@@ -200,9 +212,19 @@ for controls and terminal/settlement evidence. Ordinary traffic uses the remaind
 Journal-pressure waits release the command mutex, keeping native Stop available.
 A five-second no-progress deadline leaves unknown effects unknown. The send window
 reserves 1 MiB/64 unacknowledged records; one larger legal frame can progress alone
-under the 4 MiB wire limit. Control responses have separate bounded queues.
+under the 4 MiB wire limit. Control responses have separate bounded queues: thirty-two responses within a
+64 KiB estimated byte budget and eight sync replies. Payloads remain in the
+durable journal rather than being duplicated in the control lane.
 ACK follows durable host ingestion, never mere transport delivery. Compaction
 retains deduplication and unresolved evidence.
+
+The retained [40/80 MiB pressure record](../dev/measurements/queue-pressure.json)
+includes actual writer count/byte peaks and wait times, journal logical/physical
+peaks, delayed ACKs, send-window occupancy and control progress. Compression or
+checkpoint/delta wire encoding remains deferred: the measured workload progresses
+with bounded flow and durable ACK. Reconsider encoding if representative healthy
+consumers repeatedly exhaust the five-second progress window. No alternate legacy
+decoder is retained for that optional optimization.
 
 Fresh format-2 journals create the current layout and required indexes atomically.
 Format-1 conversion and startup index repair are removed; old formats, versioned
@@ -247,11 +269,11 @@ See [operations](operations.md), [compatibility](compatibility.md),
 | --- | --- |
 | Startup and initialized journeys | [Retained/current paired comparison](../dev/measurements/startup-comparison.json): equal synthetic content, thirty fresh contexts per build; final current local return p95 25.7 ms versus 53.2 ms; all earlier timing variation retained |
 | Indexed query scaling | [Thirty samples at 1k/10k/100k records](../dev/measurements/conversation-scale.json), identical canonical two-item output; current query p95 0.23/0.23/0.40 ms versus retained raw reconstruction 6.81/62.53/792.53 ms; excludes HTTP/rendering |
-| Combined browser/native load | [Independent projection observation](../dev/measurements/combined-projection.json): 55 rounds, all 229 completions, projection observation p95 1.196 s, HTTP p95 23.51 ms, owner/gateway peak RSS 66,488 KiB, 712 ms owner update |
+| Combined browser/native load | [Final bounded ingestion run](../dev/measurements/final-combined.json): 52 rounds, all 217 completions, completion projection p95 378 ms, provider-to-ready p95 1.33 s, HTTP p95 26.15 ms, owner/gateway peak RSS 66,488 KiB, 1.235 s owner update |
 | Runtime idle | Same combined record: separate 60/120-second windows, zero heavy reads/new preview URLs and unchanged preview node; head reads counted separately |
 | Current guest runtime | [Journal image qualification](../dev/measurements/journal-runtime.json): release, mixed, browser, hub, native pressure, Files, PTYs, recovery and service authority; original pressure timeout and later diagnostic passes retained |
 | Real upstream continuity | [One GLM-5.2 stream](../dev/measurements/owner-handoff.json): 24.3 seconds, one request/original native completion, stable gateway and 127 ms distinct owner switch; scoped to that build/provider pair |
-| Rollback | [Retained owner/gateway revisions](../dev/measurements/revision-rollback.json) and [engine/template defaults](../dev/measurements/infrastructure-rollback.json), preserving accepted history/files; exact supported matrix in compatibility docs |
+| Rollback | [Current client/API pair](../dev/measurements/final-rollback.json), [earlier owner/gateway revisions](../dev/measurements/revision-rollback.json) and [current engine/template defaults](../dev/measurements/final-infrastructure.json), preserving accepted history/files; exact supported matrix in compatibility docs |
 | Office latency | [180 fresh-context trials](../dev/measurements/office-latency.json): normal-CPU DOCX/XLSX/PPTX p95 774/577/505 ms; four-times-CPU 813/1,230/1,025 ms; routed fixed bodies and useful DOM/canvas readiness |
 | Maximal transcript scrolling | [160-turn, sixteen-page profile](../dev/measurements/history-scroll.json): four-times-CPU wheel-to-RAF p95 8.8 ms, largest observed task 139 ms, 83,421 DOM nodes; automation inspection is not application attribution |
 | Directory retention | [Fifty-page resource journey](../dev/measurements/directory-window.json): 100 rows, fixed 6,740 nodes/751 listeners, post-GC heap 11.67→11.96 MB; selected dirty edit preserved |
@@ -266,8 +288,26 @@ These observations do not establish field INP, arbitrary document rendering,
 cross-host recovery or bootstrap of an ungated installation. Combined runs retain
 long tasks above 200 ms and earlier failed workload attempts; thresholds were not
 relaxed to erase them. The startup comparison separates initialized feedback and actual quiet windows.
-The final all-resource/source audit remains in progress. Public claims must follow their actual evidence, not infer a
+The resource/source inventory and local qualification are complete for the
+declared workloads and supported release combinations. Live bootstrap remains
+unqualified and pending under the explicit deployment boundary. Public claims must follow their actual evidence, not infer a
 complete performance matrix from one passing workload.
+
+## Final reader and initialized-read observations
+
+The [reader resource record](../dev/measurements/reader-resources.json) measures
+fifty warm immutable captures after a cold open. Host descriptors stay at twenty
+at every checkpoint, with one helper and zero residual leases/capture bytes or
+per-read database writes. The warm sequence takes 481 ms and eight host CPU ticks;
+these observations exclude engine/guest CPU.
+
+The [initialized-read record](../dev/measurements/initialized-reads.json) contains
+thirty fresh contexts on loopback and thirty with synthetic API responses delayed
+by 100 ms plus serialized bytes at 10 Mbps. Conversation first useful content p95
+is 89/402 ms; cached return 26/20 ms; text preview 176/273 ms. Original local/shaped
+conversation, cached return and local preview targets pass. This response-delay
+fixture is separate from packet RTT or a live backend SLO; the combined runtime
+uses real Go APIs and its separately documented CDP profile.
 
 ## Startup comparison and instrumentation cost
 

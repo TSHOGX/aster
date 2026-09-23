@@ -36,6 +36,12 @@ func startMixedCompanion(a *releaseApp) *mixedCompanion {
 			return
 		}
 		output := os.Getenv("PROJECT_TEST_OUTPUT")
+		statusContext, statusCancel := context.WithTimeout(a.ctx, 3*time.Second)
+		status, statusErr := exec.CommandContext(statusContext, a.binary, "diagnostics", "--socket", filepath.Join(a.root, "state/control.sock")).CombinedOutput()
+		statusCancel()
+		if statusErr == nil {
+			_ = os.WriteFile(filepath.Join(output, "failure-diagnostics.json"), status, 0600)
+		}
 		for _, name := range []string{"requests.jsonl", "completions.jsonl"} {
 			raw, err := os.ReadFile(filepath.Join(a.root, name))
 			if err == nil {
@@ -52,6 +58,7 @@ func startMixedCompanion(a *releaseApp) *mixedCompanion {
 			"turns":         `SELECT id,session_id,request_id,state,created_at,updated_at FROM turns`,
 			"commands":      `SELECT id,turn_id,kind,state FROM agent_commands`,
 			"native_errors": `SELECT turn_id,json_extract(payload,'$.message.errorMessage') FROM agent_records WHERE kind='native' AND json_extract(payload,'$.message.errorMessage') IS NOT NULL`,
+			"last_records":  `SELECT turn_id,sequence,kind,json_extract(payload,'$.type'),length(payload) FROM agent_records WHERE turn_id IN (SELECT id FROM turns ORDER BY created_at DESC LIMIT 8) AND (kind<>'native' OR json_extract(payload,'$.type') IN ('agent_end','prompt_end')) ORDER BY turn_id,sequence`,
 		} {
 			rows, err := db.Query(query)
 			if err != nil {

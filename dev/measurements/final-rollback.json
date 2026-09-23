@@ -1,0 +1,139 @@
+{
+  "gateway-0": {
+    "digest": "sha256:893c64a3750c83408bbb4c5fca1b643fb5d599c436d7127d3ca942dec021f93e",
+    "go": "go1.23.4",
+    "revision": "fcc38780b5a8fa281ce0e5e68413847cf2b23773",
+    "vcs.modified": "true",
+    "vcs.revision": "fcc38780b5a8fa281ce0e5e68413847cf2b23773",
+    "version": "handoff-fixture-candidate"
+  },
+  "gateway-1": {
+    "digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+    "go": "go1.23.4",
+    "revision": "e1e4e665580427f1daf7ce3f46345dfec8489bed",
+    "version": "dev"
+  },
+  "held_intent_preserved": true,
+  "new": {
+    "digest": "sha256:893c64a3750c83408bbb4c5fca1b643fb5d599c436d7127d3ca942dec021f93e",
+    "go": "go1.23.4",
+    "revision": "fcc38780b5a8fa281ce0e5e68413847cf2b23773",
+    "vcs.modified": "true",
+    "vcs.revision": "fcc38780b5a8fa281ce0e5e68413847cf2b23773",
+    "version": "handoff-fixture-candidate"
+  },
+  "old": {
+    "digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+    "go": "go1.23.4",
+    "revision": "e1e4e665580427f1daf7ce3f46345dfec8489bed",
+    "version": "dev"
+  },
+  "post_upgrade_file_sha256": "sha256:d6b0353d0eec1a2f693a347a14a23f7fa2546658f40d3cafea2f6ad30bf8d167",
+  "retained_completed_turns": 5,
+  "rollback": {
+    "activation_instance": "e57277c4-c324-43b7-ae6e-5f42a6971734",
+    "deadline": "",
+    "finished_digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+    "generation": 2,
+    "mode": "quiescent",
+    "owner": "rollback",
+    "phase": "open",
+    "reason": "rolled_back",
+    "target_digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+    "updated_at": "2026-09-23T12:26:29.537533039Z"
+  },
+  "upgrade": {
+    "activation_instance": "65a3780f-73f4-4c77-9694-86b121c93e6a",
+    "deadline": "",
+    "finished_digest": "sha256:893c64a3750c83408bbb4c5fca1b643fb5d599c436d7127d3ca942dec021f93e",
+    "generation": 1,
+    "mode": "quiescent",
+    "owner": "upgrade",
+    "phase": "open",
+    "reason": "completed",
+    "target_digest": "sha256:893c64a3750c83408bbb4c5fca1b643fb5d599c436d7127d3ca942dec021f93e",
+    "updated_at": "2026-09-23T12:26:28.351079348Z"
+  },
+  "date": "2026-09-23",
+  "runtime_digest": "sha256:94da68a926b57b648f15a82f687e3694c5c763388352a5045034e21518ed1c88",
+  "current_browser_on_retained_owner_seconds": 44.5,
+  "browser_workflows": 3,
+  "current_frontend_tree": "af2a8c4802582be36eb567327dda7827fefa1339",
+  "rehearsal_seconds": 17.9,
+  "previous_prebatch_rehearsal": {
+    "gateway-0": {
+      "digest": "sha256:8bd587c82c544c0286563dc359097e4d8e8923413bb086b5d4b071588c1a3315",
+      "go": "go1.23.4",
+      "revision": "478a5d5e53b093a201bf36c7f76b221f284eb8df",
+      "vcs.modified": "true",
+      "vcs.revision": "478a5d5e53b093a201bf36c7f76b221f284eb8df",
+      "version": "handoff-fixture-candidate"
+    },
+    "gateway-1": {
+      "digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+      "go": "go1.23.4",
+      "revision": "e1e4e665580427f1daf7ce3f46345dfec8489bed",
+      "version": "dev"
+    },
+    "held_intent_preserved": true,
+    "new": {
+      "digest": "sha256:8bd587c82c544c0286563dc359097e4d8e8923413bb086b5d4b071588c1a3315",
+      "go": "go1.23.4",
+      "revision": "478a5d5e53b093a201bf36c7f76b221f284eb8df",
+      "vcs.modified": "true",
+      "vcs.revision": "478a5d5e53b093a201bf36c7f76b221f284eb8df",
+      "version": "handoff-fixture-candidate"
+    },
+    "old": {
+      "digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+      "go": "go1.23.4",
+      "revision": "e1e4e665580427f1daf7ce3f46345dfec8489bed",
+      "version": "dev"
+    },
+    "post_upgrade_file_sha256": "sha256:d6b0353d0eec1a2f693a347a14a23f7fa2546658f40d3cafea2f6ad30bf8d167",
+    "retained_completed_turns": 5,
+    "rollback": {
+      "activation_instance": "3c43581a-3218-4be3-a6a6-a5dc99d596cc",
+      "deadline": "",
+      "finished_digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+      "generation": 2,
+      "mode": "quiescent",
+      "owner": "rollback",
+      "phase": "open",
+      "reason": "rolled_back",
+      "target_digest": "sha256:09fff5041127aa3b237792bb332a0075567093c48d622288bf969f0a30a67fa5",
+      "updated_at": "2026-09-23T11:14:16.134709901Z"
+    },
+    "upgrade": {
+      "activation_instance": "17e37f92-5fa7-40eb-a46b-c923016503b3",
+      "deadline": "",
+      "finished_digest": "sha256:8bd587c82c544c0286563dc359097e4d8e8923413bb086b5d4b071588c1a3315",
+      "generation": 1,
+      "mode": "quiescent",
+      "owner": "upgrade",
+      "phase": "open",
+      "reason": "completed",
+      "target_digest": "sha256:8bd587c82c544c0286563dc359097e4d8e8923413bb086b5d4b071588c1a3315",
+      "updated_at": "2026-09-23T11:14:14.928361452Z"
+    },
+    "date": "2026-09-23",
+    "runtime_digest": "sha256:94da68a926b57b648f15a82f687e3694c5c763388352a5045034e21518ed1c88",
+    "rehearsal_seconds": 18.27,
+    "current_browser_on_retained_owner_seconds": 44.5,
+    "browser_workflows": 3,
+    "current_frontend_tree": "af2a8c4802582be36eb567327dda7827fefa1339",
+    "limits": [
+      "Current and retained ownerproductioncodeisequal;source revisions differ through frontend,tests,anddocs.",
+      "Bothownersusethemetadata-onlyscheduleoverviewAPI andruntimecatalog.",
+      "Currentbrowseredit/save/disablepreservesfullpromptagainstretainedowner.",
+      "Rollbackretainsacceptedwrites;noschemadowngradeorbackuprestore.",
+      "Historical pre-catalog/pre-schedule-API pairs are separate qualifications and not current-client rollback promises."
+    ]
+  },
+  "limits": [
+    "Retainedownerisprebatch;candidateusesboundeddurableingestion. Schema12,wireandruntimecatalogcontractsunchanged.",
+    "Currentfrontendpasses3workflowsonretainedowner,includingschedulefulldetailedit/save/disable.",
+    "Fivecompletednativeturns,heldintentandpost-upgradebytespreservedthroughowner/gatewayA\u2192B\u2192A.",
+    "No schemadowngrade,accepted-writebackuprestore,arbitrary-versionorpre-cataloghandoffsupport."
+  ]
+}

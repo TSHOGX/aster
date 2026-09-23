@@ -5,7 +5,31 @@ A matching `release-identity` is necessary for owner handoff; it does not certif
 arbitrary older code. Rollback uses the current database and retains writes accepted
 by the newer owner. Restoring an older backup over those writes is unsupported.
 
-## Qualified owner, gateway and client pair
+## Current owner, gateway and client pair
+
+The [final rehearsal](../dev/measurements/final-rollback.json) uses retained
+`e1e4e665580427f1daf7ce3f46345dfec8489bed` and candidate
+`fcc38780b5a8fa281ce0e5e68413847cf2b23773` on schema 12 and the current manifest-3,
+native-1, Agent/journal-2, reader-2 image. The candidate adds bounded atomic Agent ingestion;
+the retained owner uses the prior single-record commit path. Schema, wire and
+runtime catalog contracts are unchanged. Owner and
+gateway A→B→A preserves five completed native turns, held intent and post-upgrade
+workspace bytes in 17.90 seconds. The current client passes all three browser
+workflows against the retained owner in 44.50 seconds, including metadata-only
+schedule overview and complete prompt edit/save/disable.
+
+The [current infrastructure rehearsal](../dev/measurements/final-infrastructure.json)
+passes in 107.19 seconds with the batched owner, two artifacts of the pinned engine
+and runtime defaults v16→v15→v16. All three saved Project bindings, eight native
+turn identities/states and post-upgrade workspace bytes survive. The non-default
+image remains in the host-validated catalog; omitting it refuses startup.
+
+The exact artifacts, frontend tree and runtime digest are in that record. This
+is the current client/API rollback pair. Earlier pairs below remain historical
+qualification and do not imply that the current client supports old schedule
+responses or pre-catalog owner handoff.
+
+## Earlier owner and infrastructure qualification
 
 The [revision rehearsal](../dev/measurements/revision-rollback.json) upgrades from
 `525ec8fa543f3b1cd8ce13c8fa6a3d3605b25f8b` to

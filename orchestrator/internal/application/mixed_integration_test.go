@@ -192,6 +192,7 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 	var maxCPU float64
 	cpuByProcess := map[int]float64{}
 	var gatewayRSSMax int64
+	fileReadAttempts, fileReadCapacity := 0, 0
 	var roundSamples []map[string]any
 	t.Cleanup(func() {
 		raw, _ := json.MarshalIndent(roundSamples, "", "  ")
@@ -200,6 +201,8 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 	round := 0
 	restarted := false
 	maxFairness := time.Duration(0)
+	stopTelemetry := sampleMixedTelemetry(a)
+	defer stopTelemetry()
 	workloadStart := time.Now()
 	for time.Since(workloadStart) < 5*time.Minute {
 		tick := time.Now()
@@ -222,14 +225,26 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 			path := fmt.Sprintf("/api/projects/mixed-%d/files/content?path=load.txt", p)
 			content := strings.Repeat(fmt.Sprintf("round=%d\n", round), 512)
 			a.writeFile(path, content, fmt.Sprintf("write-%d-%d", p, round))
-			req, _ := http.NewRequestWithContext(a.ctx, "GET", a.origin+path, nil)
-			response, err := a.client.Do(req)
-			require(t, err)
-			raw, err := io.ReadAll(response.Body)
-			response.Body.Close()
-			require(t, err)
-			if response.StatusCode != 200 || string(raw) != content {
-				t.Fatal("file roundtrip mismatch")
+			readDeadline := time.Now().Add(2 * time.Second)
+			for {
+				req, _ := http.NewRequestWithContext(a.ctx, "GET", a.origin+path, nil)
+				fileReadAttempts++
+				response, err := a.client.Do(req)
+				require(t, err)
+				raw, err := io.ReadAll(response.Body)
+				response.Body.Close()
+				require(t, err)
+				if response.StatusCode == http.StatusServiceUnavailable && bytes.Contains(raw, []byte("capacity exhausted")) {
+					fileReadCapacity++
+					if time.Now().Before(readDeadline) {
+						time.Sleep(25 * time.Millisecond)
+						continue
+					}
+				}
+				if response.StatusCode != 200 || string(raw) != content {
+					t.Fatalf("file roundtrip failed: project=%d round=%d status=%d bytes=%d expected_bytes=%d response=%q", p, round, response.StatusCode, len(raw), len(content), string(raw[:min(len(raw), 256)]))
+				}
+				break
 			}
 		}
 		sample["files_ms"] = float64(time.Since(tick)) / float64(time.Millisecond)
@@ -262,7 +277,7 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 			var observed []projectedTurn
 			for _, raw := range page["turn_summaries"].([]any) {
 				row := raw.(map[string]any)
-				observed = append(observed, projectedTurn{ID: row["id"].(string), State: row["state"].(string)})
+				observed = append(observed, projectedTurn{ID: row["id"].(string), State: row["state"].(string), FinishedAt: func() string { v, _ := row["finished_at"].(string); return v }()})
 			}
 			observer.note(observed, time.Now())
 		}
@@ -377,9 +392,18 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 	}
 	// Observation includes independent sampling and HTTP overhead. It is not
 	// internal projector CPU time or raw turn-state completion.
-	var projection []time.Duration
+	var projection, providerToView []time.Duration
 	for id, at := range completionTimes {
-		projection = append(projection, observer.projected[id].Sub(at))
+		seen := observer.projected[id]
+		providerToView = append(providerToView, seen.Sub(at))
+		finished, ok := observer.completed[id]
+		if !ok {
+			t.Fatal("ready native turn lacks authoritative completion time", id)
+		}
+		if seen.Before(finished) {
+			t.Fatal("observed completion before its timestamp", id)
+		}
+		projection = append(projection, seen.Sub(finished))
 	}
 
 	report := a.cli("diagnostics", "--socket", socket)
@@ -388,6 +412,11 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 		cpuTotal += ticks
 	}
 	metrics := map[string]any{"quantile_method": "nearest-rank", "gateway_rss_max_kib": gatewayRSSMax, "cpu_ticks_total_sampled": cpuTotal, "resource_scope": "owner plus independent gateway", "elapsed_seconds": time.Since(start).Seconds(), "mixed_seconds": workloadEnd.Sub(workloadStart).Seconds(), "post_warmup_seconds": time.Since(workloadStart).Seconds(), "rounds": round, "projects": 2, "agents": 4, "ptys": 2, "rss_max_kib": maxRSS, "cpu_ticks_max_process": maxCPU, "http_samples": len(a.latencies), "http_p95_ms": float64(percentile(a.latencies, .95)) / float64(time.Millisecond), "http_p99_ms": float64(percentile(a.latencies, .99)) / float64(time.Millisecond), "projection_samples": len(projection), "projection_p95_ms": float64(percentile(projection, .95)) / float64(time.Millisecond), "round_max_seconds": maxFairness.Seconds(), "idle_seconds": time.Since(idleStart).Seconds(), "diagnostics": report}
+	metrics["file_read_attempts"] = fileReadAttempts
+	metrics["file_read_capacity_rejections"] = fileReadCapacity
+	metrics["provider_completion_to_view_samples_ns"] = providerToView
+	metrics["provider_completion_to_view_p95_ms"] = float64(percentile(providerToView, .95)) / float64(time.Millisecond)
+	metrics["projection_definition"] = "authoritative completion transaction timestamp to first ready projected page; includes commit and sampling overhead"
 	metrics["projection_samples_ns"] = projection
 	metrics["projection_observer"] = observer.report()
 	if companion != nil {

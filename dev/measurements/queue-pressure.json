@@ -1,0 +1,180 @@
+{
+  "host": [
+    {
+      "cumulative_native_mib": 40,
+      "elapsed_ms": 2117,
+      "frame_bytes_approx": 1048576,
+      "projects": 2,
+      "retained_replay_bytes": 23266670,
+      "stop_admission_ns": [
+        16568507,
+        20560748
+      ],
+      "writer": {
+        "background": {
+          "queued": 0,
+          "peak_queued": 1,
+          "queued_bytes": 0,
+          "peak_bytes": 1048944,
+          "admitted": 55,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 607623646,
+          "max_wait_ns": 137071221,
+          "transaction_ns": 1355588502,
+          "max_transaction_ns": 71511405
+        },
+        "control": {
+          "queued": 0,
+          "peak_queued": 0,
+          "queued_bytes": 0,
+          "peak_bytes": 0,
+          "admitted": 28,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 13458,
+          "max_wait_ns": 2042,
+          "transaction_ns": 4923913,
+          "max_transaction_ns": 445628
+        },
+        "ingest": {
+          "queued": 0,
+          "peak_queued": 2,
+          "queued_bytes": 0,
+          "peak_bytes": 2099426,
+          "admitted": 42,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 797221121,
+          "max_wait_ns": 56471118,
+          "transaction_ns": 645634868,
+          "max_transaction_ns": 54331142
+        },
+        "stop_control": {
+          "queued": 0,
+          "peak_queued": 1,
+          "queued_bytes": 0,
+          "peak_bytes": 1048576,
+          "admitted": 2,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 34658152,
+          "max_wait_ns": 19647074,
+          "transaction_ns": 2457145,
+          "max_transaction_ns": 1551263
+        }
+      }
+    },
+    {
+      "cumulative_native_mib": 80,
+      "elapsed_ms": 3353,
+      "frame_bytes_approx": 1048576,
+      "projects": 2,
+      "retained_replay_bytes": 27496936,
+      "stop_admission_ns": [
+        35855453,
+        5855713
+      ],
+      "writer": {
+        "background": {
+          "queued": 0,
+          "peak_queued": 1,
+          "queued_bytes": 0,
+          "peak_bytes": 1048945,
+          "admitted": 96,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 745180242,
+          "max_wait_ns": 73756965,
+          "transaction_ns": 2392057080,
+          "max_transaction_ns": 43020302
+        },
+        "control": {
+          "queued": 0,
+          "peak_queued": 0,
+          "queued_bytes": 0,
+          "peak_bytes": 0,
+          "admitted": 28,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 15625,
+          "max_wait_ns": 3000,
+          "transaction_ns": 5357457,
+          "max_transaction_ns": 472921
+        },
+        "ingest": {
+          "queued": 0,
+          "peak_queued": 2,
+          "queued_bytes": 0,
+          "peak_bytes": 2099426,
+          "admitted": 82,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 1329060328,
+          "max_wait_ns": 42628632,
+          "transaction_ns": 735595552,
+          "max_transaction_ns": 16957428
+        },
+        "stop_control": {
+          "queued": 0,
+          "peak_queued": 1,
+          "queued_bytes": 0,
+          "peak_bytes": 1048576,
+          "admitted": 2,
+          "rejected": 0,
+          "canceled": 0,
+          "wait_ns": 39848151,
+          "max_wait_ns": 35015738,
+          "transaction_ns": 1769140,
+          "max_transaction_ns": 936008
+        }
+      }
+    }
+  ],
+  "runner": [
+    {
+      "ack_interval_ms": 100,
+      "control_queue_peak": 533,
+      "cumulative_target_mib": 40,
+      "elapsed_ms": 6914,
+      "journal": {
+        "Bytes": 608,
+        "PeakBytes": 35971814,
+        "Limit": 67108864,
+        "ControlReserve": 16777216,
+        "DiskBytes": 40060736,
+        "Full": 0,
+        "Unacked": 0
+      },
+      "native_abort_write_ns": 288127,
+      "raw_bytes": 42283295,
+      "records": 106,
+      "send_window_peak": 1048404
+    },
+    {
+      "ack_interval_ms": 100,
+      "control_queue_peak": 533,
+      "cumulative_target_mib": 80,
+      "elapsed_ms": 14814,
+      "journal": {
+        "Bytes": 608,
+        "PeakBytes": 50184863,
+        "Limit": 67108864,
+        "ControlReserve": 16777216,
+        "DiskBytes": 54892784,
+        "Full": 45,
+        "Unacked": 0
+      },
+      "native_abort_write_ns": 213334,
+      "raw_bytes": 84003748,
+      "records": 185,
+      "send_window_peak": 1048404
+    }
+  ],
+  "scope": "Retained two-Project40/80MiB host pressure and guest100ms delayed-ACK fixtures; historical stage results,not a new current-run timing claim.",
+  "limits": [
+    "Hostcontrolbytecountsareadmissionestimates;nativepayloadbytecountsaremeasured.",
+    "RunnerlogicalcapacityandphysicalSQLitefilesizesaredistinct.",
+    "Fixtureabortstdinwriteisnotproviderresponseorfullnativecancellationsettlement;the separate real native pressure gate measures dispatch and original outcome."
+  ]
+}

@@ -16,8 +16,9 @@ import (
 )
 
 type projectedTurn struct {
-	ID    string `json:"id"`
-	State string `json:"state"`
+	ID         string `json:"id"`
+	State      string `json:"state"`
+	FinishedAt string `json:"finished_at"`
 }
 
 // Each Session is observed independently of mutation rounds and release control.
@@ -29,6 +30,7 @@ type projectionObserver struct {
 	group     sync.WaitGroup
 	mu        sync.Mutex
 	projected map[string]time.Time
+	completed map[string]time.Time
 	latencies []time.Duration
 	failures  map[string]int
 	attempts  int
@@ -36,7 +38,7 @@ type projectionObserver struct {
 
 func observeProjections(a *releaseApp, sessions []string) *projectionObserver {
 	ctx, cancel := context.WithCancel(a.ctx)
-	o := &projectionObserver{cancel: cancel, projected: map[string]time.Time{}, failures: map[string]int{}}
+	o := &projectionObserver{cancel: cancel, projected: map[string]time.Time{}, completed: map[string]time.Time{}, failures: map[string]int{}}
 	for _, path := range sessions {
 		o.group.Add(1)
 		go func() {
@@ -123,6 +125,9 @@ func (o *projectionObserver) note(turns []projectedTurn, at time.Time) {
 		if turn.State == "completed" && turn.ID != "" {
 			if _, ok := o.projected[turn.ID]; !ok {
 				o.projected[turn.ID] = at
+				if finished, err := time.Parse(time.RFC3339Nano, turn.FinishedAt); err == nil {
+					o.completed[turn.ID] = finished
+				}
 			}
 		}
 	}

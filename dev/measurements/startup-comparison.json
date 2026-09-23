@@ -6814,6 +6814,7 @@
     "Synthetic API and controlled events; server/OS warm. Datasetdigest and buildIDs match their stated scopes. Not real-network,engine,paint or fieldINP measurement.",
     "The sixty/120secondidlewindows are separate actual elapsed observations,not extrapolation from startupcounts.",
     "Response bytes are sampled completed-request bodies through the checkpoint,not an assertion that every asynchronous response finished.",
-    "A short isolated Node timing-ring microbenchmark ran during the earlier paired investigation; the final browser-local paired run was separate. Node per-call overhead does not establish browser profiling overhead."
+    "A short isolated Node timing-ring microbenchmark ran during the earlier paired investigation; the final browser-local paired run was separate. Node per-call overhead does not establish browser profiling overhead.",
+    "The small routed fixture models imported message content and Files; it does not model a complete native turn-index response. These readiness timings therefore qualify only the named conversation/preview content, while real runtime tests cover turn navigation and native actions."
   ]
 }
