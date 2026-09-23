@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-09-23T15:37:19.924891+00:00",
+  "source_revision": "76364abe6247cbbb43d26cf6274fa7c7508146fd",
+  "schema_version": 13,
+  "engine_revision": "e8cd021a9c7c",
+  "runtime_digest": "sha256:94da68a926b57b648f15a82f687e3694c5c763388352a5045034e21518ed1c88",
+  "validation": {
+    "go_tests": "passed",
+    "go_vet": "passed",
+    "race_packages": [
+      "product",
+      "producthttp",
+      "sandbox/khora"
+    ],
+    "browser_tests_passed": 24,
+    "real_engine_volume_suite": "passed",
+    "real_engine_file_confinement_and_recovery": "passed",
+    "release_handoff_and_activation_suite": "passed",
+    "live_browser": true
+  },
+  "observed_behavior": {
+    "upload_before_first_compute": true,
+    "paused_listing_preview_download_edit_move_remove": true,
+    "paused_conversation_history": true,
+    "paused_compute_occupied": false,
+    "paused_placement_state": "lost",
+    "resume_retains_workspace_volume": true,
+    "quota_failure_preserves_target_and_reclaims_staging": true,
+    "uncertain_mutations_are_not_replayed": true
+  },
+  "deployment": {
+    "gated_schema_migration": "12 to 13",
+    "accepted_conversations_and_volume_bindings_preserved": true,
+    "engine_and_gateway_restarted": false
+  },
+  "limits": [
+    "Active writes retain the guest path because Khora refuses direct writes with a live writable mount.",
+    "Schema-12 executables cannot reopen schema 13.",
+    "Ambiguous direct mutation outcomes remain fenced pending operator recovery."
+  ]
+}

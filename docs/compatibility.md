@@ -7,7 +7,7 @@ by the newer owner. Restoring an older backup over those writes is unsupported.
 
 ## Workspace storage update
 
-The independent workspace update requires schema 13. Upgrade from schema 12
+The [qualified independent workspace update](../dev/measurements/paused-volumes.json) requires schema 13. Upgrade from schema 12
 uses the full quiescent activation gate; it is not a compatible owner-only
 handoff. Known schema migration preserves accepted history and file outcomes.
 The pinned Khora engine and manifest-3 runtime are unchanged. Older schema-12

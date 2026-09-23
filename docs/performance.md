@@ -75,6 +75,10 @@ a thirty-second light metadata fallback operates only while disconnected.
 
 ## Files and active directory windows
 
+[Paused-volume qualification](../dev/measurements/paused-volumes.json) covers
+conversation/file access, storage mutations with no occupied compute, retained
+workspace bytes after resume, quota failure and interrupted-operation handling.
+
 For active compute, the guest reader reuses a root descriptor confined to `/workspace`. Component
 walking uses `O_PATH|O_NOFOLLOW` and verifies object types; symlink substitutions,
 special files and private runtime paths are refused. The reader accepts no writes.
