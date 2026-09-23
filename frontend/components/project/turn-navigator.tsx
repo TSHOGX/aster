@@ -248,10 +248,6 @@ export function TurnNavigator({
       <div
         className="turn-rail"
         ref={rail}
-        onScroll={() => {
-          if (rail.current && rail.current.scrollTop < 12 && older && !loading)
-            void load("older");
-        }}
       >
         {older && (
           <button

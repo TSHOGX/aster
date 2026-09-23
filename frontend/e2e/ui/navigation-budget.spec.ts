@@ -10,6 +10,14 @@ test("the turn rail pages both ways within a bounded window and keeps the curren
   await page.goto("/?project=battery&session=analysis");
   const rail = page.locator(".turn-rail");
   await expect(rail.locator(".turn-tick")).toHaveCount(100);
+  const reads = () => fixture.calls.filter(url => url.includes("/turn-index?before=") && !url.includes("before=0&")).length;
+  const beforeScroll = reads();
+  // Scroll restoration and click auto-scrolling are not new paging intent.
+  await rail.evaluate(async node => {
+    node.scrollTop = 0;
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  expect(reads()).toBe(beforeScroll);
   for (const earliest of [801, 701, 601, 501, 401]) {
     await page
       .getByRole("button", { name: "Earlier turns", exact: true })
