@@ -5,6 +5,15 @@ A matching `release-identity` is necessary for owner handoff; it does not certif
 arbitrary older code. Rollback uses the current database and retains writes accepted
 by the newer owner. Restoring an older backup over those writes is unsupported.
 
+## Schedule catalog update
+
+The chronological schedule overview requires schema 14. The migration adds
+owner-scoped catalog revisions and ordering metadata, preserving all schedules
+and run history. Deployment requires the full quiescent activation gate. The
+new browser uses opaque overview cursors and recurrence previews; older clients
+and schema-13 owners are not supported rollback targets for this release. The
+historical qualification records below do not certify this change.
+
 ## Workspace storage update
 
 The [qualified independent workspace update](../dev/measurements/paused-volumes.json) requires schema 13. Upgrade from schema 12

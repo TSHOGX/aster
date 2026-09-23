@@ -33,19 +33,32 @@ func scanSchedule(row scanner) (s Schedule, err error) {
 	err = missing(row.Scan(&s.ID, &s.ProjectID, &s.SessionID, &s.Title, &s.Prompt, &s.Cron, &s.Timezone, &s.Enabled, &s.Deleted, &s.NextAt, &s.Revision, &s.CreatedAt))
 	return
 }
-func scheduleNext(s Schedule, now time.Time) (string, error) {
-	if _, err := time.LoadLocation(s.Timezone); err != nil {
-		return "", ErrInvalid
+func parseRecurrence(expression, zone string) (cron.Schedule, string, error) {
+	if !validText(zone, 128) || strings.ContainsAny(zone, " \t\n") {
+		return nil, "timezone", ErrInvalid
 	}
-	if s.Cron == "" {
-		return "", nil
+	if _, err := time.LoadLocation(zone); err != nil {
+		return nil, "timezone", ErrInvalid
 	}
-	if len(s.Cron) > 128 || len(strings.Fields(s.Cron)) != 5 || strings.ContainsAny(s.Timezone, " \t\n") {
-		return "", ErrInvalid
+	if expression == "" {
+		return nil, "", nil
 	}
-	parsed, err := cron.ParseStandard("CRON_TZ=" + s.Timezone + " " + s.Cron)
+	if len(expression) > 128 || len(strings.Fields(expression)) != 5 {
+		return nil, "cron", ErrInvalid
+	}
+	parsed, err := cron.ParseStandard("CRON_TZ=" + zone + " " + expression)
 	if err != nil {
-		return "", ErrInvalid
+		return nil, "cron", ErrInvalid
+	}
+	return parsed, "", nil
+}
+func scheduleNext(s Schedule, now time.Time) (string, error) {
+	parsed, _, err := parseRecurrence(s.Cron, s.Timezone)
+	if err != nil {
+		return "", err
+	}
+	if parsed == nil {
+		return "", nil
 	}
 	next := parsed.Next(now)
 	if next.IsZero() {

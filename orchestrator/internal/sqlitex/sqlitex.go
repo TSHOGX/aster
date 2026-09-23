@@ -4,13 +4,25 @@ package sqlitex
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
+
+func init() {
+	// SQLite's built-in lower() handles ASCII only. User-facing title filters
+	// need the same Unicode lowercase operation on the stored title and query.
+	if err := sqlite.RegisterDeterministicScalarFunction("batterygpt_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		value, _ := args[0].(string)
+		return strings.ToLower(value), nil
+	}); err != nil {
+		panic(err)
+	}
+}
 
 const (
 	// DefaultReaderPoolSize is the reader pool ceiling. Reads under WAL never

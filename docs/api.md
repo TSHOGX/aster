@@ -69,12 +69,26 @@ violations return `403`; stale/conflicting intent returns `409`. Capacity and
 pending outcomes remain distinct from successful completion. Browser access does
 not expose engine handles or operator control routes.
 
-`GET /api/schedules?project_id=OPTIONAL&after=ID&limit=50` returns
-`{schedules: [...], next?: ID}`. Entries include existing schedule fields plus
-`project_title`. Ownership, project deletion state and schedule deletion are
-filtered before stable ID pagination; conversation reader grants do not grant
-schedule access. Continue with `next` until absent. Task mutations and run history
-use the existing Project-scoped routes.
+`GET /api/schedules?project_id=OPTIONAL&q=TITLE&status=enabled|paused&after=CURSOR&limit=50`
+returns `{schedules: [...], next?: CURSOR}` with at most 50 metadata rows.
+Omit status for all tasks. Unicode lowercase title matching, Project filtering,
+and owner authorization apply before pagination. Automatic tasks sort by next
+occurrence and ID, followed by enabled manual-only tasks and paused tasks.
+Opaque continuation cursors bind the owner and filters to a catalog revision.
+Schedule edits/ticks and relevant Project changes invalidate continuation with
+`409 resync_required`; restart at the first page. The page and revision come from
+one database read snapshot. This replaces ID-only overview pagination.
+
+`POST /api/schedules/preview` accepts `{cron, timezone}` and returns
+`{valid, cron, timezone, reference_time, occurrences, errors?}`. Field errors use
+`cron` or `timezone`. The authenticated, non-mutating endpoint validates with the
+execution parser and returns three upcoming UTC instants or none for manual-only.
+It creates no task or run. Five-field Cron and IANA timezones are required. The
+pinned parser skips nonexistent spring-forward wall times and can produce both
+occurrences of a repeated fall-back wall time; clients display each offset.
+
+Task mutations and history remain Project-scoped. Run history returns at most 50
+rows and an explicit `next` continuation identity only when another row exists.
 
 Conversation items are materialized by a bounded background projector. Native
 text/thinking blocks retain stable identities; tool calls appear while arguments
@@ -149,8 +163,7 @@ mutation outcome. Writes retain their existing idempotency/unknown-outcome contr
 
 
 The owner-scoped `GET /api/schedules` overview returns schedule identity, Project
-identity/title, selected Session ID, title, timezone, enabled state, next run time
-and revision. It omits full prompt bodies and cron/edit fields. Read the existing
-Project-scoped schedule detail route before editing; mutations still validate the
-complete schedule and revision. Overview pagination continues after the returned schedule ID over
-owned, non-deleted Projects and does not grant shared readers schedule authority.
+identity/title, selected Session ID, title, Cron (at most 128 characters), timezone,
+enabled state, next run time and revision. It omits full prompt bodies. Read the
+Project-scoped detail for the selected task; mutations validate the complete
+schedule and revision. Reader grants do not confer schedule authority.

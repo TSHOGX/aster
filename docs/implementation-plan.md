@@ -65,5 +65,10 @@ That stale documentation must be corrected during final reconciliation.
   typecheck/lint, 43 production-build browser checks, and focused product and HTTP
   authorization race tests passed. Shared details use the explicit `conversation`
   parameter; old mixed Session URLs are canonicalized to the list.
+- Scheduling contracts: implemented with schema 14, owner catalog epochs,
+  Unicode title matching, chronological opaque cursors, authoritative previews,
+  and explicit history continuation. Focused race tests cover migration rollback,
+  multiple pages, authorization, filtering, concurrent ticks, month-end skips,
+  and both DST transitions.
 - Implementation and qualification: in progress; stage evidence will be recorded
   here as checks complete.

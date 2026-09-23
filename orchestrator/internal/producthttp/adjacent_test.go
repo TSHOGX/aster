@@ -43,6 +43,18 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 	if status != 201 {
 		t.Fatal(status, string(body))
 	}
+	status, body = do("POST", "/api/schedules/preview", `{"cron":"0 9 * * *","timezone":"Asia/Shanghai"}`)
+	if status != 200 || !strings.Contains(string(body), `"valid":true`) || !strings.Contains(string(body), `"occurrences":["`) {
+		t.Fatal("preview", status, string(body))
+	}
+	status, body = do("POST", "/api/schedules/preview", `{"cron":"@every 1h","timezone":"UTC"}`)
+	if status != 200 || !strings.Contains(string(body), `"valid":false`) {
+		t.Fatal("invalid preview", status, string(body))
+	}
+	status, body = do("GET", "/api/schedules?q=absent&status=paused", "")
+	if status != 200 || !strings.Contains(string(body), `"schedules":[]`) {
+		t.Fatal("overview filters", status, string(body))
+	}
 	status, _ = do("GET", "/api/conversations/session", "")
 	if status != 404 {
 		t.Fatal("ownership is not received sharing", status)
@@ -65,6 +77,24 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 	}
 	status, body = do("GET", "/api/projects/project/schedules/scheduled/runs", "")
 	if status != 200 {
+		t.Fatal(status, string(body))
+	}
+	status, body = do("POST", "/api/projects/project/schedules/scheduled/run", `{"request_id":"two"}`)
+	if status != 201 {
+		t.Fatal(status, string(body))
+	}
+	status, body = do("GET", "/api/projects/project/schedules/scheduled/runs?limit=1", "")
+	var runPage struct {
+		Runs []product.ScheduleRun `json:"runs"`
+		Next string                `json:"next"`
+	}
+	must(t, json.Unmarshal(body, &runPage))
+	if status != 200 || len(runPage.Runs) != 1 || runPage.Next == "" {
+		t.Fatal(status, string(body))
+	}
+	status, body = do("GET", "/api/projects/project/schedules/scheduled/runs?limit=1&after="+runPage.Next, "")
+	must(t, json.Unmarshal(body, &runPage))
+	if status != 200 || len(runPage.Runs) != 1 || runPage.Next != "" {
 		t.Fatal(status, string(body))
 	}
 	status, body = do("POST", "/api/projects/project/sessions/session/readers", `{"reader":"bob"}`)
