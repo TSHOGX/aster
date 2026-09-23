@@ -148,3 +148,17 @@ For the maximal transcript scroll profile, set `HISTORY_WINDOW_OUTPUT`,
 `navigation-budget.spec.ts` with the `maximal transcript` test. CPU profiling is
 kept separate from ordinary latency trials. Preserve its raw profile and metadata;
 DOM inspection performed by test automation is not application attribution.
+
+
+`startup-budget.spec.ts` is opt-in with `STARTUP_PROFILE_OUTPUT`. It records thirty
+fresh-context initialized journeys plus a separate real elapsed 60/120-second
+quiet window. `STARTUP_FIXTURE`, `STARTUP_ORIGIN` and `STARTUP_BUILD_DIRECTORY`
+select a disposable retained build; `STARTUP_PAIRED_FIXTURE` pairs that build on
+loopback port 3108 with the current one on 3107, alternating order. Never select
+live user state. Preserve dataset digests, exact build IDs and all failed or slower
+attempts. The [startup record](../dev/measurements/startup-comparison.json) explains
+why action wall time and browser-local feedback are different measurements.
+
+`INTERACTION_BENCHMARK_OUTPUT` enables `interaction-overhead.test.ts` to measure
+bounded timing-ring call overhead in Node. Keep that microbenchmark separate from
+browser latency trials; its result is not browser instrumentation overhead.
