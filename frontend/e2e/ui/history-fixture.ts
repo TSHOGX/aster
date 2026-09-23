@@ -41,6 +41,8 @@ export async function historyFixture(
     streaming = false;
   const calls: string[] = [];
   await page.route("**/sessions/analysis/turn-index?**", (route) => {
+    const requestURL = new URL(route.request().url());
+    calls.push(requestURL.pathname + requestURL.search);
     const before = Number(
       new URL(route.request().url()).searchParams.get("before") || 0,
     );

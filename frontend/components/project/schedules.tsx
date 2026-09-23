@@ -21,7 +21,7 @@ import { useLocale, useT } from "@/lib/i18n";
 import { scheduleTime } from "@/lib/schedule-recurrence";
 import { ProjectPicker } from "./project-picker";
 import { Menu, useDialog } from "./ui";
-import { RecurrenceSummary } from "./schedule-recurrence";
+import { RecurrenceSummary, UpcomingOccurrences } from "./schedule-recurrence";
 import { ScheduleEditor } from "./schedule-editor";
 
 export function Schedules({
@@ -455,11 +455,24 @@ export function Schedules({
                 onCancel={() => onNavigate({ ...nav, scheduleMode: undefined })}
                 onSaved={saved}
                 onChanged={(value) => {
-                  setDetail({ key: selectedKey, value });
+                  if (
+                    navRef.current.schedule === value.id &&
+                    navRef.current.scheduleProject === value.project_id
+                  )
+                    setDetail({ key: selectedKey, value });
                   setRefresh((n) => n + 1);
                 }}
                 onDeleted={() => {
-                  close();
+                  if (
+                    navRef.current.schedule === nav.schedule &&
+                    navRef.current.scheduleProject === nav.scheduleProject
+                  )
+                    navigateRef.current({
+                      ...navRef.current,
+                      schedule: undefined,
+                      scheduleProject: undefined,
+                      scheduleMode: undefined,
+                    });
                   setRefresh((n) => n + 1);
                 }}
                 onOpen={onOpen}
@@ -682,6 +695,11 @@ function SelectedSchedule({
               cron={schedule.cron}
               timezone={schedule.timezone}
             />
+            <UpcomingOccurrences
+              cron={schedule.cron}
+              timezone={schedule.timezone}
+              enabled={schedule.enabled}
+            />
             <p>
               {!schedule.enabled
                 ? tr("Paused. Resume to continue on this schedule.")
@@ -741,6 +759,7 @@ function SelectedSchedule({
         </div>
       )}
       <RunHistory
+        key={historyVersion}
         schedule={schedule}
         version={historyVersion}
         editing={editing}

@@ -1,5 +1,9 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Upcoming occurrences": "后续执行时间",
+  "Expected times after resuming": "恢复后预计执行时间",
+  "Missed occurrences are coalesced into one run. These are planned times, not guaranteed start times.": "错过的执行时间会合并为一次执行。以上为计划时间，不保证在该时刻开始。",
+
   "Saved task is outside this page or filter.": "已保存的任务不在当前页面或筛选结果中。",
   "Show all tasks": "显示全部任务",
   "Back to task": "返回任务详情",
@@ -152,10 +156,7 @@ export const ZH: Record<MessageKey, string> = {
   "Continue from history": "从历史继续",
   "Copy link": "复制链接",
   "Create a Project": "创建项目",
-  "Create a new Session per run": "每次运行创建新会话",
   "Create public snapshot · 7 days": "创建公开快照 · 有效期 7 天",
-  "Create schedule": "创建计划",
-  "Cron expression": "Cron 表达式",
   Delete: "删除",
   "Delete Project": "删除项目",
   "Delete schedule": "删除计划",
@@ -179,7 +180,6 @@ export const ZH: Record<MessageKey, string> = {
   "Inspect files": "检查文件",
   "Its owned runtime resources have been reclaimed.": "项目的运行资源已回收。",
   Latest: "回到最新",
-  "Leave empty for manual runs": "留空以手动运行",
   "Checking for file changes…": "正在检查文件更新…",
   "Next page": "下一页",
   "Directory changed. Showing the first page.": "目录已更改，正在显示第一页。",
@@ -223,7 +223,6 @@ export const ZH: Record<MessageKey, string> = {
   "Project Files": "项目文件",
   "Project deleted": "项目已删除",
   "Project schedules": "项目计划任务",
-  Prompt: "提示词",
   "Read-only reader username": "只读用户名称",
   "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.":
     "读者只能查看会话和明确选定的文件快照，不能访问项目的运行资源。",
@@ -247,7 +246,6 @@ export const ZH: Record<MessageKey, string> = {
   "Runs share this Project’s workspace. Disabling a schedule stops future admissions.":
     "计划任务共用此项目的工作区。禁用计划将停止接受新的执行任务。",
   "Save file": "保存文件",
-  "Schedule name": "计划名称",
   Schedules: "计划任务",
   Search: "搜索",
   "Search a topic, decision, or result…": "搜索主题、决策或结果…",
@@ -263,7 +261,6 @@ export const ZH: Record<MessageKey, string> = {
   Steer: "引导当前任务",
   "Stop turn": "停止当前任务",
   "Take input": "接管输入",
-  "Target Session": "目标代理会话",
   Terminate: "终止进程",
   "The workspace is": "工作区状态：",
   Theme: "主题",
@@ -333,7 +330,6 @@ export const ZH: Record<MessageKey, string> = {
   "Directories must be empty.": "目录必须为空。",
   Disabled: "已停用",
   Discard: "放弃更改",
-  "Edit schedule": "编辑定时任务",
   Enabled: "已启用",
   "Enter Full Screen": "进入全屏",
   "Existing conversation": "现有会话",

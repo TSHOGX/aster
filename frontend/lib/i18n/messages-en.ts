@@ -1,4 +1,8 @@
 export const EN = {
+  "Upcoming occurrences": "Upcoming occurrences",
+  "Expected times after resuming": "Expected times after resuming",
+  "Missed occurrences are coalesced into one run. These are planned times, not guaranteed start times.": "Missed occurrences are coalesced into one run. These are planned times, not guaranteed start times.",
+
   "Saved task is outside this page or filter.": "Saved task is outside this page or filter.",
   "Show all tasks": "Show all tasks",
   "Back to task": "Back to task",
@@ -153,10 +157,7 @@ export const EN = {
   "Continue from history": "Continue from history",
   "Copy link": "Copy link",
   "Create a Project": "Create a Project",
-  "Create a new Session per run": "Create a new Session per run",
   "Create public snapshot · 7 days": "Create public snapshot · 7 days",
-  "Create schedule": "Create schedule",
-  "Cron expression": "Cron expression",
   Delete: "Delete",
   "Delete Project": "Delete Project",
   "Delete schedule": "Delete schedule",
@@ -182,7 +183,6 @@ export const EN = {
   "Its owned runtime resources have been reclaimed.":
     "Its owned runtime resources have been reclaimed.",
   Latest: "Latest",
-  "Leave empty for manual runs": "Leave empty for manual runs",
   "Checking for file changes…": "Checking for file changes…",
   "Next page": "Next page",
   "Directory changed. Showing the first page.": "Directory changed. Showing the first page.",
@@ -228,7 +228,6 @@ export const EN = {
   "Project Files": "Project Files",
   "Project deleted": "Project deleted",
   "Project schedules": "Project schedules",
-  Prompt: "Prompt",
   "Read-only reader username": "Read-only reader username",
   "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.":
     "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.",
@@ -252,7 +251,6 @@ export const EN = {
   "Runs share this Project’s workspace. Disabling a schedule stops future admissions.":
     "Runs share this Project’s workspace. Disabling a schedule stops future admissions.",
   "Save file": "Save file",
-  "Schedule name": "Schedule name",
   Schedules: "Schedules",
   Search: "Search",
   "Search a topic, decision, or result…":
@@ -270,7 +268,6 @@ export const EN = {
   Steer: "Steer",
   "Stop turn": "Stop turn",
   "Take input": "Take input",
-  "Target Session": "Target Session",
   Terminate: "Terminate",
   "The workspace is": "The workspace is ",
   Theme: "Theme",
@@ -342,7 +339,6 @@ export const EN = {
   "Directories must be empty.": "Directories must be empty.",
   Disabled: "Disabled",
   Discard: "Discard",
-  "Edit schedule": "Edit schedule",
   Enabled: "Enabled",
   "Enter Full Screen": "Enter Full Screen",
   "Existing conversation": "Existing conversation",

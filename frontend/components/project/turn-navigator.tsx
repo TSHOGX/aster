@@ -256,12 +256,13 @@ export function TurnNavigator({
     >
       <div className="turn-rail" ref={rail}>
         {older && (
+          // Keep paging intent available during background refresh. load()
+          // coalesces a queued direction behind the single in-flight request.
           <button
             type="button"
             className="turn-rail-more"
             aria-label={tr("Earlier turns")}
             title={tr("Earlier turns")}
-            disabled={loading}
             onClick={() => void load("older")}
           >
             <ChevronUp size={12} />
@@ -328,7 +329,6 @@ export function TurnNavigator({
             className="turn-rail-more"
             aria-label={tr("Later turns")}
             title={tr("Later turns")}
-            disabled={loading}
             onClick={() => void load("newer")}
           >
             <ChevronDown size={12} />

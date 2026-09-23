@@ -37,6 +37,78 @@ export function RecurrenceSummary({
   );
 }
 
+export function UpcomingOccurrences({
+  cron,
+  timezone,
+  enabled,
+}: {
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+}) {
+  const tr = useT(),
+    locale = useLocale();
+  const [opened, setOpened] = useState(false),
+    [attempt, setAttempt] = useState(0);
+  const [data, setData] = useState<{
+    key: string;
+    value?: SchedulePreview;
+    failed?: boolean;
+  }>();
+  const key = JSON.stringify([cron, timezone, attempt]);
+  useEffect(() => {
+    if (!opened || !cron) return;
+    const controller = new AbortController();
+    void api<SchedulePreview>("/api/schedules/preview", {
+      method: "POST",
+      body: JSON.stringify({ cron, timezone }),
+      signal: controller.signal,
+    })
+      .then((value) => {
+        if (!controller.signal.aborted) setData({ key, value });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setData({ key, failed: true });
+      });
+    return () => controller.abort();
+  }, [opened, cron, timezone, key]);
+  if (!cron) return null;
+  const current = data?.key === key ? data : undefined;
+  return (
+    <div>
+      <button aria-expanded={opened} onClick={() => setOpened((v) => !v)}>
+        {tr("Upcoming occurrences")}
+      </button>
+      {opened && (
+        <div aria-live="polite">
+          {!enabled && <p>{tr("Expected times after resuming")}</p>}
+          {!current && <p>{tr("Loading…")}</p>}
+          {(current?.failed || current?.value?.valid === false) && (
+            <p>
+              {tr("Could not confirm upcoming times. Retry before saving.")}{" "}
+              <button onClick={() => setAttempt((n) => n + 1)}>
+                {tr("Retry")}
+              </button>
+            </p>
+          )}
+          {current?.value?.valid && (
+            <ol>
+              {current.value.occurrences.map((time) => (
+                <li key={time}>{scheduleTime(time, timezone, locale)}</li>
+              ))}
+            </ol>
+          )}
+          <small>
+            {tr(
+              "Missed occurrences are coalesced into one run. These are planned times, not guaranteed start times.",
+            )}
+          </small>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RecurrenceFields({
   rule,
   cron,

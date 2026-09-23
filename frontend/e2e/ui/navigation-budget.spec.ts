@@ -3,6 +3,39 @@ import { historyFixture } from "./history-fixture";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+test("paging intent queues while a background turn-index refresh is pending", async ({
+  page,
+}) => {
+  await historyFixture(page, 1000, 1);
+  let reads = 0,
+    pending = false,
+    release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/sessions/analysis/turn-index?**", async (route) => {
+    reads++;
+    if (reads === 2) {
+      pending = true;
+      await gate;
+    }
+    return route.fallback();
+  });
+  try {
+    await page.goto("/?project=battery&session=analysis");
+    await expect(page.locator(".turn-tick")).toHaveCount(100);
+    await expect.poll(() => pending).toBe(true);
+    await page
+      .getByRole("button", { name: "Earlier turns", exact: true })
+      .click();
+    release();
+    await expect(page.locator('[data-nav-turn="turn-801"]')).toBeAttached();
+    expect(reads).toBe(3);
+  } finally {
+    release();
+  }
+});
+
 test("the turn rail pages both ways within a bounded window and keeps the current marker", async ({
   page,
 }) => {
@@ -10,12 +43,18 @@ test("the turn rail pages both ways within a bounded window and keeps the curren
   await page.goto("/?project=battery&session=analysis");
   const rail = page.locator(".turn-rail");
   await expect(rail.locator(".turn-tick")).toHaveCount(100);
-  const reads = () => fixture.calls.filter(url => url.includes("/turn-index?before=") && !url.includes("before=0&")).length;
+  const reads = () =>
+    fixture.calls.filter(
+      (url) =>
+        url.includes("/turn-index?before=") && !url.includes("before=0&"),
+    ).length;
   const beforeScroll = reads();
   // Scroll restoration and click auto-scrolling are not new paging intent.
-  await rail.evaluate(async node => {
+  await rail.evaluate(async (node) => {
     node.scrollTop = 0;
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
   });
   expect(reads()).toBe(beforeScroll);
   for (const earliest of [801, 701, 601, 501, 401]) {
@@ -47,8 +86,12 @@ test("the turn rail pages both ways within a bounded window and keeps the curren
     expect(await rail.locator(".turn-tick").count()).toBeLessThanOrEqual(301);
   }
   // One newly streamed turn can occupy the next page after the old latest edge.
-  if (await page.getByRole("button", { name: "Later turns", exact: true }).count())
-    await page.getByRole("button", { name: "Later turns", exact: true }).click();
+  if (
+    await page.getByRole("button", { name: "Later turns", exact: true }).count()
+  )
+    await page
+      .getByRole("button", { name: "Later turns", exact: true })
+      .click();
   await expect(
     page.getByRole("button", { name: "Later turns", exact: true }),
   ).toHaveCount(0);
@@ -98,17 +141,24 @@ test("maximal transcript traversal retains bounded pages and both directions", a
   if (process.env.HISTORY_SCROLL_PROFILE === "1") {
     const rate = Number(process.env.HISTORY_CPU_RATE || "1");
     await cdp.send("Emulation.setCPUThrottlingRate", { rate });
-    await scroll.evaluate(node => {
+    await scroll.evaluate((node) => {
       node.scrollTop = (node.scrollHeight - node.clientHeight) / 2;
     });
     await page.waitForTimeout(300);
-    await scroll.evaluate(node => {
-      const feedback: number[] = [], tasks: number[] = [];
-      node.addEventListener("wheel", () => {
-        const start = performance.now();
-        requestAnimationFrame(() => feedback.push(performance.now() - start));
-      }, { passive: true });
-      new PerformanceObserver(list => tasks.push(...list.getEntries().map(entry => entry.duration))).observe({ type: "longtask" });
+    await scroll.evaluate((node) => {
+      const feedback: number[] = [],
+        tasks: number[] = [];
+      node.addEventListener(
+        "wheel",
+        () => {
+          const start = performance.now();
+          requestAnimationFrame(() => feedback.push(performance.now() - start));
+        },
+        { passive: true },
+      );
+      new PerformanceObserver((list) =>
+        tasks.push(...list.getEntries().map((entry) => entry.duration)),
+      ).observe({ type: "longtask" });
       Reflect.set(window, "maximalScrollSamples", { feedback, tasks });
     });
     await cdp.send("Profiler.enable");
@@ -119,11 +169,35 @@ test("maximal transcript traversal retains bounded pages and both directions", a
       await page.waitForTimeout(100);
     }
     const profile = await cdp.send("Profiler.stop");
-    const samples = await page.evaluate(() => Reflect.get(window, "maximalScrollSamples") as { feedback: number[]; tasks: number[] });
+    const samples = await page.evaluate(
+      () =>
+        Reflect.get(window, "maximalScrollSamples") as {
+          feedback: number[];
+          tasks: number[];
+        },
+    );
     mkdirSync(output!, { recursive: true });
-    writeFileSync(resolve(output!, "maximal-scroll.cpuprofile"), JSON.stringify(profile.profile));
-    const sorted = [...samples.feedback].sort((a,b) => a-b);
-    writeFileSync(resolve(output!, "maximal-scroll.json"), JSON.stringify({ rate, samples, p95: sorted[Math.ceil(sorted.length * .95)-1], turns: await page.locator(".conversation-turn").count(), dom: await cdp.send("Memory.getDOMCounters"), method: "wheel event to next RAF; separate profiled run at maximal retained transcript window; not paint or field INP" }, null, 2));
+    writeFileSync(
+      resolve(output!, "maximal-scroll.cpuprofile"),
+      JSON.stringify(profile.profile),
+    );
+    const sorted = [...samples.feedback].sort((a, b) => a - b);
+    writeFileSync(
+      resolve(output!, "maximal-scroll.json"),
+      JSON.stringify(
+        {
+          rate,
+          samples,
+          p95: sorted[Math.ceil(sorted.length * 0.95) - 1],
+          turns: await page.locator(".conversation-turn").count(),
+          dom: await cdp.send("Memory.getDOMCounters"),
+          method:
+            "wheel event to next RAF; separate profiled run at maximal retained transcript window; not paint or field INP",
+        },
+        null,
+        2,
+      ),
+    );
     expect(samples.feedback).toHaveLength(30);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
   }

@@ -432,3 +432,64 @@ for (const locale of ["en-US", "zh-CN"])
         }
       });
     });
+
+test("a late pause response cannot replace another selected task", async ({
+  page,
+}) => {
+  const fixture = await setup(page);
+  fixture.tasks.set("other", {
+    ...fixture.tasks.get("task")!,
+    id: "other",
+    title: "Another selected task",
+  });
+  let release!: () => void,
+    issued = false;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/projects/battery/schedules/task", async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    issued = true;
+    const body = route.request().postDataJSON();
+    await pending;
+    return route.fulfill({ json: { ...body, revision: body.revision + 1 } });
+  });
+  try {
+    await page.goto("/?view=schedules&schedule=task&schedule_project=battery");
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
+    await expect.poll(() => issued).toBe(true);
+    await page
+      .locator(".schedule-description")
+      .filter({ hasText: "Another selected task" })
+      .click();
+    await expect(page.locator(".schedule-reading h2")).toHaveText(
+      "Another selected task",
+    );
+    release();
+    await expect(page.locator(".schedule-reading h2")).toHaveText(
+      "Another selected task",
+    );
+    await expect(page).toHaveURL(/schedule=other/);
+  } finally {
+    release();
+  }
+});
+
+test("upcoming occurrences load on demand and use the schedule timezone", async ({
+  page,
+}) => {
+  const fixture = await setup(page);
+  await page.goto("/?view=schedules&schedule=task&schedule_project=battery");
+  await expect(page.locator(".schedule-reading h2")).toHaveText(
+    "Research task",
+  );
+  expect(fixture.previews).toHaveLength(0);
+  await page
+    .getByRole("button", { name: "Upcoming occurrences", exact: true })
+    .click();
+  await expect(page.locator(".schedule-reading li")).toHaveCount(3);
+  await expect(page.locator(".schedule-reading li").first()).toContainText(
+    "09:00 GMT+8",
+  );
+  expect(fixture.previews).toHaveLength(1);
+});

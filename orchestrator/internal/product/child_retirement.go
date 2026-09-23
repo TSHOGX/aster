@@ -126,7 +126,7 @@ func (c *ChildRetirement) privateDirectory(ctx context.Context, child Child) (re
 		return ErrDeleting
 	}
 	scope := Scope{actor, child.ProjectID}
-	if err = c.Lifecycle.EnsureActive(ctx, scope, r.Profile); err != nil {
+	if err = c.Lifecycle.EnsureConfiguredActive(ctx, scope, r.Profile); err != nil {
 		return err
 	}
 	r, err = c.Lifecycle.ActiveResources(ctx, scope)
