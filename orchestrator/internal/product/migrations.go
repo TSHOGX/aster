@@ -48,9 +48,12 @@ var volumeFilesSchema string
 //go:embed schedule_catalog_schema.sql
 var scheduleCatalogSchema string
 
+//go:embed network_policy_schema.sql
+var networkPolicySchema string
+
 // Immutable, ordered schema steps. The original unversioned schema is recognized
 // only by its complete digest. Unknown versions or DDL never enter a writer.
-var schemaSteps = []string{schema, displaySchema, projectorSchema, eventFrontierSchema, readerSchema, retentionSchema, navigationSchema, releaseSchema, readinessSchema, activationSchema, gatewaySchema, ownerHandoffSchema, volumeFilesSchema, scheduleCatalogSchema}
+var schemaSteps = []string{schema, displaySchema, projectorSchema, eventFrontierSchema, readerSchema, retentionSchema, navigationSchema, releaseSchema, readinessSchema, activationSchema, gatewaySchema, ownerHandoffSchema, volumeFilesSchema, scheduleCatalogSchema, networkPolicySchema}
 
 var expectedSchemas = sync.OnceValues(func() ([]string, error) {
 	db, err := sql.Open("sqlite", ":memory:")

@@ -97,6 +97,7 @@ type Config struct {
 	Manifest          runtimerelease.Manifest `json:"-"`
 	RollbackCandidate bool                    `json:"-"`
 	base              string
+	source            string
 }
 
 func defaults() Config {
@@ -129,6 +130,7 @@ func LoadConfig(name string) (Config, error) {
 		return cfg, errors.New("trailing application configuration")
 	}
 	cfg.base = filepath.Dir(absolute)
+	cfg.source = absolute
 	resolve := func(value string) string {
 		if value == "" || filepath.IsAbs(value) {
 			return value
@@ -169,6 +171,9 @@ func LoadConfig(name string) (Config, error) {
 	return cfg, err
 }
 func (c Config) Validate() error {
+	if c.Project.NetworkPolicyRevision != "" {
+		return errors.New("network policy revision is application-owned")
+	}
 	if c.Version != 1 || !filepath.IsAbs(c.StateDirectory) || !filepath.IsAbs(c.ControlSocket) || c.StateDirectory == "/" || c.ControlSocket == "/" {
 		return errors.New("version 1 and explicit state/control paths required")
 	}

@@ -26,8 +26,9 @@ tracked example. The example denies guest egress until reachability is declared.
 | `tls_cert`, `tls_key` | Optional browser TLS certificate/key pair |
 
 The application derives Project store/template/release/publication bindings.
-Those fields cannot be supplied inside `project`. Existing Projects retain their
-saved profile; a changed default affects newly configured Projects. Startup
+Those fields, including `network_policy_revision`, cannot be supplied inside
+`project`. Existing Projects retain fixed template/resource/service settings;
+direct/DNS defaults apply at the next creation/resume boundary. Startup
 validates every default/retained manifest against the current host protocols and
 checks each registered template platform. Template IDs must be unique. Every
 non-deleted Project, including paused Projects, must match an exact template ID
@@ -98,3 +99,33 @@ product Store or engine connection. Its mode-0600 operator socket is
 `STATE_DIRECTORY/gateway.sock`, and `STATE_DIRECTORY/gateway.lock` excludes a
 second gateway lifetime, including directory aliases. Never unlink the lock file.
 Keep gateway supervision independent of owner/frontend restart policies.
+
+## Mutable network defaults
+
+The running owner checks its original configuration file every two seconds. Only
+`project.reachability.direct` and `project.reachability.resolvers` are mutable.
+It validates the complete file and rejects unsupported field changes as a whole;
+malformed files retain the last accepted policy. Write the file atomically to
+avoid transient parse errors. The protected `network-reload` command invokes the
+same path immediately. Reload never pauses a Project or interrupts running work.
+
+Accepted defaults are durable, immutable snapshots identified by a SHA-256
+revision. Resource initialization and creation/resume intent select a snapshot
+inside the product transaction. A paused binding is conditionally updated and
+verified before resume; its matching DNS/hosts files are projected before work
+is admitted. Later file edits cannot change an operation already in progress.
+Model service routes, hosts, Project identity and both volumes are retained. A
+running Project (even idle) retains its effective policy until a later resume.
+
+Invalid startup configuration still refuses startup; persisted defaults do not
+bypass the strict configuration contract. Correct the file to restart. Runtime
+reload is fenced during release transitions. Owner handoff/rollback must match
+the accepted policy revision before acquiring the database writer; the fixed
+release compatibility digest excludes only these two mutable fields.
+
+Resolvers authorize UDP/53. Deployments requiring TCP DNS fallback must declare
+an explicit TCP/53 direct rule. Direct permissions are IPv4 CIDR/port/protocol
+tuples, not domain or HTTP filters. DNS permission alone does not grant HTTPS
+egress. Public downloads also require the deployment's forwarding/NAT/upstream
+path; the isolated runtime gate does not qualify that external path. Python
+package installation still requires a suitable virtual environment under PEP 668.

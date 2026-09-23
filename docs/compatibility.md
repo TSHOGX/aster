@@ -5,6 +5,15 @@ A matching `release-identity` is necessary for owner handoff; it does not certif
 arbitrary older code. Rollback uses the current database and retains writes accepted
 by the newer owner. Restoring an older backup over those writes is unsupported.
 
+## Network policy update
+
+This release requires schema 15 and release-identity format 2. Schema 14–15
+activation requires a full quiescent gate; older owners are not rollback targets.
+Fixed compatibility excludes direct/DNS defaults only. The accepted network
+policy revision is checked separately before a handoff or rollback candidate
+opens the writer. Reload cannot change policy while release admission is fenced.
+Historical qualification below does not certify this release.
+
 ## Schedule catalog update
 
 The chronological schedule overview requires schema 14. The migration adds

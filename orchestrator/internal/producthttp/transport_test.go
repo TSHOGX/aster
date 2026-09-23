@@ -624,3 +624,10 @@ func (f *ptyBackend) InspectProcess(_ context.Context, ref sandbox.ProcessRefere
 	}
 	return sandbox.ProcessObservation{ProcessReference: ref, State: "running"}, nil
 }
+
+func (f *fakeLifecycleBackend) InspectConfiguration(context.Context, sandbox.Reference) (sandbox.Configuration, error) {
+	return sandbox.Configuration{}, errors.New("network configuration is outside this HTTP fixture")
+}
+func (f *fakeLifecycleBackend) UpdateNetwork(context.Context, sandbox.Reference, sandbox.Network) (sandbox.Configuration, error) {
+	return sandbox.Configuration{}, errors.New("network update is outside this HTTP fixture")
+}

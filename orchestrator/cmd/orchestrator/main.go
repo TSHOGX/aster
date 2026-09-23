@@ -32,7 +32,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify|network-reload --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
 		return err
 	}
 	action := args[0]
@@ -161,7 +161,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		}
 		defer app.Close()
 		return app.Run(ctx)
-	case "diagnostics", "publish", "notify":
+	case "diagnostics", "publish", "notify", "network-reload":
 		socket := flags.String("socket", "", "protected application control socket")
 		project := flags.String("project", "", "optional Project diagnostic scope")
 		title := flags.String("title", "", "notification title")
@@ -174,6 +174,8 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			return errors.New("operator commands require --socket PATH")
 		}
 		switch action {
+		case "network-reload":
+			return application.Control(ctx, *socket, "POST", "/network/reload", nil, output)
 		case "diagnostics":
 			path := "/status"
 			if *project != "" {

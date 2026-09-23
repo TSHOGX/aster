@@ -9,17 +9,10 @@ import (
 	"time"
 )
 
-// EnsureConfiguredActive keeps an existing Project's saved configuration. A new
-// deployment default applies only to Projects without a resource binding.
+// EnsureConfiguredActive retains fixed Project configuration and selects mutable
+// network defaults in the transaction recording creation/resume intent.
 func (l *Lifecycle) EnsureConfiguredActive(ctx context.Context, scope Scope, fallback Profile) error {
-	r, err := l.Store.Resources(ctx, scope)
-	if err == nil {
-		return l.EnsureActive(ctx, scope, r.Profile)
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	return l.EnsureActive(ctx, scope, fallback)
+	return l.ensureActive(ctx, scope, fallback, true)
 }
 
 // Observe validates the original binding, including after engine events are lost.

@@ -76,5 +76,12 @@ That stale documentation must be corrected during final reconciliation.
   production browser tests passed, including light/dark English/Chinese forms at
   1440, 1280, 1024, 768, and 390px. Screenshots were inspected; the former modal
   and its CSS were removed. A moderated usability study remains unperformed.
+- Network lifecycle: implemented with durable schema-15 defaults, atomic
+  operation selection, conditional paused-binding replacement, recovery,
+  diagnostics/control, automatic reload, and independent handoff policy checks.
+  Focused race tests passed. The real isolated Khora/runsc network gate passed
+  in 22.52 seconds, including DNS, 102,400 verified TLS package bytes, denied
+  undeclared access, removal on resume, retained volumes and native model work.
+  Public Internet connectivity was not exercised.
 - Implementation and qualification: in progress; stage evidence will be recorded
   here as checks complete.

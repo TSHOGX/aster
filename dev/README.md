@@ -138,3 +138,13 @@ initial upload before compute exists, native conversation completion, idle pause
 continued conversation/file access, paused edits/rename/delete, empty and chunked
 uploads, snapshot pagination, and resume with retained workspace bytes. It asserts
 zero occupied Projects throughout paused file operations.
+
+## Network policy lifecycle
+
+`--suite network` runs the released owner and pinned Khora/runsc with isolated DNS
+and TLS package endpoints. It verifies reload while running leaves the binding
+and guest projection unchanged, resume applies matching permissions/DNS, stored
+workspace/runtime volumes survive, undeclared destinations remain denied, removal
+applies at the next resume, and the retained model gateway completes a native
+turn. `network-policy.json` distinguishes this local substrate evidence from
+public Internet/package-index reachability, which it does not test.

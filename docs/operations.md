@@ -52,11 +52,16 @@ Use the protected control socket for live operations:
 orchestrator diagnostics --socket /var/lib/batterygpt/control.sock
 orchestrator diagnostics --socket /var/lib/batterygpt/control.sock --project PROJECT_ID
 orchestrator publish --socket /var/lib/batterygpt/control.sock
+orchestrator network-reload --socket /var/lib/batterygpt/control.sock
 orchestrator notify --socket /var/lib/batterygpt/control.sock --audience researcher --title Notice --body 'Maintenance is scheduled.'
 ```
 
 Diagnostics report resource counts, occupied Projects, pending work and database
-bytes. Project diagnostics compare declared mounts/network to public engine
+bytes. Network diagnostics distinguish accepted defaults and the last reload
+result from each Project’s effective policy revision and pending change. Reload
+errors leave accepted defaults intact. Network edits are also detected every two
+seconds; they take effect only at creation/resume, without stopping live work.
+Project diagnostics compare declared mounts/network to public engine
 observations and expose blockers. Publication selects new defaults on the next
 application restart. Omit notification audience only for an intentional broadcast.
 

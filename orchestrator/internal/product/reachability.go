@@ -9,9 +9,9 @@ import (
 )
 
 // Reachability is the Project's whole network declaration. It is part of the
-// immutable profile: a Session or Terminal never widens, narrows, or renames it,
-// and no child start rewrites a shared hostname. Only an explicit Project
-// operation replaces a profile, which is out of scope for this implementation.
+// effective saved profile: a Session or Terminal never widens, narrows, or
+// renames it. Creation/resume intent alone selects new direct/DNS defaults while
+// retaining model routes and host mappings. Running placements stay unchanged.
 //
 // Names never establish authority. Hosts exists so authored native configuration
 // can name a stable origin; enforcement uses the exact address, port and protocol
@@ -116,8 +116,7 @@ func (r Reachability) Audience(name string) (ServiceRule, bool) {
 }
 
 // Declaration is the complete engine network for this Project's placement. It is
-// derived only from the immutable profile, so every placement of one profile
-// declares exactly the same reachability.
+// derived only from the effective saved profile selected for this operation.
 func (r Reachability) Declaration() sandbox.Network {
 	out := sandbox.Network{}
 	for _, rule := range r.Direct {

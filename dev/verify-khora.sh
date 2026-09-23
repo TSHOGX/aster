@@ -3,7 +3,7 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|files|gateway|native|provider|rollback|infrastructure|mixed|combined|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|files|network|gateway|native|provider|rollback|infrastructure|mixed|combined|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
 Default suite: release. Browser/combined/all require a frontend production build and Chromium.
 Combined is opt-in and adds two real browser tabs, network profiles and gated handoff.
@@ -22,7 +22,7 @@ while (($#)); do
  esac
 done
 [[ -d $template && -f $manifest && -n $output ]] || { usage >&2;exit 2; }
-case "$suite" in release|files|gateway|native|provider|rollback|infrastructure|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
+case "$suite" in release|files|network|gateway|native|provider|rollback|infrastructure|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 for program in go python3 ip unshare mount mkfs.btrfs btrfs runsc sudo; do command -v "$program" >/dev/null || { echo "missing prerequisite: $program" >&2;exit 2; }; done
 if [[ $suite == provider ]]; then : "${PROJECT_PROVIDER_CONFIG:?explicit host-only provider YAML required}"; fi
 if [[ $suite == rollback ]]; then : "${PROJECT_ROLLBACK_BINARY:?explicit previously built compatible owner required}"; fi
@@ -111,6 +111,7 @@ run() {
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
 if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationRollback|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement)$' release 4m;fi
+if [[ $suite == network ]]; then run application '^TestReleasedNetworkPolicyReload$' network 4m;fi
 if [[ $suite == files ]]; then run application '^TestReleasedPausedVolumeFiles$' files 4m;fi
 if [[ $suite == gateway ]]; then run application '^(TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff)$' gateway 2m;fi
 if [[ $suite == native ]]; then run application '^(TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement)$' native 3m;fi

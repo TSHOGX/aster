@@ -45,6 +45,22 @@ func listenControl(name string) (net.Listener, error) {
 }
 func (a *Application) controlHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /network", func(w http.ResponseWriter, r *http.Request) {
+		report, err := a.networkReport(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeControl(w, report)
+	})
+	mux.HandleFunc("POST /network/reload", func(w http.ResponseWriter, r *http.Request) {
+		report, err := a.ReloadNetworkPolicy(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, report)
+	})
 	audiences := make(map[string]int, len(a.Config.Gateways))
 	for _, gateway := range a.Config.Gateways {
 		audiences[gateway.Audience] = gateway.MaxRequests
@@ -193,7 +209,12 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
 		out["application_digest"] = a.releaseIdentity.ExecutableDigest
-		out["release_identity"] = a.releaseIdentity
+		identity := a.releaseIdentity
+		if network, err := a.networkReport(r.Context()); err == nil {
+			out["network"] = network
+			identity.NetworkPolicyRevision = network.Defaults.Revision
+		}
+		out["release_identity"] = identity
 		release, err := a.Store.ReleaseState(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -226,6 +247,11 @@ func (a *Application) controlHandler() http.Handler {
 		report := map[string]any{"project": project, "blockers": blockers}
 		if resourceErr == nil {
 			report["resources"] = resources
+			if network, err := a.Store.NetworkDefaults(r.Context()); err == nil {
+				report["default_network_policy_revision"] = network.Revision
+				report["effective_network_policy_revision"] = resources.Profile.NetworkPolicyRevision
+				report["network_policy_pending"] = network.Revision != resources.Profile.NetworkPolicyRevision
+			}
 			observed, e := a.Backend.InspectConfiguration(r.Context(), resources.Reference)
 			if e != nil {
 				report["observation_error"] = e.Error()

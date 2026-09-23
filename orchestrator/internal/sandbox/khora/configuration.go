@@ -32,6 +32,7 @@ func (b *Backend) InspectConfiguration(ctx context.Context, reference sandbox.Re
 	}
 	result.Observation = sandbox.Observation{Reference: sandbox.Reference{StoreID: b.identity.StoreID, SandboxID: observed.SandboxID, Epoch: observed.PlacementEpoch, MutationRevision: observed.MutationRevision}, State: observed.State, PlacementState: observed.PlacementState}
 	result.IdleTimeout, result.Retention = observed.IdleTimeout, observed.Retention
+	result.TemplateID, result.CPUMillis, result.MemoryBytes, result.DiskCapacityBytes = observed.TemplateID, observed.CPUMillis, observed.MemoryByte, observed.DiskByte
 	for _, rule := range observed.Network.Egress.Allow {
 		tuple, err := sandbox.CanonicalTuple(rule.CIDR, rule.Port, rule.Proto)
 		if err != nil {

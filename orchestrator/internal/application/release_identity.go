@@ -18,17 +18,18 @@ import (
 // inputs. Matching compatibility is necessary, not sufficient, for a live owner
 // handoff: admission, durable work and stable gateway checks remain mandatory.
 type ReleaseIdentity struct {
-	Version             int               `json:"version"`
-	ExecutableDigest    string            `json:"executable_digest"`
-	SchemaVersion       int               `json:"schema_version"`
-	SchemaDigest        string            `json:"schema_digest"`
-	ConfigurationDigest string            `json:"configuration_digest"`
-	RuntimeDigest       string            `json:"runtime_digest"`
-	ContentDigests      map[string]string `json:"content_digests"`
-	RuntimeCatalog      map[string]string `json:"runtime_catalog"`
-	OwnerProtocol       int               `json:"owner_protocol"`
-	GatewayProtocol     int               `json:"gateway_protocol"`
-	CompatibilityDigest string            `json:"compatibility_digest"`
+	Version               int               `json:"version"`
+	ExecutableDigest      string            `json:"executable_digest"`
+	SchemaVersion         int               `json:"schema_version"`
+	SchemaDigest          string            `json:"schema_digest"`
+	ConfigurationDigest   string            `json:"configuration_digest"`
+	RuntimeDigest         string            `json:"runtime_digest"`
+	ContentDigests        map[string]string `json:"content_digests"`
+	RuntimeCatalog        map[string]string `json:"runtime_catalog"`
+	OwnerProtocol         int               `json:"owner_protocol"`
+	GatewayProtocol       int               `json:"gateway_protocol"`
+	CompatibilityDigest   string            `json:"compatibility_digest"`
+	NetworkPolicyRevision string            `json:"network_policy_revision"`
 }
 
 type preparedPublication struct {
@@ -124,7 +125,12 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 	if err != nil {
 		return out, err
 	}
-	id := ReleaseIdentity{Version: 1, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
+	id := ReleaseIdentity{Version: 2, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
+	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
+	if err != nil {
+		return out, err
+	}
+	id.NetworkPolicyRevision = policy.Revision
 	id.RuntimeCatalog = make(map[string]string, len(out.templates))
 	for binding := range out.templates {
 		id.RuntimeCatalog[binding.TemplateID] = binding.Digest
@@ -138,7 +144,7 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 	id.ConfigurationDigest, err = digestJSON(struct {
 		Config Config
 		Base   string
-	}{cfg, cfg.base})
+	}{fixedConfiguration(cfg), cfg.base})
 	if err != nil {
 		return out, err
 	}
@@ -148,6 +154,7 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 	// Executable identity is separate: a new build can declare the same contract.
 	contract := id
 	contract.ExecutableDigest = ""
+	contract.NetworkPolicyRevision = ""
 	id.CompatibilityDigest, err = digestJSON(contract)
 	if err != nil {
 		return out, err

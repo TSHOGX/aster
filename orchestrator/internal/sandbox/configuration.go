@@ -11,9 +11,11 @@ import (
 // one engine mutation revision. It describes configuration, not running grants.
 type Configuration struct {
 	Observation
-	Network                Network
-	Mounts                 []Mount
-	IdleTimeout, Retention string
+	Network                                   Network
+	Mounts                                    []Mount
+	IdleTimeout, Retention                    string
+	TemplateID                                string
+	CPUMillis, MemoryBytes, DiskCapacityBytes int64
 }
 type ConfigurationReader interface {
 	InspectConfiguration(context.Context, Reference) (Configuration, error)

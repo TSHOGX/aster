@@ -41,10 +41,14 @@ func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope) (Resour
 		}
 		r, err = resources(ctx, tx, p.ID)
 		if errors.Is(err, ErrNotFound) {
-			if err = f.Profile.Validate(); err != nil {
+			profile, _, e := selectedNetworkProfile(ctx, tx, f.Profile)
+			if e != nil {
+				return e
+			}
+			if err = profile.Validate(); err != nil {
 				return err
 			}
-			raw, _ := json.Marshal(f.Profile)
+			raw, _ := json.Marshal(profile)
 			_, err = tx.ExecContext(ctx, `INSERT INTO project_resources(project_id,store_id,profile,occupied,storage_key) VALUES(?,?,?,0,?)`, p.ID, f.Profile.StoreID, string(raw), "storage-"+uuid.NewString())
 			if err != nil {
 				return err

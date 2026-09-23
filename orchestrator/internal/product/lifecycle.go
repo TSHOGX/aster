@@ -19,19 +19,23 @@ var ErrPending = errors.New("project operation pending")
 var ErrCapacity = errors.New("active Project capacity exhausted")
 
 type Profile struct {
-	ReleaseDigest   string          `json:"release_digest,omitempty"`
-	StoreID         string          `json:"store_id"`
-	TemplateID      string          `json:"template_id"`
-	CPUMillis       int64           `json:"cpu_millis"`
-	MemoryBytes     int64           `json:"memory_bytes"`
-	DiskBytes       int64           `json:"disk_bytes"`
-	WorkspaceBytes  int64           `json:"workspace_bytes"`
-	RuntimeBytes    int64           `json:"runtime_bytes"`
-	Reachability    Reachability    `json:"reachability"`
-	PublishedMounts []sandbox.Mount `json:"published_mounts"`
+	NetworkPolicyRevision string          `json:"network_policy_revision,omitempty"`
+	ReleaseDigest         string          `json:"release_digest,omitempty"`
+	StoreID               string          `json:"store_id"`
+	TemplateID            string          `json:"template_id"`
+	CPUMillis             int64           `json:"cpu_millis"`
+	MemoryBytes           int64           `json:"memory_bytes"`
+	DiskBytes             int64           `json:"disk_bytes"`
+	WorkspaceBytes        int64           `json:"workspace_bytes"`
+	RuntimeBytes          int64           `json:"runtime_bytes"`
+	Reachability          Reachability    `json:"reachability"`
+	PublishedMounts       []sandbox.Mount `json:"published_mounts"`
 }
 
 func (p Profile) Validate() error {
+	if p.NetworkPolicyRevision != "" && !content.ValidDigest(p.NetworkPolicyRevision) {
+		return ErrInvalid
+	}
 	if p.ReleaseDigest != "" && !content.ValidDigest(p.ReleaseDigest) {
 		return ErrInvalid
 	}
@@ -78,6 +82,8 @@ func (s *Store) Resources(ctx context.Context, scope Scope) (Resources, error) {
 }
 
 type LifecycleBackend interface {
+	InspectConfiguration(context.Context, sandbox.Reference) (sandbox.Configuration, error)
+	UpdateNetwork(context.Context, sandbox.Reference, sandbox.Network) (sandbox.Configuration, error)
 	Identity(context.Context) (sandbox.Identity, error)
 	CreateVolume(context.Context, string, int64) (sandbox.Volume, error)
 	Create(context.Context, sandbox.CreateRequest) (sandbox.Observation, error)
@@ -87,7 +93,7 @@ type LifecycleBackend interface {
 	Destroy(context.Context, sandbox.Reference) error
 	DeleteVolume(context.Context, sandbox.VolumeReference) error
 	// WriteProjection materializes a host-owned guest file for a placement. Only
-	// the lifecycle calls it, and only from the immutable profile, so a child
+	// the lifecycle calls it, and only from the committed profile, so a child
 	// start can never rewrite reachability that a sibling depends on.
 	WriteProjection(context.Context, sandbox.Reference, string, []byte) error
 }
@@ -110,9 +116,10 @@ func (l *Lifecycle) lane(id string) *sync.Mutex {
 }
 
 type operationRequest struct {
-	Reference sandbox.Reference
-	Restart   bool
-	Force     bool
+	Reference     sandbox.Reference
+	Restart       bool
+	Force         bool
+	NetworkPolicy *NetworkPolicy `json:",omitempty"`
 }
 type operation struct{ ID, ProjectID, Kind, State, Phase, Request, Error string }
 
@@ -134,6 +141,28 @@ func (l *Lifecycle) reserve(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind, phase string, request operationRequest) error {
+	if kind == "create" || (kind == "resume" && phase == "sandbox") {
+		r, err := resources(ctx, tx, project)
+		if err != nil {
+			return err
+		}
+		target, policy, err := selectedNetworkProfile(ctx, tx, r.Profile)
+		if err != nil {
+			return err
+		}
+		request.NetworkPolicy = policy
+		if kind == "create" {
+			raw, err := json.Marshal(target)
+			if err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE project_resources SET profile=? WHERE project_id=?`, string(raw), project); err != nil {
+				return err
+			}
+		} else if policy != nil {
+			phase = "network"
+		}
+	}
 	raw, err := json.Marshal(request)
 	if err != nil {
 		return err
@@ -152,6 +181,9 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 // EnsureActive records original provisioning/resume intent. It does not issue
 // remote work or tie its lifetime to an HTTP request. Workers call Reconcile.
 func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, profile Profile) error {
+	return l.ensureActive(ctx, scope, profile, false)
+}
+func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profile, useSaved bool) error {
 	if err := profile.Validate(); err != nil {
 		return err
 	}
@@ -181,7 +213,7 @@ func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, profile Profi
 		if err != nil {
 			return err
 		}
-		if string(stored) != string(raw) {
+		if !useSaved && string(stored) != string(raw) {
 			return ErrConflict
 		}
 		if _, err := pendingOperation(ctx, tx, p.ID); err == nil {
@@ -364,6 +396,8 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 		return l.unknown(ctx, o, err)
 	}
 	switch {
+	case o.Kind == "resume" && o.Phase == "network":
+		err = l.prepareNetwork(ctx, o, r)
 	// A committed placement awaiting its guest projection is resumed by phase, not
 	// by kind: create and resume converge on the same remaining work.
 	case o.Phase == "reachability" && (o.Kind == "create" || o.Kind == "resume"):
@@ -474,7 +508,7 @@ func (l *Lifecycle) reprojectReachability(ctx context.Context, o operation, r Re
 }
 
 // reachability writes the Project's host-owned guest projections for one
-// placement. It is idempotent: the bytes derive only from the immutable profile,
+// placement. It is idempotent: the bytes derive only from the committed profile,
 // so a retry after a lost reply writes identical content.
 func (l *Lifecycle) reachability(ctx context.Context, o operation, p Profile, ref sandbox.Reference) error {
 	for _, projection := range []struct{ path, content string }{

@@ -13,15 +13,16 @@ import (
 )
 
 type fakeLifecycle struct {
-	mu         sync.Mutex
-	store      string
-	volumes    map[string]sandbox.Volume
-	volumeKeys map[string]string
-	creates    map[string]string
-	sandboxes  map[string]sandbox.Observation
-	mounts     map[string][]sandbox.Mount
-	fail       map[string]int
-	calls      map[string]int
+	configurations map[string]sandbox.CreateRequest
+	mu             sync.Mutex
+	store          string
+	volumes        map[string]sandbox.Volume
+	volumeKeys     map[string]string
+	creates        map[string]string
+	sandboxes      map[string]sandbox.Observation
+	mounts         map[string][]sandbox.Mount
+	fail           map[string]int
+	calls          map[string]int
 	// projections and epochs record the host-owned guest files this Project wrote
 	// and the placement epoch each was written under.
 	projections map[string]map[string]string
@@ -29,7 +30,7 @@ type fakeLifecycle struct {
 }
 
 func fakeBackend() *fakeLifecycle {
-	return &fakeLifecycle{store: "engine", volumes: map[string]sandbox.Volume{}, volumeKeys: map[string]string{}, creates: map[string]string{}, sandboxes: map[string]sandbox.Observation{}, mounts: map[string][]sandbox.Mount{}, fail: map[string]int{}, calls: map[string]int{}, projections: map[string]map[string]string{}, epochs: map[string]uint64{}}
+	return &fakeLifecycle{configurations: map[string]sandbox.CreateRequest{}, store: "engine", volumes: map[string]sandbox.Volume{}, volumeKeys: map[string]string{}, creates: map[string]string{}, sandboxes: map[string]sandbox.Observation{}, mounts: map[string][]sandbox.Mount{}, fail: map[string]int{}, calls: map[string]int{}, projections: map[string]map[string]string{}, epochs: map[string]uint64{}}
 }
 func (f *fakeLifecycle) lost(kind string) error {
 	f.calls[kind]++
@@ -65,6 +66,7 @@ func (f *fakeLifecycle) Create(_ context.Context, r sandbox.CreateRequest) (sand
 		f.creates[r.IdempotencyKey] = id
 		f.sandboxes[id] = sandbox.Observation{Reference: sandbox.Reference{StoreID: f.store, SandboxID: id, MutationRevision: "r1", Epoch: 1}, State: "running", PlacementState: "active"}
 		f.mounts[id] = r.Mounts
+		f.configurations[id] = r
 	}
 	return f.sandboxes[id], f.lost("create")
 }
@@ -428,4 +430,34 @@ func TestIdentityMismatchAndChangedConditionalReferenceStayFenced(t *testing.T) 
 	if !r.Occupied {
 		t.Fatal("uncertainty released capacity")
 	}
+}
+
+func (f *fakeLifecycle) InspectConfiguration(_ context.Context, ref sandbox.Reference) (sandbox.Configuration, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.sandboxes[ref.SandboxID]
+	if !ok {
+		return sandbox.Configuration{}, &sandbox.Error{Class: sandbox.NotFound}
+	}
+	r := f.configurations[ref.SandboxID]
+	return sandbox.Configuration{Observation: o, Network: r.Network, Mounts: r.Mounts, TemplateID: r.TemplateID, CPUMillis: r.CPUMillis, MemoryBytes: r.MemoryBytes, DiskCapacityBytes: r.DiskBytes, IdleTimeout: "0s", Retention: "0s"}, nil
+}
+func (f *fakeLifecycle) UpdateNetwork(ctx context.Context, ref sandbox.Reference, network sandbox.Network) (sandbox.Configuration, error) {
+	f.mu.Lock()
+	o := f.sandboxes[ref.SandboxID]
+	if o.Reference != ref || o.State != "paused" {
+		f.mu.Unlock()
+		return sandbox.Configuration{}, ErrConflict
+	}
+	r := f.configurations[ref.SandboxID]
+	r.Network = network
+	f.configurations[ref.SandboxID] = r
+	o.MutationRevision += "n"
+	f.sandboxes[ref.SandboxID] = o
+	err := f.lost("network")
+	f.mu.Unlock()
+	if err != nil {
+		return sandbox.Configuration{}, err
+	}
+	return f.InspectConfiguration(ctx, ref)
 }

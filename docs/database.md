@@ -12,7 +12,9 @@ version 9 adds [indexed readiness and transactional revocation](../orchestrator/
 version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql);
 version 11 adds [bounded durable gateway request slots](../orchestrator/internal/product/gateway_schema.sql);
 version 12 adds [guarded owner handoff](../orchestrator/internal/product/owner_handoff_schema.sql);
-version 13 adds [independent workspace storage and volume file outcomes](../orchestrator/internal/product/volume_files_schema.sql).
+version 13 adds [independent workspace storage and volume file outcomes](../orchestrator/internal/product/volume_files_schema.sql);
+version 14 adds [owner schedule catalog epochs](../orchestrator/internal/product/schedule_catalog_schema.sql);
+version 15 adds [durable network defaults](../orchestrator/internal/product/network_policy_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. Application startup uses `product.OpenApplication`: it validates a pending
 activation against the measured executable through a read-only connection under
@@ -137,3 +139,10 @@ reference. `project_resources.storage_key` records workspace creation intent
 before any remote allocation, without marking compute occupied. Schema migration
 preserves release admission triggers, readiness indexes and blocker views in the
 same transaction. A schema-12 executable cannot reopen this database.
+
+The network-defaults singleton stores only direct rules, resolver order, content
+revision and acceptance time. A lifecycle operation records its selected target
+in durable request JSON. The `network` resume phase commits verified binding
+revision and effective profile together before advancing to `sandbox`, then
+`reachability`; admission remains closed until projection/readiness succeeds.
+An uncertain PATCH is reconciled against the whole original/target binding.

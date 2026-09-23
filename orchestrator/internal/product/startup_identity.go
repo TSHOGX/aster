@@ -8,9 +8,10 @@ import (
 )
 
 type ApplicationIdentity struct {
-	ExecutableDigest    string
-	CompatibilityDigest string
-	RollbackCandidate   bool
+	ExecutableDigest      string
+	CompatibilityDigest   string
+	RollbackCandidate     bool
+	NetworkPolicyRevision string
 }
 
 func (i ApplicationIdentity) validate() error {
@@ -37,6 +38,16 @@ func (i *ApplicationIdentity) check(ctx context.Context, q queryer, version int)
 			return err
 		}
 		if mode == "owner" {
+			if version >= 15 {
+				policy, err := networkDefaults(ctx, q)
+				if err == nil {
+					if i == nil || policy.Revision != i.NetworkPolicyRevision {
+						return errors.New("owner handoff requires the accepted network policy revision")
+					}
+				} else if !errors.Is(err, ErrNotFound) || (i != nil && i.NetworkPolicyRevision != "") {
+					return errors.New("owner handoff has no accepted network policy")
+				}
+			}
 			targetVersion, targetSchema, err := SchemaIdentity()
 			if err != nil {
 				return err

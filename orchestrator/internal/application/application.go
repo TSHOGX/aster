@@ -47,6 +47,8 @@ type Application struct {
 	controlServer   *http.Server
 	releaseIdentity ReleaseIdentity
 	retireOnce      sync.Once
+	networkReloadMu sync.Mutex
+	networkReload   NetworkReloadStatus
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application, result error) {
@@ -71,11 +73,18 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err := os.MkdirAll(cfg.StateDirectory, 0700); err != nil {
 		return app, err
 	}
-	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), product.ApplicationIdentity{ExecutableDigest: app.releaseIdentity.ExecutableDigest, CompatibilityDigest: app.releaseIdentity.CompatibilityDigest, RollbackCandidate: cfg.RollbackCandidate})
+	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), product.ApplicationIdentity{ExecutableDigest: app.releaseIdentity.ExecutableDigest, CompatibilityDigest: app.releaseIdentity.CompatibilityDigest, RollbackCandidate: cfg.RollbackCandidate, NetworkPolicyRevision: app.releaseIdentity.NetworkPolicyRevision})
 	if err != nil {
 		return app, err
 	}
 	app.Store = store
+	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
+	if err != nil {
+		return app, err
+	}
+	if _, err = store.InitializeNetworkPolicy(ctx, policy); err != nil {
+		return app, err
+	}
 	engineConfig, err := cfg.Engine.Build(cfg.base)
 	if err != nil {
 		return app, err
@@ -220,6 +229,8 @@ func (a *Application) Run(ctx context.Context) error {
 	go func() { defer a.group.Done(); a.Workers.Run(a.ctx) }()
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.watchCredentials() }()
+	a.group.Add(1)
+	go func() { defer a.group.Done(); a.watchNetworkPolicy() }()
 	failures := make(chan error, len(a.servers))
 	for index, server := range a.servers {
 		index, server := index, server
