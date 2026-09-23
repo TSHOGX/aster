@@ -62,12 +62,13 @@ func (a *releaseApp) start(extra ...string) {
 		return response.StatusCode == 200
 	})
 }
-func (a *releaseApp) startGateway() {
+func (a *releaseApp) startGateway() { a.startGatewayBinary(a.binary) }
+func (a *releaseApp) startGatewayBinary(binary string) {
 	a.t.Helper()
 	log, err := os.OpenFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "gateway.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	require(a.t, err)
 	defer log.Close()
-	a.gateway = exec.CommandContext(a.ctx, a.binary, "gateway", "--config", a.config)
+	a.gateway = exec.CommandContext(a.ctx, binary, "gateway", "--config", a.config)
 	a.gateway.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
 	a.gateway.Env = append(os.Environ(), "PROJECT_RELEASE_SECRET=release-fixture-secret")
 	a.gateway.Stdout, a.gateway.Stderr = log, log
@@ -144,7 +145,8 @@ func (a *releaseApp) cli(args ...string) map[string]any {
 	}
 	return value
 }
-func newReleasedApp(t *testing.T) *releaseApp {
+func newReleasedApp(t *testing.T) *releaseApp { return newReleasedAppBinary(t, "") }
+func newReleasedAppBinary(t *testing.T, initialBinary string) *releaseApp {
 	t.Helper()
 	endpoint, binaries, manifestPath := os.Getenv("PROJECT_TEST_ENDPOINT"), os.Getenv("PROJECT_TEST_BIN_DIR"), os.Getenv("PROJECT_TEST_MANIFEST")
 	if endpoint == "" || binaries == "" || manifestPath == "" {
@@ -178,7 +180,11 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		require(t, os.Chown(filepath.Join(root, name), uid, gid))
 	}
 	for _, name := range []string{"orchestrator", "orchestrator-candidate", "runtime-fixture"} {
-		raw, err := os.ReadFile(filepath.Join(binaries, name))
+		source := filepath.Join(binaries, name)
+		if name == "orchestrator" && initialBinary != "" {
+			source = initialBinary
+		}
+		raw, err := os.ReadFile(source)
 		require(t, err)
 		require(t, os.WriteFile(filepath.Join(root, name), raw, 0755))
 	}

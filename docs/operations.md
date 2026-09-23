@@ -308,3 +308,9 @@ before reopening admission. If the drain times out, admission reopens and the
 update is abandoned. Arrange supervision so a successful gated stop does not
 immediately restart the old executable. Forced termination is fault recovery,
 not graceful stream preservation.
+
+
+The [compatibility matrix](compatibility.md) records the owner/gateway/client pair
+that has been rehearsed with post-upgrade writes and defines its seven-day artifact
+retention window. Select exact qualified artifacts; the generic rollback commands
+do not imply support for an arbitrary earlier schema or runtime.

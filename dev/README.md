@@ -12,7 +12,7 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `gateway`, `native`, `provider`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `gateway`, `native`, `provider`, `rollback`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
@@ -66,3 +66,28 @@ short output, authority expiry, retries or missing native completion fail the ga
 See the [Chat Completions API reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 for the compatible streaming request shape; provider-specific access and behavior
 must be qualified by the run itself.
+
+
+## Retained-revision rollback
+
+Build the prior compatible revision in a clean isolated checkout, stamping its
+actual revision explicitly (some Go/worktree combinations omit automatic VCS
+metadata):
+
+```sh
+CGO_ENABLED=0 go -C /srv/build/prior/orchestrator build -trimpath -ldflags='-X main.commit=FULL_PRIOR_COMMIT' -o /srv/qualification/prior-owner ./cmd/orchestrator
+PROJECT_ROLLBACK_BINARY=/srv/qualification/prior-owner dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/rollback-run --suite rollback
+```
+
+The opt-in `rollback` suite starts the retained owner, upgrades to the current
+candidate, accepts new native turns/held intent/file bytes, then explicitly rolls
+back to the retained executable. Both gateway executables are exercised through
+gated replacement in each direction. The test verifies running executable digests,
+source revision declarations, preserved accepted data and subsequent native work.
+It never restores a database backup.
+
+To qualify the current client against that retained owner, run `--suite browser`
+with `PROJECT_BROWSER_OWNER_BINARY=/srv/qualification/prior-owner`. The production
+frontend build and browser prerequisites remain the same as the ordinary browser
+gate. See the [compatibility matrix](../docs/compatibility.md) for the recorded pair
+and the limits of that evidence.

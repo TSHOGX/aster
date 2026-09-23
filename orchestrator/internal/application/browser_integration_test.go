@@ -15,7 +15,7 @@ func TestReleasedBrowser(t *testing.T) {
 	// The coordinated native fixture responds only after two model requests and
 	// supports streaming interruption. It lives outside the released guest image.
 	t.Setenv("PROJECT_RELEASE_MODEL_MODE", "model")
-	a := newReleasedApp(t)
+	a := newReleasedAppBinary(t, os.Getenv("PROJECT_BROWSER_OWNER_BINARY"))
 	repo := os.Getenv("PROJECT_TEST_REPO")
 	if repo == "" {
 		t.Fatal("PROJECT_TEST_REPO required")

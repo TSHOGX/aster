@@ -31,7 +31,8 @@ is qualified only for the explicitly recorded real-provider run below.
 | P07 owner handoff | Verified locally | Same-contract active native transfer between distinct executable artifacts |
 | P07 gateway lifetime | Verified locally | Independent process, bounded authority and native fixture continuity across owner outage |
 | P07 real-provider handoff | Verified for recorded run | One GLM-5.2 stream retained across a distinct owner executable update |
-| P07 deployment qualification | Pending | Complete rollback matrix, bootstrap and combined release qualification |
+| P07 owner/gateway rollback | Verified for recorded pair | Retained revisions preserve new native history, held intent and workspace bytes |
+| P07 deployment qualification | Pending | Broader engine/template/schema matrix, bootstrap and combined release qualification |
 
 ## Diagnostics
 
@@ -1030,3 +1031,16 @@ This establishes the specified active-stream observation for this provider,
 configuration and compatible build pair. It is one run, not a latency distribution,
 a guarantee for arbitrary providers/builds, or proof of bootstrap/rollback support.
 The complete supported-version matrix and combined workload remain separate gates.
+
+
+## Retained-revision rollback observation
+
+A [recorded rehearsal](../dev/measurements/revision-rollback.json) exercises owner
+and gateway revisions `525ec8f → cc8dc88 → 525ec8f` on the same schema-12/native-1
+runtime. It accepts writes after the upgrade, then verifies five completed native
+turns, unchanged held intent and exact post-upgrade file bytes after rollback and
+both gateway replacements. The current client source is identical at both revisions;
+its browser/Files/PTY workflows also pass against the retained owner. The
+[compatibility matrix](compatibility.md) states the exact pair, rollback window and
+remaining cross-version gates. No accepted-write backup restore or legacy reader
+was introduced.
