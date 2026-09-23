@@ -136,9 +136,11 @@ test("opening branches is bounded and collapsing releases their rows", async ({
     page.locator('[data-file-path="branch-16/child.txt"]'),
   ).toBeVisible();
   await expect(page.locator(".file-row")).toHaveCount(36);
-  await page.getByLabel("Filter loaded files", { exact: true }).fill("child");
-  await expect(page.locator(".file-row")).toHaveCount(32);
-  await expect(page.getByRole("button", { name: "branch-16", exact: true })).toBeVisible();
+  await page.getByLabel("Search files", { exact: true }).fill("child");
+  await expect(page.locator(".file-search-row")).toHaveCount(20);
+  await expect(page.locator('[data-file-path="branch-19/child.txt"]')).toBeVisible();
+  await page.getByLabel("Search files", { exact: true }).fill("");
+  await expect(page.locator(".file-row")).toHaveCount(36);
 });
 
 test("closing a loading directory cancels its demand and reopening fetches it again", async ({

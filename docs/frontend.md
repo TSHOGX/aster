@@ -25,7 +25,16 @@ storage without starting compute. Preview, Source, editing and file management
 have the same controls in both states. Browsing never issues a resume request.
 
 Files use a wide preview with a lazy directory tree on the right. Each directory
-has independent pagination and refresh; filtering covers loaded entries only.
+has independent pagination and refresh. Search matches filenames and relative
+paths across the Project, including collapsed folders and later directory pages.
+Matching is case-insensitive, normalizes Unicode, and ignores whitespace around
+the query. Results show their containing folder and open the normal preview.
+Search is debounced and cancelable; clearing it restores the directory view.
+It never reads file bodies or starts compute. Each result window holds at most
+100 files; Next results/Continue search advance a retained traversal rather than
+silently searching only the loaded tree. First results and Refresh restart it.
+Incomplete or resource-limited searches are distinguished from a complete search
+with no matches. File changes mark the current search for Refresh without clearing its results.
 The active tree retains the root and at most sixteen open directories, one
 100-entry page per directory, within an estimated 8 MiB aggregate budget. Next/
 First controls replace pages; closing a branch cancels its reads and releases its

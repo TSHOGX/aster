@@ -1,5 +1,19 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Files changed. Refresh search for updated results.": "文件已更改，请刷新搜索以获取最新结果。",
+  "Refresh search": "刷新搜索",
+  "Search files": "搜索文件",
+  "File search results": "文件搜索结果",
+  "Searching files…": "正在搜索文件…",
+  "Search reached its limit. Some folders were not searched.": "搜索已达到上限，部分文件夹尚未搜索。",
+  "No more matching files.": "没有更多匹配文件。",
+  "No matching files.": "没有匹配文件。",
+  "No matches yet. Continue searching more folders.": "暂未找到匹配文件，可继续搜索其他文件夹。",
+  "Search complete.": "搜索完成。",
+  "More folders remain to be searched.": "还有更多文件夹可供搜索。",
+  "First results": "首批结果",
+  "Next results": "下一批结果",
+  "Continue search": "继续搜索",
   "Preview is busy. Choose Source to read this file.": "预览暂时繁忙。请选择“源代码”阅读此文件。",
   "File view": "文件视图",
   "Preview": "预览",
@@ -233,7 +247,6 @@ export const ZH: Record<MessageKey, string> = {
   "Files changed. Your unsaved text has been kept.":
     "文件发生变化，已保留你的未保存内容。",
   "Filter by Project": "按项目筛选",
-  "Filter loaded files": "筛选已加载文件",
   "Hide terminal": "收起终端",
   "Loading…": "加载中…",
   "New chat in {project}": "在 {project} 中新建对话",
@@ -244,7 +257,6 @@ export const ZH: Record<MessageKey, string> = {
   "New message": "新消息",
   "No runs yet.": "暂无运行记录。",
   "No scheduled tasks yet.": "暂无定时任务。",
-  "Only loaded entries are filtered.": "仅筛选已加载的条目。",
   "Only retained tool activity is shown.": "仅显示已保留的工具活动。",
   Open: "打开",
   "Open a terminal from the menu, or create one with +.":

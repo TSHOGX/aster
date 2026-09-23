@@ -2006,3 +2006,12 @@ details[open] > .activity-row .activity-chevron {
   .file-view-toggle { margin-right: auto; }
   .file-view-toggle button { min-height: 32px; padding-inline: 10px; }
 }
+
+.file-search-row .file-name { align-items: flex-start; padding-block: 8px; }
+.file-search-row .file-name > svg { margin-top: 2px; flex-shrink: 0; }
+.file-search-row .file-name > span { display: flex; flex-direction: column; min-width: 0; }
+.file-search-row .file-name > span > span, .file-search-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-search-row small { display: block; margin-top: 2px; font-size: 10px; color: var(--color-foreground-muted); }
+.file-search-status { padding: 10px 12px; font-size: 11px; color: var(--color-foreground-muted); }
+.file-search-navigation { display: flex; justify-content: space-between; gap: 8px; padding: 4px 12px 12px; font-size: 11px; }
+.file-search-navigation button { color: var(--color-accent); padding: 4px; }

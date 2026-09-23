@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
+import { WorkspaceFileSearch, searchQuery, type SearchPage } from "@/lib/workspace-file-search";
 import { hasSourceView } from "@/lib/file-view";
 import {
   api,
@@ -117,6 +118,10 @@ export function FilesPanel({
     ),
     [treeOpen, setTreeOpen] = useState(true),
     [filter, setFilter] = useState("");
+  const query = searchQuery(filter);
+  const [searchRevision, setSearchRevision] = useState(0);
+  const [search, setSearch] = useState<(SearchPage & {query: string; page: number; busy: boolean; stale?: boolean; error?: string}) | null>(null);
+  const searchRun = useRef<{job: WorkspaceFileSearch; abort: AbortController; query: string; page: number; busy: boolean; stale: boolean} | null>(null);
   const [denied, setDenied] = useState(false);
   const [view, setView] = useState<{path: string; mode: "preview" | "source"}>({path: "", mode: "preview"});
   const mode = view.path === selected ? view.mode : "preview";
@@ -168,6 +173,47 @@ export function FilesPanel({
       ),
     [resources, project.id],
   );
+  const nextSearchPage = useCallback(async () => {
+    const run = searchRun.current;
+    if (!run || run.busy || run.abort.signal.aborted) return;
+    run.busy = true;
+    setSearch(current => ({matches: current?.query === run.query ? current.matches : [], done: false, limited: false, scanned: current?.scanned ?? 0, query: run.query, page: run.page, busy: true, stale:run.stale}));
+    try {
+      const result = await run.job.next(run.abort.signal);
+      if (run.abort.signal.aborted || searchRun.current !== run) return;
+      run.page++;
+      setSearch({...result, query: run.query, page: run.page, busy: false, stale:run.stale});
+    } catch (error) {
+      if (run.abort.signal.aborted || searchRun.current !== run) return;
+      if (error instanceof APIError && [401,403].includes(error.status)) {
+        run.abort.abort();
+        run.job.dispose();
+        searchRun.current = null;
+        setSearch(null);
+        setTree({});
+        setDenied(true);
+        resources.clear(project.id);
+        return;
+      }
+      setSearch(current => ({matches:current?.matches ?? [], done:false, limited:false, scanned:current?.scanned ?? 0, query:run.query, page:run.page, busy:false, error:error instanceof Error ? error.message : String(error)}));
+    } finally { run.busy = false; }
+  }, [resources, project.id]);
+  useEffect(() => {
+    if (!query || !visible || !filesAvailable) return;
+    const abort = new AbortController();
+    const run = {
+      job: new WorkspaceFileSearch(query, (path, after, signal) => readDirectory(`${base}?path=${encode(path)}&after=${encode(after)}&limit=100`, signal)),
+      abort, query, page:0, busy:false, stale:false,
+    };
+    searchRun.current = run;
+    const timer = setTimeout(() => void nextSearchPage(), 250);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+      run.job.dispose();
+      if (searchRun.current === run) searchRun.current = null;
+    };
+  }, [query, visible, filesAvailable, base, readDirectory, nextSearchPage, searchRevision]);
   useEffect(() => resources.pin(treeKey), [resources, treeKey]);
   useEffect(() => {
     resources.put(treeKey, tree);
@@ -352,6 +398,11 @@ export function FilesPanel({
     const dirtyDirectories = new Set<string>();
     let selectedDirty = false;
     const invalidate = (event: FileInvalidation) => {
+      const run = searchRun.current;
+      if (run && !["attachment", "initial"].includes(event.reason ?? "")) {
+        run.stale = true;
+        setSearch(current => current?.query === run.query ? {...current, stale:true} : current);
+      }
       const impact = fileImpact(event, selectedRef.current, [
         "",
         ...expanded.current,
@@ -413,6 +464,10 @@ export function FilesPanel({
         else if (event.resource_kind === "resync")
           invalidate({ reset: true, reason: event.reason });
         else if (event.resource_kind === "closed") {
+          searchRun.current?.abort.abort();
+          searchRun.current?.job.dispose();
+          searchRun.current = null;
+          setSearch(null);
           setDenied(true);
           setTree({});
           setWatchHealth("stale");
@@ -456,7 +511,7 @@ export function FilesPanel({
   // A deep link reads only bounded ancestor pages; it never scans an entire
   // directory to locate a name. The selected file remains independently readable.
   useEffect(() => {
-    if (!selected || !visible || !filesAvailable) return;
+    if (!selected || !visible || !filesAvailable || query) return;
     let gone = false;
     const parts = selected.split("/");
     const parents: string[] = [];
@@ -484,12 +539,13 @@ export function FilesPanel({
     };
     // Layout preference writes do not create another reveal demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, visible, load, filesAvailable]);
+  }, [selected, visible, load, filesAvailable, query]);
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError("");
     try {
       await fn();
+      setSearchRevision(n => n + 1);
       for (const d of new Set(["", ...directories])) void load(d);
       return true;
     } catch (e) {
@@ -586,6 +642,7 @@ export function FilesPanel({
       setEdit(text);
     });
   const refresh = () => {
+    setSearchRevision(n => n + 1);
     for (const d of new Set(["", ...directories])) void load(d);
     if (edit === null) setVersion((v) => v + 1);
     else void validateSelected();
@@ -670,34 +727,12 @@ export function FilesPanel({
         })(),
     },
   ];
-  const matchingPaths = useMemo(() => {
-    if (!filter) return null;
-    const query = filter.toLowerCase();
-    const matches = new Set<string>();
-    for (const [dir, page] of Object.entries(tree))
-      for (const entry of page.entries) {
-        if (!entry.name.toLowerCase().includes(query)) continue;
-        let path = dir ? `${dir}/${entry.name}` : entry.name;
-        for (;;) {
-          matches.add(path);
-          const separator = path.lastIndexOf("/");
-          if (separator < 0) break;
-          path = path.slice(0, separator);
-        }
-      }
-    return matches;
-  }, [tree, filter]);
   const renderDirectory = (dir: string, depth = 0) => {
     const page = tree[dir];
     if (!page) return <p className="list-hint">{tr("Loading…")}</p>;
     return (
       <>
         {page.entries
-          .filter(
-            (e) =>
-              !matchingPaths ||
-              matchingPaths.has(dir ? `${dir}/${e.name}` : e.name),
-          )
           .map((entry) => {
             const path = dir ? `${dir}/${entry.name}` : entry.name;
             const isDir = entry.kind === "directory",
@@ -1019,19 +1054,17 @@ export function FilesPanel({
               <section className="file-tree" aria-label={tr("File tree")}>
                 <div className="tree-toolbar">
                   <input
-                    aria-label={tr("Filter loaded files")}
-                    placeholder={tr("Filter loaded files")}
+                    type="search"
+                    aria-label={tr("Search files")}
+                    placeholder={tr("Search files")}
                     value={filter}
                     onChange={(e) => setFilter(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Escape" && filter) { e.stopPropagation(); setFilter(""); } }}
                   />
                   <Menu label={tr("Tree actions")} items={treeActions("")} />
                 </div>
-                {filter && (
-                  <small className="list-hint">
-                    {tr("Only loaded entries are filtered.")}
-                  </small>
-                )}
-                {selected &&
+
+                {!query && selected &&
                   !tree[
                     selected.split("/").slice(0, -1).join("/")
                   ]?.entries.some(
@@ -1043,7 +1076,30 @@ export function FilesPanel({
                       )}
                     </small>
                   )}
-                <div className="file-tree-scroll">{renderDirectory("")}</div>
+                <div className="file-tree-scroll">
+                  {!query ? renderDirectory("") : (
+                    <div role="region" aria-label={tr("File search results")} aria-busy={!search || search.query !== query || search.busy}>
+                      {search?.query === query && search.matches.map(({path, entry}) => (
+                        <div className={`file-row file-search-row ${selected === path ? "selected" : ""}`} key={path} data-file-path={path}>
+                          <button className="file-name" title={path} onClick={() => void choose(path)}>
+                            <File size={16} aria-hidden="true" />
+                            <span><span>{entry.name}</span><small>{path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : project.title}</small></span>
+                          </button>
+                          <Menu label={`${tr("File actions")} ${path}`} items={entryActions(path, entry)} />
+                        </div>
+                      ))}
+                      <div className="file-search-status" role="status">
+                        {!search || search.query !== query || search.busy ? tr("Searching files…") : search.error ? search.error : search.stale ? tr("Files changed. Refresh search for updated results.") : search.limited ? tr("Search reached its limit. Some folders were not searched.") : !search.matches.length ? (search.done ? (search.page > 1 ? tr("No more matching files.") : tr("No matching files.")) : tr("No matches yet. Continue searching more folders.")) : search.done ? tr("Search complete.") : tr("More folders remain to be searched.")}
+                      </div>
+                      {search?.query === query && !search.busy && (
+                        <div className="file-search-navigation">
+                          {(search.stale || search.page > 1) && <button onClick={() => setSearchRevision(n => n + 1)}>{search.stale ? tr("Refresh search") : tr("First results")}</button>}
+                          {(!search.done || search.error) && <button onClick={() => void nextSearchPage()}>{search.error ? tr("Retry") : search.matches.length ? tr("Next results") : tr("Continue search")}</button>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </section>
             </>
           )}

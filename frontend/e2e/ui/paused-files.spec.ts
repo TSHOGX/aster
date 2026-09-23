@@ -17,7 +17,7 @@ for (const state of ["paused", "created"]) {
     await page.getByLabel("Edit reports/summary.md",{exact:true}).fill("# Edited while compute is paused");
     await page.getByRole("button",{name:"Save file",exact:true}).click();
     await expect(page.locator(".selected-file")).toContainText("Edited while compute is paused");
-    expect(fixture.files["reports/summary.md"]).toBe("# Edited while compute is paused");
+    await expect.poll(() => fixture.files["reports/summary.md"]).toBe("# Edited while compute is paused");
     expect(fixture.calls.filter(c=>c.path.endsWith("/resume") || c.path.endsWith("/start"))).toEqual([]);
   });
 }

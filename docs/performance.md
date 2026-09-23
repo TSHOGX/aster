@@ -106,7 +106,13 @@ Next/First controls replace pages. Closing cancels reads and releases descendant
 late replies cannot restore a closed branch. Expiry returns to the first page
 with a notice. Deep links read bounded ancestors rather than searching entire
 inventories. Selected previews and unsaved edits remain owned outside the current
-page. Filtering computes matching names and ancestor paths once per tree update.
+page. Filename search has separate bounded traversal state: one metadata page per
+ancestor, at most 64 levels and 8 MiB estimated retained pages, plus one 100-result
+window. A batch issues at most 100 directory reads and yields before another read
+after five seconds; further work requires explicit continuation. Search uses the
+shared per-Project directory admission, never fetches file bodies, and cancels on
+query change, hiding the panel or authority loss. Expired cursors rescan only the
+current directory, skipping already processed names.
 
 Each content read captures at most 256 MiB into an unnamed `O_TMPFILE` inode under
 application state, within a 512 MiB aggregate capture limit. Size and SHA-256 are
