@@ -29,7 +29,11 @@ runtime knob:
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `NEXT_PUBLIC_HARNESS_BRAND_NAME` | `BatteryGPT` | Product name in the wordmark, the page title, and the byline on every assistant reply. Never translated — a brand reads the same in both locales, and the byline has to match the wordmark. |
-| `NEXT_PUBLIC_HARNESS_UPLOAD_UI` | unset (off) | Shows the workspace upload buttons and drop target. The backend route is unaffected; this only withholds the UI. |
+
+The workspace upload buttons and drop target are no longer a build-time toggle:
+they follow the per-user `allow_upload` permission delivered by `/api/me`
+(`auth.canUpload`), deny-by-default. See `docs/configuration.md`. Withholding the
+UI is cosmetic — `POST /api/sessions/{id}/artifacts` enforces the same decision.
 
 UI language follows the browser: Chinese for any `zh-*` tag, English otherwise.
 There is deliberately no in-app switcher — the browser already carries the user's

@@ -1768,6 +1768,13 @@ type AuthUser struct {
 	// Role controls access to administrator APIs. Empty is the historical
 	// default (regular user), which keeps existing credentials files valid.
 	Role string `yaml:"role,omitempty"`
+	// AllowUpload opts a user into workspace file uploads. It is deny-by-default:
+	// an entry without the key cannot upload, so a forgotten config closes the
+	// gate rather than opening it. Admins are NOT implicitly granted upload --
+	// the two permissions are independent on purpose (an operator who
+	// administers the deployment is not necessarily cleared to push files into a
+	// workspace).
+	AllowUpload bool `yaml:"allow_upload,omitempty"`
 }
 
 var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -1848,7 +1855,7 @@ func ParseAuthUsers(data []byte, path string) ([]AuthUser, error) {
 		if role != "" && role != "user" && role != "admin" {
 			return nil, fmt.Errorf("auth users %s: user %q role must be user or admin", path, username)
 		}
-		users = append(users, AuthUser{Username: username, PasswordHash: hash, Role: role})
+		users = append(users, AuthUser{Username: username, PasswordHash: hash, Role: role, AllowUpload: user.AllowUpload})
 	}
 	return users, nil
 }

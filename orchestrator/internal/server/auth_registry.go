@@ -142,6 +142,27 @@ func (r *authRegistry) role(username string) string {
 	return user.Role
 }
 
+// uploadAllowed reports whether username may upload files into a workspace.
+//
+// Deny-by-default, with one deliberate exception: a nil registry or a
+// credential set with no users at all means open/lab mode (no login gate), and
+// there is no per-user config to consult there, so uploads stay allowed. That
+// keeps local development and the shared-password fallback working as before.
+// Once a credentials file exists, an unknown or unflagged user is denied.
+func (r *authRegistry) uploadAllowed(username string) bool {
+	if r == nil {
+		return true
+	}
+	r.refresh(true)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.users) == 0 {
+		return true
+	}
+	user, ok := r.users[username]
+	return ok && user.AllowUpload
+}
+
 // usernames returns the configured usernames, sorted. It reads the in-memory
 // snapshot under RLock behind the throttled stat, so the user picker cannot be
 // used to hammer the credentials file.

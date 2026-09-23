@@ -127,3 +127,29 @@ func TestAuthEnabled(t *testing.T) {
 		t.Fatalf("users should enable auth")
 	}
 }
+
+func TestLoadAuthUsersAllowUploadDefaultsToDeny(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth-users.yaml")
+	content := `users:
+  - username: lab
+    password_hash: "pbkdf2-sha256$600000$c2FsdA$aGFzaA"
+    allow_upload: true
+  - username: alice
+    password_hash: "pbkdf2-sha256$600000$c2FsdA$aGFzaA"
+  - username: bob
+    password_hash: "pbkdf2-sha256$600000$c2FsdA$aGFzaA"
+    allow_upload: false
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	users, err := LoadAuthUsersFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An omitted key must read the same as an explicit false: deny.
+	if !users[0].AllowUpload || users[1].AllowUpload || users[2].AllowUpload {
+		t.Fatalf("allow_upload=%+v", users)
+	}
+}

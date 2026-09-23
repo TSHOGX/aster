@@ -524,7 +524,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		// Open mode: issue a session for the default lab user so the cookie
 		// flow is uniform, but no credentials are required.
 		s.issueAuthSession(w, r, labUserID)
-		writeJSON(w, http.StatusOK, map[string]string{"user_id": labUserID})
+		writeJSON(w, http.StatusOK, map[string]any{"user_id": labUserID, "can_upload": true})
 		return
 	}
 	var req struct {
@@ -544,7 +544,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if userID, ok := s.verifyCredentials(username, req.Password); ok {
 		s.loginLimiter.RecordSuccess(rateKey)
 		s.issueAuthSession(w, r, userID)
-		writeJSON(w, http.StatusOK, map[string]string{"user_id": userID})
+		writeJSON(w, http.StatusOK, map[string]any{"user_id": userID, "can_upload": s.creds.uploadAllowed(userID)})
 		return
 	}
 
@@ -627,7 +627,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if !s.creds.enabled() {
-		writeJSON(w, http.StatusOK, map[string]any{"auth_required": false, "user_id": labUserID, "role": store.RoleUser})
+		// Open/lab mode: no per-user config exists, so uploads stay allowed (this
+		// mirrors authRegistry.uploadAllowed).
+		writeJSON(w, http.StatusOK, map[string]any{"auth_required": false, "user_id": labUserID, "role": store.RoleUser, "can_upload": true})
 		return
 	}
 	userID := ""
@@ -637,10 +639,12 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	role := store.RoleUser
+	canUpload := false
 	if userID != "" {
 		role = s.creds.role(userID)
+		canUpload = s.creds.uploadAllowed(userID)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"auth_required": true, "user_id": userID, "role": role})
+	writeJSON(w, http.StatusOK, map[string]any{"auth_required": true, "user_id": userID, "role": role, "can_upload": canUpload})
 }
 
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {

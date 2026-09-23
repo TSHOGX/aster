@@ -98,6 +98,16 @@ compatibility identity, not a host name. Open mode is only for isolated unmanage
 development. Use TLS, Secure cookies and trusted proxy-header configuration for
 user-facing deployments.
 
+Each credential may also set `allow_upload: true` to permit workspace file
+uploads. This is deny-by-default: an entry without the key cannot upload, so a
+forgotten config closes the gate rather than opening it. It is independent of
+`role` — an admin is not implicitly an uploader. Open/lab mode (no credentials
+file) has no per-user config to consult and keeps uploads allowed. Enforced on
+`POST /api/sessions/{id}/artifacts` (403 `upload_not_permitted`); the frontend
+additionally withholds the upload buttons and drop target, which is cosmetic
+only. Like the rest of this file it is re-read on change, so granting upload
+needs no restart.
+
 ## Optional memory/evolution configuration
 
 The extraction model and agentic pipeline settings are separate from the core
