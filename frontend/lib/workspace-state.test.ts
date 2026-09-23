@@ -4,11 +4,31 @@ import {
   navigationURL,
   parsePreferences,
   readNavigation,
+  globalNavigation,
 } from "./workspace-state";
 import { remember, recalled, clearPreferenceMemory } from "./project-api";
 afterEach(() => {
   vi.unstubAllGlobals();
   clearPreferenceMemory();
+});
+
+describe("route isolation", () => {
+  it.each(["shared", "schedules", "search", "inbox"] as const)("discards workspace selection from %s URLs and transitions", view => {
+    const mixed = readNavigation(`?view=${view}&project=p&session=s&message=m&draft=1&history=1`);
+    expect(mixed).toEqual(globalNavigation(view));
+    expect(navigationURL(mixed)).toBe(`/?view=${view}`);
+    expect(navigationURL({ ...readNavigation("?project=p&session=s&message=m&history=1"), view })).toBe(`/?view=${view}`);
+  });
+  it("uses an explicit received-conversation identity", () => {
+    expect(navigationURL(globalNavigation("shared", "received"))).toBe("/?view=shared&conversation=received");
+    expect(readNavigation("?view=shared&conversation=received&project=p&session=s")).toEqual(globalNavigation("shared", "received"));
+    expect(readNavigation("?project=p&session=s&conversation=received").conversation).toBeUndefined();
+  });
+  it("keeps draft, message, and history selection meaningful only in project routes", () => {
+    expect(readNavigation("?project=p&draft=1&session=s&message=m&history=1")).toMatchObject({ project: "p", session: "", draft: true, message: "", history: false });
+    expect(readNavigation("?view=share&project=p&session=s&message=m&history=1")).toMatchObject({ project: "p", session: "s", message: "", history: false });
+    expect(readNavigation("?session=s&message=m&history=1")).toMatchObject({ session: "", message: "", history: false });
+  });
 });
 describe("workspace preferences", () => {
   it("uses only the selected Session and leaves panels initially closed", () => {

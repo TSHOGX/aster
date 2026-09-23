@@ -43,6 +43,14 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 	if status != 201 {
 		t.Fatal(status, string(body))
 	}
+	status, _ = do("GET", "/api/conversations/session", "")
+	if status != 404 {
+		t.Fatal("ownership is not received sharing", status)
+	}
+	status, _ = do("GET", "/api/conversations/session/messages", "")
+	if status != 200 {
+		t.Fatal("owner message authorization changed", status)
+	}
 	status, body = do("GET", "/api/schedules?limit=1", "")
 	if status != 200 || !strings.Contains(string(body), `"project_title":"Project"`) {
 		t.Fatal(status, string(body))
@@ -64,6 +72,10 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 		t.Fatal(status, string(body))
 	}
 	actor.Store("bob")
+	status, body = do("GET", "/api/conversations/session", "")
+	if status != 200 || !strings.Contains(string(body), `"title":"Conversation"`) {
+		t.Fatal("shared detail unavailable", status, string(body))
+	}
 	status, _ = do("GET", "/api/projects/project/sessions/session/turn-index", "")
 	if status != 404 {
 		t.Fatal("reader accessed owner turn index", status)
@@ -104,6 +116,10 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 		t.Fatal(frame.String())
 	}
 	must(t, h.store.RevokeConversation(ctx, scope, "session", "bob"))
+	status, _ = do("GET", "/api/conversations/session", "")
+	if status != 404 {
+		t.Fatal("revoked shared detail remained available", status)
+	}
 	closed := make(chan error, 1)
 	go func() { _, err := io.Copy(io.Discard, reader); response.Body.Close(); closed <- err }()
 	select {

@@ -1,4 +1,6 @@
 export const EN = {
+  "This shared conversation is unavailable.": "This shared conversation is unavailable.",
+
   "Files changed. Refresh search for updated results.": "Files changed. Refresh search for updated results.",
   "Refresh search": "Refresh search",
   "Search files": "Search files",

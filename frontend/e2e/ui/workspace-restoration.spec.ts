@@ -66,11 +66,12 @@ test("a missing Project URL returns to the workbench without a global error",asy
 test("a granted conversation can use the shared fallback without a false global 404",async({page})=>{
   await workspaceFixture(page);
   await page.route(/\/api\/projects\/foreign(?:[/?]|$)/,route=>route.fulfill({status:404,json:{error:"not found"}}));
-  await page.route("**/api/conversations",route=>route.fulfill({json:{conversations:[{project_id:"foreign",session_id:"granted",title:"Shared result",revision:1}]}}));
+  await page.route("**/api/conversations?*",route=>route.fulfill({json:{conversations:[{project_id:"foreign",session_id:"granted",title:"Shared result",revision:1}]}}));
   await page.route("**/api/conversations/granted/messages?*",route=>route.fulfill({json:{messages:[{id:"shared-message",role:"assistant",content:"Shared answer",sequence:1,created_at:"2026-09-24T00:00:00Z"}]}}));
   await page.route("**/api/conversations/granted/head",route=>route.fulfill({json:{}}));
+  await page.route("**/api/conversations/granted", route => route.fulfill({json:{project_id:"foreign",session_id:"granted",title:"Shared result",revision:1}}));
   await page.goto("/?project=foreign&session=granted");
-  await expect(page).toHaveURL(/view=shared&session=granted/);
+  await expect(page).toHaveURL(/view=shared&conversation=granted/);
   await expect(page.getByText("Shared answer",{exact:true})).toBeVisible();
   await expect(page.locator(".project-main > .notice.error")).toHaveCount(0);
 });

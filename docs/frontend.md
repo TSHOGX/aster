@@ -1,5 +1,18 @@
 # Project workbench
 
+Global pages use destination-specific routes. Search, Inbox, Shared with me, and
+Scheduled discard Project, Session, message, draft, and turn-history selection
+on navigation, URL parsing, and browser history. Mixed URLs are replaced with
+their canonical form. Project workspace preferences restore only Project views;
+leaving a Project checks unsaved files before releasing its view and subscriptions.
+
+Received conversation details use `/?view=shared&conversation=<session-id>`.
+Selection is reflected in browser history. A grant-specific detail read validates
+eligibility before messages or SSE start, independently of list pagination.
+Loading, empty list, unavailable detail, and message content are distinct states.
+Revocation clears detail content and closes its subscription. Owner access to the
+generic conversation message API does not imply received-sharing eligibility.
+
 The workbench in `frontend/components/project` uses Project → Session navigation
 and displays one conversation at a time. Other Sessions continue independently.
 The workspace heading provides two switches: a bottom terminal dock and a file

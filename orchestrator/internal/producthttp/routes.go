@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/notifications", s.notifications)
 	mux.HandleFunc("POST /api/notifications/{notification}/read", s.readNotification)
 	mux.HandleFunc("GET /api/conversations", s.sharedConversations)
+	mux.HandleFunc("GET /api/conversations/{session}", s.sharedConversation)
 	mux.HandleFunc("GET /api/conversations/{session}/messages", s.conversationMessages)
 	mux.HandleFunc("GET /api/conversations/{session}/head", s.sharedConversationHead)
 	mux.HandleFunc("GET /api/conversations/{session}/events", s.conversationEvents)

@@ -3,19 +3,15 @@ import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
-  APIError,
   command,
   encode,
   projectURL,
   sessionURL,
   type AgentSession,
-  type Conversation,
-  type Message,
   type Notice,
   type SearchResult,
   type Share,
 } from "@/lib/project-api";
-import { MarkdownView } from "@/components/workbench/markdown-view";
 export function SharePanel({
   project,
   sessions,
@@ -337,108 +333,6 @@ export function SearchPanel({
       {results.length === 50 && (
         <button onClick={() => void search(results.at(-1)?.key)}>
           {tr("More results")}
-        </button>
-      )}
-    </section>
-  );
-}
-export function SharedConversations({
-  initialSession = "",
-}: {
-  initialSession?: string;
-}) {
-  const tr = useT();
-  const [items, setItems] = useState<Conversation[]>([]);
-  const [selected, setSelected] = useState(initialSession);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [error, setError] = useState("");
-  const [after, setAfter] = useState(0);
-  useEffect(() => {
-    void api<{
-      conversations: Conversation[];
-    }>("/api/conversations")
-      .then((data) => setItems(data.conversations))
-      .catch((e) => setError(String(e)));
-  }, []);
-  useEffect(() => {
-    if (!selected) return;
-    let canceled = false;
-    const refresh = async () => {
-      try {
-        const data = await api<{
-          messages: Message[];
-        }>(
-          `/api/conversations/${encode(selected)}/messages?after=${after}&limit=100`,
-        );
-        if (!canceled) setMessages(data.messages);
-      } catch (e) {
-        if (!canceled) {
-          setMessages([]);
-          setError(String(e));
-        }
-      }
-    };
-    void refresh();
-    const source = new EventSource(
-      `/api/conversations/${encode(selected)}/events`,
-    );
-    source.addEventListener("conversation", () => void refresh());
-    source.addEventListener("closed", () => {
-      source.close();
-      void refresh();
-    });
-    source.onerror = () => {
-      // A reconnect refusal cannot deliver a closed SSE frame. Recheck only
-      // authority/freshness metadata; keep content during ordinary network loss.
-      void api(`/api/conversations/${encode(selected)}/head`).catch((e) => {
-        if (
-          !canceled &&
-          e instanceof APIError &&
-          [401, 403, 404].includes(e.status)
-        ) {
-          source.close();
-          setMessages([]);
-          setError(String(e));
-        }
-      });
-    };
-    return () => {
-      canceled = true;
-      source.close();
-    };
-  }, [selected, after]);
-  return (
-    <section className="adjacent-panel">
-      <h2>{tr("Shared with me")}</h2>
-      {error && <p className="notice error">{error}</p>}
-      <div className="row-actions">
-        {items.map((item) => (
-          <button
-            key={item.session_id}
-            onClick={() => {
-              setSelected(item.session_id);
-              setAfter(0);
-            }}
-          >
-            {item.title}
-          </button>
-        ))}
-      </div>
-      {!items.length && (
-        <p>{tr("No conversations have been shared with you.")}</p>
-      )}
-      {messages.map((message) => (
-        <article className={`chat-message ${message.role}`} key={message.id}>
-          <small>{message.role}</small>
-          <MarkdownView content={message.content} />
-        </article>
-      ))}
-      {after > 0 && (
-        <button onClick={() => setAfter(0)}>{tr("First page")}</button>
-      )}
-      {messages.length === 100 && (
-        <button onClick={() => setAfter(messages.at(-1)?.sequence || 0)}>
-          {tr("Next messages")}
         </button>
       )}
     </section>

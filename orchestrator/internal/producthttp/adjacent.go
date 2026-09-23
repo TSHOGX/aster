@@ -138,6 +138,14 @@ func (s *Server) conversationMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"messages": items})
 }
+func (s *Server) sharedConversation(w http.ResponseWriter, r *http.Request) {
+	item, err := s.Store.SharedConversation(r.Context(), actorFrom(r.Context()), r.PathValue("session"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
 func (s *Server) grantConversation(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Reader string `json:"reader"`

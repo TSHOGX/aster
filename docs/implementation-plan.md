@@ -61,5 +61,9 @@ That stale documentation must be corrected during final reconciliation.
 ## Progress
 
 - Review and sequencing: complete.
+- Route isolation: implemented. Twelve route/preference unit tests, frontend
+  typecheck/lint, 43 production-build browser checks, and focused product and HTTP
+  authorization race tests passed. Shared details use the explicit `conversation`
+  parameter; old mixed Session URLs are canonicalized to the list.
 - Implementation and qualification: in progress; stage evidence will be recorded
   here as checks complete.

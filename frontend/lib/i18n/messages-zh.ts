@@ -1,5 +1,6 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "This shared conversation is unavailable.": "此共享对话已不可用。",
   "Files changed. Refresh search for updated results.": "文件已更改，请刷新搜索以获取最新结果。",
   "Refresh search": "刷新搜索",
   "Search files": "搜索文件",

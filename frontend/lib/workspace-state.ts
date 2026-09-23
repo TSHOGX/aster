@@ -64,11 +64,30 @@ export type Navigation = {
   message: string;
   draft: boolean;
   history: boolean;
+  conversation?: string;
 };
+export function normalizeNavigation(n: Navigation): Navigation {
+  const base: Navigation = { view: n.view, project: "", session: "", message: "", draft: false, history: false };
+  if (n.view === "project" || n.view === "share") {
+    base.project = n.project;
+    base.session = n.project && !n.draft ? n.session : "";
+    if (n.view === "project") {
+      base.draft = n.draft;
+      base.message = base.session ? n.message : "";
+      base.history = !!base.session && n.history;
+    }
+  } else if (n.view === "shared" && n.conversation) {
+    base.conversation = n.conversation;
+  }
+  return base;
+}
+export function globalNavigation(view: "search" | "inbox" | "shared" | "schedules", conversation = ""): Navigation {
+  return normalizeNavigation({ view, project: "", session: "", message: "", draft: false, history: false, conversation });
+}
 export function readNavigation(search: string): Navigation {
   const p = new URLSearchParams(search),
     view = p.get("view");
-  return {
+  return normalizeNavigation({
     view: ["search", "inbox", "shared", "schedules", "share"].includes(
       view || "",
     )
@@ -79,9 +98,11 @@ export function readNavigation(search: string): Navigation {
     message: p.get("message") || "",
     draft: p.get("draft") === "1",
     history: p.get("history") === "1",
-  };
+    conversation: p.get("conversation") || "",
+  });
 }
-export function navigationURL(n: Navigation) {
+export function navigationURL(input: Navigation) {
+  const n = normalizeNavigation(input);
   const p = new URLSearchParams();
   if (n.view !== "project") p.set("view", n.view);
   if (n.project) p.set("project", n.project);
@@ -89,5 +110,6 @@ export function navigationURL(n: Navigation) {
   if (n.message) p.set("message", n.message);
   if (n.draft) p.set("draft", "1");
   if (n.history) p.set("history", "1");
+  if (n.conversation) p.set("conversation", n.conversation);
   return p.size ? `/?${p}` : "/";
 }

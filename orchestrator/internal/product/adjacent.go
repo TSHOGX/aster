@@ -113,6 +113,16 @@ type Conversation struct {
 	Revision  int64  `json:"revision"`
 }
 
+// SharedConversation resolves a received conversation independently of list
+// pagination. Owning a Project alone does not make it received shared content.
+func (s *Store) SharedConversation(ctx context.Context, actor, session string) (c Conversation, err error) {
+	if actor == "" {
+		return c, ErrNotFound
+	}
+	err = missing(s.reader.QueryRowContext(ctx, `SELECT s.project_id,s.id,s.title,s.revision FROM conversation_grants g JOIN sessions s ON s.id=g.session_id JOIN projects p ON p.id=s.project_id WHERE g.reader_id=? AND g.session_id=? AND g.revoked=0 AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted')`, actor, session).Scan(&c.ProjectID, &c.SessionID, &c.Title, &c.Revision))
+	return
+}
+
 func (s *Store) SharedConversations(ctx context.Context, actor, after string, limit int) ([]Conversation, error) {
 	if actor == "" {
 		return nil, ErrNotFound

@@ -32,6 +32,8 @@ import {
 } from "@/lib/project-api";
 import {
   readNavigation,
+  normalizeNavigation,
+  globalNavigation,
   readWorkspace,
   navigationURL,
   workspaceKey,
@@ -50,7 +52,8 @@ import {
 import { useWorkspaceData } from "./workspace-data";
 import { ProjectPicker } from "./project-picker";
 import { ProjectWorkspace } from "./workspace";
-import { Inbox, SearchPanel, SharedConversations } from "./adjacent-panels";
+import { Inbox, SearchPanel } from "./adjacent-panels";
+import { SharedConversations } from "./shared-conversations";
 import { Schedules } from "./schedules";
 import "./workbench.css";
 import { ResourceProvider } from "./resource-provider";
@@ -172,7 +175,7 @@ function Application({
     undefined,
     () => {
       const n = readNavigation(location.search);
-      if (n.project && !n.session && !n.draft)
+      if (n.view === "project" && n.project && !n.session && !n.draft)
         n.session = readWorkspace(actor, n.project).activeSessionId;
       return n;
     },
@@ -229,8 +232,10 @@ function Application({
     navRef.current = nav;
   }, [nav]);
   const navigate = useCallback(async (next: Navigation, replace = false) => {
-    if (next.project !== navRef.current.project && !(await guard.current()))
+    next = normalizeNavigation(next);
+    if ((next.project !== navRef.current.project || next.view !== navRef.current.view) && !(await guard.current()))
       return;
+    navRef.current = next;
     dispatch(next);
     setDrawer(false);
     setFullscreen(false);
@@ -241,16 +246,19 @@ function Application({
     );
   }, []);
   useEffect(() => {
+    history.replaceState(null, "", navigationURL(navRef.current));
     const pop = () => {
       const next = readNavigation(location.search);
       void (async () => {
         if (
-          next.project !== navRef.current.project &&
+          (next.project !== navRef.current.project || next.view !== navRef.current.view) &&
           !(await guard.current())
         ) {
           history.pushState(null, "", navigationURL(navRef.current));
           return;
         }
+        navRef.current = next;
+        history.replaceState(null, "", navigationURL(next));
         dispatch(next);
         setDrawer(false);
         setFullscreen(false);
@@ -269,7 +277,7 @@ function Application({
       window.removeEventListener("project-storage-unavailable", fail);
   }, []);
   useEffect(() => {
-    if (!nav.project) return;
+    if (!["project", "share"].includes(nav.view) || !nav.project) return;
     let gone = false;
     void ensureTarget(nav.project, nav.session)
       .then(() => {
@@ -279,16 +287,16 @@ function Application({
           );
       })
       .catch((e) => {
-        if (!gone && e instanceof APIError && e.status === 404)
+        if (!gone && navRef.current === nav && e instanceof APIError && e.status === 404)
           void navigate(
-            { ...navRef.current, view: nav.session ? "shared" : "project", project: "", message: "" },
+            nav.session ? globalNavigation("shared", nav.session) : readNavigation(""),
             true,
           );
       });
     return () => {
       gone = true;
     };
-  }, [nav.project, nav.session, ensureTarget, navigate]);
+  }, [nav, ensureTarget, navigate]);
   const selected = data.sessions[nav.project]?.find(
     (s) => s.id === nav.session,
   );
@@ -521,8 +529,8 @@ function Application({
         })(),
     },
   ];
-  const page = (view: Navigation["view"]) =>
-    void navigate({ ...nav, view, history: false });
+  const page = (view: "search" | "inbox" | "shared" | "schedules") =>
+    void navigate(globalNavigation(view));
   const project = data.projects.find((p) => p.id === nav.project);
   return (
     <main
@@ -547,7 +555,7 @@ function Application({
             href="/"
             onClick={(e) => {
               e.preventDefault();
-              page("project");
+              void navigate(readNavigation(""));
             }}
           >
             <span className="brand-mark">B</span>
@@ -640,13 +648,13 @@ function Application({
                         .filter((s) => s.deletion === 0)
                         .map((s) => (
                           <div
-                            className={`navigation-row session-row ${nav.session === s.id && nav.project === p.id ? "selected" : ""}`}
+                            className={`navigation-row session-row ${["project", "share"].includes(nav.view) && nav.session === s.id && nav.project === p.id ? "selected" : ""}`}
                             key={s.id}
                           >
                             <button
                               className="navigation-title"
                               aria-current={
-                                nav.session === s.id && nav.project === p.id
+                                ["project", "share"].includes(nav.view) && nav.session === s.id && nav.project === p.id
                                   ? "page"
                                   : undefined
                               }
@@ -791,7 +799,7 @@ function Application({
         ) : nav.view === "inbox" ? (
           <Inbox onOpen={open} />
         ) : nav.view === "shared" ? (
-          <SharedConversations key={nav.session} initialSession={nav.session} />
+          <SharedConversations selected={nav.conversation || ""} onSelect={(id) => void navigate(globalNavigation("shared", id))} />
         ) : nav.view === "schedules" ? (
           <Schedules projects={data.projects} onOpen={open} />
         ) : !project ? (

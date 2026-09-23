@@ -127,8 +127,12 @@ routes have been removed. There is no request-time raw-history fallback.
 
 
 Shared-reader events track finalized-message sequence, not native token traffic.
-Unchanged streams send heartbeats; reconnect metadata checks use `/head` and
-reauthorize without reloading message bodies. Revocation closes the stream and
+`GET /api/conversations/{session}` returns bounded conversation metadata only
+when the actor has an active reader grant; ownership alone is insufficient.
+This lookup is independent of list pagination. Generic `/messages`, `/head`, and
+`/events` retain their owner-or-reader permission contract.
+Unchanged streams send heartbeats; received-view reconnect checks use the
+grant-specific detail endpoint without reloading message bodies. Revocation closes the stream and
 clears the shared view. Shared-reader authority remains separate from Project
 resource events, live files and terminals.
 
