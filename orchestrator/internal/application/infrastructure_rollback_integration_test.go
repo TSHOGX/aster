@@ -3,7 +3,10 @@
 package application_test
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +31,44 @@ func TestReleasedInfrastructureRollback(t *testing.T) {
 	t.Setenv("PROJECT_RELEASE_MODEL_MODE", "model-independent")
 	a := newReleasedApp(t)
 	ownerSocket := filepath.Join(a.root, "state/control.sock")
+	t.Cleanup(func() {
+		if t.Failed() {
+			db, err := sql.Open("sqlite", "file:"+filepath.Join(a.root, "state/product.db")+"?mode=ro")
+			if err != nil {
+				return
+			}
+			defer db.Close()
+			evidence := map[string]any{}
+			for name, query := range map[string]string{
+				"turns":         `SELECT id,project_id,state FROM turns`,
+				"projects":      `SELECT id,state,failure FROM projects`,
+				"operations":    `SELECT project_id,state,phase,error FROM project_operations`,
+				"native_errors": `SELECT turn_id,json_extract(payload,'$.message.errorMessage') FROM agent_records WHERE kind='native' AND json_extract(payload,'$.message.errorMessage') IS NOT NULL`,
+			} {
+				rows, err := db.Query(query)
+				if err != nil {
+					continue
+				}
+				columns, _ := rows.Columns()
+				out := []any{}
+				for rows.Next() {
+					values := make([]any, len(columns))
+					targets := make([]any, len(columns))
+					for i := range values {
+						targets[i] = &values[i]
+					}
+					if rows.Scan(targets...) == nil {
+						out = append(out, values)
+					}
+				}
+				rows.Close()
+				evidence[name] = out
+			}
+			raw, _ := json.MarshalIndent(evidence, "", "  ")
+			_ = os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "capability-diagnostics.json"), raw, 0600)
+		}
+	})
+
 	base := os.Getenv("PROJECT_TEST_BASE")
 	if !strings.HasPrefix(base, "/tmp/project-khora-runtime.") {
 		t.Fatal("disposable substrate required")
@@ -180,12 +221,31 @@ func TestReleasedInfrastructureRollback(t *testing.T) {
 		engineSnapshots = append(engineSnapshots, map[string]any{"step": index, "digest": actual})
 		if index == 0 {
 			config["template"] = map[string]any{"id": "battery-candidate", "manifest": candidatePath, "digest": candidateDigest}
+			config["retained_templates"] = []any{originalTemplate}
 		} else {
 			config["template"] = originalTemplate
+			config["retained_templates"] = []any{map[string]any{"id": "battery-candidate", "manifest": candidatePath, "digest": candidateDigest}}
 		}
 		raw, err = json.Marshal(config)
 		require(t, err)
 		require(t, os.WriteFile(a.config, raw, 0644))
+		if index == 0 {
+			retained := config["retained_templates"]
+			delete(config, "retained_templates")
+			unqualified, _ := json.Marshal(config)
+			require(t, os.WriteFile(a.config, unqualified, 0644))
+			attempt, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+			candidate := exec.CommandContext(attempt, a.binary, "serve", "--config", a.config)
+			candidate.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
+			output, err := candidate.CombinedOutput()
+			cancel()
+			if err == nil || !bytes.Contains(output, []byte("host-validated template catalog")) {
+				t.Fatalf("unlisted saved runtime was not refused: %v %s", err, output)
+			}
+			config["retained_templates"] = retained
+			qualified, _ := json.Marshal(config)
+			require(t, os.WriteFile(a.config, qualified, 0644))
+		}
 		a.start()
 		action := "drain-complete"
 		if index == 1 {

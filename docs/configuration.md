@@ -16,6 +16,7 @@ tracked example. The example denies guest egress until reachability is declared.
 | `application_socket`, `control_socket` | Distinct private Unix sockets; default below state directory |
 | `engine` | Explicit endpoint and persistent store ID; HTTPS requires CA and client certificate/key |
 | `template` | Engine template ID, exported Go runtime manifest and `sha256:` digest |
+| `retained_templates` | Up to 64 additional template entries, each with `id`, `manifest` and `digest`, for saved Project bindings |
 | `project` | Positive CPU, memory, overlay-disk, workspace/runtime capacities and reachability |
 | `auth` | Credential YAML path, or an explicit loopback-only development actor |
 | `content` | Reviewed Agent configuration/shared-assets source paths and publication capacity |
@@ -27,8 +28,15 @@ tracked example. The example denies guest egress until reachability is declared.
 The application derives Project store/template/release/publication bindings.
 Those fields cannot be supplied inside `project`. Existing Projects retain their
 saved profile; a changed default affects newly configured Projects. Startup
-rejects existing bindings without a release identity or bound to another engine
-store. It never treats a fresh engine's IDs as authority over old resources.
+validates every default/retained manifest against the current host protocols and
+checks each registered template platform. Template IDs must be unique. Every
+non-deleted Project, including paused Projects, must match an exact template ID
+and digest in this catalog. When changing the default, list the previous template
+in `retained_templates` until its Projects retire. Relative retained manifest paths
+resolve against the configuration directory.
+
+Startup rejects missing catalog bindings and bindings to another engine store
+before publication or workers start. It never treats a fresh engine's IDs as authority over old resources.
 
 `engine.endpoint` permits plain HTTP only on a loopback IP. HTTPS requires
 `ca_file`, `client_cert` and `client_key`; ambient proxy configuration is disabled.

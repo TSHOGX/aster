@@ -326,7 +326,11 @@ Start only an artifact of the supported engine revision. Start the owner behind
 the activating fence and complete or acknowledge rollback after reconciliation.
 
 Changing the default template affects newly configured Projects. Existing Projects
-retain their immutable template/release bindings and storage; retain their images
-until those Projects are retired. Do not rewrite a saved profile or restore a
+retain their immutable template/release bindings and storage. Keep their images
+and exported manifests, and list each previous binding in `retained_templates`
+until those Projects are retired. Startup refuses an unlisted saved binding.
+`release-identity` includes the complete host-validated `runtime_catalog`; changing
+it requires full admission drain. The introduction of this catalog also changes
+the compatibility identity from builds without it, even with no retained entries. Do not rewrite a saved profile or restore a
 volume snapshot to make a default rollback appear successful. The infrastructure
 rehearsal in the compatibility matrix demonstrates this boundary.

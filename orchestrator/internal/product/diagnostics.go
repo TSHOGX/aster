@@ -6,7 +6,14 @@ import (
 	"fmt"
 )
 
-func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string) error {
+type ReleasedTemplate struct {
+	TemplateID string
+	Digest     string
+}
+
+// The application supplies only manifests it has validated against its current
+// protocol requirements. A saved digest alone is not a capability declaration.
+func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string, allowed map[ReleasedTemplate]struct{}) error {
 	rows, err := s.reader.QueryContext(ctx, `SELECT r.store_id,r.profile FROM project_resources r JOIN projects p ON p.id=r.project_id WHERE p.state<>'deleted'`)
 	if err != nil {
 		return err
@@ -26,6 +33,9 @@ func (s *Store) ValidateReleasedBindings(ctx context.Context, engine string) err
 		}
 		if profile.ReleaseDigest == "" {
 			return fmt.Errorf("existing Project lacks a released runtime identity; use a fresh development database")
+		}
+		if _, ok := allowed[ReleasedTemplate{TemplateID: profile.TemplateID, Digest: profile.ReleaseDigest}]; !ok {
+			return fmt.Errorf("existing Project runtime is not in the host-validated template catalog; retain its compatible manifest before startup")
 		}
 	}
 	return rows.Err()

@@ -33,6 +33,7 @@ is qualified only for the explicitly recorded real-provider run below.
 | P07 real-provider handoff | Verified for recorded run | One GLM-5.2 stream retained across a distinct owner executable update |
 | P07 owner/gateway rollback | Verified for recorded pair | Retained revisions preserve new native history, held intent and workspace bytes |
 | P07 infrastructure rollback | Verified for recorded tuple | Pinned engine artifact and immutable template-default A→B→A with accepted data retained |
+| P07 retained runtime validation | Verified locally | Host-validated catalog and placement manifests; saved bindings fail closed |
 | P07 deployment qualification | Pending | Bootstrap and combined release/final acceptance qualification |
 
 ## Diagnostics
@@ -1079,3 +1080,15 @@ baseline's rank/resource/observation definitions differ; these aggregates alone
 are not a controlled speedup comparison. Source now separates offered-workload
 duration from subsequent repair/idle time. The broader browser/network/resource
 matrix and gated owner update under the combined workload remain open.
+
+
+## Retained runtime capabilities
+
+Startup validates the default and retained manifests against current host
+requirements and checks every saved non-deleted Project binding. Each placement
+also passes host manifest validation before guest self-verification. A final
+82.90-second infrastructure rehearsal preserved native history and files through
+A→B→A, and rejected startup when a saved binding was absent from the catalog.
+The release suite and full Go/vet checks pass. The catalog changes compatibility
+identity; upgrades from earlier builds require full drain. See the
+[configuration](configuration.md) and [compatibility boundary](compatibility.md).

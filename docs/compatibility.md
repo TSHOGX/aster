@@ -34,7 +34,16 @@ The images differ in reviewed builtin context and have distinct release digests.
 Three Projects retain their saved bindings, eight completed native turn IDs/states
 and exact workspace bytes. A Project created under B continues to use B after the
 default rolls back to A; this does not rebind existing Projects or migrate their
-runtime volumes. Retain both referenced templates until their Projects retire.
+runtime volumes. Retain both referenced templates and exported manifests until
+their Projects retire. Current builds require the non-default binding in
+`retained_templates`; a subsequent infrastructure rehearsal verified startup
+refusal without that catalog and successful A→B→A continuation with it.
+
+The current host validates all catalog manifests and the actual placement manifest
+against its required protocols. Catalog-aware builds have a different compatibility
+identity from the recorded earlier owner pair, so crossing that boundary requires
+full drain. The earlier owner-handoff rehearsal does not qualify a live handoff
+across this change.
 
 An attempted candidate advertising a different engine build was rejected before
 application serving. Earlier fixture attempts also exposed that a paused placement

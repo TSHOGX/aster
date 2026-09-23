@@ -43,8 +43,13 @@ go -C orchestrator run ./cmd/runtime-release --root /srv/build/battery --output 
 ```
 
 Use the generated digest verbatim in application configuration. The application
-loads the exported manifest, checks the engine template platform and runs the
-image's `runtime-verify` before each placement gains child runtime authority.
+loads all default and retained exported manifests and checks their engine template
+platforms. Before each placement gains child runtime authority, the host reads
+`/etc/project-runtime/manifest.json`, validates its pinned digest and current
+protocol requirements, then runs the image's `runtime-verify`. An older image
+cannot establish compatibility merely by passing its own older verifier. Saved
+Projects require an exact binding in the configured
+[template catalog](configuration.md).
 Verification is idempotent by sandbox/epoch/digest and can reconcile a lost reply.
 A component or native dependency mismatch refuses activation.
 

@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"harness-platform/orchestrator/internal/agentwire"
-	"harness-platform/orchestrator/internal/projectfiles"
 )
 
 const EngineModule = "v0.0.2-0.20260920024301-e8cd021a9c7c"
@@ -28,6 +27,10 @@ const PiPackage = "@earendil-works/pi-coding-agent"
 const PiVersion = "0.77.0"
 const PiIntegrity = "sha512-huS+k+dhQRR9PlTK7crLfeSRUw3a96V6JYfP0ZH3Zkko/m10gsYk8dKQmwScSy5Dll516pXorz19BURfD6S2qQ=="
 const NodeVersion = "24.15.0"
+
+// ReaderProtocol is the workspace reader capability required by this release.
+// Keep release inspection independent of guest filesystem implementation.
+const ReaderProtocol = 2
 const ManifestPath = "/etc/project-runtime/manifest.json"
 const NativeRoot = "/usr/local/lib/node_modules"
 
@@ -92,7 +95,7 @@ func Load(reader io.Reader, expected string) (Manifest, error) {
 	if err != nil || !ValidDigest(expected) || digest != expected {
 		return manifest, errors.New("runtime manifest does not match its release digest")
 	}
-	if manifest.Version != 3 || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != projectfiles.ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
+	if manifest.Version != 3 || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
 		return manifest, errors.New("incompatible Project runtime release")
 	}
 	if manifest.Platform != "linux/amd64" && manifest.Platform != "linux/arm64" {
@@ -242,7 +245,7 @@ func Generate(root string) (Manifest, error) {
 	if err := cleanRoot(root); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: 3, NativeProtocol: NativeProtocol, ReaderProtocol: projectfiles.ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
+	manifest := Manifest{Version: 3, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
 	packagePath, err := resolve(root, NativeRoot+"/"+PiPackage+"/package.json")
 	if err != nil {
 		return manifest, err

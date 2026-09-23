@@ -3,6 +3,7 @@ package runtimerelease
 import (
 	"bytes"
 	"encoding/json"
+	"harness-platform/orchestrator/internal/projectfiles"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,5 +179,11 @@ func TestReleaseRejectsMixedBinaryPlatforms(t *testing.T) {
 	}
 	if _, err := Generate(root); err == nil {
 		t.Fatal("mixed architecture release accepted")
+	}
+}
+
+func TestReleaseRequiresCurrentReaderProtocol(t *testing.T) {
+	if ReaderProtocol != projectfiles.ReaderProtocol {
+		t.Fatal("release and workspace reader protocol differ")
 	}
 }
