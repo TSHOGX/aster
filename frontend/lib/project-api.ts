@@ -1,3 +1,4 @@
+import { fetchFileRead, FILE_BUSY_MESSAGE } from "./file-read";
 import { requestCategory, startTiming } from "./interaction-metrics";
 
 export type Project = {
@@ -168,7 +169,7 @@ export async function api<T>(
   const category = requestCategory(path, mutation);
   const networkDone = startTiming(category, "network");
   try {
-    response = await fetch(path, {
+    response = await (!mutation && /^\/api\/projects\/[^/]+\/files(?:\?|$|\/content\?)/.test(path) ? fetchFileRead : fetch)(path, {
       ...init,
       credentials: "same-origin",
       cache: "no-store",
@@ -215,7 +216,9 @@ export async function api<T>(
       response.status,
       data.state === "unknown"
         ? "The operation's outcome is unknown. Inspect its current state before trying again."
-        : data.error || `Request failed (${response.status})`,
+        : [429, 503].includes(response.status) && !mutation && path.includes("/files")
+          ? FILE_BUSY_MESSAGE
+          : data.error || `Request failed (${response.status})`,
       data,
     );
   if (response.status === 202 && !allowPending)
@@ -250,7 +253,7 @@ export async function readPreview(
   signal: AbortSignal,
   max = 16 << 20,
 ): Promise<Blob> {
-  const response = await fetch(url, {
+  const response = await fetchFileRead(url, {
     credentials: "same-origin",
     signal,
     cache: "no-store",
@@ -261,7 +264,7 @@ export async function readPreview(
     const data = await response.json().catch(() => ({}));
     throw new APIError(
       response.status,
-      data.error || "The file is not available yet.",
+      [202, 429, 503].includes(response.status) ? FILE_BUSY_MESSAGE : data.error || "The file is not available yet.",
     );
   }
   const reader = response.body?.getReader();

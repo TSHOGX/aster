@@ -38,13 +38,13 @@ it("bounds concurrency, file concurrency, queued demand and retains distinct pag
   const store=new ResourceStore("actor"), release=deferred<string>();
   let started=0;
   const reads=Array.from({length:134},(_,n)=>store.read({...key,kind:"directory",identity:`page:${n}`},()=>{started++;return release.promise;}).catch(e=>e.message));
-  expect(started).toBe(2); expect(store.stats().queued).toBe(128);
+  expect(started).toBe(1); expect(store.stats().queued).toBe(128);
   const selected=store.read({...key,project:"other",identity:"selected"},async()=>"selected");
   // Full queues explicitly reject rather than silently dropping a page.
   await expect(selected).rejects.toThrow("capacity");
   release.resolve("page");
   const values=await Promise.all(reads);
-  expect(values.filter(v=>v==="page")).toHaveLength(130);
+  expect(values.filter(v=>v==="page")).toHaveLength(129);
   expect(store.stats().running).toBe(0);
   expect(store.stats().queued).toBe(0);
 });
@@ -73,4 +73,17 @@ it("transient pages do not duplicate or evict the retained reading window",async
   expect(store.stats().pinnedBytes).toBeGreaterThan(0);
   unpin();
   expect(store.stats().pinnedBytes).toBe(0);
+});
+
+it("serializes directory scans but lets the selected content read alongside them", async () => {
+  const store = new ResourceStore("actor"), first = deferred<string>();
+  const calls: string[] = [];
+  const a = store.read({...key, kind:"directory", identity:"root"}, () => { calls.push("root"); return first.promise; });
+  const b = store.read({...key, kind:"directory", identity:"child"}, async () => { calls.push("child"); return "child"; });
+  const c = store.read({...key, kind:"file", identity:"selected"}, async () => { calls.push("selected"); return "content"; });
+  expect(await c).toBe("content");
+  expect(calls).toEqual(["root", "selected"]);
+  first.resolve("root");
+  await Promise.all([a,b]);
+  expect(calls).toEqual(["root", "selected", "child"]);
 });

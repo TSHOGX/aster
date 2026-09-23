@@ -17,6 +17,7 @@ export class ResourceStore {
   private flights = new Map<string, Flight>();
   private queue: Flight[] = [];
   private running = 0;
+  private directoryReads = new Set<string>();
   private fileReads = new Map<string, number>();
   private bytes = 0;
   private generation = 0;
@@ -121,11 +122,14 @@ export class ResourceStore {
     const now = performance.now();
     this.queue.sort((a,b)=>(a.priority-(now-a.queued)/1000)-(b.priority-(now-b.queued)/1000) || Number(a.key.project===this.lastProject)-Number(b.key.project===this.lastProject));
     while (this.running < 4) {
-      const at = this.queue.findIndex(f=>!this.isFile(f) || (this.fileReads.get(f.key.project)||0)<2);
+      const at = this.queue.findIndex(f =>
+        (!this.isFile(f) || (this.fileReads.get(f.key.project) || 0) < 2) &&
+        (f.key.kind !== "directory" || !this.directoryReads.has(f.key.project)));
       if (at<0) break;
       const f = this.queue.splice(at,1)[0];
       this.running++; f.started=true; f.queueDone(); this.lastProject=f.key.project;
       if (this.isFile(f)) this.fileReads.set(f.key.project,(this.fileReads.get(f.key.project)||0)+1);
+      if (f.key.kind === "directory") this.directoryReads.add(f.key.project);
       void this.run(f);
     }
   }
@@ -148,6 +152,7 @@ export class ResourceStore {
       f.reject(e);
     } finally {
       this.running--;
+      if (f.key.kind === "directory") this.directoryReads.delete(f.key.project);
       if(this.isFile(f)) this.fileReads.set(f.key.project,Math.max(0,(this.fileReads.get(f.key.project)||1)-1));
       if (again && !f.controller.signal.aborted && f.consumers) { f.queued=performance.now(); f.queueDone=startTiming(f.key.kind,"queue"); this.queue.push(f); }
       this.pump();

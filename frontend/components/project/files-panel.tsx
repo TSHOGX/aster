@@ -250,7 +250,7 @@ export function FilesPanel({
                     ? tr(
                         "Directory view exceeds its display budget. Close another directory and retry.",
                       )
-                    : String(e),
+                    : e instanceof Error ? e.message : String(e),
               },
             }));
         }
@@ -562,10 +562,10 @@ export function FilesPanel({
   };
   const editFile = () =>
     void act(async () => {
-      const blob = await readPreview(
-        fileURL(project.id, selected),
-        new AbortController().signal,
-        1 << 20,
+      const blob = await resources.read(
+        { project: project.id, kind: "file", identity: fileURL(project.id, selected) },
+        signal => readPreview(fileURL(project.id, selected), signal, 1 << 20),
+        reads.current.signal, 0,
       );
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         await blob.arrayBuffer(),
