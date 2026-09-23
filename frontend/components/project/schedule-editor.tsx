@@ -114,10 +114,12 @@ export function ScheduleEditor({
       selectedTarget?.id === session &&
       selectedTarget.project_id === project &&
       selectedTarget.deletion === 0);
+  const titleValid = !!title.trim() && new TextEncoder().encode(title).length <= 256 && !title.includes("\0");
+  const promptValid = !!prompt.trim() && !prompt.includes("\0");
   const valid =
     !!project &&
-    !!title.trim() &&
-    !!prompt.trim() &&
+    titleValid &&
+    promptValid &&
     cron !== null &&
     targetValid &&
     (recurrenceUnchanged || previewValid);
@@ -302,10 +304,12 @@ export function ScheduleEditor({
             required
             maxLength={256}
             aria-label={tr("Task name")}
+            aria-invalid={!!title && !titleValid}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
           {!title.trim() && <small>{tr("Enter a task name.")}</small>}
+          {!!title.trim() && !titleValid && <small role="alert">{tr("This task name is too long or contains an invalid character.")}</small>}
         </label>
         <label>
           {tr("Instructions")}

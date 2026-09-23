@@ -1,5 +1,10 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Starting": "正在启动",
+  "Stopping": "正在停止",
+
+  "This task name is too long or contains an invalid character.": "任务名称过长或包含无效字符。",
+
   "Upcoming occurrences": "后续执行时间",
   "Expected times after resuming": "恢复后预计执行时间",
   "Missed occurrences are coalesced into one run. These are planned times, not guaranteed start times.": "错过的执行时间会合并为一次执行。以上为计划时间，不保证在该时刻开始。",

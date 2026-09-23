@@ -1,4 +1,9 @@
 export const EN = {
+  "Starting": "Starting",
+  "Stopping": "Stopping",
+
+  "This task name is too long or contains an invalid character.": "This task name is too long or contains an invalid character.",
+
   "Upcoming occurrences": "Upcoming occurrences",
   "Expected times after resuming": "Expected times after resuming",
   "Missed occurrences are coalesced into one run. These are planned times, not guaranteed start times.": "Missed occurrences are coalesced into one run. These are planned times, not guaranteed start times.",

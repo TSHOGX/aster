@@ -833,6 +833,10 @@ function RunHistory({
         return tr("Queued");
       case "running":
         return tr("Running");
+      case "starting":
+        return tr("Starting");
+      case "stopping":
+        return tr("Stopping");
       case "completed":
         return tr("Completed");
       case "failed":

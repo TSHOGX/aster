@@ -27,10 +27,12 @@ async function setup(
   const saves: Schedule[] = [],
     runs: string[] = [],
     previews: { cron: string; timezone: string }[] = [];
+  let overviewReads = 0;
   let conflicted = false,
     lostCreate = false,
     lostRun = false;
   await page.route("**/api/schedules?*", (route) => {
+    overviewReads++;
     const q = new URL(route.request().url()).searchParams;
     const items = [...tasks.values()].filter(
       (t) =>
@@ -138,7 +140,7 @@ async function setup(
       return route.fallback();
     },
   );
-  return { ...base, tasks, saves, runs, previews };
+  return { ...base, tasks, saves, runs, previews, overviewReads: () => overviewReads };
 }
 async function createDraft(page: Page) {
   await page.goto("/?view=schedules");
@@ -465,7 +467,9 @@ test("a late pause response cannot replace another selected task", async ({
     await expect(page.locator(".schedule-reading h2")).toHaveText(
       "Another selected task",
     );
+    const beforeRefresh = fixture.overviewReads();
     release();
+    await expect.poll(() => fixture.overviewReads()).toBeGreaterThan(beforeRefresh);
     await expect(page.locator(".schedule-reading h2")).toHaveText(
       "Another selected task",
     );
@@ -492,4 +496,14 @@ test("upcoming occurrences load on demand and use the schedule timezone", async 
     "09:00 GMT+8",
   );
   expect(fixture.previews).toHaveLength(1);
+});
+
+test("multibyte task names honor the server limit before saving", async ({ page }) => {
+  await setup(page);
+  const editor = await createDraft(page);
+  await editor.getByRole("textbox", { name: "Task name", exact: true }).fill("研".repeat(100));
+  await expect(editor.getByRole("alert")).toContainText("too long");
+  await expect(editor.getByRole("button", { name: "Create task", exact: true })).toBeDisabled();
+  await editor.getByRole("textbox", { name: "Task name", exact: true }).fill("每日研究");
+  await expect(editor.getByRole("button", { name: "Create task", exact: true })).toBeEnabled();
 });

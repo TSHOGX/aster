@@ -246,12 +246,15 @@ export function FilesPanel({
             entries: t[path]?.entries || [],
             next: t[path]?.next,
             after: t[path]?.after,
+            notice: t[path]?.notice,
             loading: true,
           },
         }));
         try {
           let cursor = after;
-          let notice = "";
+          // A queued watch refresh of the reset first page must not erase the
+          // explanation before the user can see it. Paging away clears it.
+          let notice = after ? "" : treeRef.current[path]?.notice || "";
           let page: FilePage;
           try {
             page = await readDirectory(

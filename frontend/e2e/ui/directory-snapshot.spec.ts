@@ -6,10 +6,12 @@ test("an expired directory continuation resets one bounded page with a truthful 
 }) => {
   await workspaceFixture(page);
   let expired = false;
+  let firstPageReads = 0;
   await page.route("**/api/projects/battery/files?**", (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get("path")) return route.fallback();
     const cursor = url.searchParams.get("after");
+    if (!cursor) firstPageReads++;
     if (cursor === "expired") {
       expired = true;
       return route.fulfill({
@@ -52,6 +54,12 @@ test("an expired directory continuation resets one bounded page with a truthful 
   await expect(
     page.getByRole("button", { name: "entry-000.txt", exact: true }),
   ).toHaveCount(1);
+  const beforeRefresh = firstPageReads;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("fixture-resource-event", {
+    detail: { resource_kind: "files", payload: { reset: true, reason: "changed" } },
+  })));
+  await expect.poll(() => firstPageReads).toBeGreaterThan(beforeRefresh);
+  await expect(page.getByText("Directory changed. Showing the first page.", { exact: true })).toBeVisible();
   await page
     .locator(".files-panel")
     .getByRole("button", { name: "Next page", exact: true })
