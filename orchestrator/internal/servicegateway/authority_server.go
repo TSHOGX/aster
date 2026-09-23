@@ -10,6 +10,7 @@ import (
 )
 
 const AuthorityPath = "/gateway/v1/"
+const AuthorityVersion = 1
 
 type authorityCommand struct {
 	Request  product.ServiceRequest `json:"request"`

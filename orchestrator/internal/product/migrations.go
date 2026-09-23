@@ -64,6 +64,16 @@ var expectedSchemas = sync.OnceValues(func() ([]string, error) {
 	return out, nil
 })
 
+// SchemaIdentity describes this executable's target DDL without opening a
+// product database. Candidate inspection cannot acquire or mutate live state.
+func SchemaIdentity() (version int, digest string, err error) {
+	expected, err := expectedSchemas()
+	if err != nil {
+		return 0, "", err
+	}
+	return len(expected), "sha256:" + expected[len(expected)-1], nil
+}
+
 func knownSchema(ctx context.Context, q queryer) (int, error) {
 	expected, err := expectedSchemas()
 	if err != nil {

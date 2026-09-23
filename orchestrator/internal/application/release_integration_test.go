@@ -232,7 +232,22 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	a := &releaseApp{t: t, ctx: ctx, root: root, binary: filepath.Join(root, "orchestrator"), config: filepath.Join(root, "application.json"), origin: "http://127.0.0.1:18192", uid: uint32(uid), gid: uint32(gid), client: &http.Client{Jar: jar, Timeout: 30 * time.Second}}
 	t.Cleanup(a.stop)
 	t.Cleanup(a.stopGateway)
+	candidate := a.cli("release-identity", "--config", a.config)
+	if _, err = os.Stat(filepath.Join(root, "state/product.db")); !os.IsNotExist(err) {
+		t.Fatal("candidate inspection opened application state", err)
+	}
 	a.start()
+	current := a.cli("diagnostics", "--socket", filepath.Join(root, "state/control.sock"))["release_identity"]
+	candidateJSON, _ := json.Marshal(candidate)
+	currentJSON, _ := json.Marshal(current)
+	liveCandidate := a.cli("release-identity", "--config", a.config)
+	liveCandidateJSON, _ := json.Marshal(liveCandidate)
+	if !bytes.Equal(candidateJSON, liveCandidateJSON) {
+		t.Fatal("inspection changed while owner holds Store lock", candidate, liveCandidate)
+	}
+	if !bytes.Equal(candidateJSON, currentJSON) {
+		t.Fatal("startup identity differs from inspected candidate", candidate, current)
+	}
 	a.startGateway()
 	a.request("POST", "/api/auth/login", map[string]string{"username": "researcher", "password": "isolated-browser-fixture"}, 200)
 	return a

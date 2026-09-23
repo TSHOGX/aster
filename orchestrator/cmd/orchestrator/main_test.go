@@ -50,7 +50,7 @@ func TestCredentialCLIUsesAtomicRegistryAndNeverPrintsHashes(t *testing.T) {
 	}
 }
 func TestEntryPointRefusesRetiredAndImplicitConfiguration(t *testing.T) {
-	for _, args := range [][]string{{"serve"}, {"serve", "--deployment", "old.json"}, {"session"}, {"user", "add", "--file", filepath.Join(t.TempDir(), "users"), "--username", "alice", "--keep-sessions"}} {
+	for _, args := range [][]string{{"release-identity"}, {"serve"}, {"serve", "--deployment", "old.json"}, {"session"}, {"user", "add", "--file", filepath.Join(t.TempDir(), "users"), "--username", "alice", "--keep-sessions"}} {
 		if err := run(context.Background(), args, strings.NewReader("password"), &bytes.Buffer{}); err == nil {
 			t.Fatal("unsupported command accepted", args)
 		}

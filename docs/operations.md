@@ -209,6 +209,31 @@ build is refused before it can write. `drain-abort` applies before activation;
 once activating, use the replacement completion or rollback path.
 
 
+## Candidate identity
+
+Inspect a replacement using that executable itself and the intended configuration:
+
+```sh
+/path/to/candidate/orchestrator release-identity --config /etc/batterygpt/application.json
+```
+
+This command reads the pinned guest manifest and reviewed content trees, hashes
+its running executable inode, and reports schema version/digest, configuration
+and content digests, gateway protocol and a compatibility digest. It does not
+open the product Store, acquire its lock, contact the engine/provider or create
+application state. It can run while the current owner is serving. Raw configuration,
+content and credential values are not returned. `diagnostics.release_identity`
+reports the running owner's corresponding startup identity.
+
+The compatibility digest excludes executable bytes, so separately built candidates
+can describe the same inputs. Configuration, configuration base directory, reviewed
+content, guest release or schema changes alter it. Startup publishes the exact
+measured content revisions; files that change before upload are refused by the
+publisher. A matching digest describes compatibility inputs and does not grant
+permission to bypass admission/drain or prove arbitrary binary compatibility.
+Active-owner handoff qualification remains separate; current activation still
+requires quiescence.
+
 ## Gateway replacement
 
 Close application admission with `drain`, retain its owner/generation, and let

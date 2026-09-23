@@ -128,7 +128,7 @@ func (a *GatewayApplication) controlHandler() http.Handler {
 		for n, gateway := range a.gateways {
 			checks[a.config.Gateways[n].Audience] = gateway.AuthorityStats()
 		}
-		writeControl(w, map[string]any{"authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "authority_protocol": 1})
+		writeControl(w, map[string]any{"authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "authority_protocol": servicegateway.AuthorityVersion})
 	})
 	mux.HandleFunc("POST /stop", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

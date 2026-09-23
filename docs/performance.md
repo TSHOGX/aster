@@ -935,3 +935,13 @@ instance. Expected and explicitly acknowledged rollback candidates can still
 upgrade recognized schemas without losing accepted turns. An activating state
 from before executable-bound handoff is refused. Real executable activation,
 rollback and independent gateway/native outage fixtures pass with this ordering.
+
+
+`release-identity --config FILE` reports a candidate's measured executable and
+compatibility inputs without opening application state or contacting dependencies.
+Startup uses the same preparation and published content revisions. Unit tests
+verify stable identities, configuration/content invalidation, pinned manifest
+validation and omission of raw configuration/credentials. The actual executable
+fixture compares candidate identity before startup and while the owner holds its
+Store lock against `diagnostics.release_identity`. Matching inputs remain a
+prerequisite, not proof of active-update safety or arbitrary rollback support.

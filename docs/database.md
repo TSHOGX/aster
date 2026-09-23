@@ -104,3 +104,9 @@ request bodies are never stored in these tables. Active slots are indexed releas
 blockers even after owner restart or turn completion. They have no expiry: only
 acknowledged forwarding settlement or a replacement gateway that has acquired the
 exclusive lifetime lock can retire them. Registration uses generation CAS.
+
+
+Candidate inspection obtains the compiled schema fingerprint from an in-memory
+schema construction. It never inspects or mutates the live product database.
+The application's startup identity and candidate CLI therefore agree even while
+the current owner holds the exclusive Store lock.

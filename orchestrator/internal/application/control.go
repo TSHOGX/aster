@@ -141,7 +141,7 @@ func (a *Application) controlHandler() http.Handler {
 			if !decodeControl(w, r, &body) {
 				return
 			}
-			state, err := a.Store.FinishRelease(r.Context(), body.Owner, body.Generation, a.executableDigest, action == "rollback")
+			state, err := a.Store.FinishRelease(r.Context(), body.Owner, body.Generation, a.releaseIdentity.ExecutableDigest, action == "rollback")
 			if err != nil {
 				http.Error(w, err.Error(), 409)
 				return
@@ -156,7 +156,8 @@ func (a *Application) controlHandler() http.Handler {
 			return
 		}
 		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
-		out["application_digest"] = a.executableDigest
+		out["application_digest"] = a.releaseIdentity.ExecutableDigest
+		out["release_identity"] = a.releaseIdentity
 		release, err := a.Store.ReleaseState(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), 500)

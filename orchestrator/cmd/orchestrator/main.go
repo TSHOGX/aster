@@ -32,7 +32,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator gateway --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
 		return err
 	}
 	action := args[0]
@@ -62,6 +62,23 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			return errors.New("gateway-stop requires --owner ID and --generation N")
 		}
 		return application.Control(ctx, *socket, "POST", "/stop", map[string]any{"owner": *owner, "generation": *generation}, output)
+	case "release-identity":
+		name := flags.String("config", "", "candidate application configuration")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *name == "" || flags.NArg() != 0 {
+			return errors.New("release-identity requires --config FILE")
+		}
+		cfg, err := application.LoadConfig(*name)
+		if err != nil {
+			return err
+		}
+		identity, err := application.InspectRelease(cfg)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(identity)
 	case "gateway":
 		name := flags.String("config", "", "versioned Project application configuration")
 		if err := flags.Parse(args[1:]); err != nil {

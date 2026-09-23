@@ -2,11 +2,8 @@ package application
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,36 +18,35 @@ import (
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/producthttp"
-	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 )
 
 type Application struct {
-	Config           Config
-	Store            *product.Store
-	Backend          *khora.Backend
-	Lifecycle        *product.Lifecycle
-	Agents           *product.Agents
-	Terminals        *product.Terminals
-	Files            *product.Files
-	Shares           *product.Shares
-	Captures         *product.Captures
-	Auth             *producthttp.Authentication
-	Workers          *product.Workers
-	BrowserAddress   string
-	logger           *slog.Logger
-	API              *producthttp.Server
-	ctx              context.Context
-	cancel           context.CancelFunc
-	group            sync.WaitGroup
-	servers          []*http.Server
-	listeners        []net.Listener
-	publication      sync.Mutex
-	closeOnce        sync.Once
-	controlServer    *http.Server
-	executableDigest string
-	retireOnce       sync.Once
+	Config          Config
+	Store           *product.Store
+	Backend         *khora.Backend
+	Lifecycle       *product.Lifecycle
+	Agents          *product.Agents
+	Terminals       *product.Terminals
+	Files           *product.Files
+	Shares          *product.Shares
+	Captures        *product.Captures
+	Auth            *producthttp.Authentication
+	Workers         *product.Workers
+	BrowserAddress  string
+	logger          *slog.Logger
+	API             *producthttp.Server
+	ctx             context.Context
+	cancel          context.CancelFunc
+	group           sync.WaitGroup
+	servers         []*http.Server
+	listeners       []net.Listener
+	publication     sync.Mutex
+	closeOnce       sync.Once
+	controlServer   *http.Server
+	releaseIdentity ReleaseIdentity
+	retireOnce      sync.Once
 }
 
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application, result error) {
@@ -64,36 +60,18 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 			app.Close()
 		}
 	}()
-	if err := cfg.Validate(); err != nil {
-		return app, err
-	}
-	// /proc/self/exe names the running inode even if the deployment path changes.
-	executable, err := os.Open("/proc/self/exe")
+	prepared, err := prepareRelease(cfg)
 	if err != nil {
 		return app, err
 	}
-	hash := sha256.New()
-	_, err = io.Copy(hash, executable)
-	err = errors.Join(err, executable.Close())
-	if err != nil {
-		return app, err
-	}
-	app.executableDigest = fmt.Sprintf("sha256:%x", hash.Sum(nil))
-	manifestFile, err := os.Open(cfg.Template.Manifest)
-	if err != nil {
-		return app, err
-	}
-	cfg.Manifest, err = runtimerelease.Load(manifestFile, cfg.Template.Digest)
-	manifestFile.Close()
-	if err != nil {
-		return app, err
-	}
+	cfg = prepared.config
 	app.Config = cfg
+	app.releaseIdentity = prepared.identity
 
 	if err := os.MkdirAll(cfg.StateDirectory, 0700); err != nil {
 		return app, err
 	}
-	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), app.executableDigest, cfg.RollbackCandidate)
+	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), app.releaseIdentity.ExecutableDigest, cfg.RollbackCandidate)
 	if err != nil {
 		return app, err
 	}
@@ -123,7 +101,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID); err != nil {
 		return app, err
 	}
-	profile, err := app.publish(startup)
+	profile, err := app.publishPrepared(startup, prepared.publications)
 	if err != nil {
 		return app, err
 	}
@@ -212,19 +190,19 @@ func (a *Application) server(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return a.ctx }}
 }
 func (a *Application) publish(ctx context.Context) (product.Profile, error) {
+	sources, err := readPublications(a.Config)
+	if err != nil {
+		return a.Config.Profile(), err
+	}
+	return a.publishPrepared(ctx, sources)
+}
+func (a *Application) publishPrepared(ctx context.Context, sources []preparedPublication) (product.Profile, error) {
 	a.publication.Lock()
 	defer a.publication.Unlock()
 	profile := a.Config.Profile()
 	publisher := content.Publisher{Repository: a.Store, Backend: a.Backend}
-	for _, source := range []struct{ path, purpose, destination string }{{a.Config.Content.AgentConfig, "config", "/opt/agent-config"}, {a.Config.Content.SharedAssets, "assets", "/opt/shared-assets"}} {
-		if source.path == "" {
-			continue
-		}
-		revision, err := content.Read(source.path)
-		if err != nil {
-			return profile, err
-		}
-		volume, err := publisher.Publish(ctx, source.purpose, revision, a.Config.Content.VolumeBytes)
+	for _, source := range sources {
+		volume, err := publisher.Publish(ctx, source.purpose, source.revision, a.Config.Content.VolumeBytes)
 		if err != nil {
 			return profile, err
 		}
@@ -232,6 +210,7 @@ func (a *Application) publish(ctx context.Context) (product.Profile, error) {
 	}
 	return profile, profile.Validate()
 }
+
 func (a *Application) Run(ctx context.Context) error {
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.Workers.Run(a.ctx) }()
