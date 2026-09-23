@@ -433,11 +433,13 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 		a.acknowledge(ctx, attachment, &committed, func(err error) { _ = writer.CloseWithError(err) })
 	}()
 	defer func() { cancel(); <-ackDone }()
-	decoder := agentwire.NewDecoder(reader)
+	decoder, decoded := decodeAgentFrames(ctx, reader)
+	defer func() { cancel(); reader.Close(); <-decoded }()
 	for {
-		f, err := decoder.Next()
+		next := decoder.next()
+		f, err := next.frame, next.err
 		if err != nil {
-			if !synchronized.Load() && errors.Is(err, agentwire.ErrFrame) && decoder.Recoverable() {
+			if !synchronized.Load() && errors.Is(err, agentwire.ErrFrame) && next.recoverable {
 				continue
 			}
 			var exit *sandbox.ProcessExitError
@@ -483,7 +485,7 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 				return err
 			}
 		case "record":
-			sequence, err := a.Store.IngestAgent(ctx, i, f)
+			sequence, err := a.Store.IngestAgentBatch(ctx, i, decoder.batch(f))
 			if err != nil {
 				return err
 			}

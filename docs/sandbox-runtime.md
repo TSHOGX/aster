@@ -74,3 +74,12 @@ cannot enter during retry backoff. Stop during backoff or compaction settles as
 canceled without dispatching a canceled preflight prompt. The settlement event
 uses reserved journal capacity. Invalid, foreign or unapplied settlement events
 fail closed; there is no timeout or `get_state.isStreaming` inference of completion.
+
+
+Live host ingestion commits adjacent records from the same incarnation in bounded
+batches: at most sixteen records/256 KiB, with one larger legal frame alone and a
+five-millisecond collection bound. The decoder has its own sixteen-record/256 KiB
+credit limit. Control/ownership boundaries preserve order. Raw identities, command
+outcomes and watermarks commit atomically; a failed batch returns no ACK. This
+amortizes durable transaction cost without dropping native evidence or weakening
+FULL durability, and does not change the guest wire or journal format.

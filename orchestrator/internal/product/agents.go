@@ -150,76 +150,114 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 	return f, err
 }
 
-// IngestAgent commits raw record identity and its projection together. A caller
-// may ACK only the returned watermark, and only after this transaction commits.
+// IngestAgent commits raw identity and authoritative command/message effects
+// together. A caller may ACK only the watermark returned after commit. Display
+// projection advances independently from this durable evidence.
 func (s *Store) IngestAgent(ctx context.Context, i Incarnation, f agentwire.Frame) (uint64, error) {
 	return s.ingestAgent(ctx, i, f, false)
 }
+
+const maxAgentIngestRecords = 16
+const maxAgentIngestBytes = 256 << 10
+
+// IngestAgentBatch amortizes durable commits for adjacent records of one original
+// incarnation. A single larger legal record progresses alone. No watermark from
+// any member escapes a failed transaction.
+func (s *Store) IngestAgentBatch(ctx context.Context, i Incarnation, frames []agentwire.Frame) (uint64, error) {
+	return s.ingestAgentBatch(ctx, i, frames, false)
+}
 func (s *Store) ingestAgent(ctx context.Context, i Incarnation, f agentwire.Frame, recovery bool) (uint64, error) {
-	if f.Kind != "record" || f.Session != i.SessionID || f.Incarnation != i.ID || f.Owner != i.Owner || f.Sequence == 0 || len(f.Payload) > agentwire.MaxFrame-1024 || !json.Valid(f.Payload) {
+	return s.ingestAgentBatch(ctx, i, []agentwire.Frame{f}, recovery)
+}
+func (s *Store) ingestAgentBatch(ctx context.Context, i Incarnation, frames []agentwire.Frame, recovery bool) (uint64, error) {
+	if len(frames) == 0 || len(frames) > maxAgentIngestRecords {
 		return 0, ErrInvalid
 	}
-	digest := creationDigest(f.CommandID, f.TurnID, f.State, string(f.Payload))
+	bytes := 0
+	for _, f := range frames {
+		if f.Kind != "record" || f.Session != i.SessionID || f.Incarnation != i.ID || f.Owner != i.Owner || f.Sequence == 0 || len(f.Payload) > agentwire.MaxFrame-1024 || !json.Valid(f.Payload) {
+			return 0, ErrInvalid
+		}
+
+		bytes += len(f.Payload) + 1024
+	}
+	if len(frames) > 1 && bytes > maxAgentIngestBytes {
+		return 0, ErrInvalid
+	}
 	var watermark uint64
-	err := s.writeClass(ctx, ingestWrite, i.ProjectID, int64(len(f.Payload)+1024), func(tx *sql.Tx) error {
-		var current Incarnation
-		var err error
-		if recovery {
-			current, err = scanIncarnation(tx.QueryRowContext(ctx, `SELECT `+incarnationColumns+` FROM agent_incarnations WHERE id=? AND state='exited' AND recovery_state='replaying'`, i.ID))
-		} else {
-			current, err = liveIncarnation(ctx, tx, i.SessionID)
-		}
-		if err != nil {
-			return err
-		}
-		if current.ID != i.ID || current.Owner != i.Owner {
-			return ErrConflict
-		}
-		watermark = current.Ingested
-		if f.Sequence <= watermark {
-			var old string
-			if err := tx.QueryRowContext(ctx, `SELECT digest FROM agent_records WHERE incarnation_id=? AND sequence=?`, i.ID, f.Sequence).Scan(&old); err != nil {
+	err := s.writeClass(ctx, ingestWrite, i.ProjectID, int64(bytes), func(tx *sql.Tx) error {
+		for _, f := range frames {
+			next, err := s.ingestAgentRecord(ctx, tx, i, f, recovery)
+			if err != nil {
 				return err
 			}
-			if old != digest {
-				return ErrConflict
-			}
-			return nil
+			watermark = next
 		}
-		if f.Sequence != watermark+1 {
-			return ErrConflict
-		}
-		if f.TurnID != "" {
-			var found string
-			if err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE id=? AND session_id=? AND project_id=?`, f.TurnID, i.SessionID, i.ProjectID).Scan(&found); err != nil {
-				return missing(err)
-			}
-		}
-		if f.CommandID != "" {
-			var found string
-			if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_commands WHERE id=? AND incarnation_id=?`, f.CommandID, i.ID).Scan(&found); err != nil {
-				return missing(err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_records(incarnation_id,sequence,digest,command_id,turn_id,kind,payload) VALUES(?,?,?,?,?,?,?)`, i.ID, f.Sequence, digest, f.CommandID, f.TurnID, f.State, []byte(f.Payload)); err != nil {
-			return err
-		}
-		if err = s.projectAgentRecord(ctx, tx, i, f); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE agent_incarnations SET ingested_sequence=?,last_work_at=? WHERE id=? AND owner=?`, f.Sequence, s.timestamp(), i.ID, i.Owner); err != nil {
-			return err
-		}
-		watermark = f.Sequence
-		// Native content has its own derived frontier. Publishing a second outbox
-		// event for every raw token recreates the amplification that view commits
-		// already coalesce. Control metadata changes only with durable outcomes.
-		if f.State == "native" {
-			return nil
-		}
-		return s.bumpSession(ctx, tx, i.ProjectID, i.SessionID, "session.control")
+		return nil
 	})
-	return watermark, err
+	if err != nil {
+		return 0, err
+	}
+	return watermark, nil
+}
+func (s *Store) ingestAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnation, f agentwire.Frame, recovery bool) (uint64, error) {
+	digest := creationDigest(f.CommandID, f.TurnID, f.State, string(f.Payload))
+	var current Incarnation
+	var err error
+	if recovery {
+		current, err = scanIncarnation(tx.QueryRowContext(ctx, `SELECT `+incarnationColumns+` FROM agent_incarnations WHERE id=? AND state='exited' AND recovery_state='replaying'`, i.ID))
+	} else {
+		current, err = liveIncarnation(ctx, tx, i.SessionID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if current.ID != i.ID || current.Owner != i.Owner {
+		return 0, ErrConflict
+	}
+	watermark := current.Ingested
+	if f.Sequence <= watermark {
+		var old string
+		if err := tx.QueryRowContext(ctx, `SELECT digest FROM agent_records WHERE incarnation_id=? AND sequence=?`, i.ID, f.Sequence).Scan(&old); err != nil {
+			return 0, err
+		}
+		if old != digest {
+			return 0, ErrConflict
+		}
+		return watermark, nil
+	}
+	if f.Sequence != watermark+1 {
+		return 0, ErrConflict
+	}
+	if f.TurnID != "" {
+		var found string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE id=? AND session_id=? AND project_id=?`, f.TurnID, i.SessionID, i.ProjectID).Scan(&found); err != nil {
+			return 0, missing(err)
+		}
+	}
+	if f.CommandID != "" {
+		var found string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_commands WHERE id=? AND incarnation_id=?`, f.CommandID, i.ID).Scan(&found); err != nil {
+			return 0, missing(err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_records(incarnation_id,sequence,digest,command_id,turn_id,kind,payload) VALUES(?,?,?,?,?,?,?)`, i.ID, f.Sequence, digest, f.CommandID, f.TurnID, f.State, []byte(f.Payload)); err != nil {
+		return 0, err
+	}
+	if err = s.projectAgentRecord(ctx, tx, i, f); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_incarnations SET ingested_sequence=?,last_work_at=? WHERE id=? AND owner=?`, f.Sequence, s.timestamp(), i.ID, i.Owner); err != nil {
+		return 0, err
+	}
+	watermark = f.Sequence
+	// Native content has its own derived frontier. Publishing a second outbox
+	// event for every raw token recreates the amplification that view commits
+	// already coalesce. Control metadata changes only with durable outcomes.
+	if f.State == "native" {
+		return watermark, nil
+	}
+	return watermark, s.bumpSession(ctx, tx, i.ProjectID, i.SessionID, "session.control")
 }
 func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnation, f agentwire.Frame) error {
 	if f.State == "native" {
