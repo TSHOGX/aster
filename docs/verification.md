@@ -127,3 +127,11 @@ measurement. Their bounded requests, all attempts, failures and latencies are
 reported separately as `projection_observer`, preserving the existing HTTP
 sample distribution. This removes delays caused by waiting for a later regular
 mutation round; the two-second projection-observation budget is unchanged.
+
+
+The projected-query scale test uses one warmup and thirty samples per size. Run
+`PROJECT_DISPLAY_SCALE=1 go test ./internal/product -run '^TestDisplayReadScale$' -count=1 -timeout 3m -v`
+from `orchestrator/` to include 100,000 synthetic records. It requires invariant
+visible content, an indexed page plan and a logical database below 1 GiB. The
+[comparison record](../dev/measurements/conversation-scale.json) includes a retained
+raw-query baseline without restoring that path to production.

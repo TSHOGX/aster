@@ -1189,3 +1189,29 @@ maximum round 2.532 seconds. An initial native-pressure timeout remains recorded
 the corrected harness and two focused repetitions pass without relaxing its
 deadline. Passing frame diagnostics do not establish the cause of that first
 failure. No live deployment or existing image was modified.
+
+
+## Controlled conversation-query scaling
+
+A [retained comparison](../dev/measurements/conversation-scale.json) uses the same
+synthetic two-item visible content at 1,000, 10,000 and 100,000 raw records, with
+one warmup and thirty measured Store queries at each scale. A canonical content
+hash matches across all scales and both revisions. Nearest-rank p95 values are:
+
+| Raw records | Retained raw reconstruction | Current projected query |
+| --- | --- | --- |
+| 1,000 | 6.81 ms | 0.23 ms |
+| 10,000 | 62.53 ms | 0.23 ms |
+| 100,000 | 792.53 ms | 0.40 ms |
+
+All current page query plans use the scoped ordering index. Reader/writer pool
+waits are zero in these serial trials. Raw payloads total 62 KB through 6.20 MB;
+current logical databases range from 1.10 MB to 39.82 MB. Exact current response
+sizes are 1,911/1,913/1,917 bytes: frontier and cursor lengths change despite equal
+visible content. The record includes every sample, query plan and byte count.
+
+These are warm Store-query timings, excluding separate JSON serialization,
+HTTP/authentication and browser rendering. They establish query scaling for the
+fixture, not contention or an end-to-end SLO. Run the largest fixture explicitly
+with `PROJECT_DISPLAY_SCALE=1`; default tests retain the two smaller scales. The
+old implementation exists only in the retained comparison checkout and evidence.
