@@ -161,3 +161,80 @@ test("conversation hints leave sibling sessions, terminals and files alone", asy
     "/api/projects/battery/sessions/analysis/view/head",
   ]);
 });
+
+for (const event of [
+  {
+    path: "reports/renamed.md",
+    old_path: "reports/summary.md",
+    operation: "rename",
+    entry_type: "file",
+  },
+  { path: "reports/summary.md", operation: "remove", entry_type: "file" },
+  {
+    path: "archive",
+    old_path: "reports",
+    operation: "rename",
+    entry_type: "directory",
+  },
+])
+  for (const editing of [false, true]) {
+    test(`external ${event.operation} ${event.entry_type} exposes the missing selected file, editing=${editing}`, async ({
+      page,
+    }) => {
+      await workspaceFixture(page);
+      let missing = false;
+      await page.route("**/files/content?*", (route) =>
+        missing &&
+        new URL(route.request().url()).searchParams.get("path") ===
+          "reports/summary.md"
+          ? route.fulfill({
+              status: 404,
+              json: { error: "File no longer exists." },
+            })
+          : route.fallback(),
+      );
+      await page.goto("/?project=battery&session=analysis");
+      await page.getByRole("link", { name: "the research report" }).click();
+      await expect(page.locator(".file-markdown")).toContainText(
+        "Cycle performance report",
+      );
+      await expect
+        .poll(() =>
+          page.evaluate(() => Reflect.get(window, "fixtureReadyResources")),
+        )
+        .toBeGreaterThan(0);
+      if (editing) {
+        await page.getByLabel("File actions", { exact: true }).click();
+        await page
+          .getByRole("menuitem", { name: "Edit text", exact: true })
+          .click();
+        await page
+          .getByLabel("Edit reports/summary.md", { exact: true })
+          .fill("Retained unsaved edit");
+      }
+      missing = true;
+      await page.evaluate(
+        (event) =>
+          window.dispatchEvent(
+            new CustomEvent("fixture-file-event", { detail: event }),
+          ),
+        event,
+      );
+      if (editing) {
+        await expect(
+          page.getByText(
+            "This file is unavailable. Your unsaved text has been kept.",
+            { exact: true },
+          ),
+        ).toBeVisible();
+        await expect(
+          page.getByLabel("Edit reports/summary.md", { exact: true }),
+        ).toContainText("Retained unsaved edit");
+      } else {
+        await expect(page.locator(".file-markdown")).toHaveCount(0);
+        await expect(
+          page.getByRole("region", { name: "File reports/summary.md" }),
+        ).toContainText("File no longer exists.");
+      }
+    });
+  }

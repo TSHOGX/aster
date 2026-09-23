@@ -317,12 +317,24 @@ export function FilesPanel({
       )
         setChanged(text !== originalRef.current);
       return true;
-    } catch {
-      if (alive.current && selectedRef.current === path)
+    } catch (error) {
+      if (alive.current && selectedRef.current === path) {
+        if (
+          error instanceof APIError &&
+          error.status === 404 &&
+          editor.current !== null
+        ) {
+          setChanged(true);
+          setError(
+            tr("This file is unavailable. Your unsaved text has been kept."),
+          );
+          return true;
+        }
         setWatchHealth("stale");
+      }
       return false;
     }
-  }, [resources, project.id]);
+  }, [resources, project.id, tr]);
   useEffect(() => {
     if (!visible || project.state !== "active") return;
     let live = false;

@@ -362,3 +362,71 @@ it("bounds a growing live tail by reacquiring a current page and keeps 64-bit or
     ),
   ).toBe(-1);
 });
+
+it("coalesces superseded navigation into one latest demand behind a held read", async () => {
+  let release!: (value: unknown) => void;
+  const held = new Promise<unknown>((resolve) => {
+    release = resolve;
+  });
+  let first = true;
+  const calls = server((url) => {
+    if (url.pathname.endsWith("/pages")) {
+      if (first) {
+        first = false;
+        return held;
+      }
+      return page([
+        item(Number(url.searchParams.get("around_item")?.slice(1) || 1)),
+      ]);
+    }
+    if (url.pathname.endsWith("/head")) return head();
+    if (url.pathname.endsWith("/turns")) return { turns: [] };
+    return changes("1", "1");
+  });
+  const r = repo();
+  const initial = r.load({ around_item: "i1" });
+  await Promise.resolve();
+  const demands = Array.from({ length: 100 }, (_, n) =>
+    r.load({ around_item: `i${n + 2}` }),
+  );
+  expect(r.workStats()).toEqual({ reads: 0, peakReads: 0, navigation: 1 });
+  release(page([item(1)]));
+  await Promise.all([initial, ...demands]);
+  expect(calls.filter((url) => url.includes("/pages?"))).toHaveLength(2);
+  expect(r.getSnapshot().items[0].id).toBe("i101");
+  expect(r.workStats().navigation).toBe(0);
+});
+
+it("bounds queued ordinary work without consuming the latest-navigation slot", async () => {
+  let release!: (value: unknown) => void;
+  const held = new Promise<unknown>((resolve) => {
+    release = resolve;
+  });
+  let first = true;
+  const calls = server((url) => {
+    if (url.pathname.endsWith("/pages")) {
+      if (first) {
+        first = false;
+        return held;
+      }
+      return page([item(99)]);
+    }
+    if (url.pathname.endsWith("/head")) return head();
+    if (url.pathname.endsWith("/turns")) return { turns: [] };
+    return changes("1", "1");
+  });
+  const r = repo();
+  const initial = r.load();
+  await Promise.resolve();
+  const reads = Array.from({ length: 50 }, (_, n) =>
+    r.load({ before: String(n + 1) }, "older"),
+  );
+  expect(r.workStats().reads).toBe(8);
+  expect(r.getSnapshot().status).toBe("error");
+  const selected = r.load({ around_item: "i99" });
+  release(page([item(1)]));
+  await Promise.all([initial, selected, ...reads]);
+  expect(r.workStats()).toEqual({ reads: 0, peakReads: 8, navigation: 0 });
+  expect(r.getSnapshot().items[0].id).toBe("i99");
+  expect(calls.filter((url) => url.includes("/pages?"))).toHaveLength(2);
+});

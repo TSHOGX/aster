@@ -125,6 +125,11 @@ export class ConversationRepository {
   private abort = new AbortController();
   private navigation = 0;
   private work: Promise<void> = Promise.resolve();
+  private queuedReads = 0;
+  private peakReads = 0;
+  private navigationDemand: { selector: PageSelector; epoch: number } | null =
+    null;
+  private navigationFlight: Promise<void> | null = null;
   private pendingPage: {
     selector: PageSelector;
     mode: "replace" | "older" | "newer";
@@ -185,6 +190,7 @@ export class ConversationRepository {
     this.closed = true;
     this.navigation++;
     this.abort.abort();
+    this.navigationDemand = null;
     clearTimeout(this.retry);
     this.retry = undefined;
     this.listeners.clear();
@@ -193,6 +199,7 @@ export class ConversationRepository {
   }
   clear() {
     this.navigation++;
+    this.navigationDemand = null;
     this.pendingPage = null;
     this.windows = [];
     this.head = null;
@@ -292,9 +299,33 @@ export class ConversationRepository {
         void this.refresh();
     }, 1000);
   }
-  private enqueue(fn: () => Promise<void>): Promise<void> {
-    const next = this.work.then(() => {
-      if (!this.closed) return fn();
+  workStats() {
+    return {
+      reads: this.queuedReads,
+      peakReads: this.peakReads,
+      navigation: Number(!!this.navigationFlight),
+    };
+  }
+  private enqueue(fn: () => Promise<void>, navigation = false): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (!navigation && this.queuedReads >= 8) {
+      this.handle(
+        new Error(
+          "Conversation read capacity reached. Retry after pending reads settle.",
+        ),
+      );
+      return Promise.resolve();
+    }
+    if (!navigation) {
+      this.queuedReads++;
+      this.peakReads = Math.max(this.peakReads, this.queuedReads);
+    }
+    const next = this.work.then(async () => {
+      try {
+        if (!this.closed) await fn();
+      } finally {
+        if (!navigation) this.queuedReads--;
+      }
     });
     this.work = next.catch(() => {});
     return next;
@@ -306,7 +337,29 @@ export class ConversationRepository {
     const epoch = mode === "replace" ? ++this.navigation : this.navigation;
     if (mode === "replace") this.pendingPage = null;
     if (mode === "replace" && !Object.keys(selector).length) this.anchor = "";
-    return this.enqueue(() => this.loadNow(selector, mode, epoch));
+    if (mode !== "replace")
+      return this.enqueue(() => this.loadNow(selector, mode, epoch));
+    this.navigationDemand = { selector, epoch };
+    if (this.navigationFlight) return this.navigationFlight;
+    const flight = this.enqueue(async () => {
+      try {
+        while (this.navigationDemand && !this.closed) {
+          const demand = this.navigationDemand;
+          this.navigationDemand = null;
+          await this.loadNow(demand.selector, "replace", demand.epoch);
+        }
+      } finally {
+        // Release synchronously with the worker's last demand check. A new
+        // microtask demand must not attach to an already-settling old flight.
+        this.navigationFlight = null;
+      }
+    }, true);
+    this.navigationFlight = flight;
+    const release = () => {
+      if (this.navigationFlight === flight) this.navigationFlight = null;
+    };
+    void flight.then(release, release);
+    return flight;
   }
   private async loadNow(
     selector: PageSelector,

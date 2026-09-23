@@ -50,7 +50,9 @@ loading, parse and renderer limits. Cached preview bytes are never editor drafts
 Application fullscreen expands the file workspace without browser fullscreen or
 losing its editor. Escape restores the layout and focus. Hiding files or changing
 Sessions retains edits; switching files/Projects offers save, discard or cancel
-for dirty text. File changes do not overwrite an active editor. Saving does not
+for dirty text. File changes do not overwrite an active editor. If an external rename or deletion
+makes the selected file unavailable, the editor retains its unsaved text and shows
+an explicit unavailable-file notice. Saving does not
 claim atomic conflict detection against concurrent writers.
 
 Conversation state lives in an authenticated memory repository. Pages carry

@@ -39,13 +39,17 @@ export function TurnNavigator({
     newer = indexWindow.next_after;
   const windowRef = useRef(indexWindow);
   const request = useRef<AbortController | null>(null);
+  const pendingDirection = useRef<"older" | "newer" | null>(null);
   const rail = useRef<HTMLDivElement>(null),
     closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     generation = useRef(0),
     first = useRef(true);
   const load = useCallback(
-    async (direction: "older" | "newer" | "refresh" = "refresh") => {
-      if (request.current) return;
+    async function load(direction: "older" | "newer" | "refresh" = "refresh") {
+      if (request.current) {
+        if (direction !== "refresh") pendingDirection.current = direction;
+        return;
+      }
       const old = windowRef.current;
       const cursor =
         direction === "older"
@@ -115,7 +119,11 @@ export function TurnNavigator({
       } finally {
         if (request.current === abort) {
           request.current = null;
-          setLoading(false);
+          const next = pendingDirection.current;
+          pendingDirection.current = null;
+          if (next && version === generation.current && !abort.signal.aborted)
+            void load(next);
+          else setLoading(false);
         }
       }
     },
@@ -128,6 +136,7 @@ export function TurnNavigator({
       generation.current = version + 1;
       request.current?.abort();
       request.current = null;
+      pendingDirection.current = null;
       clearTimeout(timer);
       if (closeTimer.current) clearTimeout(closeTimer.current);
     };
@@ -245,10 +254,7 @@ export function TurnNavigator({
         if (!e.currentTarget.contains(e.relatedTarget as Node)) close();
       }}
     >
-      <div
-        className="turn-rail"
-        ref={rail}
-      >
+      <div className="turn-rail" ref={rail}>
         {older && (
           <button
             type="button"

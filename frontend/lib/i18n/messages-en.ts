@@ -60,6 +60,7 @@ export const EN = {
   "Close a directory before opening another.": "Close a directory before opening another.",
   "The selected file is outside the loaded directory page.": "The selected file is outside the loaded directory page.",
   "Directory view exceeds its display budget. Close another directory and retry.": "Directory view exceeds its display budget. Close another directory and retry.",
+  "This file is unavailable. Your unsaved text has been kept.": "This file is unavailable. Your unsaved text has been kept.",
   "Loading preview…": "Loading preview…",
   "Later turns": "Later turns",
   "This Markdown is shown as plain text to keep the preview responsive.": "This Markdown is shown as plain text to keep the preview responsive.",

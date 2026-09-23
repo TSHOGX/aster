@@ -13,7 +13,11 @@ One authenticated application owns its resource store and Project transports.
 Logout, revocation and scope removal clear affected content and fence late
 callbacks. Exact-key consumers share a request; canceling the last consumer aborts
 it. Dirty generations coalesce a finite invalidation burst into one successor.
-Page and anchor demands remain distinct. Commands and PTYs bypass this scheduler.
+Page and anchor demands remain distinct. The conversation repository separately
+limits serialized ordinary reads to eight and reserves one coalesced navigation
+worker. Superseded target demands collapse to the latest target; excess ordinary
+work reports capacity without consuming that slot. Commands and PTYs bypass these
+schedulers.
 
 The scheduler allows four reads overall, two file/directory reads per Project and
 128 waiting requests. Aging and Project fairness prevent selected content from
@@ -57,7 +61,7 @@ continuations and reading intent; it does not join disconnected history.
 
 One actor/Project resource hub shares an outbox poller and advisory filesystem
 watch. Its replay ring is bounded to 4 MiB/4,096 frames; each of at most sixty-four
-subscribers has a 1 MiB/256-frame queue. Slow consumers resync without blocking
+subscribers has a 1 MiB/256-frame queue. At most 128 scoped hubs coexist. Slow consumers resync without blocking
 fast readers. A thirty-second last-reference grace permits browser rotations.
 Authorization, Project identity and opaque cursors remain scoped. Empty workspaces,
 zero-sequence watches, restart, overflow and actual gaps have explicit semantics.

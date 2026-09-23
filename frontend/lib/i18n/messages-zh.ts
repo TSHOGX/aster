@@ -58,6 +58,7 @@ export const ZH: Record<MessageKey, string> = {
   "Close a directory before opening another.": "请先关闭一个目录，再打开其他目录。",
   "The selected file is outside the loaded directory page.": "所选文件不在当前加载的目录页中。",
   "Directory view exceeds its display budget. Close another directory and retry.": "目录视图已达到显示上限。请关闭其他目录后重试。",
+  "This file is unavailable. Your unsaved text has been kept.": "此文件已不可用，您的未保存文本已保留。",
   "Loading preview…": "正在加载预览…",
   "Later turns": "后面的轮次",
   "This Markdown is shown as plain text to keep the preview responsive.": "此 Markdown 以纯文本显示，以保持预览流畅。",

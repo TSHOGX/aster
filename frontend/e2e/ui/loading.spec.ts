@@ -84,3 +84,22 @@ test("returning to a session retains its own window while validation is delayed"
     page.getByLabel("Message Compare cycle performance", { exact: true }),
   ).toHaveValue("retained draft");
 });
+
+test("the visible transcript accessibility tree follows message, link and composer order", async ({
+  page,
+}) => {
+  await workspaceFixture(page);
+  await page.goto("/?project=battery&session=analysis");
+  await expect(
+    page.getByRole("link", { name: "the research report" }),
+  ).toBeVisible();
+  const snapshot = await page.locator(".agent-panel").ariaSnapshot();
+  const user = snapshot.indexOf("Compare the cycle performance"),
+    answer = snapshot.indexOf("I reviewed the experiment data"),
+    link = snapshot.indexOf("the research report"),
+    composer = snapshot.indexOf("Message Compare cycle performance");
+  expect(user).toBeGreaterThanOrEqual(0);
+  expect(answer).toBeGreaterThan(user);
+  expect(link).toBeGreaterThan(answer);
+  expect(composer).toBeGreaterThan(link);
+});
