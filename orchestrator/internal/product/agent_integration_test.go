@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -316,6 +317,27 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 		t.Log("Project admission -> durable host command -> Go runner -> real Pi -> committed raw ingest/messages/capture -> journal ACK")
 	})
 	t.Run("native-abort-with-full-normal-journal", func(t *testing.T) {
+		started := time.Now()
+		evidence := map[string]any{}
+		var frames []map[string]any
+		t.Cleanup(func() {
+			evidence["frames"] = frames
+			evidence["elapsed_ms"] = time.Since(started).Milliseconds()
+			raw, _ := json.MarshalIndent(evidence, "", "  ")
+			_ = os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "native-pressure-observation.json"), raw, 0600)
+		})
+		observe := func(f agentwire.Frame) {
+			var native struct {
+				Type string `json:"type"`
+			}
+			_ = json.Unmarshal(f.Payload, &native)
+			if len(frames) < 2048 {
+				frames = append(frames, map[string]any{"at_ms": time.Since(started).Milliseconds(), "kind": f.Kind, "state": f.State, "sequence": f.Sequence, "command": f.CommandID, "native_type": native.Type, "payload_bytes": len(f.Payload), "pressure": f.Pressure})
+			}
+			if f.Kind == "error" {
+				t.Fatalf("runner error under pressure: %s", f.Error)
+			}
+		}
 		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/pressure/models.json", strings.NewReader(models)))
 		must(t, api.WriteFile(runctx, r.Reference.SandboxID, "/runtime/sessions/pressure/settings.json", strings.NewReader(`{"defaultProvider":"local","defaultModel":"local-model","compaction":{"enabled":false}}`)))
 		o := start("pressure", "pressure-run", "/usr/local/bin/pi", 2<<20)
@@ -344,6 +366,7 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 		for pressure.FullAttempts == 0 {
 			select {
 			case f := <-o.frames:
+				observe(f)
 				if f.Kind == "record" {
 					if f.Sequence != last+1 {
 						t.Fatal("sequence gap", last, f.Sequence)
@@ -363,12 +386,23 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 		if pressure.JournalBytes > pressure.JournalLimit-pressure.ControlReserve || pressure.WindowPeak > 1<<20 {
 			t.Fatal("normal traffic consumed reserve", pressure)
 		}
+		evidence["pressure_at_ms"] = time.Since(started).Milliseconds()
 		began := time.Now()
 		send(agentwire.Frame{Kind: "command", CommandID: "pressure-abort", TurnID: "pressure-turn", Payload: json.RawMessage(`{"type":"abort"}`)})
 		dispatched := false
 		for !dispatched {
 			select {
 			case f := <-o.frames:
+				observe(f)
+				// Control replies can interleave with already-sent records.
+				// Persist those records too; discarding them loses ACK coverage.
+				if f.Kind == "record" {
+					if f.Sequence != last+1 {
+						t.Fatal("sequence gap during Stop dispatch", last, f.Sequence)
+					}
+					must(t, encoder.Encode(f))
+					last = f.Sequence
+				}
 				if f.Kind == "command_status" && f.CommandID == "pressure-abort" && f.State == "dispatching" {
 					dispatched = true
 				}
@@ -379,12 +413,15 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 			}
 		}
 		latency := time.Since(began)
+		evidence["dispatch_ms"] = latency.Milliseconds()
+		evidence["first_ack_sequence"] = last
 		must(t, capture.Sync())
 		send(agentwire.Frame{Kind: "ack", Sequence: last})
 		completed := false
 		for !completed {
 			select {
 			case f := <-o.frames:
+				observe(f)
 				if f.Kind != "record" {
 					continue
 				}
@@ -395,6 +432,9 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 				must(t, capture.Sync())
 				last = f.Sequence
 				send(agentwire.Frame{Kind: "ack", Sequence: last})
+				if f.CommandID == "pressure-prompt" && (f.State == "command.unknown" || f.State == "command.rejected") {
+					t.Fatalf("native prompt settled as %s under pressure", f.State)
+				}
 				if f.CommandID == "pressure-prompt" && f.State == "command.completed" {
 					var result struct{ Outcome string }
 					must(t, json.Unmarshal(f.Payload, &result))

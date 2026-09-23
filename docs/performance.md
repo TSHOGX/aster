@@ -1172,3 +1172,20 @@ sampling preclude a causal speedup claim. Main-thread long tasks remain above
 200 ms, and the complete interaction/Office/resource matrix is still open. The
 record also distinguishes measured aggregates from the raw projection-duration
 export added afterward for subsequent qualification.
+
+
+## Current journal layout
+
+Fresh format-2 journals now create their columns and required ACK-compaction
+indexes in one transaction. The obsolete format-1 conversion and startup index
+repair paths are removed. Older formats, versioned empty databases and missing
+required indexes are refused while original command evidence remains intact.
+This is a guest image change, with unchanged host schema and wire contracts.
+
+The [runtime record](../dev/measurements/journal-runtime.json) covers release,
+mixed load, browser, resource-hub and fault/recovery/service gates on a newly
+assembled image. The mixed run observes all 245 completions with p95 515 ms and
+maximum round 2.532 seconds. An initial native-pressure timeout remains recorded;
+the corrected harness and two focused repetitions pass without relaxing its
+deadline. Passing frame diagnostics do not establish the cause of that first
+failure. No live deployment or existing image was modified.

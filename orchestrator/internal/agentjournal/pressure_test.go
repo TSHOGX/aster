@@ -130,31 +130,84 @@ func TestAcknowledgedResolvedPayloadCompactionKeepsIdentityAndUnknown(t *testing
 	}
 }
 
-func TestJournalV1MigrationRetainsOriginalEvidence(t *testing.T) {
+func TestJournalRejectsPriorFormatWithoutAlteringEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.db")
 	db, err := sql.Open("sqlite", path)
 	must(t, err)
-	_, err = db.Exec(schema)
-	must(t, err)
-	_, err = db.Exec(`INSERT INTO metadata VALUES(1,'session','incarnation',1,0,1,500);INSERT INTO commands(id,turn_id,kind,digest,payload,state,result,size) VALUES('c','t','prompt','digest',X'7b7d','unknown',X'7b7d',250);INSERT INTO records VALUES(1,'c','t','command.unknown',X'7b7d',250)`)
+	// Historical shape exists only as a refusal fixture, never a decoder.
+	_, err = db.Exec(`CREATE TABLE metadata(id INTEGER PRIMARY KEY CHECK(id=1),session TEXT NOT NULL,incarnation TEXT NOT NULL,owner INTEGER NOT NULL DEFAULT 0,ack INTEGER NOT NULL DEFAULT 0,sequence INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE records(sequence INTEGER PRIMARY KEY,command_id TEXT NOT NULL,turn_id TEXT NOT NULL,kind TEXT NOT NULL,payload BLOB NOT NULL,size INTEGER NOT NULL);
+CREATE TABLE commands(id TEXT PRIMARY KEY,turn_id TEXT NOT NULL,kind TEXT NOT NULL,digest TEXT NOT NULL,payload BLOB NOT NULL,state TEXT NOT NULL,result BLOB NOT NULL,size INTEGER NOT NULL);
+PRAGMA user_version=1;
+INSERT INTO metadata VALUES(1,'session','incarnation',1,0,1,500);
+INSERT INTO commands VALUES('c','t','prompt','digest',X'7b7d','unknown',X'7b7d',250);
+INSERT INTO records VALUES(1,'c','t','command.unknown',X'7b7d',250);`)
 	must(t, err)
 	must(t, db.Close())
-	j, err := Open(ctx, path, "session", "incarnation", 4096)
-	must(t, err)
-	defer j.Close()
-	rows, err := j.Records(ctx, 1, 0, 128)
-	must(t, err)
-	if len(rows) != 1 || rows[0].Kind != "command.unknown" {
-		t.Fatal(rows)
+	if journal, err := Open(ctx, path, "session", "incarnation", 4096); !errors.Is(err, ErrConflict) {
+		if journal != nil {
+			journal.Close()
+		}
+		t.Fatal("prior journal accepted", err)
 	}
-	pending, err := j.Unresolved(ctx)
+	db, err = sql.Open("sqlite", path)
 	must(t, err)
-	if len(pending) != 1 || pending[0].ID != "c" {
-		t.Fatal(pending)
+	defer db.Close()
+	var version, columns, owner, sequence int
+	var state, kind, payload string
+	must(t, db.QueryRow(`PRAGMA user_version`).Scan(&version))
+	must(t, db.QueryRow(`SELECT count(*) FROM pragma_table_info('commands') WHERE name='result_sequence'`).Scan(&columns))
+	must(t, db.QueryRow(`SELECT owner,sequence FROM metadata WHERE id=1`).Scan(&owner, &sequence))
+	must(t, db.QueryRow(`SELECT state FROM commands WHERE id='c'`).Scan(&state))
+	must(t, db.QueryRow(`SELECT kind,hex(payload) FROM records WHERE sequence=1`).Scan(&kind, &payload))
+	if version != 1 || columns != 0 || owner != 1 || sequence != 1 || state != "unknown" || kind != "command.unknown" || payload != "7B7D" {
+		t.Fatal("refusal modified original evidence", version, columns, owner, sequence, state, kind, payload)
 	}
-	var version int
-	must(t, j.db.QueryRow(`PRAGMA user_version`).Scan(&version))
-	if version != 2 {
-		t.Fatal(version)
+}
+
+func TestJournalRefusesMissingCompactionIndexWithoutRepair(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.db")
+	journal, err := Open(ctx, path, "session", "incarnation", 4096)
+	must(t, err)
+	_, err = journal.db.Exec(`DROP INDEX commands_compactable`)
+	must(t, err)
+	must(t, journal.Close())
+	if journal, err = Open(ctx, path, "session", "incarnation", 4096); !errors.Is(err, ErrConflict) {
+		if journal != nil {
+			journal.Close()
+		}
+		t.Fatal("modified journal accepted", err)
+	}
+	db, err := sql.Open("sqlite", path)
+	must(t, err)
+	defer db.Close()
+	var count int
+	must(t, db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='commands_compactable'`).Scan(&count))
+	if count != 0 {
+		t.Fatal("missing index was silently recreated")
+	}
+}
+
+func TestJournalDoesNotAdoptAnEmptyVersionedDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foreign.db")
+	db, err := sql.Open("sqlite", path)
+	must(t, err)
+	_, err = db.Exec(`PRAGMA user_version=99`)
+	must(t, err)
+	must(t, db.Close())
+	if journal, err := Open(ctx, path, "session", "incarnation", 4096); !errors.Is(err, ErrConflict) {
+		if journal != nil {
+			journal.Close()
+		}
+		t.Fatal("foreign database adopted", err)
+	}
+	db, err = sql.Open("sqlite", path)
+	must(t, err)
+	defer db.Close()
+	var version, tables int
+	must(t, db.QueryRow(`PRAGMA user_version`).Scan(&version))
+	must(t, db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table'`).Scan(&tables))
+	if version != 99 || tables != 0 {
+		t.Fatal("foreign database changed", version, tables)
 	}
 }

@@ -52,6 +52,13 @@ retain durable command identities/unknown outcomes. Mutation helpers cannot
 perform list/read operations; the old per-read mutation path is removed. Preview
 ETags do not implement atomic conflict detection for saves.
 
+Native journals use format 2, created directly with their ACK-compaction indexes
+in one transaction. Format 1 has no startup conversion path. Versioned empty
+databases and journals missing required indexes are refused without recreating
+schema or rewriting command evidence. Inspect the original state rather than
+resetting an unresolved journal or replaying its commands. This guest change
+requires a newly assembled immutable image.
+
 Native journal records and user-visible projections are separate. A native
 `agent_end` can precede retry or compaction and does not complete an application
 command. The pinned RPC extension reports a correlated `prompt_end` with the final

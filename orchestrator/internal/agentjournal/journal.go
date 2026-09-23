@@ -27,8 +27,11 @@ var ErrGap = errors.New("journal cursor is outside retained records")
 const schema = `
 CREATE TABLE metadata(id INTEGER PRIMARY KEY CHECK(id=1),session TEXT NOT NULL,incarnation TEXT NOT NULL,owner INTEGER NOT NULL DEFAULT 0,ack INTEGER NOT NULL DEFAULT 0,sequence INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE records(sequence INTEGER PRIMARY KEY,command_id TEXT NOT NULL,turn_id TEXT NOT NULL,kind TEXT NOT NULL,payload BLOB NOT NULL,size INTEGER NOT NULL);
-CREATE TABLE commands(id TEXT PRIMARY KEY,turn_id TEXT NOT NULL,kind TEXT NOT NULL,digest TEXT NOT NULL,payload BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('received','dispatching','applied','rejected','completed','unknown')),result BLOB NOT NULL DEFAULT X'7b7d',size INTEGER NOT NULL);
-PRAGMA user_version=1;`
+CREATE TABLE commands(id TEXT PRIMARY KEY,turn_id TEXT NOT NULL,kind TEXT NOT NULL,digest TEXT NOT NULL,payload BLOB NOT NULL,state TEXT NOT NULL CHECK(state IN ('received','dispatching','applied','rejected','completed','unknown')),result BLOB NOT NULL DEFAULT X'7b7d',size INTEGER NOT NULL,result_sequence INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX commands_result_sequence ON commands(result_sequence,id);
+CREATE INDEX records_command ON records(command_id,kind,sequence);
+CREATE INDEX commands_compactable ON commands(result_sequence,id) WHERE length(payload)>2 AND (state IN ('completed','rejected') OR (state='applied' AND kind<>'prompt'));
+PRAGMA user_version=2;`
 
 type Journal struct {
 	db                   *sql.DB
@@ -76,6 +79,9 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 		return fail(err)
 	}
 	if count == 0 {
+		if version != 0 {
+			return fail(ErrConflict)
+		}
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return fail(err)
@@ -90,7 +96,7 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 		if err = tx.Commit(); err != nil {
 			return fail(err)
 		}
-	} else if version != 1 && version != 2 {
+	} else if version != 2 {
 		return fail(ErrConflict)
 	}
 	var storedSession, storedIncarnation, integrity string
@@ -106,28 +112,14 @@ func Open(ctx context.Context, path, session, incarnation string, limit int64) (
 	if storedSession != session || storedIncarnation != incarnation {
 		return fail(ErrConflict)
 	}
-	if version != 2 {
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return fail(err)
-		}
-		_, err = tx.ExecContext(ctx, `ALTER TABLE commands ADD COLUMN result_sequence INTEGER NOT NULL DEFAULT 0;
-CREATE INDEX commands_result_sequence ON commands(result_sequence,id);
-CREATE INDEX records_command ON records(command_id,kind,sequence);
-UPDATE commands SET result_sequence=coalesce((SELECT max(sequence) FROM records WHERE command_id=commands.id AND kind='command.'||commands.state),(SELECT ack FROM metadata WHERE id=1)) WHERE state IN ('applied','completed','rejected','unknown');
-PRAGMA user_version=2;`)
-		if err != nil {
-			tx.Rollback()
-			return fail(err)
-		}
-		if err = tx.Commit(); err != nil {
-			return fail(err)
-		}
-	}
-	// Only eligible rows belong to the compaction index. Repeated cumulative ACKs
-	// must not scan every already-compacted identity retained for deduplication.
-	if _, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS commands_compactable ON commands(result_sequence,id) WHERE length(payload)>2 AND (state IN ('completed','rejected') OR (state='applied' AND kind<>'prompt'))`); err != nil {
+	// Current journals include indexed ACK compaction from creation. Older formats
+	// and missing required indexes need inspection, never an implicit upgrade.
+	var indexes int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('commands_result_sequence','records_command','commands_compactable')`).Scan(&indexes); err != nil {
 		return fail(err)
+	}
+	if indexes != 3 {
+		return fail(ErrConflict)
 	}
 	if err = sqlitex.VerifyPragmas(ctx, db, 1); err != nil {
 		return fail(err)

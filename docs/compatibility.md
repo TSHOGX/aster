@@ -69,8 +69,9 @@ retiring process can reopen admission. See the [operations runbook](operations.m
 
 ## Unsupported and remaining cases
 
-Schema downgrade, format-2 native runtimes and pre-settlement owners are not rollback
-targets. Unknown/modified schema is refused before a writer opens. Candidate identity
+Schema downgrade, manifest-format-2 native runtimes and pre-settlement owners are
+not rollback targets. Current guest builds accept journal format 2 only; journal
+format 1 is refused without conversion or loss of its original evidence. Unknown/modified schema is refused before a writer opens. Candidate identity
 or pending owner-contract mismatch cannot migrate the database. No permanent legacy
 reader/decoder exists to make those combinations appear compatible.
 

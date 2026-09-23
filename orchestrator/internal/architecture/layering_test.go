@@ -55,10 +55,6 @@ func TestLayering(t *testing.T) {
 	}
 }
 
-// TestControlsourceIsTheOnlyStoreToMemorystoreBridge pins the ingest seam: exactly
-// one package may depend on both store and memorystore in production code.
-// Anything else joining them means the controlsource seam was bypassed.
-
 // productionImports returns the non-test import set of a module-relative package.
 func productionImports(t *testing.T, root, pkg string) map[string]struct{} {
 	t.Helper()
