@@ -1,8 +1,8 @@
 # Knowledge-base self-evolution (current)
 
-> Current-truth for the nightly trajectory → memory → skill loop.
+> Current-truth for the trajectory → memory → skill loop.
 > Source: `orchestrator/internal/memory/`.
-> Mount/publish mechanics: [`agents-kb.md`](./agents-kb.md).
+> Mount/publish mechanics: [agents-kb.md](agents-kb.md).
 
 One cycle harvests candidates from session traces, runs ephemeral `pi` agents at
 the judgment nodes, then **stages** a content-addressed snapshot. Live `/agents`
@@ -18,61 +18,65 @@ continues.
 
 ```mermaid
 flowchart TD
-  start[定时 sweep / RunOnce] --> capture[Native capture<br/>pi JSONL → trajectory_events]
-  capture --> harvest[A Harvest 并行扫 session]
+  start[Scheduled sweep / RunOnce] --> capture[Native capture<br/>pi JSONL to trajectory_events]
+  capture --> harvest[A Harvest sessions in parallel]
 
-  harvest --> facts[facts lens<br/>HTTP 抽取]
-  harvest --> fail{有失败信号?}
-  fail -->|是| failure[failure lens]
-  fail -->|否| skipFail[跳过]
-  harvest --> skillGate{user turns ≥ 6?}
-  skillGate -->|是| skill[skill lens]
-  skillGate -->|否| skipSkill[跳过]
+  harvest --> facts[facts lens<br/>HTTP extraction]
+  harvest --> fail{Failure signal?}
+  fail -->|yes| failure[failure lens]
+  fail -->|no| skipFail[skip]
+  harvest --> skillGate{user turns >= 6?}
+  skillGate -->|yes| skill[skill lens]
+  skillGate -->|no| skipSkill[skip]
 
   facts --> cands[(candidate memories / skills)]
   failure --> cands
   skill --> cands
 
-  cands --> agentic{agentic 开启?}
-  agentic -->|否| scalar[标量 curator<br/>support/confidence 门槛]
-  agentic -->|是| reflect[0 Reflect 规划器<br/>选 active_scopes]
+  cands --> agentic{agentic enabled?}
+  agentic -->|no| scalar[Scalar curator<br/>support/confidence gates]
+  agentic -->|yes| reflect[0 Reflect planner<br/>select active_scopes]
 
-  reflect --> empty{本轮有新候选?}
-  empty -->|否| stop[记 empty delta 结束]
-  empty -->|是| b0[B0 blocking-key<br/>scope 归并]
-  b0 --> b1[B1 cluster<br/>同 scope+type 语义聚类]
-  b1 --> b2[B2 reduce<br/>分片簇再合并]
-  b2 --> b3[B3 kb-dedup<br/>对新簇 vs 已 accepted]
-  b3 --> verify[C Verify + 只读工具<br/>对照当前代码树]
-  verify --> curateM[D Curate 记忆<br/>promote / hold / reject]
-  verify --> curateS[D Skill reflect-loop<br/>draft → critic → revise ≤2]
-  curateM --> critic{本轮有新 promote?}
+  reflect --> empty{New candidates this cycle?}
+  empty -->|no| stop[Record empty delta and stop]
+  empty -->|yes| b0[B0 blocking-key<br/>merge scopes]
+  b0 --> b1[B1 cluster<br/>semantic clusters per scope+type]
+  b1 --> b2[B2 reduce<br/>merge shard clusters]
+  b2 --> b3[B3 kb-dedup<br/>new clusters vs accepted]
+  b3 --> verify[C Verify + read-only tools<br/>against the current tree]
+  verify --> curateM[D Curate memories<br/>promote / hold / reject]
+  verify --> curateS[D Skill reflect-loop<br/>draft, critic, revise <=2]
+  curateM --> critic{New promotions this cycle?}
   curateS --> critic
-  critic -->|否| skipF[跳过 F]
-  critic -->|是| f[F Consistency critic<br/>跨条目否决]
-  f --> pii[PII / 证据数 backstop]
+  critic -->|no| skipF[skip F]
+  critic -->|yes| f[F Consistency critic<br/>cross-item veto]
+  f --> pii[PII / evidence-count backstop]
   skipF --> pii
   scalar --> pii
-  pii --> stage[E Stage 内容寻址快照]
-  stage --> review[/evolution/review 人工审批]
-  review --> approve[Approve → 切 current]
-  approve --> live[沙箱 /agents 看到新 KB]
+  pii --> stage[E Stage content-addressed snapshot]
+  stage --> review[/evolution/review human approval]
+  review --> approve[Approve, then repoint current]
+  approve --> live[New sandboxes see the new KB]
 ```
 
 ## Approval and merge
 
 ```mermaid
 flowchart LR
-  cycle[本轮进化] --> staged[snapshots/digest<br/>pending]
-  staged --> review[按文件 / fact 批准或拒绝]
-  review --> restage[只保留批准条目<br/>再 Stage]
+  cycle[This evolution cycle] --> staged[snapshots/digest pending]
+  staged --> review[Per file/fact: approved, rejected, or undecided]
+  review --> restage[Publish approved; restage approved plus undecided]
   restage --> approve[Approve digest]
-  approve --> current[current 原子切过去]
-  current --> carry[下一轮 carryForward<br/>种子技能 + 已 live 文件]
+  approve --> current[Atomically repoint current]
+  current --> carry[Next cycle carryForward<br/>seed skills plus already-live files]
 ```
 
 - `KB.Stage` writes `snapshots/<digest>/` and `pending`; it never touches `current`.
-- `/evolution/review` (or `harness-ctl kb …`) approves/rejects facts and files.
+- `/evolution/review` (or `orchestrator kb …`) records three-state verdicts.
+  Approved entries are published, rejected facts are demoted, and undecided
+  entries restage as pending so a partial review does not lose the rest of the
+  queue. In-progress marks can be saved as a draft (`POST /api/kb-review/draft`)
+  without changing snapshot bytes.
 - `Approve` atomically repoints `current`. Running sandboxes stay pinned to the
   snapshot they mounted; **new** sessions see the new KB.
 - Next cycle `carryForward` keeps seed skills and already-live files; distillation
@@ -84,12 +88,12 @@ flowchart LR
 Every system prompt below lives in `orchestrator/internal/memory/prompts.yaml`
 (embedded into the binary), not in this document and not in Go constants. A
 deployment overrides individual prompts through `HARNESS_KB_PROMPTS_PATH` — see
-[`configuration.md`](./configuration.md#kb-evolution-prompts-optional-override).
+[configuration.md](configuration.md#kb-evolution-prompts-optional-override).
 Each section below names its key; `prompts.go` composes and validates them.
 
 The `grounding` key is prepended to every prompt except `reflect`: extract only
-what the record supports, prefer nothing over noise (宁缺毋滥), never emit
-secrets or PII. Overriding that one key therefore tightens eleven prompts at once.
+what the record supports, prefer nothing over noise, never emit secrets or PII.
+Overriding that one key therefore tightens eleven prompts at once.
 
 Each prompt ends with the exact JSON shape its Go struct decodes. An override may
 reword the guidance freely but must not change the JSON keys or enum values.
@@ -116,43 +120,33 @@ Prompt key `facts` (composed with `grounding`); call site `pipeline.go`.
 
 Hard-gated on a material failure signal (tool error or down-rated feedback).
 Summarizes task + outcome, then extracts at most 3 non-overlapping
-"how to avoid this next time" lessons, each tagged correction vs preference.
-Decodes into `FailureResult`.
-
-Prompt key `failure`; call site `pipeline.go`.
+"how to avoid this next time" lessons, each tagged correction, bug, or
+workaround. Prompt key `failure`.
 
 ### skill
 
-Gated on `user turns >= 6`. Induces a reusable ordered procedure, with this
-session's concrete values replaced by semantic placeholders; returns nothing when
-the workflow is not genuinely general. Decodes into `SkillResult` /
-`CandidateSkill`.
-
-Prompt key `skill`; call site `pipeline.go`.
+Gated on `turn_count >= 6`. Drafts a reusable SKILL.md plus structured
+metadata. Prompt key `skill`.
 
 ---
 
 ## 0 — Reflect (`node_reflect.go`)
 
-Single agent, no tools. Given the candidate distribution per scope, the previous
-cycle's result, and the scopes already in the KB, it picks `active_scopes`,
-`skip_scopes` and a `budget_hint` — spend fewer calls rather than empty ones. On
-any failure the cycle falls back to `ProcessAll`.
-
 Prompt key `reflect`. This is the one prompt **without** `grounding`: it plans the
-cycle rather than reading session records.
+cycle (which scopes to work this round) rather than extracting from a session
+record.
 
 ---
 
 ## B — Consolidate (`node_consolidate.go`)
 
-Map/reduce over candidate memories. `support_count` is the distinct evidence
+Four sub-nodes. Evidence counts on the fused statement use the distinct evidence
 session count of the merged cluster (code, not the agent).
 
 ### B0 blocking-key
 
-Merges free-text scope labels (mixed 中英文, synonymous, uneven granularity) onto
-canonical labels; every input label gets a mapping, uncertain ones map to
+Merges free-text scope labels (mixed languages, synonyms, uneven granularity)
+onto canonical labels; every input label gets a mapping, uncertain ones map to
 themselves. Prompt key `block_key`.
 
 The committed default carries a deliberately generic example list. A deployment
