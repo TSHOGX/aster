@@ -31,6 +31,14 @@ from live database authority. The dedicated host UID remains under Khora's
 second-hop network floor. Direct reachability is available to every Project
 process and must be reviewed as such.
 
+Only the protected owner control socket and the configured host file can reload
+direct/DNS defaults. Browser clients cannot supply a policy revision or mutate
+engine bindings. Invalid/unsupported edits preserve accepted defaults, and
+running placements keep their existing permissions. Conditional paused updates
+verify original identity, resource limits, mounts and retained model routes before
+admission reopens. Candidate startup checks the accepted policy revision during
+owner handoff/rollback independently of fixed release compatibility.
+
 Frontend Markdown does not enable raw HTML. File responses use restricted preview
 headers and the browser uses bounded fetched blobs. Office previews are separate
 renderers and should be treated as parsing untrusted documents. HTML previews

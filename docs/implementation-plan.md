@@ -29,8 +29,9 @@ compatibility does not authorize deleting user data.
    stale contracts, run race/vet and frontend production checks, exercise focused
    browser journeys, and record runtime qualification separately from fixtures.
 
-Each implementation stage receives a Conventional Commit after its relevant
-checks. Changes discovered during validation remain part of the owning stage.
+Each implementation stage received a Conventional Commit after its relevant
+checks. Follow-up fixes discovered during qualification were committed separately
+with regression coverage.
 
 ## Design constraints
 
@@ -52,11 +53,11 @@ checks. Changes discovered during validation remain part of the owning stage.
 ## Initial review findings
 
 All proposal documents were reviewed, including their acceptance and deferred
-scope. The code confirms route spreading and unvalidated shared selection, an
+scope. The initial code confirmed route spreading and unvalidated shared selection, an
 ID-paged schedule overview and modal Cron editor, and saved startup profiles with
-no paused network-update adapter. The repository currently has schema migrations
+no paused network-update adapter. The repository already had schema migrations
 and schema-13 qualification, despite the root README claiming no migrations.
-That stale documentation must be corrected during final reconciliation.
+The README and affected architecture/API/operations contracts have been corrected.
 
 ## Progress
 
@@ -83,5 +84,56 @@ That stale documentation must be corrected during final reconciliation.
   in 22.52 seconds, including DNS, 102,400 verified TLS package bytes, denied
   undeclared access, removal on resume, retained volumes and native model work.
   Public Internet connectivity was not exercised.
-- Implementation and qualification: in progress; stage evidence will be recorded
-  here as checks complete.
+- Cross-cutting review: fixed late schedule mutation responses replacing another
+  selection, kept turn-rail paging intent available during background refresh,
+  retained expired-directory explanations across queued refreshes, aligned
+  multibyte task names with server limits, and mapped actual run states. Removed
+  obsolete schedule copy and routed recovery/retirement through transactional
+  saved-profile selection.
+- Final qualification: complete. Full Go race suite and vet passed, with focused
+  race checks after recovery follow-ups. Frontend typecheck/lint, 186 unit tests
+  (one opt-in skip), production builds, and the final 137-test browser sweep
+  passed (42 opt-in skips). The real released browser passed three workflows in
+  39.81 seconds; its separate combined-workload test was skipped. All six released
+  owner/gateway/native/handoff tests passed. The sanitized
+  [qualification record](../dev/measurements/proposal-delivery.json) contains
+  source/artifact identities, outcomes, resolved failures and scope limits.
+
+## Root causes and final authority
+
+| Problem | Root cause | Final authority and behavior |
+| --- | --- | --- |
+| Global views display an unrelated conversation | Route spreading combined workspace identity with global-page selection; generic owner read access was treated as received sharing | Central normalization and destination construction discard unrelated fields; a grant-specific detail lookup precedes shared messages/SSE |
+| Ordinary task creation requires Cron expertise | The modal exposed a raw expression and defaulted silently to manual-only | Visible Daily 09:00 default, visual presets, explicit manual/advanced modes, exact expression preservation and scheduler-backed previews |
+| Global task filters/order cannot scale honestly | ID-only pagination and client-local state could not represent chronological filtered results | Owner-authorized server filtering and sorting with catalog-revision cursors from one read snapshot |
+| Drafts or task selection can be lost on asynchronous work | Editing, reading, navigation and operation outcome were conflated | Explicit routes/modes, shared draft guards, selected-response fencing, stable uncertain request identities and bounded conflict rebase |
+| Network configuration edits leave existing Projects stale | Defaults were copied at startup and saved profiles were reused without a lifecycle update phase | Durable accepted defaults are selected transactionally into creation/resume intent; running placements retain their policy |
+| Interrupted network updates risk mixed permissions or lost authority | Engine mutation, saved profile and guest DNS had no coordinated update protocol | Complete conditional paused-binding verification, durable target recovery, atomic effective-profile/revision commit and readiness-gated projection |
+| Mutable settings weaken release identity | One digest mixed fixed deployment inputs with network defaults | Fixed compatibility plus an independently checked accepted policy revision; reload is fenced during handoff |
+
+## Delivery boundaries
+
+Schema 15 requires the existing full quiescent activation gate. Older schema
+owners and the retired browser route/schedule contracts are not supported
+rollback targets. No live deployment, production configuration, credentials or
+outbound policy was changed. Public Internet/NAT connectivity remains a deployment
+qualification, and the proposed moderated usability study was not performed.
+Arbitrary intervals, one-time tasks, schedule-level completion, notification
+preferences and richer execution timestamps remain intentionally deferred.
+
+Raw evidence is retained privately. Public qualification contains synthetic
+identities, source/artifact digests and outcomes only. Existing user data and
+uncertain-operation evidence remain accounted for throughout migration/recovery.
+
+## Commit sequence
+
+| Stage | Commit |
+| --- | --- |
+| Review and ordered delivery plan | `adb77f2` |
+| Global routes and grant-specific shared selection | `e7b1a61` |
+| Schedule preview, filtering and cursor contracts | `afebf37` |
+| Visual Scheduled workspace | `7d4483e` |
+| Durable network policy reload and lifecycle | `4d6989e` |
+| Async navigation and recovery authority | `ea9ec4b` |
+| Recovery notices and multibyte form validation | `81f2006` |
+| Current binary-preview browser contract | `7d17896` |

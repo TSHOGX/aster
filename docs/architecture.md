@@ -36,8 +36,10 @@ same-origin router. `internal/servicegateway` owns forwarding and the versioned
 authority transport. The gateway opens no product Store; durable bounded request
 slots preserve release accounting across owner replacement. Package-boundary and removal tests enforce these layers.
 
-A Project binds its template, runtime release digest, resource limits, complete
-reachability declaration and publication mounts when first configured. Every
+A Project binds its template, runtime release digest, resource limits, service
+routes and publication mounts when first configured. Direct/DNS policy is selected
+from durable accepted defaults by each creation/resume operation; it remains
+fixed throughout the placement. Every
 Agent Session and Terminal shares that Project's workspace and Linux trust domain.
 The Project's runtime volume contains logically separate Session directories.
 Children never own a sandbox or alter Project network policy.

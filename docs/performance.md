@@ -250,10 +250,13 @@ retries/compaction before descendant cleanup, immutable capture and command outc
 
 The schedule overview returns bounded metadata without full prompt bodies. The
 browser retains one fifty-row page and refreshes explicitly or after local writes;
-there is no periodic overview polling or subscription per Project. Editing and
-enable/disable fetch full scoped detail. Filter/unmount cancellation fences late
-replies. Session choices and run history retain one bounded page, preserving the
-editor draft and selected Session. Overview loading/errors never imply emptiness.
+there is no periodic overview polling or subscription per Project. Selected-task
+reading/editing fetches full scoped detail; pause/resume revalidates the saved
+revision. Title/status/Project filtering and chronological ordering happen on
+the server before paging, with explicit cursor invalidation on concurrent writes.
+Filter/unmount cancellation and selection checks fence late reads and mutations.
+Conversation choices and history retain one bounded page, preserving drafts.
+Overview loading/errors never imply emptiness.
 
 ## Release boundaries
 

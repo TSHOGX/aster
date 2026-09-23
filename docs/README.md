@@ -15,4 +15,5 @@
 - [Notifications](notifications.md): outcome and operator notifications.
 - [Image build](sandbox-image.md): immutable packaging and release verification.
 - [Development](development.md) and [verification](verification.md): executable gates.
+- [Navigation, scheduling, and network delivery](implementation-plan.md): implementation decisions and qualification.
 - [Publication boundary](delivery/privacy.md): public reference versus private inputs.

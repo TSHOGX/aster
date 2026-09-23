@@ -6,6 +6,18 @@ manifest tests reject changed components, native dependency escapes and mixed
 binary platforms. Authentication, scoped children, journals, Files, schedules,
 sharing and retirement have focused contract tests.
 
+The network suite (`dev/verify-khora.sh --suite network` with the normal image,
+manifest and output arguments) qualifies reload on the actual released owner and
+pinned Khora/runsc. It checks guest DNS, a verified TLS download, denied undeclared
+access, unchanged running placement, permission removal on resume, retained
+volumes and native model routing. Its isolated endpoints do not certify public
+Internet forwarding/NAT or a production package index.
+
+Schedule/route browser regressions cover canonical global routes, reader-grant
+selection, daily/weekly/monthly/manual/advanced forms, stale previews, uncertain
+creates/runs, configuration versus tick conflicts, history budgets, late task
+mutations, and both locales/themes through the content-width breakpoints.
+
 Real gates use the pinned engine on a disposable Linux substrate:
 
 1. Project provisioning, bounded admission, pause/resume and owned-volume cleanup.
@@ -193,3 +205,11 @@ commit and sampling overhead and must meet the existing two-second projection
 budget. Both raw distributions are retained; the ten-second round budget still
 covers the complete offered work. Older reports used the provider endpoint as an
 upper bound and must not be relabeled as the newer projection definition.
+
+The [navigation/scheduling/network qualification](../dev/measurements/proposal-delivery.json)
+records schema 15, the exact runtime/engine pin, built artifacts and tested source
+identities. It includes the final 137-pass UI sweep, 186-pass unit suite, real
+network lifecycle gate, six release/runtime checks and the composed browser
+journey. Opt-in skips and public-Internet/usability limits are explicit. Earlier
+failures and their fixes are retained in the record rather than relabeled as
+initial passes.
