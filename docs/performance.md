@@ -1154,3 +1154,21 @@ required before interpreting that delay as projector latency. This is recorded a
 a failed gate. Browser timing variance also prevents a causal speedup claim from
 those two combined runs. Cached availability is established by the held-response
 regression; combined performance qualification remains open for this change.
+
+
+## Independent completion observation
+
+The [independent observation record](../dev/measurements/combined-projection.json)
+removes regular-round sampling gaps: all 229 provider completions in the offered
+window, including schedules and handoff, appear in ready pages. The 55-round run
+passes with projected-page observation p95 1.196 seconds, original HTTP p95/p99
+23.51/66.79 ms, owner/gateway peak RSS 66,488 KiB and maximum round 7.301 seconds.
+The additional observer makes 4,849 bounded requests and retains twelve transport
+failures separately. Handoff takes 712 ms; both quiet-window checks remain green.
+
+Cached-preview p95 is 58.8 ms on loopback and 72 ms with the declared CDP profile.
+These warmed observations qualify this run; earlier variance and the change in
+sampling preclude a causal speedup claim. Main-thread long tasks remain above
+200 ms, and the complete interaction/Office/resource matrix is still open. The
+record also distinguishes measured aggregates from the raw projection-duration
+export added afterward for subsequent qualification.

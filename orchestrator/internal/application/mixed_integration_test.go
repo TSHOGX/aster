@@ -186,7 +186,8 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 		companion.evidence["post_browser_warmup_ms"] = time.Since(warm).Milliseconds()
 		require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "workload-started"), []byte("started\n"), 0644))
 	}
-	projected := map[string]time.Time{}
+	observer := observeProjections(a, sessions)
+	defer observer.stop()
 	var maxRSS int64
 	var maxCPU float64
 	cpuByProcess := map[int]float64{}
@@ -258,15 +259,12 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 			})
 			displayTimes = append(displayTimes, float64(time.Since(tick))/float64(time.Millisecond))
 			sample["display_observed_ms"] = displayTimes
+			var observed []projectedTurn
 			for _, raw := range page["turn_summaries"].([]any) {
-				turn := raw.(map[string]any)
-				if turn["state"] == "completed" {
-					id := turn["id"].(string)
-					if _, ok := projected[id]; !ok {
-						projected[id] = time.Now()
-					}
-				}
+				row := raw.(map[string]any)
+				observed = append(observed, projectedTurn{ID: row["id"].(string), State: row["state"].(string)})
 			}
+			observer.note(observed, time.Now())
 		}
 		elapsed := time.Since(tick)
 		sample["elapsed_ms"] = float64(elapsed) / float64(time.Millisecond)
@@ -324,6 +322,26 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 		}
 	}
 	workloadEnd := time.Now()
+	// Include all provider completions offered in this window, including
+	// schedules and handoff turns, without waiting for a later mutation round.
+	completionTimes := map[string]time.Time{}
+	rawCompletions, err := os.ReadFile(filepath.Join(a.root, "completions.jsonl"))
+	require(t, err)
+	completionScanner := bufio.NewScanner(bytes.NewReader(rawCompletions))
+	var wanted []string
+	for completionScanner.Scan() {
+		var entry map[string]string
+		require(t, json.Unmarshal(completionScanner.Bytes(), &entry))
+		at, e := time.Parse(time.RFC3339Nano, entry["completed_at"])
+		require(t, e)
+		if at.After(workloadStart) && at.Before(workloadEnd) {
+			wanted = append(wanted, entry["turn"])
+			completionTimes[entry["turn"]] = at
+		}
+	}
+	require(t, completionScanner.Err())
+	a.await(10*time.Second, "every workload completion reaches a ready page", func() bool { return observer.hasAll(wanted) })
+	observer.stop()
 	if companion != nil {
 		companion.finish()
 	}
@@ -357,29 +375,21 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 		base := fmt.Sprintf("/api/projects/mixed-%d", p)
 		a.await(15*time.Second, "idle deadline plus five seconds", func() bool { return a.request("GET", base, nil, 200)["state"] == "paused" })
 	}
-	// Compare first observation of each completed turn to the deterministic
-	// upstream's final native result. Includes observed head/page readiness and
-	// polling/request overhead; it is an upper-bound observation, not internal
-	// projector CPU time.
-	raw, err := os.ReadFile(filepath.Join(a.root, "completions.jsonl"))
-	require(t, err)
+	// Observation includes independent sampling and HTTP overhead. It is not
+	// internal projector CPU time or raw turn-state completion.
 	var projection []time.Duration
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	for scanner.Scan() {
-		var result map[string]string
-		require(t, json.Unmarshal(scanner.Bytes(), &result))
-		at, err := time.Parse(time.RFC3339Nano, result["completed_at"])
-		require(t, err)
-		if seen, ok := projected[result["turn"]]; ok && at.After(workloadStart) {
-			projection = append(projection, seen.Sub(at))
-		}
+	for id, at := range completionTimes {
+		projection = append(projection, observer.projected[id].Sub(at))
 	}
+
 	report := a.cli("diagnostics", "--socket", socket)
 	var cpuTotal float64
 	for _, ticks := range cpuByProcess {
 		cpuTotal += ticks
 	}
 	metrics := map[string]any{"quantile_method": "nearest-rank", "gateway_rss_max_kib": gatewayRSSMax, "cpu_ticks_total_sampled": cpuTotal, "resource_scope": "owner plus independent gateway", "elapsed_seconds": time.Since(start).Seconds(), "mixed_seconds": workloadEnd.Sub(workloadStart).Seconds(), "post_warmup_seconds": time.Since(workloadStart).Seconds(), "rounds": round, "projects": 2, "agents": 4, "ptys": 2, "rss_max_kib": maxRSS, "cpu_ticks_max_process": maxCPU, "http_samples": len(a.latencies), "http_p95_ms": float64(percentile(a.latencies, .95)) / float64(time.Millisecond), "http_p99_ms": float64(percentile(a.latencies, .99)) / float64(time.Millisecond), "projection_samples": len(projection), "projection_p95_ms": float64(percentile(projection, .95)) / float64(time.Millisecond), "round_max_seconds": maxFairness.Seconds(), "idle_seconds": time.Since(idleStart).Seconds(), "diagnostics": report}
+	metrics["projection_samples_ns"] = projection
+	metrics["projection_observer"] = observer.report()
 	if companion != nil {
 		metrics["combined"] = companion.evidence
 	}

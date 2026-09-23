@@ -117,3 +117,13 @@ The [recorded run](../dev/measurements/combined-workload.json) includes a passin
 result and the earlier warmed fairness failure; it does not claim a complete
 cross-phase performance matrix. Per-round timing breakdowns are in
 `round-samples.json`; source/provider timings remain separate from display readiness.
+
+
+Projection observation now runs independently for each Session every 250 ms,
+including scheduled and handoff turns. Only a coherent ready page containing the
+completed turn counts. Every provider completion within the offered workload must
+be observed; missing samples fail the gate. Pollers stop before quiet-window
+measurement. Their bounded requests, all attempts, failures and latencies are
+reported separately as `projection_observer`, preserving the existing HTTP
+sample distribution. This removes delays caused by waiting for a later regular
+mutation round; the two-second projection-observation budget is unchanged.
