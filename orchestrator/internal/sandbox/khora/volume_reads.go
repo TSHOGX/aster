@@ -23,7 +23,13 @@ func (b *Backend) validateVolumeRead(ctx context.Context, reference sandbox.Volu
 	if reference.VolumeID == "" || strings.ContainsAny(reference.VolumeID, "/\\?#") || name == "" || strings.ContainsAny(name, "\\\x00") {
 		return failure("volume read", sandbox.Invalid, fmt.Errorf("volume identity and clean relative path required"))
 	}
-	for _, part := range strings.Split(name, "/") {
+	parts := strings.Split(name, "/")
+	for i, part := range parts {
+		// The pinned engine re-cleans parent paths inside several operations.
+		// Reject names it cannot preserve instead of addressing another entry.
+		if i < len(parts)-1 && strings.TrimSpace(part) != part {
+			return failure("volume path", sandbox.Invalid, fmt.Errorf("whitespace-edged parent path is not supported by the engine"))
+		}
 		if part == "" || part == "." || part == ".." {
 			return failure("volume read", sandbox.Invalid, fmt.Errorf("clean relative volume path required"))
 		}

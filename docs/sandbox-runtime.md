@@ -66,8 +66,8 @@ Khora permits direct writes with no live writable placement, and rejects them
 while a guest holds the volume writable to avoid incoherent gofer caches. Active
 mutations therefore retain the guest helper. Paused uploads verify length and
 SHA-256 in unnamed host staging, import to a unique recorded temporary path, and
-rename into place only after a complete import. A partial import never replaces
-the destination. Schema 13 records volume authority separately from process
+rename into place only after a complete import. An explicit quota failure reclaims staging and leaves the destination intact;
+a partial import never replaces the destination. Schema 13 records volume authority separately from process
 authority. Lost direct-operation replies remain unknown and are not replayed;
 unknown volume mutations block further mutations and resume pending operator
 recovery. Guest-process exit alone cannot settle them. Local file mutations
@@ -109,3 +109,9 @@ credit limit. Control/ownership boundaries preserve order. Raw identities, comma
 outcomes and watermarks commit atomically; a failed batch returns no ACK. This
 amortizes durable transaction cost without dropping native evidence or weakening
 FULL durability, and does not change the guest wire or journal format.
+
+
+The pinned engine normalizes whitespace at path boundaries. Root file names with
+leading/trailing spaces are preserved by the adapter; ambiguous parent-directory
+components with leading/trailing whitespace are rejected before engine I/O.
+Ordinary spaces inside directory/file names remain supported.

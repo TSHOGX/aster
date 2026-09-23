@@ -213,15 +213,26 @@ func (f *Files) executeVolume(ctx context.Context, scope Scope, id string, reque
 		}
 		return ErrInvalid
 	}()
+	finishctx, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer done()
 	state, detail, settled := "succeeded", "", true
 	if err != nil {
 		state, detail = "failed", err.Error()
-		if issued && !sandbox.Is(err, sandbox.Invalid) && !sandbox.Is(err, sandbox.Conflict) && !sandbox.Is(err, sandbox.NotFound) && !sandbox.Is(err, sandbox.Precondition) {
+		definite := sandbox.Is(err, sandbox.Invalid) || sandbox.Is(err, sandbox.Conflict) || sandbox.Is(err, sandbox.NotFound) || sandbox.Is(err, sandbox.Precondition) || sandbox.Is(err, sandbox.Capacity)
+		if issued && !definite {
 			state, settled = "unknown", false
 		}
+		if issued && definite && o.StagingPath != "" {
+			// An explicit engine refusal completes that call. Reclaim its
+			// partial staging file so ordinary quota failures do not consume
+			// more space or permanently fence subsequent workspace operations.
+			if cleanupErr := backend.RemoveVolumePath(finishctx, ref, o.StagingPath); cleanupErr != nil && !sandbox.Is(cleanupErr, sandbox.NotFound) {
+				err = errors.Join(err, cleanupErr)
+				detail = err.Error()
+				state, settled = "unknown", false
+			}
+		}
 	}
-	finishctx, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer done()
 	persist := f.Store.finishFile(finishctx, o, state, detail, settled)
 	o.State, o.Error, o.Settled = state, detail, settled
 	if persist != nil {

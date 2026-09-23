@@ -145,3 +145,39 @@ func TestPausedUploadFencesResumeAndPreservesUnknownOutcome(t *testing.T) {
 		})
 	}
 }
+
+type fullVolumeBackend struct{ *localFileBackend }
+
+func (b *fullVolumeBackend) ImportVolume(ctx context.Context, ref sandbox.VolumeReference, name string, input io.Reader, size int64) error {
+	if err := b.WriteVolume(ctx, ref, name, []byte("partial")); err != nil {
+		return err
+	}
+	return &sandbox.Error{Class: sandbox.Capacity, Cause: errors.New("volume full")}
+}
+func TestPausedVolumeQuotaFailureKeepsTargetAndReclaimsStaging(t *testing.T) {
+	f, scope, b := fileFixture(t)
+	must(t, os.WriteFile(filepath.Join(b.root, "target"), []byte("original"), 0600))
+	p, err := f.Store.Project(ctx, scope)
+	must(t, err)
+	must(t, f.Lifecycle.Pause(ctx, scope, p.Revision))
+	drive(t, f.Lifecycle, scope.ProjectID)
+	f.Backend = &fullVolumeBackend{b}
+	op, err := f.Execute(ctx, scope, "full", writeRequest("target", "replacement"), strings.NewReader("replacement"))
+	wantError(t, err, ErrFileOperationFailed)
+	if op.State != "failed" || !op.Settled {
+		t.Fatal(op)
+	}
+	data, err := os.ReadFile(filepath.Join(b.root, "target"))
+	must(t, err)
+	if string(data) != "original" {
+		t.Fatal(string(data))
+	}
+	entries, err := os.ReadDir(b.root)
+	must(t, err)
+	if len(entries) != 1 || entries[0].Name() != "target" {
+		t.Fatal("quota failure leaked staging", entries)
+	}
+	_, err = f.Execute(ctx, scope, "free-space", projectfiles.Request{Operation: "remove", Path: "target"}, nil)
+	must(t, err)
+	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+}

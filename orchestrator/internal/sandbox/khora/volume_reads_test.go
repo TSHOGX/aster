@@ -56,8 +56,10 @@ func TestVolumeReadAdapterPinsIdentityAndBoundsRanges(t *testing.T) {
 			t.Fatalf("invalid range accepted: %d %v", length, err)
 		}
 	}
-	if _, err := backend.ReadVolume(ctx, reference, "../file", 1, 2); !sandbox.Is(err, sandbox.Invalid) {
-		t.Fatalf("ambiguous path accepted: %v", err)
+	for _, name := range []string{"../file", " parent/file", "parent /file"} {
+		if _, err := backend.ReadVolume(ctx, reference, name, 1, 2); !sandbox.Is(err, sandbox.Invalid) {
+			t.Fatalf("ambiguous path reached engine: %q %v", name, err)
+		}
 	}
 	storeID = "replaced"
 	if _, err := backend.ReadVolume(ctx, reference, "file", 1, 2); !sandbox.Is(err, sandbox.IdentityChanged) {
