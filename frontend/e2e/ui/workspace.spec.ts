@@ -196,25 +196,19 @@ test("global schedules, project selection and keyboard account menu", async ({
   );
   expect(f.calls.some((c) => c.path === "/api/schedules")).toBe(true);
   await page
-    .getByRole("button", { name: "Create schedule", exact: true })
+    .getByRole("button", { name: "Create task", exact: true })
     .click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: "Project", exact: true }).click();
-  await dialog
-    .getByRole("option", { name: "Battery research", exact: true })
-    .click();
-  await dialog
-    .getByRole("combobox", { name: "Target Session", exact: true })
-    .selectOption("analysis");
-  await dialog.getByRole("button", { name: "Project", exact: true }).click();
-  await dialog
-    .getByRole("option", { name: "Research notes", exact: true })
-    .click();
-  await expect(
-    dialog.getByRole("combobox", { name: "Target Session", exact: true }),
-  ).toHaveValue("");
+  const editor = page.locator(".schedule-editor");
+  await editor.getByRole("button", { name: "Project", exact: true }).click();
+  await page.getByRole("option", { name: "Battery research", exact: true }).click();
+  await editor.getByRole("combobox", { name: /^Conversation/ }).selectOption("existing");
+  await editor.getByRole("combobox", { name: "Choose a conversation", exact: true }).selectOption("analysis");
+  await editor.getByRole("button", { name: "Project", exact: true }).click();
+  await page.getByRole("option", { name: "Research notes", exact: true }).click();
+  await expect(editor.getByRole("combobox", { name: "Choose a conversation", exact: true })).toHaveValue("");
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("dialog").getByRole("button", {name:"Discard changes",exact:true}).click();
+  await expect(editor).toHaveCount(0);
   await page.getByLabel("Account", { exact: true }).click();
   await expect(
     page.getByRole("menuitem", { name: "Theme", exact: true }),

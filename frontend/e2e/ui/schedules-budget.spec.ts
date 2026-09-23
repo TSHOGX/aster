@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { workspaceFixture } from "./fixture";
 
-const summary = (n: number) => ({ id: `task-${n}`, project_id: "battery", project_title: "Battery research", title: `Task ${n}`, timezone: "UTC", enabled: true, revision: 1 });
+const summary = (n: number) => ({ id: `task-${n}`, project_id: "battery", project_title: "Battery research", title: `Task ${n}`, timezone: "UTC", cron: "", enabled: true, revision: 1 });
 
 test("schedule reads are explicit, single-flight and replace bounded pages", async ({ page }) => {
   await workspaceFixture(page);
@@ -64,8 +64,9 @@ test("schedule filter changes fence late replies and full prompts load only for 
     await expect(page.locator(".schedule-row")).not.toContainText("Task 0");
     expect(details).toBe(0);
     await page.locator(".schedule-description").click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByRole("dialog").locator("textarea")).toHaveValue("The complete private scheduled prompt");
+    await expect(page.locator(".schedule-reading")).toContainText("The complete private scheduled prompt");
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect(page.locator(".schedule-editor textarea")).toHaveValue("The complete private scheduled prompt");
     expect(details).toBe(1);
   } finally { release(); }
 });
@@ -79,19 +80,21 @@ test("schedule run history replaces each page while preserving the editor draft"
     historyPages++;
     const after = new URL(route.request().url()).searchParams.get("after");
     const start = after ? Number(after) + 1 : 0;
-    return route.fulfill({ json: { runs: Array.from({ length: 50 }, (_, i) => ({ id: String(start + i), project_id: "battery", schedule_id: "task-1", session_id: "analysis", turn_id: `turn-${start + i}`, state: "completed", created_at: "2026-09-23T00:00:00Z" })) } });
+    return route.fulfill({ json: { next: String(start + 49), runs: Array.from({ length: 50 }, (_, i) => ({ id: String(start + i), project_id: "battery", schedule_id: "task-1", session_id: "analysis", turn_id: `turn-${start + i}`, state: "completed", created_at: "2026-09-23T00:00:00Z" })) } });
   });
   await page.goto("/?project=battery&session=analysis");
   await page.getByRole("button", { name: "Scheduled", exact: true }).click();
   await page.locator(".schedule-description").click();
-  const dialog = page.getByRole("dialog");
-  await dialog.locator("textarea").fill("Unsaved scheduled draft");
-  await dialog.getByRole("button", { name: "Run history", exact: true }).click();
-  await expect(dialog.locator(".run-history button")).toHaveCount(51);
-  await dialog.locator(".run-history").getByRole("button", { name: "Next page", exact: true }).click();
-  await expect(dialog.locator(".run-history button")).toHaveCount(51);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const editor = page.locator(".schedule-editor");
+  await editor.locator("textarea").fill("Unsaved scheduled draft");
+  const history = page.getByRole("region", { name: "Recent runs", exact: true });
+  await expect(history.locator("article")).toHaveCount(5);
+  await history.getByRole("button", { name: "Show this page’s runs", exact: true }).click();
+  await expect(history.locator("article")).toHaveCount(50);
+  await history.getByRole("button", { name: "Next page", exact: true }).click();
+  await expect(history.locator("article")).toHaveCount(5);
   await expect.poll(() => historyPages).toBe(2);
-  await expect(dialog.locator(".run-history").getByRole("button", { name: "Next page", exact: true })).toBeEnabled();
-  await expect(dialog.locator(".run-history button")).toHaveCount(51);
-  await expect(dialog.locator("textarea")).toHaveValue("Unsaved scheduled draft");
+  await expect(history.getByRole("button", { name: "Next page", exact: true })).toBeEnabled();
+  await expect(editor.locator("textarea")).toHaveValue("Unsaved scheduled draft");
 });

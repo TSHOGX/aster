@@ -65,9 +65,23 @@ export type Navigation = {
   draft: boolean;
   history: boolean;
   conversation?: string;
+  schedule?: string;
+  scheduleProject?: string;
+  scheduleMode?: "create" | "edit";
+  scheduleFilter?: string;
+  scheduleQuery?: string;
+  scheduleStatus?: "enabled" | "paused";
+  scheduleAfter?: string;
 };
 export function normalizeNavigation(n: Navigation): Navigation {
-  const base: Navigation = { view: n.view, project: "", session: "", message: "", draft: false, history: false };
+  const base: Navigation = {
+    view: n.view,
+    project: "",
+    session: "",
+    message: "",
+    draft: false,
+    history: false,
+  };
   if (n.view === "project" || n.view === "share") {
     base.project = n.project;
     base.session = n.project && !n.draft ? n.session : "";
@@ -78,11 +92,34 @@ export function normalizeNavigation(n: Navigation): Navigation {
     }
   } else if (n.view === "shared" && n.conversation) {
     base.conversation = n.conversation;
+  } else if (n.view === "schedules") {
+    if (n.scheduleMode === "create") base.scheduleMode = "create";
+    else if (n.schedule && n.scheduleProject) {
+      base.schedule = n.schedule;
+      base.scheduleProject = n.scheduleProject;
+      if (n.scheduleMode === "edit") base.scheduleMode = "edit";
+    }
+    if (n.scheduleFilter) base.scheduleFilter = n.scheduleFilter;
+    if (n.scheduleQuery) base.scheduleQuery = n.scheduleQuery.slice(0, 256);
+    if (n.scheduleStatus === "enabled" || n.scheduleStatus === "paused")
+      base.scheduleStatus = n.scheduleStatus;
+    if (n.scheduleAfter) base.scheduleAfter = n.scheduleAfter;
   }
   return base;
 }
-export function globalNavigation(view: "search" | "inbox" | "shared" | "schedules", conversation = ""): Navigation {
-  return normalizeNavigation({ view, project: "", session: "", message: "", draft: false, history: false, conversation });
+export function globalNavigation(
+  view: "search" | "inbox" | "shared" | "schedules",
+  conversation = "",
+): Navigation {
+  return normalizeNavigation({
+    view,
+    project: "",
+    session: "",
+    message: "",
+    draft: false,
+    history: false,
+    conversation,
+  });
 }
 export function readNavigation(search: string): Navigation {
   const p = new URLSearchParams(search),
@@ -99,6 +136,23 @@ export function readNavigation(search: string): Navigation {
     draft: p.get("draft") === "1",
     history: p.get("history") === "1",
     conversation: p.get("conversation") || "",
+    schedule: p.get("schedule") || "",
+    scheduleProject: p.get("schedule_project") || "",
+    scheduleMode:
+      p.get("mode") === "create"
+        ? "create"
+        : p.get("mode") === "edit"
+          ? "edit"
+          : undefined,
+    scheduleFilter: p.get("filter_project") || "",
+    scheduleQuery: p.get("q") || "",
+    scheduleStatus:
+      p.get("status") === "enabled"
+        ? "enabled"
+        : p.get("status") === "paused"
+          ? "paused"
+          : undefined,
+    scheduleAfter: p.get("after") || "",
   });
 }
 export function navigationURL(input: Navigation) {
@@ -111,5 +165,12 @@ export function navigationURL(input: Navigation) {
   if (n.draft) p.set("draft", "1");
   if (n.history) p.set("history", "1");
   if (n.conversation) p.set("conversation", n.conversation);
+  if (n.schedule) p.set("schedule", n.schedule);
+  if (n.scheduleProject) p.set("schedule_project", n.scheduleProject);
+  if (n.scheduleMode) p.set("mode", n.scheduleMode);
+  if (n.scheduleFilter) p.set("filter_project", n.scheduleFilter);
+  if (n.scheduleQuery) p.set("q", n.scheduleQuery);
+  if (n.scheduleStatus) p.set("status", n.scheduleStatus);
+  if (n.scheduleAfter) p.set("after", n.scheduleAfter);
   return p.size ? `/?${p}` : "/";
 }

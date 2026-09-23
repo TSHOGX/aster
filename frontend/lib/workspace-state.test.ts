@@ -13,6 +13,14 @@ afterEach(() => {
 });
 
 describe("route isolation", () => {
+  it("round trips schedule selection and filters without selecting a workspace", () => {
+    const url="?view=schedules&schedule=task&schedule_project=p&mode=edit&filter_project=other&q=weekly&status=paused";
+    const route=readNavigation(url);
+    expect(route.project).toBe("");
+    expect(readNavigation(navigationURL(route).slice(1))).toEqual(route);
+    expect(readNavigation("?view=schedules&mode=create&schedule=old&schedule_project=p")).toMatchObject({scheduleMode:"create"});
+    expect(readNavigation("?view=schedules&mode=create&schedule=old&schedule_project=p").schedule).toBeUndefined();
+  });
   it.each(["shared", "schedules", "search", "inbox"] as const)("discards workspace selection from %s URLs and transitions", view => {
     const mixed = readNavigation(`?view=${view}&project=p&session=s&message=m&draft=1&history=1`);
     expect(mixed).toEqual(globalNavigation(view));

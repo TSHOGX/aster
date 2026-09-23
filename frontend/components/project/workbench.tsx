@@ -222,18 +222,34 @@ function Application({
     return () => document.removeEventListener("keydown", keys);
   }, [drawer]);
   const forgetExpandedProject = useCallback((project: string) => {
-    setExpanded(old => old.includes(project) ? old.filter(id => id !== project) : old);
+    setExpanded((old) =>
+      old.includes(project) ? old.filter((id) => id !== project) : old,
+    );
   }, []);
-  const data = useWorkspaceData(nav.project, expanded, nav.session, forgetExpandedProject);
+  const data = useWorkspaceData(
+    nav.project,
+    expanded,
+    nav.session,
+    forgetExpandedProject,
+  );
   const { ensureTarget } = data;
   const guard = useRef<() => Promise<boolean>>(async () => true);
+  const runRequests = useRef(new Map<string, string>());
+  const scheduleListMemory = useRef({ key: "", top: 0 });
   const navRef = useRef(nav);
   useEffect(() => {
     navRef.current = nav;
   }, [nav]);
   const navigate = useCallback(async (next: Navigation, replace = false) => {
     next = normalizeNavigation(next);
-    if ((next.project !== navRef.current.project || next.view !== navRef.current.view) && !(await guard.current()))
+    if (
+      (next.project !== navRef.current.project ||
+        next.view !== navRef.current.view ||
+        next.schedule !== navRef.current.schedule ||
+        next.scheduleProject !== navRef.current.scheduleProject ||
+        next.scheduleMode !== navRef.current.scheduleMode) &&
+      !(await guard.current())
+    )
       return;
     navRef.current = next;
     dispatch(next);
@@ -251,7 +267,11 @@ function Application({
       const next = readNavigation(location.search);
       void (async () => {
         if (
-          (next.project !== navRef.current.project || next.view !== navRef.current.view) &&
+          (next.project !== navRef.current.project ||
+            next.view !== navRef.current.view ||
+            next.schedule !== navRef.current.schedule ||
+            next.scheduleProject !== navRef.current.scheduleProject ||
+            next.scheduleMode !== navRef.current.scheduleMode) &&
           !(await guard.current())
         ) {
           history.pushState(null, "", navigationURL(navRef.current));
@@ -287,9 +307,16 @@ function Application({
           );
       })
       .catch((e) => {
-        if (!gone && navRef.current === nav && e instanceof APIError && e.status === 404)
+        if (
+          !gone &&
+          navRef.current === nav &&
+          e instanceof APIError &&
+          e.status === 404
+        )
           void navigate(
-            nav.session ? globalNavigation("shared", nav.session) : readNavigation(""),
+            nav.session
+              ? globalNavigation("shared", nav.session)
+              : readNavigation(""),
             true,
           );
       });
@@ -654,7 +681,9 @@ function Application({
                             <button
                               className="navigation-title"
                               aria-current={
-                                ["project", "share"].includes(nav.view) && nav.session === s.id && nav.project === p.id
+                                ["project", "share"].includes(nav.view) &&
+                                nav.session === s.id &&
+                                nav.project === p.id
                                   ? "page"
                                   : undefined
                               }
@@ -799,9 +828,20 @@ function Application({
         ) : nav.view === "inbox" ? (
           <Inbox onOpen={open} />
         ) : nav.view === "shared" ? (
-          <SharedConversations selected={nav.conversation || ""} onSelect={(id) => void navigate(globalNavigation("shared", id))} />
+          <SharedConversations
+            selected={nav.conversation || ""}
+            onSelect={(id) => void navigate(globalNavigation("shared", id))}
+          />
         ) : nav.view === "schedules" ? (
-          <Schedules projects={data.projects} onOpen={open} />
+          <Schedules
+            projects={data.projects}
+            onOpen={open}
+            nav={nav}
+            onNavigate={(next, replace) => void navigate(next, replace)}
+            guardRef={guard}
+            runRequests={runRequests}
+            listMemoryRef={scheduleListMemory}
+          />
         ) : !project ? (
           <div className="project-welcome">
             <h1>{tr("What would you like to work on?")}</h1>

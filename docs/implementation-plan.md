@@ -70,5 +70,11 @@ That stale documentation must be corrected during final reconciliation.
   and explicit history continuation. Focused race tests cover migration rollback,
   multiple pages, authorization, filtering, concurrent ticks, month-end skips,
   and both DST transitions.
+- Scheduled workspace: implemented with explicit routes, responsive panes,
+  localized recurrence controls, exact advanced-rule retention, draft guards,
+  bounded history, and uncertain-write/conflict recovery. Nineteen focused
+  production browser tests passed, including light/dark English/Chinese forms at
+  1440, 1280, 1024, 768, and 390px. Screenshots were inspected; the former modal
+  and its CSS were removed. A moderated usability study remains unperformed.
 - Implementation and qualification: in progress; stage evidence will be recorded
   here as checks complete.

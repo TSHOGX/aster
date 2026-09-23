@@ -1,495 +1,902 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Clock3, Plus, X } from "lucide-react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { Clock3, Pause, Plus } from "lucide-react";
 import {
   api,
+  APIError,
   command,
   encode,
   newID,
   projectURL,
+  sessionURL,
   type AgentSession,
   type Project,
-  type ScheduleOverview,
   type Schedule,
   type SchedulePage,
   type ScheduleRun,
+  type ScheduleRunPage,
 } from "@/lib/project-api";
-import { useT } from "@/lib/i18n";
+import type { Navigation } from "@/lib/workspace-state";
+import { useLocale, useT } from "@/lib/i18n";
+import { scheduleTime } from "@/lib/schedule-recurrence";
 import { ProjectPicker } from "./project-picker";
-import { IconButton, Menu, useDialog } from "./ui";
-import { useResources } from "./resource-provider";
+import { Menu, useDialog } from "./ui";
+import { RecurrenceSummary } from "./schedule-recurrence";
+import { ScheduleEditor } from "./schedule-editor";
+
 export function Schedules({
   projects,
   onOpen,
+  nav,
+  onNavigate,
+  guardRef,
+  runRequests,
+  listMemoryRef,
 }: {
   projects: Project[];
   onOpen: (project: string, session: string) => void;
+  nav: Navigation;
+  onNavigate: (n: Navigation, replace?: boolean) => void;
+  guardRef: RefObject<() => Promise<boolean>>;
+  runRequests: RefObject<Map<string, string>>;
+  listMemoryRef: RefObject<{ key: string; top: number }>;
 }) {
   const tr = useT(),
-    ask = useDialog();
-  const resources = useResources();
-  const [filter, setFilter] = useState(""),
-    [page, setPage] = useState<SchedulePage>({ schedules: [] }),
-    [error, setError] = useState("");
-  const [selected, setSelected] = useState<(Schedule & { project_title: string }) | null>(null),
-    [creating, setCreating] = useState(false),
-    [busy, setBusy] = useState(false);
-  const serial = useRef(0);
-  const request = useRef<AbortController | null>(null);
-  const detail = useRef<AbortController | null>(null);
-  const [loading, setLoading] = useState(true);
-  const cursor = useRef("");
-  const [hasPrevious, setHasPrevious] = useState(false);
-  const load = useCallback(
-    async (after = cursor.current) => {
-      request.current?.abort();
-      const abort = new AbortController();
-      request.current = abort;
-      const id = ++serial.current;
-      setLoading(true);
-      try {
-        const url = `/api/schedules?project_id=${encode(filter)}&after=${encode(after)}&limit=50`;
-        const next = await resources.read<SchedulePage>(
-          { project: filter || "schedule-overview", kind: "index", identity: url },
-          signal => api<SchedulePage>(url, { signal }), abort.signal,
-        );
-        if (abort.signal.aborted || id !== serial.current) return;
-        if (next.schedules.length > 50 || JSON.stringify(next).length * 3 > 1024 * 1024)
-          throw new Error("Schedule page exceeds its display budget.");
-        cursor.current = after;
-        setHasPrevious(!!after);
-        setPage(next);
-        setError("");
-      } catch (e) {
-        if (abort.signal.aborted || id !== serial.current) return;
-        setError(String(e));
-      } finally {
-        if (!abort.signal.aborted && id === serial.current) setLoading(false);
-      }
-    }, [filter, resources],
-  );
+    locale = useLocale();
+  const [refresh, setRefresh] = useState(0),
+    [notice, setNotice] = useState("");
+  const [query, setQuery] = useState(nav.scheduleQuery || ""),
+    [composing, setComposing] = useState(false);
+  const [page, setPage] = useState<{
+    key: string;
+    value?: SchedulePage;
+    error?: string;
+  }>();
+  const [detail, setDetail] = useState<{
+    key: string;
+    value?: Schedule;
+    error?: string;
+  }>();
+  const [detailRefresh, setDetailRefresh] = useState(0);
+  const navRef = useRef(nav),
+    navigateRef = useRef(onNavigate);
   useEffect(() => {
-    let live = true;
-    cursor.current = "";
-    void Promise.resolve().then(() => { if (live) void load(""); });
-    return () => { live = false; request.current?.abort(); detail.current?.abort(); };
-  }, [load]);
-  const fullSchedule = async (summary: ScheduleOverview) => {
-    detail.current?.abort();
-    const abort = new AbortController();
-    detail.current = abort;
-    const url = `${projectURL(summary.project_id)}/schedules/${encode(summary.id)}`;
-    const schedule = await resources.read<Schedule>(
-      { project: summary.project_id, kind: "index", identity: url },
-      signal => api<Schedule>(url, { signal }), abort.signal,
+    navRef.current = nav;
+    navigateRef.current = onNavigate;
+  }, [nav, onNavigate]);
+  useEffect(() => {
+    void Promise.resolve().then(() => setQuery(nav.scheduleQuery || ""));
+  }, [nav.scheduleQuery]);
+  useEffect(() => {
+    if (composing || query === (nav.scheduleQuery || "")) return;
+    const timer = setTimeout(
+      () =>
+        navigateRef.current(
+          { ...navRef.current, scheduleQuery: query, scheduleAfter: undefined },
+          true,
+        ),
+      250,
     );
-    abort.signal.throwIfAborted();
-    return schedule;
+    return () => clearTimeout(timer);
+  }, [query, composing, nav.scheduleQuery]);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        document.querySelector('dialog[open],[role="menu"],[role="listbox"]')
+      )
+        return;
+      const current = navRef.current;
+      if (current.schedule || current.scheduleMode === "create") {
+        event.preventDefault();
+        navigateRef.current({
+          ...current,
+          schedule: undefined,
+          scheduleProject: undefined,
+          scheduleMode: undefined,
+        });
+      }
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, []);
+  const filter = nav.scheduleFilter || "",
+    status = nav.scheduleStatus || "",
+    after = nav.scheduleAfter || "";
+  const listKey = JSON.stringify([
+    filter,
+    status,
+    nav.scheduleQuery || "",
+    after,
+    refresh,
+  ]);
+  useEffect(() => {
+    const controller = new AbortController();
+    const url = `/api/schedules?project_id=${encode(filter)}&q=${encode(nav.scheduleQuery || "")}&status=${status}&after=${encode(after)}&limit=50`;
+    void api<SchedulePage>(url, { signal: controller.signal })
+      .then((value) => {
+        if (controller.signal.aborted) return;
+        if (
+          value.schedules.length > 50 ||
+          JSON.stringify(value).length * 3 > 1024 * 1024
+        )
+          throw new Error("Schedule page exceeds its display budget.");
+        setPage({ key: listKey, value });
+      })
+      .catch((e) => {
+        if (controller.signal.aborted) return;
+        if (e instanceof APIError && e.status === 409 && after) {
+          setNotice(tr("Tasks changed. Showing a fresh first page."));
+          navigateRef.current(
+            { ...navRef.current, scheduleAfter: undefined },
+            true,
+          );
+          return;
+        }
+        setPage({ key: listKey, error: String(e) });
+      });
+    return () => controller.abort();
+  }, [filter, status, nav.scheduleQuery, after, refresh, listKey, tr]);
+  const selectedKey =
+    nav.schedule && nav.scheduleProject
+      ? `${nav.scheduleProject}:${nav.schedule}`
+      : "";
+  useEffect(() => {
+    if (!selectedKey) return;
+    const controller = new AbortController();
+    void api<Schedule>(
+      `${projectURL(nav.scheduleProject!)}/schedules/${encode(nav.schedule!)}`,
+      { signal: controller.signal },
+    )
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          if (value.deleted) throw new Error("This task was deleted.");
+          setDetail({ key: selectedKey, value });
+        }
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted)
+          setDetail({ key: selectedKey, error: String(e) });
+      });
+    return () => controller.abort();
+  }, [selectedKey, nav.scheduleProject, nav.schedule, detailRefresh]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const memoryKey = JSON.stringify([
+    filter,
+    status,
+    nav.scheduleQuery || "",
+    after,
+  ]);
+  useEffect(() => {
+    if (page?.key !== listKey || !listRef.current) return;
+    listRef.current.scrollTop =
+      listMemoryRef.current.key === memoryKey ? listMemoryRef.current.top : 0;
+  }, [page, listKey, memoryKey, listMemoryRef]);
+  const current = page?.key === listKey ? page : undefined;
+  const selected = detail?.key === selectedKey ? detail : undefined;
+  const loading = !current;
+  const creating = nav.scheduleMode === "create";
+  const hasDetail = creating || !!selectedKey;
+  const close = () =>
+    onNavigate({
+      ...nav,
+      schedule: undefined,
+      scheduleProject: undefined,
+      scheduleMode: undefined,
+    });
+  const saved = (value: Schedule) => {
+    setDetail({ key: `${value.project_id}:${value.id}`, value });
+    setNotice(tr("Task saved."));
+    setRefresh((n) => n + 1);
+    onNavigate(
+      {
+        ...nav,
+        schedule: value.id,
+        scheduleProject: value.project_id,
+        scheduleMode: undefined,
+      },
+      true,
+    );
   };
-  const openSchedule = async (summary: ScheduleOverview) => {
-    setBusy(true);
-    try { const schedule = await fullSchedule(summary); setSelected({ ...schedule, project_title: summary.project_title }); setCreating(false); }
-    catch (e) { if (!(e instanceof DOMException && e.name === "AbortError")) setError(String(e)); }
-    finally { setBusy(false); }
-  };
+  const setFilter = (next: Partial<Navigation>) =>
+    onNavigate({ ...nav, ...next, scheduleAfter: undefined }, true);
+  return (
+    <section
+      className={`schedules-page ${hasDetail ? "has-detail" : ""}`}
+      aria-busy={loading}
+    >
+      <div className="schedules-layout">
+        <section
+          className="schedule-list-pane"
+          aria-label={tr("Scheduled tasks")}
+        >
+          <header className="page-heading">
+            <h1>{tr("Scheduled")}</h1>
+            <button
+              onClick={() =>
+                onNavigate({
+                  ...nav,
+                  schedule: undefined,
+                  scheduleProject: undefined,
+                  scheduleMode: "create",
+                })
+              }
+            >
+              <Plus size={17} />
+              {tr("Create task")}
+            </button>
+          </header>
+          <div className="schedule-filters">
+            <div className="row-actions" aria-label={tr("Task status")}>
+              {([undefined, "enabled", "paused"] as const).map((value) => (
+                <button
+                  key={value || "all"}
+                  aria-pressed={nav.scheduleStatus === value}
+                  onClick={() => setFilter({ scheduleStatus: value })}
+                >
+                  {value === "enabled"
+                    ? tr("Enabled")
+                    : value === "paused"
+                      ? tr("Paused")
+                      : tr("All")}
+                </button>
+              ))}
+            </div>
+            <input
+              aria-label={tr("Search task names")}
+              placeholder={tr("Search task names")}
+              maxLength={256}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
+            />
+            <div className="schedule-filter">
+              <ProjectPicker
+                label={tr("Filter by Project")}
+                projects={projects}
+                value={filter}
+                emptyOption={tr("All Projects")}
+                onChange={(id) => setFilter({ scheduleFilter: id })}
+              />
+              <button
+                disabled={loading}
+                onClick={() => setRefresh((n) => n + 1)}
+              >
+                {tr("Refresh")}
+              </button>
+            </div>
+          </div>
+          {notice && (
+            <p role="status" className="notice">
+              {notice}
+            </p>
+          )}
+          {notice === tr("Task saved.") &&
+            current?.value &&
+            selected?.value &&
+            !current.value.schedules.some(
+              (s) => s.id === selected.value!.id,
+            ) && (
+              <p role="status">
+                {tr("Saved task is outside this page or filter.")}{" "}
+                <button
+                  onClick={() =>
+                    setFilter({
+                      scheduleFilter: undefined,
+                      scheduleStatus: undefined,
+                      scheduleQuery: undefined,
+                    })
+                  }
+                >
+                  {tr("Show all tasks")}
+                </button>
+              </p>
+            )}
+          {current?.error && (
+            <p role="alert" className="notice error">
+              {current.error}{" "}
+              <button onClick={() => setRefresh((n) => n + 1)}>
+                {tr("Retry")}
+              </button>
+            </p>
+          )}
+          <div
+            className="schedule-list"
+            ref={listRef}
+            onScroll={(event) => {
+              listMemoryRef.current = {
+                key: memoryKey,
+                top: event.currentTarget.scrollTop,
+              };
+            }}
+          >
+            {loading && <p role="status">{tr("Loading…")}</p>}
+            {current?.value?.schedules.map((s) => (
+              <div
+                key={s.id}
+                className={`schedule-row ${nav.schedule === s.id ? "selected" : ""}`}
+              >
+                {s.enabled ? <Clock3 size={19} /> : <Pause size={19} />}
+                <button
+                  className="schedule-description"
+                  aria-current={nav.schedule === s.id ? "page" : undefined}
+                  onClick={() =>
+                    onNavigate({
+                      ...nav,
+                      schedule: s.id,
+                      scheduleProject: s.project_id,
+                      scheduleMode: undefined,
+                    })
+                  }
+                >
+                  <strong>{s.title}</strong>
+                  <small>
+                    {!s.enabled && `${tr("Paused")} · `}
+                    <RecurrenceSummary cron={s.cron} timezone={s.timezone} />
+                  </small>
+                  {s.enabled && s.cron && s.next_at && (
+                    <small>
+                      {tr("Next run")}:{" "}
+                      {scheduleTime(s.next_at, s.timezone, locale)}
+                    </small>
+                  )}
+                  <small>
+                    {s.project_title} ·{" "}
+                    {s.session_id
+                      ? tr("Existing conversation")
+                      : tr("New conversation each run")}
+                  </small>
+                </button>
+                <Menu
+                  label={`${tr("Schedule actions")} ${s.title}`}
+                  items={[
+                    {
+                      label: tr("Edit task"),
+                      action: () =>
+                        onNavigate({
+                          ...nav,
+                          schedule: s.id,
+                          scheduleProject: s.project_id,
+                          scheduleMode: "edit",
+                        }),
+                    },
+                  ]}
+                />
+              </div>
+            ))}
+            {current?.value?.schedules.length === 0 && (
+              <div className="empty-state">
+                <Clock3 size={28} />
+                <p>
+                  {filter || status || nav.scheduleQuery
+                    ? tr("No matching tasks.")
+                    : tr("No scheduled tasks yet.")}
+                </p>
+                {(filter || status || nav.scheduleQuery) && (
+                  <button
+                    onClick={() =>
+                      setFilter({
+                        scheduleFilter: undefined,
+                        scheduleQuery: undefined,
+                        scheduleStatus: undefined,
+                      })
+                    }
+                  >
+                    {tr("Clear filters")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <footer className="schedule-pages">
+            {after && (
+              <button
+                disabled={loading}
+                onClick={() =>
+                  onNavigate({ ...nav, scheduleAfter: undefined }, true)
+                }
+              >
+                {tr("First page")}
+              </button>
+            )}
+            {current?.value?.next && (
+              <button
+                disabled={loading}
+                onClick={() =>
+                  onNavigate(
+                    { ...nav, scheduleAfter: current.value!.next },
+                    true,
+                  )
+                }
+              >
+                {tr("Next page")}
+              </button>
+            )}
+          </footer>
+        </section>
+        <section
+          className="schedule-detail-pane"
+          aria-label={tr("Task details")}
+        >
+          {creating ? (
+            <ScheduleEditor
+              key="create"
+              projects={projects}
+              defaultProject={filter}
+              guardRef={guardRef}
+              onClose={close}
+              onSaved={saved}
+            />
+          ) : selectedKey ? (
+            !selected ? (
+              <p role="status">{tr("Loading…")}</p>
+            ) : selected.error ? (
+              <div>
+                <button onClick={close}>{tr("Back to tasks")}</button>
+                <p role="alert">
+                  {tr("This task is unavailable.")} {selected.error}
+                </p>
+                <button onClick={() => setDetailRefresh((n) => n + 1)}>
+                  {tr("Retry")}
+                </button>
+              </div>
+            ) : selected.value ? (
+              <SelectedSchedule
+                key={selectedKey}
+                schedule={selected.value}
+                editing={nav.scheduleMode === "edit"}
+                projects={projects}
+                guardRef={guardRef}
+                runRequests={runRequests}
+                onEdit={() => onNavigate({ ...nav, scheduleMode: "edit" })}
+                onClose={close}
+                onCancel={() => onNavigate({ ...nav, scheduleMode: undefined })}
+                onSaved={saved}
+                onChanged={(value) => {
+                  setDetail({ key: selectedKey, value });
+                  setRefresh((n) => n + 1);
+                }}
+                onDeleted={() => {
+                  close();
+                  setRefresh((n) => n + 1);
+                }}
+                onOpen={onOpen}
+              />
+            ) : null
+          ) : (
+            <p className="schedule-select-prompt">
+              {tr("Select a task to see its details.")}
+            </p>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function SelectedSchedule({
+  schedule,
+  editing,
+  projects,
+  guardRef,
+  runRequests,
+  onEdit,
+  onClose,
+  onCancel,
+  onSaved,
+  onChanged,
+  onDeleted,
+  onOpen,
+}: {
+  schedule: Schedule;
+  editing: boolean;
+  projects: Project[];
+  guardRef: RefObject<() => Promise<boolean>>;
+  runRequests: RefObject<Map<string, string>>;
+  onEdit: () => void;
+  onClose: () => void;
+  onCancel: () => void;
+  onSaved: (s: Schedule) => void;
+  onChanged: (s: Schedule) => void;
+  onDeleted: () => void;
+  onOpen: (p: string, s: string) => void;
+}) {
+  const tr = useT(),
+    locale = useLocale(),
+    ask = useDialog();
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState("");
+  const [historyVersion, setHistoryVersion] = useState(0),
+    [lastRun, setLastRun] = useState<ScheduleRun>();
+  const [target, setTarget] = useState<AgentSession>(),
+    [projectTitle, setProjectTitle] = useState(
+      projects.find((p) => p.id === schedule.project_id)?.title || "",
+    );
+  const [targetError, setTargetError] = useState(false);
+  const path = `${projectURL(schedule.project_id)}/schedules/${encode(schedule.id)}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    void api<Project>(projectURL(schedule.project_id), {
+      signal: controller.signal,
+    })
+      .then((p) => {
+        if (!controller.signal.aborted) setProjectTitle(p.title);
+      })
+      .catch(() => {});
+    if (schedule.session_id)
+      void api<AgentSession>(
+        sessionURL(schedule.project_id, schedule.session_id),
+        { signal: controller.signal },
+      )
+        .then((s) => {
+          if (!controller.signal.aborted) {
+            setTarget(s);
+            setTargetError(s.deletion !== 0);
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setTargetError(true);
+        });
+    return () => controller.abort();
+  }, [schedule.project_id, schedule.session_id]);
   const act = async (fn: () => Promise<void>) => {
+    if (busy) return;
     setBusy(true);
+    setError("");
     try {
       await fn();
-      await load();
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
   };
+  const run = () =>
+    act(async () => {
+      const id = runRequests.current.get(path) || newID();
+      runRequests.current.set(path, id);
+      const result = await command<ScheduleRun>(`${path}/run`, {
+        request_id: id,
+      });
+      runRequests.current.delete(path);
+      setLastRun(result);
+      setHistoryVersion((n) => n + 1);
+      setNotice(tr("Run submitted."));
+    });
+  const toggle = () =>
+    act(async () => {
+      const latest = await api<Schedule>(path);
+      const changed = await command<Schedule>(
+        path,
+        { ...latest, enabled: !schedule.enabled },
+        "PATCH",
+      );
+      onChanged(changed);
+      setNotice(
+        changed.enabled
+          ? tr("Task enabled.")
+          : tr("Paused. Already submitted runs are unaffected."),
+      );
+    });
+  const remove = async () => {
+    if (
+      await ask({
+        title: tr("Delete task"),
+        description: `${schedule.title}\n${tr("No new runs will start. Already submitted runs will not stop.")}`,
+        choices: [{ label: tr("Delete"), value: "delete", danger: true }],
+      })
+    )
+      void act(async () => {
+        await command(
+          `${path}?revision=${schedule.revision}`,
+          undefined,
+          "DELETE",
+        );
+        onDeleted();
+      });
+  };
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!schedule.next_at) return;
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(
+        2147483647,
+        Math.max(0, Date.parse(schedule.next_at) - Date.now()),
+      ),
+    );
+    return () => clearTimeout(timer);
+  }, [schedule.next_at]);
+
   return (
-    <section className="adjacent-panel schedules-page" aria-busy={loading}>
-      <header className="page-heading">
-        <div>
-          <h1>{tr("Scheduled")}</h1>
-          <p>{tr("Tasks across your projects")}</p>
-        </div>
-        <button
-          onClick={() => {
-            detail.current?.abort();
-            setSelected(null);
-            setCreating(true);
-          }}
-        >
-          <Plus size={17} />
-          {tr("Create schedule")}
-        </button>
-      </header>
-      <div className="schedule-filter">
-        <button disabled={loading} onClick={() => void load()}>{tr("Refresh")}</button>
-        <ProjectPicker
-          label={tr("Filter by Project")}
+    <>
+      {editing ? (
+        <ScheduleEditor
+          schedule={schedule}
           projects={projects}
-          value={filter}
-          emptyOption={tr("All Projects")}
-          onChange={(id) => {
-            request.current?.abort();
-            detail.current?.abort();
-            setPage({ schedules: [] });
-            setLoading(true);
-            setFilter(id);
-            setSelected(null);
-          }}
+          defaultProject=""
+          guardRef={guardRef}
+          onClose={onCancel}
+          onSaved={onSaved}
         />
-      </div>
-      {error && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="schedule-list">
-        {page.schedules.map((s) => (
-          <div key={s.id} className="schedule-row">
-            <Clock3 size={19} />
-            <button
-              className="schedule-description"
-              disabled={busy}
-              onClick={() => void openSchedule(s)}
-            >
-              <strong>{s.title}</strong>
-              <small>
-                {s.project_title} ·{" "}
-                {s.session_id
-                  ? tr("Existing conversation")
-                  : tr("New conversation each run")}
-              </small>
-              <small>
-                {s.next_at
-                  ? new Date(s.next_at).toLocaleString()
-                  : tr("Manual only")}{" "}
-                · {s.timezone}
-              </small>
-            </button>
-            <span className="quiet-status">
-              {s.enabled ? tr("Enabled") : tr("Disabled")}
-            </span>
-            <Menu
-              label={`${tr("Schedule actions")} ${s.title}`}
-              items={[
-                {
-                  label: tr("Run now"),
-                  disabled: busy || !s.enabled,
-                  action: () =>
-                    void act(async () => {
-                      const run = await command<ScheduleRun>(
-                        `${projectURL(s.project_id)}/schedules/${encode(s.id)}/run`,
-                        { request_id: newID() },
-                      );
-                      onOpen(run.project_id, run.session_id);
-                    }),
-                },
-                {
-                  label: s.enabled ? tr("Disable") : tr("Enable"),
-                  disabled: busy,
-                  action: () =>
-                    void act(async () => {
-                      const full = await fullSchedule(s);
-                      await command(
-                        `${projectURL(s.project_id)}/schedules/${encode(s.id)}`,
-                        { ...full, enabled: !s.enabled },
-                        "PATCH",
-                      );
-                    }),
-                },
-                {
-                  label: tr("Delete schedule"),
-                  danger: true,
-                  action: () =>
-                    void (async () => {
-                      if (
-                        await ask({
-                          title: tr("Delete schedule"),
-                          description: tr(
-                            "Delete this schedule? Admitted runs retain their own controls.",
-                          ),
-                          choices: [
-                            { label: tr("Delete"), value: "yes", danger: true },
-                          ],
-                        })
-                      )
-                        void act(async () => {
-                          await command(
-                            `${projectURL(s.project_id)}/schedules/${encode(s.id)}?revision=${s.revision}`,
-                            undefined,
-                            "DELETE",
-                          );
-                          if (selected?.id === s.id) setSelected(null);
-                        });
-                    })(),
-                },
-              ]}
+      ) : (
+        <div className="schedule-reading">
+          <header className="schedule-detail-heading">
+            <span>{schedule.enabled ? tr("Enabled") : tr("Paused")}</span>
+            <div className="row-actions">
+              <button disabled={busy} onClick={onEdit}>
+                {tr("Edit")}
+              </button>
+              <button disabled={busy} onClick={() => void toggle()}>
+                {schedule.enabled ? tr("Pause") : tr("Resume")}
+              </button>
+              <Menu
+                label={tr("Task actions")}
+                items={[
+                  {
+                    label: tr("Delete task"),
+                    danger: true,
+                    disabled: busy,
+                    action: () => void remove(),
+                  },
+                ]}
+              />
+              <button onClick={onClose}>{tr("Back to tasks")}</button>
+            </div>
+          </header>
+          <h2>{schedule.title}</h2>
+          <Instructions text={schedule.prompt} />
+          <section className="schedule-settings">
+            <h3>{tr("Runs in")}</h3>
+            <dl>
+              <dt>{tr("Project")}</dt>
+              <dd>{projectTitle || tr("Loading…")}</dd>
+              <dt>{tr("Conversation")}</dt>
+              <dd>
+                {schedule.session_id ? (
+                  targetError ? (
+                    tr("This conversation is unavailable. Choose another.")
+                  ) : target?.id === schedule.session_id ? (
+                    <button
+                      onClick={() =>
+                        onOpen(schedule.project_id, schedule.session_id!)
+                      }
+                    >
+                      {target.title}
+                    </button>
+                  ) : (
+                    tr("Loading…")
+                  )
+                ) : (
+                  tr("New conversation each run")
+                )}
+              </dd>
+            </dl>
+          </section>
+          <section className="schedule-settings">
+            <h3>{tr("Schedule")}</h3>
+            <RecurrenceSummary
+              cron={schedule.cron}
+              timezone={schedule.timezone}
             />
-          </div>
-        ))}
-      </div>
-      {loading && <p role="status">{tr("Loading…")}</p>}
-      {!page.schedules.length && !error && !loading && (
-        <div className="empty-state">
-          <Clock3 size={28} />
-          <p>{tr("No scheduled tasks yet.")}</p>
+            <p>
+              {!schedule.enabled
+                ? tr("Paused. Resume to continue on this schedule.")
+                : !schedule.cron
+                  ? tr("Runs only when you choose Run now.")
+                  : schedule.next_at
+                    ? `${tr("Next run")}: ${scheduleTime(schedule.next_at, schedule.timezone, locale)}`
+                    : tr("Upcoming time is unavailable. Refresh the task.")}
+            </p>
+            {schedule.enabled &&
+              schedule.next_at &&
+              Date.parse(schedule.next_at) <= now && (
+                <p>
+                  {tr("The planned time has passed. Refresh for an update.")}
+                </p>
+              )}
+          </section>
+          {notice && <p role="status">{notice}</p>}
+          {lastRun && (
+            <button
+              onClick={() => onOpen(lastRun.project_id, lastRun.session_id)}
+            >
+              {tr("Open conversation")}
+            </button>
+          )}
+          {error && (
+            <p className="notice error" role="alert">
+              {error}{" "}
+              {runRequests.current.has(path) &&
+                tr("Retry Run now to confirm the same request.")}
+            </p>
+          )}
+          <footer className="schedule-footer">
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(async () => onChanged(await api<Schedule>(path)))
+              }
+            >
+              {tr("Refresh task")}
+            </button>
+            <button
+              className="primary"
+              disabled={
+                busy ||
+                (!schedule.enabled && !runRequests.current.has(path)) ||
+                targetError
+              }
+              onClick={() => void run()}
+            >
+              {tr("Run now")}
+            </button>
+            {!schedule.enabled && (
+              <small>{tr("Resume this task to run it now.")}</small>
+            )}
+          </footer>
         </div>
       )}
-      <div className="schedule-pages">
-        {hasPrevious && <button disabled={loading} onClick={() => void load("")}>{tr("First page")}</button>}
-        {page.next && <button disabled={loading} onClick={() => void load(page.next)}>{tr("Next page")}</button>}
-      </div>
-      {(selected || creating) && (
-        <ScheduleDetails
-          key={selected?.id || "new"}
-          schedule={selected}
-          projects={projects}
-          defaultProject={filter}
-          onClose={() => {
-            setSelected(null);
-            setCreating(false);
-          }}
-          onSaved={() => {
-            setSelected(null);
-            setCreating(false);
-            void load();
-          }}
-          onOpen={onOpen}
-        />
-      )}
-    </section>
+      <RunHistory
+        schedule={schedule}
+        version={historyVersion}
+        editing={editing}
+        onOpen={onOpen}
+      />
+    </>
   );
 }
-function ScheduleDetails({
+function Instructions({ text }: { text: string }) {
+  const tr = useT();
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <p className="schedule-instructions">
+        {expanded ? text : text.slice(0, 2000)}
+      </p>
+      {text.length > 2000 && (
+        <button onClick={() => setExpanded((v) => !v)}>
+          {expanded ? tr("Show less") : tr("Show all instructions")}
+        </button>
+      )}
+    </div>
+  );
+}
+function RunHistory({
   schedule,
-  projects,
-  defaultProject,
-  onClose,
-  onSaved,
+  version,
+  editing,
   onOpen,
 }: {
-  schedule: (Schedule & { project_title: string }) | null;
-  projects: Project[];
-  defaultProject: string;
-  onClose: () => void;
-  onSaved: () => void;
-  onOpen: (project: string, session: string) => void;
+  schedule: Schedule;
+  version: number;
+  editing: boolean;
+  onOpen: (p: string, s: string) => void;
 }) {
-  const tr = useT();
-  const resources = useResources();
-  const sessionRequest = useRef<AbortController | null>(null);
-  const [sessionLoading, setSessionLoading] = useState(false);
-  const [sessionAfter, setSessionAfter] = useState("");
-  const historyRequest = useRef<AbortController | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [project, setProject] = useState(
-      schedule?.project_id || defaultProject,
-    ),
-    [title, setTitle] = useState(schedule?.title || ""),
-    [prompt, setPrompt] = useState(schedule?.prompt || ""),
-    [cron, setCron] = useState(schedule?.cron || ""),
-    [timezone, setTimezone] = useState(
-      schedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-    ),
-    [session, setSession] = useState(schedule?.session_id || "");
-  const [sessions, setSessions] = useState<AgentSession[]>([]),
-    [more, setMore] = useState(false),
-    [runs, setRuns] = useState<ScheduleRun[] | null>(null),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const requestId = useRef(newID());
+  const tr = useT(),
+    locale = useLocale();
+  const [opened, setOpened] = useState(!editing),
+    [after, setAfter] = useState(""),
+    [refresh, setRefresh] = useState(0),
+    [expanded, setExpanded] = useState(false);
+  const [data, setData] = useState<{
+    key: string;
+    value?: ScheduleRunPage;
+    error?: string;
+  }>();
+  const key = JSON.stringify([after, refresh, version]);
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement;
-    dialog.current?.showModal();
-    return () => previous?.focus();
-  }, []);
-  const loadSessions = useCallback(async (after = "") => {
-    sessionRequest.current?.abort();
-    const abort = new AbortController();
-    sessionRequest.current = abort;
-    if (!project) return;
-    setSessionLoading(true);
-    try {
-      const url = `${projectURL(project)}/sessions?limit=100&after=${encode(after)}`;
-      const data = await resources.read<{ sessions: AgentSession[] }>(
-        { project, kind: "index", identity: url }, signal => api(url, { signal }), abort.signal,
-      );
-      if (!abort.signal.aborted) {
-        setSessions(data.sessions.filter(s => s.deletion === 0).slice(0,100));
-        setMore(data.sessions.length === 100); setSessionAfter(after);
-      }
-    } catch (e) { if (!abort.signal.aborted) setError(String(e)); }
-    finally { if (!abort.signal.aborted) setSessionLoading(false); }
-  }, [project, resources]);
+    if (!editing) void Promise.resolve().then(() => setOpened(true));
+  }, [editing]);
   useEffect(() => {
-    let live = true;
-    void Promise.resolve().then(() => { if (live) void loadSessions(); });
-    return () => { live = false; sessionRequest.current?.abort(); historyRequest.current?.abort(); };
-  }, [loadSessions]);
-  const history = async (after = "") => {
-    historyRequest.current?.abort();
-    const abort = new AbortController();
-    historyRequest.current = abort;
-    setHistoryLoading(true);
-    try {
-      const url = `${projectURL(project)}/schedules/${encode(schedule!.id)}/runs?after=${encode(after)}&limit=50`;
-      const data = await resources.read<{ runs: ScheduleRun[] }>(
-        { project, kind: "index", identity: url }, signal => api(url, { signal }), abort.signal,
-      );
-      if (!abort.signal.aborted) setRuns(data.runs.slice(0, 50));
-    } catch (e) { if (!abort.signal.aborted) setError(String(e)); }
-    finally { if (!abort.signal.aborted) setHistoryLoading(false); }
+    if (!opened) return;
+    const controller = new AbortController();
+    void api<ScheduleRunPage>(
+      `${projectURL(schedule.project_id)}/schedules/${encode(schedule.id)}/runs?after=${encode(after)}&limit=50`,
+      { signal: controller.signal },
+    )
+      .then((value) => {
+        if (!controller.signal.aborted)
+          setData({ key, value: { ...value, runs: value.runs.slice(0, 50) } });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setData({ key, error: String(e) });
+      });
+    return () => controller.abort();
+  }, [opened, schedule.project_id, schedule.id, after, refresh, version, key]);
+  const current = data?.key === key ? data : undefined;
+  const label = (state: string) => {
+    switch (state) {
+      case "queued":
+        return tr("Queued");
+      case "running":
+        return tr("Running");
+      case "completed":
+        return tr("Completed");
+      case "failed":
+        return tr("Failed");
+      case "canceled":
+        return tr("Canceled");
+      case "interrupted":
+        return tr("Interrupted");
+      case "held":
+        return tr("Held");
+      default:
+        return tr("Outcome unknown");
+    }
   };
   return (
-    <dialog
-      className="app-dialog schedule-dialog"
-      ref={dialog}
-      aria-labelledby="schedule-detail-title"
-      onCancel={(e) => {
-        e.preventDefault();
-        onClose();
-      }}
-    >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!project) return;
-          setBusy(true);
-          void command(
-            `${projectURL(project)}/schedules${schedule ? `/${encode(schedule.id)}` : ""}`,
-            {
-              id: schedule?.id || requestId.current,
-              title,
-              prompt,
-              cron,
-              timezone,
-              session_id: session,
-              enabled: schedule?.enabled ?? true,
-              ...(schedule ? { revision: schedule.revision } : {}),
-            },
-            schedule ? "PATCH" : "POST",
-          )
-            .then(onSaved)
-            .catch((e) => setError(String(e)))
-            .finally(() => setBusy(false));
-        }}
-      >
-        <header>
-          <h2 id="schedule-detail-title">
-            {schedule ? tr("Edit schedule") : tr("Create schedule")}
-          </h2>
-          <IconButton label={tr("Close")} onClick={onClose}>
-            <X size={18} />
-          </IconButton>
-        </header>
-        {error && (
-          <p className="notice error" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="project-picker-field">
-          <span>{tr("Project")}</span>
-          <ProjectPicker
-            projects={projects}
-            value={project}
-            disabled={!!schedule}
-            fallbackTitle={schedule?.project_title}
-            onChange={(id) => {
-              setProject(id);
-              setSession("");
-              setSessions([]);
-            }}
-          />
-        </div>
-        <label>
-          {tr("Schedule name")}
-          <input
-            required
-            maxLength={256}
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </label>
-        <label>
-          {tr("Prompt")}
-          <textarea
-            required
-            maxLength={64000}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-        </label>
-        <label>
-          {tr("Target Session")}
-          <select value={session} onChange={(e) => setSession(e.target.value)}>
-            <option value="">{tr("Create a new Session per run")}</option>
-            {session && !sessions.some((s) => s.id === session) && (
-              <option value={session}>{session}</option>
-            )}
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div>
-          {sessionAfter && <button type="button" disabled={sessionLoading} onClick={() => void loadSessions()}>{tr("First page")}</button>}
-          {more && <button type="button" disabled={sessionLoading} onClick={() => void loadSessions(sessions.at(-1)?.id || "")}>{tr("Next page")}</button>}
-        </div>
-        <label>
-          {tr("Cron expression")}
-          <input
-            value={cron}
-            onChange={(e) => setCron(e.target.value)}
-            placeholder={tr("Leave empty for manual runs")}
-          />
-        </label>
-        <label>
-          {tr("Timezone")}
-          <input
-            required
-            value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-          />
-        </label>
-        <footer>
-          {schedule && (
-            <button type="button" disabled={historyLoading} onClick={() => void history()}>
-              {tr("Run history")}
-            </button>
+    <section className="run-history" aria-label={tr("Recent runs")}>
+      <header>
+        <h3>{tr("Recent runs")}</h3>
+        <button
+          onClick={() => {
+            setOpened(true);
+            setAfter("");
+            setRefresh((n) => n + 1);
+          }}
+          disabled={opened && !current}
+        >
+          {opened ? tr("Refresh history") : tr("Show history")}
+        </button>
+      </header>
+      {opened && (
+        <>
+          {!current && <p role="status">{tr("Loading…")}</p>}
+          {current?.error && (
+            <p role="alert">
+              {tr("Could not load run history.")}{" "}
+              <button onClick={() => setRefresh((n) => n + 1)}>
+                {tr("Retry")}
+              </button>
+            </p>
           )}
-          <button type="button" onClick={onClose}>
-            {tr("Cancel")}
-          </button>
-          <button className="primary" disabled={busy || !project}>
-            {tr("Save")}
-          </button>
-        </footer>
-      </form>
-      {runs && (
-        <div className="run-history">
-          {runs.map((run) => (
-            <button
-              key={run.id}
-              onClick={() => {
-                onClose();
-                onOpen(run.project_id, run.session_id);
-              }}
-            >
-              {run.due_at
-                ? new Date(run.due_at).toLocaleString()
-                : tr("Manual run")}{" "}
-              · {run.state}
-            </button>
+          {current?.value?.runs.length === 0 && <p>{tr("No runs yet.")}</p>}
+          {current?.value?.runs.slice(0, expanded ? 50 : 5).map((run) => (
+            <article key={run.id}>
+              <span>{label(run.state)}</span>
+              <time>
+                {run.due_at
+                  ? `${tr("Scheduled trigger")}: ${scheduleTime(run.due_at, schedule.timezone, locale)}`
+                  : tr("Manual run")}
+              </time>
+              <button onClick={() => onOpen(run.project_id, run.session_id)}>
+                {tr("Open conversation")}
+              </button>
+            </article>
           ))}
-          {!runs.length && <p>{tr("No runs yet.")}</p>}
-          {runs.length > 0 && runs.length % 50 === 0 && (
-            <button disabled={historyLoading} onClick={() => void history(runs.at(-1)!.id)}>{tr("Next page")}</button>
+          {(current?.value?.runs.length || 0) > 5 && (
+            <button onClick={() => setExpanded((v) => !v)}>
+              {expanded ? tr("Show less") : tr("Show this page’s runs")}
+            </button>
           )}
-        </div>
+          <div className="row-actions">
+            {after && (
+              <button
+                onClick={() => {
+                  setAfter("");
+                  setExpanded(false);
+                }}
+              >
+                {tr("First page")}
+              </button>
+            )}
+            {current?.value?.next && (
+              <button
+                onClick={() => {
+                  setAfter(current.value!.next!);
+                  setExpanded(false);
+                }}
+              >
+                {tr("Next page")}
+              </button>
+            )}
+          </div>
+        </>
       )}
-    </dialog>
+    </section>
   );
 }

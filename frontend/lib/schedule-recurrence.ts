@@ -1,0 +1,124 @@
+import type { Schedule } from "./project-api";
+import type { MessageKey } from "./i18n/messages-en";
+export type RepeatMode =
+  | "daily"
+  | "weekdays"
+  | "weekly"
+  | "monthly"
+  | "dates"
+  | "advanced"
+  | "manual";
+export type Recurrence = {
+  mode: RepeatMode;
+  time: string;
+  weekdays: number[];
+  dates: number[];
+  advanced: string;
+};
+export const repeatLabels: Record<RepeatMode, MessageKey> = {
+  daily: "Daily",
+  weekdays: "Monday–Friday",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  dates: "Several monthly dates",
+  advanced: "Advanced: Cron expression",
+  manual: "Manual only",
+};
+export const weekdayLabels: MessageKey[] = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+export function parseRecurrence(expression: string): Recurrence {
+  const base: Recurrence = {
+    mode: expression ? "advanced" : "manual",
+    time: "09:00",
+    weekdays: [1],
+    dates: [1],
+    advanced: expression,
+  };
+  if (!expression) return base;
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5) return base;
+  const [minute, hour, date, month, day] = fields;
+  if (
+    !/^\d{1,2}$/.test(minute) ||
+    !/^\d{1,2}$/.test(hour) ||
+    +minute > 59 ||
+    +hour > 23 ||
+    month !== "*"
+  )
+    return base;
+  const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+  if (date === "*" && day === "*") return { ...base, mode: "daily", time };
+  if (date === "*" && day === "1-5") return { ...base, mode: "weekdays", time };
+  if (date === "*" && /^[0-6](,[0-6])*$/.test(day))
+    return {
+      ...base,
+      mode: "weekly",
+      time,
+      weekdays: [...new Set(day.split(",").map(Number))],
+    };
+  if (
+    day === "*" &&
+    /^\d{1,2}(,\d{1,2})*$/.test(date) &&
+    date.split(",").every((n) => +n >= 1 && +n <= 31)
+  ) {
+    const dates = [...new Set(date.split(",").map(Number))];
+    return {
+      ...base,
+      mode: dates.length === 1 ? "monthly" : "dates",
+      time,
+      dates,
+    };
+  }
+  return base;
+}
+export function recurrenceCron(rule: Recurrence): string | null {
+  if (rule.mode === "manual") return "";
+  if (rule.mode === "advanced") return rule.advanced;
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(rule.time)) return null;
+  const [hour, minute] = rule.time.split(":").map(Number);
+  const prefix = `${minute} ${hour}`;
+  if (rule.mode === "daily") return `${prefix} * * *`;
+  if (rule.mode === "weekdays") return `${prefix} * * 1-5`;
+  if (rule.mode === "weekly")
+    return rule.weekdays.length
+      ? `${prefix} * * ${[...rule.weekdays].sort((a, b) => a - b).join(",")}`
+      : null;
+  const days = rule.mode === "monthly" ? rule.dates.slice(0, 1) : rule.dates;
+  return days.length && days.every((n) => n >= 1 && n <= 31)
+    ? `${prefix} ${[...days].sort((a, b) => a - b).join(",")} * *`
+    : null;
+}
+export function scheduleConfiguration(s: Schedule) {
+  return JSON.stringify([
+    s.project_id,
+    s.title,
+    s.prompt,
+    s.cron,
+    s.timezone,
+    s.session_id || "",
+    s.enabled,
+  ]);
+}
+export function scheduleTime(value: string, zone: string, locale: string) {
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      timeZone: zone,
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZoneName: "shortOffset",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}

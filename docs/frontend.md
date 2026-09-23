@@ -136,15 +136,44 @@ inputs grow from 58px to min(280px, 32dvh), then scroll with independent top/bot
 manual resize handle. The fades affect overflowing glyphs only, not the input
 surface, and are absent for empty/whitespace-only or non-overflowing values.
 
-Scheduled tasks have an owner-scoped, paginated cross-project overview, backed by
-`GET /api/schedules`. The overview returns metadata without full prompt bodies;
-opening an editor fetches the complete Project-scoped schedule. The browser retains
-one 50-row overview page and refreshes after its own mutations or explicit Refresh.
-Next/First controls replace pages. There is no periodic overview polling or one
-subscription per Project. Filter changes and unmount cancel reads; pending/error
-states never claim an empty schedule list. The editor retains at most 100 Session
-options plus its selected ID and 50 run-history rows, with explicit paging.
-Task mutations and run history retain Project-scoped APIs.
+Scheduled is a list/detail workspace with a content-width breakpoint of 960px.
+The two-pane list is clamped to 340–460px; smaller layouts show list or detail.
+Task detail/create/edit and title/Project/status filters are explicit URL state,
+independent of the chat route. Browser history restores context; list position
+is retained in actor-scoped application memory. Reading and editing are distinct.
+
+The server filters and orders the overview before paging. The browser retains
+one 50-row metadata page (including Cron, never prompts), loads only the selected
+task's full instructions, and refreshes after its mutations or explicit Refresh.
+There is no overview polling or per-Project fan-out. Opaque cursors invalidated by
+concurrent changes restart at the first page with an explanation. Filter/detail
+changes cancel obsolete requests. Loading and failure are distinct from emptiness.
+
+Creation defaults visibly to Daily 09:00 in the detected IANA timezone (UTC with
+an explanation if detection fails), using a new conversation each run. Daily,
+Monday–Friday, weekly, monthly, multiple monthly dates, manual-only, and advanced
+five-field Cron are supported. The timezone input searches IANA and localized
+zone names. Only conservative rules are recognized visually; name/instruction
+edits preserve the original expression exactly. Replacing an advanced rule
+requires an explicit choice. Recurrence changes require an up-to-date server
+preview using the same parser as execution. Displayed instants use the task's
+zone and include each occurrence's offset.
+
+Dirty edits share a guard for close, Escape, task/global selection and browser
+navigation; resize does not remount drafts. Instructions are not persisted to
+new browser storage. Uncertain creation retains its original identity and payload;
+a read reconciles a lost response. Tick-only revision conflicts retry once with
+the latest revision. Configuration conflicts preserve drafts and require an
+explicit decision before overwriting. Run now retains an uncertain request ID,
+stays in details, and links the admitted conversation. Pausing/deleting does not
+claim to stop already admitted work.
+
+Conversation choices load only when targeting an existing conversation and retain
+at most 100 options plus an authorized selected lookup. History belongs to the
+selected task, retains at most 50 rows, and initially shows five; Next/First
+replace pages with explicit continuation. Scheduled-trigger timestamps are not
+actual start times; manual runs have no invented timestamp. Unknown outcomes,
+history failures, empty history and paused/manual-only configurations stay distinct.
 Search, inbox, conversation grants and frozen public sharing remain supported;
 read-only conversation sharing does not grant live Files or PTY access. Browser
 auth expiry returns to sign-in and tears down user-scoped state/connections.

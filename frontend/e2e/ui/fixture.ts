@@ -223,6 +223,10 @@ export async function workspaceFixture(
         body: ": connected\n\n",
       });
     if (path === "/api/projects") return json({ projects });
+    if (path === "/api/schedules/preview") {
+      const body = route.request().postDataJSON();
+      return json({ valid: true, ...body, reference_time: "2026-09-24T00:00:00Z", occurrences: body.cron ? ["2026-09-25T01:00:00Z", "2026-09-26T01:00:00Z", "2026-09-27T01:00:00Z"] : [] });
+    }
     if (path === "/api/schedules")
       return json({
         schedules: [
