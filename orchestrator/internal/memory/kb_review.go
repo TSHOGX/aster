@@ -35,6 +35,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // reviewDiffLimit caps the bytes we render an inline diff for. The KB carries a
@@ -148,6 +149,9 @@ func (k *KB) Review() (*Review, error) {
 		if !hasNew {
 			viewText = oldText
 		}
+		if rel == derivedIndexPath && viewText != "" {
+			viewText = refreshIndex(viewText, after)
+		}
 		if int64(len(viewText)) > reviewDiffLimit {
 			file.Oversized = true
 			file.Bytes = int64(len(viewText))
@@ -202,12 +206,19 @@ type ReviewResult struct {
 	RejectedFactIDs []int64 `json:"rejected_fact_ids"`
 	ApprovedFacts   int     `json:"approved_facts"`
 	RejectedFacts   int     `json:"rejected_facts"`
+	UndecidedFacts  int     `json:"undecided_facts"`
 	ApprovedFiles   int     `json:"approved_files"`
 	RejectedFiles   int     `json:"rejected_files"`
+	UndecidedFiles  int     `json:"undecided_files"`
 }
 
-// ApplyReview rebuilds the snapshot from the approved entries and stages the
-// result. `current` is untouched unless d.Publish is set.
+// ApplyReview rebuilds the snapshot from the reviewer's verdicts.
+//
+// Explicit rejects are dropped and reported for demotion. Explicit approves
+// are kept. Undecided entries stay in the pending snapshot when not
+// publishing, so a reviewer can save progress without wiping the rest of the
+// queue. Publishing withholds undecided entries from `current` and restages
+// them as the new pending snapshot.
 func (k *KB) ApplyReview(d ReviewDecisions) (ReviewResult, error) {
 	var res ReviewResult
 	if k == nil {
@@ -232,22 +243,12 @@ func (k *KB) ApplyReview(d ReviewDecisions) (ReviewResult, error) {
 		return res, fmt.Errorf("kb: read pending snapshot: %w", err)
 	}
 
-	// Start from what is live and fold in only what was approved, so an entry
-	// reaches the result by explicit acceptance rather than by default.
-	out := map[string]string{}
-	for rel, text := range before {
-		out[rel] = text
-	}
-
-	approved := func(m map[string]string, key string) bool {
-		return strings.EqualFold(strings.TrimSpace(m[key]), "approved")
-	}
+	kept := cloneTree(before)
+	published := cloneTree(before)
 
 	for _, rel := range changedPaths(before, after) {
 		oldText, hadOld := before[rel]
 		newText, hasNew := after[rel]
-
-		// The index is a projection of everything else; regenerated below.
 		if rel == derivedIndexPath {
 			continue
 		}
@@ -255,90 +256,233 @@ func (k *KB) ApplyReview(d ReviewDecisions) (ReviewResult, error) {
 		if isGeneratedFactsPath(rel) && hasNew {
 			live := factIDs(oldText)
 			parsed := parseFactsFile(newText)
-			kept := parsed.filter(func(b factBlock) bool {
+			keptFile := parsed.filter(func(b factBlock) bool {
 				if _, alreadyLive := live[b.id]; alreadyLive {
-					return true // already published; not under review
-				}
-				if approved(d.Facts, b.id) {
-					res.ApprovedFacts++
 					return true
 				}
-				res.RejectedFacts++
-				if id, convErr := strconv.ParseInt(b.id, 10, 64); convErr == nil {
-					res.RejectedFactIDs = append(res.RejectedFactIDs, id)
+				switch verdict(d.Facts, b.id) {
+				case "approved":
+					res.ApprovedFacts++
+					return true
+				case "rejected":
+					res.RejectedFacts++
+					if id, convErr := strconv.ParseInt(b.id, 10, 64); convErr == nil {
+						res.RejectedFactIDs = append(res.RejectedFactIDs, id)
+					}
+					return false
+				default:
+					res.UndecidedFacts++
+					return true
 				}
-				return false
 			})
-			if body, any := kept.render(); any {
-				out[rel] = body
+			pubFile := parsed.filter(func(b factBlock) bool {
+				if _, alreadyLive := live[b.id]; alreadyLive {
+					return true
+				}
+				return verdict(d.Facts, b.id) == "approved"
+			})
+			if body, any := keptFile.render(); any {
+				kept[rel] = body
 			} else {
-				// Every fact in the file was rejected, so the file itself has no
-				// reason to exist. Dropping it (rather than leaving an empty
-				// heading) is also what the renderer would have produced.
-				delete(out, rel)
+				delete(kept, rel)
+			}
+			if body, any := pubFile.render(); any {
+				published[rel] = body
+			} else {
+				delete(published, rel)
 			}
 			continue
 		}
 
-		// Whole-file decision.
-		if approved(d.Files, rel) {
+		switch verdict(d.Files, rel) {
+		case "approved":
 			res.ApprovedFiles++
 			if hasNew {
-				out[rel] = newText
+				kept[rel], published[rel] = newText, newText
 			} else {
-				delete(out, rel) // approving a removal removes it
+				delete(kept, rel)
+				delete(published, rel)
 			}
-			continue
-		}
-		res.RejectedFiles++
-		if hadOld {
-			out[rel] = oldText
-		} else {
-			delete(out, rel)
+		case "rejected":
+			res.RejectedFiles++
+			if hadOld {
+				kept[rel], published[rel] = oldText, oldText
+			} else {
+				delete(kept, rel)
+				delete(published, rel)
+			}
+		default:
+			res.UndecidedFiles++
+			if hasNew {
+				kept[rel] = newText
+			} else {
+				delete(kept, rel)
+			}
+			if !hadOld {
+				delete(published, rel)
+			}
 		}
 	}
 
 	if index, ok := after[derivedIndexPath]; ok {
-		out[derivedIndexPath] = refreshIndex(index, out)
+		kept[derivedIndexPath] = refreshIndex(index, kept)
+		published[derivedIndexPath] = refreshIndex(index, published)
 	}
 
 	sort.Slice(res.RejectedFactIDs, func(i, j int) bool { return res.RejectedFactIDs[i] < res.RejectedFactIDs[j] })
 
-	digest, err := k.writeSnapshot(out)
+	keptDigest, err := k.writeSnapshot(kept)
 	if err != nil {
 		return res, err
 	}
-	res.Digest = digest
+	publishedDigest, err := k.writeSnapshot(published)
+	if err != nil {
+		return res, err
+	}
 
-	if digest == k.CurrentDigest() {
-		// Nothing survived review that is not already live. Clear the marker so
-		// `kb status` does not advertise a pending snapshot equal to current.
-		if err := k.clearPending(); err != nil {
+	stageKept := func() error {
+		if keptDigest == k.CurrentDigest() {
+			return k.clearPending()
+		}
+		next := Pending{
+			Digest:     keptDigest,
+			PrevDigest: k.CurrentDigest(),
+			StagedAt:   pending.StagedAt,
+			RunID:      pending.RunID,
+			Counts:     pending.Counts,
+			Draft:      remainingDraft(d),
+		}
+		if err := k.writePending(next); err != nil {
+			return err
+		}
+		res.Staged = true
+		res.Digest = keptDigest
+		return nil
+	}
+
+	if !d.Publish {
+		if err := stageKept(); err != nil {
 			return res, err
+		}
+		if res.Digest == "" {
+			res.Digest = keptDigest
 		}
 		return res, nil
 	}
 
-	next := Pending{
-		Digest:     digest,
-		PrevDigest: k.CurrentDigest(),
-		StagedAt:   pending.StagedAt,
-		RunID:      pending.RunID,
-		Counts:     pending.Counts,
-	}
-	if err := k.writePending(next); err != nil {
-		return res, err
-	}
-	res.Staged = true
-
-	if d.Publish {
-		if err := k.Approve(digest, d.Actor); err != nil {
+	if publishedDigest != k.CurrentDigest() {
+		if err := k.writePending(Pending{
+			Digest:     publishedDigest,
+			PrevDigest: k.CurrentDigest(),
+			StagedAt:   pending.StagedAt,
+			RunID:      pending.RunID,
+			Counts:     pending.Counts,
+		}); err != nil {
+			return res, err
+		}
+		if err := k.Approve(publishedDigest, d.Actor); err != nil {
 			return res, err
 		}
 		res.Published = true
-		res.Staged = false
+	} else if err := k.clearPending(); err != nil {
+		return res, err
+	}
+	res.Digest = publishedDigest
+
+	if keptDigest != publishedDigest {
+		if err := stageKept(); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
+}
+
+// SaveDraft remembers the current verdicts for this pending digest without
+// changing snapshot bytes or demoting any memory row.
+func (k *KB) SaveDraft(d ReviewDecisions) (*ReviewDraft, error) {
+	if k == nil {
+		return nil, fmt.Errorf("kb: disabled (no root configured)")
+	}
+	pending, err := k.PendingInfo()
+	if err != nil {
+		return nil, err
+	}
+	if pending == nil {
+		return nil, fmt.Errorf("kb: nothing pending approval")
+	}
+	if d.Digest != "" && d.Digest != pending.Digest {
+		return nil, fmt.Errorf("kb: digest %q is not the pending snapshot (pending is %q)", d.Digest, pending.Digest)
+	}
+	draft := &ReviewDraft{
+		Facts:   sanitizeDecisions(d.Facts),
+		Files:   sanitizeDecisions(d.Files),
+		SavedAt: time.Now().UTC(),
+		Actor:   d.Actor,
+	}
+	pending.Draft = draft
+	if err := k.writePending(*pending); err != nil {
+		return nil, err
+	}
+	return draft, nil
+}
+
+func cloneTree(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for rel, text := range in {
+		out[rel] = text
+	}
+	return out
+}
+
+func verdict(m map[string]string, key string) string {
+	switch strings.ToLower(strings.TrimSpace(m[key])) {
+	case "approved":
+		return "approved"
+	case "rejected":
+		return "rejected"
+	default:
+		return ""
+	}
+}
+
+func sanitizeDecisions(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range m {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		switch v := verdict(map[string]string{key: value}, key); v {
+		case "approved", "rejected":
+			out[key] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func remainingDraft(d ReviewDecisions) *ReviewDraft {
+	facts := map[string]string{}
+	for id, value := range sanitizeDecisions(d.Facts) {
+		if value == "approved" {
+			facts[id] = value
+		}
+	}
+	files := map[string]string{}
+	for path, value := range sanitizeDecisions(d.Files) {
+		if value == "approved" {
+			files[path] = value
+		}
+	}
+	if len(facts) == 0 && len(files) == 0 {
+		return nil
+	}
+	return &ReviewDraft{Facts: facts, Files: files, SavedAt: time.Now().UTC(), Actor: d.Actor}
 }
 
 // --- facts file parsing -----------------------------------------------------
@@ -497,8 +641,9 @@ func isGeneratedFactsPath(rel string) bool {
 // it points at. renderIndex emits one such bullet per skill and per fact group.
 var indexBullet = regexp.MustCompile("^- .*`((?:facts|skills)/[^`]+)`")
 
-// factCount matches the "— N fact(s)" tail of a fact-group bullet.
-var factCount = regexp.MustCompile(`— \d+ fact\(s\)`)
+// factGroupBulletTail matches the "— N fact(s)" tail of a fact-group bullet,
+// including any keywords appended after it.
+var factGroupBulletTail = regexp.MustCompile(` — \d+ fact\(s\).*$`)
 
 // emptySectionMarker is what renderIndex writes for a section with no items.
 const emptySectionMarker = "_(none yet)_"
@@ -560,8 +705,8 @@ func refreshIndex(index string, tree map[string]string) string {
 			continue // the file did not survive review
 		}
 		if isGeneratedFactsPath(match[1]) {
-			// Counts shift when individual facts inside the file are rejected.
-			line = factCount.ReplaceAllString(line, fmt.Sprintf("— %d fact(s)", len(factIDs(body))))
+			// Counts and keywords shift when individual facts are rejected.
+			line = factGroupBulletTail.ReplaceAllString(line, formatFactGroupTail(body))
 		}
 		out = append(out, line)
 		kept++

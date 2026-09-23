@@ -20,6 +20,7 @@ ambiguities. Change the relevant reference when behavior changes.
 | [Frontend](frontend.md) | Workbench data flow and event handling |
 | [Runtime synchronization](runtime-state-synchronization.md) | Revisioned UI projection |
 | [Memory and knowledge](agents-kb.md) | Optional extraction subsystem, KB approval and external evaluation boundary |
+| [KB evolution](kb-evolution.md) | Current self-evolution graph, node roles and sub-agent prompts |
 | [Notifications](notifications.md) | Persisted notifications and delivery |
 | [Security](security.md) | Isolation, identity, network and credential boundaries |
 | [Database operations](database.md) | Explicit migrations, local catalogs and legacy split tooling |

@@ -42,6 +42,8 @@ func (s *Server) kbReviewRoute(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/api/kb-review" && r.Method == http.MethodGet:
 		s.getKBReview(w, r)
+	case r.URL.Path == "/api/kb-review/draft" && r.Method == http.MethodPost:
+		s.postKBReviewDraft(w, r)
 	case r.URL.Path == "/api/kb-review/decisions" && r.Method == http.MethodPost:
 		s.postKBReviewDecisions(w, r)
 	default:
@@ -116,10 +118,37 @@ func (s *Server) postKBReviewDecisions(w http.ResponseWriter, r *http.Request) {
 		"published":        result.Published,
 		"approved_facts":   result.ApprovedFacts,
 		"rejected_facts":   result.RejectedFacts,
+		"undecided_facts":  result.UndecidedFacts,
 		"approved_files":   result.ApprovedFiles,
 		"rejected_files":   result.RejectedFiles,
+		"undecided_files":  result.UndecidedFiles,
 		"deprecated_rows":  deprecated,
 		"current":          s.kb.CurrentDigest(),
 		"rejected_durable": deprecated == len(result.RejectedFactIDs),
+	})
+}
+
+// postKBReviewDraft stores in-progress verdicts without applying them.
+func (s *Server) postKBReviewDraft(w http.ResponseWriter, r *http.Request) {
+	var body memory.ReviewDecisions
+	if !decodeJSONBody(w, r, maxControlBodyBytes, &body) {
+		return
+	}
+	body.Actor = userIDFromContext(r.Context())
+	draft, err := s.kb.SaveDraft(body)
+	if err != nil {
+		status := http.StatusInternalServerError
+		message := "could not save the review draft"
+		if strings.Contains(err.Error(), "not the pending snapshot") || strings.Contains(err.Error(), "nothing pending") {
+			status, message = http.StatusConflict, err.Error()
+		}
+		s.log.Error("kb review draft failed", "error", err, "actor", body.Actor)
+		writeError(w, status, message)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"saved":  true,
+		"digest": body.Digest,
+		"draft":  draft,
 	})
 }
