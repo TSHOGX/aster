@@ -68,7 +68,15 @@ export class ResourceStore {
     for (const [id,e] of this.entries) if (!project || e.key.project === project) { this.entries.delete(id); this.bytes -= e.bytes; }
     for (const f of [...this.flights.values()]) if (!project || f.key.project === project) this.cancel(f);
   }
+  forget(key: ResourceKey) {
+    const id = keyID(key), entry = this.entries.get(id);
+    if (!entry) return;
+    this.bytes -= entry.bytes;
+    if (entry.pins) { entry.value = undefined; entry.bytes = 0; }
+    else this.entries.delete(id);
+  }
   invalidate(matches: (key: ResourceKey) => boolean) {
+    for (const entry of this.entries.values()) if (matches(entry.key)) this.forget(entry.key);
     for (const f of this.flights.values()) if (matches(f.key)) f.generation++;
   }
   private cancel(f: Flight) {
@@ -132,7 +140,8 @@ export class ResourceStore {
       // fence all callbacks, including loaders that ignore AbortSignal.
       if (generation !== this.generation && !this.flights.has(f.id)) return;
       if (dirty!==f.generation) { again=true; return; }
-      this.put(f.key,value);
+      // Domain owners retain their useful view, tree or small preview explicitly.
+      // Keeping each transport reply duplicates paged state and pins unused blobs.
       this.flights.delete(f.id); f.resolve(value);
     } catch (e) {
       if (this.flights.get(f.id)===f) this.flights.delete(f.id);

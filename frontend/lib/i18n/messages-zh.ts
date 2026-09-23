@@ -52,6 +52,7 @@ export const ZH: Record<MessageKey, string> = {
   "Its owned runtime resources have been reclaimed.": "项目的运行资源已回收。",
   Latest: "回到最新",
   "Leave empty for manual runs": "留空以手动运行",
+  "Checking for file changes…": "正在检查文件更新…",
   "Loading preview…": "正在加载预览…",
   "Later turns": "后面的轮次",
   "This Markdown is shown as plain text to keep the preview responsive.": "此 Markdown 以纯文本显示，以保持预览流畅。",

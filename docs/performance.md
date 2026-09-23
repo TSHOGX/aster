@@ -1125,3 +1125,32 @@ An earlier warmed run missed the unchanged ten-second maximum-round budget at
 repeat adds phase timings and idle observations; no production optimization or
 causal speedup is inferred from the difference. The final acceptance and legacy
 cleanup audit remains open.
+
+
+## Explicit retained views and cached text previews
+
+The read scheduler now retains only domain-owned conversation windows, directory
+trees and eligible preview bytes. Per-request pages and unused rich-document
+bodies no longer duplicate those views in the shared cache. Text/code/Markdown/
+JSON/table files up to 256 KiB can render from retained bytes while a visible
+validation notice accompanies the fresh authorized read. Same-byte replies keep
+the representation; denied/missing files clear it. File events invalidate affected
+cached entries even when unselected, and successful saves replace their bytes.
+Drafts remain independently owned.
+
+A held-response browser regression failed before this change and now passes,
+including changed/same bytes, denial, deletion, unselected invalidation and late
+response fencing. Validation includes 145 unit tests, lint/typecheck, 76 default
+UI cases, the existing fifty chart/session/theme cycles, all six Office profiles
+and prepared replacement/cancellation cases. Both actual Go/Khora browser workflows
+pass in a 60.47-second gate. The turn rail also uses explicit Earlier/Later controls;
+programmatic scroll restoration no longer triggers cascading page requests.
+
+A subsequent combined run preserved drafts/edits, original native handoff and both
+zero-heavy-read idle windows, but missed its projection-observation budget at
+2.50 seconds against 2 seconds. The current harness observes schedules and handoff
+turns only during later regular rounds; independent per-Session observation is
+required before interpreting that delay as projector latency. This is recorded as
+a failed gate. Browser timing variance also prevents a causal speedup claim from
+those two combined runs. Cached availability is established by the held-response
+regression; combined performance qualification remains open for this change.

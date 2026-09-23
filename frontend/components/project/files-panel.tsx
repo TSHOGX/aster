@@ -36,6 +36,7 @@ import {
   type FilePage,
   type Project,
 } from "@/lib/project-api";
+import { rememberPreview } from "@/lib/preview-cache";
 import { fileImpact, type FileInvalidation } from "@/lib/file-invalidation";
 import { useResources, useRealtime } from "./resource-provider";
 import { FilePreview } from "./file-preview";
@@ -304,8 +305,7 @@ export function FilesPanel({
                 ) === dir,
             )) ||
             (k.kind === "file" &&
-              impact.selected &&
-              k.identity === fileURL(project.id, selectedRef.current))),
+              fileImpact(event, new URL(k.identity, location.origin).searchParams.get("path") || "", []).selected)),
       );
       if (
         impact.gap &&
@@ -433,7 +433,9 @@ export function FilesPanel({
     const submitted = edit;
     let savedCurrentDraft = false;
     const success = await act(async () => {
-      await upload(project.id, selected, new Blob([submitted]));
+      const blob = new Blob([submitted]);
+      await upload(project.id, selected, blob);
+      rememberPreview(resources, { project: project.id, kind: "file", identity: fileURL(project.id, selected) }, selected, blob);
       setOriginal(submitted);
       savedCurrentDraft = editor.current === submitted;
       if (savedCurrentDraft) setEdit(null);

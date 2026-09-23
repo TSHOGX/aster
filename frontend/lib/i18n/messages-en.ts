@@ -54,6 +54,7 @@ export const EN = {
     "Its owned runtime resources have been reclaimed.",
   Latest: "Latest",
   "Leave empty for manual runs": "Leave empty for manual runs",
+  "Checking for file changes…": "Checking for file changes…",
   "Loading preview…": "Loading preview…",
   "Later turns": "Later turns",
   "This Markdown is shown as plain text to keep the preview responsive.": "This Markdown is shown as plain text to keep the preview responsive.",

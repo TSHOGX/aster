@@ -19,7 +19,7 @@ it("shares exact-key reads, preserves another consumer on cancellation, and coal
   expect(calls).toBe(2);
   expect(store.peek(key)).toBeUndefined();
   second.resolve("latest"); expect(await two).toBe("latest");
-  expect(store.peek(key)).toBe("latest");
+  expect(store.peek(key)).toBeUndefined();
   expect(store.stats().consumers).toBe(0);
 });
 it("fences late callbacks on last release and auth/project clearing",async()=>{
@@ -57,4 +57,20 @@ it("evicts unpinned content and retains the active window independently of other
   expect(store.peek({...key,identity:"b"})).toBeUndefined();
   expect(store.put({...key,identity:"oversize"},"x".repeat(3000))).toBe(false);
   unpin(); store.clear(); expect(store.stats().entries).toBe(0);
+});
+
+it("transient pages do not duplicate or evict the retained reading window",async()=>{
+  const store=new ResourceStore("actor",2000,2);
+  store.put(key,"retained window");
+  for(let n=0;n<50;n++) await store.read({...key,identity:`page:${n}`},async()=>"transient page");
+  expect(store.peek(key)).toBe("retained window");
+  expect(store.stats().entries).toBe(1);
+  const unpin=store.pin(key);
+  store.invalidate(k=>k.identity===key.identity);
+  expect(store.peek(key)).toBeUndefined();
+  expect(store.stats().bytes).toBe(0);
+  store.put(key,"new window");
+  expect(store.stats().pinnedBytes).toBeGreaterThan(0);
+  unpin();
+  expect(store.stats().pinnedBytes).toBe(0);
 });

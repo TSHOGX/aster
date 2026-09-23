@@ -1078,10 +1078,7 @@ test("turn rail previews with a hover wave, tracks reading and jumps across hist
   await expect(
     page.getByRole("button", { name: "Jump to turn 128", exact: true }),
   ).toHaveAttribute("aria-current", "step");
-  await page.locator(".turn-rail").evaluate((el) => {
-    el.scrollTop = 0;
-    el.dispatchEvent(new Event("scroll"));
-  });
+  await page.getByRole("button", { name: "Earlier turns", exact: true }).click();
   await expect(nav.locator(".turn-tick")).toHaveCount(130);
   expect(indexPages).toBeGreaterThan(1);
   const old = page.getByRole("button", { name: "Jump to turn 5", exact: true });

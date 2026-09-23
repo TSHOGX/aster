@@ -33,6 +33,14 @@ handlers. Presentation controls support keyboard navigation, localized labels,
 reading-position restoration, theme updates and Escape back to the workspace.
 See [preview budgets and qualification](performance.md#preview-admission-and-validation).
 
+Text/code/Markdown previews up to 256 KiB can reopen from the authenticated memory
+cache while fresh bytes are authorized and checked. A validation notice identifies
+that retained content; it does not claim the bytes are current. Same-byte replies
+preserve the representation. Denied or missing files clear it. File events discard
+affected cached entries even when those files are not selected; successful local
+saves replace their cached bytes. Larger and rich previews keep their separate
+loading, parse and renderer limits. Cached preview bytes are never editor drafts.
+
 Application fullscreen expands the file workspace without browser fullscreen or
 losing its editor. Escape restores the layout and focus. Hiding files or changing
 Sessions retains edits; switching files/Projects offers save, discard or cancel
@@ -43,8 +51,10 @@ Conversation state lives in an authenticated memory repository. Pages carry
 independent content frontiers; bounded deltas update loaded windows and tombstones
 remove deleted blocks. Historical pages catch up before joining newer content.
 The active window is bounded to sixteen pages and an estimated 8 MiB; edge eviction
-retains cursors and the reading anchor. The shared memory store limits inactive
-resources to 32 MiB and 256 entries. Drafts and pending command identities remain
+retains cursors and the reading anchor. The shared memory store bounds retained
+resources to 32 MiB and 256 entries. Only assembled conversation windows, directory
+trees and eligible small preview bytes are retained; individual transport replies
+are not cached a second time. Drafts and pending command identities remain
 independently owned. Oversized answer content is retrieved in chunks for complete
 copy/download; a copy operation has a 16 MiB decoded working limit.
 
@@ -114,6 +124,8 @@ turn has a gray dash; scrolling updates the darker current-turn marker. Hover or
 keyboard focus creates a short width wave centered on that dash and shows a
 bounded prompt/final-answer preview. Arrow/Home/End keys move through markers,
 Enter jumps, and Escape dismisses previews; reduced motion disables transitions.
+Earlier/Later controls page the bounded rail explicitly. Scroll restoration and
+programmatic movement never fetch extra index pages.
 The rail scrolls independently and retains at most 300 index entries plus one
 current-turn marker. Earlier/later controls reload evicted edges in either
 direction; refresh updates that same window instead of accumulating a latest
