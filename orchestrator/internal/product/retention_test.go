@@ -139,7 +139,7 @@ func TestRetiredReadMigrationPreservesCleanupAndUnknownWrites(t *testing.T) {
 			op = "write"
 		}
 		request := fmt.Sprintf(`{"operation":%q,"path":"private-path"}`, op)
-		_, err := db.Exec(`INSERT INTO file_operations VALUES(?,'p',?,'store','sandbox',1,?,'unknown',?,'','now','now')`, id, request, id, settled)
+		_, err := db.Exec(`INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error,created_at,updated_at) VALUES(?,'p',?,'store','sandbox',1,?,'unknown',?,'','now','now')`, id, request, id, settled)
 		must(t, err)
 	}
 	must(t, db.Close())

@@ -131,3 +131,10 @@ Every harness invocation records source hashes (including uncommitted files),
 executable hashes, platform, CPU/memory, Go/Node versions and the frontend build ID
 in `fingerprint.json`. Preserve the actual binaries and frontend build together
 with this metadata; source hashes alone cannot recreate an uncommitted build.
+
+
+The `files` suite exercises the real released application and Khora volume APIs:
+initial upload before compute exists, native conversation completion, idle pause,
+continued conversation/file access, paused edits/rename/delete, empty and chunked
+uploads, snapshot pagination, and resume with retained workspace bytes. It asserts
+zero occupied Projects throughout paused file operations.

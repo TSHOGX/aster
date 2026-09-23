@@ -176,10 +176,10 @@ func (s *Store) settleLostActivities(ctx context.Context, tx *sql.Tx, project st
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_incarnations SET cleanup_state='settled' WHERE project_id=? AND state='exited'`, project); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE project_activity SET state='complete',updated_at=? WHERE project_id=? AND kind IN ('files','descendants','agent_start','terminal_start','terminal_control')`, s.timestamp(), project); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE project_activity SET state='complete',updated_at=? WHERE project_id=? AND kind IN ('files','descendants','agent_start','terminal_start','terminal_control') AND id NOT IN (SELECT 'file:'||id FROM file_operations WHERE volume_id<>'')`, s.timestamp(), project); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE file_operations SET state=CASE WHEN state='running' THEN 'unknown' ELSE state END,settled=1,updated_at=? WHERE project_id=? AND settled=0`, s.timestamp(), project)
+	_, err := tx.ExecContext(ctx, `UPDATE file_operations SET state=CASE WHEN state='running' THEN 'unknown' ELSE state END,settled=1,updated_at=? WHERE project_id=? AND settled=0 AND volume_id=''`, s.timestamp(), project)
 	return err
 }
 func (l *Lifecycle) ForceRestart(ctx context.Context, scope Scope, revision int64) error {

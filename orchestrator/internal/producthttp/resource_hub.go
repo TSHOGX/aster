@@ -452,7 +452,11 @@ func (m *resourceHubs) run(ctx context.Context, h *resourceHub) {
 			for _, key := range order {
 				e := hints[key]
 				kind, id := resourceKind(e)
-				h.publish(kind, id, strconv.FormatInt(e.Revision, 10), e.Kind, nil)
+				var payload any
+				if kind == "files" {
+					payload = sandbox.FileInvalidation{Reset: true, Reason: "mutation"}
+				}
+				h.publish(kind, id, strconv.FormatInt(e.Revision, 10), e.Kind, payload)
 			}
 		}
 		select {
@@ -478,6 +482,8 @@ func (m *resourceHubs) run(ctx context.Context, h *resourceHub) {
 }
 func resourceKind(e product.Event) (string, string) {
 	switch {
+	case e.Kind == "files.changed":
+		return "files", e.ProjectID
 	case e.Kind == "conversation.view":
 		return "content", e.SessionID
 	case e.Kind == "session.title" || e.Kind == "session.created":

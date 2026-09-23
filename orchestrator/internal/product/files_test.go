@@ -219,18 +219,18 @@ func TestFilesActivityRejectsStalePauseAndDoesNotWakeFromWatch(t *testing.T) {
 	_, err = f.Watch(ctx, a, 0)
 	wantError(t, err, ErrPending)
 	_, err = f.List(ctx, a, "", "", 100)
-	wantError(t, err, ErrPending)
+	must(t, err)
 	p, err = f.Store.Project(ctx, a)
 	must(t, err)
 	if p.State != "paused" {
 		t.Fatal("observer woke Project")
 	}
 	_, err = f.Capture(ctx, a, "x")
-	wantError(t, err, ErrPending)
+	wantError(t, err, ErrNotFound)
 	drive(t, f.Lifecycle, a.ProjectID)
 	p, err = f.Store.Project(ctx, a)
 	must(t, err)
-	if p.State != "active" {
+	if p.State != "paused" {
 		t.Fatal(p)
 	}
 }
@@ -247,4 +247,70 @@ func TestInventoryRefreshDoesNotKeepProjectAwake(t *testing.T) {
 		t.Fatal("metadata observation invalidated idle", timer, current)
 	}
 	must(t, f.Lifecycle.PauseIdle(ctx, scope, timer))
+}
+
+func (b *localFileBackend) LstatVolume(ctx context.Context, ref sandbox.VolumeReference, name string) (sandbox.VolumeEntry, error) {
+	info, err := os.Lstat(filepath.Join(b.root, name))
+	if os.IsNotExist(err) {
+		return sandbox.VolumeEntry{}, &sandbox.Error{Class: sandbox.NotFound}
+	}
+	if err != nil {
+		return sandbox.VolumeEntry{}, err
+	}
+	kind := "file"
+	if info.IsDir() {
+		kind = "directory"
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		kind = "symlink"
+	}
+	return sandbox.VolumeEntry{Name: info.Name(), Type: kind, Size: info.Size(), ModifiedAt: info.ModTime()}, nil
+}
+func (b *localFileBackend) ListVolume(ctx context.Context, ref sandbox.VolumeReference, name string) ([]sandbox.VolumeEntry, error) {
+	entries, err := os.ReadDir(filepath.Join(b.root, name))
+	if err != nil {
+		return nil, err
+	}
+	out := []sandbox.VolumeEntry{}
+	for _, entry := range entries {
+		v, e := b.LstatVolume(ctx, ref, filepath.Join(name, entry.Name()))
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+func (b *localFileBackend) ReadVolume(ctx context.Context, ref sandbox.VolumeReference, name string, offset, length int64) ([]byte, error) {
+	file, err := os.Open(filepath.Join(b.root, name))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data := make([]byte, length)
+	n, err := file.ReadAt(data, offset)
+	if err == io.EOF {
+		err = nil
+	}
+	return data[:n], err
+}
+
+func (b *localFileBackend) MkdirVolume(ctx context.Context, ref sandbox.VolumeReference, name string) error {
+	return os.Mkdir(filepath.Join(b.root, name), 0755)
+}
+func (b *localFileBackend) WriteVolume(ctx context.Context, ref sandbox.VolumeReference, name string, data []byte) error {
+	return os.WriteFile(filepath.Join(b.root, name), data, 0600)
+}
+func (b *localFileBackend) ImportVolume(ctx context.Context, ref sandbox.VolumeReference, name string, input io.Reader, size int64) error {
+	data, err := io.ReadAll(input)
+	if err != nil {
+		return err
+	}
+	return b.WriteVolume(ctx, ref, name, data)
+}
+func (b *localFileBackend) MoveVolume(ctx context.Context, ref sandbox.VolumeReference, source, destination string) error {
+	return os.Rename(filepath.Join(b.root, source), filepath.Join(b.root, destination))
+}
+func (b *localFileBackend) RemoveVolumePath(ctx context.Context, ref sandbox.VolumeReference, name string) error {
+	return os.Remove(filepath.Join(b.root, name))
 }

@@ -11,7 +11,8 @@ version 8 adds [the durable release admission fence](../orchestrator/internal/pr
 version 9 adds [indexed readiness and transactional revocation](../orchestrator/internal/product/readiness_schema.sql);
 version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql);
 version 11 adds [bounded durable gateway request slots](../orchestrator/internal/product/gateway_schema.sql);
-version 12 adds [guarded owner handoff](../orchestrator/internal/product/owner_handoff_schema.sql).
+version 12 adds [guarded owner handoff](../orchestrator/internal/product/owner_handoff_schema.sql);
+version 13 adds [independent workspace storage and volume file outcomes](../orchestrator/internal/product/volume_files_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. Application startup uses `product.OpenApplication`: it validates a pending
 activation against the measured executable through a read-only connection under
@@ -127,3 +128,12 @@ and compatibility identity before any writer opens. It cannot migrate implicitly
 and an unmeasured Store open cannot bypass that condition. Explicit rollback can
 use a different executable only with the same contract. If the pinned gateway
 was replaced, rollback must additionally prove full quiescence before reopening.
+
+
+Schema 13 retains the original file mutation IDs and outcomes while distinguishing
+volume mutations from guest process mutations. `volume_id` and `staging_path`
+record direct authority and upload preparation; such rows have no sandbox process
+reference. `project_resources.storage_key` records workspace creation intent
+before any remote allocation, without marking compute occupied. Schema migration
+preserves release admission triggers, readiness indexes and blocker views in the
+same transaction. A schema-12 executable cannot reopen this database.

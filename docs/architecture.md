@@ -18,7 +18,9 @@ flowchart LR
   SDK --> Project[Project sandbox]
   Project --> Agents[Go guardians and native Pi]
   Project --> PTY[Retained Terminals]
-  Project --> Files[Confined workspace helper]
+  Project --> Files[Workspace file service]
+  Files --> VolumeIO[Paused volume APIs]
+  Files --> GuestIO[Active confined helper]
   Project --> Gateway[Go service gateway]
   Gateway --> Authority[Protected owner authority RPC]
   Authority --> Product

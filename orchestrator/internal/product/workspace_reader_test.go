@@ -111,14 +111,21 @@ func TestWorkspaceReaderScopedSnapshotAndLifecycle(t *testing.T) {
 		t.Fatal("old capture survived placement pause", err)
 	}
 	_, err = f.List(ctx, scope, "", "", 2)
-	wantError(t, err, ErrPending)
+	must(t, err)
 	p, err := f.Store.Project(ctx, scope)
 	must(t, err)
 	if p.State != "paused" {
 		t.Fatal("listing woke project")
 	}
-	_, err = f.Capture(ctx, scope, "0")
-	wantError(t, err, ErrPending)
+	pausedCapture, e := f.Capture(ctx, scope, "0")
+	must(t, e)
+	must(t, pausedCapture.Close())
+	p, err = f.Store.Project(ctx, scope)
+	must(t, err)
+	if p.State != "paused" {
+		t.Fatal("capture woke compute")
+	}
+	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	_, err = f.List(ctx, scope, "", page.Next, 2)
 	wantError(t, err, ErrResync)
@@ -170,5 +177,62 @@ func TestWorkspaceReaderCanceledConsumerAndCrashBinding(t *testing.T) {
 	readers, requests, bytes := f.reader.Stats()
 	if readers != 1 || requests != 0 || bytes != 0 {
 		t.Fatal(readers, requests, bytes)
+	}
+}
+
+func TestPausedFilesUseVolumeWithoutComputeAndRetainCapturesAcrossResume(t *testing.T) {
+	f, scope, backend := fileFixture(t)
+	must(t, os.WriteFile(filepath.Join(backend.root, "file"), []byte("paused bytes"), 0600))
+	p, err := f.Store.Project(ctx, scope)
+	must(t, err)
+	must(t, f.Lifecycle.Pause(ctx, scope, p.Revision))
+	drive(t, f.Lifecycle, scope.ProjectID)
+	starts := backend.starts
+	page, err := f.List(ctx, scope, "", "", 100)
+	must(t, err)
+	if len(page.Entries) != 1 {
+		t.Fatal(page)
+	}
+	capture, err := f.Capture(ctx, scope, "file")
+	must(t, err)
+	defer capture.Close()
+	p, err = f.Store.Project(ctx, scope)
+	must(t, err)
+	r, err := f.Store.Resources(ctx, scope)
+	must(t, err)
+	if p.State != "paused" || r.Occupied || backend.starts != starts {
+		t.Fatal("file access consumed compute", p, r, backend.starts)
+	}
+	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
+	drive(t, f.Lifecycle, scope.ProjectID)
+	must(t, os.WriteFile(filepath.Join(backend.root, "file"), []byte("new live content"), 0600))
+	data, err := io.ReadAll(capture)
+	must(t, err)
+	if string(data) != "paused bytes" {
+		t.Fatal(string(data))
+	}
+	_, err = f.Capture(ctx, Scope{Actor: "foreign", ProjectID: scope.ProjectID}, "file")
+	wantError(t, err, ErrNotFound)
+}
+
+func TestPausedVolumePathsRejectLinksAndNeverWakeForMissingFiles(t *testing.T) {
+	f, scope, backend := fileFixture(t)
+	must(t, os.Mkdir(filepath.Join(backend.root, "real"), 0700))
+	must(t, os.WriteFile(filepath.Join(backend.root, "real/file"), []byte("bytes"), 0600))
+	must(t, os.Symlink("real", filepath.Join(backend.root, "link")))
+	p, err := f.Store.Project(ctx, scope)
+	must(t, err)
+	must(t, f.Lifecycle.Pause(ctx, scope, p.Revision))
+	drive(t, f.Lifecycle, scope.ProjectID)
+	_, err = f.List(ctx, scope, "link", "", 100)
+	wantError(t, err, ErrInvalid)
+	_, err = f.Capture(ctx, scope, "link/file")
+	wantError(t, err, ErrInvalid)
+	_, err = f.Capture(ctx, scope, "missing")
+	wantError(t, err, ErrNotFound)
+	p, err = f.Store.Project(ctx, scope)
+	must(t, err)
+	if p.State != "paused" {
+		t.Fatal(p)
 	}
 }

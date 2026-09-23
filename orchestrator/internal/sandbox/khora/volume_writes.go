@@ -25,7 +25,7 @@ func (b *Backend) MkdirVolume(ctx context.Context, reference sandbox.VolumeRefer
 	if err := b.validateVolumeRead(ctx, reference, name); err != nil {
 		return err
 	}
-	_, err := b.client.MkdirVolume(ctx, reference.VolumeID, name, 0o755)
+	_, err := b.client.MkdirVolume(ctx, reference.VolumeID, volumePath(name), 0o755)
 	if err == nil {
 		return nil
 	}
@@ -33,7 +33,7 @@ func (b *Backend) MkdirVolume(ctx context.Context, reference sandbox.VolumeRefer
 	if !sandbox.Is(mapped, sandbox.Conflict) {
 		return mapped
 	}
-	existing, statErr := b.client.LstatVolume(ctx, reference.VolumeID, name)
+	existing, statErr := b.client.LstatVolume(ctx, reference.VolumeID, volumePath(name))
 	if statErr != nil {
 		return mapped
 	}
@@ -50,7 +50,7 @@ func (b *Backend) WriteVolume(ctx context.Context, reference sandbox.VolumeRefer
 	if len(data) > maxWriteChunk {
 		return failure("volume write", sandbox.Invalid, fmt.Errorf("volume write exceeds %d bytes", maxWriteChunk))
 	}
-	result, err := b.client.WriteVolume(ctx, reference.VolumeID, name, 0, data)
+	result, err := b.client.WriteVolume(ctx, reference.VolumeID, volumePath(name), 0, data)
 	if err != nil {
 		return mapError("volume write", err)
 	}

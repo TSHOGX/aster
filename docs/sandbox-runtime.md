@@ -20,13 +20,13 @@ themes are disabled; the explicit reviewed skills still load through Pi's native
 CLI. Context directories are logical organization, not isolation between sibling
 Project processes.
 
-The Files helper confines all operations to `/workspace`. It walks components
+When compute is active, the Files helper confines operations to `/workspace`. It walks components
 with `O_PATH|O_NOFOLLOW` and verifies each selected object with `fstat`; ordinary
 `O_RDONLY|O_DIRECTORY|O_NOFOLLOW` alone is insufficient in the pinned runsc.
 Regular content is opened through the selected descriptor. Symlinks, special
 files, absolute paths, traversal and private runtime access are rejected.
 
-Read-only access uses a reusable framed helper per Project/placement. Directory
+Active read-only access uses a reusable framed helper per Project/placement. Directory
 pages freeze a sorted metadata observation with opaque expiring cursors; they
 contain at most 200 entries and obey encoded-byte bounds. One scan observes at
 most 100,000 names; snapshots are not atomic filesystem snapshots. Reads reject
@@ -42,10 +42,36 @@ credit flow control prevents a slow consumer from overflowing another request.
 
 Pure reads create no mutation or activity rows. Schema 5 retains only each
 Project's current helper identity for cleanup after owner loss. Placement changes,
-pause and deletion cancel reader leases; idle helpers exit, and orphan cleanup
-requires original-handle termination or placement-loss evidence. List/watch never
-activate a Project. An explicit content open retains the existing activation
-semantics. A content response interrupted after headers aborts its HTTP body.
+pause and deletion cancel guest reader leases; idle helpers exit, and orphan cleanup
+requires original-handle termination or placement-loss evidence. Browsing and
+content opens never activate a Project. A content response interrupted after
+headers aborts its HTTP body.
+
+Paused Projects use the saved workspace volume through Khora's authenticated
+volume APIs. They can list, preview, download, upload, edit, rename, create folders
+and remove entries without reserving CPU or starting a guest. A new Project can
+create just its workspace volume before its first Agent/Terminal. Saved profiles
+and volume creation keys survive owner loss; first compute startup attaches that
+same workspace and creates the remaining runtime/placement resources.
+
+Direct access holds the Project's existing lifecycle execution lane while
+checking paths and performing volume I/O. Every path component is checked for
+symlinks and special files while the guest remains stopped. Resume and deletion
+cannot execute midway through that sequence. Completed unnamed captures release
+the lane before HTTP delivery, so a slow download does not prevent resume.
+Paused directory snapshots retain the same sorted, expiring pagination contract.
+Conversation projections remain available directly from application storage.
+
+Khora permits direct writes with no live writable placement, and rejects them
+while a guest holds the volume writable to avoid incoherent gofer caches. Active
+mutations therefore retain the guest helper. Paused uploads verify length and
+SHA-256 in unnamed host staging, import to a unique recorded temporary path, and
+rename into place only after a complete import. A partial import never replaces
+the destination. Schema 13 records volume authority separately from process
+authority. Lost direct-operation replies remain unknown and are not replayed;
+unknown volume mutations block further mutations and resume pending operator
+recovery. Guest-process exit alone cannot settle them. Local file mutations
+publish durable invalidation hints even when no guest watch exists.
 
 Writes still require length/SHA-256, replace atomically after verification and
 retain durable command identities/unknown outcomes. Mutation helpers cannot

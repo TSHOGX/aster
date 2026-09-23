@@ -13,7 +13,12 @@ import (
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
-type rejectFileBackend struct{ calls int }
+type rejectFileBackend struct {
+	sandbox.VolumeReads
+	sandbox.VolumeListings
+	sandbox.VolumeFileMutations
+	calls int
+}
 
 func (b *rejectFileBackend) StartProcess(context.Context, sandbox.StartProcessRequest) (sandbox.ProcessStream, error) {
 	b.calls++

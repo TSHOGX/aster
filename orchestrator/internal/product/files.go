@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -21,18 +22,20 @@ var ErrFileOperationFailed = errors.New("file operation failed")
 var ErrFileOutcomeUnknown = errors.New("file operation outcome unknown; inspect workspace before a new operation")
 
 type FileOperation struct {
-	ID        string                   `json:"id"`
-	ProjectID string                   `json:"project_id"`
-	Request   projectfiles.Request     `json:"request"`
-	State     string                   `json:"state"`
-	Settled   bool                     `json:"settled"`
-	Error     string                   `json:"error,omitempty"`
-	Reference sandbox.ProcessReference `json:"-"`
+	ID          string                   `json:"id"`
+	ProjectID   string                   `json:"project_id"`
+	Request     projectfiles.Request     `json:"request"`
+	State       string                   `json:"state"`
+	Settled     bool                     `json:"settled"`
+	Error       string                   `json:"error,omitempty"`
+	Reference   sandbox.ProcessReference `json:"-"`
+	VolumeID    string                   `json:"-"`
+	StagingPath string                   `json:"-"`
 }
 
 func fileOperation(ctx context.Context, q queryer, id string) (o FileOperation, err error) {
 	var raw string
-	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error FROM file_operations WHERE id=?`, id).Scan(&o.ID, &o.ProjectID, &raw, &o.Reference.StoreID, &o.Reference.SandboxID, &o.Reference.Epoch, &o.Reference.Handle, &o.State, &o.Settled, &o.Error))
+	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error,volume_id,staging_path FROM file_operations WHERE id=?`, id).Scan(&o.ID, &o.ProjectID, &raw, &o.Reference.StoreID, &o.Reference.SandboxID, &o.Reference.Epoch, &o.Reference.Handle, &o.State, &o.Settled, &o.Error, &o.VolumeID, &o.StagingPath))
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &o.Request)
 	}
@@ -48,7 +51,10 @@ func (s *Store) FileOperation(ctx context.Context, scope Scope, id string) (File
 	}
 	return o, err
 }
-func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, r projectfiles.Request) (o FileOperation, fresh bool, err error) {
+func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, r projectfiles.Request) (FileOperation, bool, error) {
+	return s.reserveFileKind(ctx, scope, id, r, false)
+}
+func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, r projectfiles.Request, volume bool) (o FileOperation, fresh bool, err error) {
 	if !validID(id) || r.Validate() != nil {
 		return o, false, ErrInvalid
 	}
@@ -73,7 +79,7 @@ func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, r proje
 		if !errors.Is(e, ErrNotFound) {
 			return e
 		}
-		if p.State != "active" {
+		if !volume && p.State != "active" || volume && p.State != "paused" && p.State != "created" {
 			return ErrPending
 		}
 		resources, e := resources(ctx, tx, scope.ProjectID)
@@ -81,11 +87,30 @@ func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, r proje
 			return e
 		}
 		o = FileOperation{ID: id, ProjectID: scope.ProjectID, Request: r, State: "running", Reference: sandbox.ProcessReference{StoreID: resources.Reference.StoreID, SandboxID: resources.Reference.SandboxID, Epoch: resources.Reference.Epoch, Handle: "file-" + uuid.NewString()}}
+		kind := "files"
+		if p.State != "active" {
+			var pending int
+			if e = tx.QueryRowContext(ctx, `SELECT count(*) FROM file_operations WHERE project_id=? AND volume_id<>'' AND settled=0`, p.ID).Scan(&pending); e != nil {
+				return e
+			}
+			if pending > 0 {
+				return ErrFileOutcomeUnknown
+			}
+			if resources.WorkspaceVolume == "" {
+				return ErrPending
+			}
+			o.VolumeID = resources.WorkspaceVolume
+			o.Reference = sandbox.ProcessReference{StoreID: resources.Reference.StoreID}
+			if r.Operation == "write" {
+				o.StagingPath = path.Join(path.Dir(r.Path), ".batterygpt-upload-"+uuid.NewString())
+			}
+			kind = "files"
+		}
 		now := s.timestamp()
-		if _, e = tx.ExecContext(ctx, `INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'running',?,?)`, id, scope.ProjectID, string(raw), o.Reference.StoreID, o.Reference.SandboxID, o.Reference.Epoch, o.Reference.Handle, now, now); e != nil {
+		if _, e = tx.ExecContext(ctx, `INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,created_at,updated_at,volume_id,staging_path) VALUES(?,?,?,?,?,?,?,'running',?,?,?,?)`, id, scope.ProjectID, string(raw), o.Reference.StoreID, o.Reference.SandboxID, o.Reference.Epoch, o.Reference.Handle, now, now, o.VolumeID, o.StagingPath); e != nil {
 			return e
 		}
-		if _, e = tx.ExecContext(ctx, `INSERT INTO project_activity(id,project_id,kind,state,detail,created_at,updated_at) VALUES(?,?,'files','active',?,?,?)`, "file:"+id, scope.ProjectID, r.Operation+" "+r.Path, now, now); e != nil {
+		if _, e = tx.ExecContext(ctx, `INSERT INTO project_activity(id,project_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'active',?,?,?)`, "file:"+id, scope.ProjectID, kind, r.Operation+" "+r.Path, now, now); e != nil {
 			return e
 		}
 		fresh = true
@@ -120,12 +145,24 @@ func (s *Store) finishFile(ctx context.Context, o FileOperation, state, detail s
 		if _, err = tx.ExecContext(ctx, `UPDATE project_activity SET state=?,updated_at=? WHERE id=?`, activity, s.timestamp(), "file:"+o.ID); err != nil {
 			return err
 		}
+		if o.VolumeID != "" {
+			var revision int64
+			if err = tx.QueryRowContext(ctx, `SELECT revision FROM projects WHERE id=?`, o.ProjectID).Scan(&revision); err != nil {
+				return err
+			}
+			if err = s.event(ctx, tx, o.ProjectID, "", "", "files.changed", revision); err != nil {
+				return err
+			}
+		}
 		return s.activity(ctx, tx, o.ProjectID)
 	})
 }
 
 type FileBackend interface {
 	sandbox.Processes
+	sandbox.VolumeReads
+	sandbox.VolumeListings
+	sandbox.VolumeFileMutations
 	WatchWorkspace(context.Context, sandbox.Reference, uint64) (sandbox.FileWatch, error)
 }
 
@@ -162,6 +199,11 @@ func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfi
 		return old, fileResult(old)
 	} else if !errors.Is(err, ErrNotFound) {
 		return FileOperation{}, err
+	}
+	if p, e := f.Store.Project(ctx, scope); e != nil {
+		return FileOperation{}, e
+	} else if p.State == "paused" || p.State == "created" {
+		return f.executeVolume(ctx, scope, id, r, input)
 	}
 	if err := f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile); err != nil {
 		return FileOperation{}, err
@@ -346,7 +388,7 @@ func (f *Files) Reconcile(ctx context.Context, limit int) error {
 	if limit < 1 || limit > 100 {
 		limit = 32
 	}
-	rows, err := f.Store.reader.QueryContext(ctx, `SELECT id FROM file_operations WHERE settled=0 ORDER BY updated_at,id LIMIT ?`, limit)
+	rows, err := f.Store.reader.QueryContext(ctx, `SELECT id FROM file_operations WHERE settled=0 AND (volume_id='' OR state='running') ORDER BY updated_at,id LIMIT ?`, limit)
 	if err != nil {
 		return err
 	}
@@ -386,6 +428,11 @@ func (f *Files) Reconcile(ctx context.Context, limit int) error {
 	return errors.Join(readerErr, errors.Join(failures...))
 }
 func (f *Files) recover(ctx context.Context, o FileOperation) error {
+	if o.VolumeID != "" {
+		// No guest-process absence can settle a direct engine mutation. Never
+		// replay or erase its uncertainty on owner loss.
+		return f.Store.finishFile(ctx, o, "unknown", "direct volume operation interrupted; inspect its original volume before recovery", false)
+	}
 	r, err := f.Store.resourcesFor(ctx, o.ProjectID)
 	if err != nil {
 		return err

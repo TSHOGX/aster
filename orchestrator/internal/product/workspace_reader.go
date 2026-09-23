@@ -42,12 +42,13 @@ type readerCarrier struct {
 type WorkspaceReader struct {
 	Store         *Store
 	Lifecycle     *Lifecycle
-	Backend       sandbox.Processes
-	Profile       Profile
+	Backend       FileBackend
 	Helper        string
 	TempDirectory string
 	mu            sync.Mutex
 	entries       map[string]*readerCarrier
+	volumePages   map[string]*volumePage
+	volumeUses    map[string]int
 	captures      int64
 	requests      int
 	closed        bool
@@ -57,7 +58,7 @@ type WorkspaceReader struct {
 }
 
 func newWorkspaceReader(f *Files) *WorkspaceReader {
-	return &WorkspaceReader{Store: f.Store, Lifecycle: f.Lifecycle, Backend: f.Backend, Profile: f.Profile, Helper: f.Helper, TempDirectory: f.CaptureDirectory, entries: map[string]*readerCarrier{}}
+	return &WorkspaceReader{Store: f.Store, Lifecycle: f.Lifecycle, Backend: f.Backend, Helper: f.Helper, TempDirectory: f.CaptureDirectory, entries: map[string]*readerCarrier{}}
 }
 func (f *Files) workspaceReader() *WorkspaceReader {
 	f.readerOnce.Do(func() { f.reader = newWorkspaceReader(f) })
@@ -238,7 +239,7 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 		}
 	}
 }
-func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, content, list bool) (*readerCarrier, context.Context, func(), error) {
+func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, list bool) (*readerCarrier, context.Context, func(), error) {
 	releaseWork, err := w.Store.beginRuntimeWork(ctx, runtimeRead)
 	if err != nil {
 		return nil, nil, nil, err
@@ -249,11 +250,6 @@ func (w *WorkspaceReader) acquire(ctx context.Context, scope Scope, content, lis
 			releaseWork()
 		}
 	}()
-	if content {
-		if err := w.Lifecycle.EnsureConfiguredActive(ctx, scope, w.Profile); err != nil {
-			return nil, nil, nil, err
-		}
-	}
 	current, err := w.Lifecycle.ActiveResources(ctx, scope)
 	if err != nil {
 		return nil, nil, nil, err
@@ -355,10 +351,25 @@ type workspaceCursor struct {
 }
 
 func (w *WorkspaceReader) List(ctx context.Context, scope Scope, path, cursor string, limit int) (projectfiles.Page, error) {
-	if projectfiles.Path(path, true) != nil || limit < 1 || limit > projectfiles.MaxPage {
+	if projectfiles.Path(path, true) != nil || limit < 1 || limit > projectfiles.MaxPage || len(cursor) > 4096 {
 		return projectfiles.Page{}, ErrInvalid
 	}
-	entry, ctx, release, err := w.acquire(ctx, scope, false, true)
+	r, readctx, _, done, paused, err := w.pausedVolume(ctx, scope)
+	if paused {
+		if err != nil {
+			return projectfiles.Page{}, err
+		}
+		defer done()
+		return w.listPaused(readctx, scope, r, path, cursor, limit)
+	}
+	if cursor != "" {
+		var token struct{ ID string }
+		raw, _ := base64.RawURLEncoding.DecodeString(cursor)
+		if json.Unmarshal(raw, &token) == nil && token.ID != "" {
+			return projectfiles.Page{}, ErrResync
+		}
+	}
+	entry, ctx, release, err := w.acquire(ctx, scope, true)
 	if err != nil {
 		return projectfiles.Page{}, err
 	}
@@ -447,7 +458,14 @@ func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string)
 	if projectfiles.Path(path, false) != nil {
 		return nil, ErrInvalid
 	}
-	entry, ctx, release, err := w.acquire(ctx, scope, true, false)
+	r, readctx, unlock, done, paused, err := w.pausedVolume(ctx, scope)
+	if paused {
+		if err != nil {
+			return nil, err
+		}
+		return w.capturePaused(readctx, scope, r, path, unlock, done)
+	}
+	entry, ctx, release, err := w.acquire(ctx, scope, false)
 	if err != nil {
 		return nil, err
 	}
@@ -589,6 +607,7 @@ func (w *WorkspaceReader) Reconcile(ctx context.Context) error {
 func (w *WorkspaceReader) Close() error {
 	w.mu.Lock()
 	w.closed = true
+	w.volumePages = nil
 	for _, entry := range w.entries {
 		entry.cancel()
 	}

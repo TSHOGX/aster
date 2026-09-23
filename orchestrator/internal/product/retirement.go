@@ -108,10 +108,10 @@ func (s *Store) settleDestroyedPlacement(ctx context.Context, tx *sql.Tx, projec
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_incarnations SET cleanup_state='settled',recovery_state='complete' WHERE project_id=?`, project); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE project_activity SET state='complete',updated_at=? WHERE project_id=?`, s.timestamp(), project); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE project_activity SET state='complete',updated_at=? WHERE project_id=? AND id NOT IN (SELECT 'file:'||id FROM file_operations WHERE volume_id<>'')`, s.timestamp(), project); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE file_operations SET state=CASE WHEN state='running' THEN 'unknown' ELSE state END,settled=1,updated_at=? WHERE project_id=?`, s.timestamp(), project); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE file_operations SET state=CASE WHEN state='running' THEN 'unknown' ELSE state END,settled=1,updated_at=? WHERE project_id=? AND volume_id=''`, s.timestamp(), project); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='canceled',updated_at=? WHERE project_id=? AND state IN ('queued','held')`, s.timestamp(), project); err != nil {

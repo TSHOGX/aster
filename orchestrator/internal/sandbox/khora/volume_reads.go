@@ -39,8 +39,8 @@ func (b *Backend) ListVolume(ctx context.Context, reference sandbox.VolumeRefere
 	if err := b.validateVolumeRead(ctx, reference, check); err != nil {
 		return nil, err
 	}
-	path := name
-	if path == "" {
+	path := volumePath(name)
+	if name == "" {
 		path = "."
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, b.endpoint+"/v1/volumes/"+url.PathEscape(reference.VolumeID)+"/list?"+url.Values{"path": []string{path}}.Encode(), nil)
@@ -53,9 +53,20 @@ func (b *Backend) ListVolume(ctx context.Context, reference sandbox.VolumeRefere
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, failure("volume list", sandbox.Unavailable, fmt.Errorf("engine volume listing returned HTTP %d", response.StatusCode))
+		class := sandbox.Unavailable
+		switch response.StatusCode {
+		case 404:
+			class = sandbox.NotFound
+		case 400:
+			class = sandbox.Invalid
+		case 409:
+			class = sandbox.Conflict
+		case 429, 503, 507:
+			class = sandbox.Capacity
+		}
+		return nil, failure("volume list", class, fmt.Errorf("engine volume listing returned HTTP %d", response.StatusCode))
 	}
-	const limit = 8 << 20
+	const limit = 32 << 20
 	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		return nil, err
@@ -72,7 +83,7 @@ func (b *Backend) ListVolume(ctx context.Context, reference sandbox.VolumeRefere
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return nil, err
 	}
-	if len(entries) > 10000 {
+	if len(entries) > 100000 {
 		return nil, failure("volume list", sandbox.Capacity, fmt.Errorf("volume directory entries exceed bound"))
 	}
 	result := make([]sandbox.VolumeEntry, 0, len(entries))
@@ -89,7 +100,7 @@ func (b *Backend) LstatVolume(ctx context.Context, reference sandbox.VolumeRefer
 	if err := b.validateVolumeRead(ctx, reference, name); err != nil {
 		return sandbox.VolumeEntry{}, err
 	}
-	entry, err := b.client.LstatVolume(ctx, reference.VolumeID, name)
+	entry, err := b.client.LstatVolume(ctx, reference.VolumeID, volumePath(name))
 	if err != nil {
 		return sandbox.VolumeEntry{}, mapError("volume lstat", err)
 	}
@@ -109,7 +120,7 @@ func (b *Backend) ReadVolume(ctx context.Context, reference sandbox.VolumeRefere
 	if offset < 0 || length <= 0 || length > 256<<10 {
 		return nil, failure("volume read", sandbox.Invalid, fmt.Errorf("bounded positive volume range required"))
 	}
-	data, err := b.client.ReadVolume(ctx, reference.VolumeID, name, offset, length)
+	data, err := b.client.ReadVolume(ctx, reference.VolumeID, volumePath(name), offset, length)
 	if err != nil {
 		return nil, mapError("volume read", err)
 	}

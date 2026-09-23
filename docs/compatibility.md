@@ -5,7 +5,16 @@ A matching `release-identity` is necessary for owner handoff; it does not certif
 arbitrary older code. Rollback uses the current database and retains writes accepted
 by the newer owner. Restoring an older backup over those writes is unsupported.
 
-## Current owner, gateway and client pair
+## Workspace storage update
+
+The independent workspace update requires schema 13. Upgrade from schema 12
+uses the full quiescent activation gate; it is not a compatible owner-only
+handoff. Known schema migration preserves accepted history and file outcomes.
+The pinned Khora engine and manifest-3 runtime are unchanged. Older schema-12
+executables are refused after migration; the historical rollback tuples below
+do not authorize a schema downgrade or restoring old database contents.
+
+## Recorded schema-12 owner, gateway and client pair
 
 The [final rehearsal](../dev/measurements/final-rollback.json) uses retained
 `e1e4e665580427f1daf7ce3f46345dfec8489bed` and candidate
@@ -25,7 +34,7 @@ turn identities/states and post-upgrade workspace bytes survive. The non-default
 image remains in the host-validated catalog; omitting it refuses startup.
 
 The exact artifacts, frontend tree and runtime digest are in that record. This
-is the current client/API rollback pair. Earlier pairs below remain historical
+is the recorded schema-12 client/API rollback pair. Earlier pairs below remain historical
 qualification and do not imply that the current client supports old schedule
 responses or pre-catalog owner handoff.
 

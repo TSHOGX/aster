@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"time"
 )
@@ -114,6 +115,16 @@ type VolumeListings interface {
 type VolumeWrites interface {
 	MkdirVolume(context.Context, VolumeReference, string) error
 	WriteVolume(context.Context, VolumeReference, string, []byte) error
+}
+
+// VolumeFileMutations addresses an unmounted or paused workspace. Mutating
+// calls must never be replayed on an ambiguous transport outcome.
+type VolumeFileMutations interface {
+	MkdirVolume(context.Context, VolumeReference, string) error
+	WriteVolume(context.Context, VolumeReference, string, []byte) error
+	ImportVolume(context.Context, VolumeReference, string, io.Reader, int64) error
+	MoveVolume(context.Context, VolumeReference, string, string) error
+	RemoveVolumePath(context.Context, VolumeReference, string) error
 }
 
 // VolumeDerivation copies a prepared volume's whole tree into a new volume under

@@ -16,7 +16,7 @@ not-found response. Conversation reader grants do not expose live Files or PTYs.
 Public shares use expiring, revocable bearer tokens and frozen selected files.
 Rotation invalidates the prior token; no public link exposes the live workspace.
 
-The Files helper confines operations to selected regular files/directories below
+With active compute, the Files helper confines operations to selected regular files/directories below
 `/workspace`, rejects symlink traversal and special files, bounds transfers and
 never automatically repeats an uncertain mutation. The application independently
 checks actor scope before starting the helper.
@@ -45,3 +45,10 @@ being tricked into clicking inside an allowed frame.
 Use TLS for externally reachable browser/engine endpoints and protect the
 frontend origin from untrusted direct access. Do not trust user-supplied forward
 headers at an outer proxy without replacing them under a configured trust policy.
+
+
+Paused Files use the authenticated engine volume boundary, pinned to the saved
+Project workspace and engine store identity. The application does not gain host
+volume-directory access. Direct reads/writes share the lifecycle execution lane
+with resume/deletion and validate path components while compute remains stopped.
+Runtime and publication volumes are never accepted from browser-supplied IDs.

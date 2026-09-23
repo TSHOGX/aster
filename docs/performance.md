@@ -75,7 +75,7 @@ a thirty-second light metadata fallback operates only while disconnected.
 
 ## Files and active directory windows
 
-The guest reader reuses a root descriptor confined to `/workspace`. Component
+For active compute, the guest reader reuses a root descriptor confined to `/workspace`. Component
 walking uses `O_PATH|O_NOFOLLOW` and verifies object types; symlink substitutions,
 special files and private runtime paths are refused. The reader accepts no writes.
 It multiplexes two operations, with 16 KiB request frames, 256 KiB replies and
@@ -87,8 +87,10 @@ one directory scan per Project. Guest operations expire after two minutes;
 unused host/guest readers retire after twenty-five/thirty seconds. Cancellation
 has request identity. A failed cancellation invalidates the connection, and
 replacement settles the original process handle before creating another.
-List/watch do not activate or prevent idle pause. Explicit file opens retain their
-activation semantics. Reads create no per-read mutation or activity rows.
+List/watch and content opens never activate compute. Paused/new Projects use
+volume APIs directly, with bounded admission and the existing lifecycle execution
+lane protecting I/O from a concurrent resume. Completed content captures release
+that lane before delivery. Reads create no per-read mutation or activity rows.
 
 A directory snapshot freezes sorted metadata, at most 100,000 names, 32 MiB each,
 64 MiB retained, sixteen snapshots and a thirty-second lifetime. Concurrent changes
