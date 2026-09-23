@@ -16,6 +16,7 @@ export function useWorkspaceData(
   active: string,
   expanded: string[],
   targetSession: string,
+  onUnavailableProject: (project: string) => void,
 ) {
   const resources = useResources(),
     realtime = useRealtime();
@@ -54,6 +55,7 @@ export function useWorkspaceData(
   );
   const pages = useRef<Record<string, number>>({});
   const serial = useRef<Record<string, number>>({});
+  const unavailable = useRef(new Set<string>());
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -63,6 +65,18 @@ export function useWorkspaceData(
       abort.current.abort();
     };
   }, []);
+  const forgetProject = useCallback((project: string) => {
+    unavailable.current.add(project);
+    serial.current[project] = (serial.current[project] || 0) + 1;
+    delete pages.current[project];
+    delete childDirty.current[project];
+    resources.clear(project);
+    setProjects(old => old.filter(item => item.id !== project));
+    setSessions(old => { const next = {...old}; delete next[project]; return next; });
+    setTerminals(old => { const next = {...old}; delete next[project]; return next; });
+    setMore(old => { const next = {...old}; delete next[project]; return next; });
+    onUnavailableProject(project);
+  }, [resources, onUnavailableProject]);
   const refreshProjects = useCallback(
     async function refreshProjects(loadMore = false): Promise<void> {
       if (projectFlight.current) {
@@ -97,16 +111,18 @@ export function useWorkspaceData(
             selection.current.active &&
             !all.some((p) => p.id === selection.current.active)
           ) {
+            const selectedProject = selection.current.active;
             try {
-              const p = await read<Project>(
-                projectURL(selection.current.active),
-              );
+              const p = await read<Project>(projectURL(selectedProject));
               if (p.state !== "deleted") all = mergePage(all, [p]);
-            } catch {
-              /* Missing selection stays unavailable. */
+              else forgetProject(selectedProject);
+            } catch (e) {
+              if (alive.current && e instanceof APIError && e.status === 404)
+                forgetProject(selectedProject);
             }
           }
           if (!alive.current || serial.current.projects !== id) return;
+          for (const project of all) unavailable.current.delete(project.id);
           pages.current.projects = count;
           setProjects((prior) =>
             all.map(
@@ -129,7 +145,7 @@ export function useWorkspaceData(
       if (alive.current && generation !== projectDirty.current)
         return refreshProjects();
     },
-    [read],
+    [read, forgetProject],
   );
   const refreshChildren = useCallback(
     async function refreshChildren(
@@ -137,6 +153,7 @@ export function useWorkspaceData(
       loadMore = false,
       includeTerminals = false,
     ): Promise<void> {
+      if (unavailable.current.has(project)) return;
       const pending = childFlights.current.get(project);
       if (pending) {
         if (!loadMore)
@@ -209,7 +226,9 @@ export function useWorkspaceData(
               setTerminals((t) => ({ ...t, [project]: list }));
           }
         } catch (e) {
-          if (alive.current) setError(String(e));
+          if (!alive.current) return;
+          if (e instanceof APIError && e.status === 404) forgetProject(project);
+          else if (!unavailable.current.has(project)) setError(String(e));
         }
       })();
       childFlights.current.set(project, {
@@ -225,13 +244,15 @@ export function useWorkspaceData(
       if (alive.current && generation !== (childDirty.current[project] || 0))
         return refreshChildren(project, false, includeTerminals);
     },
-    [read],
+    [read, forgetProject],
   );
   const ensureTarget = useCallback(
     async (project: string, session = "") => {
       try {
         const p = await read<Project>(projectURL(project));
         if (!alive.current) return;
+        if (p.state === "deleted") throw new APIError(404, "Project unavailable");
+        unavailable.current.delete(project);
         setProjects((old) => mergePage(old, [p]));
         if (session) {
           try {
@@ -254,11 +275,18 @@ export function useWorkspaceData(
           }
         }
       } catch (e) {
-        if (alive.current) setError(String(e));
+        if (!alive.current) throw e;
+        if (e instanceof APIError && e.status === 404) {
+          forgetProject(project);
+        } else if (unavailable.current.has(project)) {
+          // A concurrent index read already confirmed this Project is gone
+          // and canceled its other reads. Keep that navigation result a 404.
+          throw new APIError(404, "Project unavailable");
+        } else setError(String(e));
         throw e;
       }
     },
-    [read],
+    [read, forgetProject],
   );
   const refresh = useCallback(async () => {
     await Promise.all([

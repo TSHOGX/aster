@@ -218,7 +218,10 @@ function Application({
     document.addEventListener("keydown", keys);
     return () => document.removeEventListener("keydown", keys);
   }, [drawer]);
-  const data = useWorkspaceData(nav.project, expanded, nav.session);
+  const forgetExpandedProject = useCallback((project: string) => {
+    setExpanded(old => old.includes(project) ? old.filter(id => id !== project) : old);
+  }, []);
+  const data = useWorkspaceData(nav.project, expanded, nav.session, forgetExpandedProject);
   const { ensureTarget } = data;
   const guard = useRef<() => Promise<boolean>>(async () => true);
   const navRef = useRef(nav);
@@ -276,9 +279,9 @@ function Application({
           );
       })
       .catch((e) => {
-        if (!gone && e instanceof APIError && e.status === 404 && nav.session)
+        if (!gone && e instanceof APIError && e.status === 404)
           void navigate(
-            { ...navRef.current, view: "shared", project: "" },
+            { ...navRef.current, view: nav.session ? "shared" : "project", project: "", message: "" },
             true,
           );
       });

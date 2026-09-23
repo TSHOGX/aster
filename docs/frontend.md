@@ -4,7 +4,11 @@ The workbench in `frontend/components/project` uses Project → Session navigati
 and displays one conversation at a time. Other Sessions continue independently.
 The workspace heading provides two switches: a bottom terminal dock and a file
 preview workspace. Both start closed and subsequently restore per-user/project
-preferences. Layout changes never stop a runtime resource.
+preferences. Layout changes never stop a runtime resource. Restored sidebar
+expansions are checked against Project authority. A confirmed missing Project is
+removed from the saved expansion list and its cached navigation data, so reload
+does not repeatedly request it or show a global 404 banner. Absence from a paged
+index alone does not remove a preference; transient failures remain visible.
 
 New Chat keeps a project-scoped draft and creates its Session on first send.
 Creation and first-turn request identities survive lost responses and explicit
