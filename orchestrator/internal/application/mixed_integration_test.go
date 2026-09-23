@@ -83,7 +83,14 @@ func TestMixedPercentilesUseNearestRank(t *testing.T) {
 	}
 }
 
-func TestReleasedMixedWorkload(t *testing.T) {
+func TestReleasedMixedWorkload(t *testing.T) { runReleasedMixedWorkload(t, false) }
+
+func TestReleasedCombinedWorkload(t *testing.T) { runReleasedMixedWorkload(t, true) }
+
+func runReleasedMixedWorkload(t *testing.T, combined bool) {
+	if combined {
+		t.Setenv("PROJECT_RELEASE_MODEL_MODE", "model-independent")
+	}
 	a := newReleasedApp(t)
 	socket := filepath.Join(a.root, "state/control.sock")
 	start := time.Now()
@@ -155,11 +162,40 @@ func TestReleasedMixedWorkload(t *testing.T) {
 			}
 		}()
 	}
+	var companion *mixedCompanion
+	if combined {
+		companion = startMixedCompanion(a)
+		// Browser setup can outlast the fixture's five-second Agent idle TTL.
+		// Establish a fresh, explicit warm boundary for the offered workload.
+		warm := time.Now()
+		for _, path := range sessions {
+			a.request("POST", path+"/turns", map[string]string{"request_id": "browser-warmup", "content": "combined post-browser warmup"}, 201)
+		}
+		for _, path := range sessions {
+			a.await(45*time.Second, "post-browser native warmup", func() bool {
+				turns := a.request("GET", path+"/turns?limit=200", nil, 200)["turns"].([]any)
+				for _, v := range turns {
+					r := v.(map[string]any)
+					if r["request_id"] == "browser-warmup" {
+						return r["state"] == "completed"
+					}
+				}
+				return false
+			})
+		}
+		companion.evidence["post_browser_warmup_ms"] = time.Since(warm).Milliseconds()
+		require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "workload-started"), []byte("started\n"), 0644))
+	}
 	projected := map[string]time.Time{}
 	var maxRSS int64
 	var maxCPU float64
 	cpuByProcess := map[int]float64{}
 	var gatewayRSSMax int64
+	var roundSamples []map[string]any
+	t.Cleanup(func() {
+		raw, _ := json.MarshalIndent(roundSamples, "", "  ")
+		_ = os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "round-samples.json"), raw, 0644)
+	})
 	round := 0
 	restarted := false
 	maxFairness := time.Duration(0)
@@ -167,10 +203,13 @@ func TestReleasedMixedWorkload(t *testing.T) {
 	for time.Since(workloadStart) < 5*time.Minute {
 		tick := time.Now()
 		round++
+		sample := map[string]any{"round": round, "started_at": tick.UTC().Format(time.RFC3339Nano)}
+		roundSamples = append(roundSamples, sample)
 		for _, path := range sessions {
-			a.request("POST", path+"/turns", map[string]string{"request_id": fmt.Sprintf("round-%d", round), "content": "mixed native workload"}, 201)
+			a.request("POST", path+"/turns", map[string]string{"request_id": fmt.Sprintf("round-%d", round), "content": mixedPrompt(combined)}, 201)
 		}
-		if !restarted && time.Since(workloadStart) > 90*time.Second {
+		sample["prompts_ms"] = float64(time.Since(tick)) / float64(time.Millisecond)
+		if !combined && !restarted && time.Since(workloadStart) > 90*time.Second {
 			a.stop()
 			a.start()
 			restarted = true
@@ -192,6 +231,8 @@ func TestReleasedMixedWorkload(t *testing.T) {
 				t.Fatal("file roundtrip mismatch")
 			}
 		}
+		sample["files_ms"] = float64(time.Since(tick)) / float64(time.Millisecond)
+		nativeTimes, displayTimes := []float64{}, []float64{}
 		for _, path := range sessions {
 			a.await(10*time.Second, "healthy work fairness", func() bool {
 				v := a.request("GET", path+"/turns?limit=200", nil, 200)
@@ -207,12 +248,16 @@ func TestReleasedMixedWorkload(t *testing.T) {
 				}
 				return done
 			})
+			nativeTimes = append(nativeTimes, float64(time.Since(tick))/float64(time.Millisecond))
+			sample["native_observed_ms"] = nativeTimes
 			var page map[string]any
 			a.await(10*time.Second, "display catches native completion", func() bool {
 				page = a.request("GET", path+"/view/pages", nil, 0)
 				head, ok := page["head"].(map[string]any)
 				return ok && head["projection_state"] == "ready"
 			})
+			displayTimes = append(displayTimes, float64(time.Since(tick))/float64(time.Millisecond))
+			sample["display_observed_ms"] = displayTimes
 			for _, raw := range page["turn_summaries"].([]any) {
 				turn := raw.(map[string]any)
 				if turn["state"] == "completed" {
@@ -224,6 +269,7 @@ func TestReleasedMixedWorkload(t *testing.T) {
 			}
 		}
 		elapsed := time.Since(tick)
+		sample["elapsed_ms"] = float64(elapsed) / float64(time.Millisecond)
 		if elapsed > maxFairness {
 			maxFairness = elapsed
 		}
@@ -257,16 +303,30 @@ func TestReleasedMixedWorkload(t *testing.T) {
 		if round%6 == 0 {
 			report := a.cli("diagnostics", "--socket", socket)
 			state := report["state"].(map[string]any)
-			if state["pending_capture"].(float64) < 1 {
+			if (!combined || !restarted) && state["pending_capture"].(float64) < 1 {
 				t.Fatal("impaired capture lane was not exercised")
 			}
 			t.Logf("mixed elapsed=%s rounds=%d rss=%dKiB pending_capture=%.0f", time.Since(workloadStart).Round(time.Second), round, maxRSS, state["pending_capture"])
+		}
+		if combined && !restarted && time.Since(workloadStart) > 90*time.Second {
+			require(t, os.Chmod(impaired, 0700))
+			a.await(15*time.Second, "capture repair before gated update", func() bool {
+				return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["pending_capture"] == float64(0)
+			})
+			companion.handoff()
+			restarted = true
+		}
+		if companion != nil {
+			companion.check()
 		}
 		if left := 5*time.Second - time.Since(tick); left > 0 {
 			time.Sleep(left)
 		}
 	}
 	workloadEnd := time.Now()
+	if companion != nil {
+		companion.finish()
+	}
 	stopWatch()
 	for p := 0; p < 2; p++ {
 		project := fmt.Sprintf("mixed-%d", p)
@@ -320,9 +380,12 @@ func TestReleasedMixedWorkload(t *testing.T) {
 		cpuTotal += ticks
 	}
 	metrics := map[string]any{"quantile_method": "nearest-rank", "gateway_rss_max_kib": gatewayRSSMax, "cpu_ticks_total_sampled": cpuTotal, "resource_scope": "owner plus independent gateway", "elapsed_seconds": time.Since(start).Seconds(), "mixed_seconds": workloadEnd.Sub(workloadStart).Seconds(), "post_warmup_seconds": time.Since(workloadStart).Seconds(), "rounds": round, "projects": 2, "agents": 4, "ptys": 2, "rss_max_kib": maxRSS, "cpu_ticks_max_process": maxCPU, "http_samples": len(a.latencies), "http_p95_ms": float64(percentile(a.latencies, .95)) / float64(time.Millisecond), "http_p99_ms": float64(percentile(a.latencies, .99)) / float64(time.Millisecond), "projection_samples": len(projection), "projection_p95_ms": float64(percentile(projection, .95)) / float64(time.Millisecond), "round_max_seconds": maxFairness.Seconds(), "idle_seconds": time.Since(idleStart).Seconds(), "diagnostics": report}
+	if companion != nil {
+		metrics["combined"] = companion.evidence
+	}
 	output, _ := json.MarshalIndent(metrics, "", "  ")
 	require(t, os.WriteFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "mixed-metrics.json"), output, 0644))
-	t.Log(string(output))
+	t.Logf("mixed rounds=%d HTTPp95=%v projectedp95=%v RSS=%dKiB maxRound=%s", round, percentile(a.latencies, .95), percentile(projection, .95), maxRSS, maxFairness)
 	if percentile(a.latencies, .95) >= time.Second || percentile(a.latencies, .99) >= 2*time.Second {
 		t.Error("HTTP latency target missed")
 	}
@@ -340,4 +403,11 @@ func TestReleasedMixedWorkload(t *testing.T) {
 	a.await(15*time.Second, "mixed resource teardown", func() bool {
 		return a.cli("diagnostics", "--socket", socket)["state"].(map[string]any)["projects"].(map[string]any)["deleted"] == float64(2)
 	})
+}
+
+func mixedPrompt(combined bool) string {
+	if combined {
+		return "long-for-interrupt"
+	}
+	return "mixed native workload"
 }

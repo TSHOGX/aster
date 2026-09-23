@@ -82,3 +82,38 @@ ready page is observed, not when native turn state first becomes completed. Reso
 accounting includes the separate gateway and sums sampled CPU maxima across owner
 process replacement. See the [accounting-corrected observation](../dev/measurements/mixed-accounting.json)
 for values and limits; it is not the complete browser/shaped-network acceptance matrix.
+
+
+The opt-in `combined` suite runs the five-minute native workload alongside two
+production browser tabs, repeated conversation/preview selections, an actual file
+edit, a retained unsent draft and a non-reading SSE client with a small TCP receive
+window. Four native fixture streams overlap a gated switch to a distinct compatible
+owner while the gateway remains stable. The deliberately impaired capture lane is
+repaired before requesting readiness. Original request identity/completion and held
+intent are checked after the update. This suite uses synthetic provider responses.
+
+Browser profiles separately use loopback and CDP request latency of 100 ms with
+10 Mbps upload/download limits. CDP emulation is not a packet-level RTT profile.
+Each profile records one warmup and thirty sequential warmed selection, cached
+return and small text preview samples. Timing starts at browser pointer-down and
+ends at the first animation frame with useful DOM; it does not measure paint or
+field INP. Raw samples, failures, request counts, long tasks and post-GC checkpoints
+are retained. These repeated warmed journeys do not replace independent cold
+loads, Office distributions or controlled baseline comparisons.
+
+Browser setup may outlast the fixture's five-second Agent idle timeout. A second
+explicit native warmup therefore precedes the measured workload. Cold provisioning
+and warmup remain outside that latency distribution. The existing mixed workload
+keeps its original owner-crash scenario; combined handoff is a separate scenario.
+The receive window applies real socket backpressure, but queue overflow is only
+claimed when separately observed. Owner/gateway RSS and sampled CPU are separate
+from browser heap/DOM measurements.
+
+
+The combined test also records separate 60/120-second post-ready browser idle
+windows with selected resources quiet while PTYs and unrelated schedules continue.
+It requires zero heavy reads, zero new preview URLs and stable preview DOM identity.
+The [recorded run](../dev/measurements/combined-workload.json) includes a passing
+result and the earlier warmed fairness failure; it does not claim a complete
+cross-phase performance matrix. Per-round timing breakdowns are in
+`round-samples.json`; source/provider timings remain separate from display readiness.

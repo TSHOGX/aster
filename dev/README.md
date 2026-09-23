@@ -12,7 +12,7 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `gateway`, `native`, `provider`, `rollback`, `infrastructure`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `gateway`, `native`, `provider`, `rollback`, `infrastructure`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
@@ -110,3 +110,24 @@ engine artifact/default. It verifies eight accepted native turns, workspace byte
 and immutable bindings for Projects created under both defaults. An unrelated
 engine revision is not made compatible by this test. Existing application templates
 must not be edited to prepare a candidate; use a fresh isolated image assembly.
+
+
+Run the opt-in combined browser/native workload with the same production frontend
+and Chromium prerequisites:
+
+```sh
+PLAYWRIGHT_BROWSERS_PATH=/srv/playwright dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/combined-run --suite combined
+```
+
+It retains the five-minute offered-load budget and adds two browser tabs, loopback
+and CDP network profiles, a slow event reader, and a guarded active-owner update.
+It is excluded from `all` because it is a separate longer measurement scenario.
+See the [measurement definitions](../docs/verification.md). Inspect `browser.log`,
+`combined-browser.json`, `combined-handoff.json` and `mixed-metrics.json` together;
+partial samples or setup-only runs are not successful qualification. Failure-state
+records retain only synthetic identifiers/states and native error evidence.
+
+Every harness invocation records source hashes (including uncommitted files),
+executable hashes, platform, CPU/memory, Go/Node versions and the frontend build ID
+in `fingerprint.json`. Preserve the actual binaries and frontend build together
+with this metadata; source hashes alone cannot recreate an uncommitted build.

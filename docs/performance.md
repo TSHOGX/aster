@@ -1092,3 +1092,36 @@ A→B→A, and rejected startup when a saved binding was absent from the catalog
 The release suite and full Go/vet checks pass. The catalog changes compatibility
 identity; upgrades from earlier builds require full drain. See the
 [configuration](configuration.md) and [compatibility boundary](compatibility.md).
+
+
+## Combined browser and owner-update observation
+
+The [combined record](../dev/measurements/combined-workload.json) runs four native
+fixture streams, two Projects, two retained PTYs, schedules, Files traffic, two
+browser tabs and a non-reading SSE client over five minutes. A gated compatible
+owner switch takes 403 ms with the original request completing through the same
+gateway. Browser drafts and saved file bytes survive. Fifty-six rounds pass:
+HTTP p95/p99 13.32/32.68 ms, projected-page observation p95 956.43 ms, combined
+owner/gateway peak RSS 63,916 KiB, and maximum round 6.912 seconds. Capture repair,
+idle pause and owned cleanup settle. The full test takes 474.59 seconds including
+separate idle observations and teardown.
+
+Both real browser idle checkpoints (60/120 seconds) record zero heavy page/change/
+file/directory reads, zero new preview URLs and the same preview DOM node. Head
+reads across both tabs are counted separately (8/14). PTYs and sibling schedules
+remain active. This supplements the earlier controlled-browser idle and real hub
+rotation evidence.
+
+Thirty sequential warmed trials per profile measure pointer-down to useful DOM.
+Loopback selection/return/text-preview p95 is 62.3/53.0/100.3 ms; the CDP 100 ms/
+10 Mbps profile records 104.7/96.8/178.3 ms. File selections still revalidate over
+the network. These values do not establish cold-load, Office, paint or field INP
+performance. Main-thread long tasks remain, with observed maxima of 391/525 ms
+across the two tabs; they need attribution before claiming the interaction matrix
+complete.
+
+An earlier warmed run missed the unchanged ten-second maximum-round budget at
+10.024 seconds. It remains a failed qualification in the record. The passing
+repeat adds phase timings and idle observations; no production optimization or
+causal speedup is inferred from the difference. The final acceptance and legacy
+cleanup audit remains open.

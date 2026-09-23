@@ -3,9 +3,10 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|gateway|native|provider|rollback|infrastructure|mixed|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|gateway|native|provider|rollback|infrastructure|mixed|combined|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
-Default suite: release. Browser/all require a frontend production build and Chromium.
+Default suite: release. Browser/combined/all require a frontend production build and Chromium.
+Combined is opt-in and adds two real browser tabs, network profiles and gated handoff.
 Set PLAYWRIGHT_BROWSERS_PATH when the browser cache is outside the default location.
 HELP
 }
@@ -21,7 +22,7 @@ while (($#)); do
  esac
 done
 [[ -d $template && -f $manifest && -n $output ]] || { usage >&2;exit 2; }
-case "$suite" in release|gateway|native|provider|rollback|infrastructure|mixed|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
+case "$suite" in release|gateway|native|provider|rollback|infrastructure|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 for program in go python3 ip unshare mount mkfs.btrfs btrfs runsc sudo; do command -v "$program" >/dev/null || { echo "missing prerequisite: $program" >&2;exit 2; }; done
 if [[ $suite == provider ]]; then : "${PROJECT_PROVIDER_CONFIG:?explicit host-only provider YAML required}"; fi
 if [[ $suite == rollback ]]; then : "${PROJECT_ROLLBACK_BINARY:?explicit previously built compatible owner required}"; fi
@@ -66,6 +67,22 @@ done
  "$engine" --version
  sha256sum "$manifest" "$output/orchestrator"
 } > "$output/revisions.txt"
+python3 - "$repo" "$output" <<'PYMETA'
+import hashlib, json, os, platform, shutil, subprocess, sys
+from pathlib import Path
+repo, output = map(Path, sys.argv[1:])
+files = subprocess.check_output(["git", "-C", str(repo), "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0")
+def digest(p):
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""): h.update(chunk)
+    return h.hexdigest()
+sources = {name: digest(repo / name) for name in files if name and (repo / name).is_file()}
+artifacts = {p.name: digest(p) for p in output.iterdir() if p.is_file() and os.access(p, os.X_OK)}
+build_id = repo / "frontend/.next/BUILD_ID"
+report = {"head": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(), "sources": sources, "artifacts": artifacts, "platform": platform.platform(), "cpu_count": os.cpu_count(), "memory_total_kib": next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemTotal:")), "node": subprocess.check_output(["node", "--version"], text=True).strip() if shutil.which("node") else None, "go": subprocess.check_output(["go", "version"], text=True).strip(), "frontend_build_id": build_id.read_text().strip() if build_id.exists() else None}
+(output / "fingerprint.json").write_text(json.dumps(report, indent=2) + "\n")
+PYMETA
 # Real-provider work is opt-in and never included in the default/all suites.
 if [[ $suite == provider ]]; then
  provider_dir=$(mktemp -d /tmp/batterygpt-provider.XXXXXX)
@@ -100,6 +117,7 @@ if [[ $suite == provider ]]; then run application '^TestReleasedRealProviderHand
 if [[ $suite == rollback ]]; then run application '^TestReleasedRevisionRollback$' rollback 4m;fi
 if [[ $suite == infrastructure ]]; then run application '^TestReleasedInfrastructureRollback$' infrastructure 4m;fi
 if [[ $suite == mixed || $suite == all ]]; then run application '^TestReleasedMixedWorkload$' mixed 9m;fi
+if [[ $suite == combined ]]; then run application '^TestReleasedCombinedWorkload$' combined 10m;fi
 if [[ $suite == browser || $suite == all ]]; then run application '^TestReleasedBrowser$' browser 6m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi
 if [[ $suite == faults || $suite == all ]]; then

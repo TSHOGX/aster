@@ -181,6 +181,7 @@ func model(coordinated bool) {
 			return
 		}
 		observed := map[string]string{"project": r.Header.Get("X-Project-Id"), "session": r.Header.Get("X-Session-Id"), "turn": r.Header.Get("X-Turn-Id"), "incarnation": r.Header.Get("X-Incarnation-Id")}
+		observed["started_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 		record := func(path string) {
 			if path == "" {
 				return
