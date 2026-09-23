@@ -21,6 +21,12 @@ colors follow the application theme.
 
 Files use a wide preview with a lazy directory tree on the right. Each directory
 has independent pagination and refresh; filtering covers loaded entries only.
+The active tree retains the root and at most sixteen open directories, one
+100-entry page per directory, within an estimated 8 MiB aggregate budget. Next/
+First controls replace pages; closing a branch cancels its reads and releases its
+rows. Expired snapshots return to the first page with a notice. Deep links read
+bounded ancestor pages without scanning whole directories; the selected file and
+unsaved editor stay owned even when their row is outside the loaded page.
 Workspace links reveal ancestor directories. Files support watches, upload,
 download, mutation, text editing and bounded Markdown, code, PNG/JPEG, XLSX,
 DOCX and PPTX previews. Other formats (including PDF, legacy XLS and SVG) remain

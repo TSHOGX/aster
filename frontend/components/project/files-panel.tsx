@@ -48,7 +48,14 @@ const CodeEditor = dynamic(
     ),
   { ssr: false },
 );
-type Directory = FilePage & { error?: string; loading?: boolean };
+import {
+  DirectoryWindowLimitError,
+  MAX_OPEN_DIRECTORIES,
+  openDirectories,
+  retainDirectoryWindows,
+  replaceDirectoryWindow,
+  type DirectoryWindow as Directory,
+} from "@/lib/directory-window";
 export function FilesPanel({
   project,
   selected,
@@ -59,7 +66,7 @@ export function FilesPanel({
   onClose = () => {},
   treeWidth = 240,
   onTreeWidth = () => {},
-  directories = [""],
+  directories: savedDirectories = [""],
   onDirectories = () => {},
   guard,
   fullButton,
@@ -78,9 +85,14 @@ export function FilesPanel({
   guard?: RefObject<() => Promise<boolean>>;
   fullButton?: RefObject<HTMLButtonElement | null>;
 }) {
+  const directories = useMemo(
+    () => openDirectories(savedDirectories),
+    [savedDirectories],
+  );
   const resources = useResources();
   const realtime = useRealtime();
   const reads = useRef(new AbortController());
+  const directoryRequests = useRef(new Map<string, AbortController>());
   const loads = useRef(
     new Map<
       string,
@@ -97,8 +109,8 @@ export function FilesPanel({
   );
   const tr = useT(),
     ask = useDialog();
-  const [tree, setTree] = useState<Record<string, Directory>>(
-      () => resources.peek(treeKey) || {},
+  const [tree, setTree] = useState<Record<string, Directory>>(() =>
+      retainDirectoryWindows(resources.peek(treeKey) || {}, directories),
     ),
     [treeOpen, setTreeOpen] = useState(true),
     [filter, setFilter] = useState("");
@@ -140,11 +152,11 @@ export function FilesPanel({
     };
   }, []);
   const readDirectory = useCallback(
-    (url: string) =>
+    (url: string, signal = reads.current.signal) =>
       resources.read<FilePage>(
         { project: project.id, kind: "directory", identity: url },
         (signal) => api<FilePage>(url, { signal }),
-        reads.current.signal,
+        signal,
       ),
     [resources, project.id],
   );
@@ -159,11 +171,19 @@ export function FilesPanel({
     ): Promise<FilePage | undefined> {
       const pending = loads.current.get(path);
       if (pending) {
-        if (pending.after === after) return pending.promise;
+        if (
+          pending.after === after &&
+          !directoryRequests.current.get(path)?.signal.aborted
+        )
+          return pending.promise;
         await pending.promise;
         if (!alive.current) return;
         return load(path, after);
       }
+      if (path && !expanded.current.includes(path)) return;
+      const abort = new AbortController();
+      directoryRequests.current.set(path, abort);
+      const signal = AbortSignal.any([reads.current.signal, abort.signal]);
       const flight = (async () => {
         const id = (serial.current[path] = (serial.current[path] || 0) + 1);
         setTree((t) => ({
@@ -171,56 +191,67 @@ export function FilesPanel({
           [path]: {
             entries: t[path]?.entries || [],
             next: t[path]?.next,
+            after: t[path]?.after,
             loading: true,
           },
         }));
         try {
-          let append = !!after;
+          let cursor = after;
+          let notice = "";
           let page: FilePage;
           try {
             page = await readDirectory(
-              `${base}?path=${encode(path)}&after=${encode(after)}&limit=100`,
+              `${base}?path=${encode(path)}&after=${encode(cursor)}&limit=100`,
+              signal,
             );
           } catch (error) {
-            if (!after || !(error instanceof APIError) || error.status !== 409)
+            if (!cursor || !(error instanceof APIError) || error.status !== 409)
               throw error;
+            cursor = "";
+            notice = tr("Directory changed. Showing the first page.");
             page = await readDirectory(
               `${base}?path=${encode(path)}&after=&limit=100`,
+              signal,
             );
-            append = false;
           }
-          if (!append) {
-            const retain =
-              (treeRef.current[path]?.entries.length || 0) + (after ? 100 : 0);
-            while (page.next && page.entries.length < retain) {
-              const next = await readDirectory(
-                `${base}?path=${encode(path)}&after=${encode(page.next)}&limit=100`,
-              );
-              page = { ...next, entries: [...page.entries, ...next.entries] };
-            }
-          }
-          if (!alive.current || serial.current[path] !== id) return;
-          setTree((t) => ({
-            ...t,
-            [path]: {
-              ...page,
-              entries: append
-                ? [
-                    ...new Map(
-                      [...(t[path]?.entries || []), ...page.entries].map(
-                        (e) => [e.name, e],
-                      ),
-                    ).values(),
-                  ]
-                : page.entries,
-            },
-          }));
+          if (
+            signal.aborted ||
+            !alive.current ||
+            serial.current[path] !== id ||
+            (path && !expanded.current.includes(path))
+          )
+            return;
+          // Each branch owns one bounded snapshot page. Validate before entering
+          // a React updater so capacity failure is handled as a visible read error.
+          const next = replaceDirectoryWindow(
+            treeRef.current,
+            path,
+            { ...page, after: cursor, notice },
+            expanded.current,
+          );
+          treeRef.current = next;
+          setTree(next);
           return page;
         } catch (e) {
-          if (alive.current && serial.current[path] === id)
+          if (
+            !signal.aborted &&
+            alive.current &&
+            serial.current[path] === id &&
+            (!path || expanded.current.includes(path))
+          )
             setTree((t) => ({
               ...t,
-              [path]: { entries: t[path]?.entries || [], error: String(e) },
+              [path]: {
+                ...t[path],
+                entries: t[path]?.entries || [],
+                loading: false,
+                error:
+                  e instanceof DirectoryWindowLimitError
+                    ? tr(
+                        "Directory view exceeds its display budget. Close another directory and retry.",
+                      )
+                    : String(e),
+              },
             }));
         }
       })();
@@ -230,11 +261,31 @@ export function FilesPanel({
       } finally {
         if (loads.current.get(path)?.promise === flight)
           loads.current.delete(path);
+        if (directoryRequests.current.get(path) === abort)
+          directoryRequests.current.delete(path);
+        if (path && !expanded.current.includes(path))
+          delete serial.current[path];
       }
     },
-    [base, readDirectory],
+    [base, readDirectory, tr],
   );
   const dirsKey = directories.join("\n");
+  useEffect(() => {
+    const open = dirsKey ? dirsKey.split("\n") : [];
+    for (const [path, abort] of directoryRequests.current)
+      if (path && !open.includes(path)) abort.abort();
+    void Promise.resolve().then(() => {
+      if (alive.current)
+        setTree((current) => {
+          const next = retainDirectoryWindows(current, open);
+          treeRef.current = next;
+          return next;
+        });
+    });
+    for (const path of Object.keys(serial.current))
+      if (path && !open.includes(path) && !loads.current.has(path))
+        delete serial.current[path];
+  }, [dirsKey]);
   useEffect(() => {
     if (!visible || project.state !== "active") return;
     for (const d of new Set(["", ...dirsKey.split("\n")]))
@@ -305,7 +356,12 @@ export function FilesPanel({
                 ) === dir,
             )) ||
             (k.kind === "file" &&
-              fileImpact(event, new URL(k.identity, location.origin).searchParams.get("path") || "", []).selected)),
+              fileImpact(
+                event,
+                new URL(k.identity, location.origin).searchParams.get("path") ||
+                  "",
+                [],
+              ).selected)),
       );
       if (
         impact.gap &&
@@ -377,27 +433,22 @@ export function FilesPanel({
     resources,
     realtime,
   ]);
-  // Reveal deep links without walking unrelated directories. Continue paging each ancestor until found.
+  // A deep link reads only bounded ancestor pages; it never scans an entire
+  // directory to locate a name. The selected file remains independently readable.
   useEffect(() => {
     if (!selected || !visible || project.state !== "active") return;
     let gone = false;
     const parts = selected.split("/");
-    const parents = [""];
-    for (let i = 1; i < parts.length; i++)
+    const parents: string[] = [];
+    for (let i = 1; i < Math.min(parts.length, MAX_OPEN_DIRECTORIES + 1); i++)
       parents.push(parts.slice(0, i).join("/"));
-    onDirectories([...new Set([...expanded.current, ...parents])]);
+    const open = openDirectories([...parents, ...expanded.current]);
+    expanded.current = open;
+    onDirectories(open);
     void (async () => {
-      for (let i = 0; i < parents.length && !gone; i++) {
-        const dir = parents[i];
-        let page: FilePage | undefined = treeRef.current[dir];
-        if (!page) page = await load(dir);
-        while (
-          !gone &&
-          page &&
-          !page.entries.some((e) => e.name === parts[i]) &&
-          page.next
-        )
-          page = await load(dir, page.next);
+      for (const dir of ["", ...parents]) {
+        if (gone) return;
+        if (!treeRef.current[dir]) await load(dir);
       }
       if (!gone)
         requestAnimationFrame(() =>
@@ -409,7 +460,7 @@ export function FilesPanel({
     return () => {
       gone = true;
     };
-    // onDirectories updates layout preferences; only a changed path should reveal again.
+    // Layout preference writes do not create another reveal demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, visible, load, project.state]);
   const act = async (fn: () => Promise<void>) => {
@@ -435,7 +486,16 @@ export function FilesPanel({
     const success = await act(async () => {
       const blob = new Blob([submitted]);
       await upload(project.id, selected, blob);
-      rememberPreview(resources, { project: project.id, kind: "file", identity: fileURL(project.id, selected) }, selected, blob);
+      rememberPreview(
+        resources,
+        {
+          project: project.id,
+          kind: "file",
+          identity: fileURL(project.id, selected),
+        },
+        selected,
+        blob,
+      );
       setOriginal(submitted);
       savedCurrentDraft = editor.current === submitted;
       if (savedCurrentDraft) setEdit(null);
@@ -588,26 +648,34 @@ export function FilesPanel({
         })(),
     },
   ];
+  const matchingPaths = useMemo(() => {
+    if (!filter) return null;
+    const query = filter.toLowerCase();
+    const matches = new Set<string>();
+    for (const [dir, page] of Object.entries(tree))
+      for (const entry of page.entries) {
+        if (!entry.name.toLowerCase().includes(query)) continue;
+        let path = dir ? `${dir}/${entry.name}` : entry.name;
+        for (;;) {
+          matches.add(path);
+          const separator = path.lastIndexOf("/");
+          if (separator < 0) break;
+          path = path.slice(0, separator);
+        }
+      }
+    return matches;
+  }, [tree, filter]);
   const renderDirectory = (dir: string, depth = 0) => {
     const page = tree[dir];
     if (!page) return <p className="list-hint">{tr("Loading…")}</p>;
-    const includes = (path: string, name: string) =>
-      !filter ||
-      name.toLowerCase().includes(filter.toLowerCase()) ||
-      Object.entries(tree).some(
-        ([parent, p]) =>
-          parent.startsWith(path + "/") &&
-          p.entries.some((e) =>
-            e.name.toLowerCase().includes(filter.toLowerCase()),
-          ),
-      ) ||
-      tree[path]?.entries.some((e) =>
-        e.name.toLowerCase().includes(filter.toLowerCase()),
-      );
     return (
       <>
         {page.entries
-          .filter((e) => includes(dir ? `${dir}/${e.name}` : e.name, e.name))
+          .filter(
+            (e) =>
+              !matchingPaths ||
+              matchingPaths.has(dir ? `${dir}/${e.name}` : e.name),
+          )
           .map((entry) => {
             const path = dir ? `${dir}/${entry.name}` : entry.name;
             const isDir = entry.kind === "directory",
@@ -629,13 +697,25 @@ export function FilesPanel({
                     disabled={entry.kind === "symlink"}
                     aria-expanded={isDir ? open : undefined}
                     onClick={() => {
-                      if (isDir)
-                        onDirectories(
-                          open
-                            ? directories.filter((p) => p !== path)
-                            : [...directories, path],
-                        );
-                      else void choose(path);
+                      if (isDir) {
+                        if (
+                          !open &&
+                          directories.length >= MAX_OPEN_DIRECTORIES
+                        ) {
+                          setError(
+                            tr("Close a directory before opening another."),
+                          );
+                          return;
+                        }
+                        const next = open
+                          ? directories.filter(
+                              (p) => p !== path && !p.startsWith(path + "/"),
+                            )
+                          : [...directories, path];
+                        setError("");
+                        expanded.current = next;
+                        onDirectories(next);
+                      } else void choose(path);
                     }}
                   >
                     {isDir ? (
@@ -669,12 +749,27 @@ export function FilesPanel({
         {!page.loading && !page.error && !page.entries.length && (
           <small className="list-hint">{tr("This directory is empty.")}</small>
         )}
+        {page.notice && (
+          <small className="list-hint" role="status">
+            {page.notice}
+          </small>
+        )}
+        {page.after && (
+          <button
+            className="list-hint"
+            disabled={page.loading}
+            onClick={() => void load(dir)}
+          >
+            {tr("First page")}
+          </button>
+        )}
         {page.next && (
           <button
             className="list-hint"
+            disabled={page.loading}
             onClick={() => void load(dir, page.next)}
           >
-            {tr("Show more")}
+            {tr("Next page")}
           </button>
         )}
       </>
@@ -917,6 +1012,18 @@ export function FilesPanel({
                     {tr("Only loaded entries are filtered.")}
                   </small>
                 )}
+                {selected &&
+                  !tree[
+                    selected.split("/").slice(0, -1).join("/")
+                  ]?.entries.some(
+                    (entry) => entry.name === selected.split("/").at(-1),
+                  ) && (
+                    <small className="list-hint" role="status">
+                      {tr(
+                        "The selected file is outside the loaded directory page.",
+                      )}
+                    </small>
+                  )}
                 <div className="file-tree-scroll">{renderDirectory("")}</div>
               </section>
             </>

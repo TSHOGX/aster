@@ -76,8 +76,9 @@ project, and 128 waiting requests. Saturation returns a visible capacity error.
 The memory cache estimates decoded overhead, caps entries at 256 and content at
 32 MiB, evicts inactive entries, and refuses oversized entries. Drafts and pending
 command identities remain independently owned. Session return restores its cached
-reading window before validation; directory refresh preserves visible rows and
-serializes distinct continuation demands.
+reading window before validation. Directory validation retains prior rows while
+pending; refreshed/expired snapshots restart one bounded page with explicit
+pagination. Distinct continuation demands remain serialized.
 
 Validation: 128 frontend unit tests, lint/typecheck, production build, six loading
 and cache browser cases, and the existing navigation/draft/edit/terminal case
@@ -1259,4 +1260,27 @@ samples have p95 8.8 ms; the largest observed long task is 139 ms. The window ha
 83,421 DOM nodes. CPU samples include substantial browser/Playwright inspection;
 this does not attribute all sampled work to application rendering or establish
 field INP. No virtualization or parser replacement is justified by this run alone.
-The active file-tree retention gap remains a separate resource-audit item.
+The active file-tree retention fix and its separate resource checks are described below.
+
+
+## Active directory windows
+
+The file tree now bounds its active React state independently of the shared cache:
+root plus sixteen open branches, one hundred entries per branch, 512 KiB estimated
+per page and 8 MiB aggregate. Next/First controls replace pages. Closing a branch
+cancels its demand and releases rows; late replies cannot restore it. An expired
+snapshot resets to the first page with a notice. Deep links read only bounded
+ancestor pages and never scan a whole directory to find a selected name. Selection
+and unsaved editor text remain available outside the current directory page.
+
+Filtering computes matching paths and ancestors once per tree/filter update.
+The [fifty-page resource record](../dev/measurements/directory-window.json) retains
+one hundred rows throughout: post-GC heap grows from 11.67 MB to 11.96 MB, with
+6,740 DOM nodes and 751 listeners at every checkpoint. The final ten pages add
+3,468 heap bytes. The existing 20%/2 MiB heap, 100-node and 50-listener allowances
+are unchanged. This is a declared fixture plateau, not a total-browser RSS promise.
+
+Validation includes cancellation/reopen, unselected and selected cache invalidation,
+expiry, branch capacity, filter ancestors and dirty-editor preservation. The full
+UI suite passes 82 cases, with 38 opt-in skips; four final resource cases and all
+147 unit tests pass. All three real Go/Khora browser workflows pass in 46.73 seconds.
