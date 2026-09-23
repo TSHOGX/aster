@@ -135,3 +135,16 @@ from `orchestrator/` to include 100,000 synthetic records. It requires invariant
 visible content, an indexed page plan and a logical database below 1 GiB. The
 [comparison record](../dev/measurements/conversation-scale.json) includes a retained
 raw-query baseline without restoring that path to production.
+
+
+For independent ordinary Office timings, provide `PREVIEW_FIXTURES` and a new
+`OFFICE_LATENCY_OUTPUT`, then run the opt-in `office-latency.spec.ts` UI suite.
+It records thirty fresh contexts per format/CPU profile plus one warmup; production
+assets are built by the UI harness. Keep routed-body timing separate from network
+or real runtime qualification.
+
+For the maximal transcript scroll profile, set `HISTORY_WINDOW_OUTPUT`,
+`HISTORY_SCROLL_PROFILE=1` and optionally `HISTORY_CPU_RATE=4`, then select
+`navigation-budget.spec.ts` with the `maximal transcript` test. CPU profiling is
+kept separate from ordinary latency trials. Preserve its raw profile and metadata;
+DOM inspection performed by test automation is not application attribution.

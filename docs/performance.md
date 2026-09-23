@@ -1233,3 +1233,30 @@ near-megabyte prompt is absent from overview responses but intact in detail.
 The actual Go-edge browser journey opens, saves and disables a schedule without
 truncating its prompt. All three runtime browser workflows pass in 38.37 seconds;
 full Go tests/vet, scoped race, frontend unit/type/lint and focused UI checks pass.
+
+
+## Ordinary Office latency and maximal-window scrolling
+
+The [Office timing record](../dev/measurements/office-latency.json) contains thirty
+fresh-context trials per ordinary format at normal and four-times CPU throttling,
+with one warmup per case. All 180 samples pass without page errors. Normal-CPU
+first-useful-content p95 is 774 ms for DOCX, 577 ms for XLSX and 505 ms for PPTX,
+below the original three-second target. CPU-throttled observations are separately
+813 ms, 1.23 seconds and 1.03 seconds. The probe requires actual document/slide text
+or a drawn first worksheet cell plus adapter readiness, not merely a DOM shell.
+
+These trials use fixed routed bodies and an already-initialized application;
+they do not measure network transfer, paint completion or field INP. The initial
+probe failed before producing samples and was corrected without changing product
+adapters. Exact production bundle identity was not captured before the subsequent
+rebuild; the record states its source revision, fixtures and that limitation.
+Future runs capture the build ID at trial setup.
+
+A separate [maximal-window profile](../dev/measurements/history-scroll.json) retains
+160 turns in sixteen pages, traverses both directions after eviction and returns
+to latest correctly. At four-times CPU throttling, thirty wheel-to-next-frame
+samples have p95 8.8 ms; the largest observed long task is 139 ms. The window has
+83,421 DOM nodes. CPU samples include substantial browser/Playwright inspection;
+this does not attribute all sampled work to application rendering or establish
+field INP. No virtualization or parser replacement is justified by this run alone.
+The active file-tree retention gap remains a separate resource-audit item.

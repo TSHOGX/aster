@@ -1,0 +1,1702 @@
+{
+  "date": "2026-09-23",
+  "source_revision": "e1e4e665580427f1daf7ce3f46345dfec8489bed",
+  "test_sha256": "de335693e7e86d561a3e136aeaddee37f9b0c3252c747c335c9c842ebe8a5bb9",
+  "platform": "Linux-7.0.14-orbstack-00380-ga7e0a2dc9535-aarch64-with-glibc2.43",
+  "cpu_count": 10,
+  "node": "v24.20.0",
+  "result": "passed",
+  "trials": 180,
+  "cases": [
+    {
+      "name": "small.docx",
+      "cpuRate": 1,
+      "bytes": 36749,
+      "sha256": "cc4f871a3c3842caf110ee5916cf10c2b36a86d15da8c263c4fecdeeaf8637ae",
+      "browser": "153.0.8010.12",
+      "warmup": 1,
+      "measuredTrials": 30,
+      "samples": [
+        1461.6000000238419,
+        426,
+        408.39999997615814,
+        407.39999997615814,
+        274.2999999523163,
+        359.7999999523163,
+        773.5999999046326,
+        360.39999997615814,
+        391.39999997615814,
+        389.1999999284744,
+        358.89999997615814,
+        523.6999999284744,
+        587.3999999761581,
+        357,
+        338.60000002384186,
+        355.3000000715256,
+        361.60000002384186,
+        356.1999999284744,
+        575.1000000238419,
+        277.10000002384186,
+        310.7000000476837,
+        372.7999999523163,
+        358.1999999284744,
+        330.89999997615814,
+        360.60000002384186,
+        342.60000002384186,
+        521.6000000238419,
+        581.1000000238419,
+        398.10000002384186,
+        434.10000002384186
+      ],
+      "failures": [],
+      "tasks": [
+        {
+          "parent": [
+            51,
+            133,
+            88
+          ],
+          "renderer": [
+            88
+          ]
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [
+            77
+          ],
+          "renderer": [
+            77
+          ]
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [
+            51
+          ],
+          "renderer": [
+            51
+          ]
+        },
+        {
+          "parent": [
+            62
+          ],
+          "renderer": [
+            62
+          ]
+        },
+        {
+          "parent": [],
+          "renderer": []
+        },
+        {
+          "parent": [],
+          "renderer": []
+        }
+      ],
+      "errors": [],
+      "method": "fresh context per trial; application initialized before pointerdown; first useful Office DOM/canvas plus adapter ready on RAF; routed body, warm production server, no CPU profiler; not network/paint/field INP",
+      "stats": {
+        "p50": 361.60000002384186,
+        "p95": 773.5999999046326,
+        "max": 1461.6000000238419,
+        "quantile": "nearest-rank"
+      }
+    },
+    {
+      "name": "small.docx",
+      "cpuRate": 4,
+      "bytes": 36749,
+      "sha256": "cc4f871a3c3842caf110ee5916cf10c2b36a86d15da8c263c4fecdeeaf8637ae",
+      "browser": "153.0.8010.12",
+      "warmup": 1,
+      "measuredTrials": 30,
+      "samples": [
+        667.8999999761581,
+        620.8999999761581,
+        587.5,
+        594,
+        858.5999999046326,
+        605.6000000238419,
+        599.5,
+        735.5,
+        592,
+        601.5999999046326,
+        803.2000000476837,
+        596.7999999523163,
+        657.3999999761581,
+        636.3999999761581,
+        620.6000000238419,
+        663.1000000238419,
+        610,
+        640.8000000715256,
+        614.5999999046326,
+        674.3000000715256,
+        652,
+        683.7000000476837,
+        610,
+        684.0999999046326,
+        666.7000000476837,
+        584.3000000715256,
+        812.8000000715256,
+        710.8999999761581,
+        655.2000000476837,
+        567
+      ],
+      "failures": [],
+      "tasks": [
+        {
+          "parent": [
+            59,
+            103
+          ],
+          "renderer": [
+            59,
+            103
+          ]
+        },
+        {
+          "parent": [
+            88
+          ],
+          "renderer": [
+            88
+          ]
+        },
+        {
+          "parent": [
+            93
+          ],
+          "renderer": [
+            93
+          ]
+        },
+        {
+          "parent": [
+            71
+          ],
+          "renderer": [
+            71
+          ]
+        },
+        {
+          "parent": [
+            53,
+            136
+          ],
+          "renderer": [
+            136
+          ]
+        },
+        {
+          "parent": [
+            93
+          ],
+          "renderer": [
+            93
+          ]
+        },
+        {
+          "parent": [
+            82
+          ],
+          "renderer": [
+            82
+          ]
+        },
+        {
+          "parent": [
+            54,
+            91
+          ],
+          "renderer": [
+            54,
+            91
+          ]
+        },
+        {
+          "parent": [
+            107
+          ],
+          "renderer": [
+            107
+          ]
+        },
+        {
+          "parent": [
+            94
+          ],
+          "renderer": [
+            94
+          ]
+        },
+        {
+          "parent": [
+            51,
+            209
+          ],
+          "renderer": [
+            51,
+            209
+          ]
+        },
+        {
+          "parent": [
+            94
+          ],
+          "renderer": [
+            94
+          ]
+        },
+        {
+          "parent": [
+            91
+          ],
+          "renderer": [
+            91
+          ]
+        },
+        {
+          "parent": [
+            83
+          ],
+          "renderer": [
+            83
+          ]
+        },
+        {
+          "parent": [
+            88
+          ],
+          "renderer": [
+            88
+          ]
+        },
+        {
+          "parent": [
+            61,
+            97
+          ],
+          "renderer": [
+            61,
+            97
+          ]
+        },
+        {
+          "parent": [
+            81
+          ],
+          "renderer": [
+            81
+          ]
+        },
+        {
+          "parent": [
+            78
+          ],
+          "renderer": [
+            78
+          ]
+        },
+        {
+          "parent": [
+            101
+          ],
+          "renderer": [
+            101
+          ]
+        },
+        {
+          "parent": [
+            102
+          ],
+          "renderer": [
+            102
+          ]
+        },
+        {
+          "parent": [
+            72
+          ],
+          "renderer": [
+            72
+          ]
+        },
+        {
+          "parent": [
+            77
+          ],
+          "renderer": [
+            77
+          ]
+        },
+        {
+          "parent": [
+            94
+          ],
+          "renderer": [
+            94
+          ]
+        },
+        {
+          "parent": [
+            126
+          ],
+          "renderer": [
+            126
+          ]
+        },
+        {
+          "parent": [
+            86
+          ],
+          "renderer": [
+            86
+          ]
+        },
+        {
+          "parent": [
+            87
+          ],
+          "renderer": [
+            87
+          ]
+        },
+        {
+          "parent": [
+            93,
+            119
+          ],
+          "renderer": [
+            93,
+            119
+          ]
+        },
+        {
+          "parent": [
+            56,
+            127
+          ],
+          "renderer": [
+            56,
+            127
+          ]
+        },
+        {
+          "parent": [
+            52,
+            88
+          ],
+          "renderer": [
+            52,
+            88
+          ]
+        },
+        {
+          "parent": [
+            87
+          ],
+          "renderer": [
+            87
+          ]
+        }
+      ],
+      "errors": [],
+      "method": "fresh context per trial; application initialized before pointerdown; first useful Office DOM/canvas plus adapter ready on RAF; routed body, warm production server, no CPU profiler; not network/paint/field INP",
+      "stats": {
+        "p50": 636.3999999761581,
+        "p95": 812.8000000715256,
+        "max": 858.5999999046326,
+        "quantile": "nearest-rank"
+      }
+    },
+    {
+      "name": "small.pptx",
+      "cpuRate": 1,
+      "bytes": 29154,
+      "sha256": "63d51042929bdf0bfbea73905fde44332582eb1fa4b73d33e4ef4e27bda07e37",
+      "browser": "153.0.8010.12",
+      "warmup": 1,
+      "measuredTrials": 30,
+      "samples": [
+        329.2999999523163,
+        326.5,
+        465.40000009536743,
+        444.1999999284744,
+        343.3000000715256,
+        429.39999997615814,
+        505.40000009536743,
+        441.7000000476837,
+        452.8000000715256,
+        325.2000000476837,
+        328.5,
+        341.10000002384186,
+        344.39999997615814,
+        358.8000000715256,
+        325.39999997615814,
+        346.10000002384186,
+        463.2000000476837,
+        423.10000002384186,
+        325.10000002384186,
+        329.7999999523163,
+        329.59999990463257,
+        525.8999999761581,
+        347,
+        394.39999997615814,
+        348.60000002384186,
+        343.10000002384186,
+        345.90000009536743,
+        438.89999997615814,
+        326.89999997615814,
+        343
+      ],
+      "failures": [],
+      "tasks": [
+        {
+          "parent": [
+            73
+          ],
+          "renderer": [
+            73
+          ]
+        },
+        {
+          "parent": [
+            79
+          ],
+          "renderer": [
+            79
+          ]
+        },
+        {
+          "parent": [
+            80
+          ],
+          "renderer": [
+            80
+          ]
+        },
+        {
+          "parent": [
+            74
+          ],
+          "renderer": [
+            74
+          ]
+        },
+        {
+          "parent": [
+            72
+          ],
+          "renderer": [
+            72
+          ]
+        },
+        {
+          "parent": [
+            72
+          ],
+          "renderer": [
+            72
+          ]
+        },
+        {
+          "parent": [
+            85
+          ],
+          "renderer": [
+            85
+          ]
+        },
+        {
+          "parent": [
+            77
+          ],
+          "renderer": [
+            77
+          ]
+        },
+        {
+          "parent": [
+            76
+          ],
+          "renderer": [
+            76
+          ]
+        },
+        {
+          "parent": [
+            72
+          ],
+          "renderer": [
+            72
+          ]
+        },
+        {
+          "parent": [
+            68
+          ],
+          "renderer": [
+            68
+          ]
+        },
+        {
+          "parent": [
+            71
+          ],
+          "renderer": [
+            71
+          ]
+        },
+        {
+          "parent": [
+            78
+          ],
+          "renderer": [
+            78
+          ]
+        },
+        {
+          "parent": [
+            74
+          ],
+          "renderer": [
+            74
+          ]
+        },
+        {
+          "parent": [
+            73
+          ],
+          "renderer": [
+            73
+          ]
+        },
+        {
+          "parent": [
+            74
+          ],
+          "renderer": [
+            74
+          ]
+        },
+        {
+          "parent": [
+            82
+          ],
+          "renderer": [
+            82
+          ]
+        },
+        {
+          "parent": [
+            72
+          ],
+          "renderer": [
+            72
+          ]
+        },
+        {
+          "parent": [
+            70
+          ],
+          "renderer": [
+            70
+          ]
+        },
+        {
+          "parent": [
+            71
+          ],
+          "renderer": [
+            71
+          ]
+        },
+        {
+          "parent": [
+            74
+          ],
+          "renderer": [
+            74
+          ]
+        },
+        {
+          "parent": [
+            78
+          ],
+          "renderer": [
+            78
+          ]
+        },
+        {
+          "parent": [
+            80
+          ],
+          "renderer": [
+            80
+          ]
+        },
+        {
+          "parent": [
+            71
+          ],
+          "renderer": [
+            71
+          ]
+        },
+        {
+          "parent": [
+            73
+          ],
+          "renderer": [
+            73
+          ]
+        },
+        {
+          "parent": [
+            74
+          ],
+          "renderer": [
+            74
+          ]
+        },
+        {
+          "parent": [
+            73
+          ],
+          "renderer": [
+            73
+          ]
+        },
+        {
+          "parent": [
+            80
+          ],
+          "renderer": [
+            80
+          ]
+        },
+        {
+          "parent": [
+            72
+          ],
+          "renderer": [
+            72
+          ]
+        },
+        {
+          "parent": [
+            75
+          ],
+          "renderer": [
+            75
+          ]
+        }
+      ],
+      "errors": [],
+      "method": "fresh context per trial; application initialized before pointerdown; first useful Office DOM/canvas plus adapter ready on RAF; routed body, warm production server, no CPU profiler; not network/paint/field INP",
+      "stats": {
+        "p50": 345.90000009536743,
+        "p95": 505.40000009536743,
+        "max": 525.8999999761581,
+        "quantile": "nearest-rank"
+      }
+    },
+    {
+      "name": "small.pptx",
+      "cpuRate": 4,
+      "bytes": 29154,
+      "sha256": "63d51042929bdf0bfbea73905fde44332582eb1fa4b73d33e4ef4e27bda07e37",
+      "browser": "153.0.8010.12",
+      "warmup": 1,
+      "measuredTrials": 30,
+      "samples": [
+        741.6000000238419,
+        963.3999999761581,
+        846.8999999761581,
+        816.3000000715256,
+        835.1000000238419,
+        720.8999999761581,
+        779.5999999046326,
+        724.6000000238419,
+        698.7999999523163,
+        854.1000000238419,
+        688.5,
+        783.5,
+        1025,
+        671,
+        712.8000000715256,
+        715.5,
+        698.3999999761581,
+        774.6999999284744,
+        800.4000000953674,
+        713.2000000476837,
+        774.6999999284744,
+        728,
+        818.6000000238419,
+        706.5,
+        791.6000000238419,
+        897.8999999761581,
+        697.5,
+        1043.2000000476837,
+        741.1000000238419,
+        827.2000000476837
+      ],
+      "failures": [],
+      "tasks": [
+        {
+          "parent": [
+            229
+          ],
+          "renderer": [
+            229
+          ]
+        },
+        {
+          "parent": [
+            267,
+            103
+          ],
+          "renderer": [
+            267,
+            103
+          ]
+        },
+        {
+          "parent": [
+            52,
+            188
+          ],
+          "renderer": [
+            188
+          ]
+        },
+        {
+          "parent": [
+            61,
+            202
+          ],
+          "renderer": [
+            202
+          ]
+        },
+        {
+          "parent": [
+            244
+          ],
+          "renderer": [
+            244
+          ]
+        },
+        {
+          "parent": [
+            176
+          ],
+          "renderer": [
+            176
+          ]
+        },
+        {
+          "parent": [
+            200
+          ],
+          "renderer": [
+            200
+          ]
+        },
+        {
+          "parent": [
+            174
+          ],
+          "renderer": [
+            174
+          ]
+        },
+        {
+          "parent": [
+            175
+          ],
+          "renderer": [
+            175
+          ]
+        },
+        {
+          "parent": [
+            203
+          ],
+          "renderer": [
+            203
+          ]
+        },
+        {
+          "parent": [
+            184
+          ],
+          "renderer": [
+            184
+          ]
+        },
+        {
+          "parent": [
+            183
+          ],
+          "renderer": [
+            183
+          ]
+        },
+        {
+          "parent": [
+            55,
+            187
+          ],
+          "renderer": [
+            187
+          ]
+        },
+        {
+          "parent": [
+            161
+          ],
+          "renderer": [
+            161
+          ]
+        },
+        {
+          "parent": [
+            168
+          ],
+          "renderer": [
+            168
+          ]
+        },
+        {
+          "parent": [
+            181
+          ],
+          "renderer": [
+            181
+          ]
+        },
+        {
+          "parent": [
+            170
+          ],
+          "renderer": [
+            170
+          ]
+        },
+        {
+          "parent": [
+            209
+          ],
+          "renderer": [
+            209
+          ]
+        },
+        {
+          "parent": [
+            195
+          ],
+          "renderer": [
+            195
+          ]
+        },
+        {
+          "parent": [
+            53,
+            160
+          ],
+          "renderer": [
+            160
+          ]
+        },
+        {
+          "parent": [
+            177
+          ],
+          "renderer": [
+            177
+          ]
+        },
+        {
+          "parent": [
+            209
+          ],
+          "renderer": [
+            209
+          ]
+        },
+        {
+          "parent": [
+            204
+          ],
+          "renderer": [
+            204
+          ]
+        },
+        {
+          "parent": [
+            169
+          ],
+          "renderer": [
+            169
+          ]
+        },
+        {
+          "parent": [
+            209
+          ],
+          "renderer": [
+            209
+          ]
+        },
+        {
+          "parent": [
+            263
+          ],
+          "renderer": [
+            263
+          ]
+        },
+        {
+          "parent": [
+            168
+          ],
+          "renderer": [
+            168
+          ]
+        },
+        {
+          "parent": [
+            70,
+            305
+          ],
+          "renderer": [
+            305
+          ]
+        },
+        {
+          "parent": [
+            173
+          ],
+          "renderer": [
+            173
+          ]
+        },
+        {
+          "parent": [
+            203
+          ],
+          "renderer": [
+            203
+          ]
+        }
+      ],
+      "errors": [],
+      "method": "fresh context per trial; application initialized before pointerdown; first useful Office DOM/canvas plus adapter ready on RAF; routed body, warm production server, no CPU profiler; not network/paint/field INP",
+      "stats": {
+        "p50": 774.6999999284744,
+        "p95": 1025,
+        "max": 1043.2000000476837,
+        "quantile": "nearest-rank"
+      }
+    },
+    {
+      "name": "small.xlsx",
+      "cpuRate": 1,
+      "bytes": 5630,
+      "sha256": "35154c231b466e04d271ca1560518ca963a758e96b8a0e5a776ae9401940d6db",
+      "browser": "153.0.8010.12",
+      "warmup": 1,
+      "measuredTrials": 30,
+      "samples": [
+        557.3999999761581,
+        631,
+        442.39999997615814,
+        439.39999997615814,
+        428.1999999284744,
+        442.8000000715256,
+        463.89999997615814,
+        397,
+        410.59999990463257,
+        373.60000002384186,
+        375.10000002384186,
+        402.90000009536743,
+        377,
+        444.89999997615814,
+        577.1000000238419,
+        379.7999999523163,
+        355.2000000476837,
+        386.5,
+        393,
+        391.60000002384186,
+        441.5,
+        471.2999999523163,
+        371.1999999284744,
+        431.60000002384186,
+        507.40000009536743,
+        379.60000002384186,
+        379.2999999523163,
+        402.5,
+        393.6999999284744,
+        375.5
+      ],
+      "failures": [],
+      "tasks": [
+        {
+          "parent": [
+            136
+          ],
+          "renderer": [
+            136
+          ]
+        },
+        {
+          "parent": [
+            141
+          ],
+          "renderer": [
+            141
+          ]
+        },
+        {
+          "parent": [
+            141
+          ],
+          "renderer": [
+            141
+          ]
+        },
+        {
+          "parent": [
+            132
+          ],
+          "renderer": [
+            132
+          ]
+        },
+        {
+          "parent": [
+            126
+          ],
+          "renderer": [
+            126
+          ]
+        },
+        {
+          "parent": [
+            142
+          ],
+          "renderer": [
+            142
+          ]
+        },
+        {
+          "parent": [
+            140
+          ],
+          "renderer": [
+            140
+          ]
+        },
+        {
+          "parent": [
+            123
+          ],
+          "renderer": [
+            123
+          ]
+        },
+        {
+          "parent": [
+            120
+          ],
+          "renderer": [
+            120
+          ]
+        },
+        {
+          "parent": [
+            119
+          ],
+          "renderer": [
+            119
+          ]
+        },
+        {
+          "parent": [
+            118
+          ],
+          "renderer": [
+            118
+          ]
+        },
+        {
+          "parent": [
+            135
+          ],
+          "renderer": [
+            135
+          ]
+        },
+        {
+          "parent": [
+            117
+          ],
+          "renderer": [
+            117
+          ]
+        },
+        {
+          "parent": [
+            123
+          ],
+          "renderer": [
+            123
+          ]
+        },
+        {
+          "parent": [
+            125
+          ],
+          "renderer": [
+            125
+          ]
+        },
+        {
+          "parent": [
+            119
+          ],
+          "renderer": [
+            119
+          ]
+        },
+        {
+          "parent": [
+            118
+          ],
+          "renderer": [
+            118
+          ]
+        },
+        {
+          "parent": [
+            137
+          ],
+          "renderer": [
+            137
+          ]
+        },
+        {
+          "parent": [
+            118
+          ],
+          "renderer": [
+            118
+          ]
+        },
+        {
+          "parent": [
+            121
+          ],
+          "renderer": [
+            121
+          ]
+        },
+        {
+          "parent": [
+            164
+          ],
+          "renderer": [
+            164
+          ]
+        },
+        {
+          "parent": [
+            142
+          ],
+          "renderer": [
+            142
+          ]
+        },
+        {
+          "parent": [
+            117
+          ],
+          "renderer": [
+            117
+          ]
+        },
+        {
+          "parent": [
+            134
+          ],
+          "renderer": [
+            134
+          ]
+        },
+        {
+          "parent": [
+            126
+          ],
+          "renderer": [
+            126
+          ]
+        },
+        {
+          "parent": [
+            117
+          ],
+          "renderer": [
+            117
+          ]
+        },
+        {
+          "parent": [
+            122
+          ],
+          "renderer": [
+            122
+          ]
+        },
+        {
+          "parent": [
+            122
+          ],
+          "renderer": [
+            122
+          ]
+        },
+        {
+          "parent": [
+            123
+          ],
+          "renderer": [
+            123
+          ]
+        },
+        {
+          "parent": [
+            124
+          ],
+          "renderer": [
+            124
+          ]
+        }
+      ],
+      "errors": [],
+      "method": "fresh context per trial; application initialized before pointerdown; first useful Office DOM/canvas plus adapter ready on RAF; routed body, warm production server, no CPU profiler; not network/paint/field INP",
+      "stats": {
+        "p50": 402.5,
+        "p95": 577.1000000238419,
+        "max": 631,
+        "quantile": "nearest-rank"
+      }
+    },
+    {
+      "name": "small.xlsx",
+      "cpuRate": 4,
+      "bytes": 5630,
+      "sha256": "35154c231b466e04d271ca1560518ca963a758e96b8a0e5a776ae9401940d6db",
+      "browser": "153.0.8010.12",
+      "warmup": 1,
+      "measuredTrials": 30,
+      "samples": [
+        836.3999999761581,
+        838.1000000238419,
+        968.0999999046326,
+        901.2999999523163,
+        851.6000000238419,
+        873.6000000238419,
+        906.3999999761581,
+        967.3000000715256,
+        861,
+        886.2999999523163,
+        1231.8999999761581,
+        882.5,
+        892.2999999523163,
+        801.8999999761581,
+        889.7000000476837,
+        1050.2000000476837,
+        949.2000000476837,
+        832.7999999523163,
+        1055.1000000238419,
+        1150.7999999523163,
+        1000.2999999523163,
+        910.8000000715256,
+        916.7999999523163,
+        1005.8999999761581,
+        911,
+        1002.2000000476837,
+        776.6999999284744,
+        854.0999999046326,
+        769.5999999046326,
+        1230.2999999523163
+      ],
+      "failures": [],
+      "tasks": [
+        {
+          "parent": [
+            252
+          ],
+          "renderer": [
+            252
+          ]
+        },
+        {
+          "parent": [
+            337
+          ],
+          "renderer": [
+            337
+          ]
+        },
+        {
+          "parent": [
+            323
+          ],
+          "renderer": [
+            323
+          ]
+        },
+        {
+          "parent": [
+            313
+          ],
+          "renderer": [
+            313
+          ]
+        },
+        {
+          "parent": [
+            291,
+            61
+          ],
+          "renderer": [
+            291,
+            61
+          ]
+        },
+        {
+          "parent": [
+            293
+          ],
+          "renderer": [
+            293
+          ]
+        },
+        {
+          "parent": [
+            295
+          ],
+          "renderer": [
+            295
+          ]
+        },
+        {
+          "parent": [
+            427
+          ],
+          "renderer": [
+            427
+          ]
+        },
+        {
+          "parent": [
+            300
+          ],
+          "renderer": [
+            300
+          ]
+        },
+        {
+          "parent": [
+            286
+          ],
+          "renderer": [
+            286
+          ]
+        },
+        {
+          "parent": [
+            553
+          ],
+          "renderer": [
+            553
+          ]
+        },
+        {
+          "parent": [
+            320
+          ],
+          "renderer": [
+            320
+          ]
+        },
+        {
+          "parent": [
+            314,
+            51
+          ],
+          "renderer": [
+            314,
+            51
+          ]
+        },
+        {
+          "parent": [
+            297
+          ],
+          "renderer": [
+            297
+          ]
+        },
+        {
+          "parent": [
+            366
+          ],
+          "renderer": [
+            366
+          ]
+        },
+        {
+          "parent": [
+            372
+          ],
+          "renderer": [
+            372
+          ]
+        },
+        {
+          "parent": [
+            334
+          ],
+          "renderer": [
+            334
+          ]
+        },
+        {
+          "parent": [
+            296
+          ],
+          "renderer": [
+            296
+          ]
+        },
+        {
+          "parent": [
+            364
+          ],
+          "renderer": [
+            364
+          ]
+        },
+        {
+          "parent": [
+            441
+          ],
+          "renderer": [
+            441
+          ]
+        },
+        {
+          "parent": [
+            311,
+            51
+          ],
+          "renderer": [
+            311,
+            51
+          ]
+        },
+        {
+          "parent": [
+            329
+          ],
+          "renderer": [
+            329
+          ]
+        },
+        {
+          "parent": [
+            302
+          ],
+          "renderer": [
+            302
+          ]
+        },
+        {
+          "parent": [
+            357
+          ],
+          "renderer": [
+            357
+          ]
+        },
+        {
+          "parent": [
+            340
+          ],
+          "renderer": [
+            340
+          ]
+        },
+        {
+          "parent": [
+            344
+          ],
+          "renderer": [
+            344
+          ]
+        },
+        {
+          "parent": [
+            285
+          ],
+          "renderer": [
+            285
+          ]
+        },
+        {
+          "parent": [
+            327
+          ],
+          "renderer": [
+            327
+          ]
+        },
+        {
+          "parent": [
+            276
+          ],
+          "renderer": [
+            276
+          ]
+        },
+        {
+          "parent": [
+            64,
+            75,
+            357
+          ],
+          "renderer": [
+            357
+          ]
+        }
+      ],
+      "errors": [],
+      "method": "fresh context per trial; application initialized before pointerdown; first useful Office DOM/canvas plus adapter ready on RAF; routed body, warm production server, no CPU profiler; not network/paint/field INP",
+      "stats": {
+        "p50": 901.2999999523163,
+        "p95": 1230.2999999523163,
+        "max": 1231.8999999761581,
+        "quantile": "nearest-rank"
+      }
+    }
+  ],
+  "prior_probe_failure": "Six warmups produced no timing samples because the harness accessed an iframe body before creation and assumed canvas text arguments were strings. No product adapter changed.",
+  "limits": [
+    "Production server and OS warm; new browser context and routed Office body for each trial. No real network profile or transfer speed claim.",
+    "Pointerdown to useful DOM/canvas call plus adapter readiness on an animation frame is not paint completion or field INP.",
+    "The 3-second p95 target applies to normal CPU ordinary fixtures; throttled results are a separate population.",
+    "One warmup and thirty trials per case give a coarse tail estimate; arbitrary documents remain bounded by validation/fallback policies.",
+    "Long tasks are retained for parent and renderer; no CPU sampling profiler ran during timing trials.",
+    "The explicit zero-page-errors assertion was added after this run; every retained report was independently checked to contain zero errors.",
+    "The Office run did not capture its production build ID before the next test rebuilt assets. Production source was unchanged at the stated revision; exact bundle identity is not claimed."
+  ]
+}

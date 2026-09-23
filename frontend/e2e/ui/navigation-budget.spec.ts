@@ -95,6 +95,38 @@ test("maximal transcript traversal retains bounded pages and both directions", a
       });
     }
   }
+  if (process.env.HISTORY_SCROLL_PROFILE === "1") {
+    const rate = Number(process.env.HISTORY_CPU_RATE || "1");
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate });
+    await scroll.evaluate(node => {
+      node.scrollTop = (node.scrollHeight - node.clientHeight) / 2;
+    });
+    await page.waitForTimeout(300);
+    await scroll.evaluate(node => {
+      const feedback: number[] = [], tasks: number[] = [];
+      node.addEventListener("wheel", () => {
+        const start = performance.now();
+        requestAnimationFrame(() => feedback.push(performance.now() - start));
+      }, { passive: true });
+      new PerformanceObserver(list => tasks.push(...list.getEntries().map(entry => entry.duration))).observe({ type: "longtask" });
+      Reflect.set(window, "maximalScrollSamples", { feedback, tasks });
+    });
+    await cdp.send("Profiler.enable");
+    await cdp.send("Profiler.start");
+    await scroll.hover();
+    for (let sample = 0; sample < 30; sample++) {
+      await page.mouse.wheel(0, sample % 2 ? -180 : 180);
+      await page.waitForTimeout(100);
+    }
+    const profile = await cdp.send("Profiler.stop");
+    const samples = await page.evaluate(() => Reflect.get(window, "maximalScrollSamples") as { feedback: number[]; tasks: number[] });
+    mkdirSync(output!, { recursive: true });
+    writeFileSync(resolve(output!, "maximal-scroll.cpuprofile"), JSON.stringify(profile.profile));
+    const sorted = [...samples.feedback].sort((a,b) => a-b);
+    writeFileSync(resolve(output!, "maximal-scroll.json"), JSON.stringify({ rate, samples, p95: sorted[Math.ceil(sorted.length * .95)-1], turns: await page.locator(".conversation-turn").count(), dom: await cdp.send("Memory.getDOMCounters"), method: "wheel event to next RAF; separate profiled run at maximal retained transcript window; not paint or field INP" }, null, 2));
+    expect(samples.feedback).toHaveLength(30);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+  }
   const before = await page
     .locator(".conversation-turn")
     .last()
