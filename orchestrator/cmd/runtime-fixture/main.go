@@ -24,6 +24,13 @@ func main() {
 		panic("fixture mode required")
 	}
 	switch os.Args[1] {
+	case "provider-relay":
+		if err := runProviderRelay(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "provider-bridge":
+		providerBridge()
 	case "model":
 		model(true)
 	case "model-independent":

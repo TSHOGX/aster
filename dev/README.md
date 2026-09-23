@@ -12,7 +12,7 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `gateway`, `native`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `gateway`, `native`, `provider`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
@@ -38,3 +38,31 @@ use UID/GID 65534. The executable gate configures an owner-only private API sock
 a disposable mTLS engine proxy and reachable non-loopback model/frontend origins.
 
 See [verification](../docs/verification.md) for acceptance criteria and coverage.
+
+
+## Real-provider handoff
+
+The `provider` suite is explicit and excluded from `all`. Supply a host-only YAML
+file with `base_url` (an HTTPS OpenAI-compatible Chat Completions base), `api_key`
+and `model`. Keep this file outside version control and restrict its permissions.
+
+```sh
+PROJECT_PROVIDER_CONFIG=/srv/qualification/provider.yaml dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/provider-run --suite provider
+```
+
+The host relay makes at most one provider request, caps generation at 1,536 tokens,
+disables tools, and bounds time/response bytes. Native retries are disabled. The
+network-isolated substrate reaches the relay through a private Unix socket and a
+disposable namespace bridge; the actual provider key stays outside the guest and
+its application/gateway environment. The relay does not throttle, synthesize or
+replay the provider stream. Reports contain counts, timing, status and synthetic
+attribution only, with no request/response text or credentials.
+
+The test waits for genuine deltas, activates a distinct compatible owner while the
+original stream is live, and requires the same gateway, one provider request, at
+least ten seconds of streaming and one original native application/settlement/
+completion sequence. It then deletes the disposable Project. Provider refusal,
+short output, authority expiry, retries or missing native completion fail the gate.
+See the [Chat Completions API reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+for the compatible streaming request shape; provider-specific access and behavior
+must be qualified by the run itself.

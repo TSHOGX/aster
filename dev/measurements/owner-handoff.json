@@ -1,0 +1,48 @@
+{
+  "date": "2026-09-23",
+  "provider": "ModelArts MaaS",
+  "model": "glm-5.2",
+  "api": "OpenAI-compatible Chat Completions SSE",
+  "fixture": "disposable Project; synthetic context; native retry and tools disabled",
+  "output_token_cap": 1536,
+  "provider_requests": 1,
+  "provider_status": 200,
+  "provider_finish_reason": "stop",
+  "provider_done": true,
+  "stream_duration_ms": 24313.3309,
+  "delta_events": 425,
+  "stream_bytes": 113542,
+  "activation_to_replacement_ms": 127,
+  "gateway_process_unchanged": true,
+  "gateway_active_after_handoff": 1,
+  "authority_checks": {
+    "denied": 0,
+    "expired": 0,
+    "unavailable": 1
+  },
+  "native_applied_settled_completed": [
+    1,
+    1,
+    1
+  ],
+  "source_executable_digest": "sha256:529caf21ff25c884cf056e1a0d3bbe57d59feff9a06749dcefab7f3507760e70",
+  "candidate_executable_digest": "sha256:8e0c45bed2144e04c5f95db7fb8da73dd1b86bf682f0935387154486032e09f9",
+  "runtime_digest": "sha256:3f4597e98bf127ba77d15564b8bff466104177202be0f4fd79638197c626e62a",
+  "schema_version": 12,
+  "owner_protocol": 1,
+  "gateway_protocol": 1,
+  "native_protocol": 1,
+  "limits": [
+    "one successful run, not a latency distribution or universal provider guarantee",
+    "distinct executable artifacts built from matching source with different version metadata",
+    "host relay bridged an isolated network over a private Unix socket; no pacing or response synthesis"
+  ],
+  "excluded_trial": {
+    "reason": "three-minute relay deadline before provider completion",
+    "output_token_cap": 4096,
+    "provider_requests": 1,
+    "provider_status": 200,
+    "native_outcome": "failed",
+    "qualification": "not passed"
+  }
+}

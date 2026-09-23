@@ -66,8 +66,9 @@ from resurrecting a released request. Eight bounded cleanup workers retry while
 retaining the affected slots, so an owner outage cannot create unbounded cleanup
 queues. Unacknowledged slots remain release blockers across owner restart. The
 protocol is locally tested with controlled streams and faults. The gateway
-process survives owner exit; real-provider active-update continuity remains a
-separate qualification gate.
+process survives owner exit. A [real-provider handoff observation](../dev/measurements/owner-handoff.json)
+qualifies one GLM-5.2 stream and compatible executable pair; it is not a guarantee
+for arbitrary providers or upgrades.
 
 ## Independent process and gateway updates
 

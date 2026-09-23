@@ -1,8 +1,8 @@
 # Interaction architecture implementation
 
 This ledger distinguishes implemented behavior from remaining refactor work.
-Measurements from synthetic fixtures do not qualify production performance or
-active-model deployment continuity.
+Synthetic fixtures do not establish production performance. Provider continuity
+is qualified only for the explicitly recorded real-provider run below.
 
 | Stage | Status | Scope |
 | --- | --- | --- |
@@ -30,7 +30,8 @@ active-model deployment continuity.
 | P07 activation | Verified locally | Digest-bound quiescent handoff and explicit compatible rollback |
 | P07 owner handoff | Verified locally | Same-contract active native transfer between distinct executable artifacts |
 | P07 gateway lifetime | Verified locally | Independent process, bounded authority and native fixture continuity across owner outage |
-| P07 deployment qualification | Pending | Real provider, complete rollback matrix, bootstrap and combined release qualification |
+| P07 real-provider handoff | Verified for recorded run | One GLM-5.2 stream retained across a distinct owner executable update |
+| P07 deployment qualification | Pending | Complete rollback matrix, bootstrap and combined release qualification |
 
 ## Diagnostics
 
@@ -269,9 +270,10 @@ advances, with metadata-only reauthorization on reconnect failures.
 
 All existing Go tests/build/vet and relevant race suites passed. Source comparison
 checks confirm that the former snapshot/raw-record query and independent owner
-SSE/watch routes no longer exist; route-removal tests return 404. Full fifty-cycle
-browser heap plateaus, constrained document budgets, saturation and a final
-real-provider owner-release continuity test remain explicit outstanding work.
+SSE/watch routes no longer exist; route-removal tests return 404. Later sections
+record fifty-cycle browser heap tests, constrained document budgets, saturation
+fixtures and a real-provider owner handoff. The final combined resource/journey
+matrix remains outstanding.
 
 
 ## Reusable reader protocol qualification
@@ -976,7 +978,8 @@ a long upstream request remains active, observes the same gateway PID, preserves
 held intent, and verifies exactly one request plus genuine native completion with
 unchanged turn/incarnation identity. The candidate artifacts use the same source
 with distinct build metadata; this is mechanism qualification, not arbitrary build
-or real external-provider compatibility. Those broader gates remain open.
+or real external-provider compatibility. The real-provider observation below
+qualifies one configured provider; the broader version matrix remains open.
 
 
 ## Complete native prompt settlement
@@ -1003,3 +1006,27 @@ prompt exclusion during backoff, cancellation without another provider attempt, 
 settlement, post-run compaction in the exported capture, and cancellation during post-run and
 preflight compaction. These deterministic failures qualify lifecycle behavior;
 they do not replace the real-provider release gate.
+
+
+## Real-provider handoff observation
+
+A [sanitized qualification record](../dev/measurements/owner-handoff.json) captures
+one ModelArts MaaS GLM-5.2 run through the released native runtime and independent
+gateway. The provider emitted 425 deltas over 24.313 seconds (113,542 SSE bytes)
+and ended normally with `finish_reason: stop`. The owner switched to a distinct
+compatible executable in 127 ms while the original stream remained active. The
+gateway PID/registration stayed unchanged, with one unavailable authority check
+and no denial or expiry. Exactly one provider request and one original native
+applied/settled/completed sequence were observed; no prompt was resubmitted.
+
+The isolated substrate used a protected Unix relay to the real provider. The key
+remained on the host; only synthetic context was sent. Native retries and tools
+were disabled, generation was capped at 1,536 tokens, and reports retained no
+prompt/response text or credentials. The relay neither paced nor synthesized the
+stream. An earlier 4,096-token trial hit the three-minute relay deadline and is
+recorded as failed qualification, not excluded from the account of results.
+
+This establishes the specified active-stream observation for this provider,
+configuration and compatible build pair. It is one run, not a latency distribution,
+a guarantee for arbitrary providers/builds, or proof of bootstrap/rollback support.
+The complete supported-version matrix and combined workload remain separate gates.

@@ -191,6 +191,10 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	require(t, err)
 	require(t, os.WriteFile(filepath.Join(root, "users.yaml"), []byte("users:\n  - username: researcher\n    password_hash: "+hash+"\n    role: admin\n"), 0644))
 	models := `{"providers":{"gateway":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"project-service-token","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
+	if os.Getenv("PROJECT_PROVIDER_SOCKET") != "" {
+		raw, _ := json.Marshal(map[string]any{"providers": map[string]any{"gateway": map[string]any{"baseUrl": "http://model.internal:443/v1", "api": "openai-completions", "apiKey": "project-service-token", "models": []any{map[string]any{"id": os.Getenv("PROJECT_PROVIDER_MODEL"), "name": "Qualified provider", "reasoning": false, "input": []string{"text"}, "contextWindow": 32768, "maxTokens": 4096, "compat": map[string]any{"supportsDeveloperRole": false, "maxTokensField": "max_tokens"}, "cost": map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}}}}})
+		models = string(raw)
+	}
 	require(t, os.WriteFile(filepath.Join(root, "content/pi/models.json"), []byte(models), 0644))
 	settings := `{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":false}}`
 	if os.Getenv("PROJECT_RELEASE_RETRY_TEST") == "1" {
@@ -198,6 +202,10 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	}
 	if os.Getenv("PROJECT_RELEASE_COMPACTION_TEST") == "1" {
 		settings = `{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":true,"reserveTokens":256,"keepRecentTokens":128}}`
+	}
+	if os.Getenv("PROJECT_PROVIDER_SOCKET") != "" {
+		raw, _ := json.Marshal(map[string]any{"defaultProvider": "gateway", "defaultModel": os.Getenv("PROJECT_PROVIDER_MODEL"), "compaction": map[string]bool{"enabled": false}, "retry": map[string]bool{"enabled": false}})
+		settings = string(raw)
 	}
 	require(t, os.WriteFile(filepath.Join(root, "content/pi/settings.json"), []byte(settings), 0644))
 	require(t, os.WriteFile(filepath.Join(root, "assets/AGENTS.md"), []byte("Reviewed release qualification context."), 0644))
@@ -211,7 +219,9 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		mode = "upstream"
 	}
 	upstream := exec.CommandContext(ctx, filepath.Join(root, "runtime-fixture"), mode)
-	upstream.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
+	if mode != "provider-bridge" {
+		upstream.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
+	}
 	upstream.Env = append(os.Environ(), "PROJECT_UPSTREAM_ADDR=192.0.2.1:18890", "PROJECT_UPSTREAM_SECRET=release-fixture-secret", "PROJECT_UPSTREAM_OVERLAP=4", "PROJECT_MODEL_ADDR=192.0.2.1:18890", "PROJECT_UPSTREAM_COMPLETIONS="+filepath.Join(root, "completions.jsonl"), "PROJECT_UPSTREAM_REPORT="+filepath.Join(root, "requests.jsonl"), "PROJECT_UPSTREAM_REQUIRE_CONTEXT="+os.Getenv("PROJECT_RELEASE_CHECK_CONTEXT"))
 	upstream.Stdout, upstream.Stderr = os.Stdout, os.Stderr
 	require(t, os.WriteFile(filepath.Join(root, "completions.jsonl"), nil, 0666))

@@ -142,8 +142,8 @@ abort; a stale owner/generation cannot advance it.
 
 Ready does **not** authorize a separate unchecked shutdown. The activation command
 below consumes a fresh readiness check and retires the owner itself. The gateway
-has an independent process lifetime. First-deployment bootstrap and
-real-provider continuity remain unqualified; this workflow is for quiescent
+has an independent process lifetime. First-deployment bootstrap remains
+unqualified; this workflow is for quiescent
 replacement. Controlled owner-outage tests do not certify arbitrary active
 updates or migrations.
 
@@ -284,8 +284,9 @@ commands and preserves accepted writes. If the gateway itself was lost/replaced,
 rollback can reopen only after all work is fully settled and the new gateway is
 observed. It cannot claim preservation of the old HTTP stream. The native fixture
 qualifies this mechanism between distinct executable artifacts with the same
-contract; external-provider continuity and the complete version matrix remain
-separate qualification gates.
+contract; the [recorded real-provider run](../dev/measurements/owner-handoff.json) also
+retained a 24.3-second GLM-5.2 stream. The complete version matrix and bootstrap
+remain separate qualification gates.
 
 ## Gateway replacement
 

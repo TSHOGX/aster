@@ -67,3 +67,11 @@ compaction must precede `prompt_end` and command completion, and its entry must 
 present in the exported native capture. Preflight cancellation must dispatch no
 new native agent run. Manifest tests refuse a claimed settlement capability whose
 RPC bytes are absent or changed.
+
+
+The opt-in `provider` suite performs a bounded real Chat Completions request with
+native retries disabled, activates a distinct compatible owner during genuine
+streamed output, and requires at least ten seconds of streaming, one provider
+request and one original native completion. A [recorded GLM-5.2 run](../dev/measurements/owner-handoff.json)
+passes this gate. Credentials and prompt/response text are excluded from its
+reports. Synthetic and failed provider trials do not substitute for this evidence.
