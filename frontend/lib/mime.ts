@@ -1,6 +1,6 @@
 import { hljsLanguage } from "./languages";
 
-export type ViewerKind = "markdown" | "code" | "image" | "json" | "table" | "pdf" | "spreadsheet" | "document" | "presentation" | "text" | "binary";
+export type ViewerKind = "markdown" | "html" | "code" | "image" | "json" | "table" | "pdf" | "spreadsheet" | "document" | "presentation" | "text" | "binary";
 export type ArtifactClassification = { kind: ViewerKind; language?: string; delimiter?: "," | "\t" };
 
 const TEXT_EXT = new Set(["txt", "log", "env", "diff", "patch"]);
@@ -15,7 +15,8 @@ export function classifyArtifact(path: string): ArtifactClassification {
     }
     return { kind: "binary" };
   }
-  if (ext === "md" || ext === "markdown" || ext === "mdx") return { kind: "markdown" };
+  if (ext === "md" || ext === "markdown" || ext === "mdx") return { kind: "markdown", language: "markdown" };
+  if (ext === "html" || ext === "htm") return { kind: "html", language: "xml" };
   if (IMAGE_EXT.has(ext)) return { kind: "image" };
   if (ext === "json") return { kind: "json", language: "json" };
   if (ext === "csv") return { kind: "table", delimiter: "," };

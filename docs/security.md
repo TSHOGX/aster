@@ -33,7 +33,11 @@ process and must be reviewed as such.
 
 Frontend Markdown does not enable raw HTML. File responses use restricted preview
 headers and the browser uses bounded fetched blobs. Office previews are separate
-renderers and should be treated as parsing untrusted documents. The default page
+renderers and should be treated as parsing untrusted documents. HTML previews
+use a separate opaque-origin iframe with `sandbox="allow-scripts"` and no
+same-origin, popup, form or top-navigation permission. A leading CSP allows only
+inline scripts/styles and embedded image/font data; network connections, nested
+frames, objects and base URLs are blocked. Source and table cells render as text. The default page
 CSP permits portal framing; operators should restrict `frame-ancestors` at their
 outer edge where embedding is unnecessary. Origin checks do not prevent a user
 being tricked into clicking inside an allowed frame.

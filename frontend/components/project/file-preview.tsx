@@ -3,6 +3,8 @@ import { cacheablePreview, rememberPreview } from "@/lib/preview-cache";
 import { useT } from "@/lib/i18n";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { decodeTextFile, isTextFile, TEXT_FILE_LIMIT } from "@/lib/file-view";
+import { TextPreview } from "./text-preview";
 import { classifyArtifact } from "@/lib/mime";
 import {
   contentDigest,
@@ -25,15 +27,20 @@ export function FilePreview({
   href,
   project,
   validation = 0,
+  mode = "preview",
+  onTextReady,
 }: {
   path: string;
   href: string;
   project: string;
   validation?: number;
+  mode?: "preview" | "source";
+  onTextReady?: (path: string, editable: boolean) => void;
 }) {
   const tr = useT();
   const resources = useResources();
   const [loaded, setLoaded] = useState<PreviewRepresentation | null>(null);
+  useEffect(() => { onTextReady?.(path, loaded?.textReadable ?? false); }, [path, loaded, onTextReady]);
   const current = useRef<PreviewRepresentation | null>(null);
   const owned = useRef(new Set<PreviewRepresentation>());
   useEffect(() => {
@@ -52,6 +59,8 @@ export function FilePreview({
     };
   }, []);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const [retryable, setRetryable] = useState(false);
   const [validated, setValidated] = useState<number | null>(null);
   useEffect(() => {
     const abort = new AbortController();
@@ -67,11 +76,10 @@ export function FilePreview({
         return;
       }
       const type = classifyArtifact(path).kind;
-      const text =
-        ["code", "text", "markdown", "json", "table"].includes(type) &&
-        blob.size <= 1 << 20
-          ? await blob.text()
-          : "";
+      const decoded = await decodeTextFile(path, blob);
+      if (isTextFile(path) && blob.size <= TEXT_FILE_LIMIT && decoded === null)
+        throw new Error(tr("This file is not readable as UTF-8 text. Download it to open in another app."));
+      const text = decoded ?? "";
       const mime =
         type === "pdf"
           ? "application/pdf"
@@ -106,6 +114,7 @@ export function FilePreview({
         path,
         mime,
         plan,
+        decoded !== null,
       );
       owned.current.add(representation);
       current.current = representation;
@@ -136,6 +145,7 @@ export function FilePreview({
             current.current = null;
             setLoaded(null);
           }
+          setRetryable(e instanceof TypeError || e instanceof APIError && [202, 429, 500, 502, 503, 504].includes(e.status));
           setError(
             e instanceof PreviewLimitError
               ? tr(
@@ -151,11 +161,12 @@ export function FilePreview({
     return () => {
       abort.abort();
     };
-  }, [href, path, validation, resources, project, tr]);
+  }, [href, path, validation, resources, project, tr, retry]);
   if (error && !loaded)
     return (
       <div className="notice" role="status">
         <p>{error}</p>
+        {retryable && <button onClick={() => { setError(""); setRetry(n => n + 1); }}>{tr("Retry")}</button>}
         <a href={href} download>
           {tr("Download")} {path}
         </a>
@@ -170,12 +181,13 @@ export function FilePreview({
       {error && (
         <p className="notice error" role="alert">
           {error}{" "}
+          {retryable && <button onClick={() => { setError(""); setRetry(n => n + 1); }}>{tr("Retry")}</button>}
           <a href={href} download>
             {tr("Download")}
           </a>
         </p>
       )}
-      <PreviewContent loaded={loaded} path={path} href={href} />
+      <PreviewContent loaded={loaded} path={path} href={href} mode={mode} />
     </>
   );
 }
@@ -183,13 +195,17 @@ function PreviewContent({
   loaded,
   path,
   href,
+  mode,
 }: {
   loaded: PreviewRepresentation;
   path: string;
   href: string;
+  mode: "preview" | "source";
 }) {
   const tr = useT();
   const kind = classifyArtifact(path);
+  if (loaded.textReadable && mode === "source")
+    return <CodeView code={loaded.text} language={kind.language} />;
   if (kind.kind === "image")
     return (
       <div className="image-preview">
@@ -215,7 +231,9 @@ function PreviewContent({
         href={href}
       />
     );
-  if (kind.kind === "markdown" && loaded.blob.size <= 1 << 20)
+  if (loaded.textReadable && ["html", "table", "json"].includes(kind.kind))
+    return <TextPreview key={loaded.digest} path={path} text={loaded.text} />;
+  if (kind.kind === "markdown" && loaded.textReadable)
     return (
       <div className="file-markdown">
         <MarkdownView content={loaded.text} />
@@ -223,7 +241,7 @@ function PreviewContent({
     );
   if (
     ["code", "text", "json", "table"].includes(kind.kind) &&
-    loaded.blob.size <= 1 << 20
+    loaded.textReadable
   )
     return <CodeView code={loaded.text} language={kind.language} />;
   return (

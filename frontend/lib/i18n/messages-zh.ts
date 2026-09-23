@@ -1,5 +1,18 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Preview is busy. Choose Source to read this file.": "预览暂时繁忙。请选择“源代码”阅读此文件。",
+  "File view": "文件视图",
+  "Preview": "预览",
+  "Source": "源代码",
+  "Table": "表格",
+  "Row": "行",
+  "Previous rows": "上一页",
+  "Next rows": "下一页",
+  "This file is empty.": "文件为空。",
+  "{rows} rows · {columns} columns": "{rows} 行 · {columns} 列",
+  "This table could not be formatted. Choose Source to view the original text.": "无法格式化此表格。选择“源代码”查看原始文本。",
+  "Showing the first part of this table. Source and Download contain the complete file.": "正在显示表格的前一部分。“源代码”和“下载”包含完整文件。",
+  "This file is not readable as UTF-8 text. Download it to open in another app.": "此文件不是 UTF-8 文本。请下载后使用其他应用打开。",
   "code.copy": "复制",
   "code.copyCode": "复制代码",
   "code.copied": "已复制",

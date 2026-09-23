@@ -13,6 +13,7 @@ export class PreviewRepresentation {
     readonly path: string,
     mime: string,
     readonly plan?: PreviewPlan,
+    readonly textReadable = false,
   ) {
     this.releaseBudget = reservePreview(
       blob.size +

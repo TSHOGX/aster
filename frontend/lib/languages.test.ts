@@ -5,6 +5,9 @@ import { codeMirrorLang, hljsLanguage } from "./languages";
 describe("hljsLanguage", () => {
   // Locks the former lib/mime.ts CODE_EXT map verbatim.
   const cases: Array<[string, string]> = [
+    ["mjs", "javascript"],
+    ["cjs", "javascript"],
+    ["htm", "xml"],
     ["js", "javascript"],
     ["jsx", "javascript"],
     ["ts", "typescript"],
@@ -39,7 +42,7 @@ describe("hljsLanguage", () => {
     expect(hljsLanguage(ext)).toBe(id);
   });
   it("returns undefined for extensions never treated as highlightable code", () => {
-    for (const ext of ["json", "md", "mjs", "cjs", "htm", "txt", "png"]) {
+    for (const ext of ["json", "md", "txt", "png"]) {
       expect(hljsLanguage(ext)).toBeUndefined();
     }
   });

@@ -10,6 +10,8 @@ import {
   type RefObject,
 } from "react";
 import {
+  Code2,
+  Eye,
   ChevronDown,
   ChevronRight,
   File,
@@ -21,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { classifyArtifact } from "@/lib/mime";
+import { hasSourceView } from "@/lib/file-view";
 import {
   api,
   APIError,
@@ -115,6 +117,11 @@ export function FilesPanel({
     [treeOpen, setTreeOpen] = useState(true),
     [filter, setFilter] = useState("");
   const [denied, setDenied] = useState(false);
+  const [view, setView] = useState<{path: string; mode: "preview" | "source"}>({path: "", mode: "preview"});
+  const mode = view.path === selected ? view.mode : "preview";
+  const [textFile, setTextFile] = useState<{path: string; editable: boolean}>({path: "", editable: false});
+  const onTextReady = useCallback((path: string, editable: boolean) => setTextFile({path, editable}), []);
+  const editable = textFile.path === selected && textFile.editable;
   const [watchHealth, setWatchHealth] = useState<
     "live" | "reconnecting" | "stale"
   >("live");
@@ -462,6 +469,8 @@ export function FilesPanel({
         if (gone) return;
         if (!treeRef.current[dir]) await load(dir);
       }
+      if (!gone && window.matchMedia("(max-width: 767px)").matches)
+        setTreeOpen(false);
       if (!gone)
         requestAnimationFrame(() =>
           document
@@ -829,6 +838,16 @@ export function FilesPanel({
             ))}
         </nav>
         <div className="row-actions">
+          {selected && hasSourceView(selected) && editable && edit === null && (
+            <div className="file-view-toggle" role="group" aria-label={tr("File view")}>
+              <button type="button" aria-pressed={mode === "preview"} onClick={() => setView({path: selected, mode: "preview"})}>
+                <Eye size={14} aria-hidden="true" />{tr("Preview")}
+              </button>
+              <button type="button" aria-pressed={mode === "source"} onClick={() => setView({path: selected, mode: "source"})}>
+                <Code2 size={14} aria-hidden="true" />{tr("Source")}
+              </button>
+            </div>
+          )}
           {selected && (
             <Menu
               label={tr("File actions")}
@@ -842,16 +861,11 @@ export function FilesPanel({
                     a.click();
                   },
                 },
-                {
+                ...(editable && edit === null ? [{
                   label: tr("Edit text"),
-                  disabled:
-                    busy ||
-                    project.state !== "active" ||
-                    !["code", "text", "markdown", "json", "table"].includes(
-                      classifyArtifact(selected).kind,
-                    ),
+                  disabled: busy || project.state !== "active",
                   action: editFile,
-                },
+                }] : []),
                 { label: tr("Close file"), action: () => void choose("") },
               ]}
             />
@@ -994,6 +1008,8 @@ export function FilesPanel({
                 key={`${project.id}:${selected}`}
                 project={project.id}
                 validation={version}
+                mode={mode}
+                onTextReady={onTextReady}
                 path={selected}
                 href={fileURL(project.id, selected)}
               />

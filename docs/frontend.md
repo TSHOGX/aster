@@ -27,8 +27,16 @@ First controls replace pages; closing a branch cancels its reads and releases it
 rows. Expired snapshots return to the first page with a notice. Deep links read
 bounded ancestor pages without scanning whole directories; the selected file and
 unsaved editor stay owned even when their row is outside the loaded page.
-Workspace links reveal ancestor directories. Files support watches, upload,
-download, mutation, text editing and bounded Markdown, code, PNG/JPEG, XLSX,
+Directory scans are serialized per Project, with a second slot available for
+selected file content. Temporary 202/429/503 read responses and captures changed
+during a read retry silently with bounded jittered backoff (at most seven attempts).
+Collapsing a branch or changing the selection cancels its demand. Persistent
+failures retain available content and offer an explicit retry; authorization and
+missing-file errors are immediate. Writes are never automatically repeated.
+
+Workspace links reveal ancestor directories; on mobile the tree folds away after
+selection. Files support watches, upload, download, mutation, text editing and
+bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG, XLSX,
 DOCX and PPTX previews. Other formats (including PDF, legacy XLS and SVG) remain
 downloadable. Unsupported workbook drawings are identified. Office bytes pass
 bounded format validation in a cancellable Worker before rendering. Each Office
@@ -37,6 +45,20 @@ until its prepared replacement is ready. Cancel, timeout and explicit retry keep
 that displayed version. Frame removal releases the renderer's URLs and global
 handlers. Presentation controls support keyboard navigation, localized labels,
 reading-position restoration, theme updates and Escape back to the workspace.
+Markdown, HTML, CSV/TSV and JSON expose a keyboard-accessible Preview/Source
+control. Switching uses the same captured bytes without fetching again. HTML
+uses an opaque-origin sandbox: self-contained styles and inline scripts work;
+remote dependencies, network APIs, forms and application access are blocked.
+CSV/TSV previews preserve quoted delimiters and multiline cells, show 100 rows
+per page, and bound parsing to 2,000 rows, 256 columns and 20,000 cells. Truncation
+is explicit; Source and Download retain the complete input. JSON Preview formats
+valid JSON; Source retains its original whitespace.
+
+The file menu offers Edit text only after validating a supported UTF-8 text file
+of at most 1 MiB, with no NUL bytes. Binary, unsupported and oversized inputs have
+no misleading edit action. Source remains read-only; editing is an explicit mode
+with the existing Save/Discard protection for unsaved changes.
+
 See [preview budgets and qualification](performance.md#preview-admission-and-validation).
 
 Text/code/Markdown previews up to 256 KiB can reopen from the authenticated memory

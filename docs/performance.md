@@ -149,7 +149,7 @@ have separate regressions.
 
 ## Preview admission and validation
 
-Text/code/Markdown/JSON/table previews up to 256 KiB can reopen from authenticated
+Text/code/Markdown/HTML/JSON/table previews up to 256 KiB can reopen from authenticated
 memory while a visible checking notice accompanies a fresh authorized read.
 Identical digests preserve the representation; denied/missing files clear it.
 Known events invalidate affected cached bytes even for unselected files, and
@@ -169,6 +169,8 @@ Unsupported formats or excessive work produce an explicit download fallback.
 | XML | 100,000 nodes; depth 64 |
 | Workbook | 8 sheets; 20,000 cells; 2,000 rows; 256 columns; bounded sparse extent |
 | Presentation / document | 40 slides; 2,000 paragraphs; 100 pages |
+| CSV/TSV | 100 displayed rows; 2,000 parsed rows; 256 columns; 20,000 cells |
+| Source/edit text | Valid UTF-8, no NUL bytes, at most 1 MiB |
 | Image pixels | 8 million per image; 16 million total |
 | Parse / renderer lifetime | One active parse; two queued; two renderer documents |
 
