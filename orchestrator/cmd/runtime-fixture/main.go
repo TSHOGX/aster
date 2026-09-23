@@ -215,11 +215,16 @@ func model(coordinated bool) {
 		}
 
 		slow := false
+		streamChunks := 200
 		pressure := false
 		messages, _ := request["messages"].([]any)
 		if len(messages) > 0 {
 			last, _ := json.Marshal(messages[len(messages)-1])
 			slow = bytes.Contains(last, []byte("long-for-interrupt"))
+			if bytes.Contains(last, []byte("long-for-owner-handoff")) {
+				slow = true
+				streamChunks = 600
+			}
 			pressure = bytes.Contains(last, []byte("pressure-native"))
 			if bytes.Contains(last, []byte("offline-ring")) {
 				select {
@@ -239,7 +244,7 @@ func model(coordinated bool) {
 		}
 		if slow {
 			output := []string{records[0], records[1]}
-			for n := 0; n < 200; n++ {
+			for n := 0; n < streamChunks; n++ {
 				output = append(output, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"streaming "}}`)
 			}
 			records = append(output, records[3:]...)

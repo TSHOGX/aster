@@ -132,10 +132,10 @@ unacknowledged unknown outcomes are blockers. An explicitly acknowledged command
 can cease blocking only after its original process exited, cleanup settled, and
 replay is no longer pending. Its unknown outcome is preserved.
 
-`drain-ready` checks durable blockers and in-flight counts atomically with runtime
-admission and the database writer. It reports a revocable ready checkpoint only
-when both are empty. Reads, model requests and resizing cannot acquire new leases
-while ready. Stop/Ctrl-C remains available: authorized cancellation returns ready
+The default `quiescent` drain mode checks durable blockers and in-flight counts
+atomically with runtime admission and the database writer. `drain-ready` reports
+a revocable checkpoint only when both are empty. Reads, model requests and
+resizing cannot acquire new leases while quiescent-ready. Stop/Ctrl-C remains available: authorized cancellation returns ready
 to draining before it issues. New cleanup or unresolved evidence also revokes
 ready in the same transaction. Ready retains the original deadline and supports
 abort; a stale owner/generation cannot advance it.
@@ -231,8 +231,61 @@ content, guest release or schema changes alter it. Startup publishes the exact
 measured content revisions; files that change before upload are refused by the
 publisher. A matching digest describes compatibility inputs and does not grant
 permission to bypass admission/drain or prove arbitrary binary compatibility.
-Active-owner handoff qualification remains separate; current activation still
-requires quiescence.
+The owner-only workflow below applies an additional transfer predicate and live
+gateway checks. Full updates continue to require quiescence.
+
+## Compatible owner handoff
+
+Use `--mode owner` only for an owner/API executable replacement with matching
+candidate and running-owner compatibility digests. The contract includes the
+owner handoff protocol, exact schema, configuration/base directory, guest release,
+reviewed content and gateway protocol. Schema, template, engine, configuration or
+gateway changes require the default full drain. Keep the gateway process running.
+
+```sh
+orchestrator drain --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --mode owner --target TARGET_DIGEST --compatibility COMPATIBILITY_DIGEST --timeout-seconds 120
+orchestrator drain-ready --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+orchestrator drain-activate --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION --target TARGET_DIGEST
+# Wait for the source to retire, then start the inspected executable.
+/path/to/candidate/orchestrator serve --config /etc/batterygpt/application.json
+/path/to/candidate/orchestrator drain-complete --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+```
+
+Copy target and compatibility digests from `release-identity`; use the generation
+returned by `drain`. Begin pins the target and gateway registrations. Ready,
+activation and completion require a fresh protected gateway observation, whose
+registration/capacity must match both SQLite and that pinned snapshot. The gateway
+must advertise the same owner handoff protocol as the application. Observations
+older than two seconds are refused. A changed or unavailable gateway prevents
+handoff; another process cannot silently stand in for the original stream.
+
+Owner-ready can retain running turns with durably applied prompts and their
+original active incarnation/Project, plus requests authorized for those turns.
+Starting/stopping/unknown work, pending/uncertain sends, host writes, publication,
+cleanup and all host operation leases still block. `durable_blockers` reports the
+full work set; `handoff_blockers` identifies work that cannot transfer. Retained
+work is not idle. Late authority/evidence changes revoke pending readiness.
+
+Existing admitted turns may make new authorized model requests during owner-ready
+and activating while the authority is available. New requests fail closed during
+the actual outage. Existing streams retain the five-second maximum continuation
+window described in the [gateway contract](gateway-contract.md). Exceeding that
+window cancels forwarding; it is not a successful continuity result. A successful
+`gateway-stop` always requires quiescent mode, even between model requests.
+
+Replacement startup verifies exact schema/contract before any writer or migration.
+It reattaches original native journal identities; completion may reopen admission
+while transferable work is still running. Stale coordinators and the retiring
+Store instance cannot finish the handoff. Deadline expiry aborts a pending drain
+or readiness checkpoint, but never reopens an activating handoff automatically.
+
+Explicit compatible rollback uses the existing rollback-candidate/rollback
+commands and preserves accepted writes. If the gateway itself was lost/replaced,
+rollback can reopen only after all work is fully settled and the new gateway is
+observed. It cannot claim preservation of the old HTTP stream. The native fixture
+qualifies this mechanism between distinct executable artifacts with the same
+contract; external-provider continuity and the complete version matrix remain
+separate qualification gates.
 
 ## Gateway replacement
 

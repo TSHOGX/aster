@@ -125,10 +125,12 @@ func (a *GatewayApplication) controlHandler() http.Handler {
 			pending += authority.Pending()
 		}
 		checks := map[string]any{}
+		registrations := map[string]product.GatewayRegistration{}
 		for n, gateway := range a.gateways {
 			checks[a.config.Gateways[n].Audience] = gateway.AuthorityStats()
+			registrations[a.config.Gateways[n].Audience] = a.authorities[n].Registration()
 		}
-		writeControl(w, map[string]any{"authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "authority_protocol": servicegateway.AuthorityVersion})
+		writeControl(w, map[string]any{"registrations": registrations, "authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "authority_protocol": servicegateway.AuthorityVersion, "owner_handoff_protocol": product.OwnerHandoffProtocol})
 	})
 	mux.HandleFunc("POST /stop", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -152,7 +154,7 @@ func (a *GatewayApplication) controlHandler() http.Handler {
 			return
 		}
 		var state product.ReleaseState
-		if json.Unmarshal(reply.Bytes(), &state) != nil || state.Phase != "ready" || state.Owner != body.Owner || state.Generation != body.Generation {
+		if json.Unmarshal(reply.Bytes(), &state) != nil || state.Phase != "ready" || state.Mode != "quiescent" || state.Owner != body.Owner || state.Generation != body.Generation {
 			http.Error(w, "invalid release checkpoint", 409)
 			return
 		}

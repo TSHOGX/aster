@@ -213,6 +213,9 @@ func (c Config) Validate() error {
 	if l.Projects < 1 || l.Projects > 128 || l.Agents < 1 || l.Agents > 256 || l.Terminals < 1 || l.Terminals > 256 || l.AgentsPerProject < 1 || l.AgentsPerProject > l.Agents || l.TerminalsPerProject < 1 || l.TerminalsPerProject > l.Terminals || time.Duration(l.IdleAfter) < time.Second || time.Duration(l.IdleAgentAfter) < time.Second || time.Duration(l.Interval) < 50*time.Millisecond || time.Duration(l.Interval) > 10*time.Second {
 		return errors.New("invalid runtime capacity or timing bounds")
 	}
+	if len(c.Gateways) > 64 {
+		return errors.New("at most 64 gateway audiences supported")
+	}
 	if len(c.Gateways) > 0 {
 		if c.GatewaySocket() == c.ControlSocket || c.GatewaySocket() == c.ApplicationSocket {
 			return errors.New("gateway control socket must differ from owner sockets")

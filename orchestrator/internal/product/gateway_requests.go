@@ -101,7 +101,8 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 		if e != nil {
 			return e
 		}
-		if state.Phase != "open" && state.Phase != "draining" {
+		retaining := state.Mode == "owner" && (state.Phase == "ready" || state.Phase == "activating")
+		if state.Phase != "open" && state.Phase != "draining" && !retaining {
 			return ErrDraining
 		}
 		var sequence int64
@@ -117,6 +118,15 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 		out, e = authorizeService(ctx, tx, s.timestamp(), r.Audience, token)
 		if e != nil {
 			return e
+		}
+		if retaining {
+			var allowed bool
+			if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM owner_transferable_turns WHERE id=?)`, out.TurnID).Scan(&allowed); e != nil {
+				return e
+			}
+			if !allowed {
+				return ErrDraining
+			}
 		}
 		if sequence == r.Sequence {
 			if out.Grant.ID != grant || out.TurnID != turn {

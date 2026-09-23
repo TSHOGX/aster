@@ -62,6 +62,9 @@ func (a *Application) controlHandler() http.Handler {
 		var body struct {
 			Owner          string `json:"owner"`
 			TimeoutSeconds int64  `json:"timeout_seconds"`
+			Mode           string `json:"mode"`
+			Target         string `json:"target"`
+			Compatibility  string `json:"compatibility"`
 		}
 		if !decodeControl(w, r, &body) {
 			return
@@ -70,7 +73,25 @@ func (a *Application) controlHandler() http.Handler {
 			http.Error(w, "timeout_seconds must be between 1 and 3600", 400)
 			return
 		}
-		state, err := a.Store.BeginReleaseDrain(r.Context(), body.Owner, time.Duration(body.TimeoutSeconds)*time.Second)
+		var state product.ReleaseState
+		var err error
+		switch body.Mode {
+		case "", "quiescent":
+			if body.Target != "" || body.Compatibility != "" {
+				http.Error(w, "candidate binding requires owner mode", 400)
+				return
+			}
+			state, err = a.Store.BeginReleaseDrain(r.Context(), body.Owner, time.Duration(body.TimeoutSeconds)*time.Second)
+		case "owner":
+			var proof product.GatewayObservation
+			proof, err = a.observeGateways(r.Context())
+			if err == nil {
+				state, err = a.Store.BeginOwnerHandoff(r.Context(), body.Owner, time.Duration(body.TimeoutSeconds)*time.Second, body.Target, body.Compatibility, proof)
+			}
+		default:
+			http.Error(w, "invalid release mode", 400)
+			return
+		}
 		if err != nil {
 			code := 409
 			if errors.Is(err, product.ErrInvalid) {
@@ -104,7 +125,12 @@ func (a *Application) controlHandler() http.Handler {
 		if !decodeControl(w, r, &body) {
 			return
 		}
-		state, err := a.Store.TryReleaseReady(r.Context(), body.Owner, body.Generation)
+		proofs, observeErr := a.releaseObservation(r.Context())
+		if observeErr != nil {
+			http.Error(w, observeErr.Error(), 409)
+			return
+		}
+		state, err := a.Store.TryReleaseReady(r.Context(), body.Owner, body.Generation, proofs...)
 		if err != nil {
 			http.Error(w, err.Error(), 409)
 			return
@@ -124,7 +150,12 @@ func (a *Application) controlHandler() http.Handler {
 			http.Error(w, "application retirement is unavailable", 503)
 			return
 		}
-		state, err := a.Store.ActivateRelease(r.Context(), body.Owner, body.Generation, body.Target)
+		proofs, observeErr := a.releaseObservation(r.Context())
+		if observeErr != nil {
+			http.Error(w, observeErr.Error(), 409)
+			return
+		}
+		state, err := a.Store.ActivateRelease(r.Context(), body.Owner, body.Generation, body.Target, proofs...)
 		if err != nil {
 			http.Error(w, err.Error(), 409)
 			return
@@ -141,7 +172,12 @@ func (a *Application) controlHandler() http.Handler {
 			if !decodeControl(w, r, &body) {
 				return
 			}
-			state, err := a.Store.FinishRelease(r.Context(), body.Owner, body.Generation, a.releaseIdentity.ExecutableDigest, action == "rollback")
+			proofs, observeErr := a.releaseObservation(r.Context())
+			if observeErr != nil {
+				http.Error(w, observeErr.Error(), 409)
+				return
+			}
+			state, err := a.Store.FinishRelease(r.Context(), body.Owner, body.Generation, a.releaseIdentity.ExecutableDigest, action == "rollback", proofs...)
 			if err != nil {
 				http.Error(w, err.Error(), 409)
 				return

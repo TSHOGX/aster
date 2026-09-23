@@ -36,7 +36,10 @@ retained PTY detach/reload/input handoff, output gaps and fairness under output.
 These use the final guest binaries, not injected application replacements.
 The gateway fixture verifies one original upstream request and native completion
 through an owner outage, followed by a quiescent gateway replacement. Its
-deterministic model does not qualify a real-provider active update.
+deterministic model does not qualify a real-provider active update. The owner
+handoff fixture additionally switches between distinct executable artifacts with
+a matching contract while the original request remains active, preserves held
+intent, and verifies one original native completion.
 
 Use [dev/README.md](../dev/README.md) to run and collect a gate. Preserve source
 revision, release digest, engine revision, platform, commands, test names and raw

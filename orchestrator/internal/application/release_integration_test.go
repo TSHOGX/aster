@@ -177,7 +177,7 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		require(t, os.MkdirAll(filepath.Join(root, name), 0755))
 		require(t, os.Chown(filepath.Join(root, name), uid, gid))
 	}
-	for _, name := range []string{"orchestrator", "runtime-fixture"} {
+	for _, name := range []string{"orchestrator", "orchestrator-candidate", "runtime-fixture"} {
 		raw, err := os.ReadFile(filepath.Join(binaries, name))
 		require(t, err)
 		require(t, os.WriteFile(filepath.Join(root, name), raw, 0755))

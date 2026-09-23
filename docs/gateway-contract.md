@@ -50,8 +50,9 @@ registrations from a replaced process.
 
 The remote authority client records each acquisition in a bounded durable slot.
 Authorization and admission share the database writer transaction. An admitted
-turn may continue requesting service during `draining`; `ready` and `activating`
-reject new requests. Checks preserve original attribution and perform no writes.
+turn may continue requesting service during `draining`. Quiescent `ready` and
+`activating` reject new requests. Owner-only handoff permits requests for retained
+running/applied turns in those phases, under the same durable authority checks. Checks preserve original attribution and perform no writes.
 Each successful response permits existing forwarding for at most five seconds
 from the check's start, measured with the gateway's monotonic clock. Checks run
 every 100 ms, with RPCs bounded to one second and to the remaining continuation
@@ -89,3 +90,13 @@ lock until all forwarding handlers return. Start the replacement gateway before
 aborting the application drain to reopen admission. Signal termination or a crash
 can interrupt streams; use the gated stop command for an orderly update. HTTP
 streams are not resumed across gateway replacement.
+
+
+Owner handoff requires gateway `owner_handoff_protocol: 1`, in addition to
+authority RPC protocol 1. It pins the live gateway registrations (instance, generation and slot
+capacity) reported by the protected status endpoint and checks them against the
+Store in each transition transaction. Gateway status includes those identities;
+no credential is returned. A new registration revokes pending owner readiness.
+Owner-only readiness never permits gateway shutdown. If gateway replacement occurs
+after owner activation, ordinary handoff completion is refused; explicit rollback
+requires full quiescence before acknowledging the changed gateway.

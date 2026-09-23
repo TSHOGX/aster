@@ -10,7 +10,7 @@ import (
 )
 
 func TestIncrementalMigrationFromRecentSchemasIsAtomic(t *testing.T) {
-	for _, previous := range []int{6, 7, 8, 9, 10} {
+	for _, previous := range []int{6, 7, 8, 9, 10, 11} {
 		t.Run(fmt.Sprint(previous), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "previous.db")
 			db := baselineDatabase(t, path)

@@ -75,3 +75,33 @@ func TestGatewayStopRequiresCurrentQuiescenceAndLocalSettlement(t *testing.T) {
 		t.Fatal("request crossed stopped gateway", response.Code)
 	}
 }
+
+func TestGatewayStopRejectsOwnerModeEvenBetweenModelRequests(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	identity := product.ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
+	store, err := product.OpenApplication(ctx, filepath.Join(directory, "product.db"), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, err = store.BeginOwnerHandoff(ctx, "owner-only", time.Minute, "sha256:"+strings.Repeat("b", 64), identity.CompatibilityDigest, product.GatewayObservation{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := &Application{Store: store}
+	socket := filepath.Join(directory, "owner.sock")
+	listener, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: owner.controlHandler()}
+	go server.Serve(listener)
+	defer server.Close()
+	gateway := &GatewayApplication{config: Config{ControlSocket: socket}, stop: make(chan struct{}), control: &http.Server{}}
+	response := httptest.NewRecorder()
+	gateway.controlHandler().ServeHTTP(response, httptest.NewRequest("POST", "/stop", strings.NewReader(`{"owner":"owner-only","generation":1}`)))
+	if response.Code != 409 || gateway.stopping {
+		t.Fatal("gateway stopped between model requests during owner-only handoff", response.Code)
+	}
+}

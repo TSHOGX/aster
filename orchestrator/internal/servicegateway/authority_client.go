@@ -26,6 +26,7 @@ var ErrAuthorityUnavailable = errors.New("service authority unavailable")
 // database or holds upstream credentials. Each occupied slot remains occupied
 // until its release is durably acknowledged, including failed/lost acquires.
 type RemoteAuthority struct {
+	registration       product.GatewayRegistration
 	client             *http.Client
 	transport          *http.Transport
 	audience, instance string
@@ -65,6 +66,7 @@ func NewRemoteAuthority(ctx context.Context, socket, audience string, slots int)
 		a.Close()
 		return nil, errors.New("gateway capacity differs from authority configuration")
 	}
+	a.registration = registration
 	for slot := 0; slot < slots; slot++ {
 		a.free <- &product.ServiceRequest{Audience: audience, Instance: a.instance, Slot: slot}
 	}
@@ -179,6 +181,8 @@ func (a *RemoteAuthority) clean() {
 }
 
 func (a *RemoteAuthority) Pending() int64 { return a.pending.Load() }
+
+func (a *RemoteAuthority) Registration() product.GatewayRegistration { return a.registration }
 
 // Close is called after upstream forwarding has stopped. Unacknowledged rows
 // remain release blockers until the next exclusively locked gateway starts.

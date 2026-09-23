@@ -71,7 +71,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err := os.MkdirAll(cfg.StateDirectory, 0700); err != nil {
 		return app, err
 	}
-	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), app.releaseIdentity.ExecutableDigest, cfg.RollbackCandidate)
+	store, err := product.OpenApplication(ctx, cfg.DatabasePath(), product.ApplicationIdentity{ExecutableDigest: app.releaseIdentity.ExecutableDigest, CompatibilityDigest: app.releaseIdentity.CompatibilityDigest, RollbackCandidate: cfg.RollbackCandidate})
 	if err != nil {
 		return app, err
 	}

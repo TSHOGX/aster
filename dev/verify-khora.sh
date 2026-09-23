@@ -36,6 +36,7 @@ engine=$(realpath "$engine")
 for binary in orchestrator agent-runner workspace-files runtime-cleanup runtime-fixture; do
  CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -o "$output/$binary" "./cmd/$binary"
 done
+CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -ldflags='-X main.version=handoff-fixture-candidate' -o "$output/orchestrator-candidate" ./cmd/orchestrator
 CGO_ENABLED=0 go -C "$repo/orchestrator" test -c -o "$output/projectfiles.test" ./internal/projectfiles
 for package in application product producthttp servicegateway; do
  go -C "$repo/orchestrator" test -tags khoraintegration -c -o "$output/$package.test" "./internal/$package"
@@ -54,8 +55,8 @@ run() {
  sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" \
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
-if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationRollback|TestReleasedGatewaySurvivesOwnerOutage)$' release 4m;fi
-if [[ $suite == gateway ]]; then run application '^TestReleasedGatewaySurvivesOwnerOutage$' gateway 2m;fi
+if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationRollback|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff)$' release 4m;fi
+if [[ $suite == gateway ]]; then run application '^(TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff)$' gateway 2m;fi
 if [[ $suite == mixed || $suite == all ]]; then run application '^TestReleasedMixedWorkload$' mixed 9m;fi
 if [[ $suite == browser || $suite == all ]]; then run application '^TestReleasedBrowser$' browser 6m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi

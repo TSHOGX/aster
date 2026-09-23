@@ -25,6 +25,7 @@ type ReleaseIdentity struct {
 	ConfigurationDigest string            `json:"configuration_digest"`
 	RuntimeDigest       string            `json:"runtime_digest"`
 	ContentDigests      map[string]string `json:"content_digests"`
+	OwnerProtocol       int               `json:"owner_protocol"`
 	GatewayProtocol     int               `json:"gateway_protocol"`
 	CompatibilityDigest string            `json:"compatibility_digest"`
 }
@@ -108,7 +109,7 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 	if err != nil {
 		return out, err
 	}
-	id := ReleaseIdentity{Version: 1, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
+	id := ReleaseIdentity{Version: 1, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
 	id.SchemaVersion, id.SchemaDigest, err = product.SchemaIdentity()
 	if err != nil {
 		return out, err

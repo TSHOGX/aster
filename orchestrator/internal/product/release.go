@@ -22,6 +22,12 @@ func releaseFenceError(err error) error {
 }
 
 type ReleaseState struct {
+	Mode                string `json:"mode"`
+	CompatibilityDigest string `json:"compatibility_digest,omitempty"`
+	SchemaDigest        string `json:"schema_digest,omitempty"`
+	GatewayIdentity     string `json:"gateway_identity,omitempty"`
+	gatewaySnapshot     string
+
 	Generation         int64  `json:"generation"`
 	Owner              string `json:"owner"`
 	Phase              string `json:"phase"`
@@ -34,7 +40,8 @@ type ReleaseState struct {
 }
 
 func releaseState(ctx context.Context, q queryer) (out ReleaseState, err error) {
-	err = q.QueryRowContext(ctx, `SELECT generation,owner,phase,deadline,reason,updated_at,activation_instance,target_digest,finished_digest FROM application_release WHERE id=1`).Scan(&out.Generation, &out.Owner, &out.Phase, &out.Deadline, &out.Reason, &out.UpdatedAt, &out.ActivationInstance, &out.TargetDigest, &out.FinishedDigest)
+	err = q.QueryRowContext(ctx, `SELECT generation,owner,phase,deadline,reason,updated_at,activation_instance,target_digest,finished_digest,mode,compatibility_digest,schema_digest,gateway_snapshot FROM application_release WHERE id=1`).Scan(&out.Generation, &out.Owner, &out.Phase, &out.Deadline, &out.Reason, &out.UpdatedAt, &out.ActivationInstance, &out.TargetDigest, &out.FinishedDigest, &out.Mode, &out.CompatibilityDigest, &out.SchemaDigest, &out.gatewaySnapshot)
+	out.GatewayIdentity = snapshotDigest(out.gatewaySnapshot)
 	return
 }
 func (s *Store) ReleaseState(ctx context.Context) (ReleaseState, error) {
@@ -43,7 +50,10 @@ func (s *Store) ReleaseState(ctx context.Context) (ReleaseState, error) {
 
 // BeginReleaseDrain closes admission atomically with the new persisted owner.
 // Repeating the same owner is idempotent and cannot extend its deadline.
-func (s *Store) BeginReleaseDrain(ctx context.Context, owner string, timeout time.Duration) (out ReleaseState, err error) {
+func (s *Store) BeginReleaseDrain(ctx context.Context, owner string, timeout time.Duration) (ReleaseState, error) {
+	return s.beginReleaseDrain(ctx, owner, timeout, "quiescent", "", "", nil)
+}
+func (s *Store) beginReleaseDrain(ctx context.Context, owner string, timeout time.Duration, mode, target, compatibility string, proof *GatewayObservation) (out ReleaseState, err error) {
 	if !validID(owner) || timeout < time.Second || timeout > time.Hour {
 		return out, ErrInvalid
 	}
@@ -54,8 +64,22 @@ func (s *Store) BeginReleaseDrain(ctx context.Context, owner string, timeout tim
 		if e != nil {
 			return e
 		}
+		snapshot, schema := "", ""
+		if mode == "owner" {
+			if proof == nil {
+				return ErrInvalid
+			}
+			snapshot, e = checkGatewayObservation(ctx, tx, *proof)
+			if e != nil {
+				return e
+			}
+			_, schema, e = SchemaIdentity()
+			if e != nil {
+				return e
+			}
+		}
 		if current.Phase != "open" {
-			if current.Owner == owner && current.Phase == "draining" {
+			if current.Owner == owner && current.Phase == "draining" && current.Mode == mode && (mode != "owner" || (current.TargetDigest == target && current.CompatibilityDigest == compatibility && current.gatewaySnapshot == snapshot)) {
 				out = current
 				return nil
 			}
@@ -71,7 +95,7 @@ func (s *Store) BeginReleaseDrain(ctx context.Context, owner string, timeout tim
 		if _, e = tx.ExecContext(ctx, `INSERT INTO release_coordinators(owner,generation) VALUES(?,?)`, owner, current.Generation+1); e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `UPDATE application_release SET generation=generation+1,owner=?,phase='draining',deadline=?,reason='',activation_instance='',target_digest='',finished_digest='',updated_at=? WHERE id=1`, owner, sqlitex.FormatTime(s.now().Add(timeout)), s.timestamp())
+		_, e = tx.ExecContext(ctx, `UPDATE application_release SET generation=generation+1,owner=?,phase='draining',deadline=?,reason='',activation_instance='',target_digest=?,finished_digest='',mode=?,compatibility_digest=?,schema_digest=?,gateway_snapshot=?,updated_at=? WHERE id=1`, owner, sqlitex.FormatTime(s.now().Add(timeout)), target, mode, compatibility, schema, snapshot, s.timestamp())
 		if e != nil {
 			return e
 		}
@@ -98,7 +122,7 @@ func (s *Store) releaseQuiescent(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func (s *Store) ActivateRelease(ctx context.Context, owner string, generation int64, target string) (out ReleaseState, err error) {
+func (s *Store) ActivateRelease(ctx context.Context, owner string, generation int64, target string, proofs ...GatewayObservation) (out ReleaseState, err error) {
 	if !content.ValidDigest(target) || s.instance == "" {
 		return out, ErrInvalid
 	}
@@ -116,6 +140,9 @@ func (s *Store) ActivateRelease(ctx context.Context, owner string, generation in
 			out = current
 			return nil
 		}
+		if current.Mode == "owner" && current.TargetDigest != target {
+			return ErrConflict
+		}
 		if current.Phase != "ready" {
 			return ErrConflict
 		}
@@ -127,7 +154,7 @@ func (s *Store) ActivateRelease(ctx context.Context, owner string, generation in
 			out, e = releaseState(ctx, tx)
 			return e
 		}
-		if e = s.releaseQuiescent(ctx, tx); e != nil {
+		if e = s.releaseEligible(ctx, tx, current, proofs, false); e != nil {
 			return e
 		}
 		_, e = tx.ExecContext(ctx, `UPDATE application_release SET phase='activating',activation_instance=?,target_digest=?,reason='',updated_at=? WHERE id=1`, s.instance, target, s.timestamp())
@@ -146,9 +173,12 @@ func (s *Store) ActivateRelease(ctx context.Context, owner string, generation in
 // FinishRelease is called only by the replacement application with its measured
 // executable digest. Rollback is explicit and still requires a compatible Store
 // and settled work; it never restores a backup over accepted writes.
-func (s *Store) FinishRelease(ctx context.Context, owner string, generation int64, digest string, rollback bool) (out ReleaseState, err error) {
+func (s *Store) FinishRelease(ctx context.Context, owner string, generation int64, digest string, rollback bool, proofs ...GatewayObservation) (out ReleaseState, err error) {
 	if !content.ValidDigest(digest) || s.instance == "" {
 		return out, ErrInvalid
+	}
+	if s.identity.ExecutableDigest != "" && digest != s.identity.ExecutableDigest {
+		return out, ErrConflict
 	}
 	s.runtime.mu.Lock()
 	defer s.runtime.mu.Unlock()
@@ -174,7 +204,7 @@ func (s *Store) FinishRelease(ctx context.Context, owner string, generation int6
 		if current.Phase != "activating" {
 			return ErrConflict
 		}
-		if e = s.releaseQuiescent(ctx, tx); e != nil {
+		if e = s.releaseEligible(ctx, tx, current, proofs, rollback); e != nil {
 			return e
 		}
 		_, e = tx.ExecContext(ctx, `UPDATE application_release SET phase='open',deadline='',reason=?,finished_digest=?,updated_at=? WHERE id=1`, reason, digest, s.timestamp())
@@ -234,7 +264,7 @@ func (s *Store) ExpireReleaseDrain(ctx context.Context) error {
 
 // TryReleaseReady closes runtime admission only after one atomic check of both
 // lease counts and durable evidence. A ready result is revocable, not activation.
-func (s *Store) TryReleaseReady(ctx context.Context, owner string, generation int64) (out ReleaseState, err error) {
+func (s *Store) TryReleaseReady(ctx context.Context, owner string, generation int64, proofs ...GatewayObservation) (out ReleaseState, err error) {
 	s.runtime.mu.Lock()
 	defer s.runtime.mu.Unlock()
 	err = s.writeClass(ctx, urgentWrite, "", 1024, func(tx *sql.Tx) error {
@@ -253,7 +283,7 @@ func (s *Store) TryReleaseReady(ctx context.Context, owner string, generation in
 			out, e = releaseState(ctx, tx)
 			return e
 		}
-		if e = s.releaseQuiescent(ctx, tx); e != nil {
+		if e = s.releaseEligible(ctx, tx, current, proofs, false); e != nil {
 			return e
 		}
 		_, e = tx.ExecContext(ctx, `UPDATE application_release SET phase='ready',reason='',updated_at=? WHERE id=1`, s.timestamp())
@@ -275,6 +305,7 @@ type ReleaseDrainStatus struct {
 	ReleaseState
 	DurableBlockers map[string]int64 `json:"durable_blockers"`
 	RuntimeWork     map[string]int   `json:"runtime_work"`
+	HandoffBlockers map[string]int64 `json:"handoff_blockers"`
 }
 
 func (s *Store) ReleaseDrainStatus(ctx context.Context) (out ReleaseDrainStatus, err error) {
@@ -307,6 +338,25 @@ func (s *Store) ReleaseDrainStatus(ctx context.Context) (out ReleaseDrainStatus,
 	err = errors.Join(rows.Err(), rows.Close())
 	if err != nil {
 		return out, err
+	}
+	if out.Mode == "owner" {
+		rows, e := tx.QueryContext(ctx, `SELECT kind,count(*) FROM owner_handoff_blockers GROUP BY kind`)
+		if e != nil {
+			return out, e
+		}
+		out.HandoffBlockers = map[string]int64{}
+		for rows.Next() {
+			var kind string
+			var count int64
+			if e = rows.Scan(&kind, &count); e != nil {
+				rows.Close()
+				return out, e
+			}
+			out.HandoffBlockers[kind] = count
+		}
+		if e = errors.Join(rows.Err(), rows.Close()); e != nil {
+			return out, e
+		}
 	}
 	return out, tx.Commit()
 }

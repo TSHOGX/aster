@@ -10,7 +10,8 @@ version 7 adds [turn-scoped final-message lookup](../orchestrator/internal/produ
 version 8 adds [the durable release admission fence](../orchestrator/internal/product/release_schema.sql);
 version 9 adds [indexed readiness and transactional revocation](../orchestrator/internal/product/readiness_schema.sql);
 version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql);
-version 11 adds [bounded durable gateway request slots](../orchestrator/internal/product/gateway_schema.sql).
+version 11 adds [bounded durable gateway request slots](../orchestrator/internal/product/gateway_schema.sql);
+version 12 adds [guarded owner handoff](../orchestrator/internal/product/owner_handoff_schema.sql).
 `product.Open` validates and migrates known schemas while holding an exclusive path/alias
 lock. Application startup uses `product.OpenApplication`: it validates a pending
 activation against the measured executable through a read-only connection under
@@ -110,3 +111,19 @@ Candidate inspection obtains the compiled schema fingerprint from an in-memory
 schema construction. It never inspects or mutates the live product database.
 The application's startup identity and candidate CLI therefore agree even while
 the current owner holds the exclusive Store lock.
+
+
+Schema 12 records release mode, compatibility/schema digests and the pinned
+gateway registration snapshot. `owner_transferable_turns` identifies running turns
+with durably applied original prompts, active Projects and running incarnations.
+`owner_handoff_blockers` retains every other release blocker, including requests
+whose turn or grant no longer qualifies. Changes to retained prompt/turn/session,
+grant/request authority or gateway registration revoke a pending owner-ready
+checkpoint transactionally. The full `release_blockers` view remains authoritative
+for quiescent releases. Operator status reports both sets in owner mode.
+
+An owner-mode drain, ready or activating state requires the exact compiled schema
+and compatibility identity before any writer opens. It cannot migrate implicitly,
+and an unmeasured Store open cannot bypass that condition. Explicit rollback can
+use a different executable only with the same contract. If the pinned gateway
+was replaced, rollback must additionally prove full quiescence before reopening.

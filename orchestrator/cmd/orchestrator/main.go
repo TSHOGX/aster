@@ -32,7 +32,7 @@ func main() {
 }
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
+		_, err := fmt.Fprintln(output, "orchestrator serve --config FILE [--rollback-candidate]\norchestrator gateway --config FILE\norchestrator release-identity --config FILE\norchestrator gateway-status|gateway-stop --socket PATH [--owner ID --generation N]\norchestrator version\norchestrator diagnostics|publish|notify --socket PATH [flags]\norchestrator drain|drain-status|drain-ready|drain-abort|drain-activate|drain-complete|drain-rollback --socket PATH [--owner ID] [--generation N] [--timeout-seconds N] [--mode quiescent|owner] [--target sha256:DIGEST] [--compatibility sha256:DIGEST]\norchestrator user add|password|role|remove|list --file FILE --username NAME [--password-stdin] [--role user|admin]")
 		return err
 	}
 	action := args[0]
@@ -103,6 +103,8 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		generation := flags.Int64("generation", 0, "generation returned by drain")
 		timeout := flags.Int64("timeout-seconds", 120, "admission drain timeout, at most 3600 seconds")
 		target := flags.String("target", "", "expected replacement executable sha256 digest")
+		mode := flags.String("mode", "quiescent", "drain mode: quiescent or owner")
+		compatibility := flags.String("compatibility", "", "candidate compatibility digest for owner handoff")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -131,7 +133,13 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		if *timeout < 1 || *timeout > 3600 {
 			return errors.New("timeout-seconds must be between 1 and 3600")
 		}
-		return application.Control(ctx, *socket, "POST", "/release/drain", map[string]any{"owner": *owner, "timeout_seconds": *timeout}, output)
+		if *mode != "quiescent" && *mode != "owner" {
+			return errors.New("mode must be quiescent or owner")
+		}
+		if *mode == "owner" && (*target == "" || *compatibility == "") {
+			return errors.New("owner drain requires --target and --compatibility from release-identity")
+		}
+		return application.Control(ctx, *socket, "POST", "/release/drain", map[string]any{"owner": *owner, "timeout_seconds": *timeout, "mode": *mode, "target": *target, "compatibility": *compatibility}, output)
 	case "serve":
 		name := flags.String("config", "", "versioned Project application configuration")
 		rollback := flags.Bool("rollback-candidate", false, "permit a compatible rollback build to start behind an activating fence")

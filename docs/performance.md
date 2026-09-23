@@ -27,8 +27,9 @@ active-model deployment continuity.
 | P07 admission fence | Verified locally | Persisted drain ownership/deadline and atomic new-work fencing |
 | P07 readiness | Verified locally | Atomic blocker/lease check and revocation by new evidence or cancellation |
 | P07 activation | Verified locally | Digest-bound quiescent handoff and explicit compatible rollback |
+| P07 owner handoff | Verified locally | Same-contract active native transfer between distinct executable artifacts |
 | P07 gateway lifetime | Verified locally | Independent process, bounded authority and native fixture continuity across owner outage |
-| P07 deployment qualification | Pending | Active update protocol, real provider, bootstrap and combined release qualification |
+| P07 deployment qualification | Pending | Real provider, complete rollback matrix, bootstrap and combined release qualification |
 
 ## Diagnostics
 
@@ -945,3 +946,32 @@ validation and omission of raw configuration/credentials. The actual executable
 fixture compares candidate identity before startup and while the owner holds its
 Store lock against `diagnostics.release_identity`. Matching inputs remain a
 prerequisite, not proof of active-update safety or arbitrary rollback support.
+
+
+## Guarded owner handoff
+
+Schema 12 adds an explicit owner-only release mode while preserving full drain as
+the default. The mode pins a candidate executable, exact schema/compatibility and
+live gateway registration snapshot. A running turn transfers only with a durably
+applied original prompt, running incarnation and active Project. Original model
+requests for those turns remain counted and may continue through the stable
+gateway. Every other durable blocker and all host operation leases still prevent
+ready/activation/completion. Late evidence or authority changes revoke readiness.
+
+Each transition uses a fresh gateway observation, at most two seconds old,
+validated against the database and pinned snapshot. Owner-mode startup requires
+identical schema/contract before opening any writer; migration is forbidden.
+Unmeasured Store access cannot bypass it. Source-instance and target-digest checks
+remain, and explicit rollback after gateway replacement additionally requires
+full quiescence. Gateway stop refuses owner mode even with zero current requests.
+
+Unit/race tests cover rejected identities without database mutation, retained
+requests across replacement, admitted requests during handoff, unsafe/unknown
+work, stale/changed/omitted gateway observations, late authority revocation,
+activation races, deadline abort, source refusal to finish and explicit quiescent
+rollback after gateway loss. A native fixture activates a distinct candidate while
+a long upstream request remains active, observes the same gateway PID, preserves
+held intent, and verifies exactly one request plus genuine native completion with
+unchanged turn/incarnation identity. The candidate artifacts use the same source
+with distinct build metadata; this is mechanism qualification, not arbitrary build
+or real external-provider compatibility. Those broader gates remain open.

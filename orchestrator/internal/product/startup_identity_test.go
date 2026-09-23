@@ -51,7 +51,7 @@ func TestRejectedReplacementCannotMigrateOrReplaceStoreIdentity(t *testing.T) {
 			path := activationDatabase(t, test.version, test.source, test.target)
 			before, err := os.ReadFile(path)
 			must(t, err)
-			store, err := OpenApplication(ctx, path, test.digest, test.rollback)
+			store, err := OpenApplication(ctx, path, ApplicationIdentity{ExecutableDigest: test.digest, RollbackCandidate: test.rollback})
 			if err == nil {
 				store.Close()
 				t.Fatal("invalid replacement opened a writer")
@@ -89,7 +89,7 @@ func TestExpectedOrExplicitRollbackExecutableMayUpgradeKnownSchema(t *testing.T)
 			if rollback {
 				digest = "sha256:" + strings.Repeat("b", 64)
 			}
-			store, err := OpenApplication(ctx, path, digest, rollback)
+			store, err := OpenApplication(ctx, path, ApplicationIdentity{ExecutableDigest: digest, RollbackCandidate: rollback})
 			must(t, err)
 			defer store.Close()
 			version, err := knownSchema(ctx, store.reader)
@@ -113,7 +113,7 @@ func TestExpectedOrExplicitRollbackExecutableMayUpgradeKnownSchema(t *testing.T)
 
 func TestApplicationOpenRequiresMeasuredDigestBeforeCreatingState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "product.db")
-	if store, err := OpenApplication(ctx, path, "", false); err == nil {
+	if store, err := OpenApplication(ctx, path, ApplicationIdentity{}); err == nil {
 		store.Close()
 		t.Fatal("unmeasured executable accepted")
 	}

@@ -36,6 +36,7 @@ type Store struct {
 	writer     writeAdmission
 	runtime    runtimeAdmission
 	instance   string
+	identity   ApplicationIdentity
 }
 
 func Open(ctx context.Context, path string) (result *Store, resultErr error) {
@@ -45,15 +46,14 @@ func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 // OpenApplication checks the measured executable against a pending activation
 // under the exclusive lifetime lock, before opening a writer or migrating DDL.
 // Open remains the lower-level Store constructor for fixtures and repository use.
-func OpenApplication(ctx context.Context, path, executableDigest string, rollback bool) (*Store, error) {
-	identity := startupIdentity{digest: executableDigest, rollback: rollback}
+func OpenApplication(ctx context.Context, path string, identity ApplicationIdentity) (*Store, error) {
 	if err := identity.validate(); err != nil {
 		return nil, err
 	}
 	return open(ctx, path, &identity)
 }
 
-func open(ctx context.Context, path string, identity *startupIdentity) (result *Store, resultErr error) {
+func open(ctx context.Context, path string, identity *ApplicationIdentity) (result *Store, resultErr error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func open(ctx context.Context, path string, identity *startupIdentity) (result *
 		}
 		version, schemaErr := knownSchema(ctx, check)
 		err = schemaErr
-		if err == nil && identity != nil {
+		if err == nil {
 			err = identity.check(ctx, check, version)
 		}
 		closeErr := check.Close()
@@ -116,7 +116,11 @@ func open(ctx context.Context, path string, identity *startupIdentity) (result *
 	if err != nil {
 		return fail(err)
 	}
-	return &Store{db: db, reader: reader, now: time.Now, release: release, instance: instance}, nil
+	store := &Store{db: db, reader: reader, now: time.Now, release: release, instance: instance}
+	if identity != nil {
+		store.identity = *identity
+	}
+	return store, nil
 }
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() {
