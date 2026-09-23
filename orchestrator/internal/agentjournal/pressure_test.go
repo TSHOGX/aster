@@ -37,7 +37,7 @@ func TestNormalFullJournalRetainsAbortAndTerminalEvidence(t *testing.T) {
 	must(t, j.Dispatch(ctx, 1, next.ID))
 	_, err = j.Result(ctx, next.ID, "applied", json.RawMessage(`{"success":true}`))
 	must(t, err)
-	_, err = j.Append(ctx, Record{Kind: "native", CommandID: c.ID, TurnID: c.TurnID, Payload: json.RawMessage(`{"type":"agent_end"}`)})
+	_, err = j.Append(ctx, Record{Kind: "native", CommandID: c.ID, TurnID: c.TurnID, Payload: json.RawMessage(`{"type":"prompt_end","id":"prompt","outcome":"canceled"}`)})
 	must(t, err)
 	last, err := j.Result(ctx, c.ID, "completed", json.RawMessage(`{"outcome":"canceled","digest":"capture"}`))
 	must(t, err)

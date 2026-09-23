@@ -45,6 +45,16 @@ func releaseFixture(t *testing.T) (string, Manifest, string) {
 	if err = os.WriteFile(filepath.Join(types, "rpc-types.d.ts"), []byte(`type Command = { type: "abort" } | { type: "steer"; message: string }`), 0644); err != nil {
 		t.Fatal(err)
 	}
+	original, err := os.ReadFile("testdata/pi-rpc-0.77.0.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(types, "rpc-mode.js"), original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = PatchNativeRPC(root); err != nil {
+		t.Fatal(err)
+	}
 	manifest, err := Generate(root)
 	if err != nil {
 		t.Fatal(err)

@@ -58,3 +58,12 @@ first-send lost-response identity, paged navigation, dirty-file guards, layout
 switches and fullscreen focus restoration. Its locale/theme/viewport captures
 are UI evidence, not runtime integration evidence. The browser qualification
 continues to exercise the real Go edge and native PTYs after selector changes.
+
+
+The `native` suite uses the actual pinned Pi and released guardian. It injects a
+retryable provider failure, checks that the original turn stays running and queued
+work waits, then tests cancellation during retry and compaction. A successful
+compaction must precede `prompt_end` and command completion, and its entry must be
+present in the exported native capture. Preflight cancellation must dispatch no
+new native agent run. Manifest tests refuse a claimed settlement capability whose
+RPC bytes are absent or changed.

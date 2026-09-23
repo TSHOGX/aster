@@ -23,6 +23,6 @@ for binary in agent-runner workspace-files runtime-cleanup runtime-verify; do
  CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -buildvcs=false -o "$destination/usr/local/bin/$binary" "./cmd/$binary"
  chmod 0755 "$destination/usr/local/bin/$binary"
 done
-CGO_ENABLED=0 go -C "$repo/orchestrator" run ./cmd/runtime-release --root "$destination" --output "$destination.manifest.json"
+CGO_ENABLED=0 go -C "$repo/orchestrator" run ./cmd/runtime-release --patch-native --root "$destination" --output "$destination.manifest.json"
 chmod -R a-w "$destination/etc/project-runtime" "$destination/usr/local/share/project-runtime"
 printf 'Template: %s\nManifest: %s\n' "$destination" "$destination.manifest.json"

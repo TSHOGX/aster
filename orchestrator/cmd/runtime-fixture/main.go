@@ -159,6 +159,7 @@ func upstream() {
 }
 func model(coordinated bool) {
 	var mu sync.Mutex
+	attempts := map[string]int{}
 	count := 0
 	both := make(chan struct{})
 	mux := http.NewServeMux()
@@ -185,15 +186,28 @@ func model(coordinated bool) {
 				file.Close()
 			}
 		}
-		record(os.Getenv("PROJECT_UPSTREAM_REPORT"))
 
 		mu.Lock()
 		count++
+		attempts[observed["turn"]]++
+		attempt := attempts[observed["turn"]]
 		if count == 2 {
 			close(both)
-			fmt.Println("overlapping-model-requests")
+			if coordinated {
+				fmt.Println("overlapping-model-requests")
+			}
 		}
 		mu.Unlock()
+		observed["attempt"] = strconv.Itoa(attempt)
+		record(os.Getenv("PROJECT_UPSTREAM_REPORT"))
+		requestMessages, _ := request["messages"].([]any)
+		if len(requestMessages) > 0 {
+			last, _ := json.Marshal(requestMessages[len(requestMessages)-1])
+			if bytes.Contains(last, []byte("native-retry-until-stop")) || bytes.Contains(last, []byte("native-retry-exhaust")) || (attempt == 1 && bytes.Contains(last, []byte("native-retry-once"))) {
+				http.Error(w, "503 overloaded native retry fixture", http.StatusServiceUnavailable)
+				return
+			}
+		}
 		if coordinated {
 			select {
 			case <-both:
@@ -240,6 +254,27 @@ func model(coordinated bool) {
 				input, _ := json.Marshal(map[string]string{"command": "setsid sh -c 'echo $$ > /workspace/escaped-fault.pid; exec sleep 300' & echo ready > /workspace/fault-ready; sleep 300"})
 				delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "input_json_delta", "partial_json": string(input)}})
 				records = []string{records[0], `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"fault-tool","name":"bash","input":{}}}`, string(delta), records[3], `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":4}}`, records[5]}
+			}
+		}
+		if len(requestMessages) > 0 {
+			last, _ := requestMessages[len(requestMessages)-1].(map[string]any)
+			blocks, _ := last["content"].([]any)
+			if len(blocks) == 1 {
+				block, _ := blocks[0].(map[string]any)
+				switch block["text"] {
+				case "native-compaction-seed":
+					delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": strings.Repeat("retained context ", 400)}})
+					records[2] = string(delta)
+				case "native-compaction-trigger":
+					records[0] = strings.Replace(records[0], `"input_tokens":1`, `"input_tokens":8150`, 1)
+				}
+			}
+		}
+		if os.Getenv("PROJECT_RELEASE_COMPACTION_TEST") == "1" {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(750 * time.Millisecond):
 			}
 		}
 		if slow {
@@ -316,6 +351,8 @@ func native() {
 				time.Sleep(10 * time.Millisecond)
 			}
 			fmt.Println(`{"type":"agent_end","messages":[]}`)
+			raw, _ := json.Marshal(map[string]string{"type": "prompt_end", "id": command.ID, "outcome": "completed"})
+			fmt.Println(string(raw))
 		}
 	}
 }

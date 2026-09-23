@@ -33,9 +33,9 @@ Node and builtin system context, and hashes the complete native dependency tree.
 Native dependency symlinks must resolve inside that hashed tree. All ELF runtime
 components must share a supported Linux architecture. The manifest records
 engine/native/protocol pins, platform and required workspace/runtime paths.
-Manifest version 2 requires agent protocol 2 (bounded flow/pressure telemetry)
-and reader protocol 2, including per-request chunk
-credits; a manifest missing that capability is rejected. Reader changes require
+Manifest version 3 requires agent protocol 2 (bounded flow/pressure telemetry),
+reader protocol 2 with per-request chunk credits, and native settlement protocol 1.
+A missing capability or an older manifest is rejected. Reader changes require
 a newly assembled immutable template, not replacement of running guest binaries.
 
 ```sh
@@ -51,3 +51,20 @@ A component or native dependency mismatch refuses activation.
 Image assembly alone is not runtime qualification. Run the actual application
 and final image through the [isolated executable gates](verification.md), including
 native Pi, Files, retained PTYs, cookie-authenticated Chromium and recovery.
+
+
+The builder installs a narrowly pinned extension to Pi 0.77.0 RPC mode before
+manifest generation. It checks the exact upstream and patched file SHA-256 values;
+unknown input is refused. The extension emits a correlated `prompt_end` only when
+the entire `session.prompt()` Promise settles, including retries and compaction.
+`agent_end` remains an intermediate native event and is never completion authority.
+Stop also cancels native retry and compaction, including preflight continuation.
+The upstream package/version/integrity pin remains recorded alongside the complete
+patched native tree. Generate and guest verification both require the exact native
+RPC extension bytes; a matching tree digest alone cannot claim the capability.
+
+The patcher refuses an existing release or the host root. For manual fresh-root
+assembly, use `runtime-release --patch-native --root ... --output ...`; generation
+without that flag requires an already prepared native RPC module. Always assemble
+a new immutable image. Existing format-2 templates cannot satisfy the new native
+settlement contract, and changing the guest release requires a full admission drain.

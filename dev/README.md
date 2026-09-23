@@ -12,11 +12,12 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `gateway`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `gateway`, `native`, `mixed`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
-target identity. Its deterministic model does not qualify an external provider. `mixed` runs over five minutes. `browser`
+target identity. Its deterministic model does not qualify an external provider. `native` isolates real Pi retry, cancellation and post-run/preflight compaction
+settlement using deterministic provider responses. `mixed` runs over five minutes. `browser`
 requires `npm run build` in the frontend and an installed Playwright Chromium.
 Provide `PLAYWRIGHT_BROWSERS_PATH` when the build user owns the browser cache;
 the isolated substrate runs as root and otherwise searches its own cache.

@@ -20,6 +20,7 @@ active-model deployment continuity.
 | P04b–e | Verified locally | Reusable host readers, immutable captures, scoped directory cursors and read-path removal |
 | P05 host writer/retention | Verified locally | Bounded priority admission, derived retention and raw-outbox removal |
 | P05 journal/flow | Verified locally | Guest reserve, bounded delivery, safe command compaction and delayed-ACK qualification |
+| P05 native settlement | Verified locally | Original prompt identity through retry/compaction and capture after complete settlement |
 | P05 combined resource audit | Pending | Final cross-phase queue/resource matrix and deployment qualification |
 | P06 admission | Verified locally | Bounded format validation in a Worker and preview parse/resource admission |
 | P06 Office ownership | Verified locally | Prepared replacements, cancellation, chart lifecycle and localized keyboard controls |
@@ -327,7 +328,8 @@ lease and captured-byte counts. Conditional requests reacquire current bytes;
 Range uses only one complete immutable representation. ETags never imply save
 compare-and-swap or an atomic historical filesystem observation.
 
-Runtime manifest version 2 requires reader protocol 2; older runtime manifests
+Runtime manifest version 3 retains reader protocol 2 and adds native settlement
+protocol 1; older runtime manifests
 are rejected. New immutable images were assembled and qualified in disposable
 substrates; no existing user template/service was replaced. In the final reader
 fixture fifty warm captures reused one helper and performed zero database writes;
@@ -975,3 +977,29 @@ held intent, and verifies exactly one request plus genuine native completion wit
 unchanged turn/incarnation identity. The candidate artifacts use the same source
 with distinct build metadata; this is mechanism qualification, not arbitrary build
 or real external-provider compatibility. Those broader gates remain open.
+
+
+## Complete native prompt settlement
+
+A failed native fixture exposed that Pi 0.77.0 emits `agent_end` before its retry
+and compaction continuations settle. Completing at that event could release a
+turn's gateway authority, dispatch another prompt and freeze an incomplete capture.
+The guardian now requires the pinned native RPC protocol-1 `prompt_end` event,
+correlated to its applied prompt. Its authoritative final outcome precedes
+bounded descendant settlement and immutable capture. Intermediate events retain
+the original command/turn identity and cannot release its busy reservation.
+
+The image builder applies an exact-input/exact-output patch to the pinned Pi RPC
+module. It reports full Promise settlement and supports cancellation of retry,
+compaction and preflight continuation. Manifest format 3 requires this capability;
+generation and guest verification check the native RPC bytes as well as the tree.
+No legacy `agent_end` completion path remains. Go wire/journal and reader formats
+remain version 2; the immutable guest release changes and requires full drain.
+
+Tests verify preserved command identity, no premature capture/descendant cleanup,
+rejection of foreign/unapplied settlement, and reserved capacity at normal journal
+exhaustion. Native fixtures verify provider retry followed by success, queued
+prompt exclusion during backoff, cancellation without another provider attempt, exhaustion before one failed
+settlement, post-run compaction in the exported capture, and cancellation during post-run and
+preflight compaction. These deterministic failures qualify lifecycle behavior;
+they do not replace the real-provider release gate.

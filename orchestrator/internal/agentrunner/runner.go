@@ -38,7 +38,7 @@ type Runner struct {
 	config        Config
 	journal       *agentjournal.Journal
 	native        io.WriteCloser
-	pi            *exec.Cmd
+	settle        func() error
 	mu            sync.Mutex
 	active, turn  string
 	commands      map[string]agentjournal.Command
@@ -172,7 +172,7 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 	stdoutWriter.Close()
 	runctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	r := &Runner{config: c, journal: j, native: stdin, pi: cmd, commands: map[string]agentjournal.Command{}, wake: make(chan struct{}, 1), responses: make(chan agentwire.Frame, 32), syncs: make(chan agentwire.Frame, 8), fatal: make(chan error, 1), ackWake: make(chan struct{}, 1)}
+	r := &Runner{config: c, journal: j, native: stdin, settle: func() error { return settleDescendants(cmd.Process.Pid, true) }, commands: map[string]agentjournal.Command{}, wake: make(chan struct{}, 1), responses: make(chan agentwire.Frame, 32), syncs: make(chan agentwire.Frame, 8), fatal: make(chan error, 1), ackWake: make(chan struct{}, 1)}
 	var workers sync.WaitGroup
 	workers.Add(1)
 	go func() { defer workers.Done(); r.nativeOutput(runctx, stdout, nativeFile) }()
@@ -500,12 +500,8 @@ func (r *Runner) nativeOutput(ctx context.Context, output io.Reader, nativeFile 
 	for scanner.Scan() {
 		raw := append(json.RawMessage{}, scanner.Bytes()...)
 		var event struct {
-			Type, ID string
-			Success  bool
-			Messages []struct {
-				Role       string
-				StopReason string
-			}
+			Type, ID, Outcome string
+			Success           bool
 		}
 		if err := json.Unmarshal(raw, &event); err != nil {
 			r.fail(errors.Join(agentwire.ErrFrame, err))
@@ -529,6 +525,10 @@ func (r *Runner) nativeOutput(ctx context.Context, output io.Reader, nativeFile 
 				r.fail(err)
 				return
 			}
+			if c.Kind == "prompt" && event.Success {
+				c.State = "applied"
+				r.commands[c.ID] = c
+			}
 			if c.Kind != "prompt" || !event.Success {
 				delete(r.commands, c.ID)
 			}
@@ -536,13 +536,26 @@ func (r *Runner) nativeOutput(ctx context.Context, output io.Reader, nativeFile 
 				r.active, r.turn = "", ""
 			}
 		}
+		if event.Type == "prompt_end" {
+			c, ok := r.commands[event.ID]
+			if !ok || event.ID != command || c.Kind != "prompt" || c.State != "applied" || (event.Outcome != "completed" && event.Outcome != "failed" && event.Outcome != "canceled") {
+				r.mu.Unlock()
+				r.fail(errors.New("uncorrelated or invalid native prompt settlement"))
+				return
+			}
+		}
 		if err := r.appendNative(ctx, agentjournal.Record{CommandID: command, TurnID: turn, Kind: "native", Payload: raw}); err != nil {
 			r.mu.Unlock()
 			r.fail(err)
 			return
 		}
-		if event.Type == "agent_end" && command != "" {
-			if err := settleDescendants(r.pi.Process.Pid, true); err != nil {
+		if event.Type == "prompt_end" {
+			if r.settle == nil {
+				r.mu.Unlock()
+				r.fail(errors.New("native descendant settlement unavailable"))
+				return
+			}
+			if err := r.settle(); err != nil {
 				r.mu.Unlock()
 				r.fail(err)
 				return
@@ -553,17 +566,7 @@ func (r *Runner) nativeOutput(ctx context.Context, output io.Reader, nativeFile 
 				r.fail(err)
 				return
 			}
-			capture.Outcome = "completed"
-			for _, message := range event.Messages {
-				if message.Role == "assistant" {
-					switch message.StopReason {
-					case "aborted":
-						capture.Outcome = "canceled"
-					case "error":
-						capture.Outcome = "failed"
-					}
-				}
-			}
+			capture.Outcome = event.Outcome
 			payload, _ := json.Marshal(capture)
 			if _, err = r.journal.Result(ctx, command, "completed", payload); err != nil {
 				r.mu.Unlock()
@@ -607,7 +610,7 @@ func captureNative(source, directory, command string) (Capture, error) {
 	if !info.Mode().IsRegular() || info.Size() > 64<<20 {
 		return Capture{}, errors.New("native capture size/type limit")
 	}
-	// Pi has reached agent_end. No next prompt is dispatched until this immutable
+	// The complete native prompt Promise has settled. No next prompt is dispatched until this immutable
 	// per-Session copy is synced. Workspace and sibling Sessions remain concurrent.
 	dst, err := os.CreateTemp(directory, "capture-*.tmp")
 	if err != nil {

@@ -33,6 +33,7 @@ const NativeRoot = "/usr/local/lib/node_modules"
 
 type Manifest struct {
 	Version        int               `json:"version"`
+	NativeProtocol int               `json:"native_protocol"`
 	Platform       string            `json:"platform"`
 	EngineModule   string            `json:"engine_module"`
 	EngineRevision string            `json:"engine_revision"`
@@ -91,7 +92,7 @@ func Load(reader io.Reader, expected string) (Manifest, error) {
 	if err != nil || !ValidDigest(expected) || digest != expected {
 		return manifest, errors.New("runtime manifest does not match its release digest")
 	}
-	if manifest.Version != 2 || manifest.ReaderProtocol != projectfiles.ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
+	if manifest.Version != 3 || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != projectfiles.ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
 		return manifest, errors.New("incompatible Project runtime release")
 	}
 	if manifest.Platform != "linux/amd64" && manifest.Platform != "linux/arm64" {
@@ -241,7 +242,7 @@ func Generate(root string) (Manifest, error) {
 	if err := cleanRoot(root); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: 2, ReaderProtocol: projectfiles.ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
+	manifest := Manifest{Version: 3, NativeProtocol: NativeProtocol, ReaderProtocol: projectfiles.ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
 	packagePath, err := resolve(root, NativeRoot+"/"+PiPackage+"/package.json")
 	if err != nil {
 		return manifest, err
@@ -309,6 +310,9 @@ func Generate(root string) (Manifest, error) {
 			manifest.Platform = platform
 		}
 	}
+	if err = verifyNativeRPC(root); err != nil {
+		return manifest, err
+	}
 	manifest.NativeTree, err = nativeTree(root)
 	return manifest, err
 }
@@ -324,6 +328,9 @@ func Verify(root, expected string) error {
 	manifest, err := Load(opened, expected)
 	opened.Close()
 	if err != nil {
+		return err
+	}
+	if err = verifyNativeRPC(root); err != nil {
 		return err
 	}
 	for _, component := range Components {

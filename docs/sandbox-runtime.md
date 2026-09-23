@@ -52,7 +52,18 @@ retain durable command identities/unknown outcomes. Mutation helpers cannot
 perform list/read operations; the old per-read mutation path is removed. Preview
 ETags do not implement atomic conflict detection for saves.
 
-Native journal records and user-visible projections are separate. Completion
-creates a synced immutable native capture before the next prompt can replace its
-source. Host exports retain native history for inspection and recovery; rendered
+Native journal records and user-visible projections are separate. A native
+`agent_end` can precede retry or compaction and does not complete an application
+command. The pinned RPC extension reports a correlated `prompt_end` with the final
+completed/failed/canceled outcome after the whole native prompt settles. Only then
+does the Go guardian settle descendants and create a synced immutable capture,
+before the next prompt can replace its source. Host exports retain native history for inspection and recovery; rendered
 conversation history does not substitute for the native Session.
+
+
+Retry events and post-run compaction remain attached to the original command and
+turn. The guardian retains its busy reservation through that work; another prompt
+cannot enter during retry backoff. Stop during backoff or compaction settles as
+canceled without dispatching a canceled preflight prompt. The settlement event
+uses reserved journal capacity. Invalid, foreign or unapplied settlement events
+fail closed; there is no timeout or `get_state.isStreaming` inference of completion.

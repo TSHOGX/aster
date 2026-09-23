@@ -192,7 +192,14 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	require(t, os.WriteFile(filepath.Join(root, "users.yaml"), []byte("users:\n  - username: researcher\n    password_hash: "+hash+"\n    role: admin\n"), 0644))
 	models := `{"providers":{"gateway":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"project-service-token","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
 	require(t, os.WriteFile(filepath.Join(root, "content/pi/models.json"), []byte(models), 0644))
-	require(t, os.WriteFile(filepath.Join(root, "content/pi/settings.json"), []byte(`{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":false}}`), 0644))
+	settings := `{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":false}}`
+	if os.Getenv("PROJECT_RELEASE_RETRY_TEST") == "1" {
+		settings = `{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":false},"retry":{"enabled":true,"maxRetries":2,"baseDelayMs":3000}}`
+	}
+	if os.Getenv("PROJECT_RELEASE_COMPACTION_TEST") == "1" {
+		settings = `{"defaultProvider":"gateway","defaultModel":"local-model","compaction":{"enabled":true,"reserveTokens":256,"keepRecentTokens":128}}`
+	}
+	require(t, os.WriteFile(filepath.Join(root, "content/pi/settings.json"), []byte(settings), 0644))
 	require(t, os.WriteFile(filepath.Join(root, "assets/AGENTS.md"), []byte("Reviewed release qualification context."), 0644))
 	if os.Getenv("PROJECT_RELEASE_CHECK_CONTEXT") == "1" {
 		require(t, os.MkdirAll(filepath.Join(root, "assets/skills/qualification"), 0755))

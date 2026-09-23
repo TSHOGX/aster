@@ -12,10 +12,17 @@ import (
 func main() {
 	root := flag.String("root", "", "newly assembled template root")
 	output := flag.String("output", "", "exported manifest path")
+	patchNative := flag.Bool("patch-native", false, "install the pinned native settlement extension in a fresh build root")
 	flag.Parse()
 	if *root == "" || *output == "" || flag.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "--root and --output required")
 		os.Exit(2)
+	}
+	if *patchNative {
+		if err := runtimerelease.PatchNativeRPC(*root); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 	manifest, err := runtimerelease.Generate(*root)
 	if err != nil {

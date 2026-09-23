@@ -20,7 +20,7 @@ func criticalRecord(r Record) bool {
 		return false
 	}
 	switch event.Type {
-	case "response", "message_end", "agent_end", "tool_execution_end":
+	case "response", "message_end", "agent_end", "prompt_end", "tool_execution_end":
 		return true
 	}
 	return false
