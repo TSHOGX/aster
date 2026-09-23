@@ -19,6 +19,11 @@ incarnation; reconnect uses bounded replay and reports missing output. Read-only
 observers explicitly request available input ownership. Resizing fits the PTY;
 colors follow the application theme.
 
+Conversation history and Files remain available while compute is paused. The
+Files panel also works before a Project's first sandbox starts; uploads create
+storage without starting compute. Preview, Source, editing and file management
+have the same controls in both states. Browsing never issues a resume request.
+
 Files use a wide preview with a lazy directory tree on the right. Each directory
 has independent pagination and refresh; filtering covers loaded entries only.
 The active tree retains the root and at most sixteen open directories, one

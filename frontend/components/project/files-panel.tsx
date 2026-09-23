@@ -91,6 +91,7 @@ export function FilesPanel({
     () => openDirectories(savedDirectories),
     [savedDirectories],
   );
+  const filesAvailable = ["created", "active", "paused"].includes(project.state);
   const resources = useResources();
   const realtime = useRealtime();
   const reads = useRef(new AbortController());
@@ -294,10 +295,10 @@ export function FilesPanel({
         delete serial.current[path];
   }, [dirsKey]);
   useEffect(() => {
-    if (!visible || project.state !== "active") return;
+    if (!visible || !filesAvailable) return;
     for (const d of new Set(["", ...dirsKey.split("\n")]))
       if (!treeRef.current[d]) void load(d);
-  }, [visible, project.state, dirsKey, load]);
+  }, [visible, filesAvailable, dirsKey, load]);
   const validateSelected = useCallback(async () => {
     const path = selectedRef.current;
     if (!path) return true;
@@ -343,7 +344,7 @@ export function FilesPanel({
     }
   }, [resources, project.id, tr]);
   useEffect(() => {
-    if (!visible || project.state !== "active") return;
+    if (!visible || !filesAvailable) return;
     let live = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let healthTimer: ReturnType<typeof setTimeout> | undefined;
@@ -447,7 +448,7 @@ export function FilesPanel({
     load,
     validateSelected,
     visible,
-    project.state,
+    filesAvailable,
     project.id,
     resources,
     realtime,
@@ -455,7 +456,7 @@ export function FilesPanel({
   // A deep link reads only bounded ancestor pages; it never scans an entire
   // directory to locate a name. The selected file remains independently readable.
   useEffect(() => {
-    if (!selected || !visible || project.state !== "active") return;
+    if (!selected || !visible || !filesAvailable) return;
     let gone = false;
     const parts = selected.split("/");
     const parents: string[] = [];
@@ -483,7 +484,7 @@ export function FilesPanel({
     };
     // Layout preference writes do not create another reveal demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, visible, load, project.state]);
+  }, [selected, visible, load, filesAvailable]);
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -863,7 +864,7 @@ export function FilesPanel({
                 },
                 ...(editable && edit === null ? [{
                   label: tr("Edit text"),
-                  disabled: busy || project.state !== "active",
+                  disabled: busy || !filesAvailable,
                   action: editFile,
                 }] : []),
                 { label: tr("Close file"), action: () => void choose("") },
@@ -942,21 +943,11 @@ export function FilesPanel({
           });
         }}
       />
-      {project.state !== "active" ? (
+      {!filesAvailable ? (
         <div className="empty-state">
           <p>
             {tr("The workspace is")} {project.state}.
           </p>
-          <button
-            disabled={busy}
-            onClick={() =>
-              void act(async () => {
-                await command(`${projectURL(project.id)}/resume`);
-              })
-            }
-          >
-            {tr("Resume Project")}
-          </button>
         </div>
       ) : (
         <div className="file-columns">

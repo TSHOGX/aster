@@ -2,7 +2,7 @@ import { type Page } from "@playwright/test";
 import { ConversationFixture } from "./conversation-fixture";
 export async function workspaceFixture(
   page: Page,
-  options: { lostFirstReply?: boolean; many?: boolean } = {},
+  options: { lostFirstReply?: boolean; many?: boolean; projectState?: string } = {},
 ) {
   const views = new Map<string, ConversationFixture>();
   await page.addInitScript(() => {
@@ -88,7 +88,7 @@ export async function workspaceFixture(
     {
       id: "battery",
       title: "Battery research",
-      state: "active",
+      state: options.projectState ?? "active",
       revision: 1,
       activity_revision: 1,
     },
