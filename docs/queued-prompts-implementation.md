@@ -121,3 +121,7 @@ The composer now persists unresolved Hold/Release/Cancel/Steer/Stop request bodi
 ## Display position cleanup (2026-09-24)
 
 Conversation items and page cursors no longer carry the prompt enqueue sequence. Projected item order, seek tuples and repository merging use durable display position, block index and item ID. Prompt sequence remains in the queue scheduler and bounded turn index where it identifies the original intent; it is no longer duplicated in transcript items or storage. The projector no longer looks up prompt sequence for every item.
+
+## Queue visual qualification (2026-09-24)
+
+Playwright checks the three queue controls at 390 x 844 in dark, reduced-motion and forced-color mode, and again with Chinese browser locale in light mode. It verifies all buttons remain visible inside the queue without horizontal overflow. Captures were inspected for the two states. Existing browser tests cover the active single Stop slot, Enter enqueue, draft preservation, IME and Shift+Enter. A full screen-reader and soft-keyboard device pass is still outside this automated fixture.

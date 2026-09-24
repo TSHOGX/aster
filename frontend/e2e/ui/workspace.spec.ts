@@ -636,6 +636,83 @@ test("uncertain Steer keeps its request identity through reload and reports row 
   expect(requests[1]).toBe(requests[0]);
 });
 
+test("queue controls fit narrow and forced-color layouts", async ({ page }) => {
+  await workspaceFixture(page);
+  const fixture = new ConversationFixture();
+  const session = {
+    id: "analysis", project_id: "battery", title: "Compare cycle performance",
+    state: "running", revision: 2, control_revision: 2, deletion: 0,
+  };
+  await page.route("**/sessions/analysis/view/head", route => {
+    const head = fixture.reply({ session }, new URL(route.request().url())) as Record<string, unknown>;
+    head.active_run = { id: "run", prompt_id: "active", incarnation_id: "incarnation", owner: 1, state: "running" };
+    return route.fulfill({ json: head });
+  });
+  await page.route("**/sessions/analysis/queue?*", route => route.fulfill({ json: {
+    items: [{ id: "held", session_id: "analysis", request_id: "held", content: "Held guidance with a long explanation", state: "held", sequence: 2, prompt_revision: 1 }],
+    total_pending: 1, queue_revision: 2,
+  } }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce", forcedColors: "active" });
+  await page.goto("/?project=battery&session=analysis");
+  await page.locator(".prompt-queue summary").filter({ hasText: "Queued prompts" }).click();
+  const queue = page.locator(".prompt-queue").last();
+  const row = queue.locator(".prompt-queue-row");
+  await expect(row.locator("button")).toHaveCount(3);
+  const bounds = await queue.evaluate((element) => ({
+    scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+    buttons: [...element.querySelectorAll(".prompt-queue-row button")].map(button => {
+      const box = button.getBoundingClientRect(), outer = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, outerLeft: outer.left, outerRight: outer.right };
+    }),
+  }));
+  expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1);
+  for (const button of bounds.buttons) {
+    expect(button.left).toBeGreaterThanOrEqual(button.outerLeft);
+    expect(button.right).toBeLessThanOrEqual(button.outerRight);
+  }
+  await page.screenshot({ path: "/tmp/batterygpt-queue-mobile.png" });
+});
+
+test("localized queue controls remain visible on a narrow screen", async ({ browser }) => {
+  const context = await browser.newContext({ locale: "zh-CN", viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await workspaceFixture(page);
+    const fixture = new ConversationFixture();
+    const session = {
+      id: "analysis", project_id: "battery", title: "Compare cycle performance",
+      state: "running", revision: 2, control_revision: 2, deletion: 0,
+    };
+    await page.route("**/sessions/analysis/view/head", route => {
+      const head = fixture.reply({ session }, new URL(route.request().url())) as Record<string, unknown>;
+      head.active_run = { id: "run", prompt_id: "active", incarnation_id: "incarnation", owner: 1, state: "running" };
+      return route.fulfill({ json: head });
+    });
+    await page.route("**/sessions/analysis/queue?*", route => route.fulfill({ json: {
+      items: [{ id: "held", session_id: "analysis", request_id: "held", content: "Battery guidance", state: "held", sequence: 2, prompt_revision: 1 }],
+      total_pending: 1, queue_revision: 2,
+    } }));
+    await page.goto("/?project=battery&session=analysis");
+    await page.locator(".prompt-queue summary").filter({ hasText: "待处理提示词" }).click();
+    const row = page.locator(".prompt-queue-row");
+    await expect(row.getByRole("button", { name: /提交: Battery guidance/ })).toBeVisible();
+    await expect(row.getByRole("button", { name: /引导当前任务: Battery guidance/ })).toBeVisible();
+    await expect(row.getByRole("button", { name: /取消提示词: Battery guidance/ })).toBeVisible();
+    const clipped = await row.evaluate(element => {
+      const outer = element.closest(".prompt-queue")!.getBoundingClientRect();
+      return [...element.querySelectorAll("button")].some(button => {
+        const box = button.getBoundingClientRect();
+        return box.left < outer.left || box.right > outer.right;
+      });
+    });
+    expect(clipped).toBe(false);
+    await page.screenshot({ path: "/tmp/batterygpt-queue-zh-mobile.png" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("completed turn folds intermediate output, freezes elapsed time and provides answer actions", async ({
   page,
   context,
