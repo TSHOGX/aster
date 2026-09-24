@@ -53,3 +53,9 @@ The projector now accepts the durable `input_consumed` event, creates the source
 The focused projector test passes for old output → consumed Steer → subsequent output, including reload-style projection replay. Full pagination, delta, sharing/export, historical missing identities, and all timing clocks still need the broader P3/P5 qualification.
 
 Segment summaries now use the earliest durable `input_deliveries.consumed_at` as their worked-for start when available, falling back to the original prompt timestamp only for records without consumption evidence. This excludes queue and native-wait time from the displayed clock. The focused timing test verifies the persisted consumed timestamp is used.
+
+## P1/P2: lifecycle guard alignment (2026-09-24)
+
+Worker admission, Stop target selection, idle retirement, service attribution, gateway checks, and release dispatch now consult `execution_runs` alongside prompt policy. A draining release cannot create a new normal prompt command, while an already accepted Stop remains urgent. Service grants resolve the active run's prompt and drain when that prompt reaches a terminal state; a later prompt receives a fresh attribution. The product suite passes with these owner checks.
+
+The schema still retains legacy `turns.state` for terminal outcome and compatibility adapters, and several cleanup/display paths still reference it. Full removal requires a coordinated migration of the remaining release views, recovery handlers, schedules, shares, and deletion paths. G2/G3 are not complete.

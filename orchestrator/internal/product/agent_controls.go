@@ -63,7 +63,7 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 			return ErrConflict
 		}
 		var active string
-		if err = tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id=? AND state IN ('starting','running','stopping')`, session).Scan(&active); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT prompt_id FROM execution_runs WHERE session_id=? AND state IN ('starting','running','stopping','unknown') ORDER BY started_at LIMIT 1`, session).Scan(&active); err != nil {
 			return missing(err)
 		}
 		runID := active
@@ -96,6 +96,9 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 			}
 		} else {
 			if _, err = tx.ExecContext(ctx, `UPDATE turns SET state='held',updated_at=? WHERE session_id=? AND state='queued'`, s.timestamp(), session); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE execution_runs SET state='stopping' WHERE session_id=? AND prompt_id=? AND state IN ('starting','running','stopping','unknown')`, session, active); err != nil {
 				return err
 			}
 			if _, err = tx.ExecContext(ctx, `UPDATE turns SET state='stopping',updated_at=? WHERE id=?`, s.timestamp(), active); err != nil {

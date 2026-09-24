@@ -16,7 +16,7 @@ func (a *Agents) QuiesceIdle(ctx context.Context, project string, delay time.Dur
 	}
 	var ids []string
 	err := a.Store.write(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT i.id,i.session_id FROM agent_incarnations i JOIN sessions s ON s.id=i.session_id WHERE i.project_id=? AND i.state='running' AND s.deletion_intent=0 AND i.last_work_at<? AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.state IN ('queued','starting','running','stopping')) AND NOT EXISTS(SELECT 1 FROM agent_commands c WHERE c.incarnation_id=i.id AND c.state IN ('pending','sending','dispatching')) LIMIT 8`, project, sqlitex.FormatTime(a.Store.now().Add(-delay)))
+		rows, err := tx.QueryContext(ctx, `SELECT i.id,i.session_id FROM agent_incarnations i JOIN sessions s ON s.id=i.session_id WHERE i.project_id=? AND i.state='running' AND s.deletion_intent=0 AND i.last_work_at<? AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.state='queued') AND NOT EXISTS(SELECT 1 FROM execution_runs r WHERE r.session_id=s.id AND r.state IN ('starting','running','stopping','unknown')) AND NOT EXISTS(SELECT 1 FROM agent_commands c WHERE c.incarnation_id=i.id AND c.state IN ('pending','sending','dispatching')) LIMIT 8`, project, sqlitex.FormatTime(a.Store.now().Add(-delay)))
 		if err != nil {
 			return err
 		}
@@ -62,8 +62,8 @@ func (a *Agents) ReconcileControls(ctx context.Context, project string) error {
 	// attachment's readiness. SIGTERM retains journal/descendant cleanup; this
 	// transition alone does not assert that the turn or process has ended.
 	_, err := a.Store.exec(ctx, `UPDATE agent_incarnations SET state='stopping' WHERE project_id=? AND state='running' AND EXISTS (
-		SELECT 1 FROM turns t JOIN agent_commands c ON c.turn_id=t.id
-		WHERE t.session_id=agent_incarnations.session_id AND t.state='stopping'
+		SELECT 1 FROM execution_runs r JOIN agent_commands c ON c.turn_id=r.prompt_id
+		WHERE r.session_id=agent_incarnations.session_id AND r.state='stopping'
 		AND c.incarnation_id=agent_incarnations.id AND c.kind='abort' AND c.created_at<?
 	)`, project, sqlitex.FormatTime(a.Store.now().Add(-30*time.Second)))
 	if err != nil {

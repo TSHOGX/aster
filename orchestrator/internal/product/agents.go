@@ -95,6 +95,19 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		if projectState != "active" || sessionState == "blocked" || deletion != Live {
 			return ErrPending
 		}
+		var draining bool
+		if err := tx.QueryRowContext(ctx, `SELECT phase='draining' FROM application_release WHERE id=1`).Scan(&draining); err != nil {
+			return err
+		}
+		if draining {
+			var aborts int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_commands WHERE incarnation_id=? AND kind='abort' AND state='pending'`, i.ID).Scan(&aborts); err != nil {
+				return err
+			}
+			if aborts == 0 {
+				return ErrDraining
+			}
+		}
 		current, err := liveIncarnation(ctx, tx, i.SessionID)
 		if err != nil {
 			return err
@@ -114,7 +127,7 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 				return ErrPending
 			}
 			var active int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND (state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0))`, i.SessionID).Scan(&active); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns t WHERE t.session_id=? AND (t.state IN ('starting','running','stopping') OR (t.state='unknown' AND t.acknowledged=0)) OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.session_id=? AND r.state IN ('starting','running','stopping','unknown'))`, i.SessionID, i.SessionID).Scan(&active); err != nil {
 				return err
 			}
 			if active > 0 {
