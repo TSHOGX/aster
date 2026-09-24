@@ -257,8 +257,8 @@ func (s *Store) ConversationPage(ctx context.Context, scope Scope, session strin
 		if e != nil {
 			return out, e
 		}
-		where = ` AND (turn_sequence,position,block_index,id)` + op + `(?,?,?,?)`
-		args = append(args, at.Turn, at.Position, at.Block, at.ID)
+		where = ` AND (position,block_index,id)` + op + `(?,?,?)`
+		args = append(args, at.Position, at.Block, at.ID)
 	} else if selector.AroundTurn != "" || selector.AroundMessage != "" || selector.AroundItem != "" {
 		column, value := "turn_id", selector.AroundTurn
 		if selector.AroundMessage != "" {
@@ -270,17 +270,17 @@ func (s *Store) ConversationPage(ctx context.Context, scope Scope, session strin
 		var turn, position int64
 		var block int
 		var id string
-		if err = tx.QueryRowContext(ctx, `SELECT turn_sequence,position,block_index,id FROM conversation_items WHERE session_id=? AND `+column+`=? ORDER BY turn_sequence,position,block_index,id LIMIT 1`, session, value).Scan(&turn, &position, &block, &id); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT turn_sequence,position,block_index,id FROM conversation_items WHERE session_id=? AND `+column+`=? ORDER BY position,block_index,id LIMIT 1`, session, value).Scan(&turn, &position, &block, &id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) && out.Head.State == "catching_up" {
 				return out, ErrPending
 			}
 			return out, missing(err)
 		}
-		where = ` AND (turn_sequence,position,block_index,id)>=(?,?,?,?)`
-		args = append(args, turn, position, block, id)
+		where = ` AND (position,block_index,id)>=(?,?,?)`
+		args = append(args, position, block, id)
 		direction = "ASC"
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT data FROM conversation_items WHERE session_id=?`+where+` ORDER BY turn_sequence `+direction+`,position `+direction+`,block_index `+direction+`,id `+direction+` LIMIT 50`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT data FROM conversation_items WHERE session_id=?`+where+` ORDER BY position `+direction+`,block_index `+direction+`,id `+direction+` LIMIT 50`, args...)
 	if err != nil {
 		return out, err
 	}
@@ -336,7 +336,7 @@ func (s *Store) ConversationPage(ctx context.Context, scope Scope, session strin
 			return encodeViewToken(viewToken{Kind: "page", Session: session, Generation: out.Head.Generation, Turn: item.TurnSequence, Position: item.Position, Block: item.Block, ID: item.ID})
 		}
 		var earlier, later bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND (turn_sequence,position,block_index,id)<(?,?,?,?)),EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND (turn_sequence,position,block_index,id)>(?,?,?,?))`, session, first.TurnSequence, first.Position, first.Block, first.ID, session, last.TurnSequence, last.Position, last.Block, last.ID).Scan(&earlier, &later); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND (position,block_index,id)<(?,?,?)),EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND (position,block_index,id)>(?,?,?))`, session, first.Position, first.Block, first.ID, session, last.Position, last.Block, last.ID).Scan(&earlier, &later); err != nil {
 			return out, err
 		}
 		if earlier {

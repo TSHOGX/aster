@@ -283,7 +283,7 @@ func (d *displayReducer) consume(r displaySource) error {
 			segment = "segment/" + r.Turn
 			d.segments[r.Turn] = segment
 		}
-		return d.put(DisplayItem{ID: r.Turn + "/user", TurnID: r.Turn, SegmentID: segment, Position: 0, Kind: "user", Content: content, MessageID: r.Turn + "/user"}, "user/"+r.Turn)
+		return d.put(DisplayItem{ID: r.Turn + "/user", TurnID: r.Turn, SegmentID: segment, Position: -1, Kind: "user", Content: content, MessageID: r.Turn + "/user"}, "user/"+r.Turn)
 	}
 	if r.Kind != "native" {
 		return nil

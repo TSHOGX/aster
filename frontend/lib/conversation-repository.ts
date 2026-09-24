@@ -107,7 +107,6 @@ export type ConversationState = {
 const compareInt = (a: string, b: string) =>
   BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0;
 export const compareItems = (a: DisplayItem, b: DisplayItem) =>
-  compareInt(a.turn_sequence, b.turn_sequence) ||
   compareInt(a.position, b.position) ||
   a.block - b.block ||
   a.id.localeCompare(b.id);

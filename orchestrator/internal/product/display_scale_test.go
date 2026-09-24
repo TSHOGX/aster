@@ -60,7 +60,7 @@ func TestDisplayReadScale(t *testing.T) {
 			must(t, s.reader.QueryRow(`PRAGMA page_count`).Scan(&pageCount))
 			must(t, s.reader.QueryRow(`PRAGMA page_size`).Scan(&pageSize))
 			var plans []string
-			planRows, e := s.reader.Query(`EXPLAIN QUERY PLAN SELECT data FROM conversation_items WHERE session_id=? ORDER BY turn_sequence DESC,position DESC,block_index DESC,id DESC LIMIT 50`, i.SessionID)
+			planRows, e := s.reader.Query(`EXPLAIN QUERY PLAN SELECT data FROM conversation_items WHERE session_id=? ORDER BY position DESC,block_index DESC,id DESC LIMIT 50`, i.SessionID)
 			must(t, e)
 			for planRows.Next() {
 				var id, parent, unused int

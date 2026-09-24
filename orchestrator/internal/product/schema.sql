@@ -603,7 +603,7 @@ CREATE INDEX conversation_changes_detail ON conversation_changes(session_id,item
 
 CREATE INDEX conversation_items_message ON conversation_items(session_id,message_id);
 
-CREATE INDEX conversation_items_order ON conversation_items(session_id,turn_sequence,position,block_index,id);
+CREATE INDEX conversation_items_order ON conversation_items(session_id,position,block_index,id);
 
 CREATE INDEX conversation_items_source ON conversation_items(session_id,source_key);
 

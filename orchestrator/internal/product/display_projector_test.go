@@ -10,7 +10,7 @@ import (
 
 func displayItems(t *testing.T, s *Store, session string) []DisplayItem {
 	t.Helper()
-	rows, err := s.reader.Query(`SELECT data FROM conversation_items WHERE session_id=? ORDER BY turn_sequence,position,block_index,id`, session)
+	rows, err := s.reader.Query(`SELECT data FROM conversation_items WHERE session_id=? ORDER BY position,block_index,id`, session)
 	must(t, err)
 	defer rows.Close()
 	out := []DisplayItem{}

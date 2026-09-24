@@ -56,6 +56,8 @@ The focused projector test passes for old output → consumed Steer → subseque
 
 The segment reducer now closes the old run prompt's message group using the normal command's prompt ID. The consumed Steer anchor and following assistant response share one segment ID, while earlier output remains in the previous segment. The focused test asserts this membership as well as source chronology.
 
+Conversation page seek tuples, SQL ordering/indexes, projector test ordering, and the frontend item comparator now use durable display position before block and ID. Enqueue sequence remains metadata for queue scheduling and navigation, not the transcript sort key. Existing repository and product pagination tests pass under the revised ordering.
+
 Segment summaries now use the earliest durable `input_deliveries.consumed_at` as their worked-for start when available, falling back to the original prompt timestamp only for records without consumption evidence. This excludes queue and native-wait time from the displayed clock. The focused timing test verifies the persisted consumed timestamp is used.
 
 ## P1/P2: lifecycle guard alignment (2026-09-24)
