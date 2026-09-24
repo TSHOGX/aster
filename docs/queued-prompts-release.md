@@ -41,7 +41,9 @@ version-1 fingerprint and writes a separate version-2 database; it is not an
 application startup migration. It copies shared authority rows and their
 identities, maps completed normal prompts to explicit historical inputs with
 unknown native-consumption time, maps the applied old Steer to an unknown
-delivery/run, rebuilds derived conversation state and search, and validates
+delivery/run, retargets paused Project profiles to a supplied protocol-3
+runtime digest while retaining their workspace/runtime volume IDs and clearing
+the old sandbox placement, rebuilds derived conversation state and search, and validates
 foreign keys and the candidate fingerprint before publishing its output path.
 No ACK-only input is relabeled consumed. Unknown or contradictory source
 shapes fail closed. The source snapshot is opened read-only.
@@ -51,7 +53,7 @@ From this checkout, the isolated format commands are:
 ```sh
 go -C orchestrator run ./cmd/format-convert --candidate
 go -C orchestrator run ./cmd/format-convert --source /path/to/source-snapshot.db --inspect
-go -C orchestrator run ./cmd/format-convert --source /path/to/source-snapshot.db --destination /path/to/staging.db
+go -C orchestrator run ./cmd/format-convert --source /path/to/source-snapshot.db --destination /path/to/staging.db --target-runtime sha256:efa87b576da80bb011f0897bcab176b028a2e64d16acaf3b314d43070245ded3
 ```
 
 The source must be a consistent SQLite backup with no uncheckpointed WAL. The
@@ -72,14 +74,22 @@ the complete installation.
    pending controls, captures, service slots and release blockers. Do not
    infer consumption from `turns.state=completed` or a command ACK.
 3. Use the existing quiescent drain, not owner handoff, for a schema/runtime
-   change. Wait for durable and process blockers to settle. Do not acknowledge
-   an unknown delivery merely to make readiness pass.
+   change. Wait for durable and process blockers to settle. Pause every retained
+   Project; the converter refuses active Projects. Do not acknowledge an unknown
+   delivery merely to make readiness pass.
 4. Stop the incumbent owner and producers. Make a consistent SQLite backup
    with its WAL state and retain the corresponding guest journal, captures,
    workspace volumes, engine state and immutable runtime manifest. Hash the
    copies and keep the source untouched. Conversion writes only a separate
    staging database and artifacts.
-5. Run `format-convert --source SNAPSHOT.db --destination STAGING.db` against a
+5. Record each paused source sandbox identity and its two volume identities.
+   Before activation, retire each old protocol-2 sandbox through the engine
+   while keeping both volumes intact; verify the old sandbox is absent. The
+   converted copy clears that placement binding so resume creates a new
+   sandbox from the protocol-3 template. Do not mount the same retained volume
+   into two live sandboxes. This engine action belongs to the separately
+   authorized release, not to the offline converter or this development task.
+6. Run `format-convert --source SNAPSHOT.db --destination STAGING.db --target-runtime CANDIDATE_DIGEST` against a
    staging snapshot of the **actual** incumbent fingerprint. The destination
    must not exist. Check exact row/identity
    accounting, all foreign keys, unique live-run and delivery-claim indexes,
@@ -87,11 +97,11 @@ the complete installation.
    and deterministic projection rebuild. The tool verifies the candidate
    Store's compiled schema fingerprint and publishes the output only after
    projection reaches ready. Reject any unexplained data loss.
-6. Exercise the candidate against that converted staging copy and the pinned
+7. Exercise the candidate against that converted staging copy and the pinned
    runtime with controlled model streams, Stop/Steer settlement, gateway and
    browser reconnection. Record latency, bounded queue/page work and the
    acceptance results in [queued-prompts-acceptance.md](./queued-prompts-acceptance.md).
-7. Only after those checks and separate deployment authorization, use the
+8. Only after those checks and separate deployment authorization, use the
    repository's `drain-activate`/selected-executable procedure. Preserve the
    pre-conversion backup; there is no old-executable rollback into the new
    database. A failed activation remains fenced for repair or restoration of
@@ -103,11 +113,15 @@ Its output retained 4 Projects, 4 Sessions, 11 prompts, 39 messages, 11 commands
 one unknown delivery and two ready retained conversation projections. The
 remaining two Sessions are retired. Foreign keys and SQLite integrity passed;
 two independent converted copies produced identical item/position/data hashes.
+The paused retained Project's staged profile was retargeted to the candidate
+manifest, its workspace/runtime volumes remained, and its old sandbox binding
+was cleared; a candidate Store reopened and read that profile successfully.
 No source message text or credentials were exported to this repository.
 
 Current state: the format transition is qualified on a staging copy and the
 new runtime template passed isolated native, release, fault, real-browser and
 combined workload suites. The final executable/configuration identity and
 the remaining exact-delivery crash/extension matrix are not yet qualified.
-The old Steer remains explicitly unknown. Activation remains closed. No
+The old Steer remains explicitly unknown. Engine retirement of the actual old
+paused sandbox has not been performed. Activation remains closed. No
 live-data reset or deployment is implied.
