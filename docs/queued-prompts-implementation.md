@@ -30,6 +30,8 @@ The product store now has fresh-schema `execution_runs`, `input_deliveries`, and
 
 The adapter now also emits `inputs_reconciled` after the complete Session prompt Promise settles and it clears remaining native queues. The host reducer requires a complete per-run disposition: every unresolved delivery must be consumed or listed as removed. Stop and Steer commands carry an exact run ID; both runner and native adapter reject a stale target. The runtime patch uses request-local async context and a WeakMap, so overlapping command preflights cannot swap tokens. The pinned JavaScript output is syntax-checked when Node is available.
 
+The reconciled event now includes the native occurrence timestamp and monotonic run elapsed milliseconds. The store persists the elapsed evidence on the run. This separates execution duration from each input segment's consumed-at clock, though full clock rendering and recovery tests remain open.
+
 The current implementation still has an ACK-created user message for ordinary prompts, because the existing conversation projector and its tests assume it. That violates the final consumed-input rule and must be removed with the coordinated P3 projection change. The runtime test exercises full Session methods, while the production RPC patch itself still needs a complete stdin/stdout integration fixture with extension, retry and crash cases. `turns.state` guards, the full receipt HTTP DTOs, source-local mutations, complete frontend integration, and release transition are also unfinished. G1–G7 remain open.
 
 ## P4: queue and composer behavior (2026-09-24)

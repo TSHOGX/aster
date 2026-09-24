@@ -94,7 +94,7 @@ func TestInputsReconciledRestoresUnconsumedDeliveryToHeld(t *testing.T) {
 	must(t, err)
 	var token string
 	must(t, s.db.QueryRow(`SELECT input_token FROM input_deliveries WHERE command_id=?`, steer.CommandID).Scan(&token))
-	_, err = s.IngestAgent(ctx, i, record(i, prompt, 4, "native", fmt.Sprintf(`{"type":"inputs_reconciled","run_id":%q,"removed_input_tokens":[%q],"complete":true}`, prompt.CommandID, token)))
+	_, err = s.IngestAgent(ctx, i, record(i, prompt, 4, "native", fmt.Sprintf(`{"type":"inputs_reconciled","run_id":%q,"removed_input_tokens":[%q],"complete":true,"occurred_at":"2026-09-24T00:00:10Z","run_elapsed_ms":10000}`, prompt.CommandID, token)))
 	must(t, err)
 	var state string
 	must(t, s.db.QueryRow(`SELECT state FROM input_deliveries WHERE input_token=?`, token).Scan(&state))
@@ -109,6 +109,11 @@ func TestInputsReconciledRestoresUnconsumedDeliveryToHeld(t *testing.T) {
 	must(t, s.db.QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='user'`, source.ID).Scan(&messages))
 	if messages != 0 {
 		t.Fatal("removed input was projected", messages)
+	}
+	var elapsed int64
+	must(t, s.db.QueryRow(`SELECT elapsed_ms FROM execution_runs WHERE id=?`, prompt.CommandID).Scan(&elapsed))
+	if elapsed != 10000 {
+		t.Fatal("runtime elapsed evidence was lost", elapsed)
 	}
 }
 

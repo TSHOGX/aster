@@ -319,16 +319,18 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			var removed []string
 			var complete bool
 			var raw struct {
-				Type     string   `json:"type"`
-				RunID    string   `json:"run_id"`
-				Removed  []string `json:"removed_input_tokens"`
-				Complete bool     `json:"complete"`
+				Type         string   `json:"type"`
+				RunID        string   `json:"run_id"`
+				Removed      []string `json:"removed_input_tokens"`
+				Complete     bool     `json:"complete"`
+				OccurredAt   string   `json:"occurred_at"`
+				RunElapsedMS int64    `json:"run_elapsed_ms"`
 			}
 			if err := json.Unmarshal(f.Payload, &raw); err != nil {
 				return err
 			}
 			removed, complete = raw.Removed, raw.Complete
-			if !complete || raw.RunID != f.CommandID {
+			if !complete || raw.RunID != f.CommandID || raw.OccurredAt == "" || raw.RunElapsedMS < 0 {
 				return ErrInvalid
 			}
 			for _, token := range removed {
@@ -345,6 +347,9 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			}
 			if unresolved != 0 {
 				return ErrConflict
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE execution_runs SET elapsed_ms=? WHERE id=?`, raw.RunElapsedMS, raw.RunID); err != nil {
+				return err
 			}
 			return nil
 		}

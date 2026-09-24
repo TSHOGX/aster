@@ -14,7 +14,7 @@ import (
 const NativeProtocol = 2
 const NativeRPCPath = NativeRoot + "/" + PiPackage + "/dist/modes/rpc/rpc-mode.js"
 const nativeRPCOriginal = "sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7"
-const nativeRPCPatched = "sha256:cf4272cca1e7dc6adb1f7996d012cd875c537498b11b499c0dbcc0c62436032c"
+const nativeRPCPatched = "sha256:ed1ca03f745037ace8323eac3f2fdfa8f93b31697f800a724f5c7a04c7f2d858"
 
 const identityHooks = `    let session = runtimeHost.session;
     let activePrompt;
@@ -61,11 +61,12 @@ const settledPrompt = `            case "prompt": {
                 const operation = { id, outcome: "completed", abortRequested: false, inputTokens: new Set() };
                 activePrompt = operation;
                 if (command.input_token) operation.inputTokens.add(command.input_token);
+                const started = process.hrtime.bigint();
                 let preflightSucceeded = false;
                 const canceledBeforeDispatch = new Error("Prompt canceled before dispatch");
                 const finish = (outcome, failure) => {
                     session.clearQueue();
-                    output({ type: "inputs_reconciled", run_id: operation.id, removed_input_tokens: [...operation.inputTokens], complete: true });
+                    output({ type: "inputs_reconciled", run_id: operation.id, removed_input_tokens: [...operation.inputTokens], complete: true, occurred_at: new Date().toISOString(), run_elapsed_ms: Number((process.hrtime.bigint() - started) / 1000000n) });
                     if (activePrompt === operation) activePrompt = undefined;
                     output({ type: "prompt_end", id, outcome, ...(failure ? { error: String(failure).slice(0, 1024) } : {}) });
                 };
