@@ -12,7 +12,7 @@ export type TimelineSegment =
 /** Collapse only adjacent activity in the same turn; prose is a hard boundary. */
 export function groupTimeline(
   items: readonly TimelineItem[],
-  activeTurns: ReadonlySet<string>,
+  activeRuns: ReadonlySet<string>,
 ): TimelineSegment[] {
   const segments: TimelineSegment[] = [];
   for (const item of items) {
@@ -39,7 +39,7 @@ export function groupTimeline(
     if (segment.kind !== "activity") continue;
     segment.active = segment.items.filter(
       (item) =>
-        activeTurns.has(item.turn_id) &&
+        !!item.run_id && activeRuns.has(item.run_id) &&
         ((item.kind === "tool" &&
           ["pending", "running"].includes(item.state || "")) ||
           // Native thinking blocks remain 'streaming' while text in the same

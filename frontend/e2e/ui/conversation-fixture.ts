@@ -77,9 +77,14 @@ export class ConversationFixture {
       this.revision = revision;
     }
     for (const item of items) this.rows.set(item.id, item);
+    const activeTurn = s.turns?.find(t => ["starting", "running", "stopping", "unknown"].includes(t.state));
     const head: ConversationHead = {
       session: s.session,
       turns: s.turns || [],
+      active_run: activeTurn
+        ? { id: activeTurn.id, prompt_id: activeTurn.id,
+            incarnation_id: "fixture-incarnation", owner: 1, state: "running" }
+        : undefined,
       control_revision: String(s.session.control_revision || 1),
       content_revision: String(revision),
       index_revision: String(revision),

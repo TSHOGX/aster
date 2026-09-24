@@ -10,7 +10,7 @@ const item = (
   kind: string,
   state = "completed",
   turn = "t",
-): TimelineItem => ({ id, kind, state, turn_id: turn, cursor: 1 });
+): TimelineItem => ({ id, kind, state, turn_id: turn, run_id: "run", cursor: 1 });
 it("groups adjacent tools and thinking, never across prose or turns", () => {
   const rows = groupTimeline(
     [
@@ -32,7 +32,7 @@ it("groups adjacent tools and thinking, never across prose or turns", () => {
 it("keeps the group identity when streaming completes or another tool arrives", () => {
   const start = groupTimeline(
     [item("a", "thinking", "streaming")],
-    new Set(["t"]),
+    new Set(["run"]),
   );
   const end = groupTimeline(
     [item("a", "thinking"), item("b", "tool")],
@@ -46,7 +46,7 @@ it("does not animate old thinking when the same native message streams prose, or
   expect(
     groupTimeline(
       [item("a", "thinking", "streaming"), item("b", "assistant", "streaming")],
-      new Set(["t"]),
+      new Set(["run"]),
     )[0],
   ).toMatchObject({ live: undefined });
   expect(
@@ -84,11 +84,21 @@ it("keeps every pending and running call live, including calls before prose", ()
     item("c", "tool"),
     item("d", "assistant"),
   ];
-  expect(groupTimeline(rows, new Set(["t"]))[0]).toMatchObject({
+  expect(groupTimeline(rows, new Set(["run"]))[0]).toMatchObject({
     active: [{ id: "a" }, { id: "b" }],
   });
   expect(groupTimeline(rows, new Set())[0]).toMatchObject({
     active: [],
+    live: undefined,
+  });
+});
+
+it("keeps a steered segment's tool active under the original run", () => {
+  const tool = item("steered-tool", "tool", "running", "steer-source");
+  expect(groupTimeline([tool], new Set(["run"]))[0]).toMatchObject({
+    live: { id: "steered-tool" },
+  });
+  expect(groupTimeline([tool], new Set(["another-run"]))[0]).toMatchObject({
     live: undefined,
   });
 });

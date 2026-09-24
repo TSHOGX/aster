@@ -532,19 +532,15 @@ export function SessionPanel({
     void Promise.resolve().then(() => loadQueue());
   }, [loadQueue, view.head?.session.control_revision]);
   useEffect(() => {
-    if (!view.head?.active_run && !view.head?.turns.some((turn) => ["starting", "running", "stopping"].includes(turn.state)))
+    if (!view.head?.active_run)
       void Promise.resolve().then(() => setStopPending(false));
-  }, [view.head?.turns, view.head?.active_run]);
+  }, [view.head?.active_run]);
   const timeline: TimelineItem[] = view.items.map((item, index) => ({
     ...item,
     cursor: index,
     order: item.block,
   }));
-  const activeTurns = new Set(
-    view.head?.turns
-      .filter((t) => ["starting", "running", "stopping"].includes(t.state))
-      .map((t) => t.id),
-  );
+  const activeRuns = new Set(view.head?.active_run ? [view.head.active_run.id] : []);
   const displayTurns = [...(view.head?.turns || [])];
   const turns = conversationTurns(timeline, view.summaries || [], displayTurns);
   const navigationTurns: TurnIndexItem[] = turns
@@ -774,9 +770,7 @@ export function SessionPanel({
       setError(e instanceof Error ? e.message : tr("The action failed."));
     }
   };
-  const active = !!view.head?.active_run || view.head?.turns.some((turn) =>
-    ["starting", "running", "stopping"].includes(turn.state),
-  );
+  const active = !!view.head?.active_run;
   const queue = queuePage?.items || [];
   const deliveryBusy = (turn: Turn) => ["accepted", "dispatching", "native_queued", "unknown", "consumed"].includes(turn.delivery_state || "");
   return (
@@ -994,7 +988,7 @@ export function SessionPanel({
                 key={turn.id}
                 turn={turn}
                 files={workspaceFiles}
-                activeTurns={activeTurns}
+                activeRuns={activeRuns}
                 loadMessage={(id) => repository.messageText(id)}
                 loadDetail={(item) =>
                   repository.detailText(item.id, item.detail_version!)

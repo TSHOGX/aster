@@ -41,7 +41,7 @@ export function TurnClock({
 function Transcript({
   items,
   files,
-  activeTurns,
+  activeRuns,
   loadMessage,
   loadDetail,
   targetItem,
@@ -49,7 +49,7 @@ function Transcript({
 }: {
   items: TimelineItem[];
   files: readonly string[];
-  activeTurns: ReadonlySet<string>;
+  activeRuns: ReadonlySet<string>;
   loadMessage: (id: string) => Promise<string>;
   loadDetail: (item: TimelineItem) => Promise<string>;
   targetItem?: string;
@@ -84,7 +84,7 @@ function Transcript({
           {downloadError}
         </p>
       )}
-      {groupTimeline(items, activeTurns).map((segment) => {
+      {groupTimeline(items, activeRuns).map((segment) => {
         if (segment.kind === "activity")
           return (
             <ActivityGroup
@@ -123,7 +123,7 @@ function Transcript({
 export function TurnView({
   turn,
   files,
-  activeTurns,
+  activeRuns,
   loadMessage,
   loadDetail,
   actor,
@@ -135,7 +135,7 @@ export function TurnView({
 }: {
   turn: ConversationTurn;
   files: readonly string[];
-  activeTurns: ReadonlySet<string>;
+  activeRuns: ReadonlySet<string>;
   loadMessage: (id: string) => Promise<string>;
   loadDetail: (item: TimelineItem) => Promise<string>;
   actor: string;
@@ -213,7 +213,7 @@ export function TurnView({
       <Transcript
         items={users}
         files={files}
-        activeTurns={activeTurns}
+        activeRuns={activeRuns}
         loadMessage={loadMessage}
         loadDetail={loadDetail}
       />
@@ -263,7 +263,7 @@ export function TurnView({
           <Transcript
             items={completed ? intermediate : body}
             files={files}
-            activeTurns={activeTurns}
+            activeRuns={activeRuns}
             loadMessage={loadMessage}
             loadDetail={loadDetail}
             targetItem={targetItem}
@@ -277,7 +277,7 @@ export function TurnView({
             <Transcript
               items={final}
               files={files}
-              activeTurns={activeTurns}
+              activeRuns={activeRuns}
               loadMessage={loadMessage}
               loadDetail={loadDetail}
             />
