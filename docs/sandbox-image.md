@@ -34,7 +34,7 @@ Native dependency symlinks must resolve inside that hashed tree. All ELF runtime
 components must share a supported Linux architecture. The manifest records
 engine/native/protocol pins, platform and required workspace/runtime paths.
 Manifest version 3 requires agent protocol 2 (bounded flow/pressure telemetry),
-reader protocol 2 with per-request chunk credits, and native input identity/settlement protocol 2.
+reader protocol 2 with per-request chunk credits, and native input identity/settlement protocol 3.
 A missing capability or an older manifest is rejected. Reader changes require
 a newly assembled immutable template, not replacement of running guest binaries.
 

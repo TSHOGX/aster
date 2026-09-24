@@ -1,11 +1,12 @@
 # Product database
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-The current fresh lineage has schema version 1 and an exact compiled DDL
+The current fresh lineage has schema version 2 and an exact compiled DDL
 fingerprint. `product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
-version and fingerprint before a writer opens. There are no migration files,
-historical-schema fingerprints or data backfills.
+version and fingerprint before a writer opens. Application startup has no
+migration chain or data backfill. The exact-source queued-prompts offline
+converter is separate from the Store and operates only on a quiescent copy.
 
 Application startup validates pending activation against the measured executable
 through a read-only connection under the same lock. Only the selected replacement
@@ -15,8 +16,12 @@ Credentials are an independently managed atomic YAML registry, not a second
 product database.
 
 Projects, saved profiles, owned resources and lifecycle operations describe
-parent authority. Sessions, turns, messages, commands, incarnations and native
-captures describe Agent work. Terminals and their incarnations describe retained
+parent authority. Sessions and prompt rows own immutable input and queue policy;
+`execution_runs` owns native execution status; `input_deliveries` owns exact
+acceptance/consumption/removal evidence; `control_receipts` owns idempotent
+admission results. Messages, commands, incarnations and native captures retain
+their separate evidence. Derived conversation segments group consumed input and
+following output without changing the native run. Terminals and their incarnations describe retained
 PTYs. Activity rows account for admission and cleanup blockers. Events and bounded
 projections drive browser recovery. Files operations preserve intent and uncertain
 outcomes. Schedules/runs, reader grants, shares/files, notifications, auth sessions
@@ -25,7 +30,8 @@ and immutable content publications complete the product state.
 Transactions serialize durable intent before remote side effects. Original IDs,
 owner fences, revisions and postconditions govern settlement. A result from a
 superseded owner or placement cannot update the active incarnation. Separate
-Session control revisions avoid making Stop/Steer stale on every token.
+Session control revisions are refresh markers. Prompt mutations compare a
+prompt-local revision; Steer/Stop compare the exact run/incarnation/owner fence.
 
 The database is not the engine control plane and does not store an alternate
 copy of its internals. It saves public engine identities needed to observe and
@@ -43,7 +49,9 @@ current ingestion transactions, never by a historical backfill.
 
 For a current installation, a coordinated database/volume backup must include
 all retained application artifacts. A deliberately reset installation starts
-fresh; it never imports a retired database or restores legacy state backups.
+fresh. The queued-prompts format change instead has a separately qualified
+offline conversion path documented in [queued-prompts-release.md](queued-prompts-release.md);
+neither path runs automatically when a Store opens.
 
 The background display projector advances bounded session batches and serves the
 versioned view API used by the browser. Raw records are no longer reconstructed

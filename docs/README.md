@@ -11,6 +11,8 @@
 - [Database](database.md): the single product writer and durable state.
 - [Security](security.md): trust domains, authentication and public shares.
 - [Frontend](frontend.md): workbench, bounds, previews and localization.
+- [Queued prompts](queued-prompts-implementation.md): staged prompt/run/delivery refactor.
+- [Queued-prompts acceptance](queued-prompts-acceptance.md) and [release preparation](queued-prompts-release.md): evidence and format gates.
 - [Interaction architecture](performance.md): implementation progress and performance diagnostics.
 - [Notifications](notifications.md): outcome and operator notifications.
 - [Image build](sandbox-image.md): immutable packaging and release verification.

@@ -10,18 +10,21 @@ deletion. Durable operations preserve original keys and revision fences across
 retries. A Project is active only after binding observation, host/resolver
 projection and runtime-release verification have succeeded.
 
-An Agent Session is a conversation with a durable ordered turn queue. Its logical
-identity survives worker and placement changes. Each runner incarnation has an
-owner fence, command journal and native capture lineage. Held turns require an
-explicit continue action. Separate control revisions let Stop/Steer remain valid
-while token events advance the display projection.
+An Agent Session owns ordered prompt intents, native execution runs and exact
+input-delivery evidence. Its logical identity survives worker and placement
+changes. Each runner incarnation has an owner fence, command journal and native
+capture lineage. Held prompts require Release for ordinary dispatch, but can
+be explicitly Steered into an eligible run. Prompt-local revisions govern row
+mutations; Stop/Steer carry the exact run/incarnation/owner fence. Session
+control revision signals a refresh while token events advance the display.
 
 A Terminal is a retained PTY resource with its own incarnation, dimensions and
 observed exit status. Browser sockets are observers. One observer holds input;
 read-only observers can watch. Detach changes no execution intent. Reopening an
 exited Terminal creates a new incarnation and resets the renderer.
 
-Admission accounts for real work: starting/running turns, terminal processes,
+Admission accounts for real work: pending released prompts, live execution runs,
+unresolved deliveries, terminal processes,
 workspace mutations, captures, recovery and cleanup. An idle Project pauses only
 when those blockers have settled and its idle deadline expires. Read-only
 inventory and browser watchers do not extend the deadline. Idle Agent slots can

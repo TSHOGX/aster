@@ -14,8 +14,9 @@ Resource paths below use stored Project and child identities.
 | `…/resume`, `…/pause`, `…/restart`, `…/blockers` | Project lifecycle and admission state |
 | `…/sessions` and `…/sessions/{session}` | List/create/inspect/rename/retire Agent Sessions |
 | `…/sessions/{session}/turns` | Ordered turns and prompt admission |
-| `…/sessions/{session}/control` | Continue, interrupt, steer or retry recovery |
-| `…/sessions/{session}/turns/{turn}/control` | Control held/queued work |
+| `…/sessions/{session}/control` and `/controls/{request}` | Admit exact-run Steer/Stop and read durable receipts/current evidence |
+| `…/sessions/{session}/turns/{turn}/control` | Hold, release or cancel an unclaimed prompt |
+| `…/sessions/{session}/queue` | Bounded FIFO prompt page and client projection handoff |
 | `…/sessions/{session}/view/*` | Bounded durable conversation views, changes, details and control head |
 | `…/terminals` and `…/terminals/{terminal}` | Retained PTY metadata and retirement |
 | `…/terminals/{terminal}/start`, `/stop`, `/attach` | Start, stop and WebSocket observation |
@@ -36,15 +37,23 @@ For exact methods and payloads, see [routes.go](../orchestrator/internal/product
 Create Projects/Sessions with an explicit `id` and `title`. Admit a prompt with
 `request_id`, `content` and optional `held`. Repeating the same admitted identity
 and payload returns its prior intent; a changed payload conflicts. Rename/control
-operations require the relevant current revision. Agent streaming controls use
-`control_revision`, separate from projection revision. Deletion and Project
+operations require the relevant current revision. Hold/Release/Cancel use
+`expected_prompt_revision` and `request_id`; Steer/Stop use an exact
+`target_run_id`, `target_incarnation_id`, `target_owner` and `request_id`.
+Steer also supplies `source` and `expected_prompt_revision`. The Session
+`control_revision` is a refresh marker, not a queue mutation guard. Deletion and Project
 lifecycle actions read `revision` from the query. Forced restart explicitly adds
 `force=1`.
 
-A `202` means pending/accepted work, not completion. Inspect the resource or its
-operation until evidence settles. Terminal start can initially return `202`;
+A Steer/Stop `202` contains a durable receipt, not proof of native consumption
+or run completion. `GET …/controls/{request}` returns that immutable receipt
+with current command, delivery and run evidence. A not-admitted control has an
+HTTP error and `state: not_admitted`, never a successful pending result. Queue
+reads accept optional `projection_frontier`, the client's last applied
+conversation source frontier; consumed rows remain as synchronization rows
+until that client's projection catches up. Terminal start can initially return `202`;
 observe its state before attaching. A disconnected response to a mutation is an
-unknown outcome and must not be treated as permission to repeat an effect.
+unknown outcome and must be retried only with the original request identity.
 
 File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
 Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase

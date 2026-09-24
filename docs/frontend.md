@@ -223,12 +223,21 @@ Partial results update the same open panel; completion stops only that call's
 animation, without changing its identity/order. Calls left unfinished when a
 turn stops show an unknown outcome instead of continuing to animate.
 
-Each turn displays an elapsed-time header immediately on submission. Owner
-view pages include historic `turn_summaries` independently of the bounded live
-turn-control page, so duration and completion survive navigation/reload. Timers
-use creation time (including queued wait), freeze at recorded completion, and
-collapse intermediate thinking/tools/assistant output only after confirmed
-successful completion. The final assistant message remains visible with copy,
+Pending prompts live in the bounded FIFO queue and show no transcript bubble or
+Worked-for clock. The composer has one Send/Stop primary slot selected by the
+active execution run; Enter remains an ordinary queue submission while active.
+Held and released rows expose Hold/Release, Steer and Cancel Prompt in stable
+slots. A native-accepted Steer waits in the queue until correlated consumption;
+a consumed input remains as a synchronization row until the client applies its
+transcript anchor. Stop never submits or clears a draft.
+
+Visible response segments use their first correlated native consumption as the
+Worked-for start. Queue and native-injection wait do not count. Terminal segment
+duration comes from native run-relative elapsed evidence; missing historical
+start evidence has no precise duration. Owner view pages include historic
+`turn_summaries` independently of the bounded control head, so segment outcome
+survives navigation/reload. Intermediate thinking/tools/assistant output folds
+only after confirmed successful segment completion. The final assistant message remains visible with copy,
 browser-local like/dislike toggles and the completion time. Failed/interrupted
 or unknown work remains inspectable, and message deep links reveal folded
 history. There is no generic working notice at the bottom of the transcript.
