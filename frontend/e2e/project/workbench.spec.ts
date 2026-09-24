@@ -398,10 +398,18 @@ test("held queue prompt Steers into the active native run", async ({ page, conte
     const receipt = await admitted;
     expect(receipt.status()).toBe(202);
     expect((await receipt.json()).delivery_id).toBeTruthy();
+    await page.reload();
+    const secondTab = await context.newPage();
+    await secondTab.goto(`/?project=${project}&session=${sessionID}`);
     const anchor = panel.locator(".chat-message.user").filter({ hasText: "second question" });
+    const secondPanel = secondTab.locator(".agent-panel");
+    const secondAnchor = secondPanel.locator(".chat-message.user").filter({ hasText: "second question" });
     await expect(anchor).toHaveCount(1, { timeout: 30000 });
+    await expect(secondAnchor).toHaveCount(1, { timeout: 30000 });
     await expect(row).toHaveCount(0, { timeout: 30000 });
+    await expect(secondPanel.locator(".prompt-queue-row").filter({ hasText: "second question" })).toHaveCount(0, { timeout: 30000 });
     await expect(panel.locator(".chat-message.assistant").last()).toContainText("deterministic-local-reply");
+    await secondTab.close();
   } finally {
     const current = await context.request.get(`/api/projects/${project}`);
     const revision = (await current.json()).revision;
