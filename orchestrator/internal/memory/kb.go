@@ -251,23 +251,29 @@ func renderIndex(memories []memorystore.SemanticMemory, skills []memorystore.Ski
 		fmt.Fprintf(&b, "- **%s** (`%s`) — `skills/%s/SKILL.md`\n", sk.Title, sk.KBStatus, slugify(sk.TargetSkillName))
 	}
 	b.WriteString("\n## Fact groups\n")
-	groups := map[string]int{}
+	grouped := map[string][]memorystore.SemanticMemory{}
 	for _, m := range memories {
 		if distinctEvidenceCount(m.EvidenceSessionIDs) < minFactSupport {
 			continue
 		}
-		groups[classifyFileGroup(m.Type, m.Scope, m.Statement, m.WhenToApply)]++
+		group := classifyFileGroup(m.Type, m.Scope, m.Statement, m.WhenToApply)
+		grouped[group] = append(grouped[group], m)
 	}
-	if len(groups) == 0 {
+	if len(grouped) == 0 {
 		b.WriteString("_(none yet)_\n")
 	}
-	names := make([]string, 0, len(groups))
-	for group := range groups {
+	names := make([]string, 0, len(grouped))
+	for group := range grouped {
 		names = append(names, group)
 	}
 	sort.Strings(names)
 	for _, group := range names {
-		fmt.Fprintf(&b, "- `facts/%s.md` — %d fact(s)\n", group, groups[group])
+		mems := grouped[group]
+		fmt.Fprintf(&b, "- `facts/%s.md` — %d fact(s)", group, len(mems))
+		if kws := summarizeGroupKeywords(mems); len(kws) > 0 {
+			fmt.Fprintf(&b, " · %s", strings.Join(kws, "、"))
+		}
+		b.WriteByte('\n')
 	}
 	return b.String()
 }

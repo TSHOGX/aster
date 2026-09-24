@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"harness-platform/orchestrator/internal/config"
 	"harness-platform/orchestrator/internal/sessionstate"
 	"harness-platform/orchestrator/internal/store"
 )
@@ -372,5 +373,94 @@ func assertOwnedBySandbox(t *testing.T, srv *Server, path string) {
 	}
 	if int(sysStat.Uid) != wantUID || int(sysStat.Gid) != wantGID {
 		t.Fatalf("%s owned by %d:%d, want %d:%d", path, sysStat.Uid, sysStat.Gid, wantUID, wantGID)
+	}
+}
+
+// uploadPermServer wires a credentials file into the upload path so the per-user
+// allow_upload gate is exercised end to end (parse -> registry -> handler).
+func uploadPermServer(t *testing.T, allowUpload bool) *Server {
+	t.Helper()
+	srv, _, _ := newWorkspaceWriteServer(t, "sess_1")
+	path := filepath.Join(t.TempDir(), "auth-users.yaml")
+	body := "users:\n  - username: " + labUserID + "\n" +
+		"    password_hash: \"pbkdf2-sha256$600000$c2FsdA$aGFzaA\"\n"
+	if allowUpload {
+		body += "    allow_upload: true\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write users file: %v", err)
+	}
+	users, err := config.LoadAuthUsersFile(path)
+	if err != nil {
+		t.Fatalf("load users: %v", err)
+	}
+	srv.creds = newRegistry(t, path, users)
+	return srv
+}
+
+func TestUploadArtifactsDeniedWithoutAllowUpload(t *testing.T) {
+	srv := uploadPermServer(t, false)
+	body, contentType := multipartUpload(t, map[string]string{"a.txt": "x"})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/sess_1/artifacts", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+
+	srv.uploadArtifacts(rec, req, "sess_1")
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "upload_not_permitted") {
+		t.Fatalf("expected upload_not_permitted error_class, got %s", rec.Body.String())
+	}
+}
+
+func TestUploadArtifactsAllowedWithAllowUpload(t *testing.T) {
+	srv := uploadPermServer(t, true)
+	body, contentType := multipartUpload(t, map[string]string{"a.txt": "x"})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/sess_1/artifacts", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+
+	srv.uploadArtifacts(rec, req, "sess_1")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Open/lab mode has no credentials file and therefore no per-user config to
+// consult; uploads must keep working there or local development breaks.
+func TestUploadAllowedInOpenMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth-users.yaml")
+	reg := newRegistry(t, path, nil)
+	if !reg.uploadAllowed(labUserID) {
+		t.Fatal("open mode must permit uploads")
+	}
+	var nilReg *authRegistry
+	if !nilReg.uploadAllowed(labUserID) {
+		t.Fatal("nil registry must permit uploads")
+	}
+}
+
+// An admin is not implicitly an uploader: the two permissions are independent.
+func TestUploadDeniedForAdminWithoutAllowUpload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth-users.yaml")
+	body := "users:\n  - username: root\n" +
+		"    password_hash: \"pbkdf2-sha256$600000$c2FsdA$aGFzaA\"\n    role: admin\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write users file: %v", err)
+	}
+	users, err := config.LoadAuthUsersFile(path)
+	if err != nil {
+		t.Fatalf("load users: %v", err)
+	}
+	reg := newRegistry(t, path, users)
+	if reg.uploadAllowed("root") {
+		t.Fatal("admin without allow_upload must be denied")
+	}
+	// An unknown user is denied too.
+	if reg.uploadAllowed("ghost") {
+		t.Fatal("unknown user must be denied")
 	}
 }

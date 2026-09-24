@@ -31,6 +31,18 @@ type Pending struct {
 	// Counts carries the cycle's stats (sessions swept, memories promoted, …) so
 	// `kb status` can summarize without re-reading the database.
 	Counts map[string]int `json:"counts,omitempty"`
+	// Draft is the reviewer's in-progress marks for this digest. Saving a draft
+	// does not re-aggregate or demote anything; it only remembers decisions so
+	// a later session can continue. Ignored when Digest no longer matches.
+	Draft *ReviewDraft `json:"draft,omitempty"`
+}
+
+// ReviewDraft is a reviewer's in-progress verdicts for the pending snapshot.
+type ReviewDraft struct {
+	Facts   map[string]string `json:"facts,omitempty"`
+	Files   map[string]string `json:"files,omitempty"`
+	SavedAt time.Time         `json:"saved_at"`
+	Actor   string            `json:"actor,omitempty"`
 }
 
 // Stage writes the snapshot for the given content and records it as pending

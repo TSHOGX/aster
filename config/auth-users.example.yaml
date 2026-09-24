@@ -20,6 +20,8 @@
 #  - passwords are stored ONLY as PBKDF2-SHA256 hashes, never in plaintext.
 #  - the "lab" user inherits the existing sessions created before login was
 #    added; keep it if you want to see that history.
+#  - allow_upload is deny-by-default: a user without it cannot upload files. It
+#    is independent of role -- the admin below deliberately has no upload right.
 #  - point the orchestrator at a different file with HARNESS_AUTH_USERS_PATH.
 #  - if this file is absent the orchestrator runs open (single "lab" user, no
 #    login required) — only safe for local development.
@@ -27,6 +29,8 @@
 users:
   - username: lab
     password_hash: "pbkdf2-sha256$600000$REPLACE_WITH_REAL_SALT$REPLACE_WITH_REAL_HASH"
+    # Optional; omit to deny. Permits workspace file uploads for this user.
+    allow_upload: true
   - username: alice
     password_hash: "pbkdf2-sha256$600000$REPLACE_WITH_REAL_SALT$REPLACE_WITH_REAL_HASH"
     # Optional role; omit for a regular user. Admin APIs require role: admin.

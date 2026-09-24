@@ -9,6 +9,7 @@ import {
   FileCode2,
   GitCompare,
   Loader2,
+  Save,
   ShieldAlert,
   X
 } from "lucide-react";
@@ -28,7 +29,18 @@ type ReviewFile = {
   bytes?: number;
   content?: string;
 };
-type Pending = { digest: string; prev_digest?: string; staged_at?: string; counts?: Record<string, number> };
+type ReviewDraft = {
+  facts?: Record<string, Decision>;
+  files?: Record<string, Decision>;
+  saved_at?: string;
+};
+type Pending = {
+  digest: string;
+  prev_digest?: string;
+  staged_at?: string;
+  counts?: Record<string, number>;
+  draft?: ReviewDraft;
+};
 type Review = { current: string; pending: Pending | null; files: ReviewFile[]; new_facts: number };
 
 const changeLabel: Record<ReviewFile["change"], string> = { added: "新增", removed: "删除", modified: "修改" };
@@ -54,6 +66,65 @@ function factSummary(body: string) {
     .replace(/^-\s*/, "")
     .replace(/\s+—\s+support=\d+,\s*confidence=[\d.]+\s*$/, "")
     .trim();
+}
+
+const draftStorageKey = (digest: string) => `kb-review-draft:${digest}`;
+
+function asDecisionMap(input?: Record<string, string>): Record<string, Decision> {
+  const out: Record<string, Decision> = {};
+  for (const [key, value] of Object.entries(input ?? {})) {
+    if (value === "approved" || value === "rejected") out[key] = value;
+  }
+  return out;
+}
+
+function decisionsFromDraft(draft?: ReviewDraft | null): Record<string, Decision> {
+  return { ...asDecisionMap(draft?.facts), ...asDecisionMap(draft?.files) };
+}
+
+function readLocalDraft(digest?: string): Record<string, Decision> {
+  if (!digest || typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey(digest));
+    return raw ? asDecisionMap(JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalDraft(digest: string | undefined, decisions: Record<string, Decision>) {
+  if (!digest || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(draftStorageKey(digest), JSON.stringify(decisions));
+  } catch {
+    // ignore quota / private-mode failures
+  }
+}
+
+function keywordsFromFile(file: ReviewFile): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string) => {
+    const next = value.trim();
+    if (!next || next === "global" || seen.has(next) || out.length >= 6) return;
+    seen.add(next);
+    out.push(next);
+  };
+  for (const entry of file.entries ?? []) add(entry.scope);
+  for (const match of (file.content ?? "").matchAll(/^## (.+)$/gm)) add(match[1]);
+  return out;
+}
+
+function displayContent(file: ReviewFile, files: ReviewFile[]): string {
+  const content = file.content ?? "";
+  if (file.path !== "facts/INDEX.md") return content;
+  const byPath = new Map(files.map((item) => [item.path, item]));
+  return content.replace(/^- `([^`]+)` — (\d+) fact\(s\)(.*)$/gm, (full, path: string, count: string, rest: string) => {
+    if (rest.includes("·")) return full;
+    const keywords = keywordsFromFile(byPath.get(path) ?? { path, change: "modified", per_entry: false, derived: false });
+    if (!keywords.length) return full;
+    return `- \`${path}\` — ${count} fact(s) · ${keywords.join("、")}`;
+  });
 }
 
 type PreviewLine = { text: string; active: boolean; factId: string };
@@ -94,7 +165,11 @@ export function EvolutionReview() {
       const body = (await response.json()) as Review & { error?: string };
       if (!response.ok) throw new Error(body.error || `读取失败（${response.status}）`);
       setReview(body);
-      setDecisions({});
+      const restored = {
+        ...readLocalDraft(body.pending?.digest),
+        ...decisionsFromDraft(body.pending?.draft)
+      };
+      setDecisions(restored);
       setChecked({});
       setFailed(false);
       setSelected((prev) => (body.files?.some((file) => file.path === prev) ? prev : body.files?.[0]?.path ?? ""));
@@ -130,6 +205,28 @@ export function EvolutionReview() {
   const decide = (keys: string[], decision: Decision) =>
     setDecisions((old) => ({ ...old, ...Object.fromEntries(keys.map((key) => [key, decision])) }));
 
+  useEffect(() => {
+    writeLocalDraft(review?.pending?.digest, decisions);
+  }, [decisions, review?.pending?.digest]);
+
+  const collectDecisions = () => {
+    const facts: Record<string, Decision> = {};
+    const fileDecisions: Record<string, Decision> = {};
+    for (const file of files) {
+      if (file.derived) continue;
+      if (file.per_entry) {
+        for (const entry of file.entries ?? []) {
+          const decision = decisions[entry.fact_id];
+          if (decision) facts[entry.fact_id] = decision;
+        }
+      } else {
+        const decision = decisions[fileKey(file)];
+        if (decision) fileDecisions[file.path] = decision;
+      }
+    }
+    return { facts, files: fileDecisions };
+  };
+
   const fileStatus = (file: ReviewFile) => {
     const keys = decidableKeys(file);
     if (keys.length === 0) return { label: "派生", className: "" };
@@ -144,9 +241,13 @@ export function EvolutionReview() {
 
   const activeKeys = activeFile ? decidableKeys(activeFile) : [];
   const checkedKeys = activeKeys.filter((key) => checked[key]);
+  const previewSource = useMemo(
+    () => (activeFile ? displayContent(activeFile, files) : ""),
+    [activeFile, files]
+  );
   const preview = useMemo(
-    () => previewLines(activeFile?.content ?? "", selectedFact),
-    [activeFile?.content, selectedFact]
+    () => previewLines(previewSource, selectedFact),
+    [previewSource, selectedFact]
   );
 
   useEffect(() => {
@@ -166,24 +267,43 @@ export function EvolutionReview() {
 
   const openFile = (path: string) => setSelected(path);
 
+  const saveDraft = async () => {
+    if (!review?.pending) return;
+    setBusy(true);
+    try {
+      const payload = collectDecisions();
+      writeLocalDraft(review.pending.digest, decisions);
+      const count = Object.keys(payload.facts).length + Object.keys(payload.files).length;
+      let serverSaved = false;
+      try {
+        const response = await fetch("/api/kb-review/draft", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ digest: review.pending.digest, ...payload })
+        });
+        serverSaved = response.ok;
+      } catch {
+        serverSaved = false;
+      }
+      setNotice(
+        serverSaved
+          ? `已暂存 ${count} 条审批结果。未决策的条目都还在，刷新后会恢复这些勾选。`
+          : `已在本机暂存 ${count} 条审批结果。未决策的条目都还在；同一浏览器刷新可恢复。`
+      );
+      setFailed(false);
+    } catch (error) {
+      setFailed(true);
+      setNotice(error instanceof Error ? error.message : "暂存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async (publish: boolean) => {
     if (!review?.pending) return;
     setBusy(true);
     try {
-      const facts: Record<string, Decision> = {};
-      const fileDecisions: Record<string, Decision> = {};
-      for (const file of files) {
-        if (file.derived) continue;
-        if (file.per_entry) {
-          for (const entry of file.entries ?? []) {
-            const decision = decisions[entry.fact_id];
-            if (decision) facts[entry.fact_id] = decision;
-          }
-        } else {
-          const decision = decisions[fileKey(file)];
-          if (decision) fileDecisions[file.path] = decision;
-        }
-      }
+      const { facts, files: fileDecisions } = collectDecisions();
       const response = await fetch("/api/kb-review/decisions", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -195,8 +315,8 @@ export function EvolutionReview() {
         body.published
           ? `已发布快照 ${body.digest}，新会话将挂载它。`
           : body.staged
-            ? `已重新聚合为待审快照 ${body.digest}。`
-            : "本次没有批准任何新内容，知识库保持不变。",
+            ? `已提交已决策的条目。未决策的 ${body.undecided_facts ?? 0} 条仍留在待审快照 ${body.digest}。`
+            : "本次没有留下待审内容，知识库保持不变。",
         `批准 ${body.approved_facts} 条 fact、${body.approved_files} 个文件；驳回 ${body.rejected_facts} 条、${body.rejected_files} 个文件。`
       ];
       if (body.rejected_facts > 0) {
@@ -229,7 +349,7 @@ export function EvolutionReview() {
               <GitCompare size={15} /> KNOWLEDGE BASE · APPROVAL
             </div>
             <h1>知识库变更审批</h1>
-            <p>左侧选择文件，中间批准或驳回 fact，右侧查看该文件的完整内容。</p>
+            <p>左侧选择文件，中间批准或驳回 fact，右侧查看该文件的完整内容。审批中途请用「暂存当前审批结果」，未点过的条目会继续留在待审里。</p>
           </div>
           <div className={styles.headerMeta}>
             <span className={styles.pending}>
@@ -258,12 +378,18 @@ export function EvolutionReview() {
             <strong>
               <em>批准 {approvedCount}</em> / <b>驳回 {rejectedCount}</b>
             </strong>
-            <small>未决策的条目不会被发布</small>
+            <small>未决策的条目不会被发布，也不会被清掉</small>
           </div>
-          <button className={styles.approveAll} onClick={() => decide(allKeys, "approved")} disabled={!allKeys.length}>
-            <CheckCheck size={17} />
-            全部批准
-          </button>
+          <div className={styles.summaryActions}>
+            <button className={styles.saveDraft} onClick={() => void saveDraft()} disabled={busy || !review?.pending}>
+              {busy ? <Loader2 className={styles.spin} size={17} /> : <Save size={17} />}
+              暂存当前审批结果
+            </button>
+            <button className={styles.approveAll} onClick={() => decide(allKeys, "approved")} disabled={!allKeys.length}>
+              <CheckCheck size={17} />
+              全部批准
+            </button>
+          </div>
         </section>
 
         {notice && <div className={`${styles.notice} ${failed ? styles.noticeError : ""}`}>{notice}</div>}
@@ -330,7 +456,7 @@ export function EvolutionReview() {
                       {activeFile.derived
                         ? "这是索引文件，由审批结果自动重算，不需要单独决策。"
                         : activeFile.per_entry
-                          ? "在这里批准或驳回本文件的新增 fact；右侧同步显示完整文件。"
+                          ? "在这里批准或驳回本文件的新增 fact；右侧同步显示完整文件。#编号是记忆库里的 fact-id，只用来精确对应条目。"
                           : "该文件按整档决策：批准即采用暂存版本，驳回则保留当前线上版本。"}
                     </p>
                   </div>
@@ -408,7 +534,9 @@ export function EvolutionReview() {
                                 }
                               />
                               <span>
-                                <code>#{entry.fact_id}</code>
+                                <code title="记忆库条目编号。批准/驳回按这个 ID 精确对应一条 fact；驳回后会按它降级，避免下次再生成。">
+                                  #{entry.fact_id}
+                                </code>
                                 {entry.scope}
                               </span>
                             </label>
@@ -484,18 +612,22 @@ export function EvolutionReview() {
                 <ShieldAlert size={16} />
                 <span>
                   {undecided.length > 0
-                    ? `还有 ${undecided.length} 条未决策；未决策的条目不会被发布。`
-                    : "所有条目已决策，可以提交。"}
+                    ? `还有 ${undecided.length} 条未决策。点「暂存」只记住勾选；未决策的条目会继续留着。`
+                    : "所有条目已决策，可以提交或发布。"}
                 </span>
               </div>
               <div className={styles.actions}>
+                <button className={styles.saveDraft} onClick={() => void saveDraft()} disabled={busy || !review?.pending}>
+                  {busy ? <Loader2 className={styles.spin} size={16} /> : <Save size={16} />}
+                  暂存当前审批结果
+                </button>
                 <button className={styles.reject} onClick={() => decide(allKeys, "rejected")} disabled={!allKeys.length}>
                   <X size={16} />
                   全部驳回
                 </button>
                 <button className={styles.approve} onClick={() => void submit(false)} disabled={busy || !review?.pending}>
                   {busy ? <Loader2 className={styles.spin} size={16} /> : <Check size={16} />}
-                  {busy ? "提交中…" : "提交并重新暂存"}
+                  {busy ? "提交中…" : "提交已决策并继续"}
                 </button>
               </div>
             </div>
@@ -516,9 +648,9 @@ export function EvolutionReview() {
                 </div>
               )}
               {activeFile &&
-                !activeFile.content &&
+                !previewSource &&
                 !activeFile.oversized && <div className={styles.emptyPane}>该文件没有可展示的正文。</div>}
-              {activeFile?.content &&
+              {previewSource &&
                 preview.map((line, index) => (
                   <div
                     key={index}
@@ -537,8 +669,8 @@ export function EvolutionReview() {
 
         <footer className={styles.footer}>
           <span>
-            “提交并重新暂存”只会把批准的内容重新聚合为新的待审快照，不会上线；“批准并发布”会立即把它设为
-            current，新建会话开始挂载。
+            「暂存当前审批结果」只记住勾选，待审列表不会少。「提交已决策并继续」才会真正去掉已驳回的条目；「批准并发布」把已批准的设为
+            current，未决策的会继续留在待审里。
           </span>
           <button onClick={() => void submit(true)} disabled={busy || !review?.pending}>
             批准并发布

@@ -63,8 +63,20 @@ with the skills actually provisioned there.
 
 Publication is staged by default (`auto_publish: false`). Explicit approval changes
 `current`; rejection preserves the staged snapshot as evidence. Per-entry review
-can retain approved facts/files and demote rejected facts. `auto_publish: true`
-is an explicit opt-in to unreviewed publication, not the default guarantee.
+is three-state: approved, rejected, or undecided. Approved entries are published,
+rejected facts are demoted, and undecided entries restage as pending so a partial
+review does not lose the rest of the queue. In-progress marks can be saved as a
+draft (`POST /api/kb-review/draft`) without changing snapshot bytes.
+`auto_publish: true` is an explicit opt-in to unreviewed publication, not the
+default guarantee.
+
+The implemented agentic graph, mermaid flow, and per-node responsibilities live in
+[kb-evolution.md](kb-evolution.md). The prompts themselves are configuration,
+not prose: see `orchestrator/internal/memory/prompts.yaml` for the committed
+defaults and [configuration.md](configuration.md#kb-evolution-prompts-optional-override)
+for the private override.
+
+
 
 ```bash
 orchestrator kb status --config /private/harness.yaml

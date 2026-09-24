@@ -111,6 +111,11 @@ func runReplay(ctx context.Context, log *slog.Logger, args []string) error {
 	defer db.Close()
 	defer memoryDB.Close()
 
+	kbPrompts, err := memory.LoadPrompts()
+	if err != nil {
+		return fmt.Errorf("load KB evolution prompts: %w", err)
+	}
+
 	pipeline := memory.NewPipeline(memory.PipelineOptions{
 		Store:  memoryDB,
 		Ingest: ingest,
@@ -128,6 +133,7 @@ func runReplay(ctx context.Context, log *slog.Logger, args []string) error {
 			Model:    cfg.MemoryLLM.AgentModel,
 			WorkDir:  cfg.RepoRoot,
 		}),
+		Prompts:     kbPrompts,
 		Agentic:     cfg.MemoryLLM.Agentic,
 		AutoPublish: cfg.MemoryLLM.AutoPublish,
 	})

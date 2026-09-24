@@ -89,11 +89,19 @@ export async function fetchHealth() {
 }
 
 export async function fetchMe() {
-  return request<{ auth_required: boolean; user_id: string; role?: "user" | "admin" }>("/api/me");
+  return request<{
+    auth_required: boolean;
+    user_id: string;
+    role?: "user" | "admin";
+    // Per-user upload permission, deny-by-default server-side. Absent on an old
+    // backend, which the caller treats as false -- the upload route enforces the
+    // same decision independently, so withholding the UI is never the only gate.
+    can_upload?: boolean;
+  }>("/api/me");
 }
 
 export async function login(username: string, password: string) {
-  return request<{ user_id: string; role?: "user" | "admin" }>("/api/login", {
+  return request<{ user_id: string; role?: "user" | "admin"; can_upload?: boolean }>("/api/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ username, password })

@@ -219,9 +219,9 @@ func TestKBApplyReviewApproveAllReproducesStagedDigest(t *testing.T) {
 	}
 }
 
-// An unmentioned entry must NOT be published. Defaulting to "approved" would let
-// a reviewer who scrolled past a fact ship it by omission.
-func TestKBApplyReviewTreatsUndecidedAsRejected(t *testing.T) {
+// An unmentioned entry stays in the pending snapshot when the reviewer is only
+// saving progress. It must not be demoted, and it must not go live.
+func TestKBApplyReviewKeepsUndecidedWhenNotPublishing(t *testing.T) {
 	staged := []memorystore.SemanticMemory{reviewMemory(2, "doris", "Never decided 字段 fact.")}
 	kb, digest := stageReviewFixture(t, nil, staged)
 
@@ -229,15 +229,106 @@ func TestKBApplyReviewTreatsUndecidedAsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
+	if !res.Staged {
+		t.Fatal("undecided facts must remain pending")
+	}
+	if res.RejectedFacts != 0 || res.UndecidedFacts != 1 {
+		t.Fatalf("counts = %d rejected / %d undecided, want 0/1", res.RejectedFacts, res.UndecidedFacts)
+	}
+	if len(res.RejectedFactIDs) != 0 {
+		t.Fatalf("undecided facts must not be demoted: %v", res.RejectedFactIDs)
+	}
 	tree, err := readTree(kb.SnapshotDir(res.Digest))
 	if err != nil {
 		t.Fatalf("readTree: %v", err)
 	}
-	if strings.Contains(strings.Join(valuesOf(tree), "\n"), "Never decided 字段 fact.") {
-		t.Fatal("an undecided fact was published; the default must be to withhold")
+	if !strings.Contains(strings.Join(valuesOf(tree), "\n"), "Never decided 字段 fact.") {
+		t.Fatal("undecided fact disappeared from the pending snapshot")
 	}
-	if res.RejectedFacts != 1 {
-		t.Fatalf("RejectedFacts = %d, want 1", res.RejectedFacts)
+}
+
+// Publishing withholds undecided facts from current and restages them so the
+// remaining queue does not vanish.
+func TestKBApplyReviewPublishRestagesUndecided(t *testing.T) {
+	staged := []memorystore.SemanticMemory{
+		reviewMemory(2, "doris", "Keep this 字段 fact."),
+		reviewMemory(3, "doris", "Still undecided 字段 fact."),
+	}
+	kb, digest := stageReviewFixture(t, nil, staged)
+
+	res, err := kb.ApplyReview(ReviewDecisions{
+		Digest:  digest,
+		Facts:   map[string]string{"2": "approved"},
+		Actor:   "alice",
+		Publish: true,
+	})
+	if err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+	if !res.Published {
+		t.Fatal("approved fact must be published")
+	}
+	if !res.Staged {
+		t.Fatal("the undecided fact must remain pending")
+	}
+	live, err := readTree(kb.SnapshotDir(kb.CurrentDigest()))
+	if err != nil {
+		t.Fatalf("read current: %v", err)
+	}
+	joined := strings.Join(valuesOf(live), "\n")
+	if !strings.Contains(joined, "Keep this 字段 fact.") {
+		t.Fatal("approved fact missing from current")
+	}
+	if strings.Contains(joined, "Still undecided 字段 fact.") {
+		t.Fatal("undecided fact was published")
+	}
+	pending, err := kb.PendingInfo()
+	if err != nil {
+		t.Fatalf("PendingInfo: %v", err)
+	}
+	if pending == nil {
+		t.Fatal("expected leftover pending snapshot")
+	}
+	tree, err := readTree(kb.SnapshotDir(pending.Digest))
+	if err != nil {
+		t.Fatalf("read pending: %v", err)
+	}
+	if !strings.Contains(strings.Join(valuesOf(tree), "\n"), "Still undecided 字段 fact.") {
+		t.Fatal("undecided fact missing from restaged pending")
+	}
+}
+
+func TestKBSaveDraftRoundTrip(t *testing.T) {
+	staged := []memorystore.SemanticMemory{reviewMemory(2, "doris", "A 字段 fact.")}
+	kb, digest := stageReviewFixture(t, nil, staged)
+
+	draft, err := kb.SaveDraft(ReviewDecisions{
+		Digest: digest,
+		Facts:  map[string]string{"2": "approved"},
+		Actor:  "reviewer",
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+	if draft == nil || draft.Facts["2"] != "approved" {
+		t.Fatalf("draft = %+v, want fact 2 approved", draft)
+	}
+	pending, err := kb.PendingInfo()
+	if err != nil {
+		t.Fatalf("PendingInfo: %v", err)
+	}
+	if pending == nil || pending.Draft == nil || pending.Draft.Facts["2"] != "approved" {
+		t.Fatalf("pending draft = %+v", pending)
+	}
+	review, err := kb.Review()
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if review.Pending == nil || review.Pending.Draft == nil || review.Pending.Draft.Facts["2"] != "approved" {
+		t.Fatal("Review did not surface the saved draft")
+	}
+	if review.NewFacts != 1 {
+		t.Fatalf("saving a draft must not drop pending facts, NewFacts=%d", review.NewFacts)
 	}
 }
 

@@ -90,6 +90,13 @@ type AuthState = {
   checked: boolean;
   required: boolean;
   userId: string | null;
+  /**
+   * Whether this account may upload files into a workspace, from /api/me.
+   * Deny-by-default: it stays false until the backend says otherwise, so a
+   * failed or stale /api/me withholds the upload UI rather than offering
+   * buttons whose requests the server would reject with 403.
+   */
+  canUpload: boolean;
 };
 
 type HarnessState = {
@@ -133,7 +140,7 @@ type HarnessActions = {
   loadOlderMessages: (id: string) => Promise<void>;
   loadMessageWindow: (id: string, aroundId?: number) => Promise<void>;
   loadNewerMessages: (id: string) => Promise<void>;
-  onLogin: (userId: string) => void;
+  onLogin: (userId: string, canUpload: boolean) => void;
   logout: () => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
 };
@@ -167,7 +174,7 @@ const initialState: HarnessState = {
   runtimes: {},
   artifacts: {},
   notifications: [],
-  auth: { checked: false, required: false, userId: null }
+  auth: { checked: false, required: false, userId: null, canUpload: false }
 };
 
 const RUNNING_STATUSES = new Set<SessionStatus>(["running_active"]);
@@ -858,7 +865,7 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     discardedSessionIdsRef.current.clear();
     setState((p) => ({
       ...p,
-      auth: { checked: true, required: true, userId: null },
+      auth: { checked: true, required: true, userId: null, canUpload: false },
       sessions: [],
       conversations: {},
       artifacts: {},
@@ -940,7 +947,10 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
       if (cancelled) return;
       if (!res.ok) {
         // /api/me should never 401; treat failure as backend-unreachable.
-        setState((p) => ({ ...p, auth: { checked: true, required: false, userId: null } }));
+        setState((p) => ({
+          ...p,
+          auth: { checked: true, required: false, userId: null, canUpload: false }
+        }));
         return;
       }
       setState((p) => ({
@@ -948,7 +958,8 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
         auth: {
           checked: true,
           required: res.data.auth_required,
-          userId: res.data.user_id || null
+          userId: res.data.user_id || null,
+          canUpload: res.data.can_upload === true
         }
       }));
     });
@@ -957,12 +968,12 @@ export function HarnessProvider({ children }: { children: React.ReactNode }) {
     };
   }, [setState]);
 
-  const onLogin = useCallback((userId: string) => {
+  const onLogin = useCallback((userId: string, canUpload: boolean) => {
     aliveRef.current = true;
     lastEventIDRef.current = null;
     setState((p) => ({
       ...p,
-      auth: { checked: true, required: true, userId },
+      auth: { checked: true, required: true, userId, canUpload },
       connection: "connecting"
     }));
   }, [setState]);

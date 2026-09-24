@@ -10,7 +10,7 @@ import { Wordmark } from "@/components/ui/wordmark";
 import { useT } from "@/lib/i18n";
 
 type LoginScreenProps = {
-  onSuccess: (userId: string) => void;
+  onSuccess: (userId: string, canUpload: boolean) => void;
 };
 
 export function LoginScreen({ onSuccess }: LoginScreenProps) {
@@ -33,7 +33,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
       setPassword("");
       return;
     }
-    onSuccess(res.data.user_id);
+    onSuccess(res.data.user_id, res.data.can_upload === true);
   }
 
   return (

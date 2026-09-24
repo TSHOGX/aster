@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
 import {
+  useAuth,
   useSelectedSession,
   useTranscriptState,
 } from "@/components/harness-provider";
@@ -16,7 +17,6 @@ import {
   entriesFromFileList,
 } from "@/lib/upload-entries";
 import { formatBytes } from "@/lib/format";
-import { uploadUiEnabled } from "@/lib/ui-config";
 import type { ApiArtifact } from "@/lib/types";
 import { toast } from "sonner";
 
@@ -80,6 +80,7 @@ function Browser({
   onExpandedChange?: (v: boolean) => void;
 }) {
   const t = useT();
+  const uploadPermitted = useAuth().canUpload;
   const [pages, setPages] = useState<Record<string, Page>>({});
   const [expanded, setExpanded] = useState(
     () => new Set(expansion.get(sessionId) ?? []),
@@ -222,7 +223,7 @@ function Browser({
   const open = (e: Entry) => setActive(e);
   const writable = !readOnly && status !== "destroyed" && status !== "failed";
   const runUpload = async (entries: import("@/lib/api").UploadEntry[]) => {
-    if (!uploadUiEnabled || !writable || uploading || !entries.length) return;
+    if (!uploadPermitted || !writable || uploading || !entries.length) return;
     if (
       entries.length > 2000 ||
       entries.some((e) => e.file.size > 100 * 1024 * 1024)
@@ -242,11 +243,11 @@ function Browser({
   return (
     <aside
       onDragOver={(e) => {
-        if (uploadUiEnabled && writable) e.preventDefault();
+        if (uploadPermitted && writable) e.preventDefault();
       }}
       onDrop={(e) => {
         e.preventDefault();
-        if (uploadUiEnabled && writable)
+        if (uploadPermitted && writable)
           void entriesFromDataTransfer(e.dataTransfer)
             .then(runUpload)
             .catch(() => toast.error("Cannot read dropped files"));
@@ -259,7 +260,7 @@ function Browser({
     >
       <div className="p-3 text-sm">
         {t("workspace.title")}{" "}
-        {uploadUiEnabled && writable && (
+        {uploadPermitted && writable && (
           <label className="ml-2 cursor-pointer text-xs">
             {uploading ? "Uploading…" : "Upload"}
             <input
@@ -275,7 +276,7 @@ function Browser({
             />
           </label>
         )}
-        {uploadUiEnabled && writable && (
+        {uploadPermitted && writable && (
           <label className="ml-2 cursor-pointer text-xs">
             Folder
             <input

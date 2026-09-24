@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useCapabilities, useArtifacts, useLastReply, useSelectedSession } from "@/components/harness-provider";
+import { useCapabilities, useArtifacts, useAuth, useLastReply, useSelectedSession } from "@/components/harness-provider";
 import { PagedArtifactPane } from "./paged-artifact-pane";
 import { InputWithIcon } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,7 +25,7 @@ import { entriesFromDataTransfer, entriesFromFileList, isSessionWritable } from 
 import { formatBytes, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useT } from "@/lib/i18n";
-import { brandName, uploadUiEnabled } from "@/lib/ui-config";
+import { brandName } from "@/lib/ui-config";
 import type { ApiArtifact, SessionStatus } from "@/lib/types";
 
 // Backend-enforced upload limits, mirrored client-side for fast friendly errors.
@@ -101,6 +101,7 @@ function ArtifactPaneInner({
   onExpandedChange?: (expanded: boolean) => void;
 }) {
   const t = useT();
+  const auth = useAuth();
   // Artifacts-style: a single open file drives the Preview panel. Null → list view.
   const [openPath, setOpenPath] = useState<string | null>(null);
   // When true, the preview overlays the whole viewport instead of docking in the
@@ -121,9 +122,12 @@ function ArtifactPaneInner({
 
   const writable = !readOnly && isSessionWritable(status);
   const busy = upload.phase === "uploading";
-  // uploadUiEnabled is a build-time flag (default off): with it off there are no
-  // upload buttons, no drop target, and no upload status text at all.
-  const canUpload = uploadUiEnabled && writable && !busy;
+  // Per-user upload permission from /api/me (deny-by-default). With it off there
+  // are no upload buttons, no drop target, and no upload status text at all. The
+  // POST route enforces the same decision server-side, so this only withholds
+  // affordances the request would reject anyway.
+  const uploadPermitted = auth.canUpload;
+  const canUpload = uploadPermitted && writable && !busy;
 
   const runUpload = useCallback(
     async (entries: UploadEntry[]) => {
@@ -169,9 +173,9 @@ function ArtifactPaneInner({
       event.preventDefault();
       dragDepth.current = 0;
       setDragging(false);
-      // Flag off: the drop is swallowed silently rather than uploading through a
-      // path whose UI affordances were withheld.
-      if (!uploadUiEnabled) return;
+      // Not permitted: the drop is swallowed silently rather than uploading
+      // through a path whose UI affordances were withheld.
+      if (!uploadPermitted) return;
       if (readOnly) {
         toast.error(t("workspace.readOnlyShared"));
         return;
@@ -184,7 +188,7 @@ function ArtifactPaneInner({
         .then((entries) => runUpload(entries))
         .catch(() => toast.error(t("workspace.dropReadFailed")));
     },
-    [runUpload, status, readOnly, t]
+    [runUpload, status, readOnly, t, uploadPermitted]
   );
 
   const onDragEnter = useCallback(
@@ -260,7 +264,7 @@ function ArtifactPaneInner({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {uploadUiEnabled ? (
+      {uploadPermitted ? (
         <>
           <input
             ref={fileInputRef}
@@ -343,7 +347,7 @@ function ArtifactPaneInner({
                   </span>
                 ) : null}
               </div>
-              <div className={readOnly || !uploadUiEnabled ? "hidden" : "flex shrink-0 items-center gap-1.5"}>
+              <div className={readOnly || !uploadPermitted ? "hidden" : "flex shrink-0 items-center gap-1.5"}>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -381,7 +385,7 @@ function ArtifactPaneInner({
               <p className="mt-2 text-2xs text-[var(--color-foreground-muted)]">
                 Shared with you — read-only.
               </p>
-            ) : uploadUiEnabled && !writable ? (
+            ) : uploadPermitted && !writable ? (
               <p className="mt-2 text-2xs text-[var(--color-foreground-muted)]">
                 {t("workspace.uploadsPausedNote")}
               </p>

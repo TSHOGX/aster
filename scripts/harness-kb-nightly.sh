@@ -18,6 +18,8 @@ fi
   echo 'binary or configuration is unavailable' >&2; exit 2;
 }
 export HARNESS_MEMORY_AUTO_PUBLISH=false
+# Optional private prompt overlay belongs in HARNESS_JOB_ENV as
+# HARNESS_KB_PROMPTS_PATH. Unset uses embedded defaults; set-but-unusable fails.
 mode=${1:-}
 case "$mode" in
   ingest) [[ $# == 1 ]] || exit 2 ;;

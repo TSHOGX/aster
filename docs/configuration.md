@@ -44,6 +44,7 @@ a versioned binary, a nonempty auth file and an already migrated database pair.
 | `HARNESS_AUTH_USERS_PATH` | Credential YAML |
 | `HARNESS_TITLE_LLM_PATH` | Optional title model configuration |
 | `HARNESS_MEMORY_LLM_PATH` | Optional extraction model configuration |
+| `HARNESS_KB_PROMPTS_PATH` | Optional private overlay of embedded KB evolution prompts |
 | `HARNESS_DRAIN_FILE` | Local deployment drain marker |
 | `HARNESS_BACKGROUND_HOLD_FILE` | Hold automatic jobs during internal smoke |
 | `HARNESS_API_BASE_URL` / `ORCHESTRATOR_URL` | Frontend server-side backend target |
@@ -97,6 +98,16 @@ compatibility identity, not a host name. Open mode is only for isolated unmanage
 development. Use TLS, Secure cookies and trusted proxy-header configuration for
 user-facing deployments.
 
+Each credential may also set `allow_upload: true` to permit workspace file
+uploads. This is deny-by-default: an entry without the key cannot upload, so a
+forgotten config closes the gate rather than opening it. It is independent of
+`role` — an admin is not implicitly an uploader. Open/lab mode (no credentials
+file) has no per-user config to consult and keeps uploads allowed. Enforced on
+`POST /api/sessions/{id}/artifacts` (403 `upload_not_permitted`); the frontend
+additionally withholds the upload buttons and drop target, which is cosmetic
+only. Like the rest of this file it is re-read on change, so granting upload
+needs no restart.
+
 ## Optional memory/evolution configuration
 
 The extraction model and agentic pipeline settings are separate from the core
@@ -104,7 +115,54 @@ scheduler. Missing LLM credentials leave extraction disabled. Use
 `HARNESS_MEMORY_AGENTIC`, `HARNESS_MEMORY_AUTO_PUBLISH` and supported concurrency
 settings only after selecting a single writer/scheduling authority.
 
+KB evolution prompts live in `orchestrator/internal/memory/prompts.yaml` and are
+embedded into the binary. See [KB evolution prompts](#kb-evolution-prompts-optional-override).
+
 External evaluation/evolution integration requires explicit `EVOLUTION_*`
 variables. It has no checked-in host path and is disabled when configuration is
 absent. Its implementation boundary and allowlist behavior are documented in
 [memory and knowledge](agents-kb.md).
+
+## KB evolution prompts (optional override)
+
+Every LLM system prompt in the extraction/curation loop — the three harvest
+lenses and each graph node — lives in `orchestrator/internal/memory/prompts.yaml`,
+embedded into the binary at build time. Those committed defaults are complete
+and generic: with no override configured the loop runs entirely on them, and a
+release tarball (binary only, no `config/`) needs nothing extra.
+
+A deployment overrides individual prompts by pointing `HARNESS_KB_PROMPTS_PATH`
+at a YAML file of the same keys. Per-deployment material belongs there — a real
+scope taxonomy for the B0 blocking-key node, house wording, a tightened PII
+clause — and must not enter the tracked repository. Keys: `grounding`, `facts`,
+`failure`, `skill`, `reflect`, `block_key`, `cluster`, `reduce`, `kb_dedup`,
+`verify`, `memory_curate`, `skill_critic`, `critic`.
+
+```yaml
+# kb-prompts.local.yaml (gitignored via **/*.local.yaml)
+block_key: |-
+  ...deployment-specific scope taxonomy used as examples...
+```
+
+Semantics match `HARNESS_SCHEMA_BASELINES_PATH` in `internal/schemastate`:
+
+- Present keys replace the whole prompt body; absent keys keep the embedded one.
+- `grounding` is prepended to every prompt except `reflect`, so overriding it
+  cascades into the other eleven.
+- Env var unset → embedded prompts only. Not an error, and no default path is
+  guessed: an external job wrapper may run with cwd `/`, where a relative default
+  would resolve elsewhere and silently fall back.
+- Env var set but unusable (missing file, malformed YAML, unknown key, empty
+  body) → startup fails. A typo has to be loud here, or it resurfaces later as
+  degraded consolidation that looks like a model problem.
+
+There is no `.example.yaml` twin: unlike `memory-llm.example.yaml`, this file is
+a partial overlay, and `prompts.yaml` itself is the readable full schema. Which
+prompt text actually ran is auditable per call via `agent_calls.prompt_sha`.
+
+If a host takes a new binary without its override file, the loop silently falls
+back to the generic `block_key` example and consolidates scopes less well (a
+quality regression, not a correctness bug). Deploy the override with the binary.
+The B0 log line (`N raw scopes → M canonical`) is the observable signal.
+External job wrappers should set `HARNESS_KB_PROMPTS_PATH` through the operator
+env file (`HARNESS_JOB_ENV`), not by hardcoding a host path in the wrapper.

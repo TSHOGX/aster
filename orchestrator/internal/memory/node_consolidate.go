@@ -50,20 +50,21 @@ const consolidateAgentTimeout = 12 * time.Minute
 
 // ConsolidateNode drives Node B.
 type ConsolidateNode struct {
-	agent *AgentRunner
-	store *memorystore.Store
-	log   *slog.Logger
-	runID int64
+	agent   *AgentRunner
+	prompts PromptSet
+	store   *memorystore.Store
+	log     *slog.Logger
+	runID   int64
 }
 
 // NewConsolidateNode builds the node. A nil/disabled agent is tolerated: Run
 // then uses the deterministic fallbacks throughout (identity block-key, singleton
 // clusters) so the node still executes without a live pi.
-func NewConsolidateNode(agent *AgentRunner, st *memorystore.Store, log *slog.Logger, runID int64) *ConsolidateNode {
+func NewConsolidateNode(agent *AgentRunner, prompts PromptSet, st *memorystore.Store, log *slog.Logger, runID int64) *ConsolidateNode {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &ConsolidateNode{agent: agent, store: st, log: log, runID: runID}
+	return &ConsolidateNode{agent: agent, prompts: prompts, store: st, log: log, runID: runID}
 }
 
 // ConsolidateReport summarizes one Node B pass.
@@ -110,38 +111,6 @@ type dedupResult struct {
 	Canonical string `json:"canonical_statement"`
 	Rationale string `json:"rationale"`
 }
-
-// ---- prompts (bilingual, PURE JSON) ----------------------------------------
-
-const blockKeySystemPrompt = grounding + `
-
-你在为记忆去重做"分块键(blocking key)"。下面数据块里是一组自由文本的 scope 标签(可能中英混杂、同义、粒度不一,例如 doris / analytics_example / doris/bms / f2 / 数据源选择)。请把语义等价或从属同一领域的标签归并到同一个规范(canonical)标签下。规范标签用简短的小写英文或原标签中最典型的一个。
-
-只输出如下纯 JSON,不要任何解释或代码围栏:
-{"canonical":{"原始标签A":"规范标签","原始标签B":"规范标签",...}}
-必须为输入的每一个标签给出映射;拿不准就映射到它自身。`
-
-const clusterSystemPrompt = grounding + `
-
-下面数据块里是同一个领域、同一类型的一组候选记忆(每条含 id、statement、when_to_apply、evidence)。请判断哪些条目在语义上等价(表达同一条知识,允许中英文互译、措辞不同、粒度略异),把它们归为一个等价簇(cluster)。一个簇可以只含一条(独立知识)。对每个簇写一条融合后的规范陈述(canonical),并列出其成员 id。绝不把不同的知识强行合并;宁可多个小簇。
-
-只输出如下纯 JSON,不要任何解释或代码围栏:
-{"clusters":[{"canonical":{"type":"fact|heuristic|procedure|bug|preference","scope":"领域标签","statement":"融合后的一句话陈述","when_to_apply":"何时适用"},"member_ids":[12,88,140],"rationale":"为何等价"}]}
-member_ids 只能取自输入中出现过的 id。`
-
-const reduceSystemPrompt = grounding + `
-
-下面数据块里是对同一个领域分片(shard)分别聚类后得到的多个"规范陈述",每个带一个 index。不同分片可能产生语义等价的规范陈述。请把等价的 index 归为一组,让它们最终合并为一个簇。每个 index 至少属于一组;不等价的自成一组。
-
-只输出如下纯 JSON,不要任何解释或代码围栏:
-{"groups":[[0,3],[1],[2,4]]}`
-
-const kbDedupSystemPrompt = grounding + `
-
-下面数据块里有一条"新的候选记忆"(new)和若干条"已被接受的记忆"(accepted,含 id 与 statement),它们同属一个领域。请判断这条新记忆是否与某一条已接受记忆表达同一知识(重复/精化)。
-
-只输出如下纯 JSON,不要任何解释或代码围栏:
-{"duplicate":true|false,"match_id":匹配到的accepted的id或0,"canonical_statement":"合并后更好的一句话陈述(可留空)","rationale":"理由"}`
 
 // ---- Run --------------------------------------------------------------------
 
@@ -239,7 +208,7 @@ func sortedKeys(set map[string]bool) []string {
 // for these labels.
 func (n *ConsolidateNode) blockKeyShard(ctx context.Context, ref string, scopes []string) (map[string]string, bool) {
 	data := "scopes:\n" + strings.Join(scopes, "\n")
-	payload, err := n.callAgent(ctx, ref, blockKeySystemPrompt, data, "block-key")
+	payload, err := n.callAgent(ctx, ref, n.prompts.BlockKeyPrompt(), data, "block-key")
 	if err != nil {
 		n.log.Warn("consolidate: B0 shard failed; identity fallback", "ref", ref, "error", err)
 		return nil, false
@@ -346,7 +315,7 @@ func (n *ConsolidateNode) clusterBucket(ctx context.Context, k bucketKey, member
 // clusterOne runs one B1 agent call over a single shard/bucket.
 func (n *ConsolidateNode) clusterOne(ctx context.Context, k bucketKey, members []memorystore.SemanticMemory, rep *ConsolidateReport) []clusterCluster {
 	data := renderCandidates(members)
-	payload, err := n.callAgent(ctx, "B1:"+k.scope+"/"+k.typ, clusterSystemPrompt, data, "cluster")
+	payload, err := n.callAgent(ctx, "B1:"+k.scope+"/"+k.typ, n.prompts.ClusterPrompt(), data, "cluster")
 	if err != nil {
 		n.log.Warn("consolidate: B1 cluster failed; singleton fallback", "scope", k.scope, "type", k.typ, "error", err)
 		rep.Notes = append(rep.Notes, fmt.Sprintf("B1[%s/%s]: singleton fallback (%s)", k.scope, k.typ, errString(err)))
@@ -391,7 +360,7 @@ func (n *ConsolidateNode) reduceClusters(ctx context.Context, k bucketKey, perSh
 		return perShard
 	}
 	data := renderClustersForReduce(perShard)
-	payload, err := n.callAgent(ctx, "B2:"+k.scope+"/"+k.typ, reduceSystemPrompt, data, "reduce")
+	payload, err := n.callAgent(ctx, "B2:"+k.scope+"/"+k.typ, n.prompts.ReducePrompt(), data, "reduce")
 	if err != nil {
 		n.log.Warn("consolidate: B2 reduce failed; keep per-shard clusters", "scope", k.scope, "error", err)
 		rep.Notes = append(rep.Notes, fmt.Sprintf("B2[%s/%s]: identity reduce (%s)", k.scope, k.typ, errString(err)))
@@ -477,7 +446,7 @@ func (n *ConsolidateNode) dedupAgainstKB(ctx context.Context, newID int64, scope
 	}
 
 	data := renderKBDedup(newMem, sameScope)
-	payload, err := n.callAgent(ctx, fmt.Sprintf("B3:%d", newID), kbDedupSystemPrompt, data, "kb-dedup")
+	payload, err := n.callAgent(ctx, fmt.Sprintf("B3:%d", newID), n.prompts.KBDedupPrompt(), data, "kb-dedup")
 	if err != nil {
 		n.log.Warn("consolidate: B3 kb-dedup failed", "id", newID, "error", err)
 		return

@@ -47,6 +47,13 @@ func (s *Server) uploadArtifacts(w http.ResponseWriter, r *http.Request, session
 	if !ok {
 		return
 	}
+	// Per-user upload permission (deny-by-default; see authRegistry.uploadAllowed).
+	// This is the enforcement point: the frontend also withholds the upload entry
+	// points for a denied user, but that is cosmetic and must not be relied on.
+	if !s.creds.uploadAllowed(userIDFromContext(r.Context())) {
+		writeErrorClass(w, http.StatusForbidden, "upload_not_permitted", "this account is not permitted to upload files")
+		return
+	}
 	accepts, err := s.sessionAcceptsWorkspaceWrite(r.Context(), session)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

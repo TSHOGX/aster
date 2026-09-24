@@ -294,6 +294,15 @@ func main() {
 	// while suppressing the automatic sweep — used to run cold-start/backfill
 	// out-of-band (e.g. a scheduled overnight job) without the server's own timer
 	// competing for the DB or firing an expensive re-harvest during the day.
+	// Prompts come from the embedded prompts.yaml, optionally overridden per
+	// deployment via HARNESS_KB_PROMPTS_PATH. A configured-but-broken override
+	// fails startup: silently distilling with the wrong prompts for weeks is a
+	// far worse outcome than refusing to boot.
+	kbPrompts, err := memory.LoadPrompts()
+	if err != nil {
+		log.Error("failed to load KB evolution prompts", "error", err)
+		os.Exit(1)
+	}
 	if !cfg.MemoryLLM.Enabled {
 		log.Info("nightly distillation loop disabled (memory-llm enabled:false); KB mount still served")
 	} else if pipeline := memory.NewPipeline(memory.PipelineOptions{
@@ -313,6 +322,7 @@ func main() {
 			Model:    cfg.MemoryLLM.AgentModel,
 			WorkDir:  cfg.RepoRoot, // Node C reads the live tree from here
 		}),
+		Prompts:     kbPrompts,
 		Agentic:     cfg.MemoryLLM.Agentic,
 		AutoPublish: cfg.MemoryLLM.AutoPublish,
 	}); pipeline != nil {
