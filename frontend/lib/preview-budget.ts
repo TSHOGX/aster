@@ -1,10 +1,10 @@
 /** Tab-wide admission; estimates are working-set reservations, not heap readings. */
 export const PREVIEW_LIMITS = Object.freeze({
-  blobBytes: 16 * 1024 * 1024,
-  retainedBytes: 128 * 1024 * 1024,
-  renderBytes: 64 * 1024 * 1024,
-  expandedBytes: 16 * 1024 * 1024,
-  entryBytes: 4 * 1024 * 1024,
+  blobBytes: 20 * 1024 * 1024,
+  retainedBytes: 256 * 1024 * 1024,
+  renderBytes: 96 * 1024 * 1024,
+  expandedBytes: 40 * 1024 * 1024,
+  entryBytes: 8 * 1024 * 1024,
   entries: 1024,
   xmlNodes: 100_000,
   xmlDepth: 64,
@@ -15,11 +15,17 @@ export const PREVIEW_LIMITS = Object.freeze({
   slides: 40,
   paragraphs: 2000,
   pages: 100,
-  imagePixels: 8_000_000,
-  totalPixels: 16_000_000,
+  imagePixels: 16_000_000,
+  totalPixels: 24_000_000,
   renderers: 2,
   queued: 2,
 });
+
+export class PreviewSizeError extends Error {
+  constructor(readonly size: number | undefined, readonly limit: number) {
+    super("This file is too large to preview. Download it instead.");
+  }
+}
 
 export class PreviewLimitError extends Error {
   constructor() {

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { decodeTextFile, hasSourceView, isTextFile, parseDelimited, TEXT_FILE_LIMIT } from "./file-view";
+import { decodeTextFile, hasSourceView, isTextFile, parseDelimited, TEXT_FILE_LIMIT, textPage, TEXT_PAGE_CHARS } from "./file-view";
 import { classifyArtifact } from "./mime";
 it("offers source and editing only for appropriate, bounded UTF-8 text", async () => {
   for (const path of ["a.md","a.csv","a.tsv","a.html","a.htm","a.json"]) {
@@ -29,4 +29,17 @@ it("bounds decoded rows, columns and cells without claiming a complete table", (
   expect(columns.rows[0]).toHaveLength(256); expect(columns.truncated).toBe(true);
   const cells=parseDelimited(('a,'.repeat(99)+'b\n').repeat(300), ',');
   expect(cells.rows.flat()).toHaveLength(20000); expect(cells.truncated).toBe(true);
+});
+
+it("decodes UTF-8 text up to 20 MiB, including files above the old 1 MiB limit", async () => {
+  const text = "a".repeat(20 * 1024 * 1024);
+  expect(await decodeTextFile("large.txt", new Blob([text]))).toBe(text);
+  expect(await decodeTextFile("large.txt", new Blob([text, "a"]))).toBeNull();
+});
+it("pages text without losing characters or splitting emoji across boundaries", () => {
+  const text = "a".repeat(TEXT_PAGE_CHARS - 1) + "🔋" + "b".repeat(TEXT_PAGE_CHARS) + "END";
+  const pages = Array.from({ length: Math.ceil(text.length / TEXT_PAGE_CHARS) }, (_, page) => textPage(text, page));
+  expect(pages.join("")).toBe(text);
+  expect(pages[1].startsWith("🔋")).toBe(true);
+  expect(pages.every(page => page.length <= TEXT_PAGE_CHARS + 1)).toBe(true);
 });

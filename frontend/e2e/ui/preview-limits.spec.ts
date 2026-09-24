@@ -19,7 +19,7 @@ for (const [name, data] of [
   [
     "expansion.docx",
     zipFixture([
-      { name: "word/document.xml", text: "a".repeat(4 * 1024 * 1024 + 1) },
+      { name: "word/document.xml", text: "a".repeat(8 * 1024 * 1024 + 1) },
     ]),
   ],
   [
@@ -39,7 +39,7 @@ for (const [name, data] of [
     await page.goto("/?project=battery&session=analysis");
     await page.getByRole("link", { name: "Document", exact: true }).click();
     await expect(page.getByRole("region", { name: `File ${name}`, exact: true }).getByRole("status")).toContainText(
-      "exceeds the supported preview limits",
+      name === "unknown.xls" ? "This format is not supported" : "supported content limits",
       { timeout: 5000 },
     );
     await expect(

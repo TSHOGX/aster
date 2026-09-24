@@ -37,7 +37,7 @@ it("honors cancellation before parsing and bounds download buffers", async () =>
   ).rejects.toThrow();
   await expect(
     preflightPreview(
-      new Blob([new Uint8Array(16 * 1024 * 1024 + 1)]),
+      new Blob([new Uint8Array(20 * 1024 * 1024 + 1)]),
       "x.png",
       new AbortController().signal,
     ),
@@ -82,7 +82,7 @@ it("validates actual cells and rejects sparse dimensions that would allocate hug
 it("checks decompressed length and CRC independently of ZIP metadata claims", async () => {
   for (const entry of [
     { text: workbook, declaredSize: 1 },
-    { text: workbook, declaredSize: 4 * 1024 * 1024 + 1 },
+    { text: workbook, declaredSize: 8 * 1024 * 1024 + 1 },
     { text: workbook, crc: 0 },
     { text: '<!DOCTYPE workbook [<!ENTITY e "x">]><workbook>&e;</workbook>' },
     { text: "<workbook><broken>" },
@@ -116,4 +116,17 @@ it("rejects ambiguous names, excessive entries and external embedded content", a
       })),
     ]),
   ).rejects.toThrow("limits");
+});
+
+it("accepts PDFs at the 20 MiB boundary and rejects larger PDFs", async () => {
+  const bytes = new Uint8Array(20 * 1024 * 1024);
+  bytes.set(new TextEncoder().encode("%PDF-1.7"));
+  await expect(preflightPreview(new Blob([bytes]), "report.pdf", new AbortController().signal)).resolves.toMatchObject({ nodes: 0 });
+  await expect(preflightPreview(new Blob([bytes, "x"]), "report.pdf", new AbortController().signal)).rejects.toThrow("limits");
+});
+it("admits ordinary 12 megapixel images within the expanded pixel budget", () => {
+  expect(imagePixels(png(4000, 3000))).toBe(12_000_000);
+});
+it("admits larger Office XML entries while retaining structural limits", async () => {
+  await expect(check([{ name: "xl/workbook.xml", text: workbook.replace("/>", ">" + " ".repeat(5 * 1024 * 1024) + "</workbook>") }])).resolves.toMatchObject({ cells: 0 });
 });

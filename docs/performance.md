@@ -174,17 +174,22 @@ Unsupported formats or excessive work produce an explicit download fallback.
 
 | Resource | Bound |
 | --- | --- |
-| Downloaded preview | 16 MiB |
-| Estimated retained preview reservations per tab | 128 MiB |
-| Estimated Office renderer | 64 MiB |
-| ZIP inventory / expansion | 1,024 entries; 16 MiB total; 4 MiB per entry |
+| Downloaded preview (all formats) | 20 MiB |
+| Estimated retained preview reservations per tab | 256 MiB |
+| Estimated Office renderer | 96 MiB |
+| ZIP inventory / expansion | 1,024 entries; 40 MiB total; 8 MiB per entry |
 | XML | 100,000 nodes; depth 64 |
 | Workbook | 8 sheets; 20,000 cells; 2,000 rows; 256 columns; bounded sparse extent |
 | Presentation / document | 40 slides; 2,000 paragraphs; 100 pages |
 | CSV/TSV | 100 displayed rows; 2,000 parsed rows; 256 columns; 20,000 cells |
-| Source/edit text | Valid UTF-8, no NUL bytes, at most 1 MiB |
-| Image pixels | 8 million per image; 16 million total |
+| Text preview / editing | Valid UTF-8, no NUL bytes; preview 20 MiB, edit 1 MiB |
+| Large text rendering | Above 256 KiB: plain text in 64 Ki-character sections |
+| Image pixels | 16 million per image; 24 million total |
 | Parse / renderer lifetime | One active parse; two queued; two renderer documents |
+
+PDFs with a valid header use the browser’s native PDF viewer, with a download
+fallback for browsers without PDF support. Its internal rendering memory is
+managed by the browser, outside the Office renderer estimates.
 
 These are admission estimates, not browser RSS measurements. Each Office renderer
 owns an isolated same-origin document and transferred input buffer. The previous

@@ -1,6 +1,17 @@
 import { classifyArtifact } from "./mime";
 
-export const TEXT_FILE_LIMIT = 1 << 20;
+import { PREVIEW_LIMITS } from "./preview-budget";
+
+export const TEXT_FILE_LIMIT = PREVIEW_LIMITS.blobBytes;
+export const TEXT_EDIT_LIMIT = 1 << 20;
+export const RICH_TEXT_LIMIT = 256 * 1024;
+export const TEXT_PAGE_CHARS = 64 * 1024;
+
+// Keep UTF-16 surrogate pairs intact at every page boundary.
+export function textPage(text: string, page: number) {
+  const boundary = (offset: number) => offset > 0 && /[\uD800-\uDBFF]/.test(text[offset - 1] ?? "") ? offset - 1 : offset;
+  return text.slice(boundary(page * TEXT_PAGE_CHARS), boundary((page + 1) * TEXT_PAGE_CHARS));
+}
 export function isTextFile(path: string) {
   return ["code", "text", "markdown", "html", "json", "table"].includes(classifyArtifact(path).kind);
 }

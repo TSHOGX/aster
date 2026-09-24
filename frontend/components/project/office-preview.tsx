@@ -13,6 +13,8 @@ import {
 } from "@/lib/office-frame";
 import type { PreviewRepresentation } from "@/lib/preview-representation";
 
+import { PreviewStatus } from "./preview-status";
+
 type Phase = "queued" | "parsing" | "ready" | "failed" | "canceled";
 
 export function OfficePreview({
@@ -31,6 +33,7 @@ export function OfficePreview({
   const active = useRef<OfficeFrame | null>(null);
   const frames = useRef(new Set<OfficeFrame>());
   const cancel = useRef(() => {});
+  const [hasReady, setHasReady] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ phase: Phase; drawings: boolean }>({
     phase: "queued",
@@ -106,6 +109,7 @@ export function OfficePreview({
         active.current = candidate;
         adopted = true;
         previous?.dispose();
+        setHasReady(true);
         setState({ phase: "ready", drawings: result.drawingsUnavailable });
       } catch {
         if (!abort.signal.aborted)
@@ -133,30 +137,20 @@ export function OfficePreview({
         </p>
       )}
       {(state.phase === "failed" || state.phase === "canceled") && (
-        <div className="notice" role="status">
-          <p>
-            {state.phase === "canceled"
-              ? tr("Preview canceled.")
-              : tr("Preview is not available for this file.")}
-          </p>
-          <button onClick={() => setAttempt((value) => value + 1)}>
-            {tr("Retry")}
-          </button>{" "}
-          <a href={href} download>
-            {tr("Download")}
-          </a>
-        </div>
+        <PreviewStatus path={path} href={href} size={representation.blob.size}
+          title={tr(state.phase === "canceled" ? "Preview canceled." : "Preview unavailable")}
+          description={tr("You can try again or download the original file.")}
+          onRetry={() => setAttempt(value => value + 1)} />
       )}
       {(state.phase === "queued" || state.phase === "parsing") && (
-        <p className="notice" role="status">
-          {tr("Preparing preview…")}{" "}
-          <button onClick={() => cancel.current()}>
-            {tr("Cancel preview")}
-          </button>
-        </p>
+        <PreviewStatus path={path} href={href} size={representation.blob.size} loading
+          title={tr("Preparing preview…")}
+          description={tr("Larger files may take a moment. You can keep working while the preview loads.")}
+          onCancel={() => cancel.current()} />
       )}
       <div
         className="office-preview"
+        style={!hasReady ? { flex: "0 0 0" } : undefined}
         ref={host}
         data-preview-phase={state.phase}
         aria-busy={state.phase === "queued" || state.phase === "parsing"}

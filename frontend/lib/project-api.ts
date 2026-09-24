@@ -1,3 +1,4 @@
+import { PREVIEW_LIMITS, PreviewSizeError } from "./preview-budget";
 import { fetchFileRead, FILE_BUSY_MESSAGE } from "./file-read";
 import { requestCategory, startTiming } from "./interaction-metrics";
 
@@ -251,7 +252,8 @@ export async function upload(project: string, path: string, bytes: Blob) {
 export async function readPreview(
   url: string,
   signal: AbortSignal,
-  max = 16 << 20,
+  max: number = PREVIEW_LIMITS.blobBytes,
+  onProgress?: (received: number, total?: number) => void,
 ): Promise<Blob> {
   const response = await fetchFileRead(url, {
     credentials: "same-origin",
@@ -269,22 +271,28 @@ export async function readPreview(
   }
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Missing file content.");
+  const declared = Number(response.headers.get("content-length"));
+  const total = !response.headers.get("content-encoding") && Number.isSafeInteger(declared) && declared > 0
+    ? declared : undefined;
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   let size = 0;
   try {
+    if (total && total > max) throw new PreviewSizeError(total, max);
+    onProgress?.(0, total);
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > max)
-        throw new Error(
-          "This file is too large to preview. Download it instead.",
-        );
+      // Once a stream is cut short, its complete size is unknown.
+      if (size > max) throw new PreviewSizeError(undefined, max);
       chunks.push(value);
+      onProgress?.(size, total);
     }
   } catch (error) {
-    await reader.cancel();
+    await reader.cancel().catch(() => {});
     throw error;
+  } finally {
+    reader.releaseLock();
   }
   return new Blob(chunks);
 }

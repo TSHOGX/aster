@@ -1,5 +1,21 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Preview unavailable": "暂时无法预览",
+  "Download file": "下载文件",
+  "Preview files up to {size}": "支持预览最大 {size} 的文件",
+  "File too large to preview": "文件超出预览大小上限",
+  "This file is larger than the {size} preview limit. Download it to view the complete file.": "此文件超过 {size} 的预览上限，请下载查看完整内容。",
+  "This file could not be previewed within the supported content limits. Download it to view the complete file.": "此文件的内容复杂度或格式超出当前预览能力，请下载查看完整内容。",
+  "You can try again or download the original file.": "你可以重新尝试，也可以下载原文件查看。",
+  "Larger files may take a moment. You can keep working while the preview loads.": "较大的文件需要一点时间，加载期间你可以继续处理其他工作。",
+  "This format is not supported for preview. Download the file to open it in another app.": "暂不支持预览此格式，请下载后使用其他应用打开。",
+  "Your browser cannot display PDFs here. Download the file to read it.": "当前浏览器无法在此显示 PDF，请下载阅读。",
+  "Large file · Plain text view": "大文件 · 纯文本阅读",
+  "Shown in sections to keep scrolling smooth. Download for the original formatting.": "内容分段展示，让阅读保持流畅。下载文件可查看原始排版。",
+  "Text sections": "文本分段",
+  "Previous section": "上一段",
+  "Next section": "下一段",
+  "Section {current} of {total}": "第 {current} 段，共 {total} 段",
   "Starting": "正在启动",
   "Stopping": "正在停止",
 

@@ -68,7 +68,12 @@ missing-file errors are immediate. Writes are never automatically repeated.
 Workspace links reveal ancestor directories; on mobile the tree folds away after
 selection. Files support watches, upload, download, mutation, text editing and
 bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG, XLSX,
-DOCX and PPTX previews. Other formats (including PDF, legacy XLS and SVG) remain
+DOCX, PPTX and native browser PDF previews. All preview reads allow up to 20 MiB.
+Larger text files (above 256 KiB) use bounded plain-text sections to keep reading
+responsive, with downloads preserving original formatting. Loading states show
+file details and transfer progress when available, with cancel/retry/download
+actions. Oversized files identify the 20 MB limit separately from content or
+format limitations. Other formats (including legacy XLS and SVG) remain
 downloadable. Unsupported workbook drawings are identified. Office bytes pass
 bounded format validation in a cancellable Worker before rendering. Each Office
 renderer owns a disposable browser document; the old document stays readable

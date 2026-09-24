@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { classifyArtifact } from "@/lib/mime";
-import { parseDelimited } from "@/lib/file-view";
+import { parseDelimited, textPage, TEXT_PAGE_CHARS } from "@/lib/file-view";
 import { isNumericText } from "@/lib/table-cells";
 import { useT } from "@/lib/i18n";
 import { reservePreview } from "@/lib/preview-budget";
@@ -67,5 +67,28 @@ function DelimitedPreview({path, text, delimiter}: {path: string; text: string; 
         </tr>)}</tbody>
       </table>
     </div>
+  </div>;
+}
+
+// Large text uses bounded plain-text pages, including HTML/Markdown/JSON, so
+// formatters and DOM construction never process an entire multi-megabyte file.
+export function LargeTextPreview({ path, href, text }: { path: string; href: string; text: string }) {
+  const tr = useT();
+  const [page, setPage] = useState(0);
+  const pages = Math.ceil(text.length / TEXT_PAGE_CHARS);
+  return <div className="large-text-preview">
+    <div className="preview-reading-bar">
+      <span>{tr("Large file · Plain text view")}</span>
+      <a href={href} download>{tr("Download file")}</a>
+    </div>
+    <p className="preview-reading-hint">{tr("Shown in sections to keep scrolling smooth. Download for the original formatting.")}</p>
+    <div className="preview-text-page" role="region" aria-label={`${tr("Preview")} ${path}`} tabIndex={0}>
+      <CodeView key={page} code={textPage(text, page)} />
+    </div>
+    <nav className="preview-text-pagination" aria-label={tr("Text sections")}>
+      <button disabled={page === 0} onClick={() => setPage(n => n - 1)}><ChevronLeft size={16} aria-hidden="true" />{tr("Previous section")}</button>
+      <span role="status">{tr("Section {current} of {total}", { current: page + 1, total: pages })}</span>
+      <button disabled={page + 1 >= pages} onClick={() => setPage(n => n + 1)}>{tr("Next section")}<ChevronRight size={16} aria-hidden="true" /></button>
+    </nav>
   </div>;
 }

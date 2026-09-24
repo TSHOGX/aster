@@ -37,6 +37,7 @@ const csp = [
   // fetched ArrayBuffer. blob: URLs are same-origin, opaque, and can't exfiltrate
   // to a remote host, so this does not weaken the exfiltration guarantee.
   `connect-src ${connectSrc}`,
+  "frame-src 'self' blob:",
   frameAncestorsDirective,
   "base-uri 'self'",
   "form-action 'self'",

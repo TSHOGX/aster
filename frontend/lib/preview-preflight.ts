@@ -235,6 +235,11 @@ export async function preflightBytes(
   requireLimit(bytes.length <= LIMIT.blobBytes);
   signal.throwIfAborted();
   const ext = path.toLowerCase().split(".").pop();
+  if (ext === "pdf") {
+    // Rendering belongs to the browser's PDF viewer, never an HTML frame parser.
+    requireLimit(/^%PDF-\d\.\d/.test(new TextDecoder().decode(bytes.subarray(0, 8))));
+    return { renderBytes: 0, expandedBytes: 0, nodes: 0, pixels: 0, cells: 0, rows: 0 };
+  }
   if (["png", "jpg", "jpeg"].includes(ext || "")) {
     const pixels = imagePixels(bytes);
     return {
