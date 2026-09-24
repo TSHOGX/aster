@@ -169,7 +169,7 @@ export class ConversationRepository {
     if (cached) {
       this.windows = cached.windows;
       this.head = cached.head;
-      this.appliedSourceFrontier = cached.appliedSourceFrontier;
+      this.appliedSourceFrontier = cached.appliedSourceFrontier ?? null;
       this.anchor = cached.anchor;
       this.emit();
     }
@@ -405,7 +405,10 @@ export class ConversationRepository {
       if (this.closed || epoch !== this.navigation) return;
       this.acceptHead(page.head);
       this.windows = caught;
-      this.appliedSourceFrontier = this.head?.projected_frontier ?? page.head.projected_frontier;
+      if (!this.windows.at(-1)?.after)
+        this.appliedSourceFrontier = this.head?.projected_frontier ?? page.head.projected_frontier;
+      else if (this.appliedSourceFrontier === null)
+        this.appliedSourceFrontier = page.head.projected_frontier;
       this.pendingPage = null;
       this.budget(mode);
       this.emit();
@@ -464,7 +467,6 @@ export class ConversationRepository {
   private async resyncNow() {
     const anchor = this.anchor;
     this.windows = [];
-    this.appliedSourceFrontier = null;
     await this.loadNow(
       anchor ? { around_item: anchor } : {},
       "replace",
@@ -532,7 +534,8 @@ export class ConversationRepository {
     this.windows = windows;
     this.budget("newer");
     await this.updateSummaries(head, epoch);
-    this.appliedSourceFrontier = head.projected_frontier;
+    if (!this.windows.at(-1)?.after)
+      this.appliedSourceFrontier = head.projected_frontier;
     this.emit();
     if (head.projection_state !== "ready") this.schedule();
   }

@@ -180,6 +180,31 @@ it("advances the observed projection frontier only after deltas apply", async ()
   expect(conversation.getSnapshot().applied_source_frontier).toBe("new");
 });
 
+it("retains the last observed frontier while only an older page is loaded", async () => {
+  let revision = "1";
+  server((url) => {
+    const h = { ...head(revision), projected_frontier: revision === "1" ? "old" : "new" };
+    if (url.pathname.endsWith("/pages"))
+      return url.searchParams.has("after")
+        ? page([item(2, revision)], h, "earlier")
+        : page([item(1)], { ...head("1"), projected_frontier: "old" }, undefined, "later");
+    if (url.pathname.endsWith("/head")) return h;
+    if (url.pathname.endsWith("/turns"))
+      return { projection_generation: "g", index_revision: revision, turn_summaries: [] };
+    return changes(url.searchParams.get("after_revision")!, revision, revision === "2" ? [item(2, "2")] : []);
+  });
+  const conversation = repo();
+  await conversation.load({ around_turn: "old" });
+  expect(conversation.getSnapshot().after).toBe("later");
+  expect(conversation.getSnapshot().applied_source_frontier).toBe("old");
+  revision = "2";
+  await conversation.refresh();
+  expect(conversation.getSnapshot().head?.projected_frontier).toBe("new");
+  expect(conversation.getSnapshot().applied_source_frontier).toBe("old");
+  await conversation.load({ after: "later" }, "newer");
+  expect(conversation.getSnapshot().applied_source_frontier).toBe("new");
+});
+
 it("bridges page frontiers, boundary insertions and deletes without retaining off-window history", async () => {
   server((url) => {
     const base = url.searchParams.get("after_revision") || "";

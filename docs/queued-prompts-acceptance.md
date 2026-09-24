@@ -15,7 +15,7 @@ in `02-design.md`.
 | C01-C03 | Durable receipts, prompt-local revision, typed HTTP rejection and browser same-ID retry/local row error tests | Browser reconnect with a real API and concurrent tabs |
 | C04-C08 | Product recovery, journal replay, release/owner/service/capture/idle, focused race/pressure, isolated Khora fault and sustained combined load | Crash injection at every exact Steer delivery boundary |
 | D01-D03 | Persisted segment/rebuild, consumption order, final ownership/coalescing and composed native Steer order tests | Full browser page/delta matrix with real native output |
-| D04-D07 | Native monotonic elapsed evidence, segment clock tests, server/client frontier race and late tool update tests | Host-clock calibration and projection failure/reconnect browser path |
+| D04-D07 | Native monotonic elapsed evidence, segment clock tests, server/client and off-window frontier races, late tool update tests | Host-clock calibration and projection failure/reconnect browser path |
 | D08-D10 | Navigation/page generation, shared message run/segment metadata, new-chat/lost-reply tests and exact-source historical conversion/rebuild | All share/export surfaces and additional historical import variants |
 
 ## Gates
