@@ -122,26 +122,39 @@ func (s *Store) Turns(ctx context.Context, scope Scope, session string, after in
 // PromptQueue is the bounded FIFO scheduling view. It deliberately excludes
 // active and consumed execution records; those belong to the run/display head.
 func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, after int64, limit int) (PromptQueuePage, error) {
-	child, err := sessionIn(ctx, s.reader, scope, session)
+	tx, err := s.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return PromptQueuePage{}, err
+	}
+	defer tx.Rollback()
+	child, err := sessionIn(ctx, tx, scope, session)
 	if err != nil {
 		return PromptQueuePage{}, err
 	}
 	limit = pageSize(limit)
 	var total int
-	if err := s.reader.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued')`, scope.ProjectID, session).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued')`, scope.ProjectID, session).Scan(&total); err != nil {
 		return PromptQueuePage{}, err
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued') AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT `+turnColumns+`,
+  coalesce((SELECT id FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),''),
+  coalesce((SELECT state FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),'')
+ FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued') AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, limit+1)
 	if err != nil {
 		return PromptQueuePage{}, err
 	}
 	defer rows.Close()
 	items := make([]Turn, 0, limit)
 	var next int64
+	hasMore := false
 	for rows.Next() {
-		t, err := scanTurn(rows)
-		if err != nil {
+		var t Turn
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState); err != nil {
 			return PromptQueuePage{}, err
+		}
+		if len(items) == limit {
+			hasMore = true
+			break
 		}
 		next = t.Sequence
 		items = append(items, t)
@@ -150,10 +163,13 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 		return PromptQueuePage{}, err
 	}
 	page := PromptQueuePage{Items: items, TotalPending: total, QueueRevision: child.ControlRevision, After: after}
-	if len(items) == limit {
+	if hasMore {
 		page.NextAfter = next
 	}
-	return page, nil
+	if err := rows.Close(); err != nil {
+		return PromptQueuePage{}, err
+	}
+	return page, tx.Commit()
 }
 
 // ReleaseTurn requires the Session control revision, because it changes that Session's

@@ -13,7 +13,6 @@ import {
   type AgentSession,
   type Project,
 } from "@/lib/project-api";
-import { TurnClock } from "./turn-view";
 import { useT } from "@/lib/i18n";
 type Intent = {
   sessionId: string;
@@ -99,11 +98,9 @@ export function NewChat({
   return (
     <section className={`new-chat-view ${pending ? "submitting-chat" : ""}`}>
       {pending && (
-        <div className="pending-first-turn">
-          <article className="chat-message user">{pending.content}</article>
-          <div className="turn-work">
-            <TurnClock start={pending.startedAt} running={busy} />
-          </div>
+        <div className="pending-first-turn" role="status">
+          <strong>{tr("Sending…")}</strong>
+          <p>{pending.content}</p>
         </div>
       )}
       <div className="new-chat-intro" hidden={!!pending}>

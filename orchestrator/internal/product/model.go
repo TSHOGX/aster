@@ -74,6 +74,8 @@ type Turn struct {
 	Content        string `json:"content"`
 	InitiallyHeld  bool   `json:"initially_held"`
 	PromptRevision int64  `json:"prompt_revision"`
+	DeliveryID     string `json:"delivery_id,omitempty"`
+	DeliveryState  string `json:"delivery_state,omitempty"`
 	State          string `json:"state"`
 	Sequence       int64  `json:"sequence"`
 	CreatedAt      string `json:"created_at"`

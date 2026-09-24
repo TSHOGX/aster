@@ -42,6 +42,16 @@ export type Turn = {
   content: string;
   state: string;
   sequence: number;
+  prompt_revision?: number;
+  delivery_id?: string;
+  delivery_state?: string;
+};
+export type PromptQueuePage = {
+  items: Turn[];
+  total_pending: number;
+  queue_revision: number;
+  after?: number;
+  next_after?: number;
 };
 export type Message = {
   id: string;

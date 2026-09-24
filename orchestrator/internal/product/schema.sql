@@ -588,6 +588,7 @@ CREATE INDEX agent_commands_pending ON agent_commands(incarnation_id,state,creat
 
 CREATE INDEX execution_runs_live ON execution_runs(session_id,state) WHERE state IN ('starting','running','stopping','unknown');
 CREATE INDEX input_deliveries_run ON input_deliveries(session_id,run_id,acceptance_sequence);
+CREATE INDEX input_deliveries_prompt ON input_deliveries(prompt_id,acceptance_sequence DESC);
 CREATE INDEX input_deliveries_pending ON input_deliveries(session_id,state) WHERE state IN ('accepted','dispatching','native_queued','unknown');
 CREATE INDEX control_receipts_session ON control_receipts(session_id,updated_at);
 

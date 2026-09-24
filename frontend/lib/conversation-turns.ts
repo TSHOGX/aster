@@ -1,6 +1,6 @@
 import type { TimelineItem, Turn, TurnSummary } from "./project-api";
 export const runningTurn = (state: string) =>
-  ["sending", "queued", "starting", "running", "stopping"].includes(state);
+  ["starting", "running", "stopping"].includes(state);
 export function elapsedLabel(
   start?: string,
   end?: string,

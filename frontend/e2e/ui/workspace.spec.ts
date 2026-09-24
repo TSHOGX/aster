@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { workspaceFixture } from "./fixture";
 import {
+  ConversationFixture,
   conversationRoute,
   invalidateConversation,
 } from "./conversation-fixture";
@@ -535,7 +536,7 @@ test("consecutive activity has one live ripple line and keeps its phase on compl
   await expect(summary).toContainText("bash, edit, read • Tool activity (3)");
 });
 
-test("turn timer begins before creation responds", async ({ page }) => {
+test("first prompt waits in the queue without a work timer", async ({ page }) => {
   await workspaceFixture(page);
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -551,21 +552,53 @@ test("turn timer begins before creation responds", async ({ page }) => {
     .fill("Start timing immediately");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(
-    page.locator(".pending-first-turn .chat-message.user"),
+    page.locator(".pending-first-turn p"),
   ).toHaveText("Start timing immediately");
-  await expect(page.locator(".pending-first-turn .turn-work")).toContainText(
-    "Worked for",
-  );
-  const initial = await page
-    .locator(".pending-first-turn .turn-work")
-    .innerText();
-  await expect
-    .poll(() => page.locator(".pending-first-turn .turn-work").innerText())
-    .not.toBe(initial);
+  await expect(page.locator(".pending-first-turn .turn-work")).toHaveCount(0);
   release();
   await expect(page.locator(".agent-panel")).toContainText(
     "Start timing immediately",
   );
+});
+
+test("active composer has one Stop action while Enter queues and each row keeps three actions", async ({ page }) => {
+  const f = await workspaceFixture(page);
+  const fixture = new ConversationFixture();
+  const session = {
+    id: "analysis", project_id: "battery", title: "Compare cycle performance",
+    state: "running", revision: 2, control_revision: 2, deletion: 0,
+  };
+  await page.route("**/sessions/analysis/view/head", async route => {
+    const head = fixture.reply({ session, turns: [{ id: "active", session_id: "analysis", content: "Current task", state: "running", sequence: 1 }] }, new URL(route.request().url()));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(head) });
+  });
+  await page.route("**/sessions/analysis/queue?*", async route => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      items: [
+        { id: "held", session_id: "analysis", request_id: "held", content: "Held guidance", state: "held", sequence: 2, prompt_revision: 1 },
+        { id: "queued", session_id: "analysis", request_id: "queued", content: "Queued guidance", state: "queued", sequence: 3, prompt_revision: 1 },
+      ], total_pending: 2, queue_revision: 2,
+    }) });
+  });
+  await page.goto("/?project=battery&session=analysis");
+  await expect(page.getByRole("button", { name: "Stop current task" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
+  await page.locator(".prompt-queue summary").filter({ hasText: "Queued prompts" }).click();
+  const rows = page.locator(".prompt-queue-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).locator("button")).toHaveCount(3);
+  await expect(rows.nth(1).locator("button")).toHaveCount(3);
+  await expect(rows.nth(0).getByRole("button", { name: /Steer:/ })).toBeEnabled();
+  await expect(rows.nth(1).getByRole("button", { name: /Steer:/ })).toBeEnabled();
+  const input = page.getByLabel("Message Compare cycle performance", { exact: true });
+  await input.fill("A new queued prompt");
+  await input.press("Enter");
+  await expect.poll(() => f.calls.filter(c => c.method === "POST" && c.path.endsWith("/turns")).length).toBe(1);
+  await expect(page.getByRole("button", { name: "Stop current task" })).toHaveCount(1);
+  await input.fill("Keep this draft");
+  await page.getByRole("button", { name: "Stop current task" }).click();
+  await expect(input).toHaveValue("Keep this draft");
+  await expect.poll(() => f.calls.filter(c => c.method === "POST" && c.path.endsWith("/turns")).length).toBe(1);
 });
 
 test("completed turn folds intermediate output, freezes elapsed time and provides answer actions", async ({

@@ -529,6 +529,21 @@
   gap: 8px;
   padding: 6px 0;
 }
+.prompt-queue-row .row-actions {
+  flex-wrap: wrap;
+}
+.prompt-queue-row .row-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 94px;
+  min-height: 32px;
+}
+.composer-hint {
+  color: var(--color-foreground-muted);
+  font-size: 11px;
+}
 .prompt-queue pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

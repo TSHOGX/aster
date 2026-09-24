@@ -10,7 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { ArrowDown, ArrowUp, Square } from "lucide-react";
+import { ArrowDown, ArrowUp, CornerUpRight, Pause, Play, Square, X } from "lucide-react";
 import { ConversationRepository } from "@/lib/conversation-repository";
 import { TurnNavigator } from "./turn-navigator";
 import { TurnView } from "./turn-view";
@@ -34,6 +34,7 @@ import {
   type TimelineItem,
   type TurnIndexItem,
   type Turn,
+  type PromptQueuePage,
 } from "@/lib/project-api";
 import { useResources, useRealtime } from "./resource-provider";
 function useWorkspaceFiles(key: string) {
@@ -108,7 +109,10 @@ export function SessionPanel({
     } | null>(key + ":send", null),
   );
   const hasPending = !!pendingSend;
-  const [sentTurn, setSentTurn] = useState<Turn | null>(null);
+  const [queuePage, setQueuePage] = useState<PromptQueuePage | null>(null);
+  const [queueError, setQueueError] = useState("");
+  const [stopPending, setStopPending] = useState(false);
+  const queueRequest = useRef(0);
   const [focusMessage, setFocusMessage] = useState(targetMessage);
   const [focusItem, setFocusItem] = useState(
     !initialBookmark.follow ? initialBookmark.item : "",
@@ -496,12 +500,29 @@ export function SessionPanel({
   useEffect(() => {
     remember(key, draft);
   }, [draft, key]);
-  useEffect(() => {
-    if (sentTurn && view.head?.turns.some((t) => t.id === sentTurn.id))
-      void Promise.resolve().then(() => setSentTurn(null));
-  }, [sentTurn, view.head?.turns]);
   const current = view.head?.session || session;
-  let timeline: TimelineItem[] = view.items.map((item, index) => ({
+  const loadQueue = useCallback(async (after = 0) => {
+    const request = ++queueRequest.current;
+    try {
+      const page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?after=${after}&limit=32`);
+      if (request !== queueRequest.current) return;
+      setQueuePage((old) => after && old && old.queue_revision === page.queue_revision
+        ? { ...page, items: [...old.items, ...page.items] }
+        : page);
+      setQueueError("");
+    } catch (e) {
+      if (request === queueRequest.current)
+        setQueueError(e instanceof Error ? e.message : tr("The action failed."));
+    }
+  }, [session.id, session.project_id, tr]);
+  useEffect(() => {
+    void Promise.resolve().then(() => loadQueue());
+  }, [loadQueue, view.head?.session.control_revision]);
+  useEffect(() => {
+    if (!view.head?.turns.some((turn) => ["starting", "running", "stopping"].includes(turn.state)))
+      void Promise.resolve().then(() => setStopPending(false));
+  }, [view.head?.turns]);
+  const timeline: TimelineItem[] = view.items.map((item, index) => ({
     ...item,
     cursor: index,
     order: item.block,
@@ -512,44 +533,9 @@ export function SessionPanel({
       .map((t) => t.id),
   );
   const displayTurns = [...(view.head?.turns || [])];
-  if (sentTurn && !displayTurns.some((t) => t.id === sentTurn.id))
-    displayTurns.push(sentTurn);
-  if (
-    pendingSend &&
-    !pendingSend.held &&
-    !displayTurns.some((t) => t.request_id === pendingSend.id)
-  )
-    displayTurns.push({
-      id: `pending:${pendingSend.id}`,
-      session_id: session.id,
-      content: pendingSend.content,
-      state: error ? "unknown" : "sending",
-      sequence: Number.MAX_SAFE_INTEGER,
-      created_at: pendingSend.startedAt,
-    });
-  if (!view.after && !focusMessage && !focusTurn) {
-    const missing = displayTurns.filter(
-      (t) =>
-        !timeline.some((i) => i.turn_id === t.id) &&
-        (["sending", "queued", "starting", "running", "stopping"].includes(
-          t.state,
-        ) ||
-          t.id.startsWith("pending:")),
-    );
-    timeline = [
-      ...timeline,
-      ...missing.map((t) => ({
-        id: `${t.id}/user`,
-        cursor: Number.MAX_SAFE_INTEGER,
-        turn_id: t.id,
-        kind: "user",
-        content: t.content,
-      })),
-    ];
-  }
   const turns = conversationTurns(timeline, view.summaries || [], displayTurns);
   const navigationTurns: TurnIndexItem[] = turns
-    .filter((t) => t.turnId && !t.turnId.startsWith("pending:"))
+    .filter((t) => t.turnId)
     .map((t, i) => ({
       id: t.turnId,
       sequence:
@@ -608,22 +594,16 @@ export function SessionPanel({
     setPendingSend(intent);
     remember(key + ":send", intent);
     void act(async () => {
-      const accepted = await command<Turn>(`${base}/turns`, {
+      await command<Turn>(`${base}/turns`, {
         request_id: intent.id,
         content: intent.content,
         held: intent.held,
       });
-      if (!intent.held)
-        setSentTurn({
-          ...accepted,
-          content: intent.content,
-          request_id: intent.id,
-          created_at: accepted.created_at || intent.startedAt,
-        });
       setPendingSend(null);
       remember(key + ":send", null);
       await showLatest();
-      setDraft("");
+      await loadQueue();
+      setDraft((old) => old === intent.content ? "" : old);
 
       setFocusTurn("");
       setFocusMessage("");
@@ -692,19 +672,44 @@ export function SessionPanel({
     };
   }, [captureAnchor, sizeKey]);
   const control = (turn: Turn, action: string) =>
-    void act(() =>
-      command(`${base}/turns/${encodeURIComponent(turn.id)}/control`, {
+    void act(async () => {
+      await command(`${base}/turns/${encodeURIComponent(turn.id)}/control`, {
         action,
         control_revision: current.control_revision,
-      }),
-    );
+      });
+      await loadQueue();
+    });
+  const steer = (turn: Turn) =>
+    void act(async () => {
+      await command(`${base}/control`, {
+        action: "steer",
+        source: turn.id,
+        request_id: newID(),
+        control_revision: current.control_revision,
+      });
+      await loadQueue();
+    });
+  const stop = async () => {
+    if (stopPending) return;
+    setStopPending(true);
+    try {
+      await command(`${base}/control`, {
+        action: "interrupt",
+        request_id: newID(),
+        control_revision: current.control_revision,
+      });
+      await refresh();
+      await loadQueue();
+    } catch (e) {
+      setStopPending(false);
+      setError(e instanceof Error ? e.message : tr("The action failed."));
+    }
+  };
   const active = view.head?.turns.some((turn) =>
     ["starting", "running", "stopping"].includes(turn.state),
   );
-  const queue =
-    view.head?.turns.filter((turn) =>
-      ["queued", "held"].includes(turn.state),
-    ) || [];
+  const queue = queuePage?.items || [];
+  const deliveryBusy = (turn: Turn) => ["accepted", "dispatching", "native_queued", "unknown"].includes(turn.delivery_state || "");
   return (
     <section
       className="agent-panel"
@@ -1016,57 +1021,54 @@ export function SessionPanel({
           ))}
         </section>
       )}
-      {queue.length > 0 && (
+      {(queue.length > 0 || pendingSend || queueError) && (
         <details className="prompt-queue">
           <summary>
-            {tr("Queued prompts")} · {queue.length}
+            {tr("Queued prompts")} · {queuePage?.total_pending ?? queue.length}
           </summary>
+          {queueError && <p role="status">{queueError}</p>}
+          {pendingSend && !queue.some((turn) => turn.request_id === pendingSend.id) && (
+            <div className="prompt-queue-row" aria-busy="true">
+              <span>{tr("Sending…")}: {pendingSend.content.slice(0, 120)}</span>
+              <div className="row-actions" aria-label={tr("Pending action")}>
+                <button type="button" disabled>{tr("Hold")}</button>
+                <button type="button" disabled>{tr("Steer")}</button>
+                <button type="button" disabled>{tr("Cancel prompt")}</button>
+              </div>
+            </div>
+          )}
           {queue.map((turn) => (
-            <div key={turn.id}>
+            <div className="prompt-queue-row" key={turn.id} aria-busy={deliveryBusy(turn)}>
               <span>
-                {turn.state}: {turn.content.slice(0, 120)}
+                {turn.delivery_state === "native_queued" ? tr("Waiting to join current task…")
+                  : turn.delivery_state === "unknown" ? tr("Delivery outcome unknown")
+                  : deliveryBusy(turn) ? tr("Submitting to current task…")
+                  : turn.state === "held" ? tr("Held") : tr("Queued")}: {turn.content.slice(0, 120)}
               </span>
               <div className="row-actions">
-                {turn.state === "held" ? (
-                  <>
-                    <button
-                      disabled={busy}
-                      onClick={() => control(turn, "release")}
-                    >
-                      {tr("Release")}
-                    </button>
-                    {active && (
-                      <button
-                        disabled={busy}
-                        onClick={() =>
-                          void act(() =>
-                            command(`${base}/control`, {
-                              action: "steer",
-                              source: turn.id,
-                              request_id: newID(),
-                              control_revision: current.control_revision,
-                            }),
-                          )
-                        }
-                      >
-                        {tr("Steer")}
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  <button disabled={busy} onClick={() => control(turn, "held")}>
-                    {tr("Hold")}
-                  </button>
-                )}
+                <button type="button" disabled={busy || deliveryBusy(turn)} onClick={() => control(turn, turn.state === "held" ? "release" : "held")}
+                  aria-label={`${turn.state === "held" ? tr("Release") : tr("Hold")}: ${turn.content.slice(0, 80)}`}>
+                  {turn.state === "held" ? <Play size={16} /> : <Pause size={16} />}
+                  {turn.state === "held" ? tr("Release") : tr("Hold")}
+                </button>
+                <button type="button" disabled={busy || deliveryBusy(turn) || !active} onClick={() => steer(turn)}
+                  aria-label={`${tr("Steer")}: ${turn.content.slice(0, 80)}`} title={!active ? tr("No active task") : tr("Steer")}>
+                  <CornerUpRight size={16} />{tr("Steer")}
+                </button>
                 <button
-                  disabled={busy}
+                  type="button"
+                  disabled={busy || deliveryBusy(turn)}
                   onClick={() => control(turn, "canceled")}
+                  aria-label={`${tr("Cancel prompt")}: ${turn.content.slice(0, 80)}`}
                 >
-                  {tr("Cancel prompt")}
+                  <X size={16} />{tr("Cancel prompt")}
                 </button>
               </div>
             </div>
           ))}
+          {!!queuePage?.next_after && (
+            <button type="button" onClick={() => void loadQueue(queuePage.next_after)}>{tr("More prompts")}</button>
+          )}
         </details>
       )}
       <form
@@ -1078,6 +1080,7 @@ export function SessionPanel({
       >
         <ComposerInput
           aria-label={`Message ${current.title}`}
+          aria-describedby={`composer-hint-${session.id}`}
           value={pendingSend?.content || draft}
           disabled={hasPending}
           maxLength={64000}
@@ -1092,6 +1095,7 @@ export function SessionPanel({
             label={tr("Conversation actions")}
             items={[
               { label: tr("Turn history"), action: () => void loadTurns() },
+              ...(active ? [{ label: tr("Add to queue"), disabled: busy || !draft.trim() || hasPending, action: () => send(false) }] : []),
               {
                 label: tr("Hold prompt"),
                 disabled: busy || !draft.trim() || hasPending,
@@ -1099,39 +1103,31 @@ export function SessionPanel({
               },
             ]}
           />
+          <small id={`composer-hint-${session.id}`} className="composer-hint">
+            {active ? tr("Enter to add to queue · Shift+Enter for a new line") : tr("Enter to send · Shift+Enter for a new line")}
+          </small>
           <div className="row-actions">
-            {active && (
+            {active ? (
               <button
                 type="button"
                 className="stop-button"
-                aria-label={tr("Stop turn")}
-                title={tr("Stop turn")}
-                disabled={busy}
-                onClick={() =>
-                  void act(() =>
-                    command(`${base}/control`, {
-                      action: "interrupt",
-                      request_id: newID(),
-                      control_revision: current.control_revision,
-                    }),
-                  )
-                }
+                aria-label={stopPending ? tr("Stopping…") : tr("Stop current task")}
+                title={stopPending ? tr("Stopping…") : tr("Stop current task")}
+                disabled={stopPending}
+                onClick={() => void stop()}
               >
                 <Square size={14} fill="currentColor" />
               </button>
+            ) : (
+              <button
+                className="send-button"
+                aria-label={hasPending ? tr("Retry") : tr("Send")}
+                title={hasPending ? tr("Retry") : tr("Send")}
+                disabled={busy || (!draft.trim() && !hasPending) || current.state === "blocked"}
+              >
+                <ArrowUp size={18} />
+              </button>
             )}
-            <button
-              className="send-button"
-              aria-label={hasPending ? tr("Retry") : tr("Send")}
-              title={hasPending ? tr("Retry") : tr("Send")}
-              disabled={
-                busy ||
-                (!draft.trim() && !hasPending) ||
-                current.state === "blocked"
-              }
-            >
-              <ArrowUp size={18} />
-            </button>
           </div>
         </div>
       </form>

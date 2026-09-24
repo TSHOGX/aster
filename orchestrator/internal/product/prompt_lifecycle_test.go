@@ -107,3 +107,29 @@ func TestInputsReconciledRestoresUnconsumedDeliveryToHeld(t *testing.T) {
 		t.Fatal("removed input was projected", messages)
 	}
 }
+
+func TestReleasedPromptCanBeClaimedBySteerBeforeOrdinaryDispatch(t *testing.T) {
+	s, scope, i, prompt := agentFixture(t)
+	_, err := s.IngestAgent(ctx, i, record(i, prompt, 1, "command.applied", `{"success":true}`))
+	must(t, err)
+	source, err := s.AdmitTurn(ctx, scope, i.SessionID, "released-source", "join this run", false)
+	must(t, err)
+	child, err := s.Session(ctx, scope, i.SessionID)
+	must(t, err)
+	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "released-steer", child.ControlRevision))
+	steer, err := s.agentCommand(ctx, i)
+	must(t, err)
+	if steer.TurnID != source.ID {
+		t.Fatal("ordinary dispatch won after Steer claim", steer.TurnID)
+	}
+	var state string
+	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	if state != "held" {
+		t.Fatal("source remained ordinarily dispatchable", state)
+	}
+	page, err := s.PromptQueue(ctx, scope, i.SessionID, 0, 32)
+	must(t, err)
+	if len(page.Items) != 1 || page.Items[0].ID != source.ID || page.Items[0].DeliveryState != "dispatching" {
+		t.Fatal("queue lost delivery progress", page)
+	}
+}

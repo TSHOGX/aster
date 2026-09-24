@@ -77,7 +77,7 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 			if err != nil {
 				return err
 			}
-			if t.State != "held" {
+			if t.State != "held" && t.State != "queued" {
 				return ErrConflict
 			}
 			payload["message"] = t.Content
@@ -88,6 +88,11 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 			}
 			if pending > 0 {
 				return ErrConflict
+			}
+			if t.State == "queued" {
+				if err := changed(tx.ExecContext(ctx, `UPDATE turns SET state='held',prompt_revision=prompt_revision+1,updated_at=? WHERE id=? AND state='queued'`, s.timestamp(), source)); err != nil {
+					return err
+				}
 			}
 		} else {
 			if _, err = tx.ExecContext(ctx, `UPDATE turns SET state='held',updated_at=? WHERE session_id=? AND state='queued'`, s.timestamp(), session); err != nil {
