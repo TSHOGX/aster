@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"harness-platform/orchestrator/internal/agentwire"
+	"slices"
 	"testing"
 )
 
@@ -72,6 +73,46 @@ func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 	must(t, err)
 	if len(next.Items) != 25 || next.NextAfter != 0 {
 		t.Fatalf("queue tail: %+v", next)
+	}
+}
+
+func TestHeldSkipAndLaterReleasePreserveSchedulingAndDisplayOrder(t *testing.T) {
+	s, scope, i, first := agentFixture(t)
+	held, err := s.AdmitTurn(ctx, scope, i.SessionID, "held-second", "held B", true)
+	must(t, err)
+	released, err := s.AdmitTurn(ctx, scope, i.SessionID, "released-third", "released C", false)
+	must(t, err)
+	ingestContract(t, s, i, first, "native", consumedPayload(first))
+	ingestContract(t, s, i, first, "native", reconciledPayload(first))
+	completeContract(t, s, i, first)
+	next, err := s.agentCommand(ctx, i)
+	must(t, err)
+	if next.TurnID != released.ID {
+		t.Fatal("held input blocked released work", next.TurnID)
+	}
+	ingestContract(t, s, i, next, "native", consumedPayload(next))
+	ingestContract(t, s, i, next, "native", reconciledPayload(next))
+	completeContract(t, s, i, next)
+	_, err = s.MutatePrompt(ctx, scope, i.SessionID, held.ID, "release-second", "release", held.PromptRevision)
+	must(t, err)
+	next, err = s.agentCommand(ctx, i)
+	must(t, err)
+	if next.TurnID != held.ID {
+		t.Fatal("release changed the original queue position", next.TurnID)
+	}
+	ingestContract(t, s, i, next, "native", consumedPayload(next))
+	ingestContract(t, s, i, next, "native", reconciledPayload(next))
+	completeContract(t, s, i, next)
+	page, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
+	must(t, err)
+	var inputs []string
+	for _, item := range page.Items {
+		if item.Kind == "user" {
+			inputs = append(inputs, item.Content)
+		}
+	}
+	if !slices.Equal(inputs, []string{"hello", "released C", "held B"}) {
+		t.Fatal("display followed enqueue order instead of consumption", inputs)
 	}
 }
 
