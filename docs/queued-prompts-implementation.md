@@ -1,6 +1,6 @@
 # Queued-prompts implementation progress
 
-This record tracks implementation evidence after the planning baseline. It does not amend the frozen screenshot evidence or claim that the acceptance gates have passed.
+This record tracks implementation evidence after the planning baseline. It does not amend the frozen screenshot evidence. Later stages supersede earlier transitional notes; the current gate decision is in [queued-prompts-acceptance.md](./queued-prompts-acceptance.md).
 
 ## P0: full Session identity fixture (2026-09-24)
 
@@ -149,3 +149,9 @@ A dedicated composed Chromium test also used the production frontend and real AP
 The same composed test now reloads the initiating tab after the accepted receipt and opens a second tab on the Session. Both readers converge to one source anchor and no stale synchronization row. This passed against the real API and pinned candidate, supplementing the repository's off-window frontier test.
 
 The composer now derives its Stopping and recovery-disabled primary action from `active_run.state` after reload, rather than local Stop-pending memory. Steer is enabled only for starting/running runs. An unknown run with no live matching incarnation displays a disabled Recovery needed action instead of submitting another Stop or offering Steer. Browser coverage checks both states with the three queue action slots intact.
+
+## Final development qualification (2026-09-25)
+
+The patched RPC/full AgentSession fixture now holds two real synthetic tools open across Steer admission. Both tool completions precede consumption, and consumption precedes the next model call. A throwing real Session listener after the input boundary leaves one consumption fact and allows the next prompt to settle. The original queue-boundary probe also covers the parallel tool mode. A mobile touch Playwright check uses the composer action menu to queue once, then stops independently while preserving a draft and the accessible Enter hint. A SQLite dispatch/projection regression confirms held B is skipped for released C, then later Release B displays A, C, B in actual consumption order.
+
+A staging executable at `/srv/batterygpt/qualification/queued-prompts-20260924-orchestrator` has digest `sha256:728d751920d6d59a80d3944a62a7c018c03ada0660dd4d98dab33ceba831b5ed`. `release-identity` against a temporary configuration copy pointing to the new immutable manifest reported schema version 2/digest `sha256:0a9f6a6ccb1b8cb0c96b1e57ebf5b969ac5adbb6ec95c55de97ef9b175bff729`, runtime digest `sha256:efa87b576da80bb011f0897bcab176b028a2e64d16acaf3b314d43070245ded3`, owner protocol 2 and gateway protocol 1. The temporary configuration copy was deleted; its digest is not the final `/etc` release identity. The production frontend build ID for this qualification is `aNp5C89s_zeiIUPg-sIuA`. See the acceptance and release documents for the development sign-off and deferred activation steps.

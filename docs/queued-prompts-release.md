@@ -18,6 +18,21 @@ The final executable, frontend build, configuration and content digests must
 still be measured from the intended deployed candidate with `release-identity`.
 Source and staging hashes alone are not a deployable identity.
 
+The staging executable is retained at
+`/srv/batterygpt/qualification/queued-prompts-20260924-orchestrator` with digest
+`sha256:728d751920d6d59a80d3944a62a7c018c03ada0660dd4d98dab33ceba831b5ed`.
+`release-identity` on a temporary copy of the installed configuration with
+only its template manifest/digest changed reported schema version 2 and the
+schema/runtime digests above, owner protocol 2, gateway protocol 1, assets
+digest `sha256:ac6ead9319c331dfa44117991a8b3972ce3fb57c7e00e00c346557c4751b7096`
+and config-content digest
+`sha256:b33ec4e2b43935a8f3b670622152e9ba4070950852cfceaa933a74d78cf98ea6`.
+The production frontend build ID is `aNp5C89s_zeiIUPg-sIuA`.
+The staging configuration digest was
+`sha256:51c4e213a375aa6a03166d62e2169122b880984fcb0a3bc81df3e40eb23260bd`;
+it is **not** a deployment digest because its base directory was `/tmp`.
+The temporary configuration was removed after inspection.
+
 ## Format decision
 
 Development uses the new contract directly. There is no old-client adapter,
@@ -70,7 +85,8 @@ the complete installation.
 2. Inspect the incumbent with its own release identity and a read-only
    database snapshot. Use `format-convert --source SNAPSHOT.db --inspect` to
    record `PRAGMA user_version` and the compiled DDL fingerprint, plus
-   integrity and foreign-key checks, all live/unknown runs and deliveries,
+   integrity and foreign-key checks, all live/unknown turns and commands and,
+   where those tables exist, runs and deliveries,
    pending controls, captures, service slots and release blockers. Do not
    infer consumption from `turns.state=completed` or a command ACK.
 3. Use the existing quiescent drain, not owner handoff, for a schema/runtime
@@ -83,15 +99,14 @@ the complete installation.
    copies and keep the source untouched. Conversion writes only a separate
    staging database and artifacts.
 5. Record each paused source sandbox identity and its two volume identities.
-   Before activation, retire each old protocol-2 sandbox through the engine
+   Before activation, retire each old protocol-1 sandbox through the engine
    while keeping both volumes intact; verify the old sandbox is absent. The
    converted copy clears that placement binding so resume creates a new
    sandbox from the protocol-3 template. Do not mount the same retained volume
    into two live sandboxes. This engine action belongs to the separately
    authorized release, not to the offline converter or this development task.
-6. Run `format-convert --source SNAPSHOT.db --destination STAGING.db --target-runtime CANDIDATE_DIGEST` against a
-   staging snapshot of the **actual** incumbent fingerprint. The destination
-   must not exist. Check exact row/identity
+6. Run the `format-convert` command above against a staging snapshot of the
+   **actual** incumbent fingerprint. The destination must not exist. Check exact row/identity
    accounting, all foreign keys, unique live-run and delivery-claim indexes,
    unknown/removed/consumed evidence, capture paths, share/export chronology
    and deterministic projection rebuild. The tool verifies the candidate
@@ -120,8 +135,8 @@ No source message text or credentials were exported to this repository.
 
 Current state: the format transition is qualified on a staging copy and the
 new runtime template passed isolated native, release, fault, real-browser and
-combined workload suites. The final executable/configuration identity and
-the remaining exact-delivery crash/extension matrix are not yet qualified.
-The old Steer remains explicitly unknown. Engine retirement of the actual old
-paused sandbox has not been performed. Activation remains closed. No
-live-data reset or deployment is implied.
+combined workload suites. The staging executable/configuration identities are
+measured; the final `/etc` configuration and executable must be inspected again
+at release time. The old Steer remains explicitly unknown. Engine retirement
+of the actual old paused sandbox has not been performed. Activation remains
+closed. No live-data reset or deployment is implied.
