@@ -34,6 +34,8 @@ export type ProjectTerminal = {
   failure?: string;
 };
 export type Turn = {
+ queue_policy?: "held" | "released";
+ disposition?: "pending" | "claimed" | "consumed" | "canceled";
   request_id?: string;
   created_at?: string;
   updated_at?: string;
@@ -62,6 +64,7 @@ export type Message = {
   turn_id?: string;
 };
 export type TimelineItem = {
+ run_id?: string;
   segment_id?: string;
   truncated?: boolean;
   detail_version?: string;
@@ -78,6 +81,9 @@ export type TimelineItem = {
   state?: string;
 };
 export type TurnSummary = {
+ segment_id?: string;
+ run_id?: string;
+ elapsed_ms?: number;
   sequence?: number;
   id: string;
   state: string;

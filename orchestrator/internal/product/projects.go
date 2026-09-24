@@ -362,7 +362,7 @@ func (s *Store) DeleteProject(ctx context.Context, scope Scope, revision int64) 
 		if err := changed(tx.ExecContext(ctx, `UPDATE projects SET state='deleting',revision=revision+1,activity_revision=activity_revision+1,idle_deadline=NULL,updated_at=? WHERE id=? AND revision=?`, s.timestamp(), scope.ProjectID, revision)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='canceled',updated_at=? WHERE project_id=? AND state IN ('queued','held')`, s.timestamp(), scope.ProjectID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET disposition='canceled',updated_at=? WHERE project_id=? AND disposition='pending'`, s.timestamp(), scope.ProjectID); err != nil {
 			return err
 		}
 		return s.event(ctx, tx, scope.ProjectID, "", "", "project.deleting", revision+1)

@@ -11,6 +11,8 @@ import { ResourceStore, type ResourceKey } from "./resource-store";
 import { startTiming } from "./interaction-metrics";
 
 export type DisplayItem = {
+ segment_id?: string;
+ run_id?: string;
   id: string;
   turn_id: string;
   turn_sequence: string;
@@ -28,6 +30,7 @@ export type DisplayItem = {
   detail_version?: string;
 };
 export type ConversationHead = {
+ active_run?: { id: string; prompt_id: string; incarnation_id: string; owner: number; state: string };
   session: AgentSession;
   turns: Turn[];
   control_revision: string;

@@ -25,6 +25,7 @@ type AgentRecoveryStatus struct {
 }
 
 type ViewHead struct {
+	ActiveRun         *ExecutionRun         `json:"active_run,omitempty"`
 	Session           Session               `json:"session"`
 	ControlRevision   int64                 `json:"control_revision,string"`
 	ContentRevision   int64                 `json:"content_revision,string"`
@@ -162,7 +163,7 @@ func viewHead(ctx context.Context, q queryer, scope Scope, session string) (View
 			out.State = "catching_up"
 		}
 	}
-	rows, err := q.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND (state IN ('queued','held','starting','running','stopping') OR (state='unknown' AND acknowledged=0)) ORDER BY CASE WHEN state IN ('starting','running','stopping') THEN 0 ELSE 1 END,sequence DESC LIMIT 33`, session)
+	rows, err := q.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND (disposition IN ('pending','claimed') OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.prompt_id=turns.id AND r.state IN ('starting','running','stopping','unknown') AND r.acknowledged=0)) ORDER BY CASE WHEN EXISTS(SELECT 1 FROM execution_runs r WHERE r.prompt_id=turns.id AND r.state IN ('starting','running','stopping','unknown') AND r.acknowledged=0) THEN 0 ELSE 1 END,sequence DESC LIMIT 33`, session)
 	if err != nil {
 		return out, err
 	}
@@ -180,6 +181,13 @@ func viewHead(ctx context.Context, q queryer, scope Scope, session string) (View
 		out.Turns = append(out.Turns, t)
 	}
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		return out, err
+	}
+	var run ExecutionRun
+	err = q.QueryRowContext(ctx, `SELECT id,prompt_id,incarnation_id,owner,state FROM execution_runs WHERE session_id=? AND (state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0))`, session).Scan(&run.ID, &run.PromptID, &run.IncarnationID, &run.Owner, &run.State)
+	if err == nil {
+		out.ActiveRun = &run
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return out, err
 	}
 	out.Recovery = []AgentRecoveryStatus{}
@@ -523,7 +531,7 @@ func (s *Store) RebuildConversation(ctx context.Context, scope Scope, session st
 		if _, err := liveDisplaySession(ctx, tx, scope, session); err != nil {
 			return err
 		}
-		for _, table := range []string{"conversation_details", "conversation_changes", "conversation_retention", "conversation_items", "conversation_detail_gc", "conversation_turns", "conversation_checkpoints", "conversation_message_groups"} {
+		for _, table := range []string{"conversation_segment_inputs", "conversation_segments", "conversation_details", "conversation_changes", "conversation_retention", "conversation_items", "conversation_detail_gc", "conversation_turns", "conversation_checkpoints", "conversation_message_groups"} {
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE session_id=?", table), session); err != nil {
 				return err
 			}

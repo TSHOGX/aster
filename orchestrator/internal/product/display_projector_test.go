@@ -27,7 +27,7 @@ func displayItems(t *testing.T, s *Store, session string) []DisplayItem {
 func TestDisplayProjectionStableBlocksToolsAndReplay(t *testing.T) {
 	s, _, i, c := agentFixture(t)
 	payloads := []struct{ kind, body string }{
-		{"command.applied", `{}`},
+		{"native", consumedPayload(c)},
 		{"native", `{"type":"message_start","message":{"role":"assistant","content":[]}}`},
 		{"native", `{"type":"message_update","message":{"role":"assistant","content":[{"type":"thinking","thinking":"consider"},{"type":"toolCall","id":"a","name":"read","arguments":{"path":"a"}},{"type":"toolCall","id":"b","name":"read","arguments":{"path":"b"}}]}}`},
 		{"native", `{"type":"tool_execution_end","toolCallId":"b","result":{"content":[{"type":"text","text":"B"}]}}`},
@@ -71,7 +71,7 @@ func TestDisplayProjectionStableBlocksToolsAndReplay(t *testing.T) {
 
 func TestConsumedSteerInputStartsTheNextDisplaySegment(t *testing.T) {
 	s, scope, i, command := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
+	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "native", consumedPayload(command)))
 	must(t, err)
 	_, err = s.IngestAgent(ctx, i, record(i, command, 2, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"first answer"}]}}`))
 	must(t, err)
@@ -118,14 +118,12 @@ func TestConsumedSteerInputStartsTheNextDisplaySegment(t *testing.T) {
 
 func TestSummaryTimingStartsAtConsumptionEvidence(t *testing.T) {
 	s, scope, i, command := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
+	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "native", consumedPayload(command)))
 	must(t, err)
 	_, err = s.IngestAgent(ctx, i, record(i, command, 2, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"timed"}]}}`))
 	must(t, err)
 	var prompt string
 	must(t, s.db.QueryRow(`SELECT prompt_id FROM input_deliveries WHERE command_id=?`, command.CommandID).Scan(&prompt))
-	_, err = s.db.Exec(`UPDATE input_deliveries SET state='consumed',consumed_at=? WHERE prompt_id=?`, "2026-09-24T00:00:05Z", prompt)
-	must(t, err)
 	for n := 0; n < 8; n++ {
 		if err := s.ProjectConversation(ctx, i.SessionID); err != nil && !errors.Is(err, ErrPending) {
 			t.Fatal(err)
@@ -133,14 +131,14 @@ func TestSummaryTimingStartsAtConsumptionEvidence(t *testing.T) {
 	}
 	summaries, err := s.ConversationSummaries(ctx, scope, i.SessionID, []string{prompt})
 	must(t, err)
-	if len(summaries.Turns) != 1 || summaries.Turns[0].CreatedAt != "2026-09-24T00:00:05Z" {
+	if len(summaries.Turns) != 1 || summaries.Turns[0].CreatedAt != "2026-09-24T00:00:01Z" {
 		t.Fatalf("summary clock includes queue time: %+v", summaries.Turns)
 	}
 }
 
 func TestDisplayProjectionTombstonesLargeDetailAndBatchFrontier(t *testing.T) {
 	s, _, i, c := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	_, err = s.IngestAgent(ctx, i, record(i, c, 2, "native", `{"type":"message_start","message":{"role":"assistant","content":[{"type":"text","text":"first"},{"type":"thinking","thinking":"removed"}]}}`))
 	must(t, err)
@@ -197,7 +195,7 @@ func TestDisplayProjectionTombstonesLargeDetailAndBatchFrontier(t *testing.T) {
 
 func TestDisplayBatchFailureLeavesCheckpointAndACKIndependent(t *testing.T) {
 	s, _, i, c := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	// Ingestion does not interpret toolCallId; malformed display input still
 	// remains durable evidence and must not move the projection checkpoint.
@@ -226,7 +224,7 @@ func TestDisplayBatchFailureLeavesCheckpointAndACKIndependent(t *testing.T) {
 
 func TestDisplayCrashResumeAndAtomicCommit(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	_, err = s.IngestAgent(ctx, i, record(i, c, 2, "native", `{"type":"message_start","message":{"role":"assistant","content":[{"type":"text","text":"before restart"}]}}`))
 	must(t, err)
@@ -272,7 +270,7 @@ func TestDisplayCrashResumeAndAtomicCommit(t *testing.T) {
 func TestDisplayGoldenAndReusedRunnerTurns(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
 	events := []struct{ kind, payload string }{
-		{"command.applied", `{}`},
+		{"native", consumedPayload(c)},
 		{"native", `{"type":"message_start","message":{"role":"assistant","content":[]}}`},
 		{"native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"consider"},{"type":"text","text":"first answer"},{"type":"toolCall","id":"read","name":"read","arguments":{"path":"file"}}]}}`},
 		{"native", `{"type":"tool_execution_end","toolCallId":"read","result":{"ok":true}}`},
@@ -297,15 +295,17 @@ func TestDisplayGoldenAndReusedRunnerTurns(t *testing.T) {
 	}
 	var err error
 	completed := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"sha256:%064d","size":80,"outcome":"completed"}`, c.CommandID, 0)
-	_, err = s.IngestAgent(ctx, i, record(i, c, 5, "command.completed", completed))
+	_, err = s.IngestAgent(ctx, i, record(i, c, 5, "native", reconciledPayload(c)))
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, c, 6, "command.completed", completed))
 	must(t, err)
 	_, err = s.AdmitTurn(ctx, scope, i.SessionID, "next-request", "next prompt", false)
 	must(t, err)
 	next, err := s.agentCommand(ctx, i)
 	must(t, err)
-	_, err = s.IngestAgent(ctx, i, record(i, next, 6, "command.applied", `{}`))
+	_, err = s.IngestAgent(ctx, i, record(i, next, 7, "native", consumedPayload(next)))
 	must(t, err)
-	_, err = s.IngestAgent(ctx, i, record(i, next, 7, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"second answer"}]}}`))
+	_, err = s.IngestAgent(ctx, i, record(i, next, 8, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"second answer"}]}}`))
 	must(t, err)
 	must(t, s.ProjectConversation(ctx, i.SessionID))
 	items = displayItems(t, s, i.SessionID)

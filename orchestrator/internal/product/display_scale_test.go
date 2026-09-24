@@ -21,7 +21,7 @@ func TestDisplayReadScale(t *testing.T) {
 	for _, count := range counts {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			s, scope, i, c := agentFixture(t)
-			_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+			_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 			must(t, err)
 			_, err = s.IngestAgent(ctx, i, record(i, c, 2, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"fixed visible answer"}]}}`))
 			must(t, err)

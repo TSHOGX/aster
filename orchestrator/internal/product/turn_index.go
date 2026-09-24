@@ -35,16 +35,20 @@ func (s *Store) TurnIndex(ctx context.Context, scope Scope, session string, befo
 	where, order := "", "DESC"
 	args := []any{session}
 	if before != 0 {
-		where = " AND t.sequence<?"
+		where = " AND anchor.position<?"
 		args = append(args, before)
 	}
 	if after != 0 {
-		where = " AND t.sequence>?"
+		where = " AND anchor.position>?"
 		order = "ASC"
 		args = append(args, after)
 	}
 	args = append(args, limit)
-	rows, err := s.reader.QueryContext(ctx, fmt.Sprintf(`SELECT t.id,t.sequence,t.state,t.created_at,substr(t.content,1,600),CASE WHEN t.state='completed' THEN coalesce((SELECT substr(m.content,1,1200) FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') ELSE '' END FROM turns t WHERE t.session_id=?%s ORDER BY t.sequence %s LIMIT ?`, where, order), args...)
+	rows, err := s.reader.QueryContext(ctx, fmt.Sprintf(`WITH anchors AS (SELECT turn_id,min(sequence) AS position FROM messages WHERE session_id=? GROUP BY turn_id)
+ SELECT t.id,anchor.position,coalesce(json_extract(v.data,'$.state'),t.state),coalesce(json_extract(v.data,'$.created_at'),''),substr(t.content,1,600),
+ CASE WHEN json_extract(v.data,'$.state') IN ('completed','continued') AND json_extract(v.data,'$.final_message_id') IS NOT NULL AND (json_extract(v.data,'$.segment_id') IS NOT NULL OR t.state='completed') THEN coalesce((SELECT substr(content,1,1200) FROM messages WHERE id=json_extract(v.data,'$.final_message_id')),'')
+ WHEN t.state='completed' AND NOT EXISTS(SELECT 1 FROM input_deliveries WHERE prompt_id=t.id) THEN coalesce((SELECT substr(m.content,1,1200) FROM messages m WHERE m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') ELSE '' END
+ FROM anchors anchor JOIN turns t ON t.id=anchor.turn_id LEFT JOIN conversation_turns v ON v.session_id=t.session_id AND v.turn_id=t.id WHERE 1=1%s ORDER BY anchor.position %s LIMIT ?`, where, order), args...)
 	if err != nil {
 		return out, err
 	}
@@ -68,7 +72,7 @@ func (s *Store) TurnIndex(ctx context.Context, scope Scope, session string, befo
 	if len(out.Turns) > 0 {
 		first, last := out.Turns[0].Sequence, out.Turns[len(out.Turns)-1].Sequence
 		var older, newer bool
-		err = s.reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE session_id=? AND sequence<?),EXISTS(SELECT 1 FROM turns WHERE session_id=? AND sequence>?)`, session, first, session, last).Scan(&older, &newer)
+		err = s.reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=? GROUP BY turn_id HAVING min(sequence)<?),EXISTS(SELECT 1 FROM messages WHERE session_id=? GROUP BY turn_id HAVING min(sequence)>?)`, session, first, session, last).Scan(&older, &newer)
 		if err != nil {
 			return out, err
 		}

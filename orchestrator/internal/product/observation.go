@@ -193,7 +193,7 @@ func (l *Lifecycle) ForceRestart(ctx context.Context, scope Scope, revision int6
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE turns SET state='held',updated_at=? WHERE project_id=? AND state='queued'`, l.Store.timestamp(), p.ID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE turns SET queue_policy='held',updated_at=? WHERE project_id=? AND disposition='pending' AND queue_policy='released'`, l.Store.timestamp(), p.ID); err != nil {
 			return err
 		}
 		return l.newOperation(ctx, tx, p.ID, "pause", "sandbox", operationRequest{Reference: r.Reference, Restart: true, Force: true})

@@ -91,7 +91,7 @@ func TestPlacementLossFencesOldAgentOwner(t *testing.T) {
 
 func TestStreamingOutputDoesNotInvalidateExecutionControl(t *testing.T) {
 	s, scope, i, command := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
+	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "native", consumedPayload(command)))
 	must(t, err)
 	before, err := s.Session(ctx, scope, i.SessionID)
 	must(t, err)
@@ -114,7 +114,7 @@ func TestStreamingOutputDoesNotInvalidateExecutionControl(t *testing.T) {
 }
 func TestDisplayHeadKeepsActiveTurnVisibleWithLargeQueue(t *testing.T) {
 	s, scope, i, command := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
+	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "native", consumedPayload(command)))
 	must(t, err)
 	for n := 0; n < 150; n++ {
 		_, err = s.AdmitTurn(ctx, scope, i.SessionID, fmt.Sprintf("queued-%d", n), "next work", false)
@@ -133,7 +133,7 @@ func TestDisplayHeadKeepsActiveTurnVisibleWithLargeQueue(t *testing.T) {
 func TestTimelinePreservesNativeOrderAndKeysAcrossCompletion(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
 	events := []struct{ kind, payload string }{
-		{"command.applied", `{"success":true}`},
+		{"native", consumedPayload(c)},
 		{"native", `{"type":"message_start","message":{"role":"assistant","content":[]}}`},
 		{"native", `{"type":"message_update","message":{"role":"assistant","content":[{"type":"thinking","thinking":"consider the plot","thinkingSignature":"not-display"},{"type":"text","text":"I will write a script."}]}}`},
 	}
@@ -204,7 +204,7 @@ func TestTurnSummaryRestoresOldPageTimingOutsideLiveTurnWindow(t *testing.T) {
 	for _, summary := range old.Summaries {
 		if summary.ID == turn {
 			found = true
-			if summary.CreatedAt != start || summary.FinishedAt != end || summary.FinalMessageID != "final" {
+			if summary.CreatedAt != "" || summary.FinishedAt != end || summary.FinalMessageID != "final" {
 				t.Fatal(summary)
 			}
 		}
@@ -400,9 +400,10 @@ func TestTimelineKeysRemainDistinctAcrossTurnsInSameIncarnation(t *testing.T) {
 			must(t, err)
 		}
 		for _, e := range []struct{ kind, payload string }{
-			{"command.applied", `{"success":true}`},
+			{"native", consumedPayload(c)},
 			{"native", `{"type":"message_start","message":{"role":"assistant","content":[]}}`},
 			{"native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"reason"},{"type":"text","text":"answer"},{"type":"toolCall","id":"call","name":"read"}]}}`},
+			{"native", reconciledPayload(c)},
 			{"command.completed", fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"sha256:%064d","size":80,"outcome":"completed"}`, c.CommandID, 0)},
 		} {
 			seq++

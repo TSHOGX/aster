@@ -79,7 +79,7 @@ func TestSchedulesShareForegroundAdmissionAndDeduplicate(t *testing.T) {
 	schedule.Prompt = "changed"
 	wantError(t, s.UpdateSchedule(ctx, a, schedule, false), ErrConflict)
 	// Settling this run cannot release the foreground turn's admission.
-	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, runs[0].TurnID)
+	_, err = s.db.Exec(`UPDATE turns SET disposition='consumed' WHERE id=?`, runs[0].TurnID)
 	must(t, err)
 	blockers, err = s.Blockers(ctx, a)
 	must(t, err)

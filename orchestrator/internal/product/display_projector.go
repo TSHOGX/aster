@@ -20,6 +20,7 @@ const displayBatchRecords = 128
 // decimal strings; native source rowids never appear in cursors or identity.
 type DisplayItem struct {
 	ID            string `json:"id"`
+	RunID         string `json:"run_id,omitempty"`
 	TurnID        string `json:"turn_id"`
 	SegmentID     string `json:"segment_id,omitempty"`
 	TurnSequence  int64  `json:"turn_sequence,string"`
@@ -43,6 +44,7 @@ type displayCheckpoint struct {
 }
 type displaySource struct {
 	ID, Sequence            int64
+	Command                 string
 	Incarnation, Turn, Kind string
 	Payload                 []byte
 }
@@ -89,14 +91,14 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 		return err
 	}
 	sources := []displaySource{}
-	rows, err := s.reader.QueryContext(ctx, `SELECT c.source_id,c.incarnation_id,c.sequence,r.turn_id,r.kind,r.payload FROM conversation_sources c JOIN agent_records r ON r.incarnation_id=c.incarnation_id AND r.sequence=c.sequence WHERE c.session_id=? AND c.source_id>? ORDER BY c.source_id LIMIT ?`, session, before.Source, displayBatchRecords)
+	rows, err := s.reader.QueryContext(ctx, `SELECT c.source_id,c.incarnation_id,c.sequence,r.turn_id,r.kind,r.payload,r.command_id FROM conversation_sources c JOIN agent_records r ON r.incarnation_id=c.incarnation_id AND r.sequence=c.sequence WHERE c.session_id=? AND c.source_id>? ORDER BY c.source_id LIMIT ?`, session, before.Source, displayBatchRecords)
 	if err != nil {
 		return err
 	}
 	bytes := 0
 	for rows.Next() {
 		var r displaySource
-		if err = rows.Scan(&r.ID, &r.Incarnation, &r.Sequence, &r.Turn, &r.Kind, &r.Payload); err != nil {
+		if err = rows.Scan(&r.ID, &r.Incarnation, &r.Sequence, &r.Turn, &r.Kind, &r.Payload, &r.Command); err != nil {
 			break
 		}
 		if bytes+len(r.Payload) > displayBatchBytes && len(sources) > 0 {
@@ -123,7 +125,7 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 		if _, e = tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_checkpoints(session_id,generation,updated_at) VALUES(?,?,?)`, session, before.Generation, s.timestamp()); e != nil {
 			return e
 		}
-		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, turns: map[string]int64{}, segments: map[string]string{}}
+		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, turns: map[string]int64{}, segments: map[string]string{}, batchStart: before.Source}
 		for _, source := range sources {
 			if e = reducer.consume(source); e != nil {
 				return e
@@ -186,6 +188,7 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 }
 
 type displayReducer struct {
+	batchStart int64
 	ctx        context.Context
 	tx         *sql.Tx
 	session    string
@@ -234,6 +237,8 @@ func (d *displayReducer) put(item DisplayItem, source string) error {
 		return err
 	}
 	if old != nil {
+		item.TurnID, item.RunID, item.SegmentID = old.TurnID, old.RunID, old.SegmentID
+		item.TurnSequence = old.TurnSequence
 		if item.Position < 0 {
 			item.Position = old.Position
 		}
@@ -269,21 +274,16 @@ func (d *displayReducer) consume(r displaySource) error {
 	if r.Turn == "" {
 		return nil
 	}
-	if r.Kind == "command.applied" {
-		var content string
-		err := d.tx.QueryRowContext(d.ctx, `SELECT content FROM messages WHERE session_id=? AND id=?`, d.session, r.Turn+"/user").Scan(&content)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
+	if r.Kind == "command.completed" {
+		var e struct{ Outcome string }
+		if err := json.Unmarshal(r.Payload, &e); err != nil {
 			return err
 		}
-		segment := d.segments[r.Turn]
-		if segment == "" {
-			segment = "segment/" + r.Turn
-			d.segments[r.Turn] = segment
+		if e.Outcome == "" {
+			e.Outcome = "completed"
 		}
-		return d.put(DisplayItem{ID: r.Turn + "/user", TurnID: r.Turn, SegmentID: segment, Position: -1, Kind: "user", Content: content, MessageID: r.Turn + "/user"}, "user/"+r.Turn)
+		_, err := d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET state=? WHERE session_id=? AND run_id=? AND state<>'continued'`, e.Outcome, d.session, r.Command)
+		return err
 	}
 	if r.Kind != "native" {
 		return nil
@@ -301,27 +301,60 @@ func (d *displayReducer) consume(r displaySource) error {
 		if err := json.Unmarshal(r.Payload, &event); err != nil || event.InputToken == "" || event.RunID == "" {
 			return ErrInvalid
 		}
-		var prompt, message, content, activeTurn string
-		if err := d.tx.QueryRowContext(d.ctx, `SELECT d.prompt_id,d.prompt_id||'/user',t.content FROM input_deliveries d JOIN turns t ON t.id=d.prompt_id WHERE d.input_token=? AND d.session_id=? AND d.state='consumed'`, event.InputToken, d.session).Scan(&prompt, &message, &content); err != nil {
+		var prompt, content string
+		if err := d.tx.QueryRowContext(d.ctx, `SELECT prompt_id,t.content FROM input_deliveries d JOIN turns t ON t.id=d.prompt_id WHERE input_token=? AND d.session_id=? AND d.run_id=? AND d.state='consumed'`, event.InputToken, d.session, event.RunID).Scan(&prompt, &content); err != nil {
 			return err
 		}
-		if err := d.tx.QueryRowContext(d.ctx, `SELECT turn_id FROM agent_commands WHERE id=? AND session_id=?`, event.RunID, d.session).Scan(&activeTurn); err != nil {
-			return err
-		}
-		if _, err := d.tx.ExecContext(d.ctx, `UPDATE conversation_message_groups SET ended=1 WHERE session_id=? AND incarnation_id=? AND turn_id=?`, d.session, r.Incarnation, activeTurn); err != nil {
-			return err
-		}
-		segment := fmt.Sprintf("segment/%s/%s", event.RunID, prompt)
-		d.segments[event.RunID] = segment
-		d.segments[activeTurn] = segment
-		item := DisplayItem{ID: message, TurnID: prompt, SegmentID: segment, Position: -1, Kind: "user", Content: content, MessageID: message, State: "completed"}
+		message := prompt + "/user"
 		if old, err := d.get(message); err != nil {
 			return err
-		} else if old != nil && old.Position == 0 {
-			d.p.Position++
-			item.Position = d.p.Position
+		} else if old != nil {
+			return nil
 		}
-		return d.put(item, "consumed/"+event.InputToken)
+		var evidence struct {
+			OccurredAt string `json:"occurred_at"`
+			Elapsed    *int64 `json:"run_elapsed_ms"`
+		}
+		if err := json.Unmarshal(r.Payload, &evidence); err != nil {
+			return err
+		}
+		segment, owner, _, err := d.currentSegment(event.RunID)
+		if err != nil {
+			return err
+		}
+		var worked bool
+		if segment != "" {
+			if err = d.tx.QueryRowContext(d.ctx, `SELECT has_work FROM conversation_segments WHERE session_id=? AND id=?`, d.session, segment).Scan(&worked); err != nil {
+				return err
+			}
+		}
+		if segment == "" || worked {
+			if segment != "" {
+				if err = d.closeSegment(event.RunID, "continued", evidence.OccurredAt, evidence.Elapsed); err != nil {
+					return err
+				}
+			}
+			segment = fmt.Sprintf("segment/%s/%s", event.RunID, prompt)
+			owner = prompt
+			if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_segments(session_id,id,run_id,prompt_id,position,started_at,start_elapsed_ms) VALUES(?,?,?,?,?,?,?)`, d.session, segment, event.RunID, prompt, r.ID, evidence.OccurredAt, evidence.Elapsed); err != nil {
+				return err
+			}
+		}
+		if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_segment_inputs VALUES(?,?,?)`, d.session, prompt, segment); err != nil {
+			return err
+		}
+		_ = owner
+		return d.put(DisplayItem{ID: message, TurnID: prompt, RunID: event.RunID, SegmentID: segment, Position: -1, Kind: "user", Content: content, MessageID: message, State: "consumed"}, "consumed/"+event.InputToken)
+	case "inputs_reconciled":
+		var event struct {
+			RunID      string `json:"run_id"`
+			OccurredAt string `json:"occurred_at"`
+			Elapsed    *int64 `json:"run_elapsed_ms"`
+		}
+		if err := json.Unmarshal(r.Payload, &event); err != nil {
+			return err
+		}
+		return d.closeSegment(event.RunID, "settling", event.OccurredAt, event.Elapsed)
 	case "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end":
 	default:
 		return nil
@@ -344,12 +377,14 @@ func (d *displayReducer) consume(r displaySource) error {
 		}
 		keep := map[string]bool{}
 		for index, block := range e.Message.Content {
-			segment := d.segments[r.Turn]
-			if segment == "" {
-				segment = "segment/" + r.Turn
-				d.segments[r.Turn] = segment
+			segment, prompt, _, err := d.currentSegment(r.Command)
+			if err != nil {
+				return err
 			}
-			item := DisplayItem{ID: fmt.Sprintf("%s/%d", key, index), TurnID: r.Turn, SegmentID: segment, Position: pos, Block: index, State: "streaming"}
+			if prompt == "" {
+				prompt = r.Turn
+			}
+			item := DisplayItem{ID: fmt.Sprintf("%s/%d", key, index), TurnID: prompt, RunID: r.Command, SegmentID: segment, Position: pos, Block: index, State: "streaming"}
 			if e.Type == "message_end" {
 				item.State = "completed"
 				item.MessageID = fmt.Sprintf("%s/%d", r.Incarnation, r.Sequence)
@@ -381,6 +416,15 @@ func (d *displayReducer) consume(r displaySource) error {
 				}
 			default:
 				continue // Unknown source blocks remain in retained raw evidence.
+			}
+			if segment != "" {
+				final := ""
+				if e.Type == "message_end" && item.Kind == "assistant" {
+					final = item.MessageID
+				}
+				if _, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET has_work=1,final_message_id=CASE WHEN ?<>'' THEN ? ELSE final_message_id END WHERE session_id=? AND id=?`, final, final, d.session, segment); err != nil {
+					return err
+				}
 			}
 			keep[item.ID] = true
 			if err = d.put(item, key); err != nil {
@@ -435,7 +479,19 @@ func (d *displayReducer) consume(r displaySource) error {
 		if err != nil {
 			return err
 		}
-		item := DisplayItem{ID: id, TurnID: r.Turn, Position: -1, Kind: "tool", State: "running"}
+		segment, prompt, _, err := d.currentSegment(r.Command)
+		if err != nil {
+			return err
+		}
+		if prompt == "" {
+			prompt = r.Turn
+		}
+		item := DisplayItem{ID: id, TurnID: prompt, RunID: r.Command, SegmentID: segment, Position: -1, Kind: "tool", State: "running"}
+		if segment != "" {
+			if _, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET has_work=1 WHERE session_id=? AND id=?`, d.session, segment); err != nil {
+				return err
+			}
+		}
 		if old != nil {
 			item = *old
 			item.State = "running"
@@ -517,15 +573,6 @@ func (d *displayReducer) messages() error {
 		}
 		if !found {
 			pos := int64(-1)
-			if m.Role == "user" {
-				var consumed bool
-				if err = d.tx.QueryRowContext(d.ctx, `SELECT EXISTS(SELECT 1 FROM input_deliveries WHERE prompt_id=? AND state='consumed')`, m.TurnID).Scan(&consumed); err != nil {
-					return err
-				}
-				if !consumed {
-					pos = 0
-				}
-			}
 			segment := d.segments[m.TurnID]
 			if segment == "" {
 				segment = "segment/" + m.TurnID
@@ -540,7 +587,11 @@ func (d *displayReducer) messages() error {
 	return nil
 }
 func (d *displayReducer) summaries() error {
-	rows, err := d.tx.QueryContext(d.ctx, `SELECT t.id,t.sequence,t.state,coalesce((SELECT min(consumed_at) FROM input_deliveries WHERE prompt_id=t.id AND state='consumed' AND consumed_at<>''),t.created_at),t.updated_at,coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') FROM conversation_dirty_turns d JOIN turns t ON t.id=d.turn_id AND t.session_id=d.session_id WHERE d.session_id=? ORDER BY t.sequence LIMIT 64`, d.session)
+	// Segment updates can affect several input anchors, including older prompts.
+	if _, err := d.tx.ExecContext(d.ctx, `INSERT OR IGNORE INTO conversation_dirty_turns SELECT session_id,prompt_id FROM conversation_segment_inputs WHERE session_id=? AND segment_id IN (SELECT id FROM conversation_segments WHERE session_id=? AND run_id IN (SELECT command_id FROM agent_records r JOIN conversation_sources c ON c.incarnation_id=r.incarnation_id AND c.sequence=r.sequence WHERE c.session_id=? AND c.source_id>? AND c.source_id<=?))`, d.session, d.session, d.session, d.batchStart, d.p.Source); err != nil {
+		return err
+	}
+	rows, err := d.tx.QueryContext(d.ctx, `SELECT t.id,t.sequence,t.state,coalesce((SELECT min(consumed_at) FROM input_deliveries WHERE prompt_id=t.id AND state='consumed' AND consumed_at<>''),''),t.updated_at,coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') FROM conversation_dirty_turns d JOIN turns t ON t.id=d.turn_id AND t.session_id=d.session_id WHERE d.session_id=? ORDER BY t.sequence LIMIT 64`, d.session)
 	if err != nil {
 		return err
 	}
@@ -568,6 +619,15 @@ func (d *displayReducer) summaries() error {
 		d.p.Index++
 	}
 	for _, t := range summaries {
+		var segment TurnSummary
+		err = d.tx.QueryRowContext(d.ctx, `SELECT s.id,s.run_id,s.state,s.started_at,s.finished_at,s.elapsed_ms,s.final_message_id FROM conversation_segment_inputs i JOIN conversation_segments s ON s.session_id=i.session_id AND s.id=i.segment_id WHERE i.session_id=? AND i.prompt_id=?`, d.session, t.ID).Scan(&segment.SegmentID, &segment.RunID, &segment.State, &segment.CreatedAt, &segment.FinishedAt, &segment.ElapsedMS, &segment.FinalMessageID)
+		if err == nil {
+			segment.ID = t.ID
+			segment.Sequence = t.Sequence
+			t = segment
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		raw, _ := json.Marshal(t)
 		if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_turns VALUES(?,?,?,?,?) ON CONFLICT(session_id,turn_id) DO UPDATE SET revision=excluded.revision,data=excluded.data`, d.session, t.ID, t.Sequence, d.p.Index, string(raw)); err != nil {
 			return err
@@ -635,4 +695,20 @@ func (d *displayReducer) flush() error {
 		}
 	}
 	return nil
+}
+
+func (d *displayReducer) currentSegment(run string) (segment, prompt, state string, err error) {
+	err = d.tx.QueryRowContext(d.ctx, `SELECT id,prompt_id,state FROM conversation_segments WHERE session_id=? AND run_id=? ORDER BY position DESC LIMIT 1`, d.session, run).Scan(&segment, &prompt, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return
+}
+func (d *displayReducer) closeSegment(run, state, at string, elapsed *int64) error {
+	segment, _, _, err := d.currentSegment(run)
+	if err != nil || segment == "" {
+		return err
+	}
+	_, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET state=?,finished_at=?,elapsed_ms=CASE WHEN start_elapsed_ms IS NOT NULL AND ? IS NOT NULL THEN max(0,?-start_elapsed_ms) ELSE NULL END WHERE session_id=? AND id=? AND finished_at=''`, state, at, elapsed, elapsed, d.session, segment)
+	return err
 }

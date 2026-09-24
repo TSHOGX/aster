@@ -67,6 +67,8 @@ type Terminal struct {
 }
 
 type Turn struct {
+	QueuePolicy    string `json:"queue_policy"`
+	Disposition    string `json:"disposition"`
 	ID             string `json:"id"`
 	ProjectID      string `json:"project_id"`
 	SessionID      string `json:"session_id"`

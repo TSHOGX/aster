@@ -195,6 +195,9 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 			if _, e := tx.ExecContext(settle, `UPDATE agent_commands SET state='unknown',error=? WHERE id=? AND state='sending'`, err.Error(), f.CommandID); e != nil {
 				return e
 			}
+			if e := markRunUnknown(settle, tx, session); e != nil {
+				return e
+			}
 			if _, e := tx.ExecContext(settle, `UPDATE agent_incarnations SET state='stopping',error='native input outcome unknown; terminating original process' WHERE id=? AND owner=? AND state IN ('starting','running')`, attachment.incarnation.ID, attachment.incarnation.Owner); e != nil {
 				return e
 			}
@@ -336,6 +339,9 @@ func (a *Agents) takeOwnership(ctx context.Context, i Incarnation) (Incarnation,
 		}
 		// Outstanding sending commands are not replayed merely because the previous
 		// owner died. Journal replay can still provide their definitive results.
+		if _, err = tx.ExecContext(ctx, `UPDATE input_deliveries SET state='unknown',error='application owner changed during send' WHERE command_id IN (SELECT id FROM agent_commands WHERE incarnation_id=? AND state='sending') AND state='dispatching'`, i.ID); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='unknown',error='application owner changed during send' WHERE incarnation_id=? AND state='sending'`, i.ID)
 		return err
 	})
@@ -535,15 +541,15 @@ func (a *Agents) recordExit(ctx context.Context, i Incarnation, code int32) {
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(settle, `UPDATE turns SET state='unknown',updated_at=? WHERE session_id=? AND state IN ('starting','running','stopping')`, a.Store.timestamp(), i.SessionID); err != nil {
+		if err := markRunUnknown(settle, tx, i.SessionID); err != nil {
 			return err
 		}
 		var unknown int
-		if err := tx.QueryRowContext(settle, `SELECT count(*) FROM turns WHERE session_id=? AND state='unknown' AND acknowledged=0`, i.SessionID).Scan(&unknown); err != nil {
+		if err := tx.QueryRowContext(settle, `SELECT count(*) FROM execution_runs WHERE session_id=? AND state='unknown' AND acknowledged=0`, i.SessionID).Scan(&unknown); err != nil {
 			return err
 		}
 		if code != 0 || unknown > 0 {
-			if _, err := tx.ExecContext(settle, `UPDATE turns SET state='held',updated_at=? WHERE session_id=? AND state='queued'`, a.Store.timestamp(), i.SessionID); err != nil {
+			if _, err := tx.ExecContext(settle, `UPDATE turns SET queue_policy='held',updated_at=? WHERE session_id=? AND disposition='pending' AND queue_policy='released'`, a.Store.timestamp(), i.SessionID); err != nil {
 				return err
 			}
 		}
@@ -582,10 +588,10 @@ func (a *Agents) inspectEnded(ctx context.Context, i Incarnation, cause error) {
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(settle, `UPDATE turns SET state='unknown',updated_at=? WHERE session_id=? AND state IN ('starting','running','stopping')`, a.Store.timestamp(), i.SessionID); err != nil {
+		if err := markRunUnknown(settle, tx, i.SessionID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(settle, `UPDATE turns SET state='held',updated_at=? WHERE session_id=? AND state='queued'`, a.Store.timestamp(), i.SessionID); err != nil {
+		if _, err := tx.ExecContext(settle, `UPDATE turns SET queue_policy='held',updated_at=? WHERE session_id=? AND disposition='pending' AND queue_policy='released'`, a.Store.timestamp(), i.SessionID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(settle, `UPDATE sessions SET state='blocked',failure='original guardian handle absent; reconcile history and descendant cleanup' WHERE id=? AND deletion_intent<2`, i.SessionID); err != nil {

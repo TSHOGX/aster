@@ -64,6 +64,8 @@ func (s *Store) purgeProject(ctx context.Context, tx *sql.Tx, project string) er
 		`DELETE FROM schedules WHERE project_id=?`,
 		`DELETE FROM conversation_pending_sessions WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
 		`DELETE FROM conversation_dirty_turns WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
+		`DELETE FROM conversation_segment_inputs WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
+		`DELETE FROM conversation_segments WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
 		`DELETE FROM conversation_message_groups WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
 		`DELETE FROM conversation_details WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
 		`DELETE FROM conversation_changes WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
@@ -77,6 +79,9 @@ func (s *Store) purgeProject(ctx context.Context, tx *sql.Tx, project string) er
 		`DELETE FROM service_grants WHERE project_id=?`,
 		`DELETE FROM native_captures WHERE incarnation_id IN (SELECT id FROM agent_incarnations WHERE project_id=?)`,
 		`DELETE FROM agent_records WHERE incarnation_id IN (SELECT id FROM agent_incarnations WHERE project_id=?)`,
+		`DELETE FROM control_receipts WHERE project_id=?`,
+		`DELETE FROM input_deliveries WHERE project_id=?`,
+		`DELETE FROM execution_runs WHERE project_id=?`,
 		`DELETE FROM agent_commands WHERE project_id=?`,
 		`DELETE FROM messages WHERE project_id=?`,
 		`DELETE FROM turns WHERE project_id=?`,
@@ -113,7 +118,7 @@ func (s *Store) settleDestroyedPlacement(ctx context.Context, tx *sql.Tx, projec
 	if _, err := tx.ExecContext(ctx, `UPDATE file_operations SET state=CASE WHEN state='running' THEN 'unknown' ELSE state END,settled=1,updated_at=? WHERE project_id=? AND volume_id=''`, s.timestamp(), project); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='canceled',updated_at=? WHERE project_id=? AND state IN ('queued','held')`, s.timestamp(), project); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET disposition='canceled',updated_at=? WHERE project_id=? AND disposition='pending'`, s.timestamp(), project); err != nil {
 		return err
 	}
 	return nil

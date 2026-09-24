@@ -62,9 +62,9 @@ func TestGatewayHandoffObservation(t *testing.T) {
 		stopping, wantOK  bool
 	}{
 		{"old gateway", 0, 1, false, false},
-		{"compatible", 1, 1, false, true},
-		{"capacity changed", 1, 2, false, false},
-		{"stopping", 1, 1, true, false},
+		{"compatible", product.OwnerHandoffProtocol, 1, false, true},
+		{"capacity changed", product.OwnerHandoffProtocol, 2, false, false},
+		{"stopping", product.OwnerHandoffProtocol, 1, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			app := &Application{Config: Config{StateDirectory: t.TempDir(), Gateways: []ServiceGateway{{Audience: "model", MaxRequests: 1}}}}

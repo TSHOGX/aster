@@ -238,9 +238,9 @@ CREATE TABLE messages (
 );
 
 CREATE TABLE native_captures (
- turn_id TEXT PRIMARY KEY REFERENCES turns(id),
+ turn_id TEXT NOT NULL REFERENCES turns(id),
  incarnation_id TEXT NOT NULL REFERENCES agent_incarnations(id),
- path TEXT NOT NULL,
+ path TEXT PRIMARY KEY,
  digest TEXT NOT NULL,
  size INTEGER NOT NULL CHECK(size>=0),
  host_path TEXT NOT NULL DEFAULT '',
@@ -400,6 +400,7 @@ CREATE TABLE service_request_slots (
  closed INTEGER NOT NULL CHECK(closed IN (0,1)),
  grant_id TEXT NOT NULL DEFAULT '',
  turn_id TEXT NOT NULL DEFAULT '',
+ run_id TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(audience,slot)
 );
 
@@ -501,8 +502,9 @@ CREATE TABLE turns (
  content TEXT NOT NULL CHECK(length(content)>0),
  initially_held INTEGER NOT NULL CHECK(initially_held IN (0,1)),
  prompt_revision INTEGER NOT NULL DEFAULT 1 CHECK(prompt_revision>0),
- state TEXT NOT NULL CHECK(state IN ('held','queued','starting','running','stopping','completed','failed','canceled','unknown')),
- acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
+ queue_policy TEXT NOT NULL DEFAULT 'released' CHECK(queue_policy IN ('held','released')),
+ disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','canceled')),
+ state TEXT NOT NULL CHECK(state IN ('held','queued','claimed','consumed','starting','running','stopping','completed','failed','canceled','unknown')),
  sequence INTEGER NOT NULL CHECK(sequence>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
@@ -513,8 +515,8 @@ CREATE TABLE turns (
 );
 
 -- Prompt intent, execution, native delivery and mutation receipt are separate
--- authorities. `turns.state` remains only until the staged owner migration is
--- complete; new code must use these records for lifecycle decisions.
+-- authorities. `turns.state` is compatibility display metadata only.
+-- Execution guards use runs; admission uses policy/disposition and claims.
 CREATE TABLE execution_runs (
  id TEXT PRIMARY KEY CHECK(id<>''),
  project_id TEXT NOT NULL,
@@ -523,14 +525,15 @@ CREATE TABLE execution_runs (
  incarnation_id TEXT NOT NULL,
  owner INTEGER NOT NULL CHECK(owner>0),
  state TEXT NOT NULL CHECK(state IN ('starting','running','stopping','settled','failed','unknown')),
+ acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
+ reconciled_at TEXT NOT NULL DEFAULT '',
  outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','completed','failed','canceled','unknown')),
  started_at TEXT NOT NULL,
  settled_at TEXT NOT NULL DEFAULT '',
- elapsed_ms INTEGER NOT NULL DEFAULT 0 CHECK(elapsed_ms>=0),
+ elapsed_ms INTEGER CHECK(elapsed_ms>=0),
  FOREIGN KEY(project_id,session_id,prompt_id) REFERENCES turns(project_id,session_id,id),
  FOREIGN KEY(project_id,session_id,incarnation_id) REFERENCES agent_incarnations(project_id,session_id,id),
- UNIQUE(session_id,id),
- UNIQUE(session_id,prompt_id)
+ UNIQUE(session_id,id)
 );
 
 CREATE TABLE input_deliveries (
@@ -546,6 +549,7 @@ CREATE TABLE input_deliveries (
  state TEXT NOT NULL CHECK(state IN ('accepted','dispatching','native_queued','consumed','rejected','removed','unknown')),
  acceptance_sequence INTEGER NOT NULL CHECK(acceptance_sequence>0),
  consumed_sequence INTEGER NOT NULL DEFAULT 0 CHECK(consumed_sequence>=0),
+ consumed_elapsed_ms INTEGER CHECK(consumed_elapsed_ms>=0),
  accepted_at TEXT NOT NULL,
  ack_at TEXT NOT NULL DEFAULT '',
  consumed_at TEXT NOT NULL DEFAULT '',
@@ -553,7 +557,8 @@ CREATE TABLE input_deliveries (
  error TEXT NOT NULL DEFAULT '',
  FOREIGN KEY(project_id,session_id,prompt_id) REFERENCES turns(project_id,session_id,id),
  FOREIGN KEY(command_id) REFERENCES agent_commands(id),
- FOREIGN KEY(run_id) REFERENCES execution_runs(id),
+ FOREIGN KEY(session_id,run_id) REFERENCES execution_runs(session_id,id),
+ UNIQUE(command_id),
  UNIQUE(session_id,request_id),
  UNIQUE(session_id,acceptance_sequence)
 );
@@ -587,7 +592,8 @@ CREATE TABLE workspace_readers (
 CREATE INDEX agent_commands_pending ON agent_commands(incarnation_id,state,created_at);
 
 CREATE INDEX execution_runs_live ON execution_runs(session_id,state) WHERE state IN ('starting','running','stopping','unknown');
-CREATE UNIQUE INDEX execution_runs_one_live ON execution_runs(session_id) WHERE state IN ('starting','running','stopping','unknown');
+CREATE UNIQUE INDEX execution_runs_one_live ON execution_runs(session_id) WHERE state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0);
+CREATE UNIQUE INDEX input_deliveries_one_claim ON input_deliveries(prompt_id) WHERE state IN ('accepted','dispatching','native_queued','consumed','unknown');
 CREATE INDEX input_deliveries_run ON input_deliveries(session_id,run_id,acceptance_sequence);
 CREATE INDEX input_deliveries_prompt ON input_deliveries(prompt_id,acceptance_sequence DESC);
 CREATE INDEX input_deliveries_pending ON input_deliveries(session_id,state) WHERE state IN ('accepted','dispatching','native_queued','unknown');
@@ -595,7 +601,7 @@ CREATE INDEX control_receipts_session ON control_receipts(session_id,updated_at)
 
 CREATE UNIQUE INDEX agent_incarnation_live ON agent_incarnations(session_id) WHERE state IN ('starting','running','stopping','unknown');
 
-CREATE UNIQUE INDEX agent_prompt_turn ON agent_commands(turn_id) WHERE kind='prompt';
+CREATE INDEX agent_prompt_turn ON agent_commands(turn_id) WHERE kind='prompt';
 
 CREATE INDEX auth_sessions_expiry ON auth_sessions(expires_at);
 
@@ -653,7 +659,7 @@ CREATE INDEX release_file_write_pending ON file_operations(id) WHERE settled=0;
 
 CREATE INDEX release_model_request_pending ON service_request_slots(audience,slot) WHERE closed=0;
 
-CREATE INDEX release_native_capture_pending ON native_captures(turn_id) WHERE state='guest';
+CREATE INDEX release_native_capture_pending ON native_captures(path) WHERE state='guest';
 
 CREATE INDEX release_project_operation_pending ON project_operations(id) WHERE state<>'succeeded';
 
@@ -700,33 +706,34 @@ SELECT b.kind,b.id FROM release_blockers b WHERE
  (b.kind NOT IN ('turn','model_request'))
  OR (b.kind='turn' AND NOT EXISTS(SELECT 1 FROM owner_transferable_turns t WHERE t.id=b.id))
  OR (b.kind='model_request' AND NOT EXISTS(
-  SELECT 1 FROM service_request_slots r JOIN owner_transferable_turns t ON t.id=r.turn_id
+  SELECT 1 FROM service_request_slots r JOIN owner_transferable_turns t ON t.id=r.turn_id AND t.run_id=r.run_id
   JOIN service_grants g ON g.id=r.grant_id AND g.incarnation_id=t.incarnation_id AND g.audience=r.audience
    AND g.state='active' AND g.expires_at>strftime('%Y-%m-%dT%H:%M:%f000000Z','now')
   WHERE r.audience||':'||r.slot=b.id AND r.closed=0
  ));
 
 CREATE VIEW owner_transferable_turns AS
-SELECT r.prompt_id AS id,r.incarnation_id FROM execution_runs r
-JOIN turns t ON t.id=r.prompt_id AND t.session_id=r.session_id AND t.state='running'
+SELECT r.prompt_id AS id,r.incarnation_id,r.id AS run_id FROM execution_runs r
+JOIN agent_commands c ON c.id=r.id AND c.state='applied'
 JOIN agent_incarnations i ON i.id=r.incarnation_id AND i.session_id=r.session_id AND i.state='running'
 JOIN sessions s ON s.id=r.session_id AND s.deletion_intent=0 AND s.state='running'
 JOIN projects p ON p.id=r.project_id AND p.state='active'
 WHERE r.state='running';
 
 CREATE VIEW release_blockers AS
-SELECT 'turn' AS kind,r.prompt_id AS id FROM execution_runs r JOIN turns t ON t.id=r.prompt_id AND t.session_id=r.session_id WHERE r.state IN ('starting','running','stopping','unknown') AND (t.state IN ('starting','running','stopping') OR (t.state='unknown' AND t.acknowledged=0))
+SELECT 'turn' AS kind,r.prompt_id AS id FROM execution_runs r WHERE r.state IN ('starting','running','stopping') OR (r.state='unknown' AND r.acknowledged=0)
+UNION ALL SELECT 'delivery',d.id FROM input_deliveries d JOIN execution_runs r ON r.id=d.run_id WHERE d.state IN ('accepted','dispatching','native_queued','unknown') AND r.acknowledged=0
 UNION ALL SELECT 'command' AS kind,id AS id FROM agent_commands INDEXED BY release_command_pending
 WHERE state IN ('pending','sending','dispatching','unknown') AND (state<>'unknown' OR NOT EXISTS(
- SELECT 1 FROM turns t JOIN agent_incarnations i ON i.id=agent_commands.incarnation_id
- WHERE t.id=agent_commands.turn_id AND t.acknowledged=1 AND i.state='exited'
+ SELECT 1 FROM execution_runs r JOIN agent_incarnations i ON i.id=agent_commands.incarnation_id
+ WHERE r.id=coalesce((SELECT run_id FROM input_deliveries WHERE command_id=agent_commands.id),json_extract(agent_commands.payload,'$.run_id')) AND r.incarnation_id=i.id AND r.acknowledged=1 AND i.state='exited'
  AND i.cleanup_state='settled' AND i.recovery_state NOT IN ('pending','replaying')
 ))
 UNION ALL SELECT 'activity' AS kind,id AS id FROM project_activity INDEXED BY release_activity_pending WHERE state<>'complete'
 UNION ALL SELECT 'agent_transition' AS kind,id AS id FROM agent_incarnations INDEXED BY release_agent_transition_pending
 WHERE (state IN ('starting','stopping','unknown') OR recovery_state IN ('pending','replaying','failed'))
  AND (state IN ('starting','stopping','unknown') OR recovery_state<>'failed' OR EXISTS(
- SELECT 1 FROM turns t WHERE t.session_id=agent_incarnations.session_id AND t.state='unknown' AND t.acknowledged=0
+ SELECT 1 FROM execution_runs r WHERE r.incarnation_id=agent_incarnations.id AND r.state='unknown' AND r.acknowledged=0
 ))
 UNION ALL SELECT 'terminal_start' AS kind,id AS id FROM terminal_incarnations INDEXED BY release_terminal_start_pending WHERE state='starting'
 UNION ALL SELECT 'project_operation' AS kind,id AS id FROM project_operations INDEXED BY release_project_operation_pending WHERE state<>'succeeded'
@@ -735,7 +742,7 @@ UNION ALL SELECT 'file_write' AS kind,id AS id FROM file_operations INDEXED BY r
 UNION ALL SELECT 'session_cleanup' AS kind,id AS id FROM sessions INDEXED BY release_session_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'terminal_cleanup' AS kind,id AS id FROM terminals INDEXED BY release_terminal_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'content_publication' AS kind,revision_digest AS id FROM content_publications INDEXED BY release_content_publication_pending WHERE stage NOT IN ('published','failed')
-UNION ALL SELECT 'native_capture' AS kind,turn_id AS id FROM native_captures INDEXED BY release_native_capture_pending WHERE state='guest'
+UNION ALL SELECT 'native_capture' AS kind,path AS id FROM native_captures INDEXED BY release_native_capture_pending WHERE state='guest'
 UNION ALL SELECT 'share_publication' AS kind,id AS id FROM shares INDEXED BY release_share_publication_pending WHERE state='pending' OR (state IN ('revoked','failed') AND cleaned=0)
 UNION ALL SELECT 'model_request' AS kind,audience||':'||slot AS id FROM service_request_slots INDEXED BY release_model_request_pending WHERE closed=0;
 
@@ -881,22 +888,22 @@ BEGIN UPDATE application_release SET phase='draining',reason='retained_work_chan
 CREATE TRIGGER release_owner_request_insert AFTER INSERT ON service_request_slots
 WHEN NEW.closed=0
  AND EXISTS(SELECT 1 FROM application_release WHERE id=1 AND mode='owner' AND phase='ready')
- AND NOT EXISTS(SELECT 1 FROM owner_transferable_turns t JOIN service_grants g ON g.id=NEW.grant_id AND g.incarnation_id=t.incarnation_id AND g.audience=NEW.audience AND g.state='active' AND g.expires_at>strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE t.id=NEW.turn_id)
+ AND NOT EXISTS(SELECT 1 FROM owner_transferable_turns t JOIN service_grants g ON g.id=NEW.grant_id AND g.incarnation_id=t.incarnation_id AND g.audience=NEW.audience AND g.state='active' AND g.expires_at>strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE t.id=NEW.turn_id AND t.run_id=NEW.run_id)
 BEGIN UPDATE application_release SET phase='draining',reason='retained_authority_changed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_owner_request_update AFTER UPDATE ON service_request_slots
 WHEN NEW.closed=0
  AND EXISTS(SELECT 1 FROM application_release WHERE id=1 AND mode='owner' AND phase='ready')
- AND NOT EXISTS(SELECT 1 FROM owner_transferable_turns t JOIN service_grants g ON g.id=NEW.grant_id AND g.incarnation_id=t.incarnation_id AND g.audience=NEW.audience AND g.state='active' AND g.expires_at>strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE t.id=NEW.turn_id)
+ AND NOT EXISTS(SELECT 1 FROM owner_transferable_turns t JOIN service_grants g ON g.id=NEW.grant_id AND g.incarnation_id=t.incarnation_id AND g.audience=NEW.audience AND g.state='active' AND g.expires_at>strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE t.id=NEW.turn_id AND t.run_id=NEW.run_id)
 BEGIN UPDATE application_release SET phase='draining',reason='retained_authority_changed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_owner_session_changed AFTER UPDATE OF state ON sessions
 WHEN OLD.state='running' AND NEW.state<>'running'
- AND EXISTS(SELECT 1 FROM turns WHERE session_id=NEW.id AND state='running')
+ AND EXISTS(SELECT 1 FROM execution_runs WHERE session_id=NEW.id AND state='running')
  AND EXISTS(SELECT 1 FROM application_release WHERE id=1 AND mode='owner' AND phase='ready')
 BEGIN UPDATE application_release SET phase='draining',reason='retained_work_changed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
-CREATE TRIGGER release_owner_turn_finished AFTER UPDATE OF state ON turns
+CREATE TRIGGER release_owner_turn_finished AFTER UPDATE OF state ON execution_runs
 WHEN OLD.state='running' AND NEW.state<>'running'
  AND EXISTS(SELECT 1 FROM application_release WHERE id=1 AND mode='owner' AND phase='ready')
 BEGIN UPDATE application_release SET phase='draining',reason='retained_work_changed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
@@ -1019,11 +1026,11 @@ CREATE TRIGGER release_ready_terminal_start_update AFTER UPDATE OF state ON term
 WHEN (NEW.state='starting') AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
-CREATE TRIGGER release_ready_turn_insert AFTER INSERT ON turns
+CREATE TRIGGER release_ready_run_insert AFTER INSERT ON execution_runs
 WHEN (NEW.state IN ('starting','running','stopping') OR (NEW.state='unknown' AND NEW.acknowledged=0)) AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
-CREATE TRIGGER release_ready_turn_update AFTER UPDATE OF state,acknowledged ON turns
+CREATE TRIGGER release_ready_run_update AFTER UPDATE OF state,acknowledged ON execution_runs
 WHEN (NEW.state IN ('starting','running','stopping') OR (NEW.state='unknown' AND NEW.acknowledged=0)) AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
@@ -1035,13 +1042,13 @@ CREATE TRIGGER release_terminal_start BEFORE INSERT ON terminal_incarnations
 WHEN (SELECT phase FROM application_release WHERE id=1)<>'open'
 BEGIN SELECT RAISE(ABORT,'application_admission_closed'); END;
 
-CREATE TRIGGER release_turn_dispatch BEFORE UPDATE OF state ON turns
-WHEN NEW.state IN ('queued','starting') AND NEW.state<>OLD.state
+CREATE TRIGGER release_turn_dispatch BEFORE UPDATE OF queue_policy ON turns
+WHEN NEW.queue_policy='released' AND NEW.queue_policy<>OLD.queue_policy
  AND (SELECT phase FROM application_release WHERE id=1)<>'open'
 BEGIN SELECT RAISE(ABORT,'application_admission_closed'); END;
 
 CREATE TRIGGER release_turn_insert BEFORE INSERT ON turns
-WHEN NEW.state<>'held' AND (SELECT phase FROM application_release WHERE id=1)<>'open'
+WHEN NEW.queue_policy<>'held' AND (SELECT phase FROM application_release WHERE id=1)<>'open'
 BEGIN SELECT RAISE(ABORT,'application_admission_closed'); END;
 
 CREATE TRIGGER revoke_incarnation_services AFTER UPDATE OF state ON agent_incarnations
@@ -1121,3 +1128,57 @@ CREATE TRIGGER turn_control_update AFTER UPDATE OF state ON turns WHEN NEW.state
 END;
 
 INSERT INTO application_release(id) VALUES(1);
+
+-- Compatibility status is a projection, never an execution admission authority.
+CREATE TRIGGER prompt_policy_status AFTER UPDATE OF queue_policy,disposition ON turns BEGIN
+ UPDATE turns SET state=CASE NEW.disposition WHEN 'pending' THEN CASE NEW.queue_policy WHEN 'held' THEN 'held' ELSE 'queued' END ELSE NEW.disposition END,
+ prompt_revision=prompt_revision+1 WHERE id=NEW.id;
+END;
+CREATE TRIGGER run_status_projection AFTER UPDATE OF state ON execution_runs BEGIN
+ UPDATE turns SET state=CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END,updated_at=CASE WHEN NEW.settled_at<>'' THEN NEW.settled_at ELSE updated_at END
+ WHERE id IN (SELECT prompt_id FROM input_deliveries WHERE run_id=NEW.id AND state='consumed') OR (id=NEW.prompt_id AND disposition='claimed');
+END;
+CREATE TRIGGER delivery_control_update AFTER UPDATE OF state ON input_deliveries WHEN OLD.state<>NEW.state BEGIN
+ UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
+END;
+
+CREATE TABLE conversation_segments (
+ session_id TEXT NOT NULL REFERENCES sessions(id),
+ id TEXT NOT NULL,
+ run_id TEXT NOT NULL,
+ prompt_id TEXT NOT NULL,
+ position INTEGER NOT NULL,
+ has_work INTEGER NOT NULL DEFAULT 0,
+ state TEXT NOT NULL DEFAULT 'running',
+ started_at TEXT NOT NULL,
+ finished_at TEXT NOT NULL DEFAULT '',
+ start_elapsed_ms INTEGER,
+ elapsed_ms INTEGER,
+ final_message_id TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(session_id,id)
+);
+CREATE INDEX conversation_segments_run ON conversation_segments(session_id,run_id,position DESC);
+CREATE TABLE conversation_segment_inputs (
+ session_id TEXT NOT NULL,
+ prompt_id TEXT NOT NULL,
+ segment_id TEXT NOT NULL,
+ PRIMARY KEY(session_id,prompt_id),
+ FOREIGN KEY(session_id,segment_id) REFERENCES conversation_segments(session_id,id)
+);
+
+CREATE TRIGGER delivery_binding BEFORE INSERT ON input_deliveries
+WHEN NOT EXISTS(
+ SELECT 1 FROM agent_commands c JOIN execution_runs r ON r.id=NEW.run_id
+ WHERE c.id=NEW.command_id AND c.turn_id=NEW.prompt_id AND c.session_id=NEW.session_id
+ AND c.incarnation_id=r.incarnation_id AND r.session_id=NEW.session_id
+ AND ((NEW.channel='normal' AND c.kind='prompt' AND c.id=r.id) OR (NEW.channel='steer' AND c.kind='steer'))
+)
+BEGIN SELECT RAISE(ABORT,'invalid delivery binding'); END;
+
+CREATE TRIGGER run_owner_fence AFTER UPDATE OF owner ON agent_incarnations BEGIN
+ UPDATE execution_runs SET owner=NEW.owner WHERE incarnation_id=NEW.id AND state IN ('starting','running','stopping','unknown');
+END;
+
+CREATE TRIGGER delivery_consumption_immutable BEFORE UPDATE OF state ON input_deliveries
+WHEN OLD.state='consumed' AND NEW.state<>'consumed'
+BEGIN SELECT RAISE(ABORT,'consumption evidence is immutable'); END;

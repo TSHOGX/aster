@@ -107,8 +107,8 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 		}
 		var sequence int64
 		var closed bool
-		var grant, turn string
-		e = tx.QueryRowContext(ctx, `SELECT sequence,closed,grant_id,turn_id FROM service_request_slots WHERE audience=? AND slot=?`, r.Audience, r.Slot).Scan(&sequence, &closed, &grant, &turn)
+		var grant, turn, run string
+		e = tx.QueryRowContext(ctx, `SELECT sequence,closed,grant_id,turn_id,run_id FROM service_request_slots WHERE audience=? AND slot=?`, r.Audience, r.Slot).Scan(&sequence, &closed, &grant, &turn, &run)
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
@@ -129,7 +129,7 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 			}
 		}
 		if sequence == r.Sequence {
-			if out.Grant.ID != grant || out.TurnID != turn {
+			if out.Grant.ID != grant || out.TurnID != turn || out.RunID != run {
 				return ErrConflict
 			}
 		} else {
@@ -140,7 +140,7 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 			if count >= 256 {
 				return ErrCapacity
 			}
-			_, e = tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed,grant_id,turn_id) VALUES(?,?,?,0,?,?) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=0,grant_id=excluded.grant_id,turn_id=excluded.turn_id`, r.Audience, r.Slot, r.Sequence, out.Grant.ID, out.TurnID)
+			_, e = tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed,grant_id,turn_id,run_id) VALUES(?,?,?,0,?,?,?) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=0,grant_id=excluded.grant_id,turn_id=excluded.turn_id,run_id=excluded.run_id`, r.Audience, r.Slot, r.Sequence, out.Grant.ID, out.TurnID, out.RunID)
 			if e != nil {
 				return e
 			}
@@ -159,7 +159,7 @@ func (s *Store) CheckGatewayRequest(ctx context.Context, r ServiceRequest) error
 		return ErrInvalid
 	}
 	var a Attribution
-	err := s.reader.QueryRowContext(ctx, `SELECT r.grant_id,r.turn_id FROM service_request_slots r JOIN service_gateways g ON g.audience=r.audience WHERE r.audience=? AND g.instance=? AND r.slot=? AND r.sequence=? AND r.closed=0`, r.Audience, r.Instance, r.Slot, r.Sequence).Scan(&a.Grant.ID, &a.TurnID)
+	err := s.reader.QueryRowContext(ctx, `SELECT r.grant_id,r.turn_id,r.run_id FROM service_request_slots r JOIN service_gateways g ON g.audience=r.audience WHERE r.audience=? AND g.instance=? AND r.slot=? AND r.sequence=? AND r.closed=0`, r.Audience, r.Instance, r.Slot, r.Sequence).Scan(&a.Grant.ID, &a.TurnID, &a.RunID)
 	if err != nil {
 		return missing(err)
 	}
@@ -174,7 +174,7 @@ func (s *Store) ReleaseGatewayRequest(ctx context.Context, r ServiceRequest) err
 		if e := checkGateway(ctx, tx, r); e != nil {
 			return e
 		}
-		_, e := tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed) VALUES(?,?,?,1) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=1,grant_id='',turn_id='' WHERE service_request_slots.sequence<=excluded.sequence`, r.Audience, r.Slot, r.Sequence)
+		_, e := tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed) VALUES(?,?,?,1) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=1,grant_id='',turn_id='',run_id='' WHERE service_request_slots.sequence<=excluded.sequence`, r.Audience, r.Slot, r.Sequence)
 		return e
 	})
 }

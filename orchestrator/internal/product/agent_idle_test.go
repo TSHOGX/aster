@@ -9,10 +9,12 @@ import (
 
 func TestIdleAgentQuiescencePreservesNewlyAdmittedQueue(t *testing.T) {
 	s, scope, i, command := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
+	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "native", consumedPayload(command)))
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, command, 2, "native", reconciledPayload(command)))
 	must(t, err)
 	payload := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"sha256:%064d","size":0}`, command.CommandID, 0)
-	_, err = s.IngestAgent(ctx, i, record(i, command, 2, "command.completed", payload))
+	_, err = s.IngestAgent(ctx, i, record(i, command, 3, "command.completed", payload))
 	must(t, err)
 	backend := newFakePTY()
 	_, err = backend.StartPTY(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: "/bin/bash"}, 24, 80)

@@ -28,25 +28,13 @@ export function conversationTurns(
   turns: readonly Turn[],
 ): ConversationTurn[] {
   const metadata = new Map(summaries.map((s) => [s.id, s]));
-  for (const turn of turns)
-    if (!metadata.has(turn.id))
-      metadata.set(turn.id, {
-        id: turn.id,
-        state: turn.state,
-        created_at: turn.created_at,
-        finished_at: ["completed", "failed", "canceled", "unknown"].includes(
-          turn.state,
-        )
-          ? turn.updated_at
-          : undefined,
-      });
+  void turns; // Queue timestamps are never execution timing evidence.
   const groups: ConversationTurn[] = [];
   for (const item of timeline) {
     const previous = groups.at(-1);
     if (
       previous &&
-      previous.turnId === item.turn_id &&
-      previous.segmentId === item.segment_id &&
+      (item.segment_id ? previous.segmentId === item.segment_id : previous.turnId === item.turn_id) &&
       item.turn_id
     )
       previous.items.push(item);
@@ -62,7 +50,7 @@ export function conversationTurns(
   return groups;
 }
 export function finalItems(turn: ConversationTurn): TimelineItem[] {
-  if (turn.summary?.state !== "completed" || !turn.summary.final_message_id)
+  if (!["completed", "continued"].includes(turn.summary?.state || "") || !turn.summary?.final_message_id)
     return [];
   return turn.items.filter(
     (item) =>

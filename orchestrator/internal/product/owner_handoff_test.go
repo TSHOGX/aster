@@ -16,6 +16,8 @@ func ownerHandoffFixture(t *testing.T) (*Store, ServiceRequest, string, func() G
 	s.identity = ApplicationIdentity{ExecutableDigest: "sha256:" + strings.Repeat("a", 64), CompatibilityDigest: "sha256:" + strings.Repeat("c", 64)}
 	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))
 	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, c, 2, "native", consumedPayload(c)))
+	must(t, err)
 	_, token, err := s.GrantService(ctx, scope, i.SessionID, i.ID, "model", time.Hour)
 	must(t, err)
 	registration, err := s.RegisterGateway(ctx, "model", "gateway", 0, 2)
@@ -127,16 +129,16 @@ func TestOwnerHandoffTransfersOnlyAppliedNativeWorkAcrossVerifiedReplacement(t *
 
 func TestOwnerHandoffRejectsUncertainTransitionsAndUnsettledRequests(t *testing.T) {
 	for name, statement := range map[string]string{
-		"turn starting":                          `UPDATE turns SET state='starting'`,
-		"turn stopping":                          `UPDATE turns SET state='stopping'`,
-		"acknowledged but live unknown":          `UPDATE turns SET state='unknown',acknowledged=1`,
+		"turn starting":                          `UPDATE execution_runs SET state='starting'`,
+		"turn stopping":                          `UPDATE execution_runs SET state='stopping'`,
+		"acknowledged but live unknown":          `UPDATE execution_runs SET state='unknown',acknowledged=1`,
 		"unknown command":                        `UPDATE agent_commands SET state='unknown'`,
 		"dispatching command":                    `UPDATE agent_commands SET state='dispatching'`,
 		"incarnation transition":                 `UPDATE agent_incarnations SET state='stopping'`,
 		"Project transition":                     `UPDATE projects SET state='pausing'`,
 		"revoked grant":                          `UPDATE service_grants SET state='revoked'`,
 		"expired grant":                          `UPDATE service_grants SET expires_at='2000-01-01T00:00:00.000000000Z'`,
-		"finished but unacknowledged forwarding": `UPDATE turns SET state='completed'`,
+		"finished but unacknowledged forwarding": `UPDATE execution_runs SET state='settled',outcome='completed'`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, _, _, observe := ownerHandoffFixture(t)
@@ -249,7 +251,7 @@ func TestOwnerHandoffDeadlineReopensAdmissionWithoutCancelingNativeWork(t *testi
 
 func TestOwnerReadyRevocationFollowsChangesToRetainedAuthority(t *testing.T) {
 	for name, statement := range map[string]string{
-		"turn completes":               `UPDATE turns SET state='completed'`,
+		"turn completes":               `UPDATE execution_runs SET state='settled',outcome='completed'`,
 		"prompt completes":             `UPDATE agent_commands SET state='completed'`,
 		"session blocked":              `UPDATE sessions SET state='blocked'`,
 		"grant revoked":                `UPDATE service_grants SET state='revoked'`,
@@ -299,7 +301,7 @@ func TestOwnerHandoffGatewayLossRequiresQuiescentCompletion(t *testing.T) {
 	}
 	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, identity.ExecutableDigest, proof())
 	wantError(t, err, ErrBusy)
-	_, err = s.db.Exec(`UPDATE turns SET state='completed'; UPDATE agent_commands SET state='completed'`)
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='settled',outcome='completed'; UPDATE agent_commands SET state='completed'`)
 	must(t, err)
 	finished, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, identity.ExecutableDigest, proof())
 	must(t, err)

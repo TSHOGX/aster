@@ -34,6 +34,7 @@ type ServiceGrant struct {
 // bounds that request's lifetime. TurnID is resolved from the incarnation's live
 // turn at authorization time, never supplied by the guest.
 type Attribution struct {
+	RunID     string
 	Grant     ServiceGrant
 	TurnID    string
 	TurnState string
@@ -110,13 +111,11 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 	}
 	var a Attribution
 	var digest string
-	err := q.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,coalesce(r.prompt_id,t.id),CASE WHEN t.state IN ('completed','failed','canceled','unknown') THEN t.state ELSE coalesce(r.state,t.state) END
- FROM service_grants g
- JOIN projects p ON p.id=g.project_id
+	err := q.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,r.prompt_id,r.state,r.id
+ FROM service_grants g JOIN projects p ON p.id=g.project_id
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.session_id=g.session_id
- LEFT JOIN turns t ON t.session_id=g.session_id AND t.state IN ('starting','running')
- LEFT JOIN execution_runs r ON r.session_id=g.session_id AND r.project_id=g.project_id AND r.prompt_id=t.id AND r.state IN ('starting','running')
-	 WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' AND (r.id IS NULL OR t.state IN ('starting','running')) AND (r.id IS NOT NULL OR t.id IS NOT NULL) AND CASE WHEN t.state IN ('completed','failed','canceled','unknown') THEN t.state ELSE coalesce(r.state,t.state) END IN ('starting','running')`, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.TurnState)
+ JOIN execution_runs r ON r.incarnation_id=i.id AND r.owner=i.owner AND r.state IN ('starting','running')
+ WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' `, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.TurnState, &a.RunID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Attribution{}, ErrNotFound
 	}
@@ -137,12 +136,11 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 // itself survives for the Session's next turn.
 func holdsAttribution(ctx context.Context, q queryer, now string, a Attribution) error {
 	var state string
-	err := q.QueryRowContext(ctx, `SELECT CASE WHEN t.state IN ('completed','failed','canceled','unknown') THEN t.state ELSE coalesce(r.state,t.state) END FROM turns t
-	LEFT JOIN execution_runs r ON r.prompt_id=t.id AND r.session_id=t.session_id
-	JOIN service_grants g ON g.id=? AND g.state='active' AND g.expires_at>? AND g.session_id=t.session_id
-	JOIN projects p ON p.id=g.project_id AND p.state='active'
-	JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.state='running'
-	 WHERE t.id=? AND CASE WHEN t.state IN ('completed','failed','canceled','unknown') THEN t.state ELSE coalesce(r.state,t.state) END IN ('starting','running','stopping')`, a.Grant.ID, now, a.TurnID).Scan(&state)
+	err := q.QueryRowContext(ctx, `SELECT r.state FROM execution_runs r
+ JOIN service_grants g ON g.id=? AND g.state='active' AND g.expires_at>? AND g.session_id=r.session_id AND g.incarnation_id=r.incarnation_id
+ JOIN projects p ON p.id=g.project_id AND p.state='active'
+ JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.state='running'
+ WHERE r.id=? AND r.state IN ('starting','running','stopping')`, a.Grant.ID, now, a.RunID).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}

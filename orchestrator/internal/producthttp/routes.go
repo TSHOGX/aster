@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/view/items/{item}/detail", s.conversationDetail)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/view/rebuild", s.rebuildConversation)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/control", s.agentControl)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/controls/{request}", s.controlResult)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/turns/{turn}/control", s.queuedControl)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/turns", s.listTurns)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/queue", s.promptQueue)

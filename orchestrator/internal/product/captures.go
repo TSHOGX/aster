@@ -58,7 +58,7 @@ func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if _, err := c.Store.exec(ctx, `UPDATE native_captures SET attempted_at=? WHERE turn_id=?`, c.Store.timestamp(), capture.TurnID); err != nil {
+	if _, err := c.Store.exec(ctx, `UPDATE native_captures SET attempted_at=? WHERE turn_id=? AND path=?`, c.Store.timestamp(), capture.TurnID, capture.Path); err != nil {
 		return err
 	}
 	var deleting bool
@@ -75,7 +75,7 @@ func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
 	// Selection comes from the committed capture ledger, never a browser path.
 	var path, digest, state string
 	var size int64
-	if err := c.Store.reader.QueryRowContext(ctx, `SELECT path,digest,size,state FROM native_captures WHERE turn_id=? AND incarnation_id=?`, capture.TurnID, capture.IncarnationID).Scan(&path, &digest, &size, &state); err != nil {
+	if err := c.Store.reader.QueryRowContext(ctx, `SELECT path,digest,size,state FROM native_captures WHERE turn_id=? AND path=? AND incarnation_id=?`, capture.TurnID, capture.Path, capture.IncarnationID).Scan(&path, &digest, &size, &state); err != nil {
 		return err
 	}
 	if path != capture.Path || digest != capture.Digest || size != capture.Size {
@@ -131,12 +131,14 @@ func (c *Captures) Export(ctx context.Context, capture NativeCapture) error {
 		return err
 	}
 	return c.Store.write(ctx, func(tx *sql.Tx) error {
-		if err := changed(tx.ExecContext(ctx, `UPDATE native_captures SET host_path=?,state='exported' WHERE turn_id=? AND digest=? AND state='guest'`, destination, capture.TurnID, capture.Digest)); err != nil {
+		if err := changed(tx.ExecContext(ctx, `UPDATE native_captures SET host_path=?,state='exported' WHERE turn_id=? AND path=? AND digest=? AND state='guest'`, destination, capture.TurnID, capture.Path, capture.Digest)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE project_activity SET state='complete',updated_at=? WHERE id=? AND project_id=?`, c.Store.timestamp(), "capture/"+capture.TurnID, capture.ProjectID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE project_activity SET state='complete',updated_at=? WHERE id=? AND project_id=?`, c.Store.timestamp(), captureActivity(capture.TurnID, capture.Path), capture.ProjectID); err != nil {
 			return err
 		}
 		return c.Store.activity(ctx, tx, capture.ProjectID)
 	})
 }
+
+func captureActivity(turn, path string) string { return "capture/" + turn + "/" + filepath.Base(path) }

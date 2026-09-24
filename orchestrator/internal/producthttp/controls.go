@@ -14,11 +14,8 @@ func (s *Server) resumeProject(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ControlRevision int64  `json:"control_revision"`
-		Action          string `json:"action"`
-		RequestID       string `json:"request_id"`
-		Source          string `json:"source"`
-		Revision        int64  `json:"revision"`
+		product.ExecutionControl
+		Revision int64 `json:"revision"`
 	}
 	if !decode(w, r, s.Config.bodyLimit(), &body) {
 		return
@@ -29,10 +26,14 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 		err = s.Store.RetryRecovery(r.Context(), s.scope(r), r.PathValue("session"), body.Revision)
 	case "continue":
 		err = s.Store.ContinueSession(r.Context(), s.scope(r), r.PathValue("session"), body.Revision)
-	case "interrupt":
-		err = s.Store.Interrupt(r.Context(), s.scope(r), r.PathValue("session"), body.RequestID, body.ControlRevision)
-	case "steer":
-		err = s.Store.Steer(r.Context(), s.scope(r), r.PathValue("session"), body.Source, body.RequestID, body.ControlRevision)
+	case "stop", "steer":
+		receipt, e := s.Store.ControlRun(r.Context(), s.scope(r), r.PathValue("session"), body.ExecutionControl)
+		if e != nil {
+			controlFailure(w, e)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, receipt)
+		return
 	default:
 		err = product.ErrInvalid
 	}
@@ -53,7 +54,7 @@ func (s *Server) queuedControl(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt, err := s.Store.MutatePrompt(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.RequestID, body.Action, body.ExpectedPromptRevision)
 	if err != nil {
-		fail(w, err)
+		controlFailure(w, err)
 		return
 	}
 	writeJSON(w, 200, receipt)
@@ -67,4 +68,22 @@ func (s *Server) turnIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// A failed admission never returns 202. Accepted requests have durable receipts.
+func controlFailure(w http.ResponseWriter, err error) {
+	code, message := status(err)
+	if code == http.StatusAccepted {
+		code = http.StatusConflict
+	}
+	writeJSON(w, code, map[string]string{"state": "not_admitted", "code": "control_not_admitted", "error": message})
+}
+
+func (s *Server) controlResult(w http.ResponseWriter, r *http.Request) {
+	result, err := s.Store.ControlResult(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("request"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

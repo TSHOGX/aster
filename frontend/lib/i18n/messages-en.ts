@@ -1,4 +1,5 @@
 export const EN = {
+  "Synchronizing…": "Synchronizing…",
   "Choose an option": "Choose an option",
   "No matching options": "No matching options",
   "Search timezones": "Search timezones",

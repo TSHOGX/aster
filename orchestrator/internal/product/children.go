@@ -91,11 +91,11 @@ func (s *Store) SettleChild(ctx context.Context, c Child) error {
 		if c.Kind == "session" {
 			// Queued and held work is canceled; an admitted turn whose outcome is
 			// unknown stays unknown, because deletion cannot manufacture evidence.
-			if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='canceled',updated_at=? WHERE session_id=? AND state IN ('held','queued')`, s.timestamp(), c.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE turns SET disposition='canceled',updated_at=? WHERE session_id=? AND disposition='pending'`, s.timestamp(), c.ID); err != nil {
 				return err
 			}
 			var undecided int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND state IN ('starting','running','stopping')`, c.ID).Scan(&undecided); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_runs WHERE session_id=? AND state IN ('starting','running','stopping')`, c.ID).Scan(&undecided); err != nil {
 				return err
 			}
 			if undecided > 0 {

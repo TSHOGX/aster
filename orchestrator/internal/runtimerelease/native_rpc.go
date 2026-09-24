@@ -11,14 +11,14 @@ import (
 
 // NativeProtocol identifies the pinned Pi RPC extension that reports settlement
 // of the complete prompt Promise, including retry and compaction continuations.
-const NativeProtocol = 2
+const NativeProtocol = 3
 const NativeRPCPath = NativeRoot + "/" + PiPackage + "/dist/modes/rpc/rpc-mode.js"
 const nativeRPCOriginal = "sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7"
-const nativeRPCPatched = "sha256:ed1ca03f745037ace8323eac3f2fdfa8f93b31697f800a724f5c7a04c7f2d858"
+const nativeRPCPatched = "sha256:b9327e55144e4d7947365e916b1aea2feb7c57892167b3e84a7d5f598e9ff7aa"
 
 const identityHooks = `    let session = runtimeHost.session;
     let activePrompt;
-    // BatteryGPT native protocol 2: correlate exact Agent message objects with
+    // BatteryGPT native protocol 3: correlate exact Agent message objects with
     // product delivery tokens. The WeakMap is never model or Session content.
     const inputContext = new AsyncLocalStorage();
     const inputIdentity = new WeakMap();
@@ -37,7 +37,12 @@ const identityHooks = `    let session = runtimeHost.session;
         };
         session.agent.steer = (message, ...args) => {
             const token = inputContext.getStore();
-            if (token) inputIdentity.set(message, token);
+            if (token) {
+                const operation = activePrompt;
+                if (!operation || operation.closed || operation.abortRequested) throw new Error("Target run ended");
+                inputIdentity.set(message, token);
+                operation.enqueued.add(token);
+            }
             return steer(message, ...args);
         };
         session.agent.processEvents = (event) => {
@@ -46,7 +51,7 @@ const identityHooks = `    let session = runtimeHost.session;
                 if (token) {
                     inputIdentity.delete(event.message);
                     activePrompt.inputTokens.delete(token);
-                    output({ type: "input_consumed", input_token: token, run_id: activePrompt.id, occurred_at: new Date().toISOString() });
+                    output({ type: "input_consumed", input_token: token, run_id: activePrompt.id, occurred_at: new Date().toISOString(), run_elapsed_ms: Number((process.hrtime.bigint() - activePrompt.started) / 1000000n) });
                 }
             }
             return processEvents(event);
@@ -54,21 +59,26 @@ const identityHooks = `    let session = runtimeHost.session;
     };`
 
 const settledPrompt = `            case "prompt": {
-                // BatteryGPT native protocol 2: agent_end is only a loop boundary.
+                // BatteryGPT native protocol 3: agent_end is only a loop boundary.
                 if (activePrompt) {
                     return error(id, "prompt", "A prompt is still settling");
                 }
-                const operation = { id, outcome: "completed", abortRequested: false, inputTokens: new Set() };
+                const operation = { id, outcome: "completed", abortRequested: false, closed: false, inputTokens: new Set(), enqueued: new Set(), preflights: new Set(), started: process.hrtime.bigint() };
                 activePrompt = operation;
                 if (command.input_token) operation.inputTokens.add(command.input_token);
-                const started = process.hrtime.bigint();
+                const started = operation.started;
                 let preflightSucceeded = false;
                 const canceledBeforeDispatch = new Error("Prompt canceled before dispatch");
-                const finish = (outcome, failure) => {
+                const finish = async (outcome, failure, rejected = false) => {
+                    operation.closed = true;
+                    // Preflights already admitted can resume after prompt settlement.
+                    // The Agent hook refuses enqueue after closure; wait for all of
+                    // them before clearing the ledger and releasing this target.
+                    await Promise.allSettled([...operation.preflights]);
                     session.clearQueue();
                     output({ type: "inputs_reconciled", run_id: operation.id, removed_input_tokens: [...operation.inputTokens], complete: true, occurred_at: new Date().toISOString(), run_elapsed_ms: Number((process.hrtime.bigint() - started) / 1000000n) });
                     if (activePrompt === operation) activePrompt = undefined;
-                    output({ type: "prompt_end", id, outcome, ...(failure ? { error: String(failure).slice(0, 1024) } : {}) });
+                    if (!rejected) output({ type: "prompt_end", id, outcome, ...(failure ? { error: String(failure).slice(0, 1024) } : {}) });
                 };
                 void inputContext.run(command.input_token, () => session
                     .prompt(command.message, {
@@ -83,13 +93,18 @@ const settledPrompt = `            case "prompt": {
                         }
                     },
                 }))
-                    .then(() => { if (preflightSucceeded) finish(operation.outcome); })
-                    .catch((e) => {
+                    .then(() => {
+                        // Extension/slash-command handling can settle without a model
+                        // input. ACK identifies acceptance; reconciliation proves removal.
+                        if (!preflightSucceeded) output(success(id, "prompt"));
+                        return finish(operation.outcome);
+                    })
+                    .catch(async (e) => {
                     if (!preflightSucceeded) {
-                        if (activePrompt === operation) activePrompt = undefined;
+                        await finish("failed", e.message, true);
                         output(error(id, "prompt", e.message));
                     } else {
-                        finish(e === canceledBeforeDispatch ? "canceled" : "failed", e.message);
+                        await finish(e === canceledBeforeDispatch ? "canceled" : "failed", e.message);
                     }
                 });
                 return undefined;
@@ -138,9 +153,9 @@ func patchNativeRPC(raw []byte) ([]byte, error) {
 		{"    let session = runtimeHost.session;\n    let unsubscribe;", identityHooks + "\n    installIdentityHooks();\n    let unsubscribe;"},
 		{"        session = runtimeHost.session;\n        await session.bindExtensions({", "        session = runtimeHost.session;\n        installIdentityHooks();\n        await session.bindExtensions({"},
 		{"        unsubscribe = session.subscribe((event) => {\n            output(event);\n        });", observePrompt},
-		{"            case \"steer\": {\n                await session.steer(command.message, command.images);", "            case \"steer\": {\n                if (!activePrompt || activePrompt.id !== command.run_id || activePrompt.abortRequested) return error(id, \"steer\", \"Target run ended\");\n                if (command.input_token) activePrompt.inputTokens.add(command.input_token);\n                try {\n                    await inputContext.run(command.input_token, () => session.steer(command.message, command.images));\n                } catch (e) {\n                    activePrompt.inputTokens.delete(command.input_token);\n                    throw e;\n                }"},
+		{"            case \"steer\": {\n                await session.steer(command.message, command.images);", "            case \"steer\": {\n                const operation = activePrompt;\n                if (!operation || operation.id !== command.run_id || operation.abortRequested || operation.closed) return error(id, \"steer\", \"Target run ended\");\n                if (command.input_token) operation.inputTokens.add(command.input_token);\n                const preflight = inputContext.run(command.input_token, () => session.steer(command.message, command.images));\n                operation.preflights.add(preflight);\n                try {\n                    await preflight;\n                } catch (e) {\n                    // Rejection is safe only before the Agent enqueue boundary.\n                    if (!operation.enqueued.has(command.input_token)) {\n                        operation.inputTokens.delete(command.input_token);\n                        throw e;\n                    }\n                } finally {\n                    operation.preflights.delete(preflight);\n                }"},
 		{"            case \"abort\": {\n                await session.abort();", "            case \"abort\": {\n                if (!activePrompt || activePrompt.id !== command.run_id) return error(id, \"abort\", \"Target run ended\");\n                activePrompt.abortRequested = true;\n                session.clearQueue();\n                session.abortCompaction();\n                await session.abort();"},
-		{"//# sourceMappingURL=rpc-mode.js.map", "// BatteryGPT native settlement protocol 2; upstream source map does not apply."},
+		{"//# sourceMappingURL=rpc-mode.js.map", "// BatteryGPT native settlement protocol 3; upstream source map does not apply."},
 	} {
 		if strings.Count(source, replacement[0]) != 1 {
 			return nil, errors.New("Pi RPC patch marker differs from pinned source")

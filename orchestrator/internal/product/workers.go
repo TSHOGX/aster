@@ -199,7 +199,7 @@ func (w *Workers) project(ctx context.Context, p Project) error {
 	if p.State == "deleting" {
 		return nil
 	}
-	rows, err := w.Store.reader.QueryContext(ctx, `SELECT s.id FROM sessions s WHERE s.project_id=? AND s.deletion_intent=0 AND s.state<>'blocked' AND (EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.state='queued') OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.session_id=s.id AND r.state IN ('starting','running','stopping','unknown')) OR EXISTS(SELECT 1 FROM agent_incarnations i WHERE i.session_id=s.id AND i.state IN ('starting','running','stopping'))) ORDER BY s.updated_at,s.id LIMIT 32`, p.ID)
+	rows, err := w.Store.reader.QueryContext(ctx, `SELECT s.id FROM sessions s WHERE s.project_id=? AND s.deletion_intent=0 AND s.state<>'blocked' AND (EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.disposition='pending' AND t.queue_policy='released') OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.session_id=s.id AND (r.state IN ('starting','running','stopping') OR (r.state='unknown' AND r.acknowledged=0))) OR EXISTS(SELECT 1 FROM agent_incarnations i WHERE i.session_id=s.id AND i.state IN ('starting','running','stopping'))) ORDER BY s.updated_at,s.id LIMIT 32`, p.ID)
 	if err != nil {
 		return err
 	}

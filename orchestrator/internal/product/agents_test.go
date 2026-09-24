@@ -42,7 +42,7 @@ func record(i Incarnation, c agentwire.Frame, seq uint64, kind, payload string) 
 }
 func TestCommittedIngestDedupAndUnknownRecords(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
-	applied := record(i, c, 1, "command.applied", `{"success":true}`)
+	applied := record(i, c, 1, "native", consumedPayload(c))
 	seq, err := s.IngestAgent(ctx, i, applied)
 	must(t, err)
 	if seq != 1 {
@@ -75,7 +75,9 @@ func TestCommittedIngestDedupAndUnknownRecords(t *testing.T) {
 	_, err = s.IngestAgent(ctx, i, assistant)
 	must(t, err)
 	payload := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"sha256:%064d","size":80,"outcome":"completed"}`, c.CommandID, 0)
-	completed := record(i, c, 3, "command.completed", payload)
+	_, err = s.IngestAgent(ctx, i, record(i, c, 3, "native", reconciledPayload(c)))
+	must(t, err)
+	completed := record(i, c, 4, "command.completed", payload)
 	_, err = s.IngestAgent(ctx, i, completed)
 	must(t, err)
 	_, err = s.IngestAgent(ctx, i, completed)
@@ -93,7 +95,7 @@ func TestCommittedIngestDedupAndUnknownRecords(t *testing.T) {
 	// Host crash after commit and before ACK cannot duplicate messages or capture.
 	current, err := liveIncarnation(ctx, s.reader, i.SessionID)
 	must(t, err)
-	if current.Ingested != 3 {
+	if current.Ingested != 4 {
 		t.Fatal(current)
 	}
 	var captures int
@@ -145,13 +147,13 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 	must(t, err)
 	var state string
 	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
-	if state != "held" {
+	if state != "claimed" {
 		t.Fatal("send retired steering source")
 	}
 	_, err = s.IngestAgent(ctx, i, record(i, steer, 2, "command.applied", `{"success":true}`))
 	must(t, err)
 	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
-	if state != "held" {
+	if state != "claimed" {
 		t.Fatal(state)
 	}
 	var token string
@@ -159,14 +161,14 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 	_, err = s.IngestAgent(ctx, i, record(i, c, 3, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q,"occurred_at":"2026-09-24T00:00:01Z"}`, token, c.CommandID)))
 	must(t, err)
 	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
-	if state != "completed" {
-		t.Fatal("consumption did not settle source", state)
+	if state != "running" {
+		t.Fatal("consumption did not preserve active execution", state)
 	}
 	// Replaying the request after the Session revision advanced remains idempotent.
 	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "steer-request", 1))
 	messages, err := s.Messages(ctx, scope, i.SessionID, 0, 100)
 	must(t, err)
-	if len(messages) != 2 || messages[1].Content != "steer this" {
+	if len(messages) != 1 || messages[0].Content != "steer this" {
 		t.Fatal(messages)
 	}
 }
@@ -189,10 +191,14 @@ func TestAbortHoldsQueueAndWaitsForNativeCancellation(t *testing.T) {
 	if abort.CommandID == c.CommandID {
 		t.Fatal(abort)
 	}
-	payload := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"sha256:%064d","size":80,"outcome":"canceled"}`, c.CommandID, 0)
-	_, err = s.IngestAgent(ctx, i, record(i, c, 2, "command.completed", payload))
+	_, err = s.IngestAgent(ctx, i, record(i, c, 2, "native", consumedPayload(c)))
 	must(t, err)
-	_, err = s.IngestAgent(ctx, i, record(i, abort, 3, "command.applied", `{"success":true}`))
+	_, err = s.IngestAgent(ctx, i, record(i, c, 3, "native", reconciledPayload(c)))
+	must(t, err)
+	payload := fmt.Sprintf(`{"path":"/runtime/sessions/agent/native/captures/%s.jsonl","digest":"sha256:%064d","size":80,"outcome":"canceled"}`, c.CommandID, 0)
+	_, err = s.IngestAgent(ctx, i, record(i, c, 4, "command.completed", payload))
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, abort, 5, "command.applied", `{"success":true}`))
 	must(t, err)
 	turns, err = s.Turns(ctx, scope, i.SessionID, 0, 100)
 	must(t, err)

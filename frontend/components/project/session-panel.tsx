@@ -25,6 +25,7 @@ import { Menu, useDialog } from "./ui";
 import { knownWorkspaceFiles, workspacePath } from "@/lib/workspace-links";
 import {
   api,
+  APIError,
   command,
   newID,
   recalled,
@@ -526,9 +527,9 @@ export function SessionPanel({
     void Promise.resolve().then(() => loadQueue());
   }, [loadQueue, view.head?.session.control_revision]);
   useEffect(() => {
-    if (!view.head?.turns.some((turn) => ["starting", "running", "stopping"].includes(turn.state)))
+    if (!view.head?.active_run && !view.head?.turns.some((turn) => ["starting", "running", "stopping"].includes(turn.state)))
       void Promise.resolve().then(() => setStopPending(false));
-  }, [view.head?.turns]);
+  }, [view.head?.turns, view.head?.active_run]);
   const timeline: TimelineItem[] = view.items.map((item, index) => ({
     ...item,
     cursor: index,
@@ -678,22 +679,37 @@ export function SessionPanel({
       layoutAnchor.current = null;
     };
   }, [captureAnchor, sizeKey]);
+  const controlRequests = useRef(new Map<string, Record<string, unknown>>());
+  const sendControl = async (key: string, path: string, intent: Record<string, unknown>) => {
+    const body = controlRequests.current.get(key) || { ...intent, request_id: newID() };
+    controlRequests.current.set(key, body);
+    try {
+      const receipt = await command(path, body);
+      controlRequests.current.delete(key);
+      return receipt;
+    } catch (error) {
+      if (error instanceof APIError && error.outcome?.state === "not_admitted")
+        controlRequests.current.delete(key);
+      throw error;
+    }
+  };
   const control = (turn: Turn, action: string) =>
     void act(async () => {
-      await command(`${base}/turns/${encodeURIComponent(turn.id)}/control`, {
+      await sendControl(`prompt:${turn.id}:${action}`, `${base}/turns/${encodeURIComponent(turn.id)}/control`, {
         action,
-        request_id: newID(),
         expected_prompt_revision: turn.prompt_revision || 1,
       });
       await loadQueue();
     });
   const steer = (turn: Turn) =>
     void act(async () => {
-      await command(`${base}/control`, {
+      await sendControl(`steer:${turn.id}`, `${base}/control`, {
         action: "steer",
         source: turn.id,
-        request_id: newID(),
-        control_revision: current.control_revision,
+        expected_prompt_revision: turn.prompt_revision,
+        target_run_id: view.head?.active_run?.id,
+        target_incarnation_id: view.head?.active_run?.incarnation_id,
+        target_owner: view.head?.active_run?.owner,
       });
       await loadQueue();
     });
@@ -701,10 +717,11 @@ export function SessionPanel({
     if (stopPending) return;
     setStopPending(true);
     try {
-      await command(`${base}/control`, {
-        action: "interrupt",
-        request_id: newID(),
-        control_revision: current.control_revision,
+      await sendControl("stop", `${base}/control`, {
+        action: "stop",
+        target_run_id: view.head?.active_run?.id,
+        target_incarnation_id: view.head?.active_run?.incarnation_id,
+        target_owner: view.head?.active_run?.owner,
       });
       await refresh();
       await loadQueue();
@@ -713,11 +730,11 @@ export function SessionPanel({
       setError(e instanceof Error ? e.message : tr("The action failed."));
     }
   };
-  const active = view.head?.turns.some((turn) =>
+  const active = !!view.head?.active_run || view.head?.turns.some((turn) =>
     ["starting", "running", "stopping"].includes(turn.state),
   );
   const queue = queuePage?.items || [];
-  const deliveryBusy = (turn: Turn) => ["accepted", "dispatching", "native_queued", "unknown"].includes(turn.delivery_state || "");
+  const deliveryBusy = (turn: Turn) => ["accepted", "dispatching", "native_queued", "unknown", "consumed"].includes(turn.delivery_state || "");
   return (
     <section
       className="agent-panel"
@@ -1049,12 +1066,13 @@ export function SessionPanel({
             <div className="prompt-queue-row" key={turn.id} aria-busy={deliveryBusy(turn)}>
               <span>
                 {turn.delivery_state === "native_queued" ? tr("Waiting to join current task…")
+                  : turn.delivery_state === "consumed" ? tr("Synchronizing…")
                   : turn.delivery_state === "unknown" ? tr("Delivery outcome unknown")
                   : deliveryBusy(turn) ? tr("Submitting to current task…")
                   : turn.state === "held" ? tr("Held") : tr("Queued")}: {turn.content.slice(0, 120)}
               </span>
               <div className="row-actions">
-                <button type="button" disabled={busy || deliveryBusy(turn)} onClick={() => control(turn, turn.state === "held" ? "release" : "held")}
+                <button type="button" disabled={busy || deliveryBusy(turn)} onClick={() => control(turn, turn.state === "held" ? "release" : "hold")}
                   aria-label={`${turn.state === "held" ? tr("Release") : tr("Hold")}: ${turn.content.slice(0, 80)}`}>
                   {turn.state === "held" ? <Play size={16} /> : <Pause size={16} />}
                   {turn.state === "held" ? tr("Release") : tr("Hold")}

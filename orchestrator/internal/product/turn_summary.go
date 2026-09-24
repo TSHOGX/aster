@@ -3,6 +3,9 @@ package product
 // Display metadata is independent of the bounded execution-control turn page.
 // An older conversation page must not guess completion from Session idle state.
 type TurnSummary struct {
+	SegmentID      string `json:"segment_id,omitempty"`
+	RunID          string `json:"run_id,omitempty"`
+	ElapsedMS      *int64 `json:"elapsed_ms,omitempty"`
 	Sequence       int64  `json:"sequence"`
 	ID             string `json:"id"`
 	State          string `json:"state"`

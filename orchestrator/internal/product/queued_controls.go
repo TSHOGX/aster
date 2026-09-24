@@ -8,6 +8,7 @@ import (
 )
 
 type PromptMutationReceipt struct {
+	Outcome        string `json:"outcome"`
 	RequestID      string `json:"request_id"`
 	Action         string `json:"action"`
 	PromptID       string `json:"prompt_id"`
@@ -53,7 +54,7 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 		if err != nil {
 			return err
 		}
-		if t.PromptRevision != revision || (t.State != "held" && t.State != "queued") {
+		if t.PromptRevision != revision || t.Disposition != "pending" {
 			return ErrConflict
 		}
 		var unresolved int
@@ -64,8 +65,8 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 			return ErrBusy
 		}
 		next := map[string]string{"hold": "held", "release": "queued", "cancel": "canceled"}[action]
-		if t.State != next {
-			if err := changed(tx.ExecContext(ctx, `UPDATE turns SET state=?,prompt_revision=prompt_revision+1,updated_at=? WHERE id=? AND prompt_revision=? AND state IN ('held','queued')`, next, s.timestamp(), prompt, revision)); err != nil {
+		if action == "cancel" || (action == "hold" && t.QueuePolicy != "held") || (action == "release" && t.QueuePolicy != "released") {
+			if err := changed(tx.ExecContext(ctx, `UPDATE turns SET queue_policy=?,disposition=?,updated_at=? WHERE id=? AND prompt_revision=? AND disposition='pending'`, map[string]string{"hold": "held", "release": "released", "cancel": t.QueuePolicy}[action], map[bool]string{true: "canceled", false: "pending"}[action == "cancel"], s.timestamp(), prompt, revision)); err != nil {
 				return err
 			}
 			t.PromptRevision++
@@ -77,7 +78,7 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 				return err
 			}
 		}
-		result = PromptMutationReceipt{RequestID: request, Action: action, PromptID: prompt, PromptRevision: t.PromptRevision, State: t.State}
+		result = PromptMutationReceipt{Outcome: "completed", RequestID: request, Action: action, PromptID: prompt, PromptRevision: t.PromptRevision, State: t.State}
 		return insertReceipt(ctx, tx, scope.ProjectID, session, request, action, digest, prompt, "", "", "completed", result, s.timestamp())
 	})
 	return result, err

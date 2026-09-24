@@ -1,8 +1,10 @@
 package product
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/agentwire"
 	"testing"
 )
 
@@ -57,10 +59,10 @@ func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 	}
 	page, err := s.PromptQueue(ctx, scope, "agent", 0, 16)
 	must(t, err)
-	if page.TotalPending != 40 || len(page.Items) != 16 || page.NextAfter == 0 {
+	if page.TotalPending != 41 || len(page.Items) != 16 || page.NextAfter == 0 {
 		t.Fatalf("queue page: %+v", page)
 	}
-	if page.Items[0].Content != "prompt 0" {
+	if page.Items[0].Content != "hello" {
 		t.Fatal("queue preview changed scheduling order", page.Items[0])
 	}
 	for n, item := range page.Items {
@@ -70,7 +72,7 @@ func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 	}
 	next, err := s.PromptQueue(ctx, scope, "agent", page.NextAfter, 64)
 	must(t, err)
-	if len(next.Items) != 24 || next.NextAfter != 0 {
+	if len(next.Items) != 25 || next.NextAfter != 0 {
 		t.Fatalf("queue tail: %+v", next)
 	}
 }
@@ -133,12 +135,12 @@ func TestReleasedPromptCanBeClaimedBySteerBeforeOrdinaryDispatch(t *testing.T) {
 	}
 	var state string
 	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
-	if state != "held" {
+	if state != "claimed" {
 		t.Fatal("source remained ordinarily dispatchable", state)
 	}
 	page, err := s.PromptQueue(ctx, scope, i.SessionID, 0, 32)
 	must(t, err)
-	if len(page.Items) != 1 || page.Items[0].ID != source.ID || page.Items[0].DeliveryState != "dispatching" {
+	if len(page.Items) != 2 || page.Items[1].ID != source.ID || page.Items[1].DeliveryState != "dispatching" {
 		t.Fatal("queue lost delivery progress", page)
 	}
 }
@@ -158,4 +160,18 @@ func TestPromptMutationReceiptIsIdempotentAndRejectsReusedRequest(t *testing.T) 
 	if !errors.Is(err, ErrConflict) {
 		t.Fatal("request id was reused for a different action", err)
 	}
+}
+
+// These payloads model native evidence, independently of command ACKs.
+func consumedPayload(c agentwire.Frame) string {
+	var payload struct {
+		Token string `json:"input_token"`
+	}
+	if err := json.Unmarshal(c.Payload, &payload); err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q,"occurred_at":"2026-09-24T00:00:01Z","run_elapsed_ms":1000}`, payload.Token, c.CommandID)
+}
+func reconciledPayload(c agentwire.Frame) string {
+	return fmt.Sprintf(`{"type":"inputs_reconciled","run_id":%q,"removed_input_tokens":[],"complete":true,"occurred_at":"2026-09-24T00:00:04Z","run_elapsed_ms":4000}`, c.CommandID)
 }

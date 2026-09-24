@@ -30,7 +30,7 @@ func TestChildCleanupRequiresEvidenceAndReleasesProjectWork(t *testing.T) {
 	_, err = s.db.Exec(`UPDATE agent_incarnations SET state='exited' WHERE id=?`, i.ID)
 	must(t, err)
 	wantError(t, s.SettleChild(ctx, pending[0]), ErrBusy)
-	_, err = s.db.Exec(`UPDATE turns SET state='unknown' WHERE id=?`, c.TurnID)
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='unknown' WHERE prompt_id=?`, c.TurnID)
 	must(t, err)
 	// Unsettled activity is also evidence of live guest work.
 	must(t, s.db.QueryRow(`SELECT 1`).Scan(new(int)))

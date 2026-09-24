@@ -8,11 +8,11 @@ import (
 	"github.com/google/uuid"
 )
 
-const turnColumns = `id,project_id,session_id,request_id,content,initially_held,prompt_revision,state,sequence,created_at,updated_at`
-const queueColumns = `id,project_id,session_id,request_id,substr(content,1,4096),initially_held,prompt_revision,state,sequence,created_at,updated_at`
+const turnColumns = `id,project_id,session_id,request_id,content,initially_held,prompt_revision,queue_policy,disposition,state,sequence,created_at,updated_at`
+const queueColumns = `id,project_id,session_id,request_id,substr(content,1,4096),initially_held,prompt_revision,queue_policy,disposition,state,sequence,created_at,updated_at`
 
 func scanTurn(row scanner) (t Turn, err error) {
-	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt))
+	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt))
 	return
 }
 
@@ -57,13 +57,20 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		var used bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM control_receipts WHERE session_id=? AND request_id=?)`, session, request).Scan(&used); err != nil {
+			return err
+		}
+		if used {
+			return ErrConflict
+		}
 		state := "queued"
 		if held {
 			state = "held"
 		}
 		now := s.timestamp()
 		id := uuid.NewString()
-		_, err = tx.ExecContext(ctx, `INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,state,sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM turns WHERE session_id=?),?,?)`, id, scope.ProjectID, session, request, content, held, state, session, now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,queue_policy,state,sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM turns WHERE session_id=?),?,?)`, id, scope.ProjectID, session, request, content, held, map[bool]string{true: "held", false: "released"}[held], state, session, now, now)
 		if err != nil {
 			return err
 		}
@@ -133,13 +140,13 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 	}
 	limit = pageSize(limit)
 	var total int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued')`, scope.ProjectID, session).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE project_id=? AND session_id=? AND (disposition IN ('pending','claimed') OR (disposition='consumed' AND NOT EXISTS(SELECT 1 FROM conversation_items ci WHERE ci.session_id=turns.session_id AND ci.id=turns.id||'/user')))`, scope.ProjectID, session).Scan(&total); err != nil {
 		return PromptQueuePage{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+queueColumns+`,
   coalesce((SELECT id FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),''),
   coalesce((SELECT state FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),'')
- FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued') AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, limit+1)
+ FROM turns WHERE project_id=? AND session_id=? AND (disposition IN ('pending','claimed') OR (disposition='consumed' AND NOT EXISTS(SELECT 1 FROM conversation_items ci WHERE ci.session_id=turns.session_id AND ci.id=turns.id||'/user'))) AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, limit+1)
 	if err != nil {
 		return PromptQueuePage{}, err
 	}
@@ -149,7 +156,7 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 	hasMore := false
 	for rows.Next() {
 		var t Turn
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState); err != nil {
 			return PromptQueuePage{}, err
 		}
 		if len(items) == limit {

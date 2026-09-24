@@ -146,7 +146,8 @@ func TestAuthorizedTerminalCancellationRevokesReady(t *testing.T) {
 
 func TestProjectDeletionAndLateUnknownEvidenceRevokeReady(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
-	_, err := s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, c.TurnID)
+	ingestContract(t, s, i, c, "native", consumedPayload(c))
+	_, err := s.db.Exec(`UPDATE execution_runs SET state='settled',outcome='completed' WHERE prompt_id=?`, c.TurnID)
 	must(t, err)
 	_, err = s.db.Exec(`UPDATE agent_commands SET state='completed' WHERE id=?`, c.CommandID)
 	must(t, err)
@@ -273,7 +274,7 @@ func TestReadinessHonorsExplicitAcknowledgmentWithoutErasingUnknownEvidence(t *t
 	s, scope, i, c := agentFixture(t)
 	for _, query := range []string{
 		`UPDATE agent_commands SET state='unknown'`,
-		`UPDATE turns SET state='unknown'`,
+		`UPDATE execution_runs SET state='unknown'`,
 		`UPDATE agent_incarnations SET state='exited',cleanup_state='settled',recovery_state='failed'`,
 		`UPDATE sessions SET state='blocked'`,
 	} {

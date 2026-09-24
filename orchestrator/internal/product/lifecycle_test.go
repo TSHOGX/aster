@@ -244,7 +244,7 @@ func TestIdleRevisionsQueuedSessionsHeldAndRetainedTerminal(t *testing.T) {
 	_, err = l.Store.ArmIdle(ctx, a, time.Second)
 	wantError(t, err, ErrBusy)
 	// Simulate worker completion, not browser detach or lease expiration.
-	_, err = l.Store.db.Exec(`UPDATE turns SET state='completed' WHERE state='queued'`)
+	_, err = l.Store.db.Exec(`UPDATE turns SET disposition='consumed' WHERE disposition='pending' AND queue_policy='released'`)
 	must(t, err)
 	term, err := l.Store.CreateTerminal(ctx, a, "terminal", "Shell", 24, 80)
 	must(t, err)

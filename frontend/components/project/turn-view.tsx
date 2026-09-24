@@ -18,10 +18,12 @@ export function TurnClock({
   start,
   end,
   running,
+  elapsed,
 }: {
   start?: string;
   end?: string;
   running: boolean;
+  elapsed?: number;
 }) {
   const tr = useT();
   const [now, setNow] = useState(() => Date.now());
@@ -32,7 +34,7 @@ export function TurnClock({
   }, [running]);
   return (
     <span>
-      {tr("Worked for {duration}", { duration: elapsedLabel(start, end, now) })}
+      {tr("Worked for {duration}", { duration: elapsed !== undefined ? elapsedLabel(new Date(0).toISOString(), new Date(elapsed).toISOString()) : elapsedLabel(start, end, now) })}
     </span>
   );
 }
@@ -147,12 +149,12 @@ export function TurnView({
   const final = finalItems(turn);
   const summary = turn.summary;
   const finishedAt = summary?.finished_at;
-  const completed = turn.summary?.state === "completed" && final.length > 0;
+  const completed = ["completed", "continued"].includes(turn.summary?.state || "") && final.length > 0;
   const [expanded, setExpanded] = useState(false);
   const [collapsedTarget, setCollapsedTarget] = useState("");
   const [copied, setCopied] = useState(false),
     [copyError, setCopyError] = useState(false);
-  const feedbackKey = `project-view:${actor}:${project}:feedback:${session}:${turn.turnId}`;
+  const feedbackKey = `project-view:${actor}:${project}:feedback:${session}:${turn.segmentId || turn.turnId}`;
   const [feedback, setFeedback] = useState<"up" | "down" | null>(() => {
     const value = recalled<unknown>(feedbackKey, null);
     return value === "up" || value === "down" ? value : null;
@@ -228,7 +230,8 @@ export function TurnView({
             }}
           >
             <TurnClock
-              start={summary.created_at}
+              elapsed={summary.elapsed_ms}
+              start={summary.finished_at && summary.run_id && summary.elapsed_ms === undefined ? undefined : summary.created_at}
               end={finishedAt}
               running={running}
             />

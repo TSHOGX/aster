@@ -78,3 +78,28 @@ func TestNativeSettlementCapabilityCannotBeDeclaredWithoutPatchedBytes(t *testin
 		t.Fatal("host root accepted for patching")
 	}
 }
+
+// Execute the actual patched RPC function with deterministic Session/transport
+// doubles. Full AgentSession provider, extension and crash qualification remains
+// separate from these handler-race tests.
+func TestPatchedRPCControlContract(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node unavailable")
+	}
+	original, err := os.ReadFile("testdata/pi-rpc-0.77.0.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched, err := patchNativeRPC(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "rpc.mjs")
+	if err = os.WriteFile(file, patched, 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("node", "testdata/rpc-contract.test.mjs", file)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("RPC contract: %v\n%s", err, output)
+	}
+}

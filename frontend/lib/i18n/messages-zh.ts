@@ -1,5 +1,6 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Synchronizing…": "正在同步…",
   "Choose an option": "请选择",
   "No matching options": "没有匹配的选项",
   "Search timezones": "搜索时区",

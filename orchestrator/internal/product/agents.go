@@ -92,8 +92,17 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		if err := tx.QueryRowContext(ctx, `SELECT p.state,s.state,s.deletion_intent FROM projects p JOIN sessions s ON s.project_id=p.id WHERE p.id=? AND s.id=?`, i.ProjectID, i.SessionID).Scan(&projectState, &sessionState, &deletion); err != nil {
 			return err
 		}
-		if projectState != "active" || sessionState == "blocked" || deletion != Live {
+		if projectState != "active" || deletion != Live {
 			return ErrPending
+		}
+		if sessionState == "blocked" {
+			var aborts bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_commands WHERE incarnation_id=? AND kind='abort' AND state='pending')`, i.ID).Scan(&aborts); err != nil {
+				return err
+			}
+			if !aborts {
+				return ErrPending
+			}
 		}
 		var draining bool
 		if err := tx.QueryRowContext(ctx, `SELECT phase='draining' FROM application_release WHERE id=1`).Scan(&draining); err != nil {
@@ -121,20 +130,20 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 		}
 		var id, turn, kind string
 		var payload []byte
-		err = tx.QueryRowContext(ctx, `SELECT id,coalesce(turn_id,''),kind,payload FROM agent_commands WHERE incarnation_id=? AND state='pending' ORDER BY CASE kind WHEN 'abort' THEN 0 WHEN 'get_state' THEN 1 ELSE 2 END,created_at,id LIMIT 1`, i.ID).Scan(&id, &turn, &kind, &payload)
+		err = tx.QueryRowContext(ctx, `SELECT id,coalesce(turn_id,''),kind,payload FROM agent_commands WHERE incarnation_id=? AND state='pending' ORDER BY CASE kind WHEN 'abort' THEN 0 WHEN 'get_state' THEN 1 ELSE 2 END,coalesce((SELECT acceptance_sequence FROM input_deliveries d WHERE d.command_id=agent_commands.id),0),created_at,id LIMIT 1`, i.ID).Scan(&id, &turn, &kind, &payload)
 		if errors.Is(err, sql.ErrNoRows) {
 			if unknown > 0 {
 				return ErrPending
 			}
 			var active int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns t WHERE t.session_id=? AND (t.state IN ('starting','running','stopping') OR (t.state='unknown' AND t.acknowledged=0)) OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.session_id=? AND r.state IN ('starting','running','stopping','unknown'))`, i.SessionID, i.SessionID).Scan(&active); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_runs WHERE session_id=? AND (state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0))`, i.SessionID).Scan(&active); err != nil {
 				return err
 			}
 			if active > 0 {
 				return ErrPending
 			}
 			var content string
-			if err := tx.QueryRowContext(ctx, `SELECT id,content FROM turns WHERE session_id=? AND state='queued' ORDER BY sequence LIMIT 1`, i.SessionID).Scan(&turn, &content); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT id,content FROM turns WHERE session_id=? AND disposition='pending' AND queue_policy='released' ORDER BY sequence LIMIT 1`, i.SessionID).Scan(&turn, &content); err != nil {
 				return missing(err)
 			}
 			id, kind = uuid.NewString(), "prompt"
@@ -148,11 +157,7 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 			if err := createExecutionRun(ctx, tx, i.ProjectID, i.SessionID, id, turn, i.ID, i.Owner, s.timestamp()); err != nil {
 				return fmt.Errorf("create execution run: %w", err)
 			}
-			var request string
-			if err := tx.QueryRowContext(ctx, `SELECT request_id FROM turns WHERE id=?`, turn).Scan(&request); err != nil {
-				return err
-			}
-			_, token, err := createDelivery(ctx, tx, i.ProjectID, i.SessionID, turn, request, id, id, "normal", s.timestamp())
+			_, token, err := createDelivery(ctx, tx, i.ProjectID, i.SessionID, turn, id, id, id, "normal", s.timestamp())
 			if err != nil {
 				return fmt.Errorf("create normal delivery: %w", err)
 			}
@@ -163,7 +168,7 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 			if _, err := tx.ExecContext(ctx, `UPDATE agent_commands SET payload=? WHERE id=?`, payload, id); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='starting',updated_at=? WHERE id=? AND state='queued'`, s.timestamp(), turn); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='starting',updated_at=? WHERE id=? AND disposition='claimed'`, s.timestamp(), turn); err != nil {
 				return err
 			}
 		} else if err != nil {
@@ -296,11 +301,12 @@ func (s *Store) ingestAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnation
 func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnation, f agentwire.Frame) error {
 	if f.State == "native" {
 		var event struct {
-			Type       string `json:"type"`
-			InputToken string `json:"input_token"`
-			RunID      string `json:"run_id"`
-			OccurredAt string `json:"occurred_at"`
-			Message    struct {
+			Type         string `json:"type"`
+			InputToken   string `json:"input_token"`
+			RunID        string `json:"run_id"`
+			OccurredAt   string `json:"occurred_at"`
+			RunElapsedMS *int64 `json:"run_elapsed_ms"`
+			Message      struct {
 				Role    string
 				Content []struct{ Type, Text string }
 			}
@@ -313,7 +319,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			if run == "" || run != f.CommandID || event.OccurredAt == "" {
 				return ErrInvalid
 			}
-			return consumeDelivery(ctx, tx, i, event.InputToken, run, f.Sequence, f.Payload, event.OccurredAt)
+			return consumeDelivery(ctx, tx, i, event.InputToken, run, f.Sequence, f.Payload, event.OccurredAt, event.RunElapsedMS)
 		}
 		if event.Type == "inputs_reconciled" {
 			var removed []string
@@ -334,21 +340,50 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 				return ErrInvalid
 			}
 			for _, token := range removed {
-				if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='removed',removed_at=? WHERE input_token=? AND run_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, s.timestamp(), token, raw.RunID)); err != nil {
+				var command, state string
+				if err := tx.QueryRowContext(ctx, `SELECT command_id,state FROM input_deliveries WHERE input_token=? AND run_id=?`, token, raw.RunID).Scan(&command, &state); err != nil {
 					return err
 				}
-				if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='held',updated_at=? WHERE id=(SELECT prompt_id FROM input_deliveries WHERE input_token=?) AND state IN ('starting','running','stopping','queued')`, s.timestamp(), token); err != nil {
+				if state == "consumed" {
+					return ErrConflict
+				}
+				if err := restoreUndelivered(ctx, tx, command, "removed", "native settlement", raw.OccurredAt); err != nil {
 					return err
 				}
 			}
-			var unresolved int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM input_deliveries WHERE run_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, raw.RunID).Scan(&unresolved); err != nil {
+			// Product-accepted controls may never have reached native stdin.
+			// Only a still-pending command proves non-dispatch; anything else
+			// missing from native's ledger remains unknown until its own evidence.
+			rows, err := tx.QueryContext(ctx, `SELECT d.command_id,c.state FROM input_deliveries d JOIN agent_commands c ON c.id=d.command_id WHERE d.run_id=? AND d.state IN ('accepted','dispatching','native_queued','unknown')`, raw.RunID)
+			if err != nil {
 				return err
 			}
-			if unresolved != 0 {
-				return ErrConflict
+			type unresolvedCommand struct{ id, state string }
+			var unresolved []unresolvedCommand
+			for rows.Next() {
+				var c unresolvedCommand
+				if err = rows.Scan(&c.id, &c.state); err != nil {
+					break
+				}
+				unresolved = append(unresolved, c)
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE execution_runs SET elapsed_ms=? WHERE id=?`, raw.RunElapsedMS, raw.RunID); err != nil {
+			err = errors.Join(err, rows.Err(), rows.Close())
+			if err != nil {
+				return err
+			}
+			for _, c := range unresolved {
+				if c.state == "pending" {
+					if err = restoreUndelivered(ctx, tx, c.id, "removed", "target settled before dispatch", raw.OccurredAt); err != nil {
+						return err
+					}
+					if _, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='rejected',error='target settled before dispatch' WHERE id=?`, c.id); err != nil {
+						return err
+					}
+				} else if _, err = tx.ExecContext(ctx, `UPDATE input_deliveries SET state='unknown',error='awaiting command disposition after target settlement' WHERE command_id=?`, c.id); err != nil {
+					return err
+				}
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE execution_runs SET state='stopping',reconciled_at=?,elapsed_ms=? WHERE id=? AND incarnation_id=?`, raw.OccurredAt, raw.RunElapsedMS, raw.RunID, i.ID); err != nil {
 				return err
 			}
 			return nil
@@ -383,6 +418,13 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 	default:
 		return ErrInvalid
 	}
+	var oldState string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM agent_commands WHERE id=?`, f.CommandID).Scan(&oldState); err != nil {
+		return err
+	}
+	if oldState == "completed" || oldState == "rejected" {
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_commands SET state=? WHERE id=?`, state, f.CommandID); err != nil {
 		return err
 	}
@@ -390,31 +432,20 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		return markDeliveryAck(ctx, tx, f.CommandID, s.timestamp())
 	}
 	if kind == "steer" && state == "rejected" {
-		if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='rejected',error=? WHERE command_id=? AND state IN ('accepted','dispatching','native_queued')`, "native command rejected", f.CommandID)); err != nil {
+		if err := restoreUndelivered(ctx, tx, f.CommandID, "rejected", "native command rejected", s.timestamp()); err != nil {
 			return err
 		}
-		return nil
+		return finishReconciledRun(ctx, tx, i.SessionID)
 	}
 	if kind == "steer" && state == "unknown" {
-		return changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='unknown',error=? WHERE command_id=?`, "native command outcome unknown", f.CommandID))
+		_, err := tx.ExecContext(ctx, `UPDATE input_deliveries SET state='unknown',error='native command outcome unknown' WHERE command_id=? AND state IN ('accepted','dispatching','native_queued')`, f.CommandID)
+		return err
 	}
 	if kind != "prompt" {
 		return nil
 	}
 	switch state {
 	case "applied":
-		// Ordinary prompt display remains on the existing command evidence until
-		// the native input_consumed event is wired through every runtime fixture.
-		// Steer sources never use this path; they materialize only on consumption.
-		if kind == "prompt" {
-			var content string
-			if err := tx.QueryRowContext(ctx, `SELECT content FROM turns WHERE id=?`, turn).Scan(&content); err != nil {
-				return err
-			}
-			if err := s.message(ctx, tx, i, turn, turn+"/user", "user", content, nil); err != nil {
-				return err
-			}
-		}
 		if err := markDeliveryAck(ctx, tx, f.CommandID, s.timestamp()); err != nil {
 			return err
 		}
@@ -424,17 +455,20 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		if _, err := tx.ExecContext(ctx, `UPDATE execution_runs SET state='running' WHERE id=? AND state='starting'`, f.CommandID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='running',updated_at=? WHERE id=? AND state='starting'`, s.timestamp(), turn); err != nil {
-			return err
-		}
 		_, err := tx.ExecContext(ctx, `UPDATE sessions SET state='running' WHERE id=? AND deletion_intent<2`, i.SessionID)
 		return err
 	case "rejected":
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='failed',updated_at=? WHERE id=?`, s.timestamp(), turn); err != nil {
+		if err := retireUnsentInputs(ctx, tx, f.CommandID, "target rejected before dispatch", s.timestamp()); err != nil {
+			return err
+		}
+		if err := restoreUndelivered(ctx, tx, f.CommandID, "rejected", "native prompt rejected", s.timestamp()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE execution_runs SET state=CASE WHEN EXISTS(SELECT 1 FROM input_deliveries d WHERE d.run_id=execution_runs.id AND d.state IN ('accepted','dispatching','native_queued','unknown')) THEN 'unknown' ELSE 'failed' END,outcome='failed',settled_at=?,reconciled_at=CASE WHEN reconciled_at='' THEN ? ELSE reconciled_at END WHERE id=?`, s.timestamp(), s.timestamp(), f.CommandID); err != nil {
 			return err
 		}
 	case "unknown":
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='unknown',updated_at=? WHERE id=?`, s.timestamp(), turn); err != nil {
+		if err := markRunUnknown(ctx, tx, i.SessionID); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE sessions SET state='blocked',failure='native command outcome unknown' WHERE id=? AND deletion_intent<2`, i.SessionID)
@@ -458,10 +492,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		if _, err := tx.ExecContext(ctx, `INSERT INTO native_captures(turn_id,incarnation_id,path,digest,size) VALUES(?,?,?,?,?)`, turn, i.ID, capture.Path, capture.Digest, capture.Size); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_activity(id,project_id,session_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'capture','active','completed native bytes awaiting export',?,?)`, "capture/"+turn, i.ProjectID, i.SessionID, s.timestamp(), s.timestamp()); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state=?,updated_at=? WHERE id=?`, outcome, s.timestamp(), turn); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_activity(id,project_id,session_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'capture','active','completed native bytes awaiting export',?,?)`, captureActivity(turn, capture.Path), i.ProjectID, i.SessionID, s.timestamp(), s.timestamp()); err != nil {
 			return err
 		}
 		if err := settleExecutionRun(ctx, tx, f.CommandID, outcome, s.timestamp()); err != nil {
@@ -534,6 +565,24 @@ func (s *Store) commandStatus(ctx context.Context, i Incarnation, id, state stri
 		}
 		switch state {
 		case "absent", "received":
+			var uncertain bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_commands WHERE id=? AND incarnation_id=? AND state='unknown')`, id, i.ID).Scan(&uncertain); err != nil {
+				return err
+			}
+			if !uncertain {
+				return nil
+			}
+			var contrary bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM input_deliveries WHERE command_id=? AND (state IN ('consumed','removed','rejected') OR ack_at<>''))`, id).Scan(&contrary); err != nil {
+				return err
+			}
+			if contrary {
+				return ErrConflict
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE input_deliveries SET state='accepted',error='' WHERE command_id=? AND state IN ('accepted','dispatching','unknown')`, id); err != nil {
+				return err
+			}
+
 			// The new owner's serialized status query proves the original native command
 			// was never dispatched. Retain its original ID/payload/turn for first dispatch.
 			_, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='pending',error='' WHERE id=? AND incarnation_id=? AND state='unknown'`, id, i.ID)

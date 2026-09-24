@@ -174,7 +174,7 @@ func TestServiceGrantAttributionRevocationAndTurnDrain(t *testing.T) {
 
 	// Completing the turn drains that request without revoking the Session's
 	// grant: the credential belongs to the incarnation, not to one turn.
-	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, c.TurnID)
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='settled',outcome='completed' WHERE prompt_id=?`, c.TurnID)
 	must(t, err)
 	wantError(t, holdsAttribution(ctx, s.reader, s.timestamp(), a), ErrNotFound)
 	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
@@ -188,7 +188,7 @@ func TestServiceGrantAttributionRevocationAndTurnDrain(t *testing.T) {
 	// inheritance of the completed one.
 	next, err := s.AdmitTurn(ctx, scope, i.SessionID, "second", "again", false)
 	must(t, err)
-	_, err = s.db.Exec(`UPDATE turns SET state='running' WHERE id=?`, next.ID)
+	_, err = s.agentCommand(ctx, i)
 	must(t, err)
 	successor, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
@@ -218,7 +218,7 @@ func TestServiceAuthorityFollowsProjectIncarnationAndExpiry(t *testing.T) {
 		must(t, err)
 		_, err = s.db.Exec(`UPDATE projects SET state='active' WHERE id=?`, scope.ProjectID)
 		must(t, err)
-		_, err = s.db.Exec(`UPDATE turns SET state='running' WHERE id=?`, c.TurnID)
+		_, err = s.db.Exec(`UPDATE execution_runs SET state='running' WHERE prompt_id=?`, c.TurnID)
 		must(t, err)
 	}
 	// An exited or replaced incarnation revokes its grant by trigger.
@@ -283,7 +283,7 @@ func TestIdleAgentHasNoServiceAuthorityWithoutAdmittedTurn(t *testing.T) {
 	// it grants no request authority either.
 	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
-	_, err = s.db.Exec(`UPDATE turns SET state='starting' WHERE id=?`, turn.ID)
+	_, err = s.agentCommand(ctx, i)
 	must(t, err)
 	a, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
@@ -335,7 +335,7 @@ func TestNativeAbortRetainsExistingRequestUntilCancellationSettles(t *testing.T)
 	must(t, holdsAttribution(ctx, s.reader, s.timestamp(), existing))
 	_, err = authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	wantError(t, err, ErrNotFound)
-	_, err = s.db.Exec(`UPDATE turns SET state='canceled' WHERE id=?`, command.TurnID)
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='settled',outcome='canceled' WHERE prompt_id=?`, command.TurnID)
 	must(t, err)
 	wantError(t, holdsAttribution(ctx, s.reader, s.timestamp(), existing), ErrNotFound)
 }

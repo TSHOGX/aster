@@ -34,11 +34,11 @@ func (s *Store) loseStaleAgents(ctx context.Context, tx *sql.Tx, project string,
 		if _, err = tx.ExecContext(ctx, `UPDATE agent_commands SET state='unknown',error=? WHERE incarnation_id=? AND state IN ('sending','dispatching','applied')`, reason, item.id); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE turns SET state='unknown',updated_at=? WHERE session_id=? AND state IN ('starting','running','stopping')`, s.timestamp(), item.session); err != nil {
+		if err = markRunUnknown(ctx, tx, item.session); err != nil {
 			return err
 		}
 		var unknown int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND state='unknown'`, item.session).Scan(&unknown); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_runs WHERE session_id=? AND state='unknown'`, item.session).Scan(&unknown); err != nil {
 			return err
 		}
 		if unknown > 0 {

@@ -206,7 +206,7 @@ func (r *AgentRecovery) finish(ctx context.Context, i Incarnation) error {
 			return err
 		}
 		var unknown, unsettled int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE session_id=? AND state='unknown' AND acknowledged=0`, i.SessionID).Scan(&unknown); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM execution_runs WHERE session_id=? AND state='unknown' AND acknowledged=0`, i.SessionID).Scan(&unknown); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM project_activity WHERE session_id=? AND kind='descendants' AND state<>'complete'`, i.SessionID).Scan(&unsettled); err != nil {
@@ -250,10 +250,10 @@ func (s *Store) ContinueSession(ctx context.Context, scope Scope, session string
 		if pending > 0 {
 			return ErrBusy
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE turns SET acknowledged=1 WHERE session_id=? AND state='unknown'`, session); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE execution_runs SET acknowledged=1 WHERE session_id=? AND state='unknown'`, session); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE turns SET state='held',updated_at=? WHERE session_id=? AND state='queued'`, s.timestamp(), session); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE turns SET queue_policy='held',updated_at=? WHERE session_id=? AND disposition='pending' AND queue_policy='released'`, s.timestamp(), session); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET state='idle',failure='' WHERE id=?`, session); err != nil {

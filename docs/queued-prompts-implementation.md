@@ -69,3 +69,31 @@ The schema still retains legacy `turns.state` for terminal outcome and compatibi
 The ordinary prompt reducer still has a temporary ACK display path because the existing product fixtures and conversation projection rely on it; Steer sources already require `input_consumed`. Removing this final normal-prompt shortcut is a separate coordinated P3 change: every runner fixture and native integration must emit the normal delivery token before the old command-applied message materialization can be deleted. This remains an explicit unmet requirement.
 
 The release schema now enforces one live `execution_runs` row per Session and derives its active/unknown release blocker from that run. Owner handoff still cross-checks the prompt's visible state and applied command, so an independently mutated prompt row cannot grant transfer authority. This is transitional until prompt policy and execution outcome have fully separate columns and the remaining `turns.state` uses are removed.
+
+## P1 correction and P2/P3 foundation pass (2026-09-24, after `7efa9e4`)
+
+This entry supersedes the earlier transitional claims above. The detailed current contract, transitions, limitations and continuation prerequisites are in [the private implementation handoff](../private/queued-prompts-analysis-20260924/07-implementation-handoff.md).
+
+Prompt policy/disposition and run lifecycle are now separate. Normal dispatch and Steer use the same transactional claim, backed by a unique live-or-consumed claim index and command/run binding constraints. Execution guards have moved to runs, including service grants, release/owner handoff, recovery and idle checks. `turns.state` remains compatibility display metadata; its former unknown-acknowledgment authority has been removed. Consumption is immutable input evidence and never means the run completed.
+
+Hold/Release/Cancel have prompt-local receipts. Steer/Stop now have explicit target run/incarnation/owner DTOs, immutable request digests, durable 202 receipts and a read endpoint for current command/delivery/run evidence. Failed admission returns a typed `not_admitted` error. The frontend sends the new target contract, uses canonical `hold`/`stop` actions and retains unresolved control request identities in memory. Existing Send/Stop, Enter and draft-preservation behavior remains covered by browser checks.
+
+Both normal and Steer inputs materialize only on consumption. Reconciliation distinguishes proven host non-dispatch from native removal and uncertain in-flight deliveries, allowing later journal evidence to advance. Late rejection can close a completion or rejection barrier; preflight rejection no longer strands a run. Process-loss and send-uncertainty paths preserve consumption, and captures are keyed by immutable per-run path so an explicitly retried unconsumed prompt cannot collide with its previous attempt. Lifecycle/segment tables participate in deletion cleanup.
+
+Native protocol 3 closes target admission around asynchronous Steer preflight, waits for admitted preflights, then clears/reconciles before releasing the run. The pinned output hash changed, as did the schema fingerprint and owner-handoff protocol (2). No installed runtime, live database or deployment was modified.
+
+P3 now persists segment membership across batches/rebuilds, coalesces consecutive inputs before work, preserves item membership on updates, assigns subsequent answers to their segment, and stores native elapsed differences for segment clocks. Earlier segments close as `continued`. Navigation follows durable message positions. Historical missing consumption time does not acquire a fabricated start. Full client-frontier queue handoff and all share/export/clock-calibration acceptance remain open.
+
+Validation for this pass:
+
+- `go -C orchestrator test ./...`: passed after contract fixture updates, including real SQLite transaction/reducer tests and existing release/recovery/cleanup suites.
+- Focused `go test -race ./internal/product -run ...` runs passed for the changed claim, control, recovery, consumption, segment/rebuild and service-attribution contracts. The earlier broad race-instrumented suite was stopped after subsequent contract edits; no whole-suite race acceptance is claimed.
+- `npm --prefix frontend run typecheck`, `npm --prefix frontend run lint`, `npm --prefix frontend test`: passed; 202 unit tests passed, one existing test skipped.
+- Five selected Playwright UI tests passed: lost first-send response, queue-only initial prompt, active Stop with Enter queueing/draft preservation, completed-answer actions/timing, and composer keyboard/IME behavior. The run includes a production frontend build and uses API fixtures.
+- Three pinned full-AgentSession tests passed with deterministic model streams.
+- Five new tests execute the actual patched RPC handler with Session/transport doubles: delayed preflight after natural settlement, Stop removal, duplicate-text identity/elapsed evidence, handled input, and rejected preflight. These are included in the runtime Go suite.
+- Additional contract coverage includes concurrent claim/cancel, ACK without materialization, consumption before ACK/unknown, retry after settlement/drain, both pending and in-flight late Steers, rejection with an in-flight control, explicit retry capture retention, cleanup integrity, and multi-batch/rebuilt segment identity and durations.
+
+P1's local contract implementation is established; native qualification remains a prerequisite to claiming G2 acceptance. P2 and P3 have a tested foundation, with the remaining G1/G3/G4 acceptance work explicitly listed in the handoff. Mocked handler/browser tests and happy paths do not close those gates. P4–P6 are not declared complete.
+
+Service gateway slots and in-memory attribution now retain the exact run ID, so a new attempt of the same prompt cannot inherit an earlier upstream request. Stop can quiesce its exact unknown run even while the Session is blocked. Additional regressions cover both cases and ACK resolution of acceptance uncertainty without resurrecting removed input.

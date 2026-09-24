@@ -12,7 +12,7 @@ func TestViewPagesChangesDetailsAndAuthorization(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
 	_, err := s.ConversationPage(ctx, scope, i.SessionID, ViewSelector{})
 	wantError(t, err, ErrPending)
-	_, err = s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err = s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	// One revision exceeds the delta count and byte budgets; every operation must
 	// remain reachable, including immutable older values while writes continue.
@@ -135,7 +135,7 @@ func TestViewPagesChangesDetailsAndAuthorization(t *testing.T) {
 
 func TestDisplayReusedIncarnationAndMissingNativeStarts(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	for n := 2; n < 5; n++ {
 		payload := fmt.Sprintf(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"answer %d"}]}}`, n)
@@ -174,7 +174,7 @@ func TestDisplayReusedIncarnationAndMissingNativeStarts(t *testing.T) {
 
 func TestViewMessageCopyAndSummaryChunks(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	content := strings.Repeat("complete 世界\n", 10000)
 	raw, _ := json.Marshal(map[string]any{"type": "message_end", "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": content}}}})

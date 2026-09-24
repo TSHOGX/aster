@@ -11,7 +11,7 @@ import (
 
 func TestDisplayRetentionPartialRevisionAndPinnedDetail(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	text := strings.Repeat("full answer 世界\n", 20000)
 	raw, _ := json.Marshal(map[string]any{"type": "message_end", "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": text}}}})
@@ -85,7 +85,7 @@ func TestDisplayRetentionPartialRevisionAndPinnedDetail(t *testing.T) {
 
 func TestDisplayRetentionBytePressureAndObsoleteDetails(t *testing.T) {
 	s, scope, i, c := agentFixture(t)
-	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
+	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "native", consumedPayload(c)))
 	must(t, err)
 	for n := 2; n < 30; n++ {
 		payload, _ := json.Marshal(map[string]any{"type": "message_update", "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": fmt.Sprint(n) + strings.Repeat("x", 1<<20)}}}})
