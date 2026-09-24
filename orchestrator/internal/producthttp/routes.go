@@ -305,7 +305,12 @@ func (s *Server) listTurns(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) promptQueue(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, err := s.Store.PromptQueue(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "after"), intParam(q, "limit", 32))
+	var observed *string
+	if q.Has("projection_frontier") {
+		frontier := q.Get("projection_frontier")
+		observed = &frontier
+	}
+	page, err := s.Store.PromptQueue(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "after"), intParam(q, "limit", 32), observed)
 	if err != nil {
 		fail(w, err)
 		return

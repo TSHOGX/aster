@@ -55,7 +55,7 @@ func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 		_, err := s.AdmitTurn(ctx, scope, "agent", fmt.Sprintf("queue-%02d", n), fmt.Sprintf("prompt %d", n), n%3 == 0)
 		must(t, err)
 	}
-	page, err := s.PromptQueue(ctx, scope, "agent", 0, 16)
+	page, err := s.PromptQueue(ctx, scope, "agent", 0, 16, nil)
 	must(t, err)
 	if page.TotalPending != 41 || len(page.Items) != 16 || page.NextAfter == 0 {
 		t.Fatalf("queue page: %+v", page)
@@ -68,11 +68,41 @@ func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 			t.Fatal("queue is not FIFO")
 		}
 	}
-	next, err := s.PromptQueue(ctx, scope, "agent", page.NextAfter, 64)
+	next, err := s.PromptQueue(ctx, scope, "agent", page.NextAfter, 64, nil)
 	must(t, err)
 	if len(next.Items) != 25 || next.NextAfter != 0 {
 		t.Fatalf("queue tail: %+v", next)
 	}
+}
+
+func TestConsumedQueueRowWaitsForClientProjectionFrontier(t *testing.T) {
+	s, scope, i, command := agentFixture(t)
+	ingestContract(t, s, i, command, "native", consumedPayload(command))
+	page, err := projectedPage(t, s, scope, i.SessionID, ViewSelector{})
+	must(t, err)
+	if page.Head.ProjectedFrontier == "" {
+		t.Fatal("missing projected consumption frontier")
+	}
+	serverPage, err := s.PromptQueue(ctx, scope, i.SessionID, 0, 32, nil)
+	must(t, err)
+	if serverPage.TotalPending != 0 {
+		t.Fatal("server projection retained consumed input", serverPage)
+	}
+	older := ""
+	clientPage, err := s.PromptQueue(ctx, scope, i.SessionID, 0, 32, &older)
+	must(t, err)
+	if clientPage.TotalPending != 1 || len(clientPage.Items) != 1 || clientPage.Items[0].DeliveryState != "consumed" {
+		t.Fatal("client lost synchronization row", clientPage)
+	}
+	frontier := page.Head.ProjectedFrontier
+	caughtUp, err := s.PromptQueue(ctx, scope, i.SessionID, 0, 32, &frontier)
+	must(t, err)
+	if caughtUp.TotalPending != 0 {
+		t.Fatal("caught-up client retained synchronization row", caughtUp)
+	}
+	invalid := "not-a-frontier"
+	_, err = s.PromptQueue(ctx, scope, i.SessionID, 0, 32, &invalid)
+	wantError(t, err, ErrInvalid)
 }
 
 func TestInputsReconciledRestoresUnconsumedDeliveryToHeld(t *testing.T) {
@@ -132,7 +162,7 @@ func TestReleasedPromptCanBeClaimedBySteerBeforeOrdinaryDispatch(t *testing.T) {
 	if state != "claimed" {
 		t.Fatal("source remained ordinarily dispatchable", state)
 	}
-	page, err := s.PromptQueue(ctx, scope, i.SessionID, 0, 32)
+	page, err := s.PromptQueue(ctx, scope, i.SessionID, 0, 32, nil)
 	must(t, err)
 	if len(page.Items) != 2 || page.Items[1].ID != source.ID || page.Items[1].DeliveryState != "dispatching" {
 		t.Fatal("queue lost delivery progress", page)

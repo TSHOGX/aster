@@ -150,6 +150,37 @@ it("retains exact-session content and does no heavy read on healthy unchanged he
   ]);
 });
 
+it("advances the observed projection frontier only after deltas apply", async () => {
+  let revision = "1";
+  let started!: () => void;
+  let release!: () => void;
+  const deltaStarted = new Promise<void>((resolve) => { started = resolve; });
+  const deltaReleased = new Promise<void>((resolve) => { release = resolve; });
+  server(async (url) => {
+    if (url.pathname.endsWith("/pages"))
+      return page([item(1)], { ...head("1"), projected_frontier: "old" });
+    if (url.pathname.endsWith("/head"))
+      return { ...head(revision), projected_frontier: revision === "1" ? "old" : "new" };
+    if (url.pathname.endsWith("/changes")) {
+      if (revision === "2") { started(); await deltaReleased; }
+      return changes(url.searchParams.get("after_revision")!, revision,
+        revision === "2" ? [item(2, "2")] : []);
+    }
+    return { projection_generation: "g", index_revision: revision, turn_summaries: [] };
+  });
+  const conversation = repo();
+  await conversation.load();
+  expect(conversation.getSnapshot().applied_source_frontier).toBe("old");
+  revision = "2";
+  const refresh = conversation.refresh();
+  await deltaStarted;
+  expect(conversation.getSnapshot().head?.projected_frontier).toBe("new");
+  expect(conversation.getSnapshot().applied_source_frontier).toBe("old");
+  release();
+  await refresh;
+  expect(conversation.getSnapshot().applied_source_frontier).toBe("new");
+});
+
 it("bridges page frontiers, boundary insertions and deletes without retaining off-window history", async () => {
   server((url) => {
     const base = url.searchParams.get("after_revision") || "";

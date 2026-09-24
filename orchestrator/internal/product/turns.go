@@ -3,7 +3,10 @@ package product
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"strconv"
 
 	"github.com/google/uuid"
 )
@@ -136,7 +139,7 @@ func (s *Store) Turns(ctx context.Context, scope Scope, session string, after in
 
 // PromptQueue is the bounded FIFO scheduling view. It deliberately excludes
 // active and consumed execution records; those belong to the run/display head.
-func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, after int64, limit int) (PromptQueuePage, error) {
+func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, after int64, limit int, observedFrontier *string) (PromptQueuePage, error) {
 	tx, err := s.reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return PromptQueuePage{}, err
@@ -146,15 +149,42 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 	if err != nil {
 		return PromptQueuePage{}, err
 	}
+	var observedSource int64
+	if observedFrontier != nil && *observedFrontier != "" {
+		if len(*observedFrontier) > 4096 {
+			return PromptQueuePage{}, ErrInvalid
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(*observedFrontier)
+		if err != nil {
+			return PromptQueuePage{}, ErrInvalid
+		}
+		var identity []string
+		if json.Unmarshal(raw, &identity) != nil || len(identity) != 2 || identity[0] == "" {
+			return PromptQueuePage{}, ErrInvalid
+		}
+		sequence, err := strconv.ParseInt(identity[1], 10, 64)
+		if err != nil || sequence <= 0 {
+			return PromptQueuePage{}, ErrInvalid
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT source_id FROM conversation_sources WHERE session_id=? AND incarnation_id=? AND sequence=?`, session, identity[0], sequence).Scan(&observedSource); err != nil {
+			return PromptQueuePage{}, missing(err)
+		}
+	}
 	limit = pageSize(limit)
 	var total int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE project_id=? AND session_id=? AND (disposition IN ('pending','claimed') OR (disposition='consumed' AND NOT EXISTS(SELECT 1 FROM conversation_items ci WHERE ci.session_id=turns.session_id AND ci.id=turns.id||'/user')))`, scope.ProjectID, session).Scan(&total); err != nil {
+	const queued = `(disposition IN ('pending','claimed') OR (disposition='consumed' AND (
+ NOT EXISTS(SELECT 1 FROM conversation_items ci WHERE ci.session_id=turns.session_id AND ci.id=turns.id||'/user')
+ OR (? AND EXISTS(SELECT 1 FROM input_deliveries d JOIN execution_runs r ON r.id=d.run_id
+ JOIN conversation_sources c ON c.incarnation_id=r.incarnation_id AND c.sequence=d.consumed_sequence
+ WHERE d.prompt_id=turns.id AND d.state='consumed' AND c.source_id>?)))))`
+	observed := observedFrontier != nil
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE project_id=? AND session_id=? AND `+queued, scope.ProjectID, session, observed, observedSource).Scan(&total); err != nil {
 		return PromptQueuePage{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+queueColumns+`,
   coalesce((SELECT id FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),''),
   coalesce((SELECT state FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),'')
- FROM turns WHERE project_id=? AND session_id=? AND (disposition IN ('pending','claimed') OR (disposition='consumed' AND NOT EXISTS(SELECT 1 FROM conversation_items ci WHERE ci.session_id=turns.session_id AND ci.id=turns.id||'/user'))) AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, limit+1)
+ FROM turns WHERE project_id=? AND session_id=? AND `+queued+` AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, observed, observedSource, after, limit+1)
 	if err != nil {
 		return PromptQueuePage{}, err
 	}

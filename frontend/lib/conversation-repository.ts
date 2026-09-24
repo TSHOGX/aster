@@ -90,9 +90,11 @@ type CachedConversation = {
   head: ConversationHead;
   windows: Window[];
   anchor: string;
+  appliedSourceFrontier: string | null;
 };
 export type ConversationState = {
   head: ConversationHead | null;
+  applied_source_frontier: string | null;
   items: DisplayItem[];
   summaries: TurnSummary[];
   before?: string;
@@ -122,6 +124,7 @@ class WindowBudget extends Error {}
 export class ConversationRepository {
   private windows: Window[] = [];
   private head: ConversationHead | null = null;
+  private appliedSourceFrontier: string | null = null;
   private anchor = "";
   private listeners = new Set<() => void>();
   private abort = new AbortController();
@@ -146,6 +149,7 @@ export class ConversationRepository {
   readonly base: string;
   private current: ConversationState = {
     head: null,
+    applied_source_frontier: null,
     items: [],
     summaries: [],
     status: "uninitialized",
@@ -166,6 +170,7 @@ export class ConversationRepository {
     if (cached) {
       this.windows = cached.windows;
       this.head = cached.head;
+      this.appliedSourceFrontier = cached.appliedSourceFrontier;
       this.anchor = cached.anchor;
       this.emit();
     }
@@ -205,6 +210,7 @@ export class ConversationRepository {
     this.pendingPage = null;
     this.windows = [];
     this.head = null;
+    this.appliedSourceFrontier = null;
     this.resources.clear(this.key.project);
     this.emit("denied", "This conversation is unavailable.");
   }
@@ -244,6 +250,7 @@ export class ConversationRepository {
       summaryRows = this.current.summaries;
     this.current = {
       head: this.head,
+      applied_source_frontier: this.appliedSourceFrontier,
       items: ordered,
       summaries: summaryRows,
       before: this.windows[0]?.before,
@@ -262,6 +269,7 @@ export class ConversationRepository {
         head: this.head,
         windows: this.windows,
         anchor: this.anchor,
+        appliedSourceFrontier: this.appliedSourceFrontier,
       });
     for (const listener of this.listeners) listener();
     done();
@@ -398,6 +406,7 @@ export class ConversationRepository {
       if (this.closed || epoch !== this.navigation) return;
       this.acceptHead(page.head);
       this.windows = caught;
+      this.appliedSourceFrontier = this.head?.projected_frontier ?? page.head.projected_frontier;
       this.pendingPage = null;
       this.budget(mode);
       this.emit();
@@ -456,6 +465,7 @@ export class ConversationRepository {
   private async resyncNow() {
     const anchor = this.anchor;
     this.windows = [];
+    this.appliedSourceFrontier = null;
     await this.loadNow(
       anchor ? { around_item: anchor } : {},
       "replace",
@@ -523,6 +533,7 @@ export class ConversationRepository {
     this.windows = windows;
     this.budget("newer");
     await this.updateSummaries(head, epoch);
+    this.appliedSourceFrontier = head.projected_frontier;
     this.emit();
     if (head.projection_state !== "ready") this.schedule();
   }

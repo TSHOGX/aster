@@ -33,3 +33,5 @@ Remaining `turns.state` reads are compatibility display/status consumers (head/s
 The session-revision Go wrappers mentioned above were removed in the exact-control cleanup stage. Test calls now use the prompt revision or exact run fence directly. The `turns.state` display cache and its remaining consumers are still pending removal.
 
 The derived-status stage removed `turns.state` from the fresh schema. `turns.go` derives the public prompt status from policy, disposition and correlated runs. Run transitions own terminal notifications and active display status; prompt changes own queue refresh revisions. Schedule, activity, title, summary and navigation queries no longer read the former column. Tests that previously wrote turn state now use run or explicit segment evidence. The earlier rows remain as an audit of the dependencies that were replaced, not as a description of the current schema.
+
+Queue reads now compare an optional client-applied projection frontier with each consumed delivery's durable source position. This keeps the synchronization row visible to a client whose page/delta has not caught up, independently of the server projector's anchor table.

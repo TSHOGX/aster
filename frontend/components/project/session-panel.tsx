@@ -503,13 +503,17 @@ export function SessionPanel({
     remember(key, draft);
   }, [draft, key]);
   const current = view.head?.session || session;
+  const appliedFrontier = view.applied_source_frontier;
   const loadQueue = useCallback(async (after = 0) => {
     const request = ++queueRequest.current;
     try {
-      let page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?after=${after}&limit=32`);
+      const query = new URLSearchParams({ after: String(after), limit: "32" });
+      if (appliedFrontier !== null) query.set("projection_frontier", appliedFrontier);
+      let page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?${query}`);
       if (request !== queueRequest.current) return;
       if (after && queueRevision.current !== page.queue_revision) {
-        page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?after=0&limit=32`);
+        query.set("after", "0");
+        page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?${query}`);
         if (request !== queueRequest.current) return;
         after = 0;
       }
@@ -522,7 +526,7 @@ export function SessionPanel({
       if (request === queueRequest.current)
         setQueueError(e instanceof Error ? e.message : tr("The action failed."));
     }
-  }, [session.id, session.project_id, tr]);
+  }, [appliedFrontier, session.id, session.project_id, tr]);
   useEffect(() => {
     void Promise.resolve().then(() => loadQueue());
   }, [loadQueue, view.head?.session.control_revision]);
