@@ -1,6 +1,6 @@
 # Queued-prompts acceptance record
 
-Status: source and isolated-fixture evidence through `1556bfc`. This is an
+Status: source and isolated-fixture evidence through `77a46de`. This is an
 acceptance ledger, not a deployment sign-off. The normative rows are in the
 private planning package's `03-validation.md` and the behavior specification
 in `02-design.md`.
@@ -8,7 +8,7 @@ in `02-design.md`.
 | Rows | Verified evidence | Remaining qualification |
 | --- | --- | --- |
 | A01-A05 | FIFO queue/count and claim/reconciliation SQLite tests; queue-only/new-chat and three-slot browser tests; real-browser held-row Steer | Full API/live scheduling across held skip and later Release |
-| A06-A10 | Active Send/Stop, Enter/IME/Shift+Enter, lost reply, draft preservation, real two-tab Steer reconnect and exact Stop receipt tests | Soft-keyboard device pass |
+| A06-A10 | Active Send/Stop, stopping/recovery-disabled action after reload, Enter/IME/Shift+Enter, lost reply, draft preservation, real two-tab Steer reconnect and exact Stop receipt tests | Soft-keyboard device pass |
 | A11-A13 | SQLite Stop/new intent serialization; narrow forced-color/dark/reduced-motion and Chinese Playwright captures | Screen-reader and touch device review |
 | B01-B06 | Real Pi AgentSession fixture, patched RPC handler and pinned Khora runtime; duplicate template identity, cooperative Steer consumption, retry/compaction through runner/journal | Real partial tool-batch and arbitrary extension mutation/listener failure |
 | B07-B12 | Exact target, concurrent claim, late Steer, preflight rejection, composed Stop removal, worker loss after acceptance, listener failure after consumption and next-run non-leak | Process loss at every queued-Steer native/host boundary and arbitrary extension outcomes |
