@@ -42,7 +42,6 @@ it("requires confirmed completion and preserves all blocks of the final message"
   const complete = conversationTurns(
     timeline,
     [{ id: "t", state: "completed", final_message_id: "m2" }],
-    [],
   )[0];
   expect(finalItems(complete).map((i) => i.id)).toEqual(["final1", "final2"]);
   for (const state of ["running", "canceled", "failed", "unknown"])
@@ -67,7 +66,6 @@ it("preserves interleaved steering turn boundaries and old-page metadata", () =>
         finished_at: "2026-09-22T00:00:03Z",
       },
     ],
-    [],
   );
   expect(groups.map((t) => t.turnId)).toEqual(["t", "steer", "t"]);
   expect(groups[0].summary?.finished_at).toBe("2026-09-22T00:00:03Z");
@@ -84,14 +82,12 @@ it("coalesces consecutive input anchors by durable segment and keeps final owner
   const groups = conversationTurns(timeline, [
     { id: "a", state: "continued", segment_id: "first", final_message_id: "old-final", elapsed_ms: 2000 },
     { id: "c", state: "completed", segment_id: "next", final_message_id: "new-final", elapsed_ms: 1000 },
-  ], []);
+  ]);
   expect(groups).toHaveLength(2);
   expect(groups[0].items.map(item => item.id)).toEqual(["a", "b", "answer"]);
   expect(groups.map(group => finalItems(group).map(item => item.id))).toEqual([["answer"], ["last"]]);
 });
 it("never derives execution timing from a queue timestamp", () => {
-  const groups = conversationTurns([{ id: "a", cursor: 1, turn_id: "a", kind: "user" }], [], [
-    { id: "a", session_id: "s", sequence: 1, content: "a", state: "running", created_at: "2026-09-24T00:00:00Z" },
-  ]);
+  const groups = conversationTurns([{ id: "a", cursor: 1, turn_id: "a", kind: "user" }], []);
   expect(groups[0].summary).toBeUndefined();
 });

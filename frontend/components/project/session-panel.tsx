@@ -542,7 +542,7 @@ export function SessionPanel({
   }));
   const activeRuns = new Set(view.head?.active_run ? [view.head.active_run.id] : []);
   const displayTurns = [...(view.head?.turns || [])];
-  const turns = conversationTurns(timeline, view.summaries || [], displayTurns);
+  const turns = conversationTurns(timeline, view.summaries || []);
   const navigationTurns: TurnIndexItem[] = turns
     .filter((t) => t.turnId)
     .map((t, i) => ({

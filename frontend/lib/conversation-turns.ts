@@ -1,4 +1,4 @@
-import type { TimelineItem, Turn, TurnSummary } from "./project-api";
+import type { TimelineItem, TurnSummary } from "./project-api";
 export const runningTurn = (state: string) =>
   ["starting", "running", "stopping"].includes(state);
 export function elapsedLabel(
@@ -25,10 +25,8 @@ export type ConversationTurn = {
 export function conversationTurns(
   timeline: readonly TimelineItem[],
   summaries: readonly TurnSummary[],
-  turns: readonly Turn[],
 ): ConversationTurn[] {
   const metadata = new Map(summaries.map((s) => [s.id, s]));
-  void turns; // Queue timestamps are never execution timing evidence.
   const groups: ConversationTurn[] = [];
   for (const item of timeline) {
     const previous = groups.at(-1);
