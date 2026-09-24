@@ -112,6 +112,7 @@ export function SessionPanel({
   const hasPending = !!pendingSend;
   const [queuePage, setQueuePage] = useState<PromptQueuePage | null>(null);
   const [queueError, setQueueError] = useState("");
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [stopPending, setStopPending] = useState(false);
   const queueRequest = useRef(0);
   const queueRevision = useRef<number | null>(null);
@@ -683,45 +684,84 @@ export function SessionPanel({
       layoutAnchor.current = null;
     };
   }, [captureAnchor, sizeKey]);
-  const controlRequests = useRef(new Map<string, Record<string, unknown>>());
-  const sendControl = async (key: string, path: string, intent: Record<string, unknown>) => {
-    const body = controlRequests.current.get(key) || { ...intent, request_id: newID() };
-    controlRequests.current.set(key, body);
+  const controlKey = key + ":controls";
+  const controlRequests = useRef<Record<string, Record<string, unknown>>>(
+    recalled(controlKey, {}),
+  );
+  const forgetControl = useCallback((requestKey: string) => {
+    const { [requestKey]: _removed, ...remaining } = controlRequests.current;
+    controlRequests.current = remaining;
+    remember(controlKey, remaining);
+  }, [controlKey]);
+  useEffect(() => {
+    let closed = false;
+    for (const [requestKey, body] of Object.entries(controlRequests.current)) {
+      if (typeof body.request_id !== "string") { forgetControl(requestKey); continue; }
+      void api(`${base}/controls/${encodeURIComponent(body.request_id)}`)
+        .then(async () => {
+          if (closed) return;
+          forgetControl(requestKey);
+          await refresh();
+          await loadQueue();
+        })
+        .catch((error) => {
+          if (!closed && !(error instanceof APIError && error.status === 404))
+            setQueueError(error instanceof Error ? error.message : tr("The action failed."));
+        });
+    }
+    return () => { closed = true; };
+  }, [base, forgetControl, loadQueue, refresh, tr]);
+  const sendControl = async (requestKey: string, path: string, intent: Record<string, unknown>) => {
+    const body = controlRequests.current[requestKey] || { ...intent, request_id: newID() };
+    controlRequests.current = { ...controlRequests.current, [requestKey]: body };
+    remember(controlKey, controlRequests.current);
     try {
       const receipt = await command(path, body);
-      controlRequests.current.delete(key);
+      forgetControl(requestKey);
       return receipt;
     } catch (error) {
       if (error instanceof APIError && error.outcome?.state === "not_admitted")
-        controlRequests.current.delete(key);
+        forgetControl(requestKey);
       throw error;
     }
   };
+  const rowAction = (turn: Turn, action: () => Promise<unknown>) => {
+    setBusy(true);
+    setRowErrors((old) => ({ ...old, [turn.id]: "" }));
+    void action().then(async () => {
+      try {
+        await refresh();
+        await loadQueue();
+      } catch (error) {
+        setQueueError(error instanceof Error ? error.message : tr("The action failed."));
+      }
+    }).catch((error) => {
+      setRowErrors((old) => ({ ...old, [turn.id]: error instanceof Error ? error.message : tr("The action failed.") }));
+    }).finally(() => setBusy(false));
+  };
   const control = (turn: Turn, action: string) =>
-    void act(async () => {
-      await sendControl(`prompt:${turn.id}:${action}`, `${base}/turns/${encodeURIComponent(turn.id)}/control`, {
+    rowAction(turn, () =>
+      sendControl(`prompt:${turn.id}:${action}`, `${base}/turns/${encodeURIComponent(turn.id)}/control`, {
         action,
         expected_prompt_revision: turn.prompt_revision || 1,
-      });
-      await loadQueue();
-    });
+      }),
+    );
   const steer = (turn: Turn) =>
-    void act(async () => {
-      await sendControl(`steer:${turn.id}`, `${base}/control`, {
+    rowAction(turn, () =>
+      sendControl(`steer:${turn.id}:${view.head?.active_run?.id}`, `${base}/control`, {
         action: "steer",
         source: turn.id,
         expected_prompt_revision: turn.prompt_revision,
         target_run_id: view.head?.active_run?.id,
         target_incarnation_id: view.head?.active_run?.incarnation_id,
         target_owner: view.head?.active_run?.owner,
-      });
-      await loadQueue();
-    });
+      }),
+    );
   const stop = async () => {
     if (stopPending) return;
     setStopPending(true);
     try {
-      await sendControl("stop", `${base}/control`, {
+      await sendControl(`stop:${view.head?.active_run?.id}`, `${base}/control`, {
         action: "stop",
         target_run_id: view.head?.active_run?.id,
         target_incarnation_id: view.head?.active_run?.incarnation_id,
@@ -1094,6 +1134,7 @@ export function SessionPanel({
                   <X size={16} />{tr("Cancel prompt")}
                 </button>
               </div>
+              {rowErrors[turn.id] && <p role="status">{rowErrors[turn.id]}</p>}
             </div>
           ))}
           {!!queuePage?.next_after && (

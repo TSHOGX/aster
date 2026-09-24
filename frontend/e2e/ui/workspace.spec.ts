@@ -601,6 +601,41 @@ test("active composer has one Stop action while Enter queues and each row keeps 
   await expect.poll(() => f.calls.filter(c => c.method === "POST" && c.path.endsWith("/turns")).length).toBe(1);
 });
 
+test("uncertain Steer keeps its request identity through reload and reports row errors locally", async ({ page }) => {
+  await workspaceFixture(page);
+  const fixture = new ConversationFixture();
+  const session = {
+    id: "analysis", project_id: "battery", title: "Compare cycle performance",
+    state: "running", revision: 2, control_revision: 2, deletion: 0,
+  };
+  await page.route("**/sessions/analysis/view/head", route => {
+    const head = fixture.reply({ session }, new URL(route.request().url())) as Record<string, unknown>;
+    head.active_run = { id: "run", prompt_id: "active", incarnation_id: "incarnation", owner: 1, state: "running" };
+    return route.fulfill({ json: head });
+  });
+  await page.route("**/sessions/analysis/queue?*", route => route.fulfill({ json: {
+    items: [{ id: "held", session_id: "analysis", request_id: "held", content: "Held guidance", state: "held", sequence: 2, prompt_revision: 1 }],
+    total_pending: 1, queue_revision: 2,
+  } }));
+  const requests: string[] = [];
+  await page.route("**/sessions/analysis/control", route => {
+    const body = route.request().postDataJSON();
+    requests.push(body.request_id);
+    return requests.length === 1 ? route.abort() : route.fulfill({ status: 202, json: { request_id: body.request_id, action: "steer", state: "accepted" } });
+  });
+  await page.route("**/sessions/analysis/controls/*", route => route.fulfill({ status: 404, json: { error: "Not found" } }));
+  await page.goto("/?project=battery&session=analysis");
+  await page.locator(".prompt-queue summary").filter({ hasText: "Queued prompts" }).click();
+  await page.getByRole("button", { name: /Steer: Held guidance/ }).click();
+  await expect(page.locator(".prompt-queue-row").getByRole("status")).toBeVisible();
+  await expect(page.locator(".agent-panel > .notice.error")).toHaveCount(0);
+  await page.reload();
+  await page.locator(".prompt-queue summary").filter({ hasText: "Queued prompts" }).click();
+  await page.getByRole("button", { name: /Steer: Held guidance/ }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toBe(requests[0]);
+});
+
 test("completed turn folds intermediate output, freezes elapsed time and provides answer actions", async ({
   page,
   context,
