@@ -1,6 +1,6 @@
 # Queued-prompts acceptance record
 
-Status: source and isolated-fixture evidence through `5e3f939`. This is an
+Status: source and isolated-fixture evidence through `1556bfc`. This is an
 acceptance ledger, not a deployment sign-off. The normative rows are in the
 private planning package's `03-validation.md` and the behavior specification
 in `02-design.md`.
@@ -8,14 +8,14 @@ in `02-design.md`.
 | Rows | Verified evidence | Remaining qualification |
 | --- | --- | --- |
 | A01-A05 | FIFO queue/count and claim/reconciliation SQLite tests; queue-only/new-chat and three-slot browser tests; real-browser held-row Steer | Full API/live scheduling across held skip and later Release |
-| A06-A10 | Active Send/Stop, Enter/IME/Shift+Enter, lost reply and draft-preservation browser tests; exact Stop receipt tests | Real two-tab reconnect and soft-keyboard device pass |
+| A06-A10 | Active Send/Stop, Enter/IME/Shift+Enter, lost reply, draft preservation, real two-tab Steer reconnect and exact Stop receipt tests | Soft-keyboard device pass |
 | A11-A13 | SQLite Stop/new intent serialization; narrow forced-color/dark/reduced-motion and Chinese Playwright captures | Screen-reader and touch device review |
 | B01-B06 | Real Pi AgentSession fixture, patched RPC handler and pinned Khora runtime; duplicate template identity, cooperative Steer consumption, retry/compaction through runner/journal | Real partial tool-batch and arbitrary extension mutation/listener failure |
 | B07-B12 | Exact target, concurrent claim, late Steer, preflight rejection, composed Stop removal, worker loss after acceptance, listener failure after consumption and next-run non-leak | Process loss at every queued-Steer native/host boundary and arbitrary extension outcomes |
-| C01-C03 | Durable receipts, prompt-local revision, typed HTTP rejection and browser same-ID retry/local row error tests | Browser reconnect with a real API and concurrent tabs |
+| C01-C03 | Durable receipts, prompt-local revision, typed HTTP rejection, browser same-ID retry/local row error and real API two-tab Steer reconnect | More concurrent source mutation combinations across tabs |
 | C04-C08 | Product recovery, journal replay, release/owner/service/capture/idle, focused race/pressure, isolated Khora worker loss after Steer acceptance and sustained combined load | Crash injection at every exact Steer delivery boundary |
 | D01-D03 | Persisted segment/rebuild, consumption order, final ownership/coalescing and composed native Steer order tests | Full browser page/delta matrix with real native output |
-| D04-D07 | Native monotonic elapsed evidence, segment clock tests, server/client and off-window frontier races, real-browser queue-to-anchor handoff, late tool update tests | Host-clock calibration and projection failure/reconnect browser path |
+| D04-D07 | Native monotonic elapsed evidence, segment clock tests, server/client and off-window frontier races, real-browser two-tab queue-to-anchor handoff, late tool update tests | Host-clock calibration and projection failure browser path |
 | D08-D10 | Navigation/page generation, shared message run/segment metadata, new-chat/lost-reply tests and exact-source historical conversion/rebuild | All share/export surfaces and additional historical import variants |
 
 ## Gates
