@@ -35,7 +35,6 @@ const item = (
 ): DisplayItem => ({
   id: `i${position}`,
   turn_id: "t",
-  turn_sequence: "1",
   position: String(position),
   block: 0,
   item_revision: revision,

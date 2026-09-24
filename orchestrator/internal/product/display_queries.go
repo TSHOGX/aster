@@ -64,7 +64,6 @@ type viewToken struct {
 	Kind       string `json:"k"`
 	Session    string `json:"s"`
 	Generation string `json:"g"`
-	Turn       int64  `json:"t,string,omitempty"`
 	Position   int64  `json:"p,string,omitempty"`
 	Block      int    `json:"b,omitempty"`
 	ID         string `json:"i,omitempty"`
@@ -94,7 +93,7 @@ func decodeViewToken(raw, kind, session, generation string) (viewToken, error) {
 	if t.Generation != generation {
 		return t, ErrResync
 	}
-	if t.Turn < 0 || t.Position < 0 || t.Block < 0 || t.Base < 0 || t.Target < 0 || t.Revision < 0 || t.Ordinal < 0 || t.Offset < 0 {
+	if t.Position < 0 || t.Block < 0 || t.Base < 0 || t.Target < 0 || t.Revision < 0 || t.Ordinal < 0 || t.Offset < 0 {
 		return t, ErrInvalid
 	}
 	return t, nil
@@ -275,10 +274,10 @@ func (s *Store) ConversationPage(ctx context.Context, scope Scope, session strin
 		if selector.AroundItem != "" {
 			column, value = "id", selector.AroundItem
 		}
-		var turn, position int64
+		var position int64
 		var block int
 		var id string
-		if err = tx.QueryRowContext(ctx, `SELECT turn_sequence,position,block_index,id FROM conversation_items WHERE session_id=? AND `+column+`=? ORDER BY position,block_index,id LIMIT 1`, session, value).Scan(&turn, &position, &block, &id); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT position,block_index,id FROM conversation_items WHERE session_id=? AND `+column+`=? ORDER BY position,block_index,id LIMIT 1`, session, value).Scan(&position, &block, &id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) && out.Head.State == "catching_up" {
 				return out, ErrPending
 			}
@@ -341,7 +340,7 @@ func (s *Store) ConversationPage(ctx context.Context, scope Scope, session strin
 	if len(out.Items) > 0 {
 		first, last := out.Items[0], out.Items[len(out.Items)-1]
 		token := func(item DisplayItem) string {
-			return encodeViewToken(viewToken{Kind: "page", Session: session, Generation: out.Head.Generation, Turn: item.TurnSequence, Position: item.Position, Block: item.Block, ID: item.ID})
+			return encodeViewToken(viewToken{Kind: "page", Session: session, Generation: out.Head.Generation, Position: item.Position, Block: item.Block, ID: item.ID})
 		}
 		var earlier, later bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND (position,block_index,id)<(?,?,?)),EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND (position,block_index,id)>(?,?,?))`, session, first.Position, first.Block, first.ID, session, last.Position, last.Block, last.ID).Scan(&earlier, &later); err != nil {

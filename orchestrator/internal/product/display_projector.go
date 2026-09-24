@@ -23,7 +23,6 @@ type DisplayItem struct {
 	RunID         string `json:"run_id,omitempty"`
 	TurnID        string `json:"turn_id"`
 	SegmentID     string `json:"segment_id,omitempty"`
-	TurnSequence  int64  `json:"turn_sequence,string"`
 	Position      int64  `json:"position,string"`
 	Block         int    `json:"block"`
 	Revision      int64  `json:"item_revision,string"`
@@ -125,7 +124,7 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 		if _, e = tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_checkpoints(session_id,generation,updated_at) VALUES(?,?,?)`, session, before.Generation, s.timestamp()); e != nil {
 			return e
 		}
-		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, turns: map[string]int64{}, segments: map[string]string{}, batchStart: before.Source}
+		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, segments: map[string]string{}, batchStart: before.Source}
 		for _, source := range sources {
 			if e = reducer.consume(source); e != nil {
 				return e
@@ -195,21 +194,9 @@ type displayReducer struct {
 	p          displayCheckpoint
 	changes    map[string]*DisplayItem
 	sourceKeys map[string]string
-	turns      map[string]int64
 	segments   map[string]string
 }
 
-func (d *displayReducer) turnSequence(turn string) (int64, error) {
-	if n, ok := d.turns[turn]; ok {
-		return n, nil
-	}
-	var n int64
-	err := d.tx.QueryRowContext(d.ctx, `SELECT sequence FROM turns WHERE session_id=? AND id=?`, d.session, turn).Scan(&n)
-	if err == nil {
-		d.turns[turn] = n
-	}
-	return n, err
-}
 func (d *displayReducer) get(id string) (*DisplayItem, error) {
 	if v, ok := d.changes[id]; ok {
 		return v, nil
@@ -227,18 +214,12 @@ func (d *displayReducer) get(id string) (*DisplayItem, error) {
 	return &item, err
 }
 func (d *displayReducer) put(item DisplayItem, source string) error {
-	var err error
-	item.TurnSequence, err = d.turnSequence(item.TurnID)
-	if err != nil {
-		return err
-	}
 	old, err := d.get(item.ID)
 	if err != nil {
 		return err
 	}
 	if old != nil {
 		item.TurnID, item.RunID, item.SegmentID = old.TurnID, old.RunID, old.SegmentID
-		item.TurnSequence = old.TurnSequence
 		if item.Position < 0 {
 			item.Position = old.Position
 		}
@@ -693,7 +674,7 @@ func (d *displayReducer) flush() error {
 			}
 			raw, _ := json.Marshal(compact)
 			data = string(raw)
-			if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_items(session_id,id,turn_id,position,block_index,item_revision,source_key,data,turn_sequence,message_id) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET item_revision=excluded.item_revision,source_key=excluded.source_key,data=excluded.data,message_id=excluded.message_id`, d.session, id, item.TurnID, item.Position, item.Block, item.Revision, d.sourceKeys[id], data, item.TurnSequence, item.MessageID); err != nil {
+			if _, err = d.tx.ExecContext(d.ctx, `INSERT INTO conversation_items(session_id,id,turn_id,position,block_index,item_revision,source_key,data,message_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET item_revision=excluded.item_revision,source_key=excluded.source_key,data=excluded.data,message_id=excluded.message_id`, d.session, id, item.TurnID, item.Position, item.Block, item.Revision, d.sourceKeys[id], data, item.MessageID); err != nil {
 				return err
 			}
 		}

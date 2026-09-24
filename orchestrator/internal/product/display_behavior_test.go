@@ -39,7 +39,7 @@ func TestDisplayPagesAndAuthorization(t *testing.T) {
 	}
 	older, err := s.ConversationPage(ctx, a, "session", ViewSelector{Before: page.Before})
 	must(t, err)
-	if len(older.Items) != 50 || older.Before == "" || older.Items[0].TurnSequence >= page.Items[0].TurnSequence {
+	if len(older.Items) != 50 || older.Before == "" || older.Items[0].Position >= page.Items[0].Position {
 		t.Fatal("invalid preceding window")
 	}
 	oldest, err := s.ConversationPage(ctx, a, "session", ViewSelector{Before: older.Before})
@@ -277,7 +277,7 @@ func TestTurnIndexPaginationFinalPreviewAndTargetedView(t *testing.T) {
 	}
 	next, err := s.ConversationPage(ctx, a, "nav", ViewSelector{After: snapshot.After})
 	must(t, err)
-	if len(next.Items) == 0 || next.Items[0].TurnSequence <= snapshot.Items[len(snapshot.Items)-1].TurnSequence {
+	if len(next.Items) == 0 || next.Items[0].Position <= snapshot.Items[len(snapshot.Items)-1].Position {
 		t.Fatal("forward page did not advance")
 	}
 	if next.After == "" {

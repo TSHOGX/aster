@@ -15,7 +15,6 @@ export type DisplayItem = {
  run_id?: string;
   id: string;
   turn_id: string;
-  turn_sequence: string;
   position: string;
   block: number;
   item_revision: string;

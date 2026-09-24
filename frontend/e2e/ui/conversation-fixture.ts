@@ -48,12 +48,6 @@ export class ConversationFixture {
       [];
     const items = timeline.map((item, index): DisplayItem => ({
       ...item,
-      turn_sequence: String(
-        s.turn_summaries?.find((t) => t.id === item.turn_id)?.sequence ||
-          s.turns?.find((t) => t.id === item.turn_id)?.sequence ||
-          timeline.find((t) => t.turn_id === item.turn_id)?.cursor ||
-          1,
-      ),
       position: String(item.cursor || index + 1),
       block: item.order || 0,
       item_revision: String(revision),

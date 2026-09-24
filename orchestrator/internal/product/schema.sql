@@ -146,7 +146,7 @@ CREATE TABLE conversation_items (
  block_index INTEGER NOT NULL,
  item_revision INTEGER NOT NULL,
  source_key TEXT NOT NULL,
- data TEXT NOT NULL, turn_sequence INTEGER NOT NULL DEFAULT 0, message_id TEXT NOT NULL DEFAULT '',
+ data TEXT NOT NULL, message_id TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(session_id,id)
 );
 

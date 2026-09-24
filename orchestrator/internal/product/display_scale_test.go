@@ -90,7 +90,7 @@ func TestDisplayReadScale(t *testing.T) {
 				newBytes = len(newJSON)
 				var content []any
 				for _, item := range page.Items {
-					content = append(content, []any{item.Kind, item.Content, item.TurnSequence, item.Position, item.Block})
+					content = append(content, []any{item.Kind, item.Content, item.Position, item.Block})
 				}
 				canonical, e := json.Marshal(content)
 				must(t, e)

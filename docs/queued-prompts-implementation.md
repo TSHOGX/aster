@@ -117,3 +117,7 @@ The composer now persists unresolved Hold/Release/Cancel/Steer/Stop request bodi
 ## Real Session RPC and exported segment evidence (2026-09-24)
 
 `TestPatchedRPCWithFullSession` executes the actual pinned RPC handler against the real Pi 0.77.0 AgentSession and deterministic fake model streams. It verifies normal and two identical template-expanded Steer tokens, native acceptance before consumption, elapsed evidence, reconciliation before prompt end, and Stop of an accepted unconsumed Steer followed by a clean next run. The handler still runs with an in-process stdin/stdout transport double; process-crash and journal integration remain distinct G1/G6 checks. Message APIs, including shared message reads, now carry persisted `run_id` and `segment_id` where projection evidence exists. A focused test checks ordinary and Steer message ownership without guessing historical identity.
+
+## Display position cleanup (2026-09-24)
+
+Conversation items and page cursors no longer carry the prompt enqueue sequence. Projected item order, seek tuples and repository merging use durable display position, block index and item ID. Prompt sequence remains in the queue scheduler and bounded turn index where it identifies the original intent; it is no longer duplicated in transcript items or storage. The projector no longer looks up prompt sequence for every item.
