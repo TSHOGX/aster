@@ -264,7 +264,7 @@ The durable admission coordinator fences user and internal dispatch together.
 Unknown commands, cleanup, file mutations and runtime leases prevent quiescent
 readiness. Generation/owner checks, revocable readiness and executable-bound
 activation prevent stale coordinators from reopening admission. Candidate identity
-is checked before writer migration under the exclusive lifetime lock.
+is checked before the writer opens under the exclusive lifetime lock.
 
 An independent gateway owns upstream streams and credentials. Existing authorized
 streams continue at most five seconds since a successful authority check began;
@@ -290,7 +290,6 @@ See [operations](operations.md), [compatibility](compatibility.md),
 | Runtime idle | Same combined record: separate 60/120-second windows, zero heavy reads/new preview URLs and unchanged preview node; head reads counted separately |
 | Current guest runtime | [Journal image qualification](../dev/measurements/journal-runtime.json): release, mixed, browser, hub, native pressure, Files, PTYs, recovery and service authority; original pressure timeout and later diagnostic passes retained |
 | Real upstream continuity | [One GLM-5.2 stream](../dev/measurements/owner-handoff.json): 24.3 seconds, one request/original native completion, stable gateway and 127 ms distinct owner switch; scoped to that build/provider pair |
-| Rollback | [Current client/API pair](../dev/measurements/final-rollback.json), [earlier owner/gateway revisions](../dev/measurements/revision-rollback.json) and [current engine/template defaults](../dev/measurements/final-infrastructure.json), preserving accepted history/files; exact supported matrix in compatibility docs |
 | Office latency | [180 fresh-context trials](../dev/measurements/office-latency.json): normal-CPU DOCX/XLSX/PPTX p95 774/577/505 ms; four-times-CPU 813/1,230/1,025 ms; routed fixed bodies and useful DOM/canvas readiness |
 | Maximal transcript scrolling | [160-turn, sixteen-page profile](../dev/measurements/history-scroll.json): four-times-CPU wheel-to-RAF p95 8.8 ms, largest observed task 139 ms, 83,421 DOM nodes; automation inspection is not application attribution |
 | Directory retention | [Fifty-page resource journey](../dev/measurements/directory-window.json): 100 rows, fixed 6,740 nodes/751 listeners, post-GC heap 11.67→11.96 MB; selected dirty edit preserved |
@@ -302,7 +301,7 @@ races, replay, scope revocation, directory/byte confinement, capture validators,
 [verification runbook](verification.md) for commands and fixture definitions.
 
 These observations do not establish field INP, arbitrary document rendering,
-cross-host recovery or bootstrap of an ungated installation. Combined runs retain
+cross-host recovery or conversion of a retired installation. Combined runs retain
 long tasks above 200 ms and earlier failed workload attempts; thresholds were not
 relaxed to erase them. The startup comparison separates initialized feedback and actual quiet windows.
 The resource/source inventory and local qualification are complete for the

@@ -147,10 +147,9 @@ abort; a stale owner/generation cannot advance it.
 
 Ready does **not** authorize a separate unchecked shutdown. The activation command
 below consumes a fresh readiness check and retires the owner itself. The gateway
-has an independent process lifetime. [Ungated-owner bootstrap](bootstrap.md)
-remains a no-go pending an enforceable external boundary; this workflow is for
-quiescent replacement of an already gated owner. Controlled owner-outage tests do not certify arbitrary active
-updates or migrations.
+has an independent process lifetime. This workflow updates the current schema
+and protocol contract. Retired installations require a deliberate
+[fresh reset](bootstrap.md), not migration or a compatibility override.
 
 `drain-status.runtime_work` and `diagnostics.runtime_work` report fixed-category
 in-flight operation counts without credentials or content. Title-generation calls
@@ -187,7 +186,7 @@ orchestrator drain-complete --socket /var/lib/batterygpt/control.sock --owner UP
 ```
 
 Startup checks the expected executable under the database lifetime lock before
-opening a writer or migrating schema. An unexpected candidate leaves the database
+opening a writer. An unexpected candidate leaves the database
 and current Store identity unchanged.
 
 Completion requires a different Store instance, matching executable digest, and
@@ -197,22 +196,11 @@ run on the replacement while ordinary work remains fenced. Maintenance cannot
 start on the retiring instance. Late evidence remains durable and can block
 completion. Coordinator identities cannot be reused, even after later attempts.
 
-If the selected build fails startup, use a rollback build compatible with the
-current schema and saved runtime protocols. Start it explicitly as a candidate,
-using the original state directory, then acknowledge rollback:
-
-```sh
-orchestrator serve --config /etc/batterygpt/application.json --rollback-candidate
-orchestrator drain-rollback --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
-```
-
-The flag permits an executable different from the planned target to start behind
-the closed fence; it does not reopen admission. Rollback still requires a distinct
-owner instance and settled work. It preserves accepted writes and records the
-running digest; it never replaces the database with a backup. A schema-incompatible
-build is refused before it can write. `drain-abort` applies before activation;
-once activating, use the replacement completion or rollback path.
-
+If the selected build fails startup, keep admission closed and repair that build's
+configuration or dependency failure. Only the selected executable can start and
+complete activation. There is no rollback-candidate flag or rollback endpoint.
+`drain-abort` is available before activation; an activating generation does not
+reopen from a timeout or an unselected executable.
 
 ## Candidate identity
 
@@ -278,21 +266,16 @@ window described in the [gateway contract](gateway-contract.md). Exceeding that
 window cancels forwarding; it is not a successful continuity result. A successful
 `gateway-stop` always requires quiescent mode, even between model requests.
 
-Replacement startup verifies exact schema/contract before any writer or migration.
+Replacement startup verifies exact schema/contract before any writer opens.
 It reattaches original native journal identities; completion may reopen admission
 while transferable work is still running. Stale coordinators and the retiring
 Store instance cannot finish the handoff. Deadline expiry aborts a pending drain
 or readiness checkpoint, but never reopens an activating handoff automatically.
 
-Explicit compatible rollback uses the existing rollback-candidate/rollback
-commands and preserves accepted writes. If the gateway itself was lost/replaced,
-rollback can reopen only after all work is fully settled and the new gateway is
-observed. It cannot claim preservation of the old HTTP stream. The native fixture
-qualifies this mechanism between distinct executable artifacts with the same
-contract; the [recorded real-provider run](../dev/measurements/owner-handoff.json) also
-retained a 24.3-second GLM-5.2 stream. The [recorded compatibility matrix](compatibility.md) qualifies specific owner,
-gateway, client, engine-artifact and template-default combinations. Bootstrap
-remains a separate qualification gate.
+If a pinned gateway is lost or replaced after activation, the selected owner can
+complete only after all retained work is settled and the replacement gateway is
+observed. This does not claim continuity of the old HTTP stream. The
+[current release contract](compatibility.md) defines the exact checks.
 
 ## Gateway replacement
 
@@ -316,26 +299,12 @@ immediately restart the old executable. Forced termination is fault recovery,
 not graceful stream preservation.
 
 
-The [compatibility matrix](compatibility.md) records the owner/gateway/client pair
-that has been rehearsed with post-upgrade writes and defines its seven-day artifact
-retention window. Select exact qualified artifacts; the generic rollback commands
-do not imply support for an arbitrary earlier schema or runtime.
+For engine or template replacement within the current contract, settle work,
+close admission and activate the selected owner under the existing gate. Preserve
+its engine store and immutable Project bindings. An incompatible format requires
+a deliberate fresh reset instead.
 
-
-For engine artifact or template-default replacement, first let existing work and
-cleanup settle. A paused Project does not prove that its retained Agent evidence
-has settled. Close full application admission and obtain a current ready checkpoint;
-retire the owner through activation before replacing the engine. Keep the original
-engine store, volumes, template registry and required network UID configuration.
-Start only an artifact of the supported engine revision. Start the owner behind
-the activating fence and complete or acknowledge rollback after reconciliation.
-
-Changing the default template affects newly configured Projects. Existing Projects
-retain their immutable template/release bindings and storage. Keep their images
-and exported manifests, and list each previous binding in `retained_templates`
-until those Projects are retired. Startup refuses an unlisted saved binding.
-`release-identity` includes the complete host-validated `runtime_catalog`; changing
-it requires full admission drain. The introduction of this catalog also changes
-the compatibility identity from builds without it, even with no retained entries. Do not rewrite a saved profile or restore a
-volume snapshot to make a default rollback appear successful. The infrastructure
-rehearsal in the compatibility matrix demonstrates this boundary.
+Changing template defaults affects newly configured Projects. Existing current-
+format Projects retain their exact template/release and volumes. List referenced
+images in `retained_templates` until those Projects retire; startup refuses an
+unlisted binding. A reset with no retained Projects needs only its new template.

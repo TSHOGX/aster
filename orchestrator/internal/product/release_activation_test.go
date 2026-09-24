@@ -31,7 +31,7 @@ func TestReleaseActivationRequiresReplacementIdentityAndSettledWork(t *testing.T
 	if active.Phase != "activating" || active.ActivationInstance == "" || active.TargetDigest != target {
 		t.Fatal(active)
 	}
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false)
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target)
 	wantError(t, err, ErrConflict)
 	_, err = s.AbortReleaseDrain(ctx, drain.Owner, drain.Generation)
 	wantError(t, err, ErrConflict)
@@ -50,23 +50,23 @@ func TestReleaseActivationRequiresReplacementIdentityAndSettledWork(t *testing.T
 	s, err = Open(ctx, path)
 	must(t, err)
 	defer s.Close()
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, "sha256:"+strings.Repeat("b", 64), false)
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, "sha256:"+strings.Repeat("b", 64))
 	wantError(t, err, ErrConflict)
 	work, err := s.beginRuntimeWork(ctx, runtimeMaintenance)
 	must(t, err)
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false)
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target)
 	wantError(t, err, ErrBusy)
 	work()
 	must(t, s.BeginActivity(ctx, scope, Activity{ID: "late-cleanup", SessionID: "session", Kind: "descendants"}))
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false)
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target)
 	wantError(t, err, ErrBusy)
 	must(t, s.SettleActivity(ctx, scope.ProjectID, "late-cleanup", "complete"))
-	finished, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false)
+	finished, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, target)
 	must(t, err)
 	if finished.Phase != "open" || finished.FinishedDigest != target || finished.Reason != "completed" {
 		t.Fatal(finished)
 	}
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false)
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target)
 	must(t, err)
 	rows, err := s.Turns(ctx, scope, "session", 0, 100)
 	must(t, err)
@@ -75,8 +75,8 @@ func TestReleaseActivationRequiresReplacementIdentityAndSettledWork(t *testing.T
 	}
 }
 
-func TestReleaseRollbackAndCoordinatorReuse(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "rollback.db")
+func TestReleaseCompletionAndCoordinatorReuse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "completion.db")
 	s, err := Open(ctx, path)
 	must(t, err)
 	target := "sha256:" + strings.Repeat("c", 64)
@@ -90,10 +90,10 @@ func TestReleaseRollbackAndCoordinatorReuse(t *testing.T) {
 	s, err = Open(ctx, path)
 	must(t, err)
 	defer s.Close()
-	rollbackDigest := "sha256:" + strings.Repeat("d", 64)
-	result, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, rollbackDigest, true)
+	completedDigest := target
+	result, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, completedDigest)
 	must(t, err)
-	if result.Reason != "rolled_back" || result.FinishedDigest != rollbackDigest {
+	if result.Reason != "completed" || result.FinishedDigest != completedDigest {
 		t.Fatal(result)
 	}
 	next, err := s.BeginReleaseDrain(ctx, "second", time.Minute)
@@ -102,7 +102,7 @@ func TestReleaseRollbackAndCoordinatorReuse(t *testing.T) {
 	must(t, err)
 	_, err = s.BeginReleaseDrain(ctx, "original", time.Minute)
 	wantError(t, err, ErrConflict)
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, rollbackDigest, true)
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, completedDigest)
 	wantError(t, err, ErrConflict)
 }
 
@@ -127,6 +127,6 @@ func TestReplacementCanPublishButRetiringOwnerCannot(t *testing.T) {
 	defer s.Close()
 	_, err = s.ClaimContentPublication(ctx, publication)
 	must(t, err)
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false)
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target)
 	wantError(t, err, ErrBusy)
 }

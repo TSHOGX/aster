@@ -80,9 +80,8 @@ the owner is available. It binds the declared service listeners, obtains the
 exclusive state-directory lifetime lock and registers each configured audience.
 Owner/API shutdown does not touch its listeners, upstream connections or secrets.
 Restart configuration supplies keys again through the gateway environment; no key
-is persisted in product state. Gateway protocol 1 requires a schema-11-compatible
-owner. An older owner without this protocol cannot authorize new requests and
-cannot extend existing requests beyond their continuation window.
+is persisted in product state. The gateway and owner must implement the exact current authority protocol;
+unsupported peers cannot authorize or extend requests.
 
 `gateway-status --socket STATE/gateway.sock` reports PID, active handlers, pending
 settlements and authority failure/expiry/denial counters. A gateway update first
@@ -102,5 +101,5 @@ capacity) reported by the protected status endpoint and checks them against the
 Store in each transition transaction. Gateway status includes those identities;
 no credential is returned. A new registration revokes pending owner readiness.
 Owner-only readiness never permits gateway shutdown. If gateway replacement occurs
-after owner activation, ordinary handoff completion is refused; explicit rollback
-requires full quiescence before acknowledging the changed gateway.
+after owner activation, the selected owner requires full quiescence before
+completing with the changed gateway.

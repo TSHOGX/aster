@@ -24,8 +24,8 @@ import (
 var schema string
 
 // Store is a single product database, with serialized immediate transactions
-// and independent bounded readers. Known schemas migrate atomically under the
-// exclusive application/schema lock before workers or readers are opened.
+// and independent bounded readers. Only the exact current schema can reopen;
+// a fresh database is initialized atomically under the exclusive lifetime lock.
 type Store struct {
 	release    func()
 	closeOnce  sync.Once
@@ -44,7 +44,7 @@ func Open(ctx context.Context, path string) (result *Store, resultErr error) {
 }
 
 // OpenApplication checks the measured executable against a pending activation
-// under the exclusive lifetime lock, before opening a writer or migrating DDL.
+// under the exclusive lifetime lock, before opening a writer.
 // Open remains the lower-level Store constructor for fixtures and repository use.
 func OpenApplication(ctx context.Context, path string, identity ApplicationIdentity) (*Store, error) {
 	if err := identity.validate(); err != nil {
@@ -73,10 +73,9 @@ func open(ctx context.Context, path string, identity *ApplicationIdentity) (resu
 		if err != nil {
 			return nil, err
 		}
-		version, schemaErr := knownSchema(ctx, check)
-		err = schemaErr
+		err = verifySchema(ctx, check)
 		if err == nil {
-			err = identity.check(ctx, check, version)
+			err = identity.check(ctx, check)
 		}
 		closeErr := check.Close()
 		if err = errors.Join(err, closeErr); err != nil {
@@ -99,7 +98,7 @@ func open(ctx context.Context, path string, identity *ApplicationIdentity) (resu
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	fail := func(err error) (*Store, error) { db.Close(); return nil, err }
-	if err = upgradeSchema(ctx, db, nil); err != nil {
+	if err = initializeSchema(ctx, db); err != nil {
 		return fail(err)
 	}
 	if err = verifySchema(ctx, db); err != nil {
@@ -155,13 +154,6 @@ func schemaDigest(ctx context.Context, db queryer) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), rows.Err()
 }
 
-func verifySchema(ctx context.Context, db *sql.DB) error {
-	version, err := knownSchema(ctx, db)
-	if err == nil && version != len(schemaSteps) {
-		return fmt.Errorf("product schema needs migration")
-	}
-	return err
-}
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
 	return s.writeClass(ctx, controlWrite, "", 1<<20, fn)
 }

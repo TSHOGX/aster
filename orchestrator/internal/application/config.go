@@ -95,7 +95,6 @@ type Config struct {
 	TLSCert           string                  `json:"tls_cert"`
 	TLSKey            string                  `json:"tls_key"`
 	Manifest          runtimerelease.Manifest `json:"-"`
-	RollbackCandidate bool                    `json:"-"`
 	base              string
 	source            string
 }

@@ -119,7 +119,7 @@ running Project (even idle) retains its effective policy until a later resume.
 
 Invalid startup configuration still refuses startup; persisted defaults do not
 bypass the strict configuration contract. Correct the file to restart. Runtime
-reload is fenced during release transitions. Owner handoff/rollback must match
+reload is fenced during release transitions. Owner handoff must match
 the accepted policy revision before acquiring the database writer; the fixed
 release compatibility digest excludes only these two mutable fields.
 

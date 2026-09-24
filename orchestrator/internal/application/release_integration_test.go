@@ -62,13 +62,12 @@ func (a *releaseApp) start(extra ...string) {
 		return response.StatusCode == 200
 	})
 }
-func (a *releaseApp) startGateway() { a.startGatewayBinary(a.binary) }
-func (a *releaseApp) startGatewayBinary(binary string) {
+func (a *releaseApp) startGateway() {
 	a.t.Helper()
 	log, err := os.OpenFile(filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "gateway.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	require(a.t, err)
 	defer log.Close()
-	a.gateway = exec.CommandContext(a.ctx, binary, "gateway", "--config", a.config)
+	a.gateway = exec.CommandContext(a.ctx, a.binary, "gateway", "--config", a.config)
 	a.gateway.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
 	a.gateway.Env = append(os.Environ(), "PROJECT_RELEASE_SECRET=release-fixture-secret")
 	a.gateway.Stdout, a.gateway.Stderr = log, log
@@ -145,8 +144,7 @@ func (a *releaseApp) cli(args ...string) map[string]any {
 	}
 	return value
 }
-func newReleasedApp(t *testing.T) *releaseApp { return newReleasedAppBinary(t, "") }
-func newReleasedAppBinary(t *testing.T, initialBinary string) *releaseApp {
+func newReleasedApp(t *testing.T) *releaseApp {
 	t.Helper()
 	endpoint, binaries, manifestPath := os.Getenv("PROJECT_TEST_ENDPOINT"), os.Getenv("PROJECT_TEST_BIN_DIR"), os.Getenv("PROJECT_TEST_MANIFEST")
 	if endpoint == "" || binaries == "" || manifestPath == "" {
@@ -181,9 +179,6 @@ func newReleasedAppBinary(t *testing.T, initialBinary string) *releaseApp {
 	}
 	for _, name := range []string{"orchestrator", "orchestrator-candidate", "runtime-fixture"} {
 		source := filepath.Join(binaries, name)
-		if name == "orchestrator" && initialBinary != "" {
-			source = initialBinary
-		}
 		raw, err := os.ReadFile(source)
 		require(t, err)
 		require(t, os.WriteFile(filepath.Join(root, name), raw, 0755))
@@ -439,50 +434,39 @@ func (a *releaseApp) awaitRetired() {
 	}
 }
 
-func TestReleasedActivationRollback(t *testing.T) {
+func TestReleasedActivationTarget(t *testing.T) {
 	a := newReleasedApp(t)
 	socket := filepath.Join(a.root, "state/control.sock")
-	a.request("POST", "/api/projects", map[string]string{"id": "rollback", "title": "Rollback"}, 201)
-	a.request("POST", "/api/projects/rollback/sessions", map[string]string{"id": "session", "title": "Session"}, 201)
-	base := "/api/projects/rollback/sessions/session"
-	original := a.request("POST", base+"/turns", map[string]any{"request_id": "preserved", "content": "retained accepted intent", "held": true}, 201)
-	drain := a.cli("drain", "--socket", socket, "--owner", "rollback-fixture", "--timeout-seconds", "60")
-	a.cli("drain-ready", "--socket", socket, "--owner", "rollback-fixture", "--generation", fmt.Sprint(drain["generation"]))
-	a.cli("drain-activate", "--socket", socket, "--owner", "rollback-fixture", "--generation", fmt.Sprint(drain["generation"]), "--target", "sha256:"+strings.Repeat("f", 64))
+	a.request("POST", "/api/projects", map[string]string{"id": "activation", "title": "Activation"}, 201)
+	a.request("POST", "/api/projects/activation/sessions", map[string]string{"id": "session", "title": "Session"}, 201)
+	base := "/api/projects/activation/sessions/session"
+	original := a.request("POST", base+"/turns", map[string]any{"request_id": "held", "content": "retained intent", "held": true}, 201)
+	old := a.binary
+	a.binary = filepath.Join(a.root, "orchestrator-candidate")
+	target := a.cli("release-identity", "--config", a.config)["executable_digest"].(string)
+	a.binary = old
+	drain := a.cli("drain", "--socket", socket, "--owner", "target-fixture", "--timeout-seconds", "60")
+	generation := fmt.Sprint(drain["generation"])
+	a.cli("drain-ready", "--socket", socket, "--owner", "target-fixture", "--generation", generation)
+	a.cli("drain-activate", "--socket", socket, "--owner", "target-fixture", "--generation", generation, "--target", target)
 	a.awaitRetired()
-	// An ordinary startup with the wrong executable must refuse before any new
-	// configuration publication or reconciliation can run.
-	attempt, done := context.WithTimeout(a.ctx, 10*time.Second)
-	unexpected := exec.CommandContext(attempt, a.binary, "serve", "--config", a.config)
+	attempt, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	unexpected := exec.CommandContext(attempt, old, "serve", "--config", a.config)
 	unexpected.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
 	raw, err := unexpected.CombinedOutput()
-	done()
+	cancel()
 	if err == nil || !bytes.Contains(raw, []byte("differs from the release target")) {
-		t.Fatalf("unexpected candidate not fenced: %v %s", err, raw)
+		t.Fatalf("unselected executable not refused: %v %s", err, raw)
 	}
-	a.start("--rollback-candidate")
-	state := a.cli("drain-status", "--socket", socket)
-	if state["phase"] != "activating" {
+	a.binary = filepath.Join(a.root, "orchestrator-candidate")
+	a.start()
+	a.request("POST", base+"/turns", map[string]string{"request_id": "closed", "content": "blocked"}, 503)
+	state := a.cli("drain-complete", "--socket", socket, "--owner", "target-fixture", "--generation", generation)
+	if state["phase"] != "open" || state["finished_digest"] != target {
 		t.Fatal(state)
 	}
-	a.request("POST", base+"/turns", map[string]string{"request_id": "not-yet", "content": "blocked"}, 503)
-	a.await(10*time.Second, "compatible rollback completes", func() bool {
-		command := exec.CommandContext(a.ctx, a.binary, "drain-rollback", "--socket", socket, "--owner", "rollback-fixture", "--generation", fmt.Sprint(drain["generation"]))
-		raw, err := command.CombinedOutput()
-		if err != nil && bytes.Contains(raw, []byte("project has admitted activity")) {
-			return false
-		}
-		require(t, err)
-		var completed map[string]any
-		require(t, json.Unmarshal(raw, &completed))
-		if completed["phase"] != "open" || completed["reason"] != "rolled_back" {
-			t.Fatal(completed)
-		}
-		return true
-	})
-	reply := a.request("GET", base+"/turns", nil, 200)
-	rows := reply["turns"].([]any)
+	rows := a.request("GET", base+"/turns", nil, 200)["turns"].([]any)
 	if len(rows) != 1 || rows[0].(map[string]any)["id"] != original["id"] || rows[0].(map[string]any)["state"] != "held" {
-		t.Fatal("rollback discarded or dispatched accepted intent", reply)
+		t.Fatal(rows)
 	}
 }

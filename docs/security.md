@@ -37,7 +37,7 @@ engine bindings. Invalid/unsupported edits preserve accepted defaults, and
 running placements keep their existing permissions. Conditional paused updates
 verify original identity, resource limits, mounts and retained model routes before
 admission reopens. Candidate startup checks the accepted policy revision during
-owner handoff/rollback independently of fixed release compatibility.
+owner handoff independently of fixed release compatibility.
 
 Frontend Markdown does not enable raw HTML. File responses use restricted preview
 headers and the browser uses bounded fetched blobs. Office previews are separate

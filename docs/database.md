@@ -1,25 +1,15 @@
 # Product database
 
-The core SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-Version 2 adds [conversation display storage](../orchestrator/internal/product/display_schema.sql);
-version 3 adds [projector queues and ordering](../orchestrator/internal/product/projector_schema.sql);
-version 4 records [actual event retention frontiers](../orchestrator/internal/product/event_frontier_schema.sql);
-version 5 adds [reusable reader bindings](../orchestrator/internal/product/reader_schema.sql);
-version 6 adds [retention accounting and cleanup](../orchestrator/internal/product/retention_schema.sql);
-version 7 adds [turn-scoped final-message lookup](../orchestrator/internal/product/navigation_schema.sql);
-version 8 adds [the durable release admission fence](../orchestrator/internal/product/release_schema.sql);
-version 9 adds [indexed readiness and transactional revocation](../orchestrator/internal/product/readiness_schema.sql);
-version 10 adds [replacement identity and activation handoff](../orchestrator/internal/product/activation_schema.sql);
-version 11 adds [bounded durable gateway request slots](../orchestrator/internal/product/gateway_schema.sql);
-version 12 adds [guarded owner handoff](../orchestrator/internal/product/owner_handoff_schema.sql);
-version 13 adds [independent workspace storage and volume file outcomes](../orchestrator/internal/product/volume_files_schema.sql);
-version 14 adds [owner schedule catalog epochs](../orchestrator/internal/product/schedule_catalog_schema.sql);
-version 15 adds [durable network defaults](../orchestrator/internal/product/network_policy_schema.sql).
-`product.Open` validates and migrates known schemas while holding an exclusive path/alias
-lock. Application startup uses `product.OpenApplication`: it validates a pending
-activation against the measured executable through a read-only connection under
-that same lock, before opening a writer, migrating DDL or replacing the Store
-instance. A rejected candidate cannot change schema or ownership metadata.
+The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
+The current fresh lineage has schema version 1 and an exact compiled DDL
+fingerprint. `product.Open` initializes that schema atomically on a new database
+under an exclusive path/alias lock. An existing database must match both its
+version and fingerprint before a writer opens. There are no migration files,
+historical-schema fingerprints or data backfills.
+
+Application startup validates pending activation against the measured executable
+through a read-only connection under the same lock. Only the selected replacement
+can acquire authority; a rejected candidate cannot change schema or ownership.
 One application owns all writes; operator control commands use that owner.
 Credentials are an independently managed atomic YAML registry, not a second
 product database.
@@ -46,22 +36,14 @@ and Project retirement purge private rows and host/guest artifacts after evidenc
 permits cleanup. Tombstones retain identity and deletion outcome without keeping
 conversation payloads. Shared content publications remain separately owned.
 
-Startup recognizes the exact original unversioned core schema and numbered
-supported versions using their complete DDL fingerprints. Unknown versions or
-modified DDL are rejected before a writer is opened. Known upgrades run atomically
-before readers/workers start; DDL and `PRAGMA user_version` commit together.
-Interruption before commit rolls back the whole upgrade. New databases run the
-same ordered schema steps. Migration copies source identity metadata once in
-original ingestion order; raw payloads and command evidence remain untouched.
-The source identity index then appends inside each ingestion transaction.
+Schema initialization commits the DDL, initial release singleton and version in
+one transaction. Current-format databases reopen without conversion. Unknown or
+modified DDL is refused without repair. The source identity index is populated by
+current ingestion transactions, never by a historical backfill.
 
-Back up the database with SQLite's backup mechanism or `VACUUM INTO` while the
-exclusive owner is stopped, and rehearse restoration to a separate path. Do not
-copy just the main database file while WAL writes are active. Once the current schema has
-accepted writes, rollback requires a schema-compatible executable. The original
-unversioned executable cannot read the new schema. Restoring a pre-upgrade backup
-over new accepted writes is not a supported rollback. Deployment must first close
-and drain admission; the release gate is still under implementation.
+For a current installation, a coordinated database/volume backup must include
+all retained application artifacts. A deliberately reset installation starts
+fresh; it never imports a retired database or restores legacy state backups.
 
 The background display projector advances bounded session batches and serves the
 versioned view API used by the browser. Raw records are no longer reconstructed
@@ -116,7 +98,7 @@ The application's startup identity and candidate CLI therefore agree even while
 the current owner holds the exclusive Store lock.
 
 
-Schema 12 records release mode, compatibility/schema digests and the pinned
+The release singleton records mode, compatibility/schema digests and the pinned
 gateway registration snapshot. `owner_transferable_turns` identifies running turns
 with durably applied original prompts, active Projects and running incarnations.
 `owner_handoff_blockers` retains every other release blocker, including requests
@@ -126,19 +108,15 @@ checkpoint transactionally. The full `release_blockers` view remains authoritati
 for quiescent releases. Operator status reports both sets in owner mode.
 
 An owner-mode drain, ready or activating state requires the exact compiled schema
-and compatibility identity before any writer opens. It cannot migrate implicitly,
-and an unmeasured Store open cannot bypass that condition. Explicit rollback can
-use a different executable only with the same contract. If the pinned gateway
-was replaced, rollback must additionally prove full quiescence before reopening.
+and deployment identity before any writer opens. An unmeasured Store open cannot
+bypass that condition. Completion requires the selected executable. Replacing a
+pinned gateway additionally requires full quiescence before completion.
 
-
-Schema 13 retains the original file mutation IDs and outcomes while distinguishing
-volume mutations from guest process mutations. `volume_id` and `staging_path`
-record direct authority and upload preparation; such rows have no sandbox process
-reference. `project_resources.storage_key` records workspace creation intent
-before any remote allocation, without marking compute occupied. Schema migration
-preserves release admission triggers, readiness indexes and blocker views in the
-same transaction. A schema-12 executable cannot reopen this database.
+File mutation rows distinguish volume authority (`volume_id`, `staging_path`)
+from guest process authority. `project_resources.storage_key` records workspace
+creation intent before remote allocation without marking compute occupied.
+The canonical DDL contains the final admission triggers, indexes and blocker
+views directly. Migration-only read-command retirement state has been removed.
 
 The network-defaults singleton stores only direct rules, resolver order, content
 revision and acceptance time. A lifecycle operation records its selected target

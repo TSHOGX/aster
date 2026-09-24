@@ -75,7 +75,7 @@ func TestOwnerHandoffTransfersOnlyAppliedNativeWorkAcrossVerifiedReplacement(t *
 	wantError(t, err, ErrConflict)
 	active, err := s.ActivateRelease(ctx, drain.Owner, drain.Generation, target, observe())
 	must(t, err)
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false, observe())
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, observe())
 	wantError(t, err, ErrConflict)
 	second.Sequence++
 	_, err = s.AcquireGatewayRequest(ctx, second, token)
@@ -113,10 +113,10 @@ func TestOwnerHandoffTransfersOnlyAppliedNativeWorkAcrossVerifiedReplacement(t *
 	must(t, s.CheckGatewayRequest(ctx, r))
 	work, err := s.beginRuntimeWork(ctx, runtimeMaintenance)
 	must(t, err)
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false, observe())
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, observe())
 	wantError(t, err, ErrBusy)
 	work()
-	finished, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false, observe())
+	finished, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, target, observe())
 	must(t, err)
 	if finished.Phase != "open" || finished.ActivationInstance != active.ActivationInstance || finished.FinishedDigest != target {
 		t.Fatal(finished)
@@ -274,7 +274,7 @@ func TestOwnerReadyRevocationFollowsChangesToRetainedAuthority(t *testing.T) {
 	}
 }
 
-func TestOwnerHandoffGatewayLossRequiresQuiescentExplicitRollback(t *testing.T) {
+func TestOwnerHandoffGatewayLossRequiresQuiescentCompletion(t *testing.T) {
 	s, _, _, observe := ownerHandoffFixture(t)
 	target := "sha256:" + strings.Repeat("b", 64)
 	drain, err := s.BeginOwnerHandoff(ctx, "gateway-loss", time.Minute, target, s.identity.CompatibilityDigest, observe())
@@ -287,7 +287,7 @@ func TestOwnerHandoffGatewayLossRequiresQuiescentExplicitRollback(t *testing.T) 
 	var name, path string
 	must(t, s.reader.QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &path))
 	identity := s.identity
-	identity.RollbackCandidate = true
+	identity.ExecutableDigest = target
 	must(t, s.Close())
 	s, err = OpenApplication(ctx, path, identity)
 	must(t, err)
@@ -297,15 +297,13 @@ func TestOwnerHandoffGatewayLossRequiresQuiescentExplicitRollback(t *testing.T) 
 	proof := func() GatewayObservation {
 		return GatewayObservation{Started: time.Now(), Registrations: map[string]GatewayRegistration{"model": registration}}
 	}
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, identity.ExecutableDigest, true, proof())
+	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, identity.ExecutableDigest, proof())
 	wantError(t, err, ErrBusy)
 	_, err = s.db.Exec(`UPDATE turns SET state='completed'; UPDATE agent_commands SET state='completed'`)
 	must(t, err)
-	_, err = s.FinishRelease(ctx, drain.Owner, drain.Generation, target, false, proof())
-	wantError(t, err, ErrConflict)
-	finished, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, identity.ExecutableDigest, true, proof())
+	finished, err := s.FinishRelease(ctx, drain.Owner, drain.Generation, identity.ExecutableDigest, proof())
 	must(t, err)
-	if finished.Phase != "open" || finished.Reason != "rolled_back" {
+	if finished.Phase != "open" || finished.Reason != "completed" {
 		t.Fatal(finished)
 	}
 }

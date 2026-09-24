@@ -171,9 +171,8 @@ func (s *Store) ActivateRelease(ctx context.Context, owner string, generation in
 }
 
 // FinishRelease is called only by the replacement application with its measured
-// executable digest. Rollback is explicit and still requires a compatible Store
-// and settled work; it never restores a backup over accepted writes.
-func (s *Store) FinishRelease(ctx context.Context, owner string, generation int64, digest string, rollback bool, proofs ...GatewayObservation) (out ReleaseState, err error) {
+// executable digest. Only the selected target can complete activation.
+func (s *Store) FinishRelease(ctx context.Context, owner string, generation int64, digest string, proofs ...GatewayObservation) (out ReleaseState, err error) {
 	if !content.ValidDigest(digest) || s.instance == "" {
 		return out, ErrInvalid
 	}
@@ -191,10 +190,7 @@ func (s *Store) FinishRelease(ctx context.Context, owner string, generation int6
 			return ErrConflict
 		}
 		reason := "completed"
-		if rollback {
-			reason = "rolled_back"
-		}
-		if !rollback && current.TargetDigest != digest {
+		if current.TargetDigest != digest {
 			return ErrConflict
 		}
 		if current.Phase == "open" && current.Reason == reason && current.FinishedDigest == digest {
@@ -204,7 +200,7 @@ func (s *Store) FinishRelease(ctx context.Context, owner string, generation int6
 		if current.Phase != "activating" {
 			return ErrConflict
 		}
-		if e = s.releaseEligible(ctx, tx, current, proofs, rollback); e != nil {
+		if e = s.releaseEligible(ctx, tx, current, proofs, true); e != nil {
 			return e
 		}
 		_, e = tx.ExecContext(ctx, `UPDATE application_release SET phase='open',deadline='',reason=?,finished_digest=?,updated_at=? WHERE id=1`, reason, digest, s.timestamp())

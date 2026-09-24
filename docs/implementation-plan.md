@@ -1,11 +1,21 @@
 # Navigation, scheduling, and network policy delivery
 
-This work replaces ambiguous route state, the Cron-first schedule editor, and
-startup-only network defaults. No legacy client contract is retained. Existing
-data and durable operation evidence must remain accounted for; removing backward
-compatibility does not authorize deleting user data.
+The original delivery implemented global route isolation, visual scheduling and
+network policy reload. The subsequent destructive reset request replaces its
+migration-preserving database approach with a fresh current-only installation.
+The original sequence below records that work; the follow-up takes precedence.
 
-## Ordered stages
+## Fresh-installation follow-up
+
+The subsequent destructive-reset request supersedes the original preservation
+and migration plan below. The current implementation has one canonical schema,
+no migration chain, no historical schema branches, no migration-only read cleanup,
+and no old-executable rollback override. Deployment replaces legacy application
+and engine state with fresh stores. See [bootstrap](bootstrap.md) and the
+[current contract](compatibility.md). The earlier qualification record describes
+its recorded source only, not the newly rebuilt deployment.
+
+## Original ordered stages
 
 1. **Route isolation.** Normalize routes on parsing, navigation, serialization,
    and history. Give received conversations their own explicit selection and an
@@ -33,7 +43,7 @@ Each implementation stage received a Conventional Commit after its relevant
 checks. Follow-up fixes discovered during qualification were committed separately
 with regression coverage.
 
-## Design constraints
+## Original design constraints
 
 - Global routes never inherit Project selection. Workspace preferences are
   remembered state, not current-page authority.
@@ -111,7 +121,7 @@ The README and affected architecture/API/operations contracts have been correcte
 | Interrupted network updates risk mixed permissions or lost authority | Engine mutation, saved profile and guest DNS had no coordinated update protocol | Complete conditional paused-binding verification, durable target recovery, atomic effective-profile/revision commit and readiness-gated projection |
 | Mutable settings weaken release identity | One digest mixed fixed deployment inputs with network defaults | Fixed compatibility plus an independently checked accepted policy revision; reload is fenced during handoff |
 
-## Delivery boundaries
+## Original delivery boundaries
 
 Schema 15 requires the existing full quiescent activation gate. Older schema
 owners and the retired browser route/schedule contracts are not supported

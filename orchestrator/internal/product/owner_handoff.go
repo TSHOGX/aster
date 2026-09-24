@@ -80,7 +80,7 @@ func (s *Store) BeginOwnerHandoff(ctx context.Context, owner string, timeout tim
 	return s.beginReleaseDrain(ctx, owner, timeout, "owner", target, compatibility, &proof)
 }
 
-func (s *Store) releaseEligible(ctx context.Context, tx *sql.Tx, state ReleaseState, proofs []GatewayObservation, allowGatewayReplacement bool) error {
+func (s *Store) releaseEligible(ctx context.Context, tx *sql.Tx, state ReleaseState, proofs []GatewayObservation, completing bool) error {
 	if state.Mode != "owner" {
 		return s.releaseQuiescent(ctx, tx)
 	}
@@ -99,9 +99,9 @@ func (s *Store) releaseEligible(ctx context.Context, tx *sql.Tx, state ReleaseSt
 		return err
 	}
 	if snapshot != state.gatewaySnapshot {
-		// A lost gateway cannot qualify retained-stream continuity. Explicit
-		// rollback can recover only after every kind of work is fully settled.
-		if allowGatewayReplacement {
+		// A selected replacement can finish after gateway loss only once all
+		// retained work is fully settled; activation still requires continuity.
+		if completing {
 			return s.releaseQuiescent(ctx, tx)
 		}
 		return ErrConflict

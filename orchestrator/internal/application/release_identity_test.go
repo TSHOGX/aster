@@ -71,15 +71,7 @@ func TestCandidateIdentityIsReadOnlyDeterministicAndContainsNoConfiguration(t *t
 			t.Fatal("candidate inspection exposed configuration or content")
 		}
 	}
-	// Rollback acknowledgment is a startup action, not a different runtime ABI.
-	cfg.RollbackCandidate = true
-	rollback, err := InspectRelease(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rollback.CompatibilityDigest != first.CompatibilityDigest {
-		t.Fatal("rollback flag changed compatibility")
-	}
+
 }
 
 func TestCandidateCompatibilityTracksConfigurationAndReviewedBytes(t *testing.T) {

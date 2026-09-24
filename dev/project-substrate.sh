@@ -9,11 +9,7 @@ if [[ ${1:-} == --inner ]]; then
  [[ $(readlink /proc/self/ns/mnt) != "$PROJECT_TEST_HOST_NS" ]] || exit 2
  mount --bind "$PROJECT_TEST_TEMPLATE" "$base/templates/battery"
  mount -o remount,bind,ro "$base/templates/battery"
- if [[ -n ${PROJECT_TEST_TEMPLATE_CANDIDATE:-} ]]; then
-  mkdir -p "$base/templates/battery-candidate"
-  mount --bind "$PROJECT_TEST_TEMPLATE_CANDIDATE" "$base/templates/battery-candidate"
-  mount -o remount,bind,ro "$base/templates/battery-candidate"
- fi
+
  mount -t tmpfs tmpfs /run
  ip link set lo up
  ip link add spike0 type dummy

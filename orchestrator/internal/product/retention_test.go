@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -125,38 +124,6 @@ func TestDisplayRetentionBytePressureAndObsoleteDetails(t *testing.T) {
 		t.Fatal("current output lost")
 	}
 	t.Logf("29 MiB cumulative snapshots: retained_changes=%d retained_bytes=%d orphan_versions=%d", count, bytes, orphan)
-}
-
-func TestRetiredReadMigrationPreservesCleanupAndUnknownWrites(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "product.db")
-	db := baselineDatabase(t, path)
-	for _, id := range []string{"finished-read", "orphan-read", "uncertain-write"} {
-		op, settled := "read", 0
-		if id == "finished-read" {
-			settled = 1
-		}
-		if id == "uncertain-write" {
-			op = "write"
-		}
-		request := fmt.Sprintf(`{"operation":%q,"path":"private-path"}`, op)
-		_, err := db.Exec(`INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error,created_at,updated_at) VALUES(?,'p',?,'store','sandbox',1,?,'unknown',?,'','now','now')`, id, request, id, settled)
-		must(t, err)
-	}
-	must(t, db.Close())
-	s, err := Open(ctx, path)
-	must(t, err)
-	defer s.Close()
-	var mutations, cleanup int
-	must(t, s.reader.QueryRow(`SELECT count(*) FROM file_operations WHERE id='uncertain-write' AND state='unknown' AND settled=0`).Scan(&mutations))
-	must(t, s.reader.QueryRow(`SELECT count(*) FROM workspace_reader_retirements WHERE project_id='p' AND handle='orphan-read'`).Scan(&cleanup))
-	if mutations != 1 || cleanup != 1 {
-		t.Fatal(mutations, cleanup)
-	}
-	var old int
-	must(t, s.reader.QueryRow(`SELECT count(*) FROM file_operations WHERE json_extract(request,'$.operation')='read'`).Scan(&old))
-	if old != 0 {
-		t.Fatal("read command remnant")
-	}
 }
 
 func TestOutboxRetentionCountsActualRowsAndBoundsEachPrune(t *testing.T) {

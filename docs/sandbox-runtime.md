@@ -67,7 +67,7 @@ while a guest holds the volume writable to avoid incoherent gofer caches. Active
 mutations therefore retain the guest helper. Paused uploads verify length and
 SHA-256 in unnamed host staging, import to a unique recorded temporary path, and
 rename into place only after a complete import. An explicit quota failure reclaims staging and leaves the destination intact;
-a partial import never replaces the destination. Schema 13 records volume authority separately from process
+a partial import never replaces the destination. The schema records volume authority separately from process
 authority. Lost direct-operation replies remain unknown and are not replayed;
 unknown volume mutations block further mutations and resume pending operator
 recovery. Guest-process exit alone cannot settle them. Local file mutations

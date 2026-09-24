@@ -200,11 +200,6 @@ func TestNetworkPolicyFencedDuringHandoffAndCheckedBeforeWriter(t *testing.T) {
 		rejected.Close()
 		t.Fatal("stale policy candidate acquired writer")
 	}
-	identity.RollbackCandidate = true
-	if rejected, err := OpenApplication(ctx, path, identity); err == nil {
-		rejected.Close()
-		t.Fatal("rollback bypassed policy check")
-	}
 	identity.NetworkPolicyRevision = first.Revision
 	s, err = OpenApplication(ctx, path, identity)
 	must(t, err)

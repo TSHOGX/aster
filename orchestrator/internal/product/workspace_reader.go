@@ -99,9 +99,6 @@ func (w *WorkspaceReader) saved(ctx context.Context, project string) (sandbox.Pr
 }
 func (w *WorkspaceReader) forget(ctx context.Context, project, handle string) error {
 	return w.Store.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_reader_retirements WHERE project_id=? AND handle=?`, project, handle); err != nil {
-			return err
-		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM workspace_readers WHERE project_id=? AND handle=?`, project, handle)
 		return err
 	})
@@ -551,19 +548,18 @@ func (w *WorkspaceReader) Reconcile(ctx context.Context) error {
 	cursor := w.cleanupCursor
 	handle := w.cleanupHandle
 	w.mu.Unlock()
-	rows, err := w.Store.reader.QueryContext(ctx, `SELECT project_id,store_id,sandbox_id,epoch,handle,retired FROM (SELECT project_id,store_id,sandbox_id,epoch,handle,0 AS retired FROM workspace_readers UNION ALL SELECT project_id,store_id,sandbox_id,epoch,handle,1 FROM workspace_reader_retirements) WHERE (project_id,handle)>(?,?) ORDER BY project_id,handle LIMIT 32`, cursor, handle)
+	rows, err := w.Store.reader.QueryContext(ctx, `SELECT project_id,store_id,sandbox_id,epoch,handle FROM workspace_readers WHERE (project_id,handle)>(?,?) ORDER BY project_id,handle LIMIT 32`, cursor, handle)
 	if err != nil {
 		return err
 	}
 	type saved struct {
 		project string
 		ref     sandbox.ProcessReference
-		retired bool
 	}
 	list := []saved{}
 	for rows.Next() {
 		var row saved
-		if err = rows.Scan(&row.project, &row.ref.StoreID, &row.ref.SandboxID, &row.ref.Epoch, &row.ref.Handle, &row.retired); err != nil {
+		if err = rows.Scan(&row.project, &row.ref.StoreID, &row.ref.SandboxID, &row.ref.Epoch, &row.ref.Handle); err != nil {
 			break
 		}
 		list = append(list, row)
@@ -598,7 +594,7 @@ func (w *WorkspaceReader) Reconcile(ctx context.Context) error {
 			delete(w.entries, row.project)
 		}
 		w.mu.Unlock()
-		if !active || row.retired {
+		if !active {
 			failures = append(failures, w.retire(ctx, row.project, row.ref))
 		}
 	}

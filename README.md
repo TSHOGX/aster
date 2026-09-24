@@ -27,8 +27,7 @@ See the [architecture](docs/architecture.md), [development guide](docs/developme
 Image assembly and real runtime verification require a disposable Linux builder
 with the [documented substrate](docs/sandbox-image.md).
 
-The supported deployment has one authoritative application owner. Known database
-schemas migrate under the exclusive startup/activation gate; unknown schemas are
-refused. Khora is the sole execution backend.
+The supported deployment has one authoritative application owner. Only the exact current database schema can reopen; fresh databases initialize
+atomically and historical schemas are refused without migration. Khora is the sole execution backend.
 Keep credentials, deployment inventories, databases and operational evidence out
 of source control; see the [publication boundary](docs/delivery/privacy.md).

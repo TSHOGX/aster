@@ -179,28 +179,26 @@ func (a *Application) controlHandler() http.Handler {
 		writeControl(w, state)
 		a.retireAfterActivation()
 	})
-	for _, action := range []string{"complete", "rollback"} {
-		mux.HandleFunc("POST /release/"+action, func(w http.ResponseWriter, r *http.Request) {
-			var body struct {
-				Owner      string `json:"owner"`
-				Generation int64  `json:"generation"`
-			}
-			if !decodeControl(w, r, &body) {
-				return
-			}
-			proofs, observeErr := a.releaseObservation(r.Context())
-			if observeErr != nil {
-				http.Error(w, observeErr.Error(), 409)
-				return
-			}
-			state, err := a.Store.FinishRelease(r.Context(), body.Owner, body.Generation, a.releaseIdentity.ExecutableDigest, action == "rollback", proofs...)
-			if err != nil {
-				http.Error(w, err.Error(), 409)
-				return
-			}
-			writeControl(w, state)
-		})
-	}
+	mux.HandleFunc("POST /release/complete", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Owner      string `json:"owner"`
+			Generation int64  `json:"generation"`
+		}
+		if !decodeControl(w, r, &body) {
+			return
+		}
+		proofs, observeErr := a.releaseObservation(r.Context())
+		if observeErr != nil {
+			http.Error(w, observeErr.Error(), 409)
+			return
+		}
+		state, err := a.Store.FinishRelease(r.Context(), body.Owner, body.Generation, a.releaseIdentity.ExecutableDigest, proofs...)
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		writeControl(w, state)
+	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		report, err := a.Store.OperatorDiagnostics(r.Context())
 		if err != nil {

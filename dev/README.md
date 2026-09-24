@@ -12,7 +12,7 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `gateway`, `native`, `provider`, `rollback`, `infrastructure`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
@@ -66,50 +66,6 @@ short output, authority expiry, retries or missing native completion fail the ga
 See the [Chat Completions API reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 for the compatible streaming request shape; provider-specific access and behavior
 must be qualified by the run itself.
-
-
-## Retained-revision rollback
-
-Build the prior compatible revision in a clean isolated checkout, stamping its
-actual revision explicitly (some Go/worktree combinations omit automatic VCS
-metadata):
-
-```sh
-CGO_ENABLED=0 go -C /srv/build/prior/orchestrator build -trimpath -ldflags='-X main.commit=FULL_PRIOR_COMMIT' -o /srv/qualification/prior-owner ./cmd/orchestrator
-PROJECT_ROLLBACK_BINARY=/srv/qualification/prior-owner dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/rollback-run --suite rollback
-```
-
-The opt-in `rollback` suite starts the retained owner, upgrades to the current
-candidate, accepts new native turns/held intent/file bytes, then explicitly rolls
-back to the retained executable. Both gateway executables are exercised through
-gated replacement in each direction. The test verifies running executable digests,
-source revision declarations, preserved accepted data and subsequent native work.
-It never restores a database backup.
-
-To qualify the current client against that retained owner, run `--suite browser`
-with `PROJECT_BROWSER_OWNER_BINARY=/srv/qualification/prior-owner`. The production
-frontend build and browser prerequisites remain the same as the ordinary browser
-gate. See the [compatibility matrix](../docs/compatibility.md) for the recorded pair
-and the limits of that evidence.
-
-
-## Engine artifact and template-default rollback
-
-Provide a second newly assembled immutable template and manifest with the same
-supported native/reader protocols but different reviewed bytes:
-
-```sh
-PROJECT_TEMPLATE_CANDIDATE=/srv/build/candidate PROJECT_TEMPLATE_CANDIDATE_MANIFEST=/srv/build/candidate.manifest.json dev/verify-khora.sh --template /srv/build/original --manifest /srv/build/original.manifest.json --output /srv/qualification/infrastructure-run --suite infrastructure
-```
-
-This opt-in suite mounts both templates read-only and builds a second artifact of
-the pinned engine revision. It waits for placement and Agent settlement, closes
-admission, retires the owner, replaces the engine on its original persistent store,
-and changes the default template. The reverse sequence restores the original
-engine artifact/default. It verifies eight accepted native turns, workspace bytes
-and immutable bindings for Projects created under both defaults. An unrelated
-engine revision is not made compatible by this test. Existing application templates
-must not be edited to prepare a candidate; use a fresh isolated image assembly.
 
 
 Run the opt-in combined browser/native workload with the same production frontend

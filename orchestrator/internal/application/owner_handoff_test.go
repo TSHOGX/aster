@@ -42,7 +42,7 @@ func TestCompletedOwnerHandoffRetryDoesNotDependOnCurrentGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err = store.FinishRelease(ctx, drain.Owner, drain.Generation, target, false, proof()); err != nil {
+	if _, err = store.FinishRelease(ctx, drain.Owner, drain.Generation, target, proof()); err != nil {
 		t.Fatal(err)
 	}
 	// No gateway listener exists now. The durable completed result is still the
