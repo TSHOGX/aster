@@ -302,13 +302,21 @@ test("Project agents, retained terminals and Files through the Go edge", async (
   await page
     .getByRole("button", { name: "large-preview.md", exact: true })
     .click();
-  const plain = page.locator(".file-markdown .markdown-plain");
-  await expect(plain).toContainText("Complete large document.");
+  const plain = page.locator(".preview-text-page code");
+  await expect(plain).toContainText("# Large Markdown");
   const completeMarkdown =
     "# Large Markdown\n\n" +
     "| Sample | Value |\n| --- | --- |\n| A | 100 |\n\n".repeat(20000) +
     "\nComplete large document.\n";
-  expect(await plain.textContent()).toBe(completeMarkdown);
+  let reconstructed = "";
+  const sectionSize = 64 * 1024;
+  for (let offset = 0; offset < completeMarkdown.length; offset += sectionSize) {
+    await expect(plain).toHaveText(completeMarkdown.slice(offset, offset + sectionSize));
+    reconstructed += await plain.textContent();
+    if (offset + sectionSize < completeMarkdown.length)
+      await page.getByRole("button", { name: "Next section", exact: true }).click();
+  }
+  expect(reconstructed).toBe(completeMarkdown);
   await page.getByRole("button", { name: "File actions", exact: true }).click();
   const largeDownload = page.waitForEvent("download");
   await page.getByRole("menuitem", { name: "Download", exact: true }).click();
