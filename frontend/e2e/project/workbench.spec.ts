@@ -368,6 +368,47 @@ test("Project agents, retained terminals and Files through the Go edge", async (
   expect((await fresh.json()).incarnation).not.toBe(priorIncarnation);
 });
 
+test("held queue prompt Steers into the active native run", async ({ page, context }) => {
+  await login(page);
+  const origin = new URL(process.env.PROJECT_BROWSER_URL!).origin;
+  const project = "browser-queued-steer";
+  const headers = { Origin: origin };
+  const created = await context.request.post("/api/projects", { headers, data: { id: project, title: "Queued guidance" } });
+  expect(created.status()).toBe(201);
+  try {
+    await page.goto(`/?project=${project}`);
+    const newMessage = page.getByLabel("New message", { exact: true });
+    await expect(newMessage).toBeVisible();
+    await newMessage.fill("long-for-owner-handoff");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    const panel = page.locator(".agent-panel");
+    await expect(panel.getByRole("button", { name: "Stop current task", exact: true })).toBeVisible();
+    await panel.locator("textarea").fill("second question");
+    await panel.getByRole("button", { name: "Conversation actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Hold prompt", exact: true }).click();
+    const queue = panel.locator(".prompt-queue").last();
+    await expect(queue).toBeVisible();
+    await queue.locator("summary").click();
+    const row = queue.locator(".prompt-queue-row").filter({ hasText: "second question" });
+    await expect(row.getByRole("button", { name: /Steer: second question/ })).toBeEnabled();
+    await expect(panel.locator(".chat-message.user").filter({ hasText: "second question" })).toHaveCount(0);
+    const sessionID = await panel.getAttribute("data-session-id");
+    const admitted = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/sessions/${sessionID}/control`));
+    await row.getByRole("button", { name: /Steer: second question/ }).click();
+    const receipt = await admitted;
+    expect(receipt.status()).toBe(202);
+    expect((await receipt.json()).delivery_id).toBeTruthy();
+    const anchor = panel.locator(".chat-message.user").filter({ hasText: "second question" });
+    await expect(anchor).toHaveCount(1, { timeout: 30000 });
+    await expect(row).toHaveCount(0, { timeout: 30000 });
+    await expect(panel.locator(".chat-message.assistant").last()).toContainText("deterministic-local-reply");
+  } finally {
+    const current = await context.request.get(`/api/projects/${project}`);
+    const revision = (await current.json()).revision;
+    expect((await context.request.delete(`/api/projects/${project}?revision=${revision}`, { headers })).status()).toBe(202);
+  }
+});
+
 test.describe("Chinese workbench", () => {
   test.use({ locale: "zh-CN" });
   test("localized login and Project navigation", async ({ page }) => {

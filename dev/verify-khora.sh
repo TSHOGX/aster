@@ -109,7 +109,7 @@ if [[ $suite == native ]]; then run application '^(TestReleasedNativeRetrySettle
 if [[ $suite == provider ]]; then run application '^TestReleasedRealProviderHandoff$' provider 5m;fi
 if [[ $suite == mixed || $suite == all ]]; then run application '^TestReleasedMixedWorkload$' mixed 9m;fi
 if [[ $suite == combined ]]; then run application '^TestReleasedCombinedWorkload$' combined 10m;fi
-if [[ $suite == browser || $suite == all ]]; then run application '^TestReleasedBrowser$' browser 6m;fi
+if [[ $suite == browser || $suite == all ]]; then run application '^(TestReleasedBrowser|TestReleasedQueueBrowser)$' browser 7m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi
 if [[ $suite == faults || $suite == all ]]; then
  run product '^(TestProjectLifecycleOnKhora|TestGoAgentRunnersOnKhora|TestProjectFilesOnKhora|TestProjectTerminalsOnKhora)$' product 12m

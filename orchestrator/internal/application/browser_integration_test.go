@@ -14,7 +14,15 @@ import (
 func TestReleasedBrowser(t *testing.T) {
 	// The coordinated native fixture responds only after two model requests and
 	// supports streaming interruption. It lives outside the released guest image.
-	t.Setenv("PROJECT_RELEASE_MODEL_MODE", "model")
+	runReleasedBrowser(t, "model")
+}
+
+func TestReleasedQueueBrowser(t *testing.T) {
+	runReleasedBrowser(t, "model-independent", "--grep", "held queue prompt Steers into the active native run")
+}
+
+func runReleasedBrowser(t *testing.T, mode string, selection ...string) {
+	t.Setenv("PROJECT_RELEASE_MODEL_MODE", mode)
 	a := newReleasedApp(t)
 	repo := os.Getenv("PROJECT_TEST_REPO")
 	if repo == "" {
@@ -36,7 +44,8 @@ func TestReleasedBrowser(t *testing.T) {
 		r.Body.Close()
 		return r.StatusCode == 200
 	})
-	browser := exec.CommandContext(a.ctx, "node", filepath.Join(repo, "frontend/node_modules/@playwright/test/cli.js"), "test", "--config", "playwright.config.ts")
+	args := append([]string{filepath.Join(repo, "frontend/node_modules/@playwright/test/cli.js"), "test", "--config", "playwright.config.ts"}, selection...)
+	browser := exec.CommandContext(a.ctx, "node", args...)
 	browser.Dir = filepath.Join(repo, "frontend")
 	browser.Env = append(os.Environ(), "PROJECT_BROWSER_URL="+a.origin, "PROJECT_BROWSER_SCREENSHOT="+filepath.Join(os.Getenv("PROJECT_TEST_OUTPUT"), "workbench.png"))
 	output, err := browser.CombinedOutput()
