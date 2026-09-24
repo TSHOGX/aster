@@ -117,7 +117,7 @@ func blockers(ctx context.Context, q queryer, project string) ([]Blocker, error)
 	// Terminal owns no process and must not pin anything, while a running PTY pins
 	// even when it is silent and every browser has detached.
 	rows, err := q.QueryContext(ctx, `
- SELECT 'turn',id,state FROM turns WHERE project_id=? AND ((disposition='pending' AND queue_policy='released') OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.prompt_id=turns.id AND r.state IN ('starting','running','stopping')))
+ SELECT 'turn',id,CASE WHEN disposition='pending' THEN 'queued' ELSE 'running' END FROM turns WHERE project_id=? AND ((disposition='pending' AND queue_policy='released') OR EXISTS(SELECT 1 FROM execution_runs r WHERE r.prompt_id=turns.id AND r.state IN ('starting','running','stopping')))
  UNION ALL SELECT 'terminal_process',id,state FROM terminal_incarnations WHERE project_id=? AND state IN ('starting','running')
  UNION ALL SELECT kind,id,detail FROM project_activity WHERE project_id=? AND state<>'complete'
  UNION ALL SELECT 'agent_process',id,state FROM agent_incarnations WHERE project_id=? AND state IN ('starting','stopping','unknown')

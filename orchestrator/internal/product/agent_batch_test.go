@@ -27,7 +27,7 @@ func TestAgentIngestBatchRollsBackAllRecordsAndReturnsNoACKOnFailure(t *testing.
 	}
 	var commandState, turnState string
 	must(t, s.reader.QueryRow(`SELECT state FROM agent_commands WHERE id=?`, c.CommandID).Scan(&commandState))
-	must(t, s.reader.QueryRow(`SELECT state FROM turns WHERE id=?`, c.TurnID).Scan(&turnState))
+	must(t, s.reader.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, c.TurnID).Scan(&turnState))
 	if commandState == "applied" || turnState == "running" {
 		t.Fatal("failed batch leaked applied effects", commandState, turnState)
 	}

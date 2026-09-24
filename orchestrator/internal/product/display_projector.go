@@ -591,7 +591,14 @@ func (d *displayReducer) summaries() error {
 	if _, err := d.tx.ExecContext(d.ctx, `INSERT OR IGNORE INTO conversation_dirty_turns SELECT session_id,prompt_id FROM conversation_segment_inputs WHERE session_id=? AND segment_id IN (SELECT id FROM conversation_segments WHERE session_id=? AND run_id IN (SELECT command_id FROM agent_records r JOIN conversation_sources c ON c.incarnation_id=r.incarnation_id AND c.sequence=r.sequence WHERE c.session_id=? AND c.source_id>? AND c.source_id<=?))`, d.session, d.session, d.session, d.batchStart, d.p.Source); err != nil {
 		return err
 	}
-	rows, err := d.tx.QueryContext(d.ctx, `SELECT t.id,t.sequence,t.state,coalesce((SELECT min(consumed_at) FROM input_deliveries WHERE prompt_id=t.id AND state='consumed' AND consumed_at<>''),''),t.updated_at,coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') FROM conversation_dirty_turns d JOIN turns t ON t.id=d.turn_id AND t.session_id=d.session_id WHERE d.session_id=? ORDER BY t.sequence LIMIT 64`, d.session)
+	rows, err := d.tx.QueryContext(d.ctx, `SELECT t.id,t.sequence,
+ CASE t.disposition WHEN 'pending' THEN CASE t.queue_policy WHEN 'held' THEN 'held' ELSE 'queued' END
+ WHEN 'claimed' THEN coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END FROM execution_runs r WHERE r.prompt_id=t.id ORDER BY r.started_at DESC,r.id DESC LIMIT 1),'claimed')
+ WHEN 'canceled' THEN 'canceled'
+ ELSE coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END FROM input_deliveries x JOIN execution_runs r ON r.id=x.run_id WHERE x.prompt_id=t.id AND x.state='consumed' ORDER BY x.acceptance_sequence DESC LIMIT 1),'consumed') END,
+ coalesce((SELECT min(consumed_at) FROM input_deliveries WHERE prompt_id=t.id AND state='consumed' AND consumed_at<>''),''),t.updated_at,
+ coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'')
+ FROM conversation_dirty_turns d JOIN turns t ON t.id=d.turn_id AND t.session_id=d.session_id WHERE d.session_id=? ORDER BY t.sequence LIMIT 64`, d.session)
 	if err != nil {
 		return err
 	}

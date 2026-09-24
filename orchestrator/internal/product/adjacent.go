@@ -167,7 +167,7 @@ func (s *Store) GenerateTitles(ctx context.Context, generator TitleGenerator, li
 	if limit < 1 || limit > 32 {
 		limit = 32
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT s.id,s.project_id,(SELECT substr(content,1,4096) FROM turns t WHERE t.session_id=s.id AND t.state NOT IN ('held','canceled') ORDER BY sequence LIMIT 1) FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.title_source='pending' AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.state NOT IN ('held','canceled')) ORDER BY s.created_at,s.id LIMIT ?`, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT s.id,s.project_id,(SELECT substr(content,1,4096) FROM turns t WHERE t.session_id=s.id AND (t.disposition IN ('claimed','consumed') OR (t.disposition='pending' AND t.queue_policy='released')) ORDER BY sequence LIMIT 1) FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.title_source='pending' AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND (t.disposition IN ('claimed','consumed') OR (t.disposition='pending' AND t.queue_policy='released'))) ORDER BY s.created_at,s.id LIMIT ?`, pageSize(limit))
 	if err != nil {
 		return 0, err
 	}

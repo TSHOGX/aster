@@ -38,7 +38,7 @@ func TestUndeliveredAbortEscalatesOnlyItsGuardianAfterGrace(t *testing.T) {
 		t.Fatal("stop not scoped to original guardian", backend.signals)
 	}
 	var state string
-	must(t, s.reader.QueryRow(`SELECT state FROM turns WHERE id=?`, c.TurnID).Scan(&state))
+	must(t, s.reader.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, c.TurnID).Scan(&state))
 	if state != "stopping" {
 		t.Fatal("signal fabricated a settled outcome", state)
 	}
@@ -148,7 +148,7 @@ func TestFailedInitialSyncRecoversMissingGuardianWithoutSuccess(t *testing.T) {
 	if state != "exited" || recovery != "pending" {
 		t.Fatal(state, recovery)
 	}
-	must(t, s.reader.QueryRow(`SELECT state FROM turns WHERE id=?`, c.TurnID).Scan(&state))
+	must(t, s.reader.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, c.TurnID).Scan(&state))
 	if state != "unknown" {
 		t.Fatal("missing guardian fabricated completion", state)
 	}

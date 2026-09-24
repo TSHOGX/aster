@@ -222,7 +222,7 @@ type ScheduleRun struct {
 	State      string `json:"state"`
 }
 
-const runColumns = `r.id,r.schedule_id,r.project_id,r.session_id,r.turn_id,r.request_id,r.due_at,t.state`
+const runColumns = `r.id,r.schedule_id,r.project_id,r.session_id,r.turn_id,r.request_id,r.due_at,CASE t.disposition WHEN 'pending' THEN CASE t.queue_policy WHEN 'held' THEN 'held' ELSE 'queued' END WHEN 'canceled' THEN 'canceled' ELSE coalesce((SELECT CASE x.state WHEN 'settled' THEN x.outcome ELSE x.state END FROM input_deliveries d JOIN execution_runs x ON x.id=d.run_id WHERE d.prompt_id=t.id ORDER BY d.acceptance_sequence DESC LIMIT 1),t.disposition) END`
 
 func scanScheduleRun(row scanner) (r ScheduleRun, err error) {
 	err = missing(row.Scan(&r.ID, &r.ScheduleID, &r.ProjectID, &r.SessionID, &r.TurnID, &r.RequestID, &r.DueAt, &r.State))

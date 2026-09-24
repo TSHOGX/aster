@@ -83,7 +83,7 @@ func TestProjectChildrenAndImmutableOwnership(t *testing.T) {
 		`UPDATE terminals SET project_id='b' WHERE id='t0'`,
 		`INSERT INTO events(project_id,session_id,revision,kind,created_at) VALUES('b','s0',1,'invalid','now')`,
 		`INSERT INTO events(project_id,terminal_id,revision,kind,created_at) VALUES('b','t0',1,'invalid','now')`,
-		`INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,state,sequence,created_at,updated_at) VALUES('bad','b','s0','bad','bad',0,'queued',1,'now','now')`,
+		`INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,sequence,created_at,updated_at) VALUES('bad','b','s0','bad','bad',0,1,'now','now')`,
 	} {
 		if _, err := s.db.Exec(statement); err == nil {
 			t.Fatalf("ownership violation accepted: %s", statement)

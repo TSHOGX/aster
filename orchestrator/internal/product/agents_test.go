@@ -143,13 +143,13 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 	steer, err := s.agentCommand(ctx, i)
 	must(t, err)
 	var state string
-	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	must(t, s.db.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, source.ID).Scan(&state))
 	if state != "claimed" {
 		t.Fatal("send retired steering source")
 	}
 	_, err = s.IngestAgent(ctx, i, record(i, steer, 2, "command.applied", `{"success":true}`))
 	must(t, err)
-	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	must(t, s.db.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, source.ID).Scan(&state))
 	if state != "claimed" {
 		t.Fatal(state)
 	}
@@ -157,7 +157,7 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 	must(t, s.db.QueryRow(`SELECT input_token FROM input_deliveries WHERE command_id=?`, steer.CommandID).Scan(&token))
 	_, err = s.IngestAgent(ctx, i, record(i, c, 3, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q,"occurred_at":"2026-09-24T00:00:01Z"}`, token, c.CommandID)))
 	must(t, err)
-	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	must(t, s.db.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, source.ID).Scan(&state))
 	if state != "running" {
 		t.Fatal("consumption did not preserve active execution", state)
 	}

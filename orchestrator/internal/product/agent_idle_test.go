@@ -33,7 +33,7 @@ func TestIdleAgentQuiescencePreservesNewlyAdmittedQueue(t *testing.T) {
 	turn, err := s.AdmitTurn(ctx, scope, i.SessionID, "arrived-during-idle-stop", "new work", false)
 	must(t, err)
 	agents.recordExit(ctx, i, 0)
-	must(t, s.reader.QueryRow(`SELECT state FROM turns WHERE id=?`, turn.ID).Scan(&state))
+	must(t, s.reader.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, turn.ID).Scan(&state))
 	if state != "queued" {
 		t.Fatal("idle shutdown parked admitted work", state)
 	}

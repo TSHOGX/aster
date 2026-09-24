@@ -235,12 +235,8 @@ func TestNotificationPagingKeepsNewestFirstAndCountsAudience(t *testing.T) {
 }
 
 func TestNotificationTracksResolvedNativeOutcome(t *testing.T) {
-	s, scope, _ := fixture(t)
-	_, err := s.CreateSession(ctx, scope, "agent", "Agent")
-	must(t, err)
-	turn, err := s.AdmitTurn(ctx, scope, "agent", "request", "work", false)
-	must(t, err)
-	_, err = s.db.Exec(`UPDATE turns SET state='unknown' WHERE id=?`, turn.ID)
+	s, scope, _, command := agentFixture(t)
+	_, err := s.db.Exec(`UPDATE execution_runs SET state='unknown' WHERE id=?`, command.CommandID)
 	must(t, err)
 	notices, err := s.Notifications(ctx, scope.Actor, "", 100)
 	must(t, err)
@@ -248,7 +244,7 @@ func TestNotificationTracksResolvedNativeOutcome(t *testing.T) {
 		t.Fatal(notices)
 	}
 	must(t, s.ReadNotification(ctx, scope.Actor, notices[0].ID))
-	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, turn.ID)
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='settled',outcome='completed' WHERE id=?`, command.CommandID)
 	must(t, err)
 	notices, err = s.Notifications(ctx, scope.Actor, "", 100)
 	must(t, err)

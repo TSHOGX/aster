@@ -99,7 +99,7 @@ func TestInputsReconciledRestoresUnconsumedDeliveryToHeld(t *testing.T) {
 	if state != "removed" {
 		t.Fatal(state)
 	}
-	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	must(t, s.db.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, source.ID).Scan(&state))
 	if state != "held" {
 		t.Fatal("removed input became dispatchable", state)
 	}
@@ -128,7 +128,7 @@ func TestReleasedPromptCanBeClaimedBySteerBeforeOrdinaryDispatch(t *testing.T) {
 		t.Fatal("ordinary dispatch won after Steer claim", steer.TurnID)
 	}
 	var state string
-	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	must(t, s.db.QueryRow(`SELECT `+promptStatus+` FROM turns WHERE id=?`, source.ID).Scan(&state))
 	if state != "claimed" {
 		t.Fatal("source remained ordinarily dispatchable", state)
 	}

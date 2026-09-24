@@ -1,6 +1,6 @@
 # Prompt/run lifecycle dependency inventory
 
-Source baseline: `ca4e587`. This is the P1 change inventory for the prompt/run split in the queued-prompts specification. The references below are current code, not the proposed contract. Search scope was non-test Go and SQL under `orchestrator/internal/product`; tests that directly mutate `turns.state` must be updated with each affected owner.
+Source baseline: `ca4e587`. The table below is the historical P1 change inventory for the prompt/run split in the queued-prompts specification. The current disposition appears after the table.
 
 | Current owner or consumer | Current dependencies | Required destination |
 | --- | --- | --- |
@@ -31,3 +31,5 @@ The inventory above records the earlier baseline. Current prompt admission/mutat
 Remaining `turns.state` reads are compatibility display/status consumers (head/summary/schedule/title/history), not execution admission. Its direct normal-dispatch assignment is a display cache update after the transactional claim. New control DTOs use prompt revision and exact run/incarnation/owner; the session-revision Go wrappers remain internal adapters. See [the current handoff](../private/queued-prompts-analysis-20260924/07-implementation-handoff.md) for the explicit remaining native qualification, client-frontier and format-transition prerequisites.
 
 The session-revision Go wrappers mentioned above were removed in the exact-control cleanup stage. Test calls now use the prompt revision or exact run fence directly. The `turns.state` display cache and its remaining consumers are still pending removal.
+
+The derived-status stage removed `turns.state` from the fresh schema. `turns.go` derives the public prompt status from policy, disposition and correlated runs. Run transitions own terminal notifications and active display status; prompt changes own queue refresh revisions. Schedule, activity, title, summary and navigation queries no longer read the former column. Tests that previously wrote turn state now use run or explicit segment evidence. The earlier rows remain as an audit of the dependencies that were replaced, not as a description of the current schema.

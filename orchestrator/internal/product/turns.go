@@ -8,8 +8,16 @@ import (
 	"github.com/google/uuid"
 )
 
-const turnColumns = `id,project_id,session_id,request_id,content,initially_held,prompt_revision,queue_policy,disposition,state,sequence,created_at,updated_at`
-const queueColumns = `id,project_id,session_id,request_id,substr(content,1,4096),initially_held,prompt_revision,queue_policy,disposition,state,sequence,created_at,updated_at`
+const promptStatus = `CASE turns.disposition
+ WHEN 'pending' THEN CASE turns.queue_policy WHEN 'held' THEN 'held' ELSE 'queued' END
+ WHEN 'claimed' THEN coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
+  FROM execution_runs r WHERE r.prompt_id=turns.id ORDER BY r.started_at DESC,r.id DESC LIMIT 1),'claimed')
+ WHEN 'canceled' THEN 'canceled'
+ ELSE coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
+  FROM input_deliveries d JOIN execution_runs r ON r.id=d.run_id
+  WHERE d.prompt_id=turns.id AND d.state='consumed' ORDER BY d.acceptance_sequence DESC LIMIT 1),'consumed') END`
+const turnColumns = `id,project_id,session_id,request_id,content,initially_held,prompt_revision,queue_policy,disposition,` + promptStatus + `,sequence,created_at,updated_at`
+const queueColumns = `id,project_id,session_id,request_id,substr(content,1,4096),initially_held,prompt_revision,queue_policy,disposition,` + promptStatus + `,sequence,created_at,updated_at`
 
 func scanTurn(row scanner) (t Turn, err error) {
 	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt))
@@ -70,7 +78,7 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 		}
 		now := s.timestamp()
 		id := uuid.NewString()
-		_, err = tx.ExecContext(ctx, `INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,queue_policy,state,sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM turns WHERE session_id=?),?,?)`, id, scope.ProjectID, session, request, content, held, map[bool]string{true: "held", false: "released"}[held], state, session, now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,queue_policy,sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM turns WHERE session_id=?),?,?)`, id, scope.ProjectID, session, request, content, held, map[bool]string{true: "held", false: "released"}[held], session, now, now)
 		if err != nil {
 			return err
 		}

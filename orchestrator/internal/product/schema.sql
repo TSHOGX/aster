@@ -504,7 +504,6 @@ CREATE TABLE turns (
  prompt_revision INTEGER NOT NULL DEFAULT 1 CHECK(prompt_revision>0),
  queue_policy TEXT NOT NULL DEFAULT 'released' CHECK(queue_policy IN ('held','released')),
  disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','canceled')),
- state TEXT NOT NULL CHECK(state IN ('held','queued','claimed','consumed','starting','running','stopping','completed','failed','canceled','unknown')),
  sequence INTEGER NOT NULL CHECK(sequence>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
@@ -515,7 +514,8 @@ CREATE TABLE turns (
 );
 
 -- Prompt intent, execution, native delivery and mutation receipt are separate
--- authorities. `turns.state` is compatibility display metadata only.
+-- authorities. Prompt status is derived at read time from policy, disposition
+-- and correlated run evidence.
 -- Execution guards use runs; admission uses policy/disposition and claims.
 CREATE TABLE execution_runs (
  id TEXT PRIMARY KEY CHECK(id<>''),
@@ -699,7 +699,7 @@ CREATE INDEX terminal_incarnations_project ON terminal_incarnations(project_id,s
 
 CREATE INDEX terminals_project ON terminals(project_id,created_at,id);
 
-CREATE INDEX turns_pending ON turns(project_id,state,session_id,sequence);
+CREATE INDEX turns_pending ON turns(project_id,disposition,queue_policy,session_id,sequence);
 
 CREATE VIEW owner_handoff_blockers AS
 SELECT b.kind,b.id FROM release_blockers b WHERE
@@ -820,13 +820,16 @@ CREATE TRIGGER index_message_insert AFTER INSERT ON messages BEGIN
  INSERT INTO message_search(rowid,content) VALUES(NEW.rowid,NEW.content);
 END;
 
-CREATE TRIGGER notify_turn_outcome AFTER UPDATE OF state ON turns
-WHEN NEW.state IN ('completed','failed','canceled','unknown') AND NEW.state<>OLD.state
+CREATE TRIGGER notify_run_outcome AFTER UPDATE OF state,outcome ON execution_runs
+WHEN (NEW.state='settled' OR NEW.state IN ('failed','unknown')) AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome)
 BEGIN
  INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
- SELECT 'turn/'||NEW.id,owner_id,NEW.project_id,NEW.session_id,'Agent turn '||NEW.state,'Open the conversation to inspect the outcome.',NEW.updated_at FROM projects WHERE id=NEW.project_id AND state NOT IN ('deleting','deleted')
+ SELECT 'turn/'||t.id,p.owner_id,NEW.project_id,NEW.session_id,'Agent turn '||CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END,'Open the conversation to inspect the outcome.',coalesce(nullif(NEW.settled_at,''),NEW.started_at)
+ FROM turns t JOIN projects p ON p.id=NEW.project_id AND p.state NOT IN ('deleting','deleted')
+ WHERE t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed')
  ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,created_at=excluded.created_at;
- DELETE FROM notification_reads WHERE notification_id='turn/'||NEW.id;
+ DELETE FROM notification_reads WHERE notification_id IN
+  (SELECT 'turn/'||t.id FROM turns t WHERE t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed'));
 END;
 
 CREATE TRIGGER project_event_account_delete AFTER DELETE ON events BEGIN
@@ -1123,20 +1126,19 @@ CREATE TRIGGER turn_control_insert AFTER INSERT ON turns BEGIN
  UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
 END;
 
-CREATE TRIGGER turn_control_update AFTER UPDATE OF state ON turns WHEN NEW.state<>OLD.state BEGIN
+CREATE TRIGGER turn_control_update AFTER UPDATE OF queue_policy,disposition ON turns WHEN NEW.queue_policy<>OLD.queue_policy OR NEW.disposition<>OLD.disposition BEGIN
  UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
 END;
 
 INSERT INTO application_release(id) VALUES(1);
 
--- Compatibility status is a projection, never an execution admission authority.
 CREATE TRIGGER prompt_policy_status AFTER UPDATE OF queue_policy,disposition ON turns BEGIN
- UPDATE turns SET state=CASE NEW.disposition WHEN 'pending' THEN CASE NEW.queue_policy WHEN 'held' THEN 'held' ELSE 'queued' END ELSE NEW.disposition END,
- prompt_revision=prompt_revision+1 WHERE id=NEW.id;
+ UPDATE turns SET prompt_revision=prompt_revision+1 WHERE id=NEW.id AND (NEW.queue_policy<>OLD.queue_policy OR NEW.disposition<>OLD.disposition);
 END;
 CREATE TRIGGER run_status_projection AFTER UPDATE OF state ON execution_runs BEGIN
- UPDATE turns SET state=CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END,updated_at=CASE WHEN NEW.settled_at<>'' THEN NEW.settled_at ELSE updated_at END
- WHERE id IN (SELECT prompt_id FROM input_deliveries WHERE run_id=NEW.id AND state='consumed') OR (id=NEW.prompt_id AND disposition='claimed');
+ UPDATE turns SET updated_at=CASE WHEN NEW.settled_at<>'' THEN NEW.settled_at ELSE updated_at END
+ WHERE id IN (SELECT prompt_id FROM input_deliveries WHERE run_id=NEW.id AND state='consumed');
+ UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id AND NEW.state<>OLD.state;
 END;
 CREATE TRIGGER delivery_control_update AFTER UPDATE OF state ON input_deliveries WHEN OLD.state<>NEW.state BEGIN
  UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;

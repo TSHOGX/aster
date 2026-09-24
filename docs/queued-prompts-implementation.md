@@ -101,3 +101,7 @@ Service gateway slots and in-memory attribution now retain the exact run ID, so 
 ## Exact control API cleanup (2026-09-24)
 
 The old `Steer`, `Interrupt`, `ReleaseTurn` and `ChangeQueuedTurn` product methods have been removed. Product tests now submit `ExecutionControl` with the original run/incarnation/owner fence or call `MutatePrompt` with a prompt-local revision. A replay test retains the original Steer request body after consumption instead of reconstructing it from mutable Session state. This removes the last session-wide control-revision adapter from the Go product API; the control revision remains a read refresh marker. The display-only `turns.state` cache remains the next schema cleanup stage.
+
+## Derived prompt status (2026-09-24)
+
+The fresh schema no longer stores `turns.state`. Queue policy and disposition determine pending, claimed and canceled input status; a correlated execution run supplies starting, running, stopping and terminal status. Normal prompts can therefore show their run state before native input consumption, while an unconsumed Steer source stays claimed. Control revision changes on prompt and run transitions. Notifications follow run outcome evidence. Schedule status, activity blockers, title candidates, summaries and navigation read their respective prompt/run/segment authorities. Historical display tests now provide explicit segment metadata instead of mutating a synthetic turn outcome. No live database was converted.

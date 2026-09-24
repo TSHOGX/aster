@@ -81,7 +81,7 @@ func TestReleaseFenceStopsQueuedAndPreexistingPendingDispatch(t *testing.T) {
 	}
 	_, err = s.db.Exec(`UPDATE agent_commands SET state='rejected' WHERE kind='steer'`)
 	must(t, err)
-	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, c.TurnID)
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='settled',outcome='completed' WHERE id=?`, c.CommandID)
 	must(t, err)
 	// Existing pending commands are durable blockers even without an active turn.
 	_, err = s.db.Exec(`UPDATE agent_commands SET state='unknown' WHERE id=?`, c.CommandID)
@@ -231,7 +231,7 @@ func TestReleaseFenceDoesNotDispatchPreviouslyQueuedPrompt(t *testing.T) {
 	must(t, err)
 	_, err = s.db.Exec(`UPDATE agent_commands SET state='completed' WHERE id=?`, c.CommandID)
 	must(t, err)
-	_, err = s.db.Exec(`UPDATE turns SET state='completed' WHERE id=?`, c.TurnID)
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='settled',outcome='completed' WHERE id=?`, c.CommandID)
 	must(t, err)
 	_, err = s.BeginReleaseDrain(ctx, "queued", time.Minute)
 	must(t, err)

@@ -168,7 +168,7 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 			if _, err := tx.ExecContext(ctx, `UPDATE agent_commands SET payload=? WHERE id=?`, payload, id); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='starting',updated_at=? WHERE id=? AND disposition='claimed'`, s.timestamp(), turn); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE turns SET updated_at=? WHERE id=? AND disposition='claimed'`, s.timestamp(), turn); err != nil {
 				return err
 			}
 		} else if err != nil {
