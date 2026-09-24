@@ -18,6 +18,7 @@ export function elapsedLabel(
 export type ConversationTurn = {
   id: string;
   turnId: string;
+  segmentId?: string;
   items: TimelineItem[];
   summary?: TurnSummary;
 };
@@ -42,12 +43,18 @@ export function conversationTurns(
   const groups: ConversationTurn[] = [];
   for (const item of timeline) {
     const previous = groups.at(-1);
-    if (previous && previous.turnId === item.turn_id && item.turn_id)
+    if (
+      previous &&
+      previous.turnId === item.turn_id &&
+      previous.segmentId === item.segment_id &&
+      item.turn_id
+    )
       previous.items.push(item);
     else
       groups.push({
         id: item.id,
         turnId: item.turn_id,
+        segmentId: item.segment_id,
         items: [item],
         summary: metadata.get(item.turn_id),
       });

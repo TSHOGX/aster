@@ -45,3 +45,9 @@ The visual/browser stage still needs the complete light/dark, reduced-motion, fo
 Hold, Release, and Cancel now use `MutatePrompt` with a prompt-local revision and a stable request ID. The receipt is written in the same transaction as the desired-state change; retries return the original result and a reused request ID with a different action is rejected. The HTTP row-control endpoint accepts `expected_prompt_revision` and returns the receipt. Queue rows expose the latest delivery state and the frontend resynchronizes a page when its queue revision changes.
 
 The old internal helper names remain only as test and worker adapters that translate their session-revision call shape into the new receipt path. Product transport no longer uses the session-wide revision as the row mutation guard. These adapters will be removed after the remaining worker and test call sites migrate. G2 is still open until all state guards and DTOs use the new contract directly.
+
+## P3: consumed-input projection and segment identity (2026-09-24)
+
+The projector now accepts the durable `input_consumed` event, creates the source prompt's user anchor from the delivery record, and closes the active run's current message group before later output. A consumed Steer therefore receives a new `segment_id`; the following assistant blocks retain the same run while joining that new segment. Existing item positions remain stable for ordinary streaming updates, while a previously imported placeholder at position zero is advanced when authoritative consumption arrives. Frontend grouping includes `segment_id` so consecutive output boundaries do not fold a later answer under the earlier prompt.
+
+The focused projector test passes for old output → consumed Steer → subsequent output, including reload-style projection replay. Full pagination, delta, sharing/export, historical missing identities, and all timing clocks still need the broader P3/P5 qualification.

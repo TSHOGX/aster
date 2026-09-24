@@ -2,6 +2,7 @@ package product
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -65,6 +66,50 @@ func TestDisplayProjectionStableBlocksToolsAndReplay(t *testing.T) {
 	must(t, s.reader.QueryRow(`SELECT count(*) FROM conversation_sources WHERE session_id=?`, i.SessionID).Scan(&count))
 	if count != 6 {
 		t.Fatal(count)
+	}
+}
+
+func TestConsumedSteerInputStartsTheNextDisplaySegment(t *testing.T) {
+	s, scope, i, command := agentFixture(t)
+	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, command, 2, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"first answer"}]}}`))
+	must(t, err)
+	steerSource, err := s.AdmitTurn(ctx, scope, i.SessionID, "display-steer", "continue with this", true)
+	must(t, err)
+	child, err := s.Session(ctx, scope, i.SessionID)
+	must(t, err)
+	must(t, s.Steer(ctx, scope, i.SessionID, steerSource.ID, "display-steer-request", child.ControlRevision))
+	steer, err := s.agentCommand(ctx, i)
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, steer, 3, "command.applied", `{"success":true}`))
+	must(t, err)
+	var token string
+	must(t, s.db.QueryRow(`SELECT input_token FROM input_deliveries WHERE command_id=?`, steer.CommandID).Scan(&token))
+	_, err = s.IngestAgent(ctx, i, record(i, command, 4, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q,"occurred_at":"2026-09-24T00:00:03Z"}`, token, command.CommandID)))
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, command, 5, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"continued answer"}]}}`))
+	must(t, err)
+	for n := 0; n < 8; n++ {
+		if err := s.ProjectConversation(ctx, i.SessionID); err != nil && !errors.Is(err, ErrPending) {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ConversationPage(ctx, scope, i.SessionID, ViewSelector{})
+	must(t, err)
+	var first, consumed, second DisplayItem
+	for _, item := range page.Items {
+		switch item.Content {
+		case "first answer":
+			first = item
+		case "continue with this":
+			consumed = item
+		case "continued answer":
+			second = item
+		}
+	}
+	if first.Position == 0 || consumed.Position == 0 || second.Position == 0 || !(first.Position < consumed.Position && consumed.Position < second.Position) {
+		t.Fatalf("display chronology lost consumed input: first=%+v consumed=%+v second=%+v", first, consumed, second)
 	}
 }
 

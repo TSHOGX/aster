@@ -21,6 +21,7 @@ const displayBatchRecords = 128
 type DisplayItem struct {
 	ID            string `json:"id"`
 	TurnID        string `json:"turn_id"`
+	SegmentID     string `json:"segment_id,omitempty"`
 	TurnSequence  int64  `json:"turn_sequence,string"`
 	Position      int64  `json:"position,string"`
 	Block         int    `json:"block"`
@@ -122,7 +123,7 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 		if _, e = tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_checkpoints(session_id,generation,updated_at) VALUES(?,?,?)`, session, before.Generation, s.timestamp()); e != nil {
 			return e
 		}
-		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, turns: map[string]int64{}}
+		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, turns: map[string]int64{}, segments: map[string]string{}}
 		for _, source := range sources {
 			if e = reducer.consume(source); e != nil {
 				return e
@@ -192,6 +193,7 @@ type displayReducer struct {
 	changes    map[string]*DisplayItem
 	sourceKeys map[string]string
 	turns      map[string]int64
+	segments   map[string]string
 }
 
 func (d *displayReducer) turnSequence(turn string) (int64, error) {
@@ -232,7 +234,9 @@ func (d *displayReducer) put(item DisplayItem, source string) error {
 		return err
 	}
 	if old != nil {
-		item.Position = old.Position
+		if item.Position < 0 {
+			item.Position = old.Position
+		}
 		item.Block = old.Block
 		item.Revision = old.Revision
 		if item == *old {
@@ -274,7 +278,12 @@ func (d *displayReducer) consume(r displaySource) error {
 		if err != nil {
 			return err
 		}
-		return d.put(DisplayItem{ID: r.Turn + "/user", TurnID: r.Turn, Position: 0, Kind: "user", Content: content, MessageID: r.Turn + "/user"}, "user/"+r.Turn)
+		segment := d.segments[r.Turn]
+		if segment == "" {
+			segment = "segment/" + r.Turn
+			d.segments[r.Turn] = segment
+		}
+		return d.put(DisplayItem{ID: r.Turn + "/user", TurnID: r.Turn, SegmentID: segment, Position: 0, Kind: "user", Content: content, MessageID: r.Turn + "/user"}, "user/"+r.Turn)
 	}
 	if r.Kind != "native" {
 		return nil
@@ -284,6 +293,30 @@ func (d *displayReducer) consume(r displaySource) error {
 		return err
 	}
 	switch header.Type {
+	case "input_consumed":
+		var event struct {
+			InputToken string `json:"input_token"`
+			RunID      string `json:"run_id"`
+		}
+		if err := json.Unmarshal(r.Payload, &event); err != nil || event.InputToken == "" || event.RunID == "" {
+			return ErrInvalid
+		}
+		var prompt, message, content string
+		if err := d.tx.QueryRowContext(d.ctx, `SELECT d.prompt_id,d.prompt_id||'/user',t.content FROM input_deliveries d JOIN turns t ON t.id=d.prompt_id WHERE d.input_token=? AND d.session_id=? AND d.state='consumed'`, event.InputToken, d.session).Scan(&prompt, &message, &content); err != nil {
+			return err
+		}
+		if _, err := d.tx.ExecContext(d.ctx, `UPDATE conversation_message_groups SET ended=1 WHERE session_id=? AND incarnation_id=? AND turn_id=?`, d.session, r.Incarnation, event.RunID); err != nil {
+			return err
+		}
+		d.segments[event.RunID] = fmt.Sprintf("segment/%s/%s", event.RunID, prompt)
+		item := DisplayItem{ID: message, TurnID: prompt, SegmentID: d.segments[event.RunID], Position: -1, Kind: "user", Content: content, MessageID: message, State: "completed"}
+		if old, err := d.get(message); err != nil {
+			return err
+		} else if old != nil && old.Position == 0 {
+			d.p.Position++
+			item.Position = d.p.Position
+		}
+		return d.put(item, "consumed/"+event.InputToken)
 	case "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end":
 	default:
 		return nil
@@ -306,7 +339,12 @@ func (d *displayReducer) consume(r displaySource) error {
 		}
 		keep := map[string]bool{}
 		for index, block := range e.Message.Content {
-			item := DisplayItem{ID: fmt.Sprintf("%s/%d", key, index), TurnID: r.Turn, Position: pos, Block: index, State: "streaming"}
+			segment := d.segments[r.Turn]
+			if segment == "" {
+				segment = "segment/" + r.Turn
+				d.segments[r.Turn] = segment
+			}
+			item := DisplayItem{ID: fmt.Sprintf("%s/%d", key, index), TurnID: r.Turn, SegmentID: segment, Position: pos, Block: index, State: "streaming"}
 			if e.Type == "message_end" {
 				item.State = "completed"
 				item.MessageID = fmt.Sprintf("%s/%d", r.Incarnation, r.Sequence)
@@ -475,9 +513,20 @@ func (d *displayReducer) messages() error {
 		if !found {
 			pos := int64(-1)
 			if m.Role == "user" {
-				pos = 0
+				var consumed bool
+				if err = d.tx.QueryRowContext(d.ctx, `SELECT EXISTS(SELECT 1 FROM input_deliveries WHERE prompt_id=? AND state='consumed')`, m.TurnID).Scan(&consumed); err != nil {
+					return err
+				}
+				if !consumed {
+					pos = 0
+				}
 			}
-			if err = d.put(DisplayItem{ID: m.ID, TurnID: m.TurnID, Position: pos, Kind: m.Role, Content: m.Content, MessageID: m.ID, State: "completed"}, "import/"+m.ID); err != nil {
+			segment := d.segments[m.TurnID]
+			if segment == "" {
+				segment = "segment/" + m.TurnID
+				d.segments[m.TurnID] = segment
+			}
+			if err = d.put(DisplayItem{ID: m.ID, TurnID: m.TurnID, SegmentID: segment, Position: pos, Kind: m.Role, Content: m.Content, MessageID: m.ID, State: "completed"}, "import/"+m.ID); err != nil {
 				return err
 			}
 		}

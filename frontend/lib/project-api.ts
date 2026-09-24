@@ -62,6 +62,7 @@ export type Message = {
   turn_id?: string;
 };
 export type TimelineItem = {
+  segment_id?: string;
   truncated?: boolean;
   detail_version?: string;
   id: string;
