@@ -11,10 +11,12 @@ The pinned Pi 0.77.0 RPC input digest is
 `sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7`;
 the patched output digest is
 `sha256:b9327e55144e4d7947365e916b1aea2feb7c57892167b3e84a7d5f598e9ff7aa`.
-The runtime advertises native protocol 3 and owner-handoff protocol 2. The
-final executable, runtime manifest, frontend build, configuration and content
-digests must be measured from the built candidate with `release-identity`.
-Source hashes alone are not a deployable identity.
+The runtime advertises native protocol 3 and owner-handoff protocol 2. A fresh
+isolated candidate template at `/srv/batterygpt/qualification/queued-prompts-20260924`
+has manifest digest `sha256:efa87b576da80bb011f0897bcab176b028a2e64d16acaf3b314d43070245ded3`.
+The final executable, frontend build, configuration and content digests must
+still be measured from the intended deployed candidate with `release-identity`.
+Source and staging hashes alone are not a deployable identity.
 
 ## Format decision
 
@@ -103,7 +105,9 @@ remaining two Sessions are retired. Foreign keys and SQLite integrity passed;
 two independent converted copies produced identical item/position/data hashes.
 No source message text or credentials were exported to this repository.
 
-Current state: the format transition is qualified on a staging copy, but the
-final candidate executable/runtime/configuration identity and full integrated
-failure matrix are not yet qualified. The old Steer remains explicitly unknown.
-Activation remains closed. No live-data reset or deployment is implied.
+Current state: the format transition is qualified on a staging copy and the
+new runtime template passed isolated native, release, fault, real-browser and
+combined workload suites. The final executable/configuration identity and
+the remaining exact-delivery crash/extension matrix are not yet qualified.
+The old Steer remains explicitly unknown. Activation remains closed. No
+live-data reset or deployment is implied.
