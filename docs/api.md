@@ -81,7 +81,7 @@ one database read snapshot. This replaces ID-only overview pagination.
 
 `POST /api/schedules/preview` accepts `{cron, timezone, next_at?}` and returns
 `{valid, cron, timezone, reference_time, occurrences, errors?}`. Field errors use
-`cron` or `timezone`. The authenticated, non-mutating endpoint validates with the
+`cron`, `interval`, `timezone` or `next_at`. The authenticated, non-mutating endpoint validates with the
 execution parser and returns three upcoming UTC instants or none for manual-only.
 It creates no task or run. `cron` accepts five-field Cron, empty for manual-only,
 or the canonical interval expression `@every Nm` (integer N from 1 to 10080).

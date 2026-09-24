@@ -1,0 +1,39 @@
+{
+  "recorded_at": "2026-09-24T02:43:17.020016+00:00",
+  "source_revision": "58d0aded0b4119ec5aa45f89dc08ecf613367ef8",
+  "deployment": "completed",
+  "recurrence": "@every Nm",
+  "minimum_minutes": 1,
+  "maximum_minutes": 10080,
+  "default_minutes": 15,
+  "schema_unchanged": true,
+  "data_preserved": true,
+  "engine_and_gateway_restarted": false,
+  "release_identity_version": 3,
+  "application_digest": "sha256:cbd744986963ccc9358d2b2586a3006c3a2101972afd29c7dfb5640f55d1ed50",
+  "frontend_build_id": "1D_uqry-5CM0lb7k4yeY0",
+  "validation": {
+    "backend_race_tests": "passed for schedules, interval boundaries, delayed ticks, restart, concurrency, previews and HTTP/application packages",
+    "go_vet": "passed",
+    "frontend_typecheck": "passed",
+    "frontend_lint": "passed",
+    "unit_tests_passed": 197,
+    "unit_tests_skipped": 1,
+    "schedule_ui_tests_passed": 25,
+    "real_browser_tests_passed": 3,
+    "real_browser_tests_skipped": 1
+  },
+  "live_checks": {
+    "browser_interval_form": true,
+    "edit_preserved_deadline": true,
+    "automatic_one_minute_trigger": true,
+    "next_deadline_exactly_60_seconds_later": true,
+    "native_completion": true,
+    "single_run": true,
+    "smoke_resources_and_user_removed": true
+  },
+  "limitations": [
+    "Opt-in benchmark and combined workload tests were skipped.",
+    "Initial real browser run found an outdated large-file preview assertion; the corrected full gate passed."
+  ]
+}
