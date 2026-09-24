@@ -17,7 +17,7 @@ func scanTurn(row scanner) (t Turn, err error) {
 }
 
 // AdmitTurn persists intent before a worker can dispatch. A held prompt is not
-// admitted until ReleaseTurn succeeds. Request identity survives state changes.
+// eligible until a release mutation succeeds. Request identity survives state changes.
 func (s *Store) AdmitTurn(ctx context.Context, scope Scope, session, request, content string, held bool) (Turn, error) {
 	if !validText(request, 128) || !validText(content, 1<<20) {
 		return Turn{}, ErrInvalid

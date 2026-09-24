@@ -96,10 +96,9 @@ func TestProductPressure40And80MiB(t *testing.T) {
 			for n := 0; n < 2; n++ {
 				select {
 				case index := <-half:
-					child, e := s.Session(runctx, scopes[index], incarnations[index].SessionID)
-					must(t, e)
 					before := time.Now()
-					must(t, s.Interrupt(runctx, scopes[index], child.ID, "stop-pressure", child.ControlRevision))
+					_, e := s.ControlRun(runctx, scopes[index], incarnations[index].SessionID, stopControl(incarnations[index], commands[index], "stop-pressure"))
+					must(t, e)
 					stopNanos = append(stopNanos, time.Since(before).Nanoseconds())
 				case e := <-errs:
 					stopProjector()

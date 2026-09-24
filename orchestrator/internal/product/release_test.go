@@ -32,10 +32,8 @@ func TestReleaseFenceBlocksWorkButPreservesStopAndIngest(t *testing.T) {
 	wantError(t, err, ErrDraining)
 	_, err = s.AdmitTurn(ctx, scope, i.SessionID, "held-during", "held", true)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	wantError(t, s.ReleaseTurn(ctx, scope, i.SessionID, held.ID, child.ControlRevision), ErrDraining)
-	wantError(t, s.Steer(ctx, scope, i.SessionID, held.ID, "steer-during", child.ControlRevision), ErrDraining)
+	wantError(t, mutationErr(s, scope, i.SessionID, held, "release-during", "release"), ErrDraining)
+	wantError(t, controlErr(s, scope, i.SessionID, targetControl(i, c, held, "steer-during")), ErrDraining)
 	_, err = s.reserveAgent(ctx, scope, "new-agent")
 	wantError(t, err, ErrDraining)
 	_, err = s.reserveTerminal(ctx, scope, "new-terminal", 24, 80)
@@ -45,9 +43,7 @@ func TestReleaseFenceBlocksWorkButPreservesStopAndIngest(t *testing.T) {
 	// Genuine evidence and Stop remain writable while new execution is fenced.
 	_, err = s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))
 	must(t, err)
-	child, err = s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop-during", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, stopControl(i, c, "stop-during")))
 	stop, err := s.agentCommand(ctx, i)
 	must(t, err)
 	if string(stop.Payload) != fmt.Sprintf(`{"run_id":%q,"type":"abort"}`, c.CommandID) {
@@ -69,9 +65,7 @@ func TestReleaseFenceStopsQueuedAndPreexistingPendingDispatch(t *testing.T) {
 	// A steer intent can precede closure while its dispatch has not yet happened.
 	held, err := s.AdmitTurn(ctx, scope, i.SessionID, "held", "held", true)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Steer(ctx, scope, i.SessionID, held.ID, "steer", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, targetControl(i, c, held, "steer")))
 	_, err = s.BeginReleaseDrain(ctx, "dispatch-fence", time.Minute)
 	must(t, err)
 	_, err = s.agentCommand(ctx, i)
@@ -79,9 +73,7 @@ func TestReleaseFenceStopsQueuedAndPreexistingPendingDispatch(t *testing.T) {
 	// Completion is allowed; queued work cannot create the next prompt command.
 	_, err = s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))
 	must(t, err)
-	child, err = s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop-before-held-steer", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, stopControl(i, c, "stop-before-held-steer")))
 	stop, err := s.agentCommand(ctx, i)
 	must(t, err)
 	if string(stop.Payload) != fmt.Sprintf(`{"run_id":%q,"type":"abort"}`, c.CommandID) {
@@ -279,9 +271,7 @@ func TestReleaseStopDispatchBypassesUnknownCommand(t *testing.T) {
 	must(t, err)
 	_, err = s.BeginReleaseDrain(ctx, "unknown-stop", time.Minute)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "abort-unknown", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, stopControl(i, c, "abort-unknown")))
 	stop, err := s.agentCommand(ctx, i)
 	must(t, err)
 	if string(stop.Payload) != fmt.Sprintf(`{"run_id":%q,"type":"abort"}`, c.CommandID) {

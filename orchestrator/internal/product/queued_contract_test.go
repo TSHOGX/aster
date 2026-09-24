@@ -23,6 +23,17 @@ func ingestContract(t *testing.T, s *Store, i Incarnation, c agentwire.Frame, ki
 func targetControl(i Incarnation, c agentwire.Frame, t Turn, request string) ExecutionControl {
 	return ExecutionControl{RequestID: request, Action: "steer", Source: t.ID, PromptRevision: t.PromptRevision, RunID: c.CommandID, IncarnationID: i.ID, Owner: i.Owner}
 }
+func stopControl(i Incarnation, c agentwire.Frame, request string) ExecutionControl {
+	return ExecutionControl{RequestID: request, Action: "stop", RunID: c.CommandID, IncarnationID: i.ID, Owner: i.Owner}
+}
+func controlErr(s *Store, scope Scope, session string, req ExecutionControl) error {
+	_, err := s.ControlRun(ctx, scope, session, req)
+	return err
+}
+func mutationErr(s *Store, scope Scope, session string, prompt Turn, request, action string) error {
+	_, err := s.MutatePrompt(ctx, scope, session, prompt.ID, request, action, prompt.PromptRevision)
+	return err
+}
 func completeContract(t *testing.T, s *Store, i Incarnation, c agentwire.Frame) {
 	t.Helper()
 	ingestContract(t, s, i, c, "command.completed", fmt.Sprintf(`{"path":"/runtime/sessions/%s/native/captures/%s.jsonl","digest":"sha256:%064d","size":0,"outcome":"completed"}`, i.SessionID, c.CommandID, 0))

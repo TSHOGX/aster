@@ -25,9 +25,7 @@ func TestUndeliveredAbortEscalatesOnlyItsGuardianAfterGrace(t *testing.T) {
 	a := NewAgents(ctx, s, nil, backend, testProfile(), 8)
 	defer a.Close()
 	a.attachments[i.SessionID] = &agentAttachment{projectID: scope.ProjectID, incarnation: i, cancel: func() {}}
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, stopControl(i, c, "stop")))
 	must(t, a.ReconcileControls(ctx, scope.ProjectID))
 	if len(backend.signals[i.Reference.Handle]) != 0 {
 		t.Fatal("normal abort grace was skipped")

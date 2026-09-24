@@ -167,7 +167,7 @@ func TestHeldAdmissionAndIdempotencyAcrossRestartAndRename(t *testing.T) {
 	}
 	child, err = s.Session(ctx, a, child.ID)
 	must(t, err)
-	must(t, s.ReleaseTurn(ctx, a, child.ID, held.ID, child.ControlRevision))
+	must(t, mutationErr(s, a, child.ID, held, "release-held", "release"))
 	p, err = s.Project(ctx, a)
 	must(t, err)
 	if p.ActivityRevision != before.ActivityRevision+1 {

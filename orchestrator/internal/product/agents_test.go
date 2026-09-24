@@ -137,12 +137,9 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 	must(t, err)
 	source, err := s.AdmitTurn(ctx, scope, i.SessionID, "steer-source", "steer this", true)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "steer-request", child.ControlRevision))
-	child, err = s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	wantError(t, s.ReleaseTurn(ctx, scope, i.SessionID, source.ID, child.ControlRevision), ErrConflict)
+	req := targetControl(i, c, source, "steer-request")
+	must(t, controlErr(s, scope, i.SessionID, req))
+	wantError(t, mutationErr(s, scope, i.SessionID, source, "release-claimed", "release"), ErrConflict)
 	steer, err := s.agentCommand(ctx, i)
 	must(t, err)
 	var state string
@@ -165,7 +162,7 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 		t.Fatal("consumption did not preserve active execution", state)
 	}
 	// Replaying the request after the Session revision advanced remains idempotent.
-	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "steer-request", 1))
+	must(t, controlErr(s, scope, i.SessionID, req))
 	messages, err := s.Messages(ctx, scope, i.SessionID, 0, 100)
 	must(t, err)
 	if len(messages) != 1 || messages[0].Content != "steer this" {
@@ -178,9 +175,7 @@ func TestAbortHoldsQueueAndWaitsForNativeCancellation(t *testing.T) {
 	must(t, err)
 	_, err = s.AdmitTurn(ctx, scope, i.SessionID, "queued", "next", false)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, stopControl(i, c, "stop")))
 	turns, err := s.Turns(ctx, scope, i.SessionID, 0, 100)
 	must(t, err)
 	if turns[0].State != "stopping" || turns[1].State != "held" {

@@ -140,54 +140,6 @@ func (s *Store) ControlRun(ctx context.Context, scope Scope, session string, req
 	return result, err
 }
 
-// Internal adapters for existing workers/tests. HTTP uses the explicit contract.
-func (s *Store) Interrupt(ctx context.Context, scope Scope, session, request string, revision int64) error {
-	return s.legacyControl(ctx, scope, session, "", request, "stop", revision)
-}
-func (s *Store) Steer(ctx context.Context, scope Scope, session, source, request string, revision int64) error {
-	return s.legacyControl(ctx, scope, session, source, request, "steer", revision)
-}
-func (s *Store) legacyControl(ctx context.Context, scope Scope, session, source, request, action string, revision int64) error {
-	req := ExecutionControl{RequestID: request, Action: action, Source: source}
-	// Preserve a previous adapter request's exact target and revision on retry.
-	var raw []byte
-	err := s.reader.QueryRowContext(ctx, `SELECT result FROM control_receipts WHERE session_id=? AND request_id=?`, session, request).Scan(&raw)
-	if err == nil {
-		if _, err = sessionIn(ctx, s.reader, scope, session); err != nil {
-			return err
-		}
-		var old ControlReceipt
-		if err = json.Unmarshal(raw, &old); err != nil {
-			return err
-		}
-		if old.Action != action || (action == "steer" && old.PromptID != source) {
-			return ErrConflict
-		}
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	child, err := s.Session(ctx, scope, session)
-	if err != nil {
-		return err
-	}
-	if child.ControlRevision != revision {
-		return ErrConflict
-	}
-	err = s.reader.QueryRowContext(ctx, `SELECT id,incarnation_id,owner FROM execution_runs WHERE session_id=? AND state IN ('starting','running','stopping')`, session).Scan(&req.RunID, &req.IncarnationID, &req.Owner)
-	if err != nil {
-		return missing(err)
-	}
-	if source != "" {
-		if err = s.reader.QueryRowContext(ctx, `SELECT prompt_revision FROM turns WHERE id=?`, source).Scan(&req.PromptRevision); err != nil {
-			return err
-		}
-	}
-	_, err = s.ControlRun(ctx, scope, session, req)
-	return err
-}
-
 // ControlResult separates an immutable acceptance receipt from current evidence.
 // A lost HTTP reply is resolved using the same request identity, never resubmission
 // under a new delivery identity.

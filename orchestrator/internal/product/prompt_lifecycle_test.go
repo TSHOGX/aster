@@ -14,9 +14,7 @@ func TestSteerDeliveryReceiptAndConsumptionEvidence(t *testing.T) {
 	must(t, err)
 	source, err := s.AdmitTurn(ctx, scope, i.SessionID, "source-request", "same words", true)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "delivery-request", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, targetControl(i, prompt, source, "delivery-request")))
 	var action, state, delivery, run string
 	must(t, s.db.QueryRow(`SELECT action,state,delivery_id,run_id FROM control_receipts WHERE request_id=?`, "delivery-request").Scan(&action, &state, &delivery, &run))
 	if action != "steer" || state != "accepted" || delivery == "" || run != prompt.CommandID {
@@ -87,9 +85,7 @@ func TestInputsReconciledRestoresUnconsumedDeliveryToHeld(t *testing.T) {
 	must(t, err)
 	source, err := s.AdmitTurn(ctx, scope, i.SessionID, "removed-source", "will be held", true)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "removed-request", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, targetControl(i, prompt, source, "removed-request")))
 	steer, err := s.agentCommand(ctx, i)
 	must(t, err)
 	_, err = s.IngestAgent(ctx, i, record(i, steer, 3, "command.applied", `{"success":true}`))
@@ -125,9 +121,7 @@ func TestReleasedPromptCanBeClaimedBySteerBeforeOrdinaryDispatch(t *testing.T) {
 	must(t, err)
 	source, err := s.AdmitTurn(ctx, scope, i.SessionID, "released-source", "join this run", false)
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "released-steer", child.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, targetControl(i, prompt, source, "released-steer")))
 	steer, err := s.agentCommand(ctx, i)
 	must(t, err)
 	if steer.TurnID != source.ID {

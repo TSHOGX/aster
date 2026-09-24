@@ -51,10 +51,8 @@ func TestDisplayPagesAndAuthorization(t *testing.T) {
 	wantError(t, err, ErrNotFound)
 	turns, err := s.Turns(ctx, a, "session", 0, 1)
 	must(t, err)
-	child, err := s.Session(ctx, a, "session")
-	must(t, err)
-	must(t, s.ChangeQueuedTurn(ctx, a, "session", turns[0].ID, "held", child.ControlRevision))
-	wantError(t, s.ChangeQueuedTurn(ctx, a, "session", turns[0].ID, "canceled", child.ControlRevision), ErrConflict)
+	must(t, mutationErr(s, a, "session", turns[0], "hold-first", "hold"))
+	wantError(t, mutationErr(s, a, "session", turns[0], "cancel-stale", "cancel"), ErrConflict)
 }
 func TestPlacementLossFencesOldAgentOwner(t *testing.T) {
 	s, a, _ := fixture(t)
@@ -110,7 +108,7 @@ func TestStreamingOutputDoesNotInvalidateExecutionControl(t *testing.T) {
 	if eventsBefore != eventsAfter {
 		t.Fatal("raw frames amplified the product outbox", eventsBefore, eventsAfter)
 	}
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop-during-stream", before.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, stopControl(i, command, "stop-during-stream")))
 }
 func TestDisplayHeadKeepsActiveTurnVisibleWithLargeQueue(t *testing.T) {
 	s, scope, i, command := agentFixture(t)

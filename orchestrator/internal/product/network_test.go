@@ -327,9 +327,7 @@ func TestNativeAbortRetainsExistingRequestUntilCancellationSettles(t *testing.T)
 	must(t, err)
 	existing, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
-	session, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
-	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop", session.ControlRevision))
+	must(t, controlErr(s, scope, i.SessionID, stopControl(i, command, "stop")))
 	// A gateway check can happen after durable Stop admission but before Pi reads
 	// abort. Existing stream must survive that interval; a new request is refused.
 	must(t, holdsAttribution(ctx, s.reader, s.timestamp(), existing))

@@ -97,3 +97,7 @@ Validation for this pass:
 P1's local contract implementation is established; native qualification remains a prerequisite to claiming G2 acceptance. P2 and P3 have a tested foundation, with the remaining G1/G3/G4 acceptance work explicitly listed in the handoff. Mocked handler/browser tests and happy paths do not close those gates. P4–P6 are not declared complete.
 
 Service gateway slots and in-memory attribution now retain the exact run ID, so a new attempt of the same prompt cannot inherit an earlier upstream request. Stop can quiesce its exact unknown run even while the Session is blocked. Additional regressions cover both cases and ACK resolution of acceptance uncertainty without resurrecting removed input.
+
+## Exact control API cleanup (2026-09-24)
+
+The old `Steer`, `Interrupt`, `ReleaseTurn` and `ChangeQueuedTurn` product methods have been removed. Product tests now submit `ExecutionControl` with the original run/incarnation/owner fence or call `MutatePrompt` with a prompt-local revision. A replay test retains the original Steer request body after consumption instead of reconstructing it from mutable Session state. This removes the last session-wide control-revision adapter from the Go product API; the control revision remains a read refresh marker. The display-only `turns.state` cache remains the next schema cleanup stage.

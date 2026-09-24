@@ -163,8 +163,6 @@ func TestStopCommitsBeforeWaitingIngestAndBackgroundDoesNotFailProjection(t *tes
 	s, scope, i, c := agentFixture(t)
 	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))
 	must(t, err)
-	child, err := s.Session(ctx, scope, i.SessionID)
-	must(t, err)
 	entered, unblock := make(chan struct{}), make(chan struct{})
 	held := make(chan error, 1)
 	go func() {
@@ -178,7 +176,7 @@ func TestStopCommitsBeforeWaitingIngestAndBackgroundDoesNotFailProjection(t *tes
 	}()
 	awaitQueued(t, &s.writer, ingestWrite, 1)
 	stopped := make(chan error, 1)
-	go func() { stopped <- s.Interrupt(ctx, scope, i.SessionID, "under-pressure", child.ControlRevision) }()
+	go func() { stopped <- controlErr(s, scope, i.SessionID, stopControl(i, c, "under-pressure")) }()
 	awaitQueued(t, &s.writer, urgentWrite, 1)
 	project := make(chan error, 1)
 	go func() { project <- s.ProjectConversation(ctx, i.SessionID) }()
