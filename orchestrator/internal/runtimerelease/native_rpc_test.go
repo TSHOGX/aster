@@ -103,3 +103,25 @@ func TestPatchedRPCControlContract(t *testing.T) {
 		t.Fatalf("RPC contract: %v\n%s", err, output)
 	}
 }
+
+func TestPatchedRPCWithFullSession(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node unavailable")
+	}
+	original, err := os.ReadFile("testdata/pi-rpc-0.77.0.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched, err := patchNativeRPC(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "rpc.mjs")
+	if err = os.WriteFile(file, patched, 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("node", "testdata/rpc-session.test.mjs", file)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("full Session RPC: %v\n%s", err, output)
+	}
+}

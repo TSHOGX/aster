@@ -57,6 +57,8 @@ export type PromptQueuePage = {
 };
 export type Message = {
   id: string;
+  run_id?: string;
+  segment_id?: string;
   role: string;
   content: string;
   sequence: number;

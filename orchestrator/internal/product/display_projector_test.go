@@ -112,6 +112,18 @@ func TestConsumedSteerInputStartsTheNextDisplaySegment(t *testing.T) {
 	if first.SegmentID == "" || consumed.SegmentID == "" || second.SegmentID != consumed.SegmentID || first.SegmentID == second.SegmentID {
 		t.Fatalf("later answer stayed in the first segment: first=%+v consumed=%+v second=%+v", first, consumed, second)
 	}
+	messages, err := s.Messages(ctx, scope, i.SessionID, 0, 100)
+	must(t, err)
+	if len(messages) != 4 || messages[0].SegmentID != first.SegmentID ||
+		messages[1].SegmentID != first.SegmentID || messages[2].SegmentID != consumed.SegmentID ||
+		messages[3].SegmentID != second.SegmentID {
+		t.Fatal("message export lost segment ownership", messages)
+	}
+	for _, message := range messages {
+		if message.RunID != command.CommandID {
+			t.Fatal("message export lost run ownership", message)
+		}
+	}
 }
 
 func TestSummaryTimingStartsAtConsumptionEvidence(t *testing.T) {

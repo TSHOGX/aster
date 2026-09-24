@@ -517,6 +517,8 @@ type Message struct {
 	Role      string          `json:"role"`
 	Content   string          `json:"content"`
 	Native    json.RawMessage `json:"native,omitempty"`
+	RunID     string          `json:"run_id,omitempty"`
+	SegmentID string          `json:"segment_id,omitempty"`
 	Sequence  int64           `json:"sequence"`
 	CreatedAt string          `json:"created_at"`
 }
@@ -528,7 +530,13 @@ func (s *Store) Messages(ctx context.Context, scope Scope, session string, after
 	return s.messages(ctx, scope.ProjectID, session, after, limit)
 }
 func (s *Store) messages(ctx context.Context, project, session string, after int64, limit int) ([]Message, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,session_id,turn_id,role,content,native_message,sequence,created_at FROM messages WHERE project_id=? AND session_id=? AND sequence>? ORDER BY sequence LIMIT ?`, project, session, after, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT m.id,m.project_id,m.session_id,m.turn_id,m.role,m.content,m.native_message,m.sequence,m.created_at,
+ coalesce((SELECT s.run_id FROM conversation_segments s WHERE s.session_id=m.session_id AND s.id=coalesce(
+  (SELECT i.segment_id FROM conversation_segment_inputs i WHERE i.session_id=m.session_id AND i.prompt_id=m.turn_id AND m.role='user'),
+  (SELECT json_extract(ci.data,'$.segment_id') FROM conversation_items ci WHERE ci.session_id=m.session_id AND ci.message_id=m.id AND json_extract(ci.data,'$.segment_id') IS NOT NULL ORDER BY ci.position LIMIT 1))),'') AS run_id,
+ coalesce((SELECT i.segment_id FROM conversation_segment_inputs i WHERE i.session_id=m.session_id AND i.prompt_id=m.turn_id AND m.role='user'),
+  (SELECT json_extract(ci.data,'$.segment_id') FROM conversation_items ci WHERE ci.session_id=m.session_id AND ci.message_id=m.id AND json_extract(ci.data,'$.segment_id') IS NOT NULL ORDER BY ci.position LIMIT 1),'') AS segment_id
+ FROM messages m WHERE m.project_id=? AND m.session_id=? AND m.sequence>? ORDER BY m.sequence LIMIT ?`, project, session, after, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -537,7 +545,7 @@ func (s *Store) messages(ctx context.Context, project, session string, after int
 	for rows.Next() {
 		var m Message
 		var native []byte
-		if err := rows.Scan(&m.ID, &m.ProjectID, &m.SessionID, &m.TurnID, &m.Role, &m.Content, &native, &m.Sequence, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProjectID, &m.SessionID, &m.TurnID, &m.Role, &m.Content, &native, &m.Sequence, &m.CreatedAt, &m.RunID, &m.SegmentID); err != nil {
 			return nil, err
 		}
 		m.Native = native
