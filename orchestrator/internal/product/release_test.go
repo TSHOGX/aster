@@ -50,7 +50,7 @@ func TestReleaseFenceBlocksWorkButPreservesStopAndIngest(t *testing.T) {
 	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop-during", child.ControlRevision))
 	stop, err := s.agentCommand(ctx, i)
 	must(t, err)
-	if string(stop.Payload) != `{"type":"abort"}` {
+	if string(stop.Payload) != fmt.Sprintf(`{"run_id":%q,"type":"abort"}`, c.CommandID) {
 		t.Fatal(string(stop.Payload))
 	}
 	status, err := s.ReleaseDrainStatus(ctx)
@@ -84,7 +84,7 @@ func TestReleaseFenceStopsQueuedAndPreexistingPendingDispatch(t *testing.T) {
 	must(t, s.Interrupt(ctx, scope, i.SessionID, "stop-before-held-steer", child.ControlRevision))
 	stop, err := s.agentCommand(ctx, i)
 	must(t, err)
-	if string(stop.Payload) != `{"type":"abort"}` {
+	if string(stop.Payload) != fmt.Sprintf(`{"run_id":%q,"type":"abort"}`, c.CommandID) {
 		t.Fatal("held steering blocked Stop", stop)
 	}
 	_, err = s.db.Exec(`UPDATE agent_commands SET state='rejected' WHERE kind='steer'`)
@@ -284,7 +284,7 @@ func TestReleaseStopDispatchBypassesUnknownCommand(t *testing.T) {
 	must(t, s.Interrupt(ctx, scope, i.SessionID, "abort-unknown", child.ControlRevision))
 	stop, err := s.agentCommand(ctx, i)
 	must(t, err)
-	if string(stop.Payload) != `{"type":"abort"}` {
+	if string(stop.Payload) != fmt.Sprintf(`{"run_id":%q,"type":"abort"}`, c.CommandID) {
 		t.Fatal(stop)
 	}
 	status, err := s.ReleaseDrainStatus(ctx)

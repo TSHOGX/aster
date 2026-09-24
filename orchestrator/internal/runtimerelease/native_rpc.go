@@ -14,28 +14,42 @@ import (
 const NativeProtocol = 2
 const NativeRPCPath = NativeRoot + "/" + PiPackage + "/dist/modes/rpc/rpc-mode.js"
 const nativeRPCOriginal = "sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7"
-const nativeRPCPatched = "sha256:00369e9c74c43bfe83b5d3500dca458be4ba5d4534c3248ee4bf648c2a9bcc4c"
+const nativeRPCPatched = "sha256:cf4272cca1e7dc6adb1f7996d012cd875c537498b11b499c0dbcc0c62436032c"
 
 const identityHooks = `    let session = runtimeHost.session;
     let activePrompt;
     // BatteryGPT native protocol 2: correlate exact Agent message objects with
-    // product delivery tokens. Tokens are non-enumerable and never reach Pi's
-    // model context or the persisted Session message JSON.
-    const pendingInputTokens = [];
-    const tagInput = (message, token) => {
-        if (message && token) Object.defineProperty(message, "__batteryInputToken", { value: token });
-    };
+    // product delivery tokens. The WeakMap is never model or Session content.
+    const inputContext = new AsyncLocalStorage();
+    const inputIdentity = new WeakMap();
+    const installedAgents = new WeakSet();
     const installIdentityHooks = () => {
+        if (installedAgents.has(session.agent)) return;
+        installedAgents.add(session.agent);
         const prompt = session.agent.prompt.bind(session.agent);
         const steer = session.agent.steer.bind(session.agent);
+        const processEvents = session.agent.processEvents.bind(session.agent);
         session.agent.prompt = (input, ...args) => {
-            const token = pendingInputTokens.shift();
-            if (token) tagInput(Array.isArray(input) ? input.find((m) => m.role === "user") : undefined, token);
+            const token = inputContext.getStore();
+            const message = Array.isArray(input) ? input.find((m) => m.role === "user") : input;
+            if (token && message && typeof message === "object") inputIdentity.set(message, token);
             return prompt(input, ...args);
         };
         session.agent.steer = (message, ...args) => {
-            tagInput(message, pendingInputTokens.shift());
+            const token = inputContext.getStore();
+            if (token) inputIdentity.set(message, token);
             return steer(message, ...args);
+        };
+        session.agent.processEvents = (event) => {
+            if (activePrompt && event.type === "message_start" && event.message.role === "user") {
+                const token = inputIdentity.get(event.message);
+                if (token) {
+                    inputIdentity.delete(event.message);
+                    activePrompt.inputTokens.delete(token);
+                    output({ type: "input_consumed", input_token: token, run_id: activePrompt.id, occurred_at: new Date().toISOString() });
+                }
+            }
+            return processEvents(event);
         };
     };`
 
@@ -44,16 +58,18 @@ const settledPrompt = `            case "prompt": {
                 if (activePrompt) {
                     return error(id, "prompt", "A prompt is still settling");
                 }
-                const operation = { id, outcome: "completed", abortRequested: false };
+                const operation = { id, outcome: "completed", abortRequested: false, inputTokens: new Set() };
                 activePrompt = operation;
-                if (command.input_token) pendingInputTokens.push(command.input_token);
+                if (command.input_token) operation.inputTokens.add(command.input_token);
                 let preflightSucceeded = false;
                 const canceledBeforeDispatch = new Error("Prompt canceled before dispatch");
                 const finish = (outcome, failure) => {
+                    session.clearQueue();
+                    output({ type: "inputs_reconciled", run_id: operation.id, removed_input_tokens: [...operation.inputTokens], complete: true });
                     if (activePrompt === operation) activePrompt = undefined;
                     output({ type: "prompt_end", id, outcome, ...(failure ? { error: String(failure).slice(0, 1024) } : {}) });
                 };
-                void session
+                void inputContext.run(command.input_token, () => session
                     .prompt(command.message, {
                     images: command.images,
                     streamingBehavior: command.streamingBehavior,
@@ -65,7 +81,7 @@ const settledPrompt = `            case "prompt": {
                             if (operation.abortRequested) throw canceledBeforeDispatch;
                         }
                     },
-                })
+                }))
                     .then(() => { if (preflightSucceeded) finish(operation.outcome); })
                     .catch((e) => {
                     if (!preflightSucceeded) {
@@ -98,9 +114,6 @@ const observePrompt = `        unsubscribe = session.subscribe((event) => {
                     activePrompt.outcome = "canceled";
                 }
             }
-            if (activePrompt && event.type === "message_start" && event.message.role === "user" && event.message.__batteryInputToken) {
-                output({ type: "input_consumed", input_token: event.message.__batteryInputToken, run_id: activePrompt.id, occurred_at: new Date().toISOString() });
-            }
             output(event);
         });`
 
@@ -120,10 +133,12 @@ func patchNativeRPC(raw []byte) ([]byte, error) {
 	}
 	source = source[:start] + settledPrompt + source[end:]
 	for _, replacement := range [][2]string{
+		{"import * as crypto from \"node:crypto\";", "import * as crypto from \"node:crypto\";\nimport { AsyncLocalStorage } from \"node:async_hooks\";"},
 		{"    let session = runtimeHost.session;\n    let unsubscribe;", identityHooks + "\n    installIdentityHooks();\n    let unsubscribe;"},
+		{"        session = runtimeHost.session;\n        await session.bindExtensions({", "        session = runtimeHost.session;\n        installIdentityHooks();\n        await session.bindExtensions({"},
 		{"        unsubscribe = session.subscribe((event) => {\n            output(event);\n        });", observePrompt},
-		{"            case \"steer\": {\n                await session.steer(command.message, command.images);", "            case \"steer\": {\n                if (command.input_token) pendingInputTokens.push(command.input_token);\n                await session.steer(command.message, command.images);"},
-		{"            case \"abort\": {\n                await session.abort();", "            case \"abort\": {\n                if (activePrompt) activePrompt.abortRequested = true;\n                session.abortCompaction();\n                await session.abort();"},
+		{"            case \"steer\": {\n                await session.steer(command.message, command.images);", "            case \"steer\": {\n                if (!activePrompt || activePrompt.id !== command.run_id || activePrompt.abortRequested) return error(id, \"steer\", \"Target run ended\");\n                if (command.input_token) activePrompt.inputTokens.add(command.input_token);\n                try {\n                    await inputContext.run(command.input_token, () => session.steer(command.message, command.images));\n                } catch (e) {\n                    activePrompt.inputTokens.delete(command.input_token);\n                    throw e;\n                }"},
+		{"            case \"abort\": {\n                await session.abort();", "            case \"abort\": {\n                if (!activePrompt || activePrompt.id !== command.run_id) return error(id, \"abort\", \"Target run ended\");\n                activePrompt.abortRequested = true;\n                session.clearQueue();\n                session.abortCompaction();\n                await session.abort();"},
 		{"//# sourceMappingURL=rpc-mode.js.map", "// BatteryGPT native settlement protocol 2; upstream source map does not apply."},
 	} {
 		if strings.Count(source, replacement[0]) != 1 {

@@ -26,7 +26,7 @@ func insertReceipt(ctx context.Context, tx *sql.Tx, project, session, request, a
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO control_receipts(request_id,project_id,session_id,action,intent_digest,prompt_id,delivery_id,run_id,state,result,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING`, request, project, session, action, digest, prompt, delivery, run, state, raw, now, now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO control_receipts(request_id,project_id,session_id,action,intent_digest,prompt_id,delivery_id,run_id,state,result,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,request_id) DO NOTHING`, request, project, session, action, digest, prompt, delivery, run, state, raw, now, now)
 	return err
 }
 
@@ -64,8 +64,8 @@ func markDeliveryAck(ctx context.Context, tx *sql.Tx, command string, now string
 }
 
 func consumeDelivery(ctx context.Context, tx *sql.Tx, i Incarnation, token string, run string, sequence uint64, payload []byte, now string) error {
-	var delivery, project, session, prompt, request, state, expectedRun, content string
-	if err := tx.QueryRowContext(ctx, `SELECT d.id,d.project_id,d.session_id,d.prompt_id,d.request_id,d.state,d.run_id,t.content FROM input_deliveries d JOIN turns t ON t.id=d.prompt_id WHERE d.input_token=?`, token).Scan(&delivery, &project, &session, &prompt, &request, &state, &expectedRun, &content); err != nil {
+	var delivery, project, session, prompt, request, state, expectedRun, channel, content string
+	if err := tx.QueryRowContext(ctx, `SELECT d.id,d.project_id,d.session_id,d.prompt_id,d.request_id,d.state,d.run_id,d.channel,t.content FROM input_deliveries d JOIN turns t ON t.id=d.prompt_id WHERE d.input_token=?`, token).Scan(&delivery, &project, &session, &prompt, &request, &state, &expectedRun, &channel, &content); err != nil {
 		return err
 	}
 	if project != i.ProjectID || session != i.SessionID || expectedRun != run {
@@ -83,7 +83,11 @@ func consumeDelivery(ctx context.Context, tx *sql.Tx, i Incarnation, token strin
 	if err := sMessage(ctx, tx, i, prompt, prompt+"/user", "user", content, payload, now); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE turns SET state='completed',updated_at=? WHERE id=? AND state IN ('held','queued','starting','running')`, now, prompt)
+	newState := "completed"
+	if channel == "normal" {
+		newState = "running"
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE turns SET state=?,updated_at=? WHERE id=? AND state IN ('held','queued','starting','running')`, newState, now, prompt)
 	return err
 }
 

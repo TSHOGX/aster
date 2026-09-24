@@ -559,7 +559,7 @@ CREATE TABLE input_deliveries (
 );
 
 CREATE TABLE control_receipts (
- request_id TEXT PRIMARY KEY CHECK(request_id<>''),
+ request_id TEXT NOT NULL CHECK(request_id<>''),
  project_id TEXT NOT NULL,
  session_id TEXT NOT NULL,
  action TEXT NOT NULL CHECK(action IN ('enqueue','hold','release','cancel','steer','stop')),
@@ -572,7 +572,7 @@ CREATE TABLE control_receipts (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
  FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id),
- UNIQUE(session_id,request_id)
+ PRIMARY KEY(session_id,request_id)
 );
 
 CREATE TABLE workspace_readers (

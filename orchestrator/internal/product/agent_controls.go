@@ -38,13 +38,6 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
-		i, err := liveIncarnation(ctx, tx, session)
-		if err != nil {
-			return err
-		}
-		if i.State != "running" {
-			return ErrPending
-		}
 		// Deterministic command ID is scoped to Session and request, with enough
 		// entropy that callers cannot collide with generated prompt command IDs.
 		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(session+"\x00control\x00"+request)).String()
@@ -59,6 +52,13 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		i, err := liveIncarnation(ctx, tx, session)
+		if err != nil {
+			return err
+		}
+		if i.State != "running" {
+			return ErrPending
+		}
 		if child.ControlRevision != revision {
 			return ErrConflict
 		}
@@ -71,7 +71,7 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 			return missing(err)
 		}
 		turn := active
-		payload := map[string]string{"type": kind}
+		payload := map[string]string{"type": kind, "run_id": runID}
 		if kind == "steer" {
 			t, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE id=? AND session_id=? AND project_id=?`, source, session, scope.ProjectID))
 			if err != nil {

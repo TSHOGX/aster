@@ -320,7 +320,7 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 	// Restrict this boundary to native RPC commands, not arbitrary configuration
 	// mutation or environment rewriting at command dispatch.
 	for key := range native {
-		if key != "type" && key != "message" && key != "input_token" {
+		if key != "type" && key != "message" && key != "input_token" && key != "run_id" {
 			return agentwire.ErrFrame
 		}
 	}
@@ -343,6 +343,14 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 		_, err = r.journal.Result(ctx, c.ID, "rejected", json.RawMessage(`{"error":"no running turn"}`))
 		r.notify()
 		return err
+	}
+	if kind == "steer" || kind == "abort" {
+		var target string
+		if err := json.Unmarshal(native["run_id"], &target); err != nil || target == "" || target != r.active {
+			_, err = r.journal.Result(ctx, c.ID, "rejected", json.RawMessage(`{"error":"target run changed"}`))
+			r.notify()
+			return err
+		}
 	}
 	if err = r.journal.Dispatch(ctx, f.Owner, c.ID); err != nil {
 		return err

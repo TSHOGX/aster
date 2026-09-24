@@ -28,7 +28,7 @@ func TestSteerDeliveryReceiptAndConsumptionEvidence(t *testing.T) {
 	if deliveryState != "native_queued" {
 		t.Fatal("ACK completed delivery", deliveryState)
 	}
-	_, err = s.IngestAgent(ctx, i, record(i, prompt, 3, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q}`, token, prompt.CommandID)))
+	_, err = s.IngestAgent(ctx, i, record(i, prompt, 3, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q,"occurred_at":"2026-09-24T00:00:01Z"}`, token, prompt.CommandID)))
 	must(t, err)
 	must(t, s.db.QueryRow(`SELECT state FROM input_deliveries WHERE id=?`, delivery).Scan(&deliveryState))
 	if deliveryState != "consumed" {
@@ -40,7 +40,7 @@ func TestSteerDeliveryReceiptAndConsumptionEvidence(t *testing.T) {
 		t.Fatal("consumption did not create one source anchor", messages)
 	}
 	// Replaying the same native evidence is deduplicated by the journal sequence.
-	_, err = s.IngestAgent(ctx, i, record(i, prompt, 3, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q}`, token, prompt.CommandID)))
+	_, err = s.IngestAgent(ctx, i, record(i, prompt, 3, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q,"occurred_at":"2026-09-24T00:00:01Z"}`, token, prompt.CommandID)))
 	must(t, err)
 	must(t, s.db.QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='user'`, source.ID).Scan(&messages))
 	if messages != 1 {
@@ -68,5 +68,42 @@ func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 	must(t, err)
 	if len(next.Items) != 24 || next.NextAfter != 0 {
 		t.Fatalf("queue tail: %+v", next)
+	}
+}
+
+func TestInputsReconciledRestoresUnconsumedDeliveryToHeld(t *testing.T) {
+	s, scope, i, prompt := agentFixture(t)
+	_, err := s.IngestAgent(ctx, i, record(i, prompt, 1, "command.applied", `{"success":true}`))
+	must(t, err)
+	var normalToken string
+	must(t, s.db.QueryRow(`SELECT input_token FROM input_deliveries WHERE command_id=?`, prompt.CommandID).Scan(&normalToken))
+	_, err = s.IngestAgent(ctx, i, record(i, prompt, 2, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q,"occurred_at":"2026-09-24T00:00:00Z"}`, normalToken, prompt.CommandID)))
+	must(t, err)
+	source, err := s.AdmitTurn(ctx, scope, i.SessionID, "removed-source", "will be held", true)
+	must(t, err)
+	child, err := s.Session(ctx, scope, i.SessionID)
+	must(t, err)
+	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "removed-request", child.ControlRevision))
+	steer, err := s.agentCommand(ctx, i)
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, steer, 3, "command.applied", `{"success":true}`))
+	must(t, err)
+	var token string
+	must(t, s.db.QueryRow(`SELECT input_token FROM input_deliveries WHERE command_id=?`, steer.CommandID).Scan(&token))
+	_, err = s.IngestAgent(ctx, i, record(i, prompt, 4, "native", fmt.Sprintf(`{"type":"inputs_reconciled","run_id":%q,"removed_input_tokens":[%q],"complete":true}`, prompt.CommandID, token)))
+	must(t, err)
+	var state string
+	must(t, s.db.QueryRow(`SELECT state FROM input_deliveries WHERE input_token=?`, token).Scan(&state))
+	if state != "removed" {
+		t.Fatal(state)
+	}
+	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	if state != "held" {
+		t.Fatal("removed input became dispatchable", state)
+	}
+	var messages int
+	must(t, s.db.QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='user'`, source.ID).Scan(&messages))
+	if messages != 0 {
+		t.Fatal("removed input was projected", messages)
 	}
 }

@@ -109,7 +109,7 @@ func TestJournalPressureWaitReleasesCommandMutexAndPreservesSequence(t *testing.
 	case <-ctx.Done():
 		t.Fatal("pending output blocked Stop mutex")
 	}
-	if err := r.command(ctx, agentwire.Frame{Owner: 1, CommandID: "stop", TurnID: "turn", Payload: json.RawMessage(`{"type":"abort"}`)}); err != nil {
+	if err := r.command(ctx, agentwire.Frame{Owner: 1, CommandID: "stop", TurnID: "turn", Payload: json.RawMessage(`{"type":"abort","run_id":"prompt"}`)}); err != nil {
 		t.Fatal("full normal journal blocked native Stop", err)
 	}
 	if err := r.journal.Ack(ctx, 1, last); err != nil {
@@ -284,7 +284,7 @@ func TestRunner40And80MiBWithDelayedACK(t *testing.T) {
 				r.notify()
 				if !stopped && produced.Load() > int64(mib/2)<<20 {
 					began := time.Now()
-					if err = r.command(ctx, agentwire.Frame{Owner: 1, CommandID: "stop", TurnID: "turn", Payload: json.RawMessage(`{"type":"abort"}`)}); err != nil {
+					if err = r.command(ctx, agentwire.Frame{Owner: 1, CommandID: "stop", TurnID: "turn", Payload: json.RawMessage(`{"type":"abort","run_id":"prompt"}`)}); err != nil {
 						t.Fatal(err)
 					}
 					stopLatency = time.Since(began)

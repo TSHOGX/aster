@@ -139,8 +139,16 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 			if err := tx.QueryRowContext(ctx, `SELECT request_id FROM turns WHERE id=?`, turn).Scan(&request); err != nil {
 				return err
 			}
-			if _, _, err := createDelivery(ctx, tx, i.ProjectID, i.SessionID, turn, request, id, id, "normal", s.timestamp()); err != nil {
+			_, token, err := createDelivery(ctx, tx, i.ProjectID, i.SessionID, turn, request, id, id, "normal", s.timestamp())
+			if err != nil {
 				return fmt.Errorf("create normal delivery: %w", err)
+			}
+			payload, err = nativePayload(map[string]string{"type": "prompt", "message": content, "input_token": token})
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE agent_commands SET payload=? WHERE id=?`, payload, id); err != nil {
+				return err
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='starting',updated_at=? WHERE id=? AND state='queued'`, s.timestamp(), turn); err != nil {
 				return err
@@ -278,6 +286,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			Type       string `json:"type"`
 			InputToken string `json:"input_token"`
 			RunID      string `json:"run_id"`
+			OccurredAt string `json:"occurred_at"`
 			Message    struct {
 				Role    string
 				Content []struct{ Type, Text string }
@@ -288,10 +297,10 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		}
 		if event.Type == "input_consumed" {
 			run := event.RunID
-			if run == "" {
-				run = f.CommandID
+			if run == "" || run != f.CommandID || event.OccurredAt == "" {
+				return ErrInvalid
 			}
-			return consumeDelivery(ctx, tx, i, event.InputToken, run, f.Sequence, f.Payload, s.timestamp())
+			return consumeDelivery(ctx, tx, i, event.InputToken, run, f.Sequence, f.Payload, event.OccurredAt)
 		}
 		if event.Type == "inputs_reconciled" {
 			var removed []string
@@ -313,6 +322,16 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 				if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='removed',removed_at=? WHERE input_token=? AND run_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, s.timestamp(), token, raw.RunID)); err != nil {
 					return err
 				}
+				if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='held',updated_at=? WHERE id=(SELECT prompt_id FROM input_deliveries WHERE input_token=?) AND state IN ('starting','running','stopping','queued')`, s.timestamp(), token); err != nil {
+					return err
+				}
+			}
+			var unresolved int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM input_deliveries WHERE run_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, raw.RunID).Scan(&unresolved); err != nil {
+				return err
+			}
+			if unresolved != 0 {
+				return ErrConflict
 			}
 			return nil
 		}

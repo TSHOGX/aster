@@ -3,6 +3,7 @@ package runtimerelease
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +25,13 @@ func TestPinnedNativeRPCPatch(t *testing.T) {
 	changed := append(append([]byte{}, original...), '\n')
 	if _, err = patchNativeRPC(changed); err == nil {
 		t.Fatal("unreviewed native source accepted")
+	}
+	if _, err := exec.LookPath("node"); err == nil {
+		check := exec.Command("node", "--check", "--input-type=module")
+		check.Stdin = bytes.NewReader(patched)
+		if output, err := check.CombinedOutput(); err != nil {
+			t.Fatalf("patched RPC is invalid JavaScript: %v\n%s", err, output)
+		}
 	}
 }
 

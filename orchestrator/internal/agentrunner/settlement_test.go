@@ -110,3 +110,29 @@ func TestNativeSettlementRefusesUncorrelatedOrUnappliedCompletion(t *testing.T) 
 		}
 	}
 }
+
+func TestSteerAndStopStayBoundToOriginalRun(t *testing.T) {
+	r := pressureRunner(t, 4<<20)
+	r.native = &pressureNative{}
+	ctx := context.Background()
+	if err := r.command(ctx, agentwire.Frame{Owner: 1, CommandID: "original", TurnID: "turn", Payload: json.RawMessage(`{"type":"prompt","message":"work","input_token":"normal"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, control := range []struct{ id, kind string }{{"late-steer", "steer"}, {"late-stop", "abort"}} {
+		payload := `{"type":"` + control.kind + `","run_id":"later"`
+		if control.kind == "steer" {
+			payload += `,"message":"guidance","input_token":"steering"`
+		}
+		payload += `}`
+		if err := r.command(ctx, agentwire.Frame{Owner: 1, CommandID: control.id, TurnID: "turn", Payload: json.RawMessage(payload)}); err != nil {
+			t.Fatal(err)
+		}
+		state, err := r.journal.Status(ctx, 1, control.id)
+		if err != nil || state != "rejected" {
+			t.Fatalf("%s retargeted: %s %v", control.kind, state, err)
+		}
+	}
+	if r.active != "original" {
+		t.Fatal("rejected control changed the run", r.active)
+	}
+}
