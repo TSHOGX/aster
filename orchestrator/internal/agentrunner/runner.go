@@ -311,10 +311,16 @@ func (r *Runner) command(ctx context.Context, f agentwire.Frame) error {
 	if (kind == "abort" || kind == "get_state") && len(native["message"]) > 0 {
 		return agentwire.ErrFrame
 	}
+	if rawToken := native["input_token"]; len(rawToken) > 0 {
+		var token string
+		if err := json.Unmarshal(rawToken, &token); err != nil || !validIdentity(token) {
+			return agentwire.ErrFrame
+		}
+	}
 	// Restrict this boundary to native RPC commands, not arbitrary configuration
 	// mutation or environment rewriting at command dispatch.
 	for key := range native {
-		if key != "type" && key != "message" {
+		if key != "type" && key != "message" && key != "input_token" {
 			return agentwire.ErrFrame
 		}
 	}

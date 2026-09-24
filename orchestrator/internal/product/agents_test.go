@@ -151,8 +151,16 @@ func TestSteerReceiptReleaseRaceAndAppliedProjection(t *testing.T) {
 	_, err = s.IngestAgent(ctx, i, record(i, steer, 2, "command.applied", `{"success":true}`))
 	must(t, err)
 	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
-	if state != "completed" {
+	if state != "held" {
 		t.Fatal(state)
+	}
+	var token string
+	must(t, s.db.QueryRow(`SELECT input_token FROM input_deliveries WHERE command_id=?`, steer.CommandID).Scan(&token))
+	_, err = s.IngestAgent(ctx, i, record(i, c, 3, "native", fmt.Sprintf(`{"type":"input_consumed","input_token":%q,"run_id":%q}`, token, c.CommandID)))
+	must(t, err)
+	must(t, s.db.QueryRow(`SELECT state FROM turns WHERE id=?`, source.ID).Scan(&state))
+	if state != "completed" {
+		t.Fatal("consumption did not settle source", state)
 	}
 	// Replaying the request after the Session revision advanced remains idempotent.
 	must(t, s.Steer(ctx, scope, i.SessionID, source.ID, "steer-request", 1))

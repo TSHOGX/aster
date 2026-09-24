@@ -66,6 +66,10 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 		if err = tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id=? AND state IN ('starting','running','stopping')`, session).Scan(&active); err != nil {
 			return missing(err)
 		}
+		runID := active
+		if err = tx.QueryRowContext(ctx, `SELECT id FROM agent_commands WHERE turn_id=? AND kind='prompt' ORDER BY created_at LIMIT 1`, active).Scan(&runID); err != nil {
+			return missing(err)
+		}
 		turn := active
 		payload := map[string]string{"type": kind}
 		if kind == "steer" {
@@ -102,6 +106,23 @@ func (s *Store) control(ctx context.Context, scope Scope, session, request, sour
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_commands(id,project_id,session_id,incarnation_id,turn_id,kind,payload,state,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)`, id, scope.ProjectID, session, i.ID, turn, kind, raw, s.timestamp()); err != nil {
 			return err
+		}
+		if kind == "steer" {
+			deliveryID, token, err := createDelivery(ctx, tx, scope.ProjectID, session, source, request, id, runID, "steer", s.timestamp())
+			if err != nil {
+				return err
+			}
+			payload["input_token"] = token
+			raw, err = nativePayload(payload)
+			if err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE agent_commands SET payload=? WHERE id=?`, raw, id); err != nil {
+				return err
+			}
+			if err = insertReceipt(ctx, tx, scope.ProjectID, session, request, "steer", intentDigest("steer", request, source, map[string]string{"run_id": runID}), source, deliveryID, runID, "accepted", map[string]string{"delivery_id": deliveryID}, s.timestamp()); err != nil {
+				return err
+			}
 		}
 		if err = s.activity(ctx, tx, scope.ProjectID); err != nil {
 			return err

@@ -21,3 +21,11 @@ The expanded full-session fixture now observes the Agent's `processEvents` entry
 ## P1 preparation: lifecycle inventory (2026-09-24)
 
 [queued-prompts-lifecycle-inventory.md](./queued-prompts-lifecycle-inventory.md) maps current `turns.state` ownership across schema, scheduling, recovery, release, service grants, and conversation projection. It is the checklist for replacing the overloaded state with prompt, run, and delivery resources. G2 remains open until that replacement and its transaction tests are complete.
+
+## P0: native token boundary (2026-09-24)
+
+The pinned RPC patch is now protocol 2. Prompt and Steer commands may carry an opaque `input_token`. The adapter tags the exact user message object at the Agent boundary with a non-enumerable property, emits `input_consumed` before the ordinary user `message_start` event, and keeps the token out of model context and Session persistence. The runner validates and forwards the token without treating it as user content. The patch remains source and output hash pinned; `go test ./internal/runtimerelease` verifies idempotence and rejects unreviewed bytes.
+
+The product store now has fresh-schema `execution_runs`, `input_deliveries`, and `control_receipts` records. Steer acceptance creates a delivery and receipt atomically; native ACK advances it to `native_queued` and does not complete the source prompt. An `input_consumed` journal event is the only path that materializes the source user message and settles that prompt. Delivery tokens are checked against the target run and are idempotent on replay. Normal prompt dispatch also creates a run and delivery record so it can move to the same evidence path.
+
+This stage has not yet replaced all `turns.state` guards, added the full inputs-reconciled runtime emission, or migrated the HTTP DTOs and frontend. G1/G2 remain open until those paths use the new authorities consistently.

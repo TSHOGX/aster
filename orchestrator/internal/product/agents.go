@@ -132,6 +132,16 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 			if _, err := tx.ExecContext(ctx, `INSERT INTO agent_commands(id,project_id,session_id,incarnation_id,turn_id,kind,payload,state,created_at) VALUES(?,?,?,?,?,'prompt',?,'pending',?)`, id, i.ProjectID, i.SessionID, i.ID, turn, payload, s.timestamp()); err != nil {
 				return err
 			}
+			if err := createExecutionRun(ctx, tx, i.ProjectID, i.SessionID, id, turn, i.ID, i.Owner, s.timestamp()); err != nil {
+				return fmt.Errorf("create execution run: %w", err)
+			}
+			var request string
+			if err := tx.QueryRowContext(ctx, `SELECT request_id FROM turns WHERE id=?`, turn).Scan(&request); err != nil {
+				return err
+			}
+			if _, _, err := createDelivery(ctx, tx, i.ProjectID, i.SessionID, turn, request, id, id, "normal", s.timestamp()); err != nil {
+				return fmt.Errorf("create normal delivery: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='starting',updated_at=? WHERE id=? AND state='queued'`, s.timestamp(), turn); err != nil {
 				return err
 			}
@@ -142,6 +152,9 @@ func (s *Store) agentCommand(ctx context.Context, i Incarnation) (agentwire.Fram
 			return ErrPending
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE agent_commands SET state='sending' WHERE id=? AND state='pending'`, id)); err != nil {
+			return err
+		}
+		if err := markDeliveryDispatching(ctx, tx, id, s.timestamp()); err != nil {
 			return err
 		}
 		f = agentwire.Frame{Kind: "command", Session: i.SessionID, Incarnation: i.ID, Owner: i.Owner, CommandID: id, TurnID: turn, Payload: payload}
@@ -245,7 +258,7 @@ func (s *Store) ingestAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnation
 		return 0, err
 	}
 	if err = s.projectAgentRecord(ctx, tx, i, f); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("project agent record %s: %w", f.State, err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_incarnations SET ingested_sequence=?,last_work_at=? WHERE id=? AND owner=?`, f.Sequence, s.timestamp(), i.ID, i.Owner); err != nil {
 		return 0, err
@@ -262,14 +275,46 @@ func (s *Store) ingestAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnation
 func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnation, f agentwire.Frame) error {
 	if f.State == "native" {
 		var event struct {
-			Type    string
-			Message struct {
+			Type       string `json:"type"`
+			InputToken string `json:"input_token"`
+			RunID      string `json:"run_id"`
+			Message    struct {
 				Role    string
 				Content []struct{ Type, Text string }
 			}
 		}
 		if err := json.Unmarshal(f.Payload, &event); err != nil {
 			return err
+		}
+		if event.Type == "input_consumed" {
+			run := event.RunID
+			if run == "" {
+				run = f.CommandID
+			}
+			return consumeDelivery(ctx, tx, i, event.InputToken, run, f.Sequence, f.Payload, s.timestamp())
+		}
+		if event.Type == "inputs_reconciled" {
+			var removed []string
+			var complete bool
+			var raw struct {
+				Type     string   `json:"type"`
+				RunID    string   `json:"run_id"`
+				Removed  []string `json:"removed_input_tokens"`
+				Complete bool     `json:"complete"`
+			}
+			if err := json.Unmarshal(f.Payload, &raw); err != nil {
+				return err
+			}
+			removed, complete = raw.Removed, raw.Complete
+			if !complete || raw.RunID != f.CommandID {
+				return ErrInvalid
+			}
+			for _, token := range removed {
+				if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='removed',removed_at=? WHERE input_token=? AND run_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, s.timestamp(), token, raw.RunID)); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		if event.Type == "message_end" && event.Message.Role == "assistant" && f.TurnID != "" {
 			text := ""
@@ -305,15 +350,16 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		return err
 	}
 	if kind == "steer" && state == "applied" {
-		var content string
-		if err := tx.QueryRowContext(ctx, `SELECT content FROM turns WHERE id=? AND state='held'`, turn).Scan(&content); err != nil {
+		return markDeliveryAck(ctx, tx, f.CommandID, s.timestamp())
+	}
+	if kind == "steer" && state == "rejected" {
+		if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='rejected',error=? WHERE command_id=? AND state IN ('accepted','dispatching','native_queued')`, "native command rejected", f.CommandID)); err != nil {
 			return err
 		}
-		if err := s.message(ctx, tx, i, turn, turn+"/user", "user", content, nil); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `UPDATE turns SET state='completed',updated_at=? WHERE id=?`, s.timestamp(), turn)
-		return err
+		return nil
+	}
+	if kind == "steer" && state == "unknown" {
+		return changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='unknown',error=? WHERE command_id=?`, "native command outcome unknown", f.CommandID))
 	}
 	if kind != "prompt" {
 		return nil
@@ -325,6 +371,15 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			return err
 		}
 		if err := s.message(ctx, tx, i, turn, turn+"/user", "user", content, nil); err != nil {
+			return err
+		}
+		if err := markDeliveryAck(ctx, tx, f.CommandID, s.timestamp()); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM execution_runs WHERE id=?`, f.CommandID).Err(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE execution_runs SET state='running' WHERE id=? AND state='starting'`, f.CommandID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state='running',updated_at=? WHERE id=? AND state='starting'`, s.timestamp(), turn); err != nil {
@@ -365,6 +420,9 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state=?,updated_at=? WHERE id=?`, outcome, s.timestamp(), turn); err != nil {
+			return err
+		}
+		if err := settleExecutionRun(ctx, tx, f.CommandID, outcome, s.timestamp()); err != nil {
 			return err
 		}
 	}

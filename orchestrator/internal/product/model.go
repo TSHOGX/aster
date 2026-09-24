@@ -67,16 +67,59 @@ type Terminal struct {
 }
 
 type Turn struct {
+	ID             string `json:"id"`
+	ProjectID      string `json:"project_id"`
+	SessionID      string `json:"session_id"`
+	RequestID      string `json:"request_id"`
+	Content        string `json:"content"`
+	InitiallyHeld  bool   `json:"initially_held"`
+	PromptRevision int64  `json:"prompt_revision"`
+	State          string `json:"state"`
+	Sequence       int64  `json:"sequence"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+type PromptQueuePage struct {
+	Items         []Turn `json:"items"`
+	TotalPending  int    `json:"total_pending"`
+	QueueRevision int64  `json:"queue_revision"`
+	After         int64  `json:"after,omitempty"`
+	NextAfter     int64  `json:"next_after,omitempty"`
+}
+
+type ExecutionRun struct {
 	ID            string `json:"id"`
 	ProjectID     string `json:"project_id"`
 	SessionID     string `json:"session_id"`
-	RequestID     string `json:"request_id"`
-	Content       string `json:"content"`
-	InitiallyHeld bool   `json:"initially_held"`
+	PromptID      string `json:"prompt_id"`
+	IncarnationID string `json:"incarnation_id"`
+	Owner         uint64 `json:"owner"`
 	State         string `json:"state"`
-	Sequence      int64  `json:"sequence"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	Outcome       string `json:"outcome,omitempty"`
+	StartedAt     string `json:"started_at"`
+	SettledAt     string `json:"settled_at,omitempty"`
+	ElapsedMS     int64  `json:"elapsed_ms"`
+}
+
+type InputDelivery struct {
+	ID                 string `json:"id"`
+	ProjectID          string `json:"project_id"`
+	SessionID          string `json:"session_id"`
+	PromptID           string `json:"prompt_id"`
+	RequestID          string `json:"request_id"`
+	CommandID          string `json:"command_id"`
+	RunID              string `json:"run_id"`
+	InputToken         string `json:"input_token"`
+	Channel            string `json:"channel"`
+	State              string `json:"state"`
+	AcceptanceSequence int64  `json:"acceptance_sequence"`
+	ConsumedSequence   int64  `json:"consumed_sequence,omitempty"`
+	AcceptedAt         string `json:"accepted_at"`
+	AckAt              string `json:"ack_at,omitempty"`
+	ConsumedAt         string `json:"consumed_at,omitempty"`
+	RemovedAt          string `json:"removed_at,omitempty"`
+	Error              string `json:"error,omitempty"`
 }
 
 type Event struct {

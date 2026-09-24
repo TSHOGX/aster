@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const turnColumns = `id,project_id,session_id,request_id,content,initially_held,state,sequence,created_at,updated_at`
+const turnColumns = `id,project_id,session_id,request_id,content,initially_held,prompt_revision,state,sequence,created_at,updated_at`
 
 func scanTurn(row scanner) (t Turn, err error) {
-	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt))
+	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt))
 	return
 }
 
@@ -51,6 +51,7 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 				return ErrConflict
 			}
 			t = old
+			_ = insertReceipt(ctx, tx, scope.ProjectID, session, request, "enqueue", intentDigest("enqueue", request, "", map[string]any{"content": content, "held": held}), old.ID, "", "", "accepted", map[string]any{"prompt_id": old.ID}, s.timestamp())
 			return nil
 		}
 		if !errors.Is(err, ErrNotFound) {
@@ -64,6 +65,9 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 		id := uuid.NewString()
 		_, err = tx.ExecContext(ctx, `INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,state,sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM turns WHERE session_id=?),?,?)`, id, scope.ProjectID, session, request, content, held, state, session, now, now)
 		if err != nil {
+			return err
+		}
+		if err = insertReceipt(ctx, tx, scope.ProjectID, session, request, "enqueue", intentDigest("enqueue", request, "", map[string]any{"content": content, "held": held}), id, "", "", "accepted", map[string]any{"prompt_id": id}, now); err != nil {
 			return err
 		}
 		if !held {
@@ -113,6 +117,43 @@ func (s *Store) Turns(ctx context.Context, scope Scope, session string, after in
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// PromptQueue is the bounded FIFO scheduling view. It deliberately excludes
+// active and consumed execution records; those belong to the run/display head.
+func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, after int64, limit int) (PromptQueuePage, error) {
+	child, err := sessionIn(ctx, s.reader, scope, session)
+	if err != nil {
+		return PromptQueuePage{}, err
+	}
+	limit = pageSize(limit)
+	var total int
+	if err := s.reader.QueryRowContext(ctx, `SELECT count(*) FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued')`, scope.ProjectID, session).Scan(&total); err != nil {
+		return PromptQueuePage{}, err
+	}
+	rows, err := s.reader.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE project_id=? AND session_id=? AND state IN ('held','queued') AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, limit)
+	if err != nil {
+		return PromptQueuePage{}, err
+	}
+	defer rows.Close()
+	items := make([]Turn, 0, limit)
+	var next int64
+	for rows.Next() {
+		t, err := scanTurn(rows)
+		if err != nil {
+			return PromptQueuePage{}, err
+		}
+		next = t.Sequence
+		items = append(items, t)
+	}
+	if err := rows.Err(); err != nil {
+		return PromptQueuePage{}, err
+	}
+	page := PromptQueuePage{Items: items, TotalPending: total, QueueRevision: child.ControlRevision, After: after}
+	if len(items) == limit {
+		page.NextAfter = next
+	}
+	return page, nil
 }
 
 // ReleaseTurn requires the Session control revision, because it changes that Session's

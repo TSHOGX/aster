@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/control", s.agentControl)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/turns/{turn}/control", s.queuedControl)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/turns", s.listTurns)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/queue", s.promptQueue)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/turn-index", s.turnIndex)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/turns", s.admitTurn)
 
@@ -299,6 +300,16 @@ func (s *Server) listTurns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"turns": turns})
+}
+
+func (s *Server) promptQueue(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, err := s.Store.PromptQueue(r.Context(), s.scope(r), r.PathValue("session"), int64Param(q, "after"), intParam(q, "limit", 32))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (s *Server) admitTurn(w http.ResponseWriter, r *http.Request) {

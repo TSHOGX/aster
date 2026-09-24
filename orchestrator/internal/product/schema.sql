@@ -500,6 +500,7 @@ CREATE TABLE turns (
  request_id TEXT NOT NULL CHECK(request_id<>''),
  content TEXT NOT NULL CHECK(length(content)>0),
  initially_held INTEGER NOT NULL CHECK(initially_held IN (0,1)),
+ prompt_revision INTEGER NOT NULL DEFAULT 1 CHECK(prompt_revision>0),
  state TEXT NOT NULL CHECK(state IN ('held','queued','starting','running','stopping','completed','failed','canceled','unknown')),
  acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
  sequence INTEGER NOT NULL CHECK(sequence>0),
@@ -509,6 +510,69 @@ CREATE TABLE turns (
  UNIQUE(session_id,request_id),
  UNIQUE(session_id,sequence),
  UNIQUE(project_id,session_id,id)
+);
+
+-- Prompt intent, execution, native delivery and mutation receipt are separate
+-- authorities. `turns.state` remains only until the staged owner migration is
+-- complete; new code must use these records for lifecycle decisions.
+CREATE TABLE execution_runs (
+ id TEXT PRIMARY KEY CHECK(id<>''),
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ prompt_id TEXT NOT NULL,
+ incarnation_id TEXT NOT NULL,
+ owner INTEGER NOT NULL CHECK(owner>0),
+ state TEXT NOT NULL CHECK(state IN ('starting','running','stopping','settled','failed','unknown')),
+ outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','completed','failed','canceled','unknown')),
+ started_at TEXT NOT NULL,
+ settled_at TEXT NOT NULL DEFAULT '',
+ elapsed_ms INTEGER NOT NULL DEFAULT 0 CHECK(elapsed_ms>=0),
+ FOREIGN KEY(project_id,session_id,prompt_id) REFERENCES turns(project_id,session_id,id),
+ FOREIGN KEY(project_id,session_id,incarnation_id) REFERENCES agent_incarnations(project_id,session_id,id),
+ UNIQUE(session_id,id),
+ UNIQUE(session_id,prompt_id)
+);
+
+CREATE TABLE input_deliveries (
+ id TEXT PRIMARY KEY CHECK(id<>''),
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ prompt_id TEXT NOT NULL,
+ request_id TEXT NOT NULL,
+ command_id TEXT NOT NULL,
+ run_id TEXT NOT NULL,
+ input_token TEXT NOT NULL UNIQUE,
+ channel TEXT NOT NULL CHECK(channel IN ('normal','steer')),
+ state TEXT NOT NULL CHECK(state IN ('accepted','dispatching','native_queued','consumed','rejected','removed','unknown')),
+ acceptance_sequence INTEGER NOT NULL CHECK(acceptance_sequence>0),
+ consumed_sequence INTEGER NOT NULL DEFAULT 0 CHECK(consumed_sequence>=0),
+ accepted_at TEXT NOT NULL,
+ ack_at TEXT NOT NULL DEFAULT '',
+ consumed_at TEXT NOT NULL DEFAULT '',
+ removed_at TEXT NOT NULL DEFAULT '',
+ error TEXT NOT NULL DEFAULT '',
+ FOREIGN KEY(project_id,session_id,prompt_id) REFERENCES turns(project_id,session_id,id),
+ FOREIGN KEY(command_id) REFERENCES agent_commands(id),
+ FOREIGN KEY(run_id) REFERENCES execution_runs(id),
+ UNIQUE(session_id,request_id),
+ UNIQUE(session_id,acceptance_sequence)
+);
+
+CREATE TABLE control_receipts (
+ request_id TEXT PRIMARY KEY CHECK(request_id<>''),
+ project_id TEXT NOT NULL,
+ session_id TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN ('enqueue','hold','release','cancel','steer','stop')),
+ intent_digest TEXT NOT NULL,
+ prompt_id TEXT NOT NULL DEFAULT '',
+ delivery_id TEXT NOT NULL DEFAULT '',
+ run_id TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK(state IN ('accepted','rejected','completed','unknown')),
+ result BLOB NOT NULL DEFAULT '{}',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id),
+ UNIQUE(session_id,request_id)
 );
 
 CREATE TABLE workspace_readers (
@@ -521,6 +585,11 @@ CREATE TABLE workspace_readers (
 );
 
 CREATE INDEX agent_commands_pending ON agent_commands(incarnation_id,state,created_at);
+
+CREATE INDEX execution_runs_live ON execution_runs(session_id,state) WHERE state IN ('starting','running','stopping','unknown');
+CREATE INDEX input_deliveries_run ON input_deliveries(session_id,run_id,acceptance_sequence);
+CREATE INDEX input_deliveries_pending ON input_deliveries(session_id,state) WHERE state IN ('accepted','dispatching','native_queued','unknown');
+CREATE INDEX control_receipts_session ON control_receipts(session_id,updated_at);
 
 CREATE UNIQUE INDEX agent_incarnation_live ON agent_incarnations(session_id) WHERE state IN ('starting','running','stopping','unknown');
 

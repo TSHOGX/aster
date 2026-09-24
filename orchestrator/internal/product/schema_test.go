@@ -42,7 +42,7 @@ func TestCurrentSchemaInitializesAndReopensWithoutConversion(t *testing.T) {
 	}
 }
 func TestHistoricalAndUnknownSchemaVersionsAreRefusedWithoutWrites(t *testing.T) {
-	for _, version := range []int{0, 2, 12, 13, 14, 15, 999} {
+	for _, version := range []int{0, 1, 12, 13, 14, 15, 999} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "old.db")
 			s, err := Open(ctx, path)

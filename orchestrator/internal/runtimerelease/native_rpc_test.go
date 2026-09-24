@@ -50,7 +50,7 @@ func TestNativeSettlementCapabilityCannotBeDeclaredWithoutPatchedBytes(t *testin
 	if err = os.WriteFile(filepath.Join(root, strings.TrimPrefix(NativeRPCPath, "/")), original, 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Even a manifest that hashes the unpatched tree must not claim protocol 1.
+	// Even a manifest that hashes the unpatched tree must not claim protocol 2.
 	manifest.NativeTree, err = nativeTree(root)
 	if err != nil {
 		t.Fatal(err)
