@@ -299,6 +299,65 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		must(t, store.ContinueSession(runctx, scope, "fault", fault.Revision))
 		turn(t, "fault", "after-ack", "continue from native history after acknowledgement")
 	})
+	t.Run("worker-crash-retains-uncertain-steer-without-next-run-leak", func(t *testing.T) {
+		_, err := store.CreateSession(runctx, scope, "steer-crash", "Steer crash")
+		must(t, err)
+		_, err = store.AdmitTurn(runctx, scope, "steer-crash", "slow", "long-for-interrupt", false)
+		must(t, err)
+		await(t, "Steer crash prompt streaming", func() bool {
+			var count int
+			e := reader.QueryRow(`SELECT count(*) FROM agent_records r JOIN agent_incarnations i ON i.id=r.incarnation_id WHERE i.session_id='steer-crash' AND r.kind='native' AND json_extract(r.payload,'$.type')='message_start' AND json_extract(r.payload,'$.message.role')='assistant'`).Scan(&count)
+			return e == nil && count > 0
+		})
+		head, err := store.ConversationHead(runctx, scope, "steer-crash")
+		must(t, err)
+		if head.ActiveRun == nil {
+			t.Fatal("native run disappeared before Steer admission")
+		}
+		run := *head.ActiveRun
+		source, err := store.AdmitTurn(runctx, scope, "steer-crash", "guidance", "accepted but uncertain guidance", true)
+		must(t, err)
+		receipt, err := store.ControlRun(runctx, scope, "steer-crash", product.ExecutionControl{
+			RequestID: "crash-steer", Action: "steer", Source: source.ID,
+			PromptRevision: source.PromptRevision, RunID: run.ID,
+			IncarnationID: run.IncarnationID, Owner: run.Owner,
+		})
+		must(t, err)
+		await(t, "native Steer accepted before crash", func() bool {
+			var state string
+			e := reader.QueryRow(`SELECT state FROM input_deliveries WHERE id=?`, receipt.DeliveryID).Scan(&state)
+			return e == nil && state == "native_queued"
+		})
+		var token string
+		must(t, reader.QueryRow(`SELECT input_token FROM input_deliveries WHERE id=?`, receipt.DeliveryID).Scan(&token))
+		shell(t, "/usr/local/bin/runtime-fixture kill-worker steer-crash")
+		await(t, "uncertain Steer journal recovery", func() bool {
+			var recovery, cleanup, state string
+			e := reader.QueryRow(`SELECT recovery_state,cleanup_state FROM agent_incarnations WHERE id=?`, run.IncarnationID).Scan(&recovery, &cleanup)
+			if e != nil {
+				return false
+			}
+			e = reader.QueryRow(`SELECT state FROM input_deliveries WHERE id=?`, receipt.DeliveryID).Scan(&state)
+			return e == nil && recovery == "complete" && cleanup == "settled" && state == "unknown"
+		})
+		child, err := store.Session(runctx, scope, "steer-crash")
+		must(t, err)
+		if child.State != "blocked" {
+			t.Fatal("uncertain Steer allowed execution", child)
+		}
+		must(t, store.ContinueSession(runctx, scope, "steer-crash", child.Revision))
+		turn(t, "steer-crash", "after-uncertain-steer", "new explicit work after recovery")
+		var state string
+		must(t, reader.QueryRow(`SELECT state FROM input_deliveries WHERE id=?`, receipt.DeliveryID).Scan(&state))
+		if state != "unknown" {
+			t.Fatal("unknown Steer was silently resolved or resent", state)
+		}
+		var consumed int
+		must(t, reader.QueryRow(`SELECT count(*) FROM agent_records WHERE kind='native' AND json_extract(payload,'$.type')='input_consumed' AND json_extract(payload,'$.input_token')=?`, token).Scan(&consumed))
+		if consumed != 0 {
+			t.Fatal("old native Steer leaked into the new run", consumed)
+		}
+	})
 	t.Run("Session-retirement-preserves-workspace-and-siblings", func(t *testing.T) {
 		shell(t, "printf shared-retained > /workspace/owned-by-project")
 		child, err := store.Session(runctx, scope, "alpha")

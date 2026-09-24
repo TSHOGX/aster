@@ -14,7 +14,11 @@ async function fixture(mode = 'normal') {
   const agent = {
     prompt(message) { agent.processEvents({type:'message_start',message}); },
     steer(message) { queue.push(message); },
-    processEvents(event) { listener?.(event); },
+    processEvents(event) {
+      listener?.(event);
+      if (mode === 'listener_failure' && event.type === 'message_start' && event.message.role === 'user')
+        throw new Error('listener failed after consumption');
+    },
     subscribe() { return () => {}; },
   };
   const session = {
@@ -87,4 +91,13 @@ test('failed prompt reconciles accepted inputs before terminal evidence',async()
   assert.equal(f.outputs.find(e=>e.type==='prompt_end').outcome,'failed');
   f.send({...normal,id:'next',input_token:'next'});await tick();
   assert.equal(f.outputs.filter(e=>e.type==='response'&&e.command==='prompt').length,2);
+});
+test('listener failure after input boundary cannot erase or resend consumption',async()=>{
+  const f=await fixture('listener_failure');f.send(normal);await tick();await tick();
+  assert.deepEqual(f.outputs.filter(e=>e.type==='input_consumed').map(e=>e.input_token),['normal']);
+  assert.deepEqual(f.outputs.find(e=>e.type==='inputs_reconciled').removed_input_tokens,[]);
+  assert.equal(f.outputs.find(e=>e.type==='prompt_end').outcome,'failed');
+  f.send({...normal,id:'next',input_token:'next'});await tick();await tick();
+  assert.equal(f.outputs.filter(e=>e.type==='input_consumed'&&e.input_token==='normal').length,1);
+  assert.ok(f.outputs.some(e=>e.type==='input_consumed'&&e.input_token==='next'));
 });
