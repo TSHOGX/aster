@@ -10,8 +10,9 @@ The original sequence below records that work; the follow-up takes precedence.
 The subsequent destructive-reset request supersedes the original preservation
 and migration plan below. The current implementation has one canonical schema,
 no migration chain, no historical schema branches, no migration-only read cleanup,
-and no old-executable rollback override. Deployment replaces legacy application
-and engine state with fresh stores. See [bootstrap](bootstrap.md) and the
+and no old-executable rollback override. Deployment replaced legacy application
+and engine state with fresh stores. The [fresh deployment](fresh-deployment.md)
+is complete and supersedes the original no-deployment boundary. See [bootstrap](bootstrap.md) and the
 [current contract](compatibility.md). The earlier qualification record describes
 its recorded source only, not the newly rebuilt deployment.
 

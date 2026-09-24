@@ -16,4 +16,5 @@
 - [Image build](sandbox-image.md): immutable packaging and release verification.
 - [Development](development.md) and [verification](verification.md): executable gates.
 - [Navigation, scheduling, and network delivery](implementation-plan.md): implementation decisions and qualification.
+- [Fresh deployment](fresh-deployment.md): removal of migration/legacy support and deployed reset evidence.
 - [Publication boundary](delivery/privacy.md): public reference versus private inputs.

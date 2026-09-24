@@ -1,0 +1,98 @@
+{
+  "recorded_at": "2026-09-24T01:57:27.989262+00:00",
+  "source_revision": "bd159922b38c7063c0bea04b7c6b9ad04a5b1813",
+  "deployment": "completed",
+  "schema": {
+    "version": 1,
+    "digest": "sha256:c945336d67883b9452c1d0e5f5e591bec42d981fafd12f330a727d1765d85983",
+    "canonical_ddl": true,
+    "migrations_supported": false,
+    "historical_schema_acceptance": false,
+    "old_executable_override": false
+  },
+  "artifacts": {
+    "orchestrator": "sha256:2b89005cb40db65081ebb58fa8754e053a7748a5c33d865a9b752f7570eab42f",
+    "khora": "sha256:de6c6c70e1cd7ce846b2611a95a3bb3726c21050fb6e7ca72413bb38354377ea",
+    "proxy": "sha256:614ca7edd92fe486a62815c1f9973338ca989140d295a9c43e2d5ba470e8a7dc"
+  },
+  "runtime_digest": "sha256:e5ba9ef9262313ebf0f8b7f275528005dafa374485aba326fab5bfe52b0e4545",
+  "frontend_build_id": "HL80cBAersSKrW7OOBstF",
+  "engine_revision": "e8cd021a9c7c",
+  "reset": {
+    "application_database_and_captures_deleted": true,
+    "engine_store_replaced": true,
+    "old_state_backups_deleted": true,
+    "legacy_subvolumes_deleted": 7,
+    "superseded_release_directories_deleted": 17,
+    "network_namespace_recreated": true,
+    "credentials_preserved": true,
+    "fresh_domain_tables_empty_before_smoke": true
+  },
+  "validation": {
+    "go_race": "passed",
+    "go_vet": "passed",
+    "integration_packages_compile": "passed",
+    "frontend_typecheck": "passed",
+    "frontend_lint": "passed",
+    "frontend_unit_tests_passed": 186,
+    "frontend_unit_tests_skipped": 1,
+    "frontend_production_build": "passed",
+    "real_release_gate": "passed",
+    "real_network_gate": "passed",
+    "real_browser_tests_passed": 3,
+    "real_browser_tests_skipped": 1,
+    "public_documentation": "passed"
+  },
+  "live_checks": {
+    "authentication_and_recurrence_preview": true,
+    "storage_before_compute": true,
+    "runtime_identity_and_workspace": true,
+    "native_model_gateway_completion": true,
+    "live_browser_navigation_and_schedule_edit": true,
+    "temporary_login_removed": true,
+    "smoke_resources_deleted": true,
+    "network_reload": true
+  },
+  "services": {
+    "application": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "NRestarts": "0"
+    },
+    "gateway": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "NRestarts": "0"
+    },
+    "engine": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "NRestarts": "0"
+    },
+    "engine-tls": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "NRestarts": "0"
+    },
+    "frontend": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "NRestarts": "0"
+    },
+    "web": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "NRestarts": "0"
+    },
+    "network": {
+      "ActiveState": "active",
+      "SubState": "exited",
+      "NRestarts": "0"
+    }
+  },
+  "limits": [
+    "Deployed the validated source revision; concurrent uncommitted preview changes are outside this release.",
+    "The destructive reset preserves reviewed credentials and provider configuration.",
+    "The disposable smoke Project was deleted through the product API; its deletion tombstone is current test metadata, not restored legacy data."
+  ]
+}

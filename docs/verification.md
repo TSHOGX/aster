@@ -213,3 +213,9 @@ network lifecycle gate, six release/runtime checks and the composed browser
 journey. Opt-in skips and public-Internet/usability limits are explicit. Earlier
 failures and their fixes are retained in the record rather than relabeled as
 initial passes.
+
+The subsequent [fresh-deployment record](../dev/measurements/fresh-deployment.json)
+supersedes the prior schema-15 installation boundary. It qualifies the canonical
+schema, selected-executable activation, rebuilt runtime and deployed data reset.
+Old migration/rollback suites were removed; current initialization/refusal and
+activation tests cover the new contract.
