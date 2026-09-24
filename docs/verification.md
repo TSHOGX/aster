@@ -219,3 +219,10 @@ supersedes the prior schema-15 installation boundary. It qualifies the canonical
 schema, selected-executable activation, rebuilt runtime and deployed data reset.
 Old migration/rollback suites were removed; current initialization/refusal and
 activation tests cover the new contract.
+
+`npm run test:pickers` runs Schedule picker interactions in Chromium, Firefox and
+WebKit against production assets. Install those Playwright browsers and their
+platform dependencies first. Checks cover Interval-first order, timezone-arrow
+selection/search, hour/minute confirmation, typed time, saved values, keyboard
+focus/Tab/Escape, and narrow English/Chinese light/dark layouts. These are browser
+engine checks on the test host, not a claim of testing every operating system.

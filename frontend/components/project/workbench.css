@@ -2113,3 +2113,67 @@ details[open] > .activity-row .activity-chevron {
 .schedule-description { display: flex !important; flex-direction: column; align-items: flex-start !important; flex: 1; min-width: 0; white-space: normal !important; text-align: left; padding: 4px !important; gap: 4px !important; }
 .schedule-description small { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 .schedule-row > .menu-root { flex-shrink: 0; }
+
+/* Shared custom form pickers: the portal uses the same tokens as the shell. */
+.selection-picker { display: grid; gap: 8px; min-width: 0; }
+.selection-picker-label, .time-picker > label { font-size: 14px; }
+.project-shell .selection-picker-trigger {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px;
+  padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px;
+  background: var(--color-surface); color: var(--color-foreground); text-align: left;
+}
+.selection-picker-trigger > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selection-picker-trigger > svg { flex-shrink: 0; color: var(--color-foreground-muted); pointer-events: none; }
+.project-shell .selection-picker-trigger:hover:not(:disabled), .project-shell .selection-picker-trigger[aria-expanded="true"] { background: var(--color-surface-muted); }
+.selection-picker-trigger:focus-visible, .time-picker-field:focus-within { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.selection-picker-trigger[aria-invalid="true"] { border-color: var(--color-danger); }
+.selection-picker-popover {
+  position: fixed; z-index: 125; display: flex; flex-direction: column; min-height: 0;
+  padding: 5px; border: 1px solid var(--color-border); border-radius: 12px;
+  color: var(--color-foreground); background: var(--color-surface);
+  box-shadow: 0 8px 30px #00000020, 0 2px 6px #0000000a;
+  font: inherit; font-size: 14px; line-height: 1.45; overflow: hidden;
+}
+.selection-picker-search { display: flex; align-items: center; gap: 9px; padding: 8px 10px; flex-shrink: 0; border-bottom: 1px solid var(--color-border); }
+.selection-picker-search svg { flex-shrink: 0; color: var(--color-foreground-muted); }
+.selection-picker-search input {
+  flex: 1; min-width: 0; width: 100%; min-height: 32px; padding: 3px 0; border: 0;
+  outline: 0; background: transparent; color: var(--color-foreground); font: inherit;
+}
+.selection-picker-search:focus-within { box-shadow: inset 0 -2px var(--color-accent); }
+.selection-picker-options { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px 0; }
+.selection-picker-options:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; border-radius: 8px; }
+.selection-picker-option { display: flex; align-items: center; gap: 12px; min-height: 40px; margin: 1px 0; padding: 9px 11px; border-radius: 7px; cursor: pointer; }
+.selection-picker-option > span { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.selection-picker-option > span > span { overflow-wrap: anywhere; }
+.selection-picker-option small { font-size: 12px; color: var(--color-foreground-muted); overflow-wrap: anywhere; }
+.selection-picker-option[data-active="true"] { background: var(--color-surface-muted); }
+.selection-picker-option[aria-selected="true"] { color: var(--color-accent); }
+.selection-picker-option > svg { flex-shrink: 0; color: var(--color-accent); }
+.selection-picker-empty { margin: 0; padding: 18px 12px; color: var(--color-foreground-muted); }
+.time-picker-field { display: flex; align-items: center; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; background: var(--color-surface); }
+.project-shell .time-picker-field input { border: 0; border-radius: 0; flex: 1; width: 0; min-width: 0; outline: none; box-shadow: none; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.project-shell .time-picker-toggle { align-self: stretch; width: 44px; padding: 10px; border-left: 1px solid var(--color-border); border-radius: 0; color: var(--color-foreground-muted); }
+.time-picker-toggle > svg { pointer-events: none; }
+.time-picker-heading { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.time-picker-heading > span { font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 500; }
+.time-picker-heading > small { margin-left: auto; color: var(--color-foreground-muted); font-size: 12px; }
+.time-picker-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-height: 0; padding: 0 7px; }
+.time-picker-column { display: flex; flex-direction: column; min-height: 0; }
+.time-picker-column > span { padding: 4px 8px 8px; font-size: 12px; color: var(--color-foreground-muted); }
+.time-picker-values { height: 204px; min-height: 0; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; border: 1px solid var(--color-border); border-radius: 8px; }
+.time-picker-values:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.time-picker-values > div { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 6px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.time-picker-values > div:hover, .time-picker-values > div[aria-selected="true"] { background: var(--color-surface-muted); }
+.time-picker-values > div[aria-selected="true"] { color: var(--color-accent); font-weight: 550; }
+.time-picker-popover footer { display: flex; justify-content: flex-end; flex-shrink: 0; gap: 8px; padding: 10px 7px 5px; }
+.time-picker-popover button { border: 0; border-radius: 7px; background: transparent; color: inherit; padding: 8px 12px; font: inherit; cursor: pointer; }
+.time-picker-popover button:hover { background: var(--color-surface-muted); }
+.time-picker-popover button.picker-confirm { background: var(--color-foreground); color: var(--color-surface); }
+.time-picker-popover button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .project-shell .selection-picker-trigger, .selection-picker-option, .time-picker-values > div, .time-picker-popover button { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  .selection-picker-option[data-active="true"], .time-picker-values > div[aria-selected="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
+}

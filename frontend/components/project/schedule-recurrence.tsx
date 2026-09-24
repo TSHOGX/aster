@@ -2,6 +2,8 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { api, type SchedulePreview } from "@/lib/project-api";
 import { useLocale, useT } from "@/lib/i18n";
+import { Globe2, Repeat2 } from "lucide-react";
+import { timezoneOptions } from "@/lib/timezone-options";
 import {
   parseRecurrence,
   recurrenceCron,
@@ -13,6 +15,8 @@ import {
   type RepeatMode,
 } from "@/lib/schedule-recurrence";
 import { useDialog } from "./ui";
+import { SelectPicker } from "./select-picker";
+import { TimePicker } from "./time-picker";
 
 export function RecurrenceSummary({
   cron,
@@ -128,6 +132,7 @@ export function RecurrenceFields({
   onRule,
   onTimezone,
   onValidity,
+  disabled = false,
 }: {
   rule: Recurrence;
   cron: string | null;
@@ -136,20 +141,17 @@ export function RecurrenceFields({
   onRule: (r: Recurrence) => void;
   onTimezone: (s: string) => void;
   onValidity: (key: string, valid: boolean) => void;
+  disabled?: boolean;
 }) {
   const tr = useT(),
     locale = useLocale(),
     ask = useDialog();
+  const [zoneReferenceTime] = useState(() => new Date());
   const zones = useMemo(
-    () =>
-      ["UTC", ...Intl.supportedValuesOf("timeZone")].map((zone) => ({
-        value: zone,
-        label: `${zone.replaceAll("_", " ")} · ${new Intl.DateTimeFormat(locale, { timeZone: zone, timeZoneName: "longGeneric" }).formatToParts(new Date(0)).find((part) => part.type === "timeZoneName")?.value || zone}`,
-      })),
-    [locale],
+    () => timezoneOptions(locale, timezone, zoneReferenceTime),
+    [locale, timezone, zoneReferenceTime],
   );
-  const zoneID = useId(),
-    errorID = useId();
+  const errorID = useId();
   const [attempt, setAttempt] = useState(0);
   const [preview, setPreview] = useState<{
     key: string;
@@ -210,19 +212,17 @@ export function RecurrenceFields({
   return (
     <fieldset className="schedule-settings">
       <legend>{tr("Schedule")}</legend>
-      <label>
-        {tr("Repeat")}
-        <select
-          value={rule.mode}
-          onChange={(e) => void switchMode(e.target.value as RepeatMode)}
-        >
-          {Object.entries(repeatLabels).map(([mode, label]) => (
-            <option key={mode} value={mode}>
-              {tr(label)}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SelectPicker
+        label={tr("Repeat")}
+        value={rule.mode}
+        disabled={disabled}
+        icon={<Repeat2 size={17} aria-hidden="true" />}
+        options={Object.entries(repeatLabels).map(([value, label]) => ({
+          value,
+          label: tr(label),
+        }))}
+        onChange={(value) => void switchMode(value as RepeatMode)}
+      />
       {rule.mode === "interval" && (
         <>
           <label>
@@ -272,17 +272,16 @@ export function RecurrenceFields({
         </fieldset>
       )}
       {rule.mode === "monthly" && (
-        <label>
-          {tr("Day of month")}
-          <select
-            value={rule.dates[0]}
-            onChange={(e) => onRule({ ...rule, dates: [+e.target.value] })}
-          >
-            {Array.from({ length: 31 }, (_, i) => (
-              <option key={i + 1}>{i + 1}</option>
-            ))}
-          </select>
-        </label>
+        <SelectPicker
+          label={tr("Day of month")}
+          value={String(rule.dates[0])}
+          disabled={disabled}
+          options={Array.from({ length: 31 }, (_, i) => ({
+            value: String(i + 1),
+            label: String(i + 1),
+          }))}
+          onChange={(value) => onRule({ ...rule, dates: [+value] })}
+        />
       )}
       {rule.mode === "dates" && (
         <fieldset aria-describedby={errorID}>
@@ -304,15 +303,12 @@ export function RecurrenceFields({
         </fieldset>
       )}
       {!["manual", "advanced", "interval"].includes(rule.mode) && (
-        <label>
-          {tr("Time")}
-          <input
-            type="time"
-            required
-            value={rule.time}
-            onChange={(e) => onRule({ ...rule, time: e.target.value })}
-          />
-        </label>
+        <TimePicker
+          value={rule.time}
+          disabled={disabled}
+          describedBy={errorID}
+          onChange={(time) => onRule({ ...rule, time })}
+        />
       )}
       {rule.mode === "advanced" && (
         <label>
@@ -342,24 +338,19 @@ export function RecurrenceFields({
             {tr("Months without the selected date are skipped.")}
           </p>
         )}
-      <label>
-        {tr("Timezone")}
-        <input
-          required
-          list={zoneID}
-          value={timezone}
-          maxLength={128}
-          aria-describedby={errorID}
-          onChange={(e) => onTimezone(e.target.value)}
-        />
-        <datalist id={zoneID}>
-          {zones.map((zone) => (
-            <option key={zone.value} value={zone.value}>
-              {zone.label}
-            </option>
-          ))}
-        </datalist>
-      </label>
+      <SelectPicker
+        label={tr("Timezone")}
+        value={timezone}
+        options={zones}
+        onChange={onTimezone}
+        disabled={disabled}
+        required
+        describedBy={errorID}
+        invalid={!!current?.value?.errors?.timezone}
+        searchLabel={tr("Search timezones")}
+        maxWidth={520}
+        icon={<Globe2 size={17} aria-hidden="true" />}
+      />
       <div className="schedule-preview" aria-live="polite">
         {cron !== null && <RecurrenceSummary cron={cron} timezone={timezone} />}
         <div id={errorID}>

@@ -160,8 +160,22 @@ Monday–Friday, weekly, monthly, multiple monthly dates, a minute interval,
 manual-only, and advanced five-field Cron are supported. Interval defaults to
 15 minutes and accepts whole minutes from 1 to 10,080. Its first run is one period
 after creation/enabling; changing the interval restarts that timer. Other edits
-and manual runs preserve its cadence. Timezone/DST do not change elapsed minutes. The timezone input searches IANA and localized
-zone names. Only conservative rules are recognized visually; name/instruction
+and manual runs preserve its cadence. Timezone/DST do not change elapsed minutes.
+
+The custom timezone picker searches IANA identifiers, localized zone names and
+current UTC offsets. Its trigger and chevron open the same selectable list.
+Repeat lists Interval first, above Daily; monthly day and conversation controls
+use the same custom listbox. Time uses a typed 24-hour field and a custom
+hour/minute popup with explicit confirmation. No browser select, datalist or
+native time popup is used in the Schedule form.
+
+Picker menus support arrow keys, typeahead (or search), Enter, Tab in form order,
+Escape and focus restoration. Escape dismisses the inner picker before the form
+guard. Popovers track their anchor and fit the visual viewport in either theme.
+Timezone search text is separate from the saved value; choosing a zone preserves
+the wall-clock time. Current saved IANA aliases remain selectable.
+
+Only conservative rules are recognized visually; name/instruction
 edits preserve the original expression exactly. Replacing an advanced rule
 requires an explicit choice. Recurrence changes require an up-to-date server
 preview using the same parser as execution. Displayed instants use the task's

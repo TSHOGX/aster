@@ -1,4 +1,13 @@
 export const EN = {
+  "Choose an option": "Choose an option",
+  "No matching options": "No matching options",
+  "Search timezones": "Search timezones",
+  "Choose time": "Choose time",
+  "24-hour time": "24-hour time",
+  "Hour": "Hour",
+  "Minute": "Minute",
+  "Done": "Done",
+
   "Interval": "Interval",
   "Every {minutes} minutes": "Every {minutes} minutes",
   "Repeat every (minutes)": "Repeat every (minutes)",

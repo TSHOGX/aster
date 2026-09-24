@@ -27,6 +27,7 @@ import {
 } from "@/lib/schedule-recurrence";
 import { ProjectPicker } from "./project-picker";
 import { RecurrenceFields } from "./schedule-recurrence";
+import { SelectPicker } from "./select-picker";
 import { useDialog } from "./ui";
 
 export function ScheduleEditor({
@@ -359,51 +360,50 @@ export function ScheduleEditor({
               <small>{tr("Choose a Project before creating this task.")}</small>
             )}
           </div>
-          <label>
-            {tr("Conversation")}
-            <select
-              aria-label={tr("Conversation")}
-              value={existing ? "existing" : "new"}
-              onChange={(e) => setExisting(e.target.value === "existing")}
-            >
-              <option value="new">{tr("New conversation each run")}</option>
-              <option value="existing">{tr("Existing conversation")}</option>
-            </select>
-            <small>
-              {existing
+          <SelectPicker
+            label={tr("Conversation")}
+            value={existing ? "existing" : "new"}
+            disabled={busy || uncertain}
+            options={[
+              { value: "new", label: tr("New conversation each run") },
+              { value: "existing", label: tr("Existing conversation") },
+            ]}
+            onChange={(value) => setExisting(value === "existing")}
+            description={
+              existing
                 ? tr("Continues this conversation using its existing context.")
                 : tr(
                     "Each run creates a conversation using this Project’s files and environment.",
-                  )}
-            </small>
-          </label>
+                  )
+            }
+          />
           {existing && (
             <>
-              <label>
-                {tr("Choose a conversation")}
-                <select
-                  required
-                  value={session}
-                  onChange={(e) => {
-                    setSession(e.target.value);
-                    setSelectedTarget(undefined);
-                  }}
-                >
-                  <option value="">{tr("Choose a conversation")}</option>
-                  {session && !options.some((s) => s.id === session) && (
-                    <option value={session}>
-                      {selectedTarget?.id === session
-                        ? selectedTarget.title
-                        : tr("Loading…")}
-                    </option>
-                  )}
-                  {options.map((s) => (
-                    <option value={s.id} key={s.id}>
-                      {s.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <SelectPicker
+                label={tr("Choose a conversation")}
+                value={session}
+                required
+                disabled={busy || uncertain}
+                options={[
+                  { value: "", label: tr("Choose a conversation") },
+                  ...(session && !options.some((s) => s.id === session)
+                    ? [
+                        {
+                          value: session,
+                          label:
+                            selectedTarget?.id === session
+                              ? selectedTarget.title
+                              : tr("Loading…"),
+                        },
+                      ]
+                    : []),
+                  ...options.map((s) => ({ value: s.id, label: s.title })),
+                ]}
+                onChange={(value) => {
+                  setSession(value);
+                  setSelectedTarget(undefined);
+                }}
+              />
               {sessionLoading && <p>{tr("Loading…")}</p>}
               {sessionError && <p role="alert">{sessionError}</p>}
               <div className="row-actions">
@@ -435,6 +435,7 @@ export function ScheduleEditor({
           </p>
         )}
         <RecurrenceFields
+          disabled={busy || uncertain}
           rule={rule}
           cron={cron}
           timezone={timezone}

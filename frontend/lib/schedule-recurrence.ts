@@ -18,12 +18,12 @@ export type Recurrence = {
   intervalMinutes: string;
 };
 export const repeatLabels: Record<RepeatMode, MessageKey> = {
+  interval: "Interval",
   daily: "Daily",
   weekdays: "Monday–Friday",
   weekly: "Weekly",
   monthly: "Monthly",
   dates: "Several monthly dates",
-  interval: "Interval",
   advanced: "Advanced: Cron expression",
   manual: "Manual only",
 };

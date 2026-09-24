@@ -1,5 +1,14 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Choose an option": "请选择",
+  "No matching options": "没有匹配的选项",
+  "Search timezones": "搜索时区",
+  "Choose time": "选择时间",
+  "24-hour time": "24 小时制",
+  "Hour": "时",
+  "Minute": "分",
+  "Done": "完成",
+
   "Interval": "按间隔",
   "Every {minutes} minutes": "每 {minutes} 分钟",
   "Repeat every (minutes)": "重复间隔（分钟）",

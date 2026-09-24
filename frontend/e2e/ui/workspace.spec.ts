@@ -1,3 +1,4 @@
+import { chooseOption } from "../picker";
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -201,11 +202,11 @@ test("global schedules, project selection and keyboard account menu", async ({
   const editor = page.locator(".schedule-editor");
   await editor.getByRole("button", { name: "Project", exact: true }).click();
   await page.getByRole("option", { name: "Battery research", exact: true }).click();
-  await editor.getByRole("combobox", { name: /^Conversation/ }).selectOption("existing");
-  await editor.getByRole("combobox", { name: "Choose a conversation", exact: true }).selectOption("analysis");
+  await chooseOption(page, "Conversation", "Existing conversation");
+  await chooseOption(page, "Choose a conversation", "Compare cycle performance");
   await editor.getByRole("button", { name: "Project", exact: true }).click();
   await page.getByRole("option", { name: "Research notes", exact: true }).click();
-  await expect(editor.getByRole("combobox", { name: "Choose a conversation", exact: true })).toHaveValue("");
+  await expect(editor.getByRole("combobox", { name: "Choose a conversation", exact: true })).toHaveText("Choose a conversation");
   await page.keyboard.press("Escape");
   await page.getByRole("dialog").getByRole("button", {name:"Discard changes",exact:true}).click();
   await expect(editor).toHaveCount(0);

@@ -1,3 +1,4 @@
+import { chooseOption } from "../picker";
 import { expect, test, type Page } from "@playwright/test";
 import { workspaceFixture } from "./fixture";
 import type { Schedule } from "../../lib/project-api";
@@ -170,8 +171,8 @@ test("daily creation has an authoritative preview, no conversation fan-out, and 
   const editor = await createDraft(page);
   await expect(
     editor.getByRole("combobox", { name: "Repeat", exact: true }),
-  ).toHaveValue("daily");
-  await expect(editor.locator('input[type="time"]')).toHaveValue("09:00");
+  ).toHaveText("Daily");
+  await expect(editor.getByRole("textbox", {name: "Time", exact: true})).toHaveValue("09:00");
   await expect(
     editor.getByText("Cron expression", { exact: true }),
   ).toHaveCount(0);
@@ -192,12 +193,10 @@ test("weekly and monthly controls retain the draft across resize and guard Escap
 }) => {
   await setup(page);
   const editor = await createDraft(page);
-  await editor
-    .getByRole("combobox", { name: "Repeat", exact: true })
-    .selectOption("weekly");
+  await chooseOption(page, "Repeat", "Weekly");
   await editor.getByRole("button", { name: "Monday", exact: true }).click();
   await editor.getByRole("button", { name: "Friday", exact: true }).click();
-  await editor.locator('input[type="time"]').fill("16:00");
+  await editor.getByRole("textbox", {name: "Time", exact: true}).fill("16:00");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(editor.locator("textarea")).toHaveValue(
     "Check the project files",
@@ -225,12 +224,8 @@ test("weekly and monthly controls retain the draft across resize and guard Escap
     .getByRole("dialog")
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
-  await editor
-    .getByRole("combobox", { name: "Repeat", exact: true })
-    .selectOption("monthly");
-  await editor
-    .getByRole("combobox", { name: "Day of month", exact: true })
-    .selectOption("31");
+  await chooseOption(page, "Repeat", "Monthly");
+  await chooseOption(page, "Day of month", "31");
   await expect(
     editor.getByText("Months without the selected date are skipped."),
   ).toBeVisible();
@@ -251,7 +246,7 @@ test("advanced rules survive name edits and tick-only revision conflicts retry o
   const editor = page.locator(".schedule-editor");
   await expect(
     editor.getByRole("combobox", { name: "Repeat", exact: true }),
-  ).toHaveValue("advanced");
+  ).toHaveText("Advanced: Cron expression");
   await editor
     .getByRole("textbox", { name: "Task name", exact: true })
     .fill("Renamed task");
@@ -356,9 +351,7 @@ test("manual-only is explicit and a stale preview cannot validate a changed rule
     await expect(
       editor.getByRole("button", { name: "Create task", exact: true }),
     ).toBeDisabled();
-    await editor
-      .getByRole("combobox", { name: "Repeat", exact: true })
-      .selectOption("manual");
+    await chooseOption(page, "Repeat", "Manual only");
     await expect(
       editor.getByText("Runs only when you choose Run now."),
     ).toBeVisible();
@@ -385,18 +378,18 @@ test("replacing an advanced rule requires an explicit choice", async ({
     "/?view=schedules&schedule=task&schedule_project=battery&mode=edit",
   );
   const repeat = page.getByRole("combobox", { name: "Repeat", exact: true });
-  await repeat.selectOption("daily");
+  await chooseOption(page, "Repeat", "Daily");
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
-  await expect(repeat).toHaveValue("advanced");
-  await repeat.selectOption("daily");
+  await expect(repeat).toHaveText("Advanced: Cron expression");
+  await chooseOption(page, "Repeat", "Daily");
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Replace time rule", exact: true })
     .click();
-  await expect(repeat).toHaveValue("daily");
+  await expect(repeat).toHaveText("Daily");
 });
 
 for (const locale of ["en-US", "zh-CN"])
@@ -420,7 +413,7 @@ for (const locale of ["en-US", "zh-CN"])
         await editor
           .locator("textarea")
           .fill("Research instructions / 研究任务内容\n".repeat(20));
-        await editor.locator("select").last().selectOption("weekly");
+        await chooseOption(page, locale === "zh-CN" ? "重复" : "Repeat", locale === "zh-CN" ? "每周" : "Weekly");
         for (const width of [1440, 1280, 1024, 768, 390]) {
           await page.setViewportSize({ width, height: 1000 });
           await expect(editor.locator("textarea")).toHaveValue(
@@ -532,15 +525,13 @@ test("minute interval can be created without Cron and restores its exact count",
 }) => {
   const fixture = await setup(page);
   const editor = await createDraft(page);
-  await editor
-    .getByRole("combobox", { name: "Repeat", exact: true })
-    .selectOption("interval");
+  await chooseOption(page, "Repeat", "Interval");
   const minutes = editor.getByRole("spinbutton", {
     name: "Repeat every (minutes)",
     exact: true,
   });
   await expect(minutes).toHaveValue("15");
-  await expect(editor.locator('input[type="time"]')).toHaveCount(0);
+  await expect(editor.getByRole("textbox", {name: "Time", exact: true})).toHaveCount(0);
   await minutes.fill("90");
   await expect(editor.locator(".schedule-preview")).toContainText(
     "Every 90 minutes",
@@ -556,7 +547,7 @@ test("minute interval can be created without Cron and restores its exact count",
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(
     editor.getByRole("combobox", { name: "Repeat", exact: true }),
-  ).toHaveValue("interval");
+  ).toHaveText("Interval");
   await expect(minutes).toHaveValue("90");
   await editor
     .getByRole("textbox", { name: "Task name", exact: true })
@@ -575,9 +566,7 @@ test("interval validation blocks empty, fractional and out-of-range minutes", as
 }) => {
   await setup(page);
   const editor = await createDraft(page);
-  await editor
-    .getByRole("combobox", { name: "Repeat", exact: true })
-    .selectOption("interval");
+  await chooseOption(page, "Repeat", "Interval");
   const minutes = editor.getByRole("spinbutton", {
     name: "Repeat every (minutes)",
     exact: true,
@@ -595,12 +584,8 @@ test("interval validation blocks empty, fractional and out-of-range minutes", as
   await expect(
     editor.getByRole("button", { name: "Create task", exact: true }),
   ).toBeEnabled();
-  await editor
-    .getByRole("combobox", { name: "Repeat", exact: true })
-    .selectOption("daily");
-  await editor
-    .getByRole("combobox", { name: "Repeat", exact: true })
-    .selectOption("interval");
+  await chooseOption(page, "Repeat", "Daily");
+  await chooseOption(page, "Repeat", "Interval");
   await expect(minutes).toHaveValue("7");
 });
 
@@ -609,12 +594,23 @@ test.describe("Chinese minute interval", () => {
   test("shows the minute control and localized summary", async ({ page }) => {
     await setup(page);
     await page.goto("/?view=schedules&mode=create");
-    await page
-      .getByRole("combobox", { name: "重复", exact: true })
-      .selectOption("interval");
+    await chooseOption(page, "重复", "按间隔");
     await page
       .getByRole("spinbutton", { name: "重复间隔（分钟）", exact: true })
       .fill("30");
     await expect(page.locator(".schedule-preview")).toContainText("每 30 分钟");
   });
+});
+
+test("confirming unchanged custom pickers does not rewrite a saved recurrence", async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.tasks.set("task", { ...fixture.tasks.get("task")!, cron: "00 09 * * *" });
+  await page.goto("/?view=schedules&schedule=task&schedule_project=battery&mode=edit");
+  await chooseOption(page, "Repeat", "Daily");
+  await page.getByRole("button", { name: "Choose time", exact: true }).click();
+  await page.getByRole("dialog", { name: "Choose time", exact: true }).getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("textbox", { name: "Task name", exact: true }).fill("Name-only edit");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.locator(".schedule-reading h2")).toHaveText("Name-only edit");
+  expect(fixture.saves.at(-1)?.cron).toBe("00 09 * * *");
 });

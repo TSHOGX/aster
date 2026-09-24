@@ -1,3 +1,4 @@
+import { chooseOption } from "../picker";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
@@ -420,7 +421,7 @@ test("schedule metadata opens complete editable prompts through the Go edge", as
     const saved = await context.request.get(`/api/projects/${project}/schedules/browser-schedule`);
     expect((await saved.json()).prompt).toBe(revised);
     await page.getByRole("button", { name: "Edit", exact: true }).click();
-    await page.getByRole("combobox", { name: "Repeat", exact: true }).selectOption("interval");
+    await chooseOption(page, "Repeat", "Interval");
     await page.getByRole("spinbutton", { name: "Repeat every (minutes)", exact: true }).fill("90");
     await page.locator(".schedule-editor").getByRole("button", { name: "Save changes", exact: true }).click();
     await expect(page.locator(".schedule-reading")).toContainText("Every 90 minutes");
