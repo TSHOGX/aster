@@ -13,6 +13,7 @@ import (
 func main() {
 	source := flag.String("source", "", "quiescent version-1 database copy")
 	destination := flag.String("destination", "", "new current-format database path")
+	targetRuntime := flag.String("target-runtime", "", "pinned protocol-3 runtime manifest digest")
 	inspect := flag.Bool("inspect", false, "report only the source version and compiled schema fingerprint")
 	candidate := flag.Bool("candidate", false, "report the candidate's compiled schema identity")
 	rebuild := flag.Bool("rebuild", false, "rebuild derived conversation state in a converted staging copy")
@@ -33,8 +34,8 @@ func main() {
 		fmt.Printf("version=%d schema=%s\n", version, fingerprint)
 		return
 	}
-	if *source == "" || (!*inspect && *destination == "") || flag.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: format-convert --source SNAPSHOT.db [--inspect | --destination NEW.db]")
+	if *source == "" || (!*inspect && (*destination == "" || *targetRuntime == "")) || flag.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: format-convert --source SNAPSHOT.db [--inspect | --destination NEW.db --target-runtime sha256:DIGEST]")
 		os.Exit(2)
 	}
 	if *inspect {
@@ -46,7 +47,7 @@ func main() {
 		fmt.Printf("version=%d schema=%s\n", version, fingerprint)
 		return
 	}
-	if err := formatconvert.Convert(context.Background(), *source, *destination); err != nil {
+	if err := formatconvert.Convert(context.Background(), *source, *destination, *targetRuntime); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

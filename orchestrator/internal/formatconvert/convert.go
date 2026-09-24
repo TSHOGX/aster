@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/runtimerelease"
 )
 
 const SourceVersion = 1
@@ -92,6 +93,7 @@ func verifySource(ctx context.Context, q *sql.DB) error {
 		return fmt.Errorf("source integrity: %s", integrity)
 	}
 	checks := []struct{ name, query string }{
+		{"active Projects", `SELECT count(*) FROM source.projects WHERE state NOT IN ('paused','created','deleted','deleting')`},
 		{"live Sessions", `SELECT count(*) FROM source.sessions WHERE state<>'idle'`},
 		{"live incarnations", `SELECT count(*) FROM source.agent_incarnations WHERE state IN ('starting','running','stopping','unknown')`},
 		{"unsettled turns", `SELECT count(*) FROM source.turns WHERE state NOT IN ('held','queued','canceled','completed','failed')`},
@@ -206,7 +208,7 @@ func copyTables(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func convert(ctx context.Context, q *sql.DB) error {
+func convert(ctx context.Context, q *sql.DB, targetRuntime string) error {
 	if err := verifySource(ctx, q); err != nil {
 		return err
 	}
@@ -243,6 +245,11 @@ func convert(ctx context.Context, q *sql.DB) error {
 	}
 	if err := copyTables(ctx, tx); err != nil {
 		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET
+ profile=json_set(profile,'$.release_digest',?),sandbox_id='',mutation_revision='',epoch=0,observed_at='',occupied=0
+ WHERE project_id IN (SELECT id FROM projects WHERE state NOT IN ('deleted','deleting'))`, targetRuntime); err != nil {
+		return fmt.Errorf("retarget paused Project runtime: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO turns(id,project_id,session_id,request_id,content,initially_held,queue_policy,disposition,sequence,created_at,updated_at)
  SELECT t.id,t.project_id,t.session_id,t.request_id,t.content,t.initially_held,
@@ -302,7 +309,10 @@ func convert(ctx context.Context, q *sql.DB) error {
 
 // Convert writes a separate current-format database from a quiescent copy of
 // the measured version-1 source. The supplied source must be an offline backup.
-func Convert(ctx context.Context, sourcePath, destinationPath string) (err error) {
+func Convert(ctx context.Context, sourcePath, destinationPath, targetRuntime string) (err error) {
+	if !runtimerelease.ValidDigest(targetRuntime) {
+		return errors.New("target runtime digest is required")
+	}
 	sourcePath, err = filepath.Abs(sourcePath)
 	if err != nil {
 		return err
@@ -355,7 +365,7 @@ func Convert(ctx context.Context, sourcePath, destinationPath string) (err error
 	if _, err := q.ExecContext(ctx, `ATTACH DATABASE ? AS source`, fileURL(sourcePath, "mode=ro&immutable=1")); err != nil {
 		return err
 	}
-	if err := convert(ctx, q); err != nil {
+	if err := convert(ctx, q, targetRuntime); err != nil {
 		return err
 	}
 	if _, err := q.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
