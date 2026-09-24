@@ -113,6 +113,7 @@ export function SessionPanel({
   const [queueError, setQueueError] = useState("");
   const [stopPending, setStopPending] = useState(false);
   const queueRequest = useRef(0);
+  const queueRevision = useRef<number | null>(null);
   const [focusMessage, setFocusMessage] = useState(targetMessage);
   const [focusItem, setFocusItem] = useState(
     !initialBookmark.follow ? initialBookmark.item : "",
@@ -504,8 +505,14 @@ export function SessionPanel({
   const loadQueue = useCallback(async (after = 0) => {
     const request = ++queueRequest.current;
     try {
-      const page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?after=${after}&limit=32`);
+      let page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?after=${after}&limit=32`);
       if (request !== queueRequest.current) return;
+      if (after && queueRevision.current !== page.queue_revision) {
+        page = await api<PromptQueuePage>(`${sessionURL(session.project_id, session.id)}/queue?after=0&limit=32`);
+        if (request !== queueRequest.current) return;
+        after = 0;
+      }
+      queueRevision.current = page.queue_revision;
       setQueuePage((old) => after && old && old.queue_revision === page.queue_revision
         ? { ...page, items: [...old.items, ...page.items] }
         : page);

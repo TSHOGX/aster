@@ -59,6 +59,9 @@ func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 	if page.TotalPending != 40 || len(page.Items) != 16 || page.NextAfter == 0 {
 		t.Fatalf("queue page: %+v", page)
 	}
+	if page.Items[0].Content != "prompt 0" {
+		t.Fatal("queue preview changed scheduling order", page.Items[0])
+	}
 	for n, item := range page.Items {
 		if n > 0 && item.Sequence <= page.Items[n-1].Sequence {
 			t.Fatal("queue is not FIFO")
