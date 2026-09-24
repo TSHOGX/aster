@@ -111,6 +111,9 @@ func TestConsumedSteerInputStartsTheNextDisplaySegment(t *testing.T) {
 	if first.Position == 0 || consumed.Position == 0 || second.Position == 0 || !(first.Position < consumed.Position && consumed.Position < second.Position) {
 		t.Fatalf("display chronology lost consumed input: first=%+v consumed=%+v second=%+v", first, consumed, second)
 	}
+	if first.SegmentID == "" || consumed.SegmentID == "" || second.SegmentID != consumed.SegmentID || first.SegmentID == second.SegmentID {
+		t.Fatalf("later answer stayed in the first segment: first=%+v consumed=%+v second=%+v", first, consumed, second)
+	}
 }
 
 func TestSummaryTimingStartsAtConsumptionEvidence(t *testing.T) {

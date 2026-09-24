@@ -54,6 +54,8 @@ The projector now accepts the durable `input_consumed` event, creates the source
 
 The focused projector test passes for old output → consumed Steer → subsequent output, including reload-style projection replay. Full pagination, delta, sharing/export, historical missing identities, and all timing clocks still need the broader P3/P5 qualification.
 
+The segment reducer now closes the old run prompt's message group using the normal command's prompt ID. The consumed Steer anchor and following assistant response share one segment ID, while earlier output remains in the previous segment. The focused test asserts this membership as well as source chronology.
+
 Segment summaries now use the earliest durable `input_deliveries.consumed_at` as their worked-for start when available, falling back to the original prompt timestamp only for records without consumption evidence. This excludes queue and native-wait time from the displayed clock. The focused timing test verifies the persisted consumed timestamp is used.
 
 ## P1/P2: lifecycle guard alignment (2026-09-24)

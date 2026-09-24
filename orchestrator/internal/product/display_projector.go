@@ -301,15 +301,20 @@ func (d *displayReducer) consume(r displaySource) error {
 		if err := json.Unmarshal(r.Payload, &event); err != nil || event.InputToken == "" || event.RunID == "" {
 			return ErrInvalid
 		}
-		var prompt, message, content string
+		var prompt, message, content, activeTurn string
 		if err := d.tx.QueryRowContext(d.ctx, `SELECT d.prompt_id,d.prompt_id||'/user',t.content FROM input_deliveries d JOIN turns t ON t.id=d.prompt_id WHERE d.input_token=? AND d.session_id=? AND d.state='consumed'`, event.InputToken, d.session).Scan(&prompt, &message, &content); err != nil {
 			return err
 		}
-		if _, err := d.tx.ExecContext(d.ctx, `UPDATE conversation_message_groups SET ended=1 WHERE session_id=? AND incarnation_id=? AND turn_id=?`, d.session, r.Incarnation, event.RunID); err != nil {
+		if err := d.tx.QueryRowContext(d.ctx, `SELECT turn_id FROM agent_commands WHERE id=? AND session_id=?`, event.RunID, d.session).Scan(&activeTurn); err != nil {
 			return err
 		}
-		d.segments[event.RunID] = fmt.Sprintf("segment/%s/%s", event.RunID, prompt)
-		item := DisplayItem{ID: message, TurnID: prompt, SegmentID: d.segments[event.RunID], Position: -1, Kind: "user", Content: content, MessageID: message, State: "completed"}
+		if _, err := d.tx.ExecContext(d.ctx, `UPDATE conversation_message_groups SET ended=1 WHERE session_id=? AND incarnation_id=? AND turn_id=?`, d.session, r.Incarnation, activeTurn); err != nil {
+			return err
+		}
+		segment := fmt.Sprintf("segment/%s/%s", event.RunID, prompt)
+		d.segments[event.RunID] = segment
+		d.segments[activeTurn] = segment
+		item := DisplayItem{ID: message, TurnID: prompt, SegmentID: segment, Position: -1, Kind: "user", Content: content, MessageID: message, State: "completed"}
 		if old, err := d.get(message); err != nil {
 			return err
 		} else if old != nil && old.Position == 0 {
