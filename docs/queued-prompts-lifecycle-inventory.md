@@ -1,0 +1,25 @@
+# Prompt/run lifecycle dependency inventory
+
+Source baseline: `ca4e587`. This is the P1 change inventory for the prompt/run split in the queued-prompts specification. The references below are current code, not the proposed contract. Search scope was non-test Go and SQL under `orchestrator/internal/product`; tests that directly mutate `turns.state` must be updated with each affected owner.
+
+| Current owner or consumer | Current dependencies | Required destination |
+| --- | --- | --- |
+| Schema authority | `schema.sql`: `turns` state check, `turns_one_active`, `turns_pending`, `release_turn_pending`, `owner_transferable_turns`, release occupancy view, `notify_turn_outcome`, `release_owner_session_changed`, `release_owner_turn_finished`, `release_ready_turn_*`, `release_turn_dispatch`, `release_turn_insert`, `turn_control_update` | A prompt row owns queue policy and claim/disposition. A run row owns active/terminal/unknown execution. Delivery rows own unresolved native inputs. Rebuild each partial index, view and trigger against the new owners. |
+| Admission and queue claim | `turns.go` admits and releases by `held`/`queued`; `queued_controls.go` holds/cancels; `agents.go` checks active states, selects first queued by sequence, claims `starting` | Keep FIFO policy on prompts; give normal dispatch and explicit Steer one atomic delivery-claim authority. A claimed input cannot be selected again. |
+| Native command reducer | `agents.go` maps prompt command progress onto `starting`/`running`/terminal turn states and marks a steer source `completed` on ACK | Create/settle the run from the normal prompt command. ACK affects delivery receipt only; correlated consumption changes input disposition. |
+| Stop and Steer | `agent_controls.go` finds active turn, checks held source, parks queued rows, sets `stopping`; `agent_service.go` sends controls and handles unknown transport | Target one run ID and incarnation fence; persist mutation receipt and delivery. Stop closes admission to that run while retaining complete native settlement. |
+| Recovery and cleanup | `agent_recovery.go`, `agent_service.go`, `placement_children.go`, `children.go`, `child_retirement.go`, `agent_idle.go`, `workers.go` count or mutate running/unknown/queued turns | Run and unresolved delivery state must block duplicate execution, owner handoff, idle retirement and deletion; only proven undelivered inputs return held. |
+| Release and activity | `schema.sql` release views/triggers; `activity.go`, `retirement.go`, `projects.go`, `observation.go` count or park/cancel turns | Include unresolved deliveries and runs in drain/occupancy; cancellation affects unclaimed prompts only. |
+| Service authority | `network.go`, `network_transition.go`, `gateway_requests.go`, `schema.sql` owner transfer view and grant triggers | Authorize against exact active run/owner, including its stopping interval; do not infer active execution from prompt policy. |
+| Conversation projection | `display_projector.go`, `display_queries.go`, `display_content.go`, `turn_summary.go`, `turn_index.go`, `adjacent.go` use turn state/sequence for synthetic input, order, summaries, title and navigation | Project only consumed input anchors; retain run identity separately from segments. Order by durable source position, not enqueue sequence. |
+| Schedules and shares | `schedules.go` exposes `t.state` as scheduled run state; `shares.go`, `publications.go`, `captures.go` reference turn/command outcome | Map scheduled work to prompt intent and its run outcome explicitly. Preserve share/capture evidence through the new IDs. |
+
+The SQL schema has two distinct partial indexes for active/unknown turns (`turns_one_active`, `release_turn_pending`) and a release view that uses the latter with `INDEXED BY`. Moving only the unique constraint would leave release readiness incorrect. `agent_idle.go` and `workers.go` independently treat queued prompts as occupancy, while the owner transfer view requires an applied normal prompt command and a running turn. These are cross-cutting gates, not display-only uses.
+
+The grep below is a useful drift check during implementation, but is not by itself a completion proof because local `Turn.State` comparisons and SQL spread across concatenated literals also exist:
+
+```sh
+rg -n --glob '*.go' --glob '*.sql' --glob '!**/*_test.go' 'turns.*state|t\.state|turnColumns' orchestrator/internal/product
+```
+
+G2 remains open until the new schema, DTOs, all listed guards, and transaction tests replace these dependencies. This inventory is a review checklist for that coordinated change.

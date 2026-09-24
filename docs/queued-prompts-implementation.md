@@ -15,3 +15,7 @@ node --test orchestrator/internal/runtimerelease/full_session_identity.test.mjs
 ```
 
 G1 remains open. The fixture has no actual RPC stdin/stdout, arbitrary extension transformations or handled commands, retry/compaction continuation, process crash, journal, or target admission gate. It does not prove a removed disposition or close the drained-input race. Those need executable qualification before the P1 wire contract is fixed.
+
+## P1 preparation: lifecycle inventory (2026-09-24)
+
+[queued-prompts-lifecycle-inventory.md](./queued-prompts-lifecycle-inventory.md) maps current `turns.state` ownership across schema, scheduling, recovery, release, service grants, and conversation projection. It is the checklist for replacing the overloaded state with prompt, run, and delivery resources. G2 remains open until that replacement and its transaction tests are complete.
