@@ -1,4 +1,11 @@
 export const EN = {
+  "Interval": "Interval",
+  "Every {minutes} minutes": "Every {minutes} minutes",
+  "Repeat every (minutes)": "Repeat every (minutes)",
+  "Enter a whole number from 1 to 10,080 minutes.": "Enter a whole number from 1 to 10,080 minutes.",
+  "First run after one interval. Enabling or changing the interval restarts the timer; other edits keep its cadence.": "First run after one interval. Enabling or changing the interval restarts the timer; other edits keep its cadence.",
+  "Elapsed minutes are unaffected by timezone or daylight saving. Preview times for a new timer are estimates until saved.": "Elapsed minutes are unaffected by timezone or daylight saving. Preview times for a new timer are estimates until saved.",
+
   "Preview unavailable": "Preview unavailable",
   "Download file": "Download file",
   "Preview files up to {size}": "Preview files up to {size}",

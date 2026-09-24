@@ -28,3 +28,8 @@ engine and runtime identity checks remain mandatory.
 A deliberate data reset is described in [bootstrap](bootstrap.md). It removes the
 old installation's state and starts a new engine store and application database;
 it does not convert history or restore an old database afterward.
+
+Release identity format 3 declares elapsed minute intervals in schedule recurrence.
+The database schema is unchanged. Crossing from a Cron-only owner requires a
+quiescent update; its different deployment digest prevents owner-only handoff to
+a build that cannot execute interval rules.

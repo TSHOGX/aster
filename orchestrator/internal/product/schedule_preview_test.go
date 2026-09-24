@@ -20,7 +20,7 @@ func TestSchedulePreviewMatchesExecutionAcrossDST(t *testing.T) {
 			now, err := time.Parse(time.RFC3339, tc.now)
 			must(t, err)
 			s := &Store{now: func() time.Time { return now }}
-			preview := s.PreviewSchedule(tc.rule, tc.zone)
+			preview := s.PreviewSchedule(tc.rule, tc.zone, "")
 			if !preview.Valid || !reflect.DeepEqual(preview.Occurrences, tc.want) {
 				t.Fatal(preview)
 			}
@@ -39,13 +39,13 @@ func TestSchedulePreviewMatchesExecutionAcrossDST(t *testing.T) {
 
 func TestSchedulePreviewValidationAndManualOnly(t *testing.T) {
 	s := &Store{now: time.Now}
-	for _, tc := range []struct{ rule, zone, field string }{{"@every 1h", "UTC", "cron"}, {"0 0 30 2 *", "UTC", "cron"}, {"0 9 * * *", "Not/AZone", "timezone"}, {"", "", "timezone"}, {"0 9 * * * *", "UTC", "cron"}} {
-		p := s.PreviewSchedule(tc.rule, tc.zone)
+	for _, tc := range []struct{ rule, zone, field string }{{"@every 1h", "UTC", "interval"}, {"0 0 30 2 *", "UTC", "cron"}, {"0 9 * * *", "Not/AZone", "timezone"}, {"", "", "timezone"}, {"0 9 * * * *", "UTC", "cron"}} {
+		p := s.PreviewSchedule(tc.rule, tc.zone, "")
 		if p.Valid || p.Errors[tc.field] == "" || len(p.Occurrences) != 0 {
 			t.Fatal(p)
 		}
 	}
-	p := s.PreviewSchedule("", "UTC")
+	p := s.PreviewSchedule("", "UTC", "")
 	if !p.Valid || len(p.Occurrences) != 0 || p.ReferenceTime == "" {
 		t.Fatal(p)
 	}

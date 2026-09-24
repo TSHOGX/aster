@@ -699,6 +699,7 @@ function SelectedSchedule({
               cron={schedule.cron}
               timezone={schedule.timezone}
               enabled={schedule.enabled}
+              nextAt={schedule.next_at}
             />
             <p>
               {!schedule.enabled

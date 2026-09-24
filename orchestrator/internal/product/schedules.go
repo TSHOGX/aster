@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,14 @@ func parseRecurrence(expression, zone string) (cron.Schedule, string, error) {
 	if expression == "" {
 		return nil, "", nil
 	}
+	if strings.HasPrefix(expression, "@every") {
+		minutes := strings.TrimSuffix(strings.TrimPrefix(expression, "@every "), "m")
+		n, err := strconv.Atoi(minutes)
+		if err != nil || n < 1 || n > MaxIntervalMinutes || expression != "@every "+strconv.Itoa(n)+"m" {
+			return nil, "interval", ErrInvalid
+		}
+		return minuteInterval(time.Duration(n) * time.Minute), "", nil
+	}
 	if len(expression) > 128 || len(strings.Fields(expression)) != 5 {
 		return nil, "cron", ErrInvalid
 	}
@@ -61,6 +70,13 @@ func scheduleNext(s Schedule, now time.Time) (string, error) {
 		return "", nil
 	}
 	next := parsed.Next(now)
+	if interval, ok := parsed.(minuteInterval); ok && s.NextAt != "" {
+		anchor, err := time.Parse(time.RFC3339Nano, s.NextAt)
+		if err != nil {
+			return "", ErrInvalid
+		}
+		next = interval.after(now, anchor)
+	}
 	if next.IsZero() {
 		return "", ErrInvalid
 	}
@@ -76,6 +92,7 @@ func validSchedule(s Schedule) bool {
 	return validID(s.ID) && validText(s.Title, 256) && validText(s.Prompt, 1<<20) && (s.SessionID == "" || validID(s.SessionID)) && validText(s.Timezone, 128)
 }
 func (s *Store) CreateSchedule(ctx context.Context, scope Scope, input Schedule) (Schedule, error) {
+	input.NextAt = "" // Server-owned; creation always starts a new cadence.
 	if !validSchedule(input) {
 		return Schedule{}, ErrInvalid
 	}
@@ -148,6 +165,7 @@ func (s *Store) Schedules(ctx context.Context, scope Scope, after string, limit 
 	return out, rows.Err()
 }
 func (s *Store) UpdateSchedule(ctx context.Context, scope Scope, input Schedule, remove bool) error {
+	input.NextAt = "" // Never accept a client-supplied execution deadline.
 	if !validSchedule(input) {
 		return ErrInvalid
 	}
@@ -165,6 +183,13 @@ func (s *Store) UpdateSchedule(ctx context.Context, scope Scope, input Schedule,
 		}
 		if old.Deleted || old.Revision != input.Revision {
 			return ErrConflict
+		}
+		parsed, _, _ := parseRecurrence(input.Cron, input.Timezone)
+		_, interval := parsed.(minuteInterval)
+		if input.Cron == old.Cron && input.Enabled == old.Enabled && (input.Timezone == old.Timezone || interval) {
+			// Content/target edits (and interval display-zone edits) must not
+			// postpone the next run, including an already overdue occurrence.
+			next = old.NextAt
 		}
 		if input.SessionID != "" {
 			child, e := sessionIn(ctx, tx, scope, input.SessionID)
@@ -309,7 +334,7 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 				return missing(e)
 			}
 			scope := Scope{actor, schedule.ProjectID}
-			if _, e = s.runSchedule(ctx, tx, scope, schedule, "cron:"+schedule.NextAt, schedule.NextAt); e != nil {
+			if _, e = s.runSchedule(ctx, tx, scope, schedule, "scheduled:"+schedule.NextAt, schedule.NextAt); e != nil {
 				return e
 			}
 			next, e := scheduleNext(schedule, now)

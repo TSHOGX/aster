@@ -377,9 +377,10 @@ func (s *Server) previewSchedule(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Cron     string `json:"cron"`
 		Timezone string `json:"timezone"`
+		NextAt   string `json:"next_at"`
 	}
 	if !decode(w, r, 4096, &body) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Store.PreviewSchedule(body.Cron, body.Timezone))
+	writeJSON(w, http.StatusOK, s.Store.PreviewSchedule(body.Cron, body.Timezone, body.NextAt))
 }

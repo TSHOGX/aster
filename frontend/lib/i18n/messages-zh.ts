@@ -1,5 +1,12 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Interval": "按间隔",
+  "Every {minutes} minutes": "每 {minutes} 分钟",
+  "Repeat every (minutes)": "重复间隔（分钟）",
+  "Enter a whole number from 1 to 10,080 minutes.": "请输入 1 至 10,080 之间的整数分钟数。",
+  "First run after one interval. Enabling or changing the interval restarts the timer; other edits keep its cadence.": "首次在一个间隔后执行。启用任务或修改间隔会重新计时；其他修改不改变执行节奏。",
+  "Elapsed minutes are unaffected by timezone or daylight saving. Preview times for a new timer are estimates until saved.": "分钟间隔不受时区或夏令时影响。新计时器的预览时间为估计值，保存后确定。",
+
   "Preview unavailable": "暂时无法预览",
   "Download file": "下载文件",
   "Preview files up to {size}": "支持预览最大 {size} 的文件",

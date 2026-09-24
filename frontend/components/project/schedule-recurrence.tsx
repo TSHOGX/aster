@@ -7,6 +7,7 @@ import {
   recurrenceCron,
   repeatLabels,
   scheduleTime,
+  schedulePreviewKey,
   weekdayLabels,
   type Recurrence,
   type RepeatMode,
@@ -24,14 +25,18 @@ export function RecurrenceSummary({
   const rule = parseRecurrence(cron);
   return (
     <span>
-      {tr(repeatLabels[rule.mode])}
+      {rule.mode === "interval"
+        ? tr("Every {minutes} minutes", { minutes: rule.intervalMinutes })
+        : tr(repeatLabels[rule.mode])}
       {rule.mode === "weekly"
         ? ` · ${rule.weekdays.map((n) => tr(weekdayLabels[n])).join(", ")}`
         : ""}
       {["monthly", "dates"].includes(rule.mode)
         ? ` · ${rule.dates.join(", ")}`
         : ""}
-      {!["manual", "advanced"].includes(rule.mode) ? ` · ${rule.time}` : ""}
+      {!["manual", "advanced", "interval"].includes(rule.mode)
+        ? ` · ${rule.time}`
+        : ""}
       {rule.mode === "advanced" ? ` · ${cron}` : ""} · {timezone}
     </span>
   );
@@ -41,10 +46,12 @@ export function UpcomingOccurrences({
   cron,
   timezone,
   enabled,
+  nextAt,
 }: {
   cron: string;
   timezone: string;
   enabled: boolean;
+  nextAt?: string;
 }) {
   const tr = useT(),
     locale = useLocale();
@@ -55,13 +62,17 @@ export function UpcomingOccurrences({
     value?: SchedulePreview;
     failed?: boolean;
   }>();
-  const key = JSON.stringify([cron, timezone, attempt]);
+  const key = JSON.stringify([cron, timezone, nextAt, attempt]);
   useEffect(() => {
     if (!opened || !cron) return;
     const controller = new AbortController();
     void api<SchedulePreview>("/api/schedules/preview", {
       method: "POST",
-      body: JSON.stringify({ cron, timezone }),
+      body: JSON.stringify({
+        cron,
+        timezone,
+        next_at: enabled ? nextAt : undefined,
+      }),
       signal: controller.signal,
     })
       .then((value) => {
@@ -71,7 +82,7 @@ export function UpcomingOccurrences({
         if (!controller.signal.aborted) setData({ key, failed: true });
       });
     return () => controller.abort();
-  }, [opened, cron, timezone, key]);
+  }, [opened, cron, timezone, nextAt, enabled, key]);
   if (!cron) return null;
   const current = data?.key === key ? data : undefined;
   return (
@@ -113,6 +124,7 @@ export function RecurrenceFields({
   rule,
   cron,
   timezone,
+  nextAt,
   onRule,
   onTimezone,
   onValidity,
@@ -120,6 +132,7 @@ export function RecurrenceFields({
   rule: Recurrence;
   cron: string | null;
   timezone: string;
+  nextAt?: string;
   onRule: (r: Recurrence) => void;
   onTimezone: (s: string) => void;
   onValidity: (key: string, valid: boolean) => void;
@@ -143,7 +156,7 @@ export function RecurrenceFields({
     value?: SchedulePreview;
     failed?: boolean;
   }>();
-  const key = JSON.stringify([cron, timezone]);
+  const key = schedulePreviewKey(cron, timezone, nextAt);
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -153,7 +166,7 @@ export function RecurrenceFields({
       }
       void api<SchedulePreview>("/api/schedules/preview", {
         method: "POST",
-        body: JSON.stringify({ cron, timezone }),
+        body: JSON.stringify({ cron, timezone, next_at: nextAt }),
         signal: controller.signal,
       })
         .then((value) => {
@@ -173,7 +186,7 @@ export function RecurrenceFields({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [cron, timezone, key, attempt, onValidity]);
+  }, [cron, timezone, nextAt, key, attempt, onValidity]);
   const current = preview?.key === key ? preview : undefined;
   const toggle = (values: number[], n: number) =>
     values.includes(n) ? values.filter((v) => v !== n) : [...values, n];
@@ -210,6 +223,35 @@ export function RecurrenceFields({
           ))}
         </select>
       </label>
+      {rule.mode === "interval" && (
+        <>
+          <label>
+            {tr("Repeat every (minutes)")}
+            <input
+              type="number"
+              min={1}
+              max={10080}
+              step={1}
+              required
+              value={rule.intervalMinutes}
+              aria-describedby={errorID}
+              onChange={(e) =>
+                onRule({ ...rule, intervalMinutes: e.target.value })
+              }
+            />
+          </label>
+          <p className="schedule-help">
+            {tr(
+              "First run after one interval. Enabling or changing the interval restarts the timer; other edits keep its cadence.",
+            )}
+          </p>
+          <p className="schedule-help">
+            {tr(
+              "Elapsed minutes are unaffected by timezone or daylight saving. Preview times for a new timer are estimates until saved.",
+            )}
+          </p>
+        </>
+      )}
       {rule.mode === "weekly" && (
         <fieldset aria-describedby={errorID}>
           <legend>{tr("Days of the week")}</legend>
@@ -261,7 +303,7 @@ export function RecurrenceFields({
           </div>
         </fieldset>
       )}
-      {!["manual", "advanced"].includes(rule.mode) && (
+      {!["manual", "advanced", "interval"].includes(rule.mode) && (
         <label>
           {tr("Time")}
           <input
@@ -323,12 +365,21 @@ export function RecurrenceFields({
         <div id={errorID}>
           {cron === null && (
             <p role="alert">
-              {tr("Choose at least one day and a valid time.")}
+              {tr(
+                rule.mode === "interval"
+                  ? "Enter a whole number from 1 to 10,080 minutes."
+                  : "Choose at least one day and a valid time.",
+              )}
             </p>
           )}
           {current?.value?.errors?.cron && (
             <p role="alert">
               {tr("Enter a valid five-field rule with upcoming occurrences.")}
+            </p>
+          )}
+          {current?.value?.errors?.interval && (
+            <p role="alert">
+              {tr("Enter a whole number from 1 to 10,080 minutes.")}
             </p>
           )}
           {current?.value?.errors?.timezone && (

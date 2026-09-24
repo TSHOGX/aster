@@ -125,7 +125,9 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 	if err != nil {
 		return out, err
 	}
-	id := ReleaseIdentity{Version: 2, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
+	// Version 3 includes elapsed interval recurrence semantics. A Cron-only owner
+	// must not be treated as the same deployment contract for handoff.
+	id := ReleaseIdentity{Version: 3, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
 	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
 	if err != nil {
 		return out, err

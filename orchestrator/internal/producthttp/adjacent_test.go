@@ -51,6 +51,10 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 	if status != 200 || !strings.Contains(string(body), `"valid":false`) {
 		t.Fatal("invalid preview", status, string(body))
 	}
+	status, body = do("POST", "/api/schedules/preview", `{"cron":"@every 90m","timezone":"UTC","next_at":"2099-01-01T00:00:00Z"}`)
+	if status != 200 || !strings.Contains(string(body), `"valid":true`) || !strings.Contains(string(body), `2099-01-01T01:30:00.000000000Z`) {
+		t.Fatal("interval preview", status, string(body))
+	}
 	status, body = do("GET", "/api/schedules?q=absent&status=paused", "")
 	if status != 200 || !strings.Contains(string(body), `"schedules":[]`) {
 		t.Fatal("overview filters", status, string(body))

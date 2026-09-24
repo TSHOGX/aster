@@ -140,7 +140,14 @@ async function setup(
       return route.fallback();
     },
   );
-  return { ...base, tasks, saves, runs, previews, overviewReads: () => overviewReads };
+  return {
+    ...base,
+    tasks,
+    saves,
+    runs,
+    previews,
+    overviewReads: () => overviewReads,
+  };
 }
 async function createDraft(page: Page) {
   await page.goto("/?view=schedules");
@@ -469,7 +476,9 @@ test("a late pause response cannot replace another selected task", async ({
     );
     const beforeRefresh = fixture.overviewReads();
     release();
-    await expect.poll(() => fixture.overviewReads()).toBeGreaterThan(beforeRefresh);
+    await expect
+      .poll(() => fixture.overviewReads())
+      .toBeGreaterThan(beforeRefresh);
     await expect(page.locator(".schedule-reading h2")).toHaveText(
       "Another selected task",
     );
@@ -498,12 +507,114 @@ test("upcoming occurrences load on demand and use the schedule timezone", async 
   expect(fixture.previews).toHaveLength(1);
 });
 
-test("multibyte task names honor the server limit before saving", async ({ page }) => {
+test("multibyte task names honor the server limit before saving", async ({
+  page,
+}) => {
   await setup(page);
   const editor = await createDraft(page);
-  await editor.getByRole("textbox", { name: "Task name", exact: true }).fill("研".repeat(100));
+  await editor
+    .getByRole("textbox", { name: "Task name", exact: true })
+    .fill("研".repeat(100));
   await expect(editor.getByRole("alert")).toContainText("too long");
-  await expect(editor.getByRole("button", { name: "Create task", exact: true })).toBeDisabled();
-  await editor.getByRole("textbox", { name: "Task name", exact: true }).fill("每日研究");
-  await expect(editor.getByRole("button", { name: "Create task", exact: true })).toBeEnabled();
+  await expect(
+    editor.getByRole("button", { name: "Create task", exact: true }),
+  ).toBeDisabled();
+  await editor
+    .getByRole("textbox", { name: "Task name", exact: true })
+    .fill("每日研究");
+  await expect(
+    editor.getByRole("button", { name: "Create task", exact: true }),
+  ).toBeEnabled();
+});
+
+test("minute interval can be created without Cron and restores its exact count", async ({
+  page,
+}) => {
+  const fixture = await setup(page);
+  const editor = await createDraft(page);
+  await editor
+    .getByRole("combobox", { name: "Repeat", exact: true })
+    .selectOption("interval");
+  const minutes = editor.getByRole("spinbutton", {
+    name: "Repeat every (minutes)",
+    exact: true,
+  });
+  await expect(minutes).toHaveValue("15");
+  await expect(editor.locator('input[type="time"]')).toHaveCount(0);
+  await minutes.fill("90");
+  await expect(editor.locator(".schedule-preview")).toContainText(
+    "Every 90 minutes",
+  );
+  await expect.poll(() => fixture.previews.at(-1)?.cron).toBe("@every 90m");
+  await editor
+    .getByRole("button", { name: "Create task", exact: true })
+    .click();
+  await expect(page.locator(".schedule-reading")).toContainText(
+    "Every 90 minutes",
+  );
+  expect(fixture.saves[0].cron).toBe("@every 90m");
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(
+    editor.getByRole("combobox", { name: "Repeat", exact: true }),
+  ).toHaveValue("interval");
+  await expect(minutes).toHaveValue("90");
+  await editor
+    .getByRole("textbox", { name: "Task name", exact: true })
+    .fill("Interval renamed");
+  await editor
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(page.locator(".schedule-reading h2")).toHaveText(
+    "Interval renamed",
+  );
+  expect(fixture.saves.at(-1)?.cron).toBe("@every 90m");
+});
+
+test("interval validation blocks empty, fractional and out-of-range minutes", async ({
+  page,
+}) => {
+  await setup(page);
+  const editor = await createDraft(page);
+  await editor
+    .getByRole("combobox", { name: "Repeat", exact: true })
+    .selectOption("interval");
+  const minutes = editor.getByRole("spinbutton", {
+    name: "Repeat every (minutes)",
+    exact: true,
+  });
+  for (const value of ["", "0", "-1", "1.5", "10081"]) {
+    await minutes.fill(value);
+    await expect(
+      editor.getByRole("button", { name: "Create task", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      editor.getByText("Enter a whole number from 1 to 10,080 minutes."),
+    ).toBeVisible();
+  }
+  await minutes.fill("7");
+  await expect(
+    editor.getByRole("button", { name: "Create task", exact: true }),
+  ).toBeEnabled();
+  await editor
+    .getByRole("combobox", { name: "Repeat", exact: true })
+    .selectOption("daily");
+  await editor
+    .getByRole("combobox", { name: "Repeat", exact: true })
+    .selectOption("interval");
+  await expect(minutes).toHaveValue("7");
+});
+
+test.describe("Chinese minute interval", () => {
+  test.use({ locale: "zh-CN" });
+  test("shows the minute control and localized summary", async ({ page }) => {
+    await setup(page);
+    await page.goto("/?view=schedules&mode=create");
+    await page
+      .getByRole("combobox", { name: "重复", exact: true })
+      .selectOption("interval");
+    await page
+      .getByRole("spinbutton", { name: "重复间隔（分钟）", exact: true })
+      .fill("30");
+    await expect(page.locator(".schedule-preview")).toContainText("每 30 分钟");
+  });
 });

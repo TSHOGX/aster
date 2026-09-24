@@ -23,6 +23,7 @@ import {
   parseRecurrence,
   recurrenceCron,
   scheduleConfiguration,
+  schedulePreviewKey,
 } from "@/lib/schedule-recurrence";
 import { ProjectPicker } from "./project-picker";
 import { RecurrenceFields } from "./schedule-recurrence";
@@ -88,6 +89,8 @@ export function ScheduleEditor({
   const [requestId] = useState(newID);
   const pending = useRef<Schedule | null>(null);
   const cron = ruleChanged || !schedule ? recurrenceCron(rule) : schedule.cron;
+  const previewNextAt =
+    baseline?.enabled && cron === baseline.cron ? baseline.next_at : undefined;
   const value: Schedule = {
     id: schedule?.id || requestId,
     project_id: project,
@@ -107,14 +110,18 @@ export function ScheduleEditor({
   const recurrenceUnchanged =
     !!baseline && cron === baseline.cron && timezone === baseline.timezone;
   const previewValid =
-    validation?.key === JSON.stringify([cron, timezone]) && validation.valid;
+    validation?.key === schedulePreviewKey(cron, timezone, previewNextAt) &&
+    validation.valid;
   const targetValid =
     !existing ||
     (!!session &&
       selectedTarget?.id === session &&
       selectedTarget.project_id === project &&
       selectedTarget.deletion === 0);
-  const titleValid = !!title.trim() && new TextEncoder().encode(title).length <= 256 && !title.includes("\0");
+  const titleValid =
+    !!title.trim() &&
+    new TextEncoder().encode(title).length <= 256 &&
+    !title.includes("\0");
   const promptValid = !!prompt.trim() && !prompt.includes("\0");
   const valid =
     !!project &&
@@ -309,7 +316,13 @@ export function ScheduleEditor({
             onChange={(e) => setTitle(e.target.value)}
           />
           {!title.trim() && <small>{tr("Enter a task name.")}</small>}
-          {!!title.trim() && !titleValid && <small role="alert">{tr("This task name is too long or contains an invalid character.")}</small>}
+          {!!title.trim() && !titleValid && (
+            <small role="alert">
+              {tr(
+                "This task name is too long or contains an invalid character.",
+              )}
+            </small>
+          )}
         </label>
         <label>
           {tr("Instructions")}
@@ -425,6 +438,7 @@ export function ScheduleEditor({
           rule={rule}
           cron={cron}
           timezone={timezone}
+          nextAt={previewNextAt}
           onRule={(next) => {
             setRule(next);
             setRuleChanged(true);

@@ -6,6 +6,7 @@ export type RepeatMode =
   | "weekly"
   | "monthly"
   | "dates"
+  | "interval"
   | "advanced"
   | "manual";
 export type Recurrence = {
@@ -14,6 +15,7 @@ export type Recurrence = {
   weekdays: number[];
   dates: number[];
   advanced: string;
+  intervalMinutes: string;
 };
 export const repeatLabels: Record<RepeatMode, MessageKey> = {
   daily: "Daily",
@@ -21,6 +23,7 @@ export const repeatLabels: Record<RepeatMode, MessageKey> = {
   weekly: "Weekly",
   monthly: "Monthly",
   dates: "Several monthly dates",
+  interval: "Interval",
   advanced: "Advanced: Cron expression",
   manual: "Manual only",
 };
@@ -40,8 +43,12 @@ export function parseRecurrence(expression: string): Recurrence {
     weekdays: [1],
     dates: [1],
     advanced: expression,
+    intervalMinutes: "15",
   };
   if (!expression) return base;
+  const interval = /^@every ([1-9]\d*)m$/.exec(expression);
+  if (interval && Number(interval[1]) <= 10080)
+    return { ...base, mode: "interval", intervalMinutes: interval[1] };
   const fields = expression.trim().split(/\s+/);
   if (fields.length !== 5) return base;
   const [minute, hour, date, month, day] = fields;
@@ -81,6 +88,15 @@ export function parseRecurrence(expression: string): Recurrence {
 export function recurrenceCron(rule: Recurrence): string | null {
   if (rule.mode === "manual") return "";
   if (rule.mode === "advanced") return rule.advanced;
+  if (rule.mode === "interval") {
+    const value = Number(rule.intervalMinutes);
+    return /^\d+$/.test(rule.intervalMinutes) &&
+      Number.isInteger(value) &&
+      value >= 1 &&
+      value <= 10080
+      ? `@every ${value}m`
+      : null;
+  }
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(rule.time)) return null;
   const [hour, minute] = rule.time.split(":").map(Number);
   const prefix = `${minute} ${hour}`;
@@ -94,6 +110,13 @@ export function recurrenceCron(rule: Recurrence): string | null {
   return days.length && days.every((n) => n >= 1 && n <= 31)
     ? `${prefix} ${[...days].sort((a, b) => a - b).join(",")} * *`
     : null;
+}
+export function schedulePreviewKey(
+  cron: string | null,
+  timezone: string,
+  nextAt?: string,
+) {
+  return JSON.stringify([cron, timezone, nextAt || ""]);
 }
 export function scheduleConfiguration(s: Schedule) {
   return JSON.stringify([

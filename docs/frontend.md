@@ -156,8 +156,11 @@ changes cancel obsolete requests. Loading and failure are distinct from emptines
 
 Creation defaults visibly to Daily 09:00 in the detected IANA timezone (UTC with
 an explanation if detection fails), using a new conversation each run. Daily,
-Monday–Friday, weekly, monthly, multiple monthly dates, manual-only, and advanced
-five-field Cron are supported. The timezone input searches IANA and localized
+Monday–Friday, weekly, monthly, multiple monthly dates, a minute interval,
+manual-only, and advanced five-field Cron are supported. Interval defaults to
+15 minutes and accepts whole minutes from 1 to 10,080. Its first run is one period
+after creation/enabling; changing the interval restarts that timer. Other edits
+and manual runs preserve its cadence. Timezone/DST do not change elapsed minutes. The timezone input searches IANA and localized
 zone names. Only conservative rules are recognized visually; name/instruction
 edits preserve the original expression exactly. Replacing an advanced rule
 requires an explicit choice. Recurrence changes require an up-to-date server

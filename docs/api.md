@@ -79,13 +79,26 @@ Schedule edits/ticks and relevant Project changes invalidate continuation with
 `409 resync_required`; restart at the first page. The page and revision come from
 one database read snapshot. This replaces ID-only overview pagination.
 
-`POST /api/schedules/preview` accepts `{cron, timezone}` and returns
+`POST /api/schedules/preview` accepts `{cron, timezone, next_at?}` and returns
 `{valid, cron, timezone, reference_time, occurrences, errors?}`. Field errors use
 `cron` or `timezone`. The authenticated, non-mutating endpoint validates with the
 execution parser and returns three upcoming UTC instants or none for manual-only.
-It creates no task or run. Five-field Cron and IANA timezones are required. The
+It creates no task or run. `cron` accepts five-field Cron, empty for manual-only,
+or the canonical interval expression `@every Nm` (integer N from 1 to 10080).
+Intervals measure elapsed minutes; the IANA timezone controls their display only.
+Optional `next_at` previews an existing interval’s phase. Without it, preview
+starts a hypothetical timer at `reference_time`; creation starts its timer when
+the server accepts the task. The
 pinned parser skips nonexistent spring-forward wall times and can produce both
 occurrences of a repeated fall-back wall time; clients display each offset.
+
+An interval first runs one period after creation, enabling, or changing its
+interval. Its saved `next_at` preserves the cadence across worker delays and
+restarts; missed occurrences coalesce into one run and advance to the first
+cadence point after the current time. Name/instruction/target edits, interval
+display-zone changes and manual runs do not reset it. Client-supplied `next_at`
+is ignored on create/update. Existing admission/overlap behavior applies: separate
+conversations may overlap and a shared target conversation queues turns.
 
 Task mutations and history remain Project-scoped. Run history returns at most 50
 rows and an explicit `next` continuation identity only when another row exists.

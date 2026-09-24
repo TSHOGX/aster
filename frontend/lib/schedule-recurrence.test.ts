@@ -14,6 +14,9 @@ describe("visual recurrence", () => {
     "0 16 * * 1,3,5",
     "0 9 31 * *",
     "0 9 1,15 * *",
+    "@every 1m",
+    "@every 90m",
+    "@every 10080m",
     "",
   ])("round trips supported rule %s", (rule) => {
     expect(recurrenceCron(parseRecurrence(rule))).toBe(rule);
@@ -36,6 +39,17 @@ describe("visual recurrence", () => {
     ).toBeNull();
     expect(recurrenceCron({ ...rule, time: "24:00" })).toBeNull();
     expect(recurrenceCron({ ...rule, mode: "dates", dates: [] })).toBeNull();
+  });
+  it("validates whole minute intervals without inventing Cron steps", () => {
+    const rule = {
+      ...parseRecurrence("@every 90m"),
+      mode: "interval" as const,
+    };
+    expect(rule.intervalMinutes).toBe("90");
+    expect(recurrenceCron(rule)).toBe("@every 90m");
+    for (const intervalMinutes of ["", "0", "-1", "1.5", "10081", "1e3"])
+      expect(recurrenceCron({ ...rule, intervalMinutes })).toBeNull();
+    expect(parseRecurrence("*/15 * * * *").mode).toBe("advanced");
   });
   it("separates configuration from scheduler-maintained revisions", () => {
     const original = {

@@ -16,6 +16,15 @@ is complete and supersedes the original no-deployment boundary. See [bootstrap](
 [current contract](compatibility.md). The earlier qualification record describes
 its recorded source only, not the newly rebuilt deployment.
 
+## Minute interval follow-up
+
+Scheduled now supports fixed elapsed intervals of 1–10,080 minutes, represented
+by `@every Nm` in its existing recurrence field. Persisted next-run time anchors
+the cadence across delayed ticks/restarts. Creation, enabling and interval changes
+start a new timer; other edits retain it. No schema change, migration or reset is
+needed. Arbitrary units, custom date anchors and finite schedules remain outside
+this minute-interval option.
+
 ## Original ordered stages
 
 1. **Route isolation.** Normalize routes on parsing, navigation, serialization,
