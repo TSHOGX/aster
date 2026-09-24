@@ -226,3 +226,8 @@ platform dependencies first. Checks cover Interval-first order, timezone-arrow
 selection/search, hour/minute confirmation, typed time, saved values, keyboard
 focus/Tab/Escape, and narrow English/Chinese light/dark layouts. These are browser
 engine checks on the test host, not a claim of testing every operating system.
+
+The [Schedule picker qualification](../dev/measurements/schedule-pickers.json)
+records 24 passing checks across those three engines, 34 schedule/workspace
+checks, and live verification of saved time and timezone values after frontend
+deployment. The live check used a paused task and removed its temporary resources.
