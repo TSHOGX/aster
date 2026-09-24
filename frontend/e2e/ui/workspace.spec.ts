@@ -744,6 +744,43 @@ test("localized queue controls remain visible on a narrow screen", async ({ brow
   }
 });
 
+test("touch composer menu queues explicitly while Stop preserves the draft", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    const page = await context.newPage();
+    const f = await workspaceFixture(page);
+    const fixture = new ConversationFixture();
+    const session = {
+      id: "analysis", project_id: "battery", title: "Compare cycle performance",
+      state: "running", revision: 2, control_revision: 2, deletion: 0,
+    };
+    await page.route("**/sessions/analysis/view/head", route => {
+      const head = fixture.reply({ session }, new URL(route.request().url())) as Record<string, unknown>;
+      head.active_run = { id: "run", prompt_id: "active", incarnation_id: "incarnation", owner: 1, state: "running" };
+      return route.fulfill({ json: head });
+    });
+    await page.goto("/?project=battery&session=analysis");
+    const panel = page.locator(".agent-panel");
+    const input = panel.locator("textarea");
+    await input.fill("Touch queued input");
+    await panel.getByRole("button", { name: "Conversation actions" }).tap();
+    await page.getByRole("menuitem", { name: "Add to queue" }).tap();
+    await expect.poll(() => f.calls.filter(c => c.method === "POST" && c.path.endsWith("/turns")).length).toBe(1);
+    await input.fill("Unsubmitted draft");
+    await panel.getByRole("button", { name: "Stop current task" }).tap();
+    await expect(input).toHaveValue("Unsubmitted draft");
+    expect(f.calls.filter(c => c.method === "POST" && c.path.endsWith("/turns"))).toHaveLength(1);
+    const stops = f.calls.filter(c => c.method === "POST" && c.path.endsWith("/control"));
+    expect(stops).toHaveLength(1);
+    expect(stops[0].body?.action).toBe("stop");
+    const hint = await input.getAttribute("aria-describedby");
+    expect(hint).toBeTruthy();
+    await expect(panel.locator(`#${hint}`)).toContainText("Enter to add to queue");
+  } finally {
+    await context.close();
+  }
+});
+
 test("completed turn folds intermediate output, freezes elapsed time and provides answer actions", async ({
   page,
   context,

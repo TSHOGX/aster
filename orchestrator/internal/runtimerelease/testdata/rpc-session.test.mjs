@@ -105,6 +105,87 @@ test('patched RPC preserves exact native input identity and settlement with real
     await until(() => outputs.some(e => e.type === 'prompt_end' && e.id === 'run3'));
     assert.equal(outputs.some(e => e.type === 'input_consumed' && e.input_token === 'C'), false);
     assert.deepEqual(outputs.filter(e => e.type === 'input_consumed' && e.run_id === 'run3').map(e => e.input_token), ['normal3']);
+
+    const unsubscribe = session.subscribe(event => {
+      if (event.type === 'message_start' && event.message?.role === 'user')
+        throw new Error('fixture Session listener failure');
+    });
+    send({ type: 'prompt', id: 'run4', input_token: 'listener', message: 'listener failure' });
+    await until(() => outputs.some(e => e.type === 'prompt_end' && e.id === 'run4'));
+    assert.deepEqual(outputs.filter(e => e.type === 'input_consumed' && e.input_token === 'listener').map(e => e.run_id), ['run4']);
+    assert.deepEqual(outputs.find(e => e.type === 'inputs_reconciled' && e.run_id === 'run4').removed_input_tokens, []);
+    unsubscribe();
+    send({ type: 'prompt', id: 'run5', input_token: 'after-listener', message: 'next after listener' });
+    await until(() => outputs.some(e => e.type === 'prompt_end' && e.id === 'run5'));
+    assert.deepEqual(outputs.filter(e => e.type === 'input_consumed' && e.run_id === 'run5').map(e => e.input_token), ['after-listener']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('patched RPC consumes Steer after a real Session completes its tool batch', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'queued-rpc-tools-'));
+  try {
+    const model = getModel('anthropic', 'claude-sonnet-4-5');
+    const gate = deferred();
+    const tool = {
+      name: 'probe', label: 'Probe', description: 'Deterministic tool',
+      parameters: { type: 'object', properties: {} },
+      async execute(id) {
+        await gate.promise;
+        return { content: [{ type: 'text', text: id }], details: {} };
+      },
+    };
+    const { session } = await createAgentSession({ cwd: dir, agentDir: dir, model,
+      modelRegistry: { hasConfiguredAuth: () => true,
+        getApiKeyAndHeaders: async () => ({ ok: true, apiKey: 'fixture-only' }) },
+      sessionManager: SessionManager.inMemory(dir), tools: ['probe'], customTools: [tool] });
+    let calls = 0;
+    session.agent.streamFn = async () => {
+      if (++calls !== 1) {
+        assert(outputs.some(e => e.type === 'input_consumed' && e.input_token === 'guidance'));
+        return stream('answer after guidance', null);
+      }
+      const message = { role: 'assistant', content: [
+        { type: 'toolCall', id: 'one', name: 'probe', arguments: {} },
+        { type: 'toolCall', id: 'two', name: 'probe', arguments: {} },
+      ], stopReason: 'toolUse', timestamp: Date.now(),
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 } };
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'start', partial: { ...message, content: [] } };
+          yield { type: 'done', message };
+        },
+        async result() { return message; },
+      };
+    };
+    const outputs = [];
+    let line;
+    const fakeProcess = new EventEmitter();
+    Object.assign(fakeProcess, { stdin: new EventEmitter(), hrtime: process.hrtime, platform: process.platform });
+    const context = vm.createContext({ AsyncLocalStorage, crypto: { randomUUID }, process: fakeProcess,
+      queueMicrotask, console, setTimeout, clearTimeout,
+      takeOverStdout() {}, serializeJsonLine: JSON.stringify,
+      writeRawStdout(raw) { outputs.push(JSON.parse(raw)); },
+      waitForRawStdoutBackpressure: async () => {},
+      attachJsonlLineReader(_input, receive) { line = receive; return () => {}; } });
+    vm.runInContext(code + '\nglobalThis.start = runRpcMode;', context);
+    void context.start({ session, setRebindSession() {} });
+    await until(() => !!line);
+    const send = body => line(JSON.stringify(body));
+    send({ type: 'prompt', id: 'tool-run', input_token: 'normal', message: 'start tools' });
+    await until(() => outputs.some(e => e.type === 'tool_execution_start'));
+    send({ type: 'steer', id: 'steer', run_id: 'tool-run', input_token: 'guidance', message: 'guide after tools' });
+    await until(() => outputs.some(e => e.type === 'response' && e.id === 'steer'));
+    assert.equal(outputs.some(e => e.type === 'input_consumed' && e.input_token === 'guidance'), false);
+    gate.resolve();
+    await until(() => outputs.some(e => e.type === 'prompt_end' && e.id === 'tool-run'));
+    const ended = outputs.flatMap((event, index) => event.type === 'tool_execution_end' ? [index] : []);
+    const consumed = outputs.findIndex(e => e.type === 'input_consumed' && e.input_token === 'guidance');
+    assert.equal(ended.length, 2);
+    assert(consumed > ended[0] && consumed > ended[1]);
+    assert.equal(calls, 2);
+    assert.deepEqual(outputs.find(e => e.type === 'inputs_reconciled' && e.run_id === 'tool-run').removed_input_tokens, []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
