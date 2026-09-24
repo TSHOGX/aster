@@ -587,6 +587,7 @@ CREATE TABLE workspace_readers (
 CREATE INDEX agent_commands_pending ON agent_commands(incarnation_id,state,created_at);
 
 CREATE INDEX execution_runs_live ON execution_runs(session_id,state) WHERE state IN ('starting','running','stopping','unknown');
+CREATE UNIQUE INDEX execution_runs_one_live ON execution_runs(session_id) WHERE state IN ('starting','running','stopping','unknown');
 CREATE INDEX input_deliveries_run ON input_deliveries(session_id,run_id,acceptance_sequence);
 CREATE INDEX input_deliveries_prompt ON input_deliveries(prompt_id,acceptance_sequence DESC);
 CREATE INDEX input_deliveries_pending ON input_deliveries(session_id,state) WHERE state IN ('accepted','dispatching','native_queued','unknown');
@@ -666,7 +667,7 @@ CREATE INDEX release_terminal_cleanup_pending ON terminals(id) WHERE deletion_in
 
 CREATE INDEX release_terminal_start_pending ON terminal_incarnations(id) WHERE state='starting';
 
-CREATE INDEX release_turn_pending ON turns(id) WHERE state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0);
+CREATE INDEX release_run_pending ON execution_runs(prompt_id) WHERE state IN ('starting','running','stopping','unknown');
 
 CREATE INDEX schedule_runs_project ON schedule_runs(project_id,created_at,id);
 
@@ -692,8 +693,6 @@ CREATE INDEX terminal_incarnations_project ON terminal_incarnations(project_id,s
 
 CREATE INDEX terminals_project ON terminals(project_id,created_at,id);
 
-CREATE UNIQUE INDEX turns_one_active ON turns(session_id) WHERE state IN ('starting','running','stopping');
-
 CREATE INDEX turns_pending ON turns(project_id,state,session_id,sequence);
 
 CREATE VIEW owner_handoff_blockers AS
@@ -708,15 +707,15 @@ SELECT b.kind,b.id FROM release_blockers b WHERE
  ));
 
 CREATE VIEW owner_transferable_turns AS
-SELECT t.id,c.incarnation_id FROM turns t INDEXED BY release_turn_pending
-JOIN agent_commands c INDEXED BY agent_prompt_turn ON c.turn_id=t.id AND c.kind='prompt' AND c.state='applied'
-JOIN agent_incarnations i ON i.id=c.incarnation_id AND i.session_id=t.session_id AND i.state='running'
-JOIN sessions s ON s.id=t.session_id AND s.deletion_intent=0 AND s.state='running'
-JOIN projects p ON p.id=t.project_id AND p.state='active'
-WHERE (t.state IN ('starting','running','stopping') OR (t.state='unknown' AND t.acknowledged=0)) AND t.state='running';
+SELECT r.prompt_id AS id,r.incarnation_id FROM execution_runs r
+JOIN turns t ON t.id=r.prompt_id AND t.session_id=r.session_id AND t.state='running'
+JOIN agent_incarnations i ON i.id=r.incarnation_id AND i.session_id=r.session_id AND i.state='running'
+JOIN sessions s ON s.id=r.session_id AND s.deletion_intent=0 AND s.state='running'
+JOIN projects p ON p.id=r.project_id AND p.state='active'
+WHERE r.state='running';
 
 CREATE VIEW release_blockers AS
-SELECT 'turn' AS kind,id AS id FROM turns INDEXED BY release_turn_pending WHERE state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0)
+SELECT 'turn' AS kind,r.prompt_id AS id FROM execution_runs r JOIN turns t ON t.id=r.prompt_id AND t.session_id=r.session_id WHERE r.state IN ('starting','running','stopping','unknown') AND (t.state IN ('starting','running','stopping') OR (t.state='unknown' AND t.acknowledged=0))
 UNION ALL SELECT 'command' AS kind,id AS id FROM agent_commands INDEXED BY release_command_pending
 WHERE state IN ('pending','sending','dispatching','unknown') AND (state<>'unknown' OR NOT EXISTS(
  SELECT 1 FROM turns t JOIN agent_incarnations i ON i.id=agent_commands.incarnation_id
