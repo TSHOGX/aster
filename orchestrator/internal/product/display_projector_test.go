@@ -113,6 +113,28 @@ func TestConsumedSteerInputStartsTheNextDisplaySegment(t *testing.T) {
 	}
 }
 
+func TestSummaryTimingStartsAtConsumptionEvidence(t *testing.T) {
+	s, scope, i, command := agentFixture(t)
+	_, err := s.IngestAgent(ctx, i, record(i, command, 1, "command.applied", `{"success":true}`))
+	must(t, err)
+	_, err = s.IngestAgent(ctx, i, record(i, command, 2, "native", `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"timed"}]}}`))
+	must(t, err)
+	var prompt string
+	must(t, s.db.QueryRow(`SELECT prompt_id FROM input_deliveries WHERE command_id=?`, command.CommandID).Scan(&prompt))
+	_, err = s.db.Exec(`UPDATE input_deliveries SET state='consumed',consumed_at=? WHERE prompt_id=?`, "2026-09-24T00:00:05Z", prompt)
+	must(t, err)
+	for n := 0; n < 8; n++ {
+		if err := s.ProjectConversation(ctx, i.SessionID); err != nil && !errors.Is(err, ErrPending) {
+			t.Fatal(err)
+		}
+	}
+	summaries, err := s.ConversationSummaries(ctx, scope, i.SessionID, []string{prompt})
+	must(t, err)
+	if len(summaries.Turns) != 1 || summaries.Turns[0].CreatedAt != "2026-09-24T00:00:05Z" {
+		t.Fatalf("summary clock includes queue time: %+v", summaries.Turns)
+	}
+}
+
 func TestDisplayProjectionTombstonesLargeDetailAndBatchFrontier(t *testing.T) {
 	s, _, i, c := agentFixture(t)
 	_, err := s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{}`))

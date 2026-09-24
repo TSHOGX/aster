@@ -535,7 +535,7 @@ func (d *displayReducer) messages() error {
 	return nil
 }
 func (d *displayReducer) summaries() error {
-	rows, err := d.tx.QueryContext(d.ctx, `SELECT t.id,t.sequence,t.state,t.created_at,t.updated_at,coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') FROM conversation_dirty_turns d JOIN turns t ON t.id=d.turn_id AND t.session_id=d.session_id WHERE d.session_id=? ORDER BY t.sequence LIMIT 64`, d.session)
+	rows, err := d.tx.QueryContext(d.ctx, `SELECT t.id,t.sequence,t.state,coalesce((SELECT min(consumed_at) FROM input_deliveries WHERE prompt_id=t.id AND state='consumed' AND consumed_at<>''),t.created_at),t.updated_at,coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'') FROM conversation_dirty_turns d JOIN turns t ON t.id=d.turn_id AND t.session_id=d.session_id WHERE d.session_id=? ORDER BY t.sequence LIMIT 64`, d.session)
 	if err != nil {
 		return err
 	}
