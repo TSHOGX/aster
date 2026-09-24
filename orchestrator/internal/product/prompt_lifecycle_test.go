@@ -1,6 +1,7 @@
 package product
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -134,5 +135,22 @@ func TestReleasedPromptCanBeClaimedBySteerBeforeOrdinaryDispatch(t *testing.T) {
 	must(t, err)
 	if len(page.Items) != 1 || page.Items[0].ID != source.ID || page.Items[0].DeliveryState != "dispatching" {
 		t.Fatal("queue lost delivery progress", page)
+	}
+}
+
+func TestPromptMutationReceiptIsIdempotentAndRejectsReusedRequest(t *testing.T) {
+	s, scope, _, _ := agentFixture(t)
+	turn, err := s.AdmitTurn(ctx, scope, "agent", "mutation-source", "mutation", true)
+	must(t, err)
+	first, err := s.MutatePrompt(ctx, scope, "agent", turn.ID, "mutation-request", "release", turn.PromptRevision)
+	must(t, err)
+	second, err := s.MutatePrompt(ctx, scope, "agent", turn.ID, "mutation-request", "release", turn.PromptRevision)
+	must(t, err)
+	if first != second || second.State != "queued" {
+		t.Fatalf("retry changed receipt: first=%+v second=%+v", first, second)
+	}
+	_, err = s.MutatePrompt(ctx, scope, "agent", turn.ID, "mutation-request", "hold", turn.PromptRevision)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatal("request id was reused for a different action", err)
 	}
 }

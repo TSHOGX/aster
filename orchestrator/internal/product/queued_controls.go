@@ -3,13 +3,29 @@ package product
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 )
 
-func (s *Store) ChangeQueuedTurn(ctx context.Context, scope Scope, session, id, state string, revision int64) error {
-	if state != "held" && state != "canceled" {
-		return ErrInvalid
+type PromptMutationReceipt struct {
+	RequestID      string `json:"request_id"`
+	Action         string `json:"action"`
+	PromptID       string `json:"prompt_id"`
+	PromptRevision int64  `json:"prompt_revision"`
+	State          string `json:"state"`
+}
+
+// MutatePrompt applies a desired queue policy against only this prompt's
+// revision. Receipt lookup precedes mutable state checks, so a lost response
+// can be retried after dispatch, cancellation, or run settlement.
+func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, request, action string, revision int64) (PromptMutationReceipt, error) {
+	if !validText(request, 128) || !validText(prompt, 128) || revision <= 0 ||
+		(action != "hold" && action != "release" && action != "cancel") {
+		return PromptMutationReceipt{}, ErrInvalid
 	}
-	return s.write(ctx, func(tx *sql.Tx) error {
+	digest := intentDigest(action, request, prompt, revision)
+	var result PromptMutationReceipt
+	err := s.writeClass(ctx, controlWrite, scope.ProjectID, 1<<20, func(tx *sql.Tx) error {
 		if _, err := writableProject(ctx, tx, scope); err != nil {
 			return err
 		}
@@ -17,25 +33,95 @@ func (s *Store) ChangeQueuedTurn(ctx context.Context, scope Scope, session, id, 
 		if err != nil {
 			return err
 		}
-		if child.ControlRevision != revision {
-			return ErrConflict
+		oldDigest, _, oldPrompt, _, _, _, raw, err := receipt(ctx, tx, session, request)
+		if err == nil {
+			if oldPrompt != prompt {
+				return ErrConflict
+			}
+			if err := validateReceiptIntent(oldDigest, digest); err != nil {
+				return err
+			}
+			return json.Unmarshal(raw, &result)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
 		}
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
-		var pending int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_commands WHERE turn_id=? AND kind='steer' AND state IN ('pending','sending','dispatching','unknown')`, id).Scan(&pending); err != nil {
+		t, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE id=? AND session_id=? AND project_id=?`, prompt, session, scope.ProjectID))
+		if err != nil {
 			return err
 		}
-		if pending > 0 {
+		if t.PromptRevision != revision || (t.State != "held" && t.State != "queued") {
+			return ErrConflict
+		}
+		var unresolved int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM input_deliveries WHERE prompt_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, prompt).Scan(&unresolved); err != nil {
+			return err
+		}
+		if unresolved != 0 {
 			return ErrBusy
 		}
-		if err = changed(tx.ExecContext(ctx, `UPDATE turns SET state=?,updated_at=? WHERE id=? AND session_id=? AND state IN ('held','queued')`, state, s.timestamp(), id, session)); err != nil {
-			return err
+		next := map[string]string{"hold": "held", "release": "queued", "cancel": "canceled"}[action]
+		if t.State != next {
+			if err := changed(tx.ExecContext(ctx, `UPDATE turns SET state=?,prompt_revision=prompt_revision+1,updated_at=? WHERE id=? AND prompt_revision=? AND state IN ('held','queued')`, next, s.timestamp(), prompt, revision)); err != nil {
+				return err
+			}
+			t.PromptRevision++
+			t.State = next
+			if err := s.activity(ctx, tx, scope.ProjectID); err != nil {
+				return err
+			}
+			if err := s.bumpSession(ctx, tx, scope.ProjectID, session, "turn."+next); err != nil {
+				return err
+			}
 		}
-		if err = s.activity(ctx, tx, scope.ProjectID); err != nil {
-			return err
-		}
-		return s.bumpSession(ctx, tx, scope.ProjectID, session, "turn."+state)
+		result = PromptMutationReceipt{RequestID: request, Action: action, PromptID: prompt, PromptRevision: t.PromptRevision, State: t.State}
+		return insertReceipt(ctx, tx, scope.ProjectID, session, request, action, digest, prompt, "", "", "completed", result, s.timestamp())
 	})
+	return result, err
+}
+
+// Legacy internal callers are kept as a narrow adapter while product handlers
+// use request-scoped receipts and prompt revisions.
+func (s *Store) ChangeQueuedTurn(ctx context.Context, scope Scope, session, prompt, state string, controlRevision int64) error {
+	action := map[string]string{"held": "hold", "canceled": "cancel"}[state]
+	if action == "" {
+		return ErrInvalid
+	}
+	var revision, currentControl int64
+	if err := s.reader.QueryRowContext(ctx, `SELECT prompt_revision FROM turns WHERE id=? AND session_id=?`, prompt, session).Scan(&revision); err != nil {
+		return err
+	}
+	if err := s.reader.QueryRowContext(ctx, `SELECT control_revision FROM sessions WHERE id=?`, session).Scan(&currentControl); err != nil {
+		return err
+	}
+	if controlRevision != currentControl {
+		return ErrConflict
+	}
+	_, err := s.MutatePrompt(ctx, scope, session, prompt, "legacy-"+prompt+"-"+action, action, revision)
+	if errors.Is(err, ErrBusy) {
+		return ErrConflict
+	}
+	return err
+}
+
+func (s *Store) ReleaseTurn(ctx context.Context, scope Scope, session, prompt string, controlRevision int64) error {
+	var currentControl int64
+	if err := s.reader.QueryRowContext(ctx, `SELECT control_revision FROM sessions WHERE id=?`, session).Scan(&currentControl); err != nil {
+		return err
+	}
+	if controlRevision != currentControl {
+		return ErrConflict
+	}
+	var revision int64
+	if err := s.reader.QueryRowContext(ctx, `SELECT prompt_revision FROM turns WHERE id=? AND session_id=?`, prompt, session).Scan(&revision); err != nil {
+		return err
+	}
+	_, err := s.MutatePrompt(ctx, scope, session, prompt, "legacy-"+prompt+"-release", "release", revision)
+	if errors.Is(err, ErrBusy) {
+		return ErrConflict
+	}
+	return err
 }

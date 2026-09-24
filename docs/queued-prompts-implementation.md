@@ -39,3 +39,9 @@ The Session panel now reads the bounded FIFO queue resource, keeps pending promp
 The New Chat pending state is now a queue submission status without a Worked-for clock. Existing browser coverage passes for lost first replies, queue-only first submission, active Stop/Enter behavior, draft preservation, and IME/Shift+Enter handling. Backend queue tests cover exact counts, FIFO pagination, Steer claim precedence over ordinary dispatch, and three-way delivery action state.
 
 The visual/browser stage still needs the complete light/dark, reduced-motion, forced-color, narrow viewport, localization capture and real API integration qualification. P3 projection cleanup and the remaining release gates are still open.
+
+## P1: prompt-local queue mutation receipts (2026-09-24)
+
+Hold, Release, and Cancel now use `MutatePrompt` with a prompt-local revision and a stable request ID. The receipt is written in the same transaction as the desired-state change; retries return the original result and a reused request ID with a different action is rejected. The HTTP row-control endpoint accepts `expected_prompt_revision` and returns the receipt. Queue rows expose the latest delivery state and the frontend resynchronizes a page when its queue revision changes.
+
+The old internal helper names remain only as test and worker adapters that translate their session-revision call shape into the new receipt path. Product transport no longer uses the session-wide revision as the row mutation guard. These adapters will be removed after the remaining worker and test call sites migrate. G2 is still open until all state guards and DTOs use the new contract directly.

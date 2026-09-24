@@ -682,7 +682,8 @@ export function SessionPanel({
     void act(async () => {
       await command(`${base}/turns/${encodeURIComponent(turn.id)}/control`, {
         action,
-        control_revision: current.control_revision,
+        request_id: newID(),
+        expected_prompt_revision: turn.prompt_revision || 1,
       });
       await loadQueue();
     });

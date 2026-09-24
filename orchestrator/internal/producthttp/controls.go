@@ -44,23 +44,19 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) queuedControl(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Action          string `json:"action"`
-		ControlRevision int64  `json:"control_revision"`
+		Action                 string `json:"action"`
+		RequestID              string `json:"request_id"`
+		ExpectedPromptRevision int64  `json:"expected_prompt_revision"`
 	}
 	if !decode(w, r, s.Config.bodyLimit(), &body) {
 		return
 	}
-	var err error
-	if body.Action == "release" {
-		err = s.Store.ReleaseTurn(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.ControlRevision)
-	} else {
-		err = s.Store.ChangeQueuedTurn(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.Action, body.ControlRevision)
-	}
+	receipt, err := s.Store.MutatePrompt(r.Context(), s.scope(r), r.PathValue("session"), r.PathValue("turn"), body.RequestID, body.Action, body.ExpectedPromptRevision)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]string{"status": "updated"})
+	writeJSON(w, 200, receipt)
 }
 
 func (s *Server) turnIndex(w http.ResponseWriter, r *http.Request) {

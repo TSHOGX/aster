@@ -26,12 +26,12 @@ func insertReceipt(ctx context.Context, tx *sql.Tx, project, session, request, a
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO control_receipts(request_id,project_id,session_id,action,intent_digest,prompt_id,delivery_id,run_id,state,result,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,request_id) DO NOTHING`, request, project, session, action, digest, prompt, delivery, run, state, raw, now, now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO control_receipts(request_id,project_id,session_id,action,intent_digest,prompt_id,delivery_id,run_id,state,result,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, request, project, session, action, digest, prompt, delivery, run, state, raw, now, now)
 	return err
 }
 
-func receipt(ctx context.Context, tx *sql.Tx, request string) (digest, action, prompt, delivery, run, state string, result []byte, err error) {
-	err = tx.QueryRowContext(ctx, `SELECT intent_digest,action,prompt_id,delivery_id,run_id,state,result FROM control_receipts WHERE request_id=?`, request).Scan(&digest, &action, &prompt, &delivery, &run, &state, &result)
+func receipt(ctx context.Context, tx *sql.Tx, session, request string) (digest, action, prompt, delivery, run, state string, result []byte, err error) {
+	err = tx.QueryRowContext(ctx, `SELECT intent_digest,action,prompt_id,delivery_id,run_id,state,result FROM control_receipts WHERE session_id=? AND request_id=?`, session, request).Scan(&digest, &action, &prompt, &delivery, &run, &state, &result)
 	return
 }
 

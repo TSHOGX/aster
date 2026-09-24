@@ -52,7 +52,6 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 				return ErrConflict
 			}
 			t = old
-			_ = insertReceipt(ctx, tx, scope.ProjectID, session, request, "enqueue", intentDigest("enqueue", request, "", map[string]any{"content": content, "held": held}), old.ID, "", "", "accepted", map[string]any{"prompt_id": old.ID}, s.timestamp())
 			return nil
 		}
 		if !errors.Is(err, ErrNotFound) {
@@ -171,45 +170,4 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 		return PromptQueuePage{}, err
 	}
 	return page, tx.Commit()
-}
-
-// ReleaseTurn requires the Session control revision, because it changes that Session's
-// ordered queue. A stale browser cannot release work using a sibling revision.
-func (s *Store) ReleaseTurn(ctx context.Context, scope Scope, session, id string, revision int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
-			return err
-		}
-		child, err := sessionIn(ctx, tx, scope, session)
-		if err != nil {
-			return err
-		}
-		if child.Deletion != Live {
-			return ErrDeleting
-		}
-		if child.ControlRevision != revision {
-			return ErrConflict
-		}
-		t, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE project_id=? AND session_id=? AND id=?`, scope.ProjectID, session, id))
-		if err != nil {
-			return err
-		}
-		if t.State != "held" {
-			return ErrConflict
-		}
-		var steering int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_commands WHERE turn_id=? AND kind='steer' AND state IN ('pending','sending','dispatching','unknown')`, id).Scan(&steering); err != nil {
-			return err
-		}
-		if steering > 0 {
-			return ErrConflict
-		}
-		if err := changed(tx.ExecContext(ctx, `UPDATE turns SET state='queued',updated_at=? WHERE id=? AND state='held'`, s.timestamp(), id)); err != nil {
-			return err
-		}
-		if err := s.activity(ctx, tx, scope.ProjectID); err != nil {
-			return err
-		}
-		return s.bumpSession(ctx, tx, scope.ProjectID, session, "turn.queued")
-	})
 }
