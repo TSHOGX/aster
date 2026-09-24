@@ -503,7 +503,7 @@ CREATE TABLE turns (
  initially_held INTEGER NOT NULL CHECK(initially_held IN (0,1)),
  prompt_revision INTEGER NOT NULL DEFAULT 1 CHECK(prompt_revision>0),
  queue_policy TEXT NOT NULL DEFAULT 'released' CHECK(queue_policy IN ('held','released')),
- disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','canceled')),
+ disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','canceled','historical')),
  sequence INTEGER NOT NULL CHECK(sequence>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,

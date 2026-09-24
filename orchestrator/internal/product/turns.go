@@ -16,6 +16,7 @@ const promptStatus = `CASE turns.disposition
  WHEN 'claimed' THEN coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
   FROM execution_runs r WHERE r.prompt_id=turns.id ORDER BY r.started_at DESC,r.id DESC LIMIT 1),'claimed')
  WHEN 'canceled' THEN 'canceled'
+ WHEN 'historical' THEN 'historical'
  ELSE coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
   FROM input_deliveries d JOIN execution_runs r ON r.id=d.run_id
   WHERE d.prompt_id=turns.id AND d.state='consumed' ORDER BY d.acceptance_sequence DESC LIMIT 1),'consumed') END`
