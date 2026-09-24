@@ -601,6 +601,37 @@ test("active composer has one Stop action while Enter queues and each row keeps 
   await expect.poll(() => f.calls.filter(c => c.method === "POST" && c.path.endsWith("/turns")).length).toBe(1);
 });
 
+test("stopping and unknown runs disable duplicate Stop and ineligible Steer", async ({ page }) => {
+  await workspaceFixture(page);
+  const fixture = new ConversationFixture();
+  let runState = "stopping";
+  await page.route("**/sessions/analysis/view/head", route => {
+    const session = {
+      id: "analysis", project_id: "battery", title: "Compare cycle performance",
+      state: runState === "unknown" ? "blocked" : "stopping", revision: 2, control_revision: 2, deletion: 0,
+    };
+    const head = fixture.reply({ session }, new URL(route.request().url())) as Record<string, unknown>;
+    head.active_run = { id: "run", prompt_id: "active", incarnation_id: "incarnation", owner: 1, state: runState };
+    head.recovery = [{ id: "incarnation", state: runState === "unknown" ? "exited" : "running", cleanup: "settled", recovery: "complete" }];
+    return route.fulfill({ json: head });
+  });
+  await page.route("**/sessions/analysis/queue?*", route => route.fulfill({ json: {
+    items: [{ id: "held", session_id: "analysis", request_id: "held", content: "Held guidance", state: "held", sequence: 2, prompt_revision: 1 }],
+    total_pending: 1, queue_revision: 2,
+  } }));
+  await page.goto("/?project=battery&session=analysis");
+  const panel = page.locator(".agent-panel");
+  await expect(panel.getByRole("button", { name: "Stopping…", exact: true })).toBeDisabled();
+  await panel.locator(".prompt-queue summary").click();
+  await expect(panel.getByRole("button", { name: /Steer: Held guidance/ })).toBeDisabled();
+  runState = "unknown";
+  await page.reload();
+  await expect(panel.getByRole("button", { name: "Recovery needed", exact: true })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
+  await panel.locator(".prompt-queue summary").click();
+  await expect(panel.getByRole("button", { name: /Steer: Held guidance/ })).toBeDisabled();
+});
+
 test("uncertain Steer keeps its request identity through reload and reports row errors locally", async ({ page }) => {
   await workspaceFixture(page);
   const fixture = new ConversationFixture();

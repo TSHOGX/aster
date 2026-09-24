@@ -293,6 +293,7 @@ export const ZH: Record<MessageKey, string> = {
   "Add to queue": "加入队列",
   "Pending action": "操作处理中",
   "No active task": "当前没有运行中的任务",
+  "Recovery needed": "需要恢复",
   "More prompts": "更多提示词",
   "Stop current task": "停止当前任务",
   "The action failed.": "操作失败。",

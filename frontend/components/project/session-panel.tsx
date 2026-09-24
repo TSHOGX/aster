@@ -753,8 +753,13 @@ export function SessionPanel({
         target_owner: view.head?.active_run?.owner,
       }),
     );
+  const activeRun = view.head?.active_run;
+  const canSteer = !!activeRun && ["starting", "running"].includes(activeRun.state);
+  const canStop = !!activeRun && (["starting", "running"].includes(activeRun.state) ||
+    (activeRun.state === "unknown" && view.head?.recovery?.some(r => r.id === activeRun.incarnation_id && r.state === "running")));
+  const stopping = stopPending || activeRun?.state === "stopping";
   const stop = async () => {
-    if (stopPending) return;
+    if (stopping || !canStop) return;
     setStopPending(true);
     try {
       await sendControl(`stop:${view.head?.active_run?.id}`, `${base}/control`, {
@@ -770,7 +775,7 @@ export function SessionPanel({
       setError(e instanceof Error ? e.message : tr("The action failed."));
     }
   };
-  const active = !!view.head?.active_run;
+  const active = !!activeRun;
   const queue = queuePage?.items || [];
   const deliveryBusy = (turn: Turn) => ["accepted", "dispatching", "native_queued", "unknown", "consumed"].includes(turn.delivery_state || "");
   return (
@@ -1115,8 +1120,8 @@ export function SessionPanel({
                   {turn.state === "held" ? <Play size={16} /> : <Pause size={16} />}
                   {turn.state === "held" ? tr("Release") : tr("Hold")}
                 </button>
-                <button type="button" disabled={busy || deliveryBusy(turn) || !active} onClick={() => steer(turn)}
-                  aria-label={`${tr("Steer")}: ${turn.content.slice(0, 80)}`} title={!active ? tr("No active task") : tr("Steer")}>
+                <button type="button" disabled={busy || deliveryBusy(turn) || !canSteer} onClick={() => steer(turn)}
+                  aria-label={`${tr("Steer")}: ${turn.content.slice(0, 80)}`} title={!active ? tr("No active task") : !canSteer ? activeRun?.state === "stopping" ? tr("Stopping…") : tr("Recovery needed") : tr("Steer")}>
                   <CornerUpRight size={16} />{tr("Steer")}
                 </button>
                 <button
@@ -1176,9 +1181,9 @@ export function SessionPanel({
               <button
                 type="button"
                 className="stop-button"
-                aria-label={stopPending ? tr("Stopping…") : tr("Stop current task")}
-                title={stopPending ? tr("Stopping…") : tr("Stop current task")}
-                disabled={stopPending}
+                aria-label={stopping ? tr("Stopping…") : !canStop ? tr("Recovery needed") : tr("Stop current task")}
+                title={stopping ? tr("Stopping…") : !canStop ? tr("Recovery needed") : tr("Stop current task")}
+                disabled={stopping || !canStop}
                 onClick={() => void stop()}
               >
                 <Square size={14} fill="currentColor" />

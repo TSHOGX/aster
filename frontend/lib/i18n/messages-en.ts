@@ -299,6 +299,7 @@ export const EN = {
   "Add to queue": "Add to queue",
   "Pending action": "Pending action",
   "No active task": "No active task",
+  "Recovery needed": "Recovery needed",
   "More prompts": "More prompts",
   "Stop current task": "Stop current task",
   "The action failed.": "The action failed.",
