@@ -1020,7 +1020,7 @@ export function SessionPanel({
               {["held", "queued"].includes(turn.state) && (
                 <button
                   disabled={busy}
-                  onClick={() => control(turn, "canceled")}
+                  onClick={() => control(turn, "cancel")}
                 >
                   {tr("Cancel prompt")}
                 </button>
@@ -1066,7 +1066,7 @@ export function SessionPanel({
                 <button
                   type="button"
                   disabled={busy || deliveryBusy(turn)}
-                  onClick={() => control(turn, "canceled")}
+                  onClick={() => control(turn, "cancel")}
                   aria-label={`${tr("Cancel prompt")}: ${turn.content.slice(0, 80)}`}
                 >
                   <X size={16} />{tr("Cancel prompt")}
