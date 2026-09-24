@@ -398,12 +398,17 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 	}
 	switch state {
 	case "applied":
-		var content string
-		if err := tx.QueryRowContext(ctx, `SELECT content FROM turns WHERE id=?`, turn).Scan(&content); err != nil {
-			return err
-		}
-		if err := s.message(ctx, tx, i, turn, turn+"/user", "user", content, nil); err != nil {
-			return err
+		// Ordinary prompt display remains on the existing command evidence until
+		// the native input_consumed event is wired through every runtime fixture.
+		// Steer sources never use this path; they materialize only on consumption.
+		if kind == "prompt" {
+			var content string
+			if err := tx.QueryRowContext(ctx, `SELECT content FROM turns WHERE id=?`, turn).Scan(&content); err != nil {
+				return err
+			}
+			if err := s.message(ctx, tx, i, turn, turn+"/user", "user", content, nil); err != nil {
+				return err
+			}
 		}
 		if err := markDeliveryAck(ctx, tx, f.CommandID, s.timestamp()); err != nil {
 			return err
