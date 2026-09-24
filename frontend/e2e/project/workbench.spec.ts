@@ -105,7 +105,7 @@ test("Project agents, retained terminals and Files through the Go edge", async (
   await first.locator("textarea").fill("long-for-interrupt");
   await first.getByRole("button", { name: "Send", exact: true }).click();
   await expect(first.locator(".streaming")).toBeVisible();
-  await first.getByRole("button", { name: "Stop turn", exact: true }).click();
+  await first.getByRole("button", { name: "Stop current task", exact: true }).click();
   await expect
     .poll(async () => {
       const result = await context.request.get(

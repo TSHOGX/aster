@@ -388,7 +388,7 @@ func TestGoAgentRunnersOnKhora(t *testing.T) {
 		}
 		evidence["pressure_at_ms"] = time.Since(started).Milliseconds()
 		began := time.Now()
-		send(agentwire.Frame{Kind: "command", CommandID: "pressure-abort", TurnID: "pressure-turn", Payload: json.RawMessage(`{"type":"abort"}`)})
+		send(agentwire.Frame{Kind: "command", CommandID: "pressure-abort", TurnID: "pressure-turn", Payload: json.RawMessage(`{"type":"abort","run_id":"pressure-prompt"}`)})
 		dispatched := false
 		for !dispatched {
 			select {
