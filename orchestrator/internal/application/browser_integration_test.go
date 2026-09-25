@@ -14,7 +14,7 @@ import (
 func TestReleasedBrowser(t *testing.T) {
 	// The coordinated native fixture responds only after two model requests and
 	// supports streaming interruption. It lives outside the released guest image.
-	runReleasedBrowser(t, "model")
+	runReleasedBrowser(t, "model", "--grep-invert", "held queue prompt Steers into the active native run")
 }
 
 func TestReleasedQueueBrowser(t *testing.T) {
