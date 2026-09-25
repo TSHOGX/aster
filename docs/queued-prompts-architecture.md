@@ -47,3 +47,10 @@ No compatibility dual writes or second scheduler are introduced. The source
 version-1 converter remains an offline tool. Schema/runtime changes invalidate
 previous candidate identities and require a newly assembled candidate; they
 do not authorize live-data changes or deployment.
+
+The code stages are committed as `21d4289`, `c6cfb1b`, `1dc157c` and
+`cd298bb`. The fresh schema is version 3 and native protocol 4. Repository Go
+and frontend suites pass, including the former review regressions. A new
+immutable runtime candidate still needs to be assembled and measured against
+the protocol-4 output before release qualification; the older protocol-3
+candidate remains historical evidence only.
