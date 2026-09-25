@@ -361,7 +361,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 				if err := tx.QueryRowContext(ctx, `SELECT command_id,state FROM input_deliveries WHERE input_token=? AND run_id=?`, token, raw.RunID).Scan(&command, &state); err != nil {
 					return err
 				}
-				if state == "consumed" {
+				if state == "consumed" || state == "handled" {
 					return ErrConflict
 				}
 				if err := restoreUndelivered(ctx, tx, command, "removed", "native settlement", raw.OccurredAt); err != nil {
