@@ -1,55 +1,42 @@
 # Prompt evidence and presentation architecture
 
-This refinement follows the 2026-09-25 review of `569d7b6`. The five resources
-remain: prompt intent, delivery evidence, execution run, immutable request
-receipt, and derived conversation segment. There is still one transactional
-claim path and one native execution owner.
+Prompt, Delivery, Run, Receipt and Segment have distinct lifetimes. There is one
+transactional input claim path and one native execution owner; presentation
+never grants execution authority.
 
-## Root causes and invariants
+| Resource | Owns |
+| --- | --- |
+| Prompt | Immutable input, enqueue sequence, queue policy, disposition and revision |
+| Delivery | Token identity, accepted/queued/consumed/handled/removed/rejected/unknown evidence |
+| Run | Exact command, incarnation/owner fence, execution status and reconciliation |
+| Receipt | Immutable admission result and request digest |
+| Segment | Input boundary, work ownership, final answer and native timing |
 
-Absence of model consumption is not proof of non-execution. An extension may
-have handled the input. A presentation observer must not control execution
-settlement. A segment boundary is not an execution outcome. Retained historical
-input is valid display evidence without being proof of native consumption.
+Consumed and handled inputs permanently claim the prompt. Handled means that
+Session processing completed without entering the model input path; it creates
+no model transcript anchor. Only proven removed or rejected input returns to
+held. Unknown remains exclusive until original evidence resolves it.
 
-1. Delivery effects are explicit: consumed by the model or handled by an
-   extension. Either permanently claims the intent. Only proven removed or
-   rejected input can return to held. Unknown remains exclusive.
-2. Native settlement closes admission, joins admitted preflights, proves queues
-   cleared, emits reconciliation, and releases the run exactly once. Observer
-   errors are diagnostics; inability to prove cleanup fences the runtime and
-   invokes process recovery without reporting false removal.
-3. Segments store input membership, work ownership, final message and native
-   timing boundaries. Run state supplies liveness and execution outcome at
-   projection time. A continued segment is unaffected by later run loss.
-4. Existing item ownership is resolved before any summary side effect. Late
-   updates cannot mark a newer segment as worked.
-5. Current correlated native evidence is the only transcript authority. There
-   is no historical disposition, import cursor, or unmatched-message fallback.
-6. API control errors have typed admission reasons. Queue rows expose durable
-   delivery reasons. Browser receipt recovery retains exact intent, consumes
-   current result, and isolates row operations, submission and urgent Stop.
+Native settlement closes admission, joins preflights and clears executable
+queues before notifying observers. Observer errors are diagnostic. A core
+cleanup failure fences the runtime and makes the runner terminate and recover
+the original process; it emits no false successful reconciliation.
 
-## Implementation sequence
+Display materializes correlated consumption, then attaches subsequent output to
+the current Segment. Existing item ownership is resolved before work-side
+effects. Consecutive inputs without intervening work coalesce. A continued
+Segment remains completed even if a later Segment's Run becomes unknown.
+Unknown execution stops live clocks without inventing an end timestamp.
 
-- [ ] Native lifecycle adapter and effect contract, schema/reducer invariants,
-      handled inputs and listener/cleanup fault tests.
-- [ ] Segment boundary model, owner-first item reduction, historical anchor
-      normalization, rebuild and composed regression tests.
-- [ ] Typed control API, durable delivery feedback, dedicated browser control
-      state, exhaustive segment rendering and interaction tests.
-- [ ] Full relevant verification, release/schema/runtime identities and current
-      acceptance documentation. Older qualification is historical evidence.
+The product supports only its current schema. There is no historical
+disposition, import cursor, unmatched-message fallback, format converter,
+session-wide queue mutation adapter or persisted prompt execution state.
+Prompt/Run-derived statuses at API read boundaries do not acquire write authority.
 
-No compatibility dual writes, converter or second scheduler are introduced.
-Incompatible old data is removed during the authorized destructive reset.
-Schema/runtime changes invalidate previous candidate identities and require a
-newly assembled candidate; they do not authorize live-data changes or
-deployment.
+Queue actions use prompt-local receipts, exact Run fences and per-row in-flight
+state. Accepted delivery errors remain visible in the queue. Urgent Stop and
+ordinary submission remain independent and preserve drafts. Browser frontiers
+advance only after actual page/delta application.
 
-The code stages are committed as `21d4289`, `c6cfb1b`, `1dc157c` and
-`cd298bb`. The fresh schema is version 3 and native protocol 4. Repository Go
-and frontend suites pass, including the former review regressions. A new
-immutable runtime candidate still needs to be assembled and measured against
-the protocol-4 output before release qualification; the older protocol-3
-candidate remains historical evidence only.
+See [the lifecycle inventory](queued-prompts-lifecycle-inventory.md),
+[verification](verification.md) and [release procedure](queued-prompts-release.md).

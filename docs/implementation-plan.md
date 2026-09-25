@@ -81,44 +81,6 @@ The README and affected architecture/API/operations contracts have been correcte
 
 ## Progress
 
-- Review and sequencing: complete.
-- Route isolation: implemented. Twelve route/preference unit tests, frontend
-  typecheck/lint, 43 production-build browser checks, and focused product and HTTP
-  authorization race tests passed. Shared details use the explicit `conversation`
-  parameter; old mixed Session URLs are canonicalized to the list.
-- Scheduling contracts: implemented with schema 14, owner catalog epochs,
-  Unicode title matching, chronological opaque cursors, authoritative previews,
-  and explicit history continuation. Focused race tests cover migration rollback,
-  multiple pages, authorization, filtering, concurrent ticks, month-end skips,
-  and both DST transitions.
-- Scheduled workspace: implemented with explicit routes, responsive panes,
-  localized recurrence controls, exact advanced-rule retention, draft guards,
-  bounded history, and uncertain-write/conflict recovery. Nineteen focused
-  production browser tests passed, including light/dark English/Chinese forms at
-  1440, 1280, 1024, 768, and 390px. Screenshots were inspected; the former modal
-  and its CSS were removed. A moderated usability study remains unperformed.
-- Network lifecycle: implemented with durable schema-15 defaults, atomic
-  operation selection, conditional paused-binding replacement, recovery,
-  diagnostics/control, automatic reload, and independent handoff policy checks.
-  Focused race tests passed. The real isolated Khora/runsc network gate passed
-  in 22.52 seconds, including DNS, 102,400 verified TLS package bytes, denied
-  undeclared access, removal on resume, retained volumes and native model work.
-  Public Internet connectivity was not exercised.
-- Cross-cutting review: fixed late schedule mutation responses replacing another
-  selection, kept turn-rail paging intent available during background refresh,
-  retained expired-directory explanations across queued refreshes, aligned
-  multibyte task names with server limits, and mapped actual run states. Removed
-  obsolete schedule copy and routed recovery/retirement through transactional
-  saved-profile selection.
-- Final qualification: complete. Full Go race suite and vet passed, with focused
-  race checks after recovery follow-ups. Frontend typecheck/lint, 186 unit tests
-  (one opt-in skip), production builds, and the final 137-test browser sweep
-  passed (42 opt-in skips). The real released browser passed three workflows in
-  39.81 seconds; its separate combined-workload test was skipped. All six released
-  owner/gateway/native/handoff tests passed. The sanitized
-  [qualification record](../dev/measurements/proposal-delivery.json) contains
-  source/artifact identities, outcomes, resolved failures and scope limits.
-
 ## Root causes and final authority
 
 | Problem | Root cause | Final authority and behavior |
@@ -157,3 +119,4 @@ uncertain-operation evidence remain accounted for throughout migration/recovery.
 | Async navigation and recovery authority | `ea9ec4b` |
 | Recovery notices and multibyte form validation | `81f2006` |
 | Current binary-preview browser contract | `7d17896` |
+

@@ -300,8 +300,3 @@ preview/excerpt bounds, with a notice; markup and links remain literal. Selectio
 original-file download and model-based answer copying stay available. See
 [Markdown qualification](performance.md#bounded-markdown-rendering) for the limits
 and the measured large-file layout cost.
-
-The [minute-interval qualification](../dev/measurements/interval-schedules.json)
-records the deployed option and a live one-minute automatic run. The run completed
-natively, its next deadline stayed exactly 60 seconds later, and editing its
-name preserved the deadline. The update required no schema change or data reset.
