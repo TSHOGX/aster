@@ -10,7 +10,7 @@ schema fingerprint `sha256:44895d2a2e545ba7232cd42ef06f7d5c7a5342086e8962818b1e9
 The pinned Pi 0.77.0 RPC input digest is
 `sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7`;
 the patched output digest is
-`sha256:90c8a74773b7143a1a83825784c0dd4ba12106db72ef90ef75926e30ee0821dc`.
+`sha256:d700150f40b6e1f942b8082c4244cdc234948d38aa9e975b386aefb8278b9a92`.
 The runtime advertises native protocol 4 and owner-handoff protocol 2. A fresh
 isolated candidate template at `/srv/batterygpt/qualification/queued-prompts-20260924`
 has manifest digest `sha256:efa87b576da80bb011f0897bcab176b028a2e64d16acaf3b314d43070245ded3`.

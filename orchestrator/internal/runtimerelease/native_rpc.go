@@ -14,7 +14,7 @@ import (
 const NativeProtocol = 4
 const NativeRPCPath = NativeRoot + "/" + PiPackage + "/dist/modes/rpc/rpc-mode.js"
 const nativeRPCOriginal = "sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7"
-const nativeRPCPatched = "sha256:90c8a74773b7143a1a83825784c0dd4ba12106db72ef90ef75926e30ee0821dc"
+const nativeRPCPatched = "sha256:d700150f40b6e1f942b8082c4244cdc234948d38aa9e975b386aefb8278b9a92"
 
 const identityHooks = `    let session = runtimeHost.session;
     let activePrompt;
@@ -67,7 +67,7 @@ const settledPrompt = `            case "prompt": {
                 if (activePrompt) {
                     return error(id, "prompt", "A prompt is still settling");
                 }
-                const operation = { id, outcome: "completed", abortRequested: false, closed: false, finished: false, extensionHandled: false, inputTokens: new Set(), modelInputs: new Set(), enqueued: new Set(), preflights: new Set(), started: process.hrtime.bigint() };
+                const operation = { id, outcome: "completed", abortRequested: false, closed: false, finished: false, normalCompleted: false, inputTokens: new Set(), modelInputs: new Set(), enqueued: new Set(), preflights: new Set(), started: process.hrtime.bigint() };
                 activePrompt = operation;
                 if (command.input_token) operation.inputTokens.add(command.input_token);
                 const started = operation.started;
@@ -83,7 +83,7 @@ const settledPrompt = `            case "prompt": {
                     await Promise.allSettled([...operation.preflights]);
                     let clearError;
                     try { session.clearQueue(); } catch (error) { clearError = error; }
-                    const handled = (preflightSucceeded || operation.extensionHandled) ? [...operation.inputTokens].filter((token) => !operation.modelInputs.has(token) && !operation.enqueued.has(token)) : [];
+                    const handled = operation.normalCompleted ? [...operation.inputTokens].filter((token) => !operation.modelInputs.has(token) && !operation.enqueued.has(token)) : [];
                     const removed = clearError ? [] : [...operation.inputTokens].filter((token) => !handled.includes(token));
                     const unknown = clearError ? [...operation.inputTokens].filter((token) => !handled.includes(token)) : [];
                     if (handled.length) output({ type: "inputs_handled", run_id: operation.id, input_tokens: handled, occurred_at: new Date().toISOString() });
@@ -107,7 +107,8 @@ const settledPrompt = `            case "prompt": {
                     .then(() => {
                         // Extension/slash-command handling can settle without a model
                         // input. ACK identifies acceptance; reconciliation proves removal.
-                        if (!preflightSucceeded) { operation.extensionHandled = true; output(success(id, "prompt")); }
+                        operation.normalCompleted = true;
+                        if (!preflightSucceeded) output(success(id, "prompt"));
                         return finish(operation.outcome);
                     })
                     .catch(async (e) => {
