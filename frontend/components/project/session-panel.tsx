@@ -1111,6 +1111,8 @@ export function SessionPanel({
                 {turn.delivery_state === "native_queued" ? tr("Waiting to join current task…")
                   : turn.delivery_state === "consumed" ? tr("Synchronizing…")
                   : turn.delivery_state === "unknown" ? tr("Delivery outcome unknown")
+                  : turn.delivery_state === "rejected" ? tr("Delivery rejected")
+                  : turn.delivery_state === "removed" ? tr("Delivery removed")
                   : deliveryBusy(turn) ? tr("Submitting to current task…")
                   : turn.state === "held" ? tr("Held") : tr("Queued")}: {turn.content.slice(0, 120)}
               </span>
@@ -1133,7 +1135,7 @@ export function SessionPanel({
                   <X size={16} />{tr("Cancel prompt")}
                 </button>
               </div>
-              {rowErrors[turn.id] && <p role="status">{rowErrors[turn.id]}</p>}
+              {(rowErrors[turn.id] || turn.delivery_error) && <p role="status">{rowErrors[turn.id] || turn.delivery_error}</p>}
             </div>
           ))}
           {!!queuePage?.next_after && (

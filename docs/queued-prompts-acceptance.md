@@ -1,7 +1,7 @@
 # Queued-prompts acceptance record
 
-Status: development acceptance through `50fda5e`. This is not a deployment
-sign-off. The normative rows are in the
+Status: historical development acceptance through `50fda5e`; it is superseded
+for the current protocol-4/schema-3 work and is not a deployment sign-off. The normative rows are in the
 private planning package's `03-validation.md` and the behavior specification
 in `02-design.md`.
 
@@ -42,3 +42,8 @@ in `02-design.md`.
 The implementation record in [queued-prompts-implementation.md](./queued-prompts-implementation.md)
 contains the staged changes and commands. Final release checks must remeasure
 the incumbent and candidate after the authorized quiescent drain.
+
+The 2026-09-25 architecture correction reopens G1/G3/G4/G5/G6. The current
+contract now distinguishes extension handled inputs, exception-safe native
+settlement, unknown-run segment presentation and historical input provenance;
+the previous protocol-3 candidate evidence does not qualify these changes.

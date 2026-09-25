@@ -5,13 +5,13 @@ runtime image, service or queue was modified while preparing this document.
 
 ## Candidate contract
 
-The implementation uses product schema version 2 and exact compiled SQLite
-schema fingerprint `sha256:0a9f6a6ccb1b8cb0c96b1e57ebf5b969ac5adbb6ec95c55de97ef9b175bff729`.
+The implementation uses product schema version 3 and exact compiled SQLite
+schema fingerprint `sha256:44895d2a2e545ba7232cd42ef06f7d5c7a5342086e8962818b1e9d34a3cf8e22`.
 The pinned Pi 0.77.0 RPC input digest is
 `sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7`;
 the patched output digest is
-`sha256:b9327e55144e4d7947365e916b1aea2feb7c57892167b3e84a7d5f598e9ff7aa`.
-The runtime advertises native protocol 3 and owner-handoff protocol 2. A fresh
+`sha256:90c8a74773b7143a1a83825784c0dd4ba12106db72ef90ef75926e30ee0821dc`.
+The runtime advertises native protocol 4 and owner-handoff protocol 2. A fresh
 isolated candidate template at `/srv/batterygpt/qualification/queued-prompts-20260924`
 has manifest digest `sha256:efa87b576da80bb011f0897bcab176b028a2e64d16acaf3b314d43070245ded3`.
 The final executable, frontend build, configuration and content digests must
@@ -22,7 +22,7 @@ The staging executable is retained at
 `/srv/batterygpt/qualification/queued-prompts-20260924-orchestrator` with digest
 `sha256:728d751920d6d59a80d3944a62a7c018c03ada0660dd4d98dab33ceba831b5ed`.
 `release-identity` on a temporary copy of the installed configuration with
-only its template manifest/digest changed reported schema version 2 and the
+only its template manifest/digest changed reported the previous schema version 2 and the
 schema/runtime digests above, owner protocol 2, gateway protocol 1, assets
 digest `sha256:ac6ead9319c331dfa44117991a8b3972ce3fb57c7e00e00c346557c4751b7096`
 and config-content digest

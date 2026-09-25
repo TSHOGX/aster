@@ -299,6 +299,8 @@ export const ZH: Record<MessageKey, string> = {
   "The action failed.": "操作失败。",
   "Waiting to join current task…": "等待加入当前任务…",
   "Delivery outcome unknown": "交付结果未知",
+  "Delivery rejected": "交付被拒绝",
+  "Delivery removed": "交付已移除",
   "Submitting to current task…": "正在提交到当前任务…",
   "Enter to add to queue · Shift+Enter for a new line": "按 Enter 加入队列 · Shift+Enter 换行",
   "Enter to send · Shift+Enter for a new line": "按 Enter 发送 · Shift+Enter 换行",

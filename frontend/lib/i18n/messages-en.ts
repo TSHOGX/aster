@@ -305,6 +305,8 @@ export const EN = {
   "The action failed.": "The action failed.",
   "Waiting to join current task…": "Waiting to join current task…",
   "Delivery outcome unknown": "Delivery outcome unknown",
+  "Delivery rejected": "Delivery rejected",
+  "Delivery removed": "Delivery removed",
   "Submitting to current task…": "Submitting to current task…",
   "Enter to add to queue · Shift+Enter for a new line": "Enter to add to queue · Shift+Enter for a new line",
   "Enter to send · Shift+Enter for a new line": "Enter to send · Shift+Enter for a new line",

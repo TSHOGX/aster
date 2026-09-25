@@ -150,6 +150,15 @@ export function TurnView({
   const summary = turn.summary;
   const finishedAt = summary?.finished_at;
   const completed = ["completed", "continued"].includes(turn.summary?.state || "") && final.length > 0;
+  const outcomeLabel = summary?.state === "canceled"
+    ? tr("Interrupted")
+    : summary?.state === "failed"
+      ? tr("Failed")
+      : summary?.state === "stopping" || summary?.state === "settling"
+        ? tr("Stopping…")
+        : summary?.state === "unknown"
+          ? tr("Outcome unknown")
+          : "";
   const [expanded, setExpanded] = useState(false);
   const [collapsedTarget, setCollapsedTarget] = useState("");
   const [copied, setCopied] = useState(false),
@@ -243,17 +252,9 @@ export function TurnView({
               />
             )}
           </button>
-          {!["completed", "queued", "starting", "running", "sending"].includes(
-            summary!.state,
-          ) && (
+          {outcomeLabel && (
             <span className="turn-outcome">
-              {summary!.state === "canceled"
-                ? tr("Interrupted")
-                : summary!.state === "failed"
-                  ? tr("Failed")
-                  : summary!.state === "stopping"
-                    ? tr("Stopping…")
-                    : tr("Outcome unknown")}
+              {outcomeLabel}
             </span>
           )}
         </div>

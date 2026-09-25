@@ -35,7 +35,7 @@ export type ProjectTerminal = {
 };
 export type Turn = {
  queue_policy?: "held" | "released";
- disposition?: "pending" | "claimed" | "consumed" | "canceled";
+ disposition?: "pending" | "claimed" | "consumed" | "handled" | "canceled";
   request_id?: string;
   created_at?: string;
   updated_at?: string;
@@ -47,6 +47,7 @@ export type Turn = {
   prompt_revision?: number;
   delivery_id?: string;
   delivery_state?: string;
+  delivery_error?: string;
 };
 export type PromptQueuePage = {
   items: Turn[];
