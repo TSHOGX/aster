@@ -37,16 +37,17 @@ input is valid display evidence without being proof of native consumption.
 - [ ] Native lifecycle adapter and effect contract, schema/reducer invariants,
       handled inputs and listener/cleanup fault tests.
 - [ ] Segment boundary model, owner-first item reduction, historical anchor
-      normalization, conversion/rebuild and composed regression tests.
+      normalization, rebuild and composed regression tests.
 - [ ] Typed control API, durable delivery feedback, dedicated browser control
       state, exhaustive segment rendering and interaction tests.
 - [ ] Full relevant verification, release/schema/runtime identities and current
       acceptance documentation. Older qualification is historical evidence.
 
-No compatibility dual writes or second scheduler are introduced. The source
-version-1 converter remains an offline tool. Schema/runtime changes invalidate
-previous candidate identities and require a newly assembled candidate; they
-do not authorize live-data changes or deployment.
+No compatibility dual writes, converter or second scheduler are introduced.
+Incompatible old data is removed during the authorized destructive reset.
+Schema/runtime changes invalidate previous candidate identities and require a
+newly assembled candidate; they do not authorize live-data changes or
+deployment.
 
 The code stages are committed as `21d4289`, `c6cfb1b`, `1dc157c` and
 `cd298bb`. The fresh schema is version 3 and native protocol 4. Repository Go

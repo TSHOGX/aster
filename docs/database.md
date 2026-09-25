@@ -6,8 +6,8 @@ fingerprint `sha256:44895d2a2e545ba7232cd42ef06f7d5c7a5342086e8962818b1e9d34a3cf
 `product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
 version and fingerprint before a writer opens. Application startup has no
-migration chain or data backfill. The exact-source queued-prompts offline
-converter is separate from the Store and operates only on a quiescent copy.
+migration chain or data backfill. An incompatible database is retired during
+the separately authorized destructive reset.
 
 Application startup validates pending activation against the measured executable
 through a read-only connection under the same lock. Only the selected replacement
@@ -50,9 +50,9 @@ current ingestion transactions, never by a historical backfill.
 
 For a current installation, a coordinated database/volume backup must include
 all retained application artifacts. A deliberately reset installation starts
-fresh. The queued-prompts format change instead has a separately qualified
-offline conversion path documented in [queued-prompts-release.md](queued-prompts-release.md);
-neither path runs automatically when a Store opens.
+fresh. An incompatible queued-prompts format is discarded during the
+destructive reset documented in [queued-prompts-release.md](queued-prompts-release.md);
+no conversion path runs automatically when a Store opens.
 
 The background display projector advances bounded session batches and serves the
 versioned view API used by the browser. Raw records are no longer reconstructed

@@ -34,11 +34,11 @@ type ServiceGrant struct {
 // bounds that request's lifetime. TurnID is resolved from the incarnation's live
 // turn at authorization time, never supplied by the guest.
 type Attribution struct {
-	RunID     string
-	Grant     ServiceGrant
-	TurnID    string
-	TurnState string
-	Request   *ServiceRequest `json:",omitempty"`
+	RunID    string
+	Grant    ServiceGrant
+	TurnID   string
+	RunState string
+	Request  *ServiceRequest `json:",omitempty"`
 }
 
 func credentialDigest(value string) string {
@@ -115,7 +115,7 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
  FROM service_grants g JOIN projects p ON p.id=g.project_id
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.session_id=g.session_id
  JOIN execution_runs r ON r.incarnation_id=i.id AND r.owner=i.owner AND r.state IN ('starting','running')
- WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' `, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.TurnState, &a.RunID)
+	WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' `, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.RunState, &a.RunID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Attribution{}, ErrNotFound
 	}

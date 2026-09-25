@@ -8,13 +8,13 @@ the result to executable digests, the runtime digest and the frontend build ID.
 ## Removed implementation
 
 - The 15-step schema construction/migration chain and historical fingerprints.
-- Incremental ALTER/backfill scripts and tests that qualified conversion of old data.
+- Offline conversion tools and tests for old data formats.
 - Startup branches for retired schemas and the old-executable rollback override.
 - Rollback CLI/control paths and old-build rollback qualification suites.
 - The migration-only read-command cleanup table and reconciliation branch.
 
 The single canonical DDL initializes fresh databases atomically. Current databases
-must match both version 1 of the new lineage and its exact fingerprint. Unknown
+must match schema version 3 and its exact fingerprint. Unknown
 or modified schemas are refused without writes. Current release authority,
 transaction atomicity, runtime verification and original-operation recovery remain
 required; only the selected executable can complete activation.

@@ -79,7 +79,8 @@ perform list/read operations; the old per-read mutation path is removed. Preview
 ETags do not implement atomic conflict detection for saves.
 
 Native journals use format 2, created directly with their ACK-compaction indexes
-in one transaction. Format 1 has no startup conversion path. Versioned empty
+in one transaction. Older journal formats are retired by destructive reset.
+Versioned empty
 databases and journals missing required indexes are refused without recreating
 schema or rewriting command evidence. Inspect the original state rather than
 resetting an unresolved journal or replaying its commands. This guest change

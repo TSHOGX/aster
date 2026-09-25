@@ -4,10 +4,9 @@ There is one supported application schema and protocol set. No historical schema
 recognition, migration chain, old-client adapter, rollback candidate override or
 old-release compatibility matrix is provided. A non-current database is refused
 before a writer opens. A format-changing update requires an independently
-qualified offline conversion of a quiescent copy, or a separately authorized
-fresh installation. The queued-prompts transition is tracked in
-[queued-prompts-release.md](queued-prompts-release.md); neither conversion nor
-reset is implicit in application startup.
+separately authorized destructive reset. The queued-prompts transition is
+tracked in [queued-prompts-release.md](queued-prompts-release.md); reset is not
+implicit in application startup.
 
 `release-identity` reports the executable, exact schema fingerprint, fixed
 configuration, current runtime catalog and content digests. Its compatibility

@@ -153,7 +153,7 @@ func TestServiceGrantAttributionRevocationAndTurnDrain(t *testing.T) {
 	// store resolves the incarnation's currently admitted turn instead.
 	a, err := authorizeService(ctx, s.reader, s.timestamp(), "model", token)
 	must(t, err)
-	if a.TurnID != c.TurnID || a.Grant.ProjectID != scope.ProjectID || a.TurnState != "starting" {
+	if a.TurnID != c.TurnID || a.Grant.ProjectID != scope.ProjectID || a.RunState != "starting" {
 		t.Fatal(a)
 	}
 	must(t, holdsAttribution(ctx, s.reader, s.timestamp(), a))

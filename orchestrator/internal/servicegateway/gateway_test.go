@@ -59,7 +59,7 @@ func (a *authority) AuthorizeService(_ context.Context, audience, token string) 
 	if !live {
 		return product.Attribution{}, errors.New("no admitted turn")
 	}
-	return product.Attribution{Grant: g, TurnID: turn, TurnState: "running"}, nil
+	return product.Attribution{Grant: g, TurnID: turn, RunState: "running"}, nil
 }
 func (a *authority) HoldsAttribution(_ context.Context, held product.Attribution) error {
 	a.mu.Lock()

@@ -16,7 +16,7 @@ in `02-design.md`.
 | C04-C08 | Store/runner crash and replay cases, release/owner/service/capture/idle, focused race/pressure, composed Khora worker loss and sustained combined load | Fault permutations are bounded by the tested durable identity/state invariants |
 | D01-D03 | Persisted segment/rebuild, consumption order, final ownership/coalescing, page/delta tests and composed native Steer order | No known chronology gap |
 | D04-D07 | Native monotonic elapsed, segment clocks, server/client/off-window frontier races, real-browser two-tab handoff and late tool updates | Running wall-clock label is provisional; terminal duration uses native evidence |
-| D08-D10 | Navigation/page generation, shared/granted message run/segment metadata, new-chat/lost-reply tests and exact-source historical conversion/rebuild | Historical inputs without native consumption evidence have no precise clock |
+| D08-D10 | Navigation/page generation, shared/granted message run/segment metadata and new-chat/lost-reply tests | Incompatible historical data is discarded by destructive reset |
 
 ## Gates
 

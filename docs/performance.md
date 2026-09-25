@@ -246,9 +246,9 @@ consumers repeatedly exhaust the five-second progress window. No alternate legac
 decoder is retained for that optional optimization.
 
 Fresh format-2 journals create the current layout and required indexes atomically.
-Format-1 conversion and startup index repair are removed; old formats, versioned
-empty databases and missing required indexes are refused without rewriting their
-evidence. Pi `agent_end` is not completion: the pinned `prompt_end` protocol settles
+Old-format conversion and startup index repair are removed; old formats,
+versioned empty databases and missing required indexes are refused without
+rewriting evidence. Pi `agent_end` is not completion: the pinned `prompt_end` protocol settles
 retries/compaction before descendant cleanup, immutable capture and command outcome.
 
 ## Global schedule reads
@@ -306,7 +306,7 @@ races, replay, scope revocation, directory/byte confinement, capture validators,
 [verification runbook](verification.md) for commands and fixture definitions.
 
 These observations do not establish field INP, arbitrary document rendering,
-cross-host recovery or conversion of a retired installation. Combined runs retain
+cross-host recovery or destructive reset of a retired installation. Combined runs retain
 long tasks above 200 ms and earlier failed workload attempts; thresholds were not
 relaxed to erase them. The startup comparison separates initialized feedback and actual quiet windows.
 The resource/source inventory and local qualification are complete for the
@@ -368,5 +368,5 @@ routes/reducers, separate owner/file SSE transports, healthy broad conversation
 polling, per-read mutation ledgers/helpers, refresh-key preview remounting,
 duplicate transport-reply caches, schedule overview polling/accumulation, raw-scroll
 rail paging, cumulative directory-page retention and journal-format-1 startup
-conversion. Historical comparison code lives only in disposable qualification
-checkouts and evidence; it is not a supported production fallback.
+conversion. Historical comparison code is not a supported production fallback;
+incompatible state is removed during destructive reset.
