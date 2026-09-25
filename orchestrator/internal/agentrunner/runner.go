@@ -521,6 +521,10 @@ func (r *Runner) nativeOutput(ctx context.Context, output io.Reader, nativeFile 
 			r.fail(errors.Join(agentwire.ErrFrame, err))
 			return
 		}
+		if event.Type == "input_cleanup_failed" {
+			r.fail(errors.New("native input cleanup failed; original process recovery required"))
+			return
+		}
 		r.mu.Lock()
 		command, turn := r.active, r.turn
 		if event.Type == "response" {

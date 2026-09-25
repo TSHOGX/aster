@@ -153,14 +153,14 @@ func TestDisplayReusedIncarnationAndMissingNativeStarts(t *testing.T) {
 	if anchor.Items[0].Content != "answer 3" {
 		t.Fatal(anchor.Items)
 	}
-	// Imported content lacks native source; it is projected without inventing
-	// execution, and reads never reconstruct it from raw logs.
+	// Uncorrelated stored content is not evidence of native input or output.
+	// Only sequenced consumption/message events can materialize display rows.
 	_, err = s.db.Exec(`INSERT INTO messages(id,project_id,session_id,turn_id,role,content,sequence,created_at) VALUES('import',?,?,?,'assistant','imported evidence',50,?)`, scope.ProjectID, i.SessionID, c.TurnID, s.timestamp())
 	must(t, err)
 	must(t, s.ProjectConversation(ctx, i.SessionID))
 	page, err = s.ConversationPage(ctx, scope, i.SessionID, ViewSelector{})
 	must(t, err)
-	if len(page.Items) != 5 || page.Items[4].Content != "imported evidence" {
+	if len(page.Items) != 4 {
 		t.Fatal(page.Items)
 	}
 	// Cursor generation cannot disclose or bridge another authorized session.

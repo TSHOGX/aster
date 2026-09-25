@@ -27,9 +27,10 @@ keeps tokens out of model content and Session persistence. Successful extension
 handling emits `inputs_handled`, which closes the intent without creating a
 model transcript anchor. Settlement is idempotent and joins admitted
 preflights, clears native queues, emits reconciliation and releases the target.
-Observer failures during cleanup produce unknown evidence instead of stranding
-the Run. The pinned output digest is
-`sha256:d700150f40b6e1f942b8082c4244cdc234948d38aa9e975b386aefb8278b9a92`.
+Queue observer failures are diagnostic after core cleanup succeeds. A core
+cleanup failure fences native admission and terminates the original process for
+journal recovery; it never asserts complete reconciliation. The pinned output digest is
+`sha256:e533d9e5bbe59991460ca018b123fab699554918ca95ba5c8a860642f19a0952`.
 
 Runner validation binds Steer/Stop frames to the active Run. The host reducer
 accepts reordered ACK and consumption facts, rejects contradictory terminal
@@ -45,10 +46,10 @@ segment presentation to unknown without inventing elapsed time; continued
 segments remain successful boundaries. Rebuild uses the same evidence and emits
 no native commands.
 
-Historical native input events are treated as retained display evidence only.
-They preserve message chronology without being relabeled as current native
-consumption. There is no old-format converter; incompatible state is removed by
-the authorized destructive reset.
+Historical input materialization and unmatched-message fallback projection are
+removed. Only current correlated native consumption can create transcript input.
+The schema has no historical disposition or import cursor. Incompatible state
+is discarded during the authorized reset.
 
 ## Frontend contract
 

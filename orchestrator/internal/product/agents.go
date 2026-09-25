@@ -454,7 +454,16 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 		return markDeliveryAck(ctx, tx, f.CommandID, s.timestamp())
 	}
 	if kind == "steer" && state == "rejected" {
-		if err := restoreUndelivered(ctx, tx, f.CommandID, "rejected", "native command rejected", s.timestamp()); err != nil {
+		var evidence struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(f.Payload, &evidence); err != nil {
+			return err
+		}
+		if evidence.Error == "" {
+			evidence.Error = "native command rejected"
+		}
+		if err := restoreUndelivered(ctx, tx, f.CommandID, "rejected", clipped(evidence.Error, 1024), s.timestamp()); err != nil {
 			return err
 		}
 		return finishReconciledRun(ctx, tx, i.SessionID)

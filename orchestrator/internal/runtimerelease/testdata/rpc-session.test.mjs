@@ -118,6 +118,23 @@ test('patched RPC preserves exact native input identity and settlement with real
     send({ type: 'prompt', id: 'run5', input_token: 'after-listener', message: 'next after listener' });
     await until(() => outputs.some(e => e.type === 'prompt_end' && e.id === 'run5'));
     assert.deepEqual(outputs.filter(e => e.type === 'input_consumed' && e.run_id === 'run5').map(e => e.input_token), ['after-listener']);
+    const unqueue = session.subscribe(event => { if(event.type==='queue_update') throw new Error('queue observer failure'); });
+    send({type:'prompt',id:'run6',input_token:'queue-observer',message:'observer fails only at settlement'});
+    await until(()=>outputs.some(e=>e.type==='prompt_end'&&e.id==='run6'));
+    assert.equal(outputs.find(e=>e.type==='prompt_end'&&e.id==='run6').outcome,'completed');
+    assert.ok(outputs.some(e=>e.type==='input_observer_error'));
+    unqueue();
+    const hasHandlers=session._extensionRunner.hasHandlers.bind(session._extensionRunner);
+    session._extensionRunner.hasHandlers=type=>type==='input'||hasHandlers(type);
+    session._extensionRunner.emitInput=async()=>({action:'handled'});
+    const beforeCalls=calls;
+    send({type:'prompt',id:'run7',input_token:'handled',message:'handled by extension'});
+    await until(()=>outputs.some(e=>e.type==='prompt_end'&&e.id==='run7'));
+    assert.deepEqual(outputs.find(e=>e.type==='inputs_handled'&&e.run_id==='run7').input_tokens,['handled']);
+    assert.deepEqual(outputs.find(e=>e.type==='inputs_reconciled'&&e.run_id==='run7').removed_input_tokens,[]);
+    assert.equal(outputs.some(e=>e.type==='input_consumed'&&e.input_token==='handled'),false);
+    assert.equal(calls,beforeCalls);
+
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

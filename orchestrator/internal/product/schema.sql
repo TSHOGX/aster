@@ -100,7 +100,6 @@ CREATE TABLE conversation_checkpoints (
  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
  generation TEXT NOT NULL,
  source_cursor INTEGER NOT NULL DEFAULT 0,
- message_cursor INTEGER NOT NULL DEFAULT 0,
  content_revision INTEGER NOT NULL DEFAULT 0,
  index_revision INTEGER NOT NULL DEFAULT 0,
  next_position INTEGER NOT NULL DEFAULT 0,
@@ -503,7 +502,7 @@ CREATE TABLE turns (
  initially_held INTEGER NOT NULL CHECK(initially_held IN (0,1)),
  prompt_revision INTEGER NOT NULL DEFAULT 1 CHECK(prompt_revision>0),
  queue_policy TEXT NOT NULL DEFAULT 'released' CHECK(queue_policy IN ('held','released')),
- disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','handled','canceled','historical')),
+ disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','handled','canceled')),
  sequence INTEGER NOT NULL CHECK(sequence>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
@@ -553,6 +552,7 @@ CREATE TABLE input_deliveries (
  accepted_at TEXT NOT NULL,
  ack_at TEXT NOT NULL DEFAULT '',
  consumed_at TEXT NOT NULL DEFAULT '',
+ handled_at TEXT NOT NULL DEFAULT '',
  removed_at TEXT NOT NULL DEFAULT '',
  error TEXT NOT NULL DEFAULT '',
  FOREIGN KEY(project_id,session_id,prompt_id) REFERENCES turns(project_id,session_id,id),
@@ -1182,5 +1182,5 @@ CREATE TRIGGER run_owner_fence AFTER UPDATE OF owner ON agent_incarnations BEGIN
 END;
 
 CREATE TRIGGER delivery_consumption_immutable BEFORE UPDATE OF state ON input_deliveries
-WHEN OLD.state='consumed' AND NEW.state<>'consumed'
+WHEN OLD.state IN ('consumed','handled') AND NEW.state<>OLD.state
 BEGIN SELECT RAISE(ABORT,'consumption evidence is immutable'); END;

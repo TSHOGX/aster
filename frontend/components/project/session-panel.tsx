@@ -112,6 +112,8 @@ export function SessionPanel({
   const hasPending = !!pendingSend;
   const [queuePage, setQueuePage] = useState<PromptQueuePage | null>(null);
   const [queueError, setQueueError] = useState("");
+  const rowLocks = useRef(new Set<string>());
+  const [pendingRows, setPendingRows] = useState<ReadonlySet<string>>(new Set());
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [stopPending, setStopPending] = useState(false);
   const queueRequest = useRef(0);
@@ -722,7 +724,9 @@ export function SessionPanel({
     }
   };
   const rowAction = (turn: Turn, action: () => Promise<unknown>) => {
-    setBusy(true);
+    if (rowLocks.current.has(turn.id)) return;
+    rowLocks.current.add(turn.id);
+    setPendingRows(new Set(rowLocks.current));
     setRowErrors((old) => ({ ...old, [turn.id]: "" }));
     void action().then(async () => {
       try {
@@ -733,7 +737,10 @@ export function SessionPanel({
       }
     }).catch((error) => {
       setRowErrors((old) => ({ ...old, [turn.id]: error instanceof Error ? error.message : tr("The action failed.") }));
-    }).finally(() => setBusy(false));
+    }).finally(() => {
+      rowLocks.current.delete(turn.id);
+      setPendingRows(new Set(rowLocks.current));
+    });
   };
   const control = (turn: Turn, action: string) =>
     rowAction(turn, () =>
@@ -1117,18 +1124,18 @@ export function SessionPanel({
                   : turn.state === "held" ? tr("Held") : tr("Queued")}: {turn.content.slice(0, 120)}
               </span>
               <div className="row-actions">
-                <button type="button" disabled={busy || deliveryBusy(turn)} onClick={() => control(turn, turn.state === "held" ? "release" : "hold")}
+                <button type="button" disabled={pendingRows.has(turn.id) || deliveryBusy(turn)} onClick={() => control(turn, turn.state === "held" ? "release" : "hold")}
                   aria-label={`${turn.state === "held" ? tr("Release") : tr("Hold")}: ${turn.content.slice(0, 80)}`}>
                   {turn.state === "held" ? <Play size={16} /> : <Pause size={16} />}
                   {turn.state === "held" ? tr("Release") : tr("Hold")}
                 </button>
-                <button type="button" disabled={busy || deliveryBusy(turn) || !canSteer} onClick={() => steer(turn)}
+                <button type="button" disabled={pendingRows.has(turn.id) || deliveryBusy(turn) || !canSteer} onClick={() => steer(turn)}
                   aria-label={`${tr("Steer")}: ${turn.content.slice(0, 80)}`} title={!active ? tr("No active task") : !canSteer ? activeRun?.state === "stopping" ? tr("Stopping…") : tr("Recovery needed") : tr("Steer")}>
                   <CornerUpRight size={16} />{tr("Steer")}
                 </button>
                 <button
                   type="button"
-                  disabled={busy || deliveryBusy(turn)}
+                  disabled={pendingRows.has(turn.id) || deliveryBusy(turn)}
                   onClick={() => control(turn, "cancel")}
                   aria-label={`${tr("Cancel prompt")}: ${turn.content.slice(0, 80)}`}
                 >

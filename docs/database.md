@@ -2,7 +2,7 @@
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
 The current fresh lineage has schema version 3 and exact compiled DDL
-fingerprint `sha256:44895d2a2e545ba7232cd42ef06f7d5c7a5342086e8962818b1e9d34a3cf8e22`.
+fingerprint `sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a`.
 `product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
 version and fingerprint before a writer opens. Application startup has no

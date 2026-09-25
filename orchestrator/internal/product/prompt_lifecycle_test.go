@@ -65,7 +65,20 @@ func TestExtensionHandledInputIsTerminalWithoutTranscriptAnchor(t *testing.T) {
 	if delivery != "handled" || disposition != "handled" || messages != 0 {
 		t.Fatalf("handled input was not terminal/no-anchor: delivery=%s disposition=%s messages=%d", delivery, disposition, messages)
 	}
-	_ = scope
+	ingestContract(t, s, i, prompt, "native", reconciledPayload(prompt))
+	completeContract(t, s, i, prompt)
+	prompts, err := s.Turns(ctx, scope, i.SessionID, 0, 10)
+	must(t, err)
+	_, err = s.MutatePrompt(ctx, scope, i.SessionID, prompt.TurnID, "repeat-handled", "release", prompts[0].PromptRevision)
+	wantError(t, err, ErrConflict)
+	var consumed, handled string
+	must(t, s.reader.QueryRow(`SELECT consumed_at,handled_at FROM input_deliveries WHERE command_id=?`, prompt.CommandID).Scan(&consumed, &handled))
+	if consumed != "" || handled == "" {
+		t.Fatal("handled evidence mixed with consumption")
+	}
+	if _, err = s.db.Exec(`UPDATE input_deliveries SET state='removed' WHERE command_id=?`, prompt.CommandID); err == nil {
+		t.Fatal("handled evidence regressed")
+	}
 }
 
 func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {

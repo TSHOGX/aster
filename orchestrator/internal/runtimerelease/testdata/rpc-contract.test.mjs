@@ -14,6 +14,7 @@ async function fixture(mode = 'normal') {
   const agent = {
     prompt(message) { agent.processEvents({type:'message_start',message}); },
     steer(message) { queue.push(message); },
+    clearAllQueues() { if(mode==='core_cleanup_failure') throw new Error('core queue failure'); queue.length=0; },
     processEvents(event) {
       listener?.(event);
       if (mode === 'listener_failure' && event.type === 'message_start' && event.message.role === 'user')
@@ -32,7 +33,8 @@ async function fixture(mode = 'normal') {
       if (mode === 'failed_after_acceptance') throw new Error('model failed');
     },
     async steer(text) { await preflight.promise; agent.steer({role:'user',content:text}); },
-    clearQueue() { queue.length = 0; listener?.({type:'queue_update', steering:[], followUp:[]}); }, abortCompaction() {}, abortRetry() {},
+    clearQueue() { agent.clearAllQueues(); this._emitQueueUpdate(); },
+    _emitQueueUpdate() { listener?.({type:'queue_update', steering:[], followUp:[]}); }, abortCompaction() {}, abortRetry() {},
     async abort() { prompt.resolve(); },
   };
   const fakeProcess = new EventEmitter();
@@ -109,4 +111,12 @@ test('observer failure during queue cleanup cannot strand native settlement',asy
   assert.ok(f.outputs.some(e=>e.type==='inputs_reconciled'&&e.run_id==='run'));
   f.send({...normal,id:'next',input_token:'next'});await tick();await tick();
   assert.equal(f.outputs.some(e=>e.id==='next'&&e.type==='response'&&e.success===false&&e.error==='A prompt is still settling'),false);
+});
+
+test('core cleanup failure emits no removal proof and fences subsequent prompts',async()=>{
+ const f=await fixture('core_cleanup_failure');f.send(normal);await tick();f.preflight.resolve();f.send(steering);await tick();f.prompt.resolve();await tick();await tick();
+ assert.ok(f.outputs.some(e=>e.type==='input_cleanup_failed'));
+ assert.equal(f.outputs.some(e=>e.type==='inputs_reconciled'||e.type==='prompt_end'),false);
+ f.send({...normal,id:'next',input_token:'next'});await tick();
+ assert.equal(f.outputs.find(e=>e.id==='next'&&e.type==='response').success,false);
 });

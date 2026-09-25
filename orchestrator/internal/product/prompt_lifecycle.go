@@ -110,6 +110,16 @@ func consumeDelivery(ctx context.Context, tx *sql.Tx, i Incarnation, token strin
 // evidence: the intent must never return to the dispatchable queue, but it is
 // deliberately not a transcript/model-consumption anchor.
 func handleDelivery(ctx context.Context, tx *sql.Tx, i Incarnation, token, run, now string) error {
+	if _, err := time.Parse(time.RFC3339Nano, now); err != nil {
+		return ErrInvalid
+	}
+	var matches bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM execution_runs WHERE id=? AND session_id=? AND project_id=? AND incarnation_id=?)`, run, i.SessionID, i.ProjectID, i.ID).Scan(&matches); err != nil {
+		return err
+	}
+	if !matches {
+		return ErrConflict
+	}
 	var delivery, prompt, expectedRun, state string
 	if err := tx.QueryRowContext(ctx, `SELECT d.id,d.prompt_id,d.run_id,d.state FROM input_deliveries d WHERE d.input_token=? AND d.session_id=?`, token, i.SessionID).Scan(&delivery, &prompt, &expectedRun, &state); err != nil {
 		return err
@@ -120,7 +130,7 @@ func handleDelivery(ctx context.Context, tx *sql.Tx, i Incarnation, token, run, 
 	if state == "handled" {
 		return nil
 	}
-	if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='handled',consumed_at=?,error='' WHERE id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, now, delivery)); err != nil {
+	if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='handled',handled_at=?,error='' WHERE id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, now, delivery)); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE turns SET disposition='handled',updated_at=? WHERE id=? AND disposition='claimed'`, now, prompt)

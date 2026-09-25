@@ -3,9 +3,9 @@
 Status: development artifact, not deployment authorization.
 
 The current product is a fresh-install contract. It uses schema version 3 with
-compiled fingerprint `sha256:44895d2a2e545ba7232cd42ef06f7d5c7a5342086e8962818b1e9d34a3cf8e22`
+compiled fingerprint `sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a`
 and native protocol 4. The patched Pi RPC output is pinned at
-`sha256:d700150f40b6e1f942b8082c4244cdc234948d38aa9e975b386aefb8278b9a92`.
+`sha256:e533d9e5bbe59991460ca018b123fab699554918ca95ba5c8a860642f19a0952`.
 The old protocol-3 candidate and old product database are retired artifacts;
 the application does not recognize or convert them.
 

@@ -24,10 +24,8 @@ input is valid display evidence without being proof of native consumption.
    projection time. A continued segment is unaffected by later run loss.
 4. Existing item ownership is resolved before any summary side effect. Late
    updates cannot mark a newer segment as worked.
-5. Historical input anchors explicitly cite retained source positions. They
-   are display provenance, never synthetic native consumption. Conversion
-   rejects ambiguous associations. Rebuild preserves both chronology and
-   evidence classification.
+5. Current correlated native evidence is the only transcript authority. There
+   is no historical disposition, import cursor, or unmatched-message fallback.
 6. API control errors have typed admission reasons. Queue rows expose durable
    delivery reasons. Browser receipt recovery retains exact intent, consumes
    current result, and isolates row operations, submission and urgent Stop.

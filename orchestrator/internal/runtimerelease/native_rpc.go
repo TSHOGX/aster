@@ -14,7 +14,7 @@ import (
 const NativeProtocol = 4
 const NativeRPCPath = NativeRoot + "/" + PiPackage + "/dist/modes/rpc/rpc-mode.js"
 const nativeRPCOriginal = "sha256:d0f92418f6aedaa4c64da68f65cb6f93e18dc65d13969eba45349d99f36dfca7"
-const nativeRPCPatched = "sha256:d700150f40b6e1f942b8082c4244cdc234948d38aa9e975b386aefb8278b9a92"
+const nativeRPCPatched = "sha256:e533d9e5bbe59991460ca018b123fab699554918ca95ba5c8a860642f19a0952"
 
 const identityHooks = `    let session = runtimeHost.session;
     let activePrompt;
@@ -22,6 +22,16 @@ const identityHooks = `    let session = runtimeHost.session;
     // product delivery tokens. The WeakMap is never model or Session content.
     const inputContext = new AsyncLocalStorage();
     const inputIdentity = new WeakMap();
+    // Clear executable queues before notifying UI listeners. Observer failure
+    // is diagnostic; a core queue failure fences this process until recovery.
+    let cleanupFailed = false;
+    const clearInputs = () => {
+        session.agent.clearAllQueues();
+        session._steeringMessages = [];
+        session._followUpMessages = [];
+        try { session._emitQueueUpdate(); }
+        catch { output({ type: "input_observer_error", stage: "queue_cleanup" }); }
+    };
     const installedAgents = new WeakSet();
     const installIdentityHooks = () => {
         if (installedAgents.has(session.agent)) return;
@@ -64,6 +74,7 @@ const identityHooks = `    let session = runtimeHost.session;
 
 const settledPrompt = `            case "prompt": {
                 // BatteryGPT native protocol 4: agent_end is only a loop boundary.
+                if (cleanupFailed) return error(id, "prompt", "Native cleanup failed; process recovery required");
                 if (activePrompt) {
                     return error(id, "prompt", "A prompt is still settling");
                 }
@@ -82,14 +93,17 @@ const settledPrompt = `            case "prompt": {
                     // them before clearing the ledger and releasing this target.
                     await Promise.allSettled([...operation.preflights]);
                     let clearError;
-                    try { session.clearQueue(); } catch (error) { clearError = error; }
-                    const handled = operation.normalCompleted ? [...operation.inputTokens].filter((token) => !operation.modelInputs.has(token) && !operation.enqueued.has(token)) : [];
-                    const removed = clearError ? [] : [...operation.inputTokens].filter((token) => !handled.includes(token));
-                    const unknown = clearError ? [...operation.inputTokens].filter((token) => !handled.includes(token)) : [];
+                    try { clearInputs(); } catch (error) { clearError = error; cleanupFailed = true; }
+                    const handled = operation.normalCompleted && operation.inputTokens.has(command.input_token) && !operation.modelInputs.has(command.input_token) ? [command.input_token] : [];
+                    if (clearError) {
+                        output({ type: "input_cleanup_failed", run_id: operation.id });
+                        return; // Runner terminates and replays the original journal.
+                    }
+                    const removed = [...operation.inputTokens].filter((token) => !handled.includes(token));
                     if (handled.length) output({ type: "inputs_handled", run_id: operation.id, input_tokens: handled, occurred_at: new Date().toISOString() });
-                    output({ type: "inputs_reconciled", run_id: operation.id, removed_input_tokens: removed, unknown_input_tokens: unknown, complete: true, occurred_at: new Date().toISOString(), run_elapsed_ms: Number((process.hrtime.bigint() - started) / 1000000n) });
+                    output({ type: "inputs_reconciled", run_id: operation.id, removed_input_tokens: removed, complete: true, occurred_at: new Date().toISOString(), run_elapsed_ms: Number((process.hrtime.bigint() - started) / 1000000n) });
                     if (activePrompt === operation) activePrompt = undefined;
-                    if (!rejected) output({ type: "prompt_end", id, outcome: clearError ? "failed" : outcome, ...(failure || clearError ? { error: String(failure || clearError).slice(0, 1024) } : {}) });
+                    if (!rejected) output({ type: "prompt_end", id, outcome, ...(failure ? { error: String(failure).slice(0, 1024) } : {}) });
                 };
                 void inputContext.run(command.input_token, () => session
                     .prompt(command.message, {
@@ -106,7 +120,7 @@ const settledPrompt = `            case "prompt": {
                 }))
                     .then(() => {
                         // Extension/slash-command handling can settle without a model
-                        // input. ACK identifies acceptance; reconciliation proves removal.
+                        // input. Successful return identifies handled input, separately from removal.
                         operation.normalCompleted = true;
                         if (!preflightSucceeded) output(success(id, "prompt"));
                         return finish(operation.outcome);
@@ -166,7 +180,7 @@ func patchNativeRPC(raw []byte) ([]byte, error) {
 		{"        session = runtimeHost.session;\n        await session.bindExtensions({", "        session = runtimeHost.session;\n        installIdentityHooks();\n        await session.bindExtensions({"},
 		{"        unsubscribe = session.subscribe((event) => {\n            output(event);\n        });", observePrompt},
 		{"            case \"steer\": {\n                await session.steer(command.message, command.images);", "            case \"steer\": {\n                const operation = activePrompt;\n                if (!operation || operation.id !== command.run_id || operation.abortRequested || operation.closed) return error(id, \"steer\", \"Target run ended\");\n                if (command.input_token) operation.inputTokens.add(command.input_token);\n                const preflight = inputContext.run(command.input_token, () => session.steer(command.message, command.images));\n                operation.preflights.add(preflight);\n                try {\n                    await preflight;\n                } catch (e) {\n                    // Rejection is safe only before the Agent enqueue boundary.\n                    if (!operation.enqueued.has(command.input_token)) {\n                        operation.inputTokens.delete(command.input_token);\n                        throw e;\n                    }\n                } finally {\n                    operation.preflights.delete(preflight);\n                }"},
-		{"            case \"abort\": {\n                await session.abort();", "            case \"abort\": {\n                if (!activePrompt || activePrompt.id !== command.run_id) return error(id, \"abort\", \"Target run ended\");\n                activePrompt.abortRequested = true;\n                session.clearQueue();\n                session.abortCompaction();\n                await session.abort();"},
+		{"            case \"abort\": {\n                await session.abort();", "            case \"abort\": {\n                if (!activePrompt || activePrompt.id !== command.run_id) return error(id, \"abort\", \"Target run ended\");\n                activePrompt.abortRequested = true;\n                try { clearInputs(); } catch { cleanupFailed = true; output({ type: \"input_cleanup_failed\", run_id: activePrompt.id }); }\n                session.abortCompaction();\n                await session.abort();"},
 		{"//# sourceMappingURL=rpc-mode.js.map", "// BatteryGPT native settlement protocol 4; upstream source map does not apply."},
 	} {
 		if strings.Count(source, replacement[0]) != 1 {

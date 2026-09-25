@@ -2,6 +2,7 @@ package product
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,15 @@ func seedMessage(t *testing.T, s *Store, scope Scope, session, request, text str
 	turn, err := s.AdmitTurn(ctx, scope, session, request, text, false)
 	must(t, err)
 	_, err = s.db.Exec(`INSERT INTO messages(id,project_id,session_id,turn_id,role,content,native_message,sequence,created_at) VALUES(?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM messages WHERE session_id=?),?)`, request, scope.ProjectID, session, turn.ID, "user", text, `{"private":"native"}`, session, s.timestamp())
+	must(t, err)
+	// Read-model fixtures supply their projection explicitly. Production never
+	// promotes uncorrelated message rows to consumed input evidence.
+	var position int64
+	must(t, s.reader.QueryRow(`SELECT sequence FROM messages WHERE id=?`, request).Scan(&position))
+	item := DisplayItem{ID: request, TurnID: turn.ID, SegmentID: "fixture/" + turn.ID, Position: position, Kind: "user", Content: text, MessageID: request, State: "consumed", Revision: 1}
+	raw, err := json.Marshal(item)
+	must(t, err)
+	_, err = s.db.Exec(`INSERT INTO conversation_items(session_id,id,turn_id,position,block_index,item_revision,source_key,data,message_id) VALUES(?,?,?,?,0,1,?,?,?)`, session, request, turn.ID, position, "fixture/"+request, string(raw), request)
 	must(t, err)
 }
 func TestFrozenSharesFrontierFilesRotationAndCleanup(t *testing.T) {

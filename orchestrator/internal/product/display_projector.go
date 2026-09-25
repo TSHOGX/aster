@@ -37,9 +37,9 @@ type DisplayItem struct {
 	DetailVersion string `json:"detail_version,omitempty"`
 }
 type displayCheckpoint struct {
-	Generation                                 string
-	Source, Message, Revision, Index, Position int64
-	State, Error                               string
+	Generation                        string
+	Source, Revision, Index, Position int64
+	State, Error                      string
 }
 type displaySource struct {
 	ID, Sequence            int64
@@ -64,7 +64,7 @@ type nativeDisplayEvent struct {
 
 func checkpoint(ctx context.Context, q queryer, session string) (displayCheckpoint, error) {
 	var p displayCheckpoint
-	err := q.QueryRowContext(ctx, `SELECT generation,source_cursor,message_cursor,content_revision,index_revision,next_position,state,error FROM conversation_checkpoints WHERE session_id=?`, session).Scan(&p.Generation, &p.Source, &p.Message, &p.Revision, &p.Index, &p.Position, &p.State, &p.Error)
+	err := q.QueryRowContext(ctx, `SELECT generation,source_cursor,content_revision,index_revision,next_position,state,error FROM conversation_checkpoints WHERE session_id=?`, session).Scan(&p.Generation, &p.Source, &p.Revision, &p.Index, &p.Position, &p.State, &p.Error)
 	return p, err
 }
 
@@ -124,7 +124,7 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 		if _, e = tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_checkpoints(session_id,generation,updated_at) VALUES(?,?,?)`, session, before.Generation, s.timestamp()); e != nil {
 			return e
 		}
-		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, segments: map[string]string{}, batchStart: before.Source}
+		reducer := displayReducer{ctx: ctx, tx: tx, session: session, p: before, changes: map[string]*DisplayItem{}, sourceKeys: map[string]string{}, batchStart: before.Source}
 		for _, source := range sources {
 			if e = reducer.consume(source); e != nil {
 				return e
@@ -134,16 +134,9 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 				break
 			}
 		}
-		// Only reconcile authoritative imported messages once their native source
-		// prefix is fully projected, avoiding duplicate fallback rows during backfill.
 		var rawPending bool
 		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_sources WHERE session_id=? AND source_id>?)`, session, reducer.p.Source).Scan(&rawPending); e != nil {
 			return e
-		}
-		if !rawPending {
-			if e = reducer.messages(); e != nil {
-				return e
-			}
 		}
 		if e = reducer.summaries(); e != nil {
 			return e
@@ -151,12 +144,12 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 		if e = reducer.flush(); e != nil {
 			return e
 		}
-		var messagePending, turnPending bool
-		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=? AND sequence>?),EXISTS(SELECT 1 FROM conversation_dirty_turns WHERE session_id=?)`, session, reducer.p.Message, session).Scan(&messagePending, &turnPending); e != nil {
+		var turnPending bool
+		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_dirty_turns WHERE session_id=?)`, session).Scan(&turnPending); e != nil {
 			return e
 		}
 		state := "ready"
-		if rawPending || messagePending || turnPending {
+		if rawPending || turnPending {
 			state = "catching_up"
 			if before.Revision == 0 {
 				state = "building"
@@ -172,7 +165,7 @@ func (s *Store) ProjectConversation(ctx context.Context, session string) error {
 				return e
 			}
 		}
-		_, e = tx.ExecContext(ctx, `UPDATE conversation_checkpoints SET source_cursor=?,message_cursor=?,content_revision=?,index_revision=?,next_position=?,state=?,error='',updated_at=? WHERE session_id=?`, reducer.p.Source, reducer.p.Message, reducer.p.Revision, reducer.p.Index, reducer.p.Position, state, s.timestamp(), session)
+		_, e = tx.ExecContext(ctx, `UPDATE conversation_checkpoints SET source_cursor=?,content_revision=?,index_revision=?,next_position=?,state=?,error='',updated_at=? WHERE session_id=?`, reducer.p.Source, reducer.p.Revision, reducer.p.Index, reducer.p.Position, state, s.timestamp(), session)
 		return e
 	})
 	if err != nil && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrPending) && !errors.Is(err, ErrCapacity) && ctx.Err() == nil {
@@ -194,7 +187,6 @@ type displayReducer struct {
 	p          displayCheckpoint
 	changes    map[string]*DisplayItem
 	sourceKeys map[string]string
-	segments   map[string]string
 }
 
 func (d *displayReducer) get(id string) (*DisplayItem, error) {
@@ -352,23 +344,6 @@ func (d *displayReducer) consume(r displaySource) error {
 	}
 	switch e.Type {
 	case "message_start", "message_update", "message_end":
-		if e.Message.Role == "user" {
-			if e.Type != "message_start" {
-				return nil
-			}
-			var message, content string
-			if err := d.tx.QueryRowContext(d.ctx, `SELECT id,content FROM messages WHERE session_id=? AND turn_id=? AND role='user' ORDER BY sequence LIMIT 1`, d.session, r.Turn).Scan(&message, &content); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					return nil
-				}
-				return err
-			}
-			key, pos, err := d.group(r, true)
-			if err != nil {
-				return err
-			}
-			return d.put(DisplayItem{ID: message, TurnID: r.Turn, RunID: r.Command, SegmentID: "", Position: pos, Kind: "user", Content: content, MessageID: message, State: "historical"}, "historical/"+message+"/"+key)
-		}
 		if e.Message.Role != "assistant" {
 			return nil
 		}
@@ -543,56 +518,6 @@ func displayResult(raw json.RawMessage) string {
 	}
 	return string(raw)
 }
-func (d *displayReducer) messages() error {
-	rows, err := d.tx.QueryContext(d.ctx, `SELECT id,turn_id,role,content,sequence FROM messages WHERE session_id=? AND sequence>? ORDER BY sequence LIMIT 64`, d.session, d.p.Message)
-	if err != nil {
-		return err
-	}
-	list := []Message{}
-	bytes := 0
-	for rows.Next() {
-		var m Message
-		if err = rows.Scan(&m.ID, &m.TurnID, &m.Role, &m.Content, &m.Sequence); err != nil {
-			break
-		}
-		if bytes+len(m.Content) > displayBatchBytes && len(list) > 0 {
-			break
-		}
-		list = append(list, m)
-		bytes += len(m.Content)
-	}
-	err = errors.Join(err, rows.Err(), rows.Close())
-	if err != nil {
-		return err
-	}
-	for _, m := range list {
-		found := false
-		for _, item := range d.changes {
-			if item != nil && item.MessageID == m.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if err = d.tx.QueryRowContext(d.ctx, `SELECT EXISTS(SELECT 1 FROM conversation_items WHERE session_id=? AND message_id=?)`, d.session, m.ID).Scan(&found); err != nil {
-				return err
-			}
-		}
-		if !found {
-			pos := int64(-1)
-			segment := d.segments[m.TurnID]
-			if segment == "" {
-				segment = "segment/" + m.TurnID
-				d.segments[m.TurnID] = segment
-			}
-			if err = d.put(DisplayItem{ID: m.ID, TurnID: m.TurnID, SegmentID: segment, Position: pos, Kind: m.Role, Content: m.Content, MessageID: m.ID, State: "completed"}, "import/"+m.ID); err != nil {
-				return err
-			}
-		}
-		d.p.Message = m.Sequence
-	}
-	return nil
-}
 func (d *displayReducer) summaries() error {
 	// Segment updates can affect several input anchors, including older prompts.
 	if _, err := d.tx.ExecContext(d.ctx, `INSERT OR IGNORE INTO conversation_dirty_turns SELECT session_id,prompt_id FROM conversation_segment_inputs WHERE session_id=? AND segment_id IN (SELECT id FROM conversation_segments WHERE session_id=? AND run_id IN (SELECT command_id FROM agent_records r JOIN conversation_sources c ON c.incarnation_id=r.incarnation_id AND c.sequence=r.sequence WHERE c.session_id=? AND c.source_id>? AND c.source_id<=?))`, d.session, d.session, d.session, d.batchStart, d.p.Source); err != nil {
@@ -602,7 +527,6 @@ func (d *displayReducer) summaries() error {
  CASE t.disposition WHEN 'pending' THEN CASE t.queue_policy WHEN 'held' THEN 'held' ELSE 'queued' END
  WHEN 'claimed' THEN coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END FROM execution_runs r WHERE r.prompt_id=t.id ORDER BY r.started_at DESC,r.id DESC LIMIT 1),'claimed')
  WHEN 'canceled' THEN 'canceled'
- WHEN 'historical' THEN 'historical'
  ELSE coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END FROM input_deliveries x JOIN execution_runs r ON r.id=x.run_id WHERE x.prompt_id=t.id AND x.state='consumed' ORDER BY x.acceptance_sequence DESC LIMIT 1),'consumed') END,
  coalesce((SELECT min(consumed_at) FROM input_deliveries WHERE prompt_id=t.id AND state='consumed' AND consumed_at<>''),''),t.updated_at,
  coalesce((SELECT m.id FROM messages m WHERE m.session_id=t.session_id AND m.turn_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1),'')
