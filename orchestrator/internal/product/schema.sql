@@ -503,7 +503,7 @@ CREATE TABLE turns (
  initially_held INTEGER NOT NULL CHECK(initially_held IN (0,1)),
  prompt_revision INTEGER NOT NULL DEFAULT 1 CHECK(prompt_revision>0),
  queue_policy TEXT NOT NULL DEFAULT 'released' CHECK(queue_policy IN ('held','released')),
- disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','canceled','historical')),
+ disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','claimed','consumed','handled','canceled','historical')),
  sequence INTEGER NOT NULL CHECK(sequence>0),
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
@@ -546,7 +546,7 @@ CREATE TABLE input_deliveries (
  run_id TEXT NOT NULL,
  input_token TEXT NOT NULL UNIQUE,
  channel TEXT NOT NULL CHECK(channel IN ('normal','steer')),
- state TEXT NOT NULL CHECK(state IN ('accepted','dispatching','native_queued','consumed','rejected','removed','unknown')),
+ state TEXT NOT NULL CHECK(state IN ('accepted','dispatching','native_queued','consumed','handled','rejected','removed','unknown')),
  acceptance_sequence INTEGER NOT NULL CHECK(acceptance_sequence>0),
  consumed_sequence INTEGER NOT NULL DEFAULT 0 CHECK(consumed_sequence>=0),
  consumed_elapsed_ms INTEGER CHECK(consumed_elapsed_ms>=0),
@@ -593,7 +593,7 @@ CREATE INDEX agent_commands_pending ON agent_commands(incarnation_id,state,creat
 
 CREATE INDEX execution_runs_live ON execution_runs(session_id,state) WHERE state IN ('starting','running','stopping','unknown');
 CREATE UNIQUE INDEX execution_runs_one_live ON execution_runs(session_id) WHERE state IN ('starting','running','stopping') OR (state='unknown' AND acknowledged=0);
-CREATE UNIQUE INDEX input_deliveries_one_claim ON input_deliveries(prompt_id) WHERE state IN ('accepted','dispatching','native_queued','consumed','unknown');
+CREATE UNIQUE INDEX input_deliveries_one_claim ON input_deliveries(prompt_id) WHERE state IN ('accepted','dispatching','native_queued','consumed','handled','unknown');
 CREATE INDEX input_deliveries_run ON input_deliveries(session_id,run_id,acceptance_sequence);
 CREATE INDEX input_deliveries_prompt ON input_deliveries(prompt_id,acceptance_sequence DESC);
 CREATE INDEX input_deliveries_pending ON input_deliveries(session_id,state) WHERE state IN ('accepted','dispatching','native_queued','unknown');

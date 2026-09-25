@@ -16,6 +16,7 @@ const promptStatus = `CASE turns.disposition
  WHEN 'claimed' THEN coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
   FROM execution_runs r WHERE r.prompt_id=turns.id ORDER BY r.started_at DESC,r.id DESC LIMIT 1),'claimed')
  WHEN 'canceled' THEN 'canceled'
+ WHEN 'handled' THEN 'handled'
  WHEN 'historical' THEN 'historical'
  ELSE coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
   FROM input_deliveries d JOIN execution_runs r ON r.id=d.run_id
@@ -183,8 +184,9 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 		return PromptQueuePage{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+queueColumns+`,
-  coalesce((SELECT id FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),''),
-  coalesce((SELECT state FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),'')
+		coalesce((SELECT id FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),''),
+  coalesce((SELECT state FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),''),
+  coalesce((SELECT error FROM input_deliveries d WHERE d.prompt_id=turns.id ORDER BY acceptance_sequence DESC LIMIT 1),'')
  FROM turns WHERE project_id=? AND session_id=? AND `+queued+` AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, observed, observedSource, after, limit+1)
 	if err != nil {
 		return PromptQueuePage{}, err
@@ -195,7 +197,7 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 	hasMore := false
 	for rows.Next() {
 		var t Turn
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState); err != nil {
+			if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState, &t.DeliveryError); err != nil {
 			return PromptQueuePage{}, err
 		}
 		if len(items) == limit {

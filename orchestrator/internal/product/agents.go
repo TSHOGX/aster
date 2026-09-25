@@ -321,6 +321,22 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 			}
 			return consumeDelivery(ctx, tx, i, event.InputToken, run, f.Sequence, f.Payload, event.OccurredAt, event.RunElapsedMS)
 		}
+		if event.Type == "inputs_handled" {
+			var raw struct {
+				RunID      string   `json:"run_id"`
+				Tokens     []string `json:"input_tokens"`
+				OccurredAt string   `json:"occurred_at"`
+			}
+			if err := json.Unmarshal(f.Payload, &raw); err != nil || raw.RunID != f.CommandID || raw.OccurredAt == "" {
+				return ErrInvalid
+			}
+			for _, token := range raw.Tokens {
+				if err := handleDelivery(ctx, tx, i, token, raw.RunID, raw.OccurredAt); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		if event.Type == "inputs_reconciled" {
 			var removed []string
 			var complete bool
@@ -328,6 +344,7 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 				Type         string   `json:"type"`
 				RunID        string   `json:"run_id"`
 				Removed      []string `json:"removed_input_tokens"`
+				Unknown      []string `json:"unknown_input_tokens"`
 				Complete     bool     `json:"complete"`
 				OccurredAt   string   `json:"occurred_at"`
 				RunElapsedMS int64    `json:"run_elapsed_ms"`
@@ -349,6 +366,11 @@ func (s *Store) projectAgentRecord(ctx context.Context, tx *sql.Tx, i Incarnatio
 				}
 				if err := restoreUndelivered(ctx, tx, command, "removed", "native settlement", raw.OccurredAt); err != nil {
 					return err
+				}
+			}
+			for _, token := range raw.Unknown {
+				if _, e := tx.ExecContext(ctx, `UPDATE input_deliveries SET state='unknown',error='native cleanup outcome unknown' WHERE input_token=? AND run_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, token, raw.RunID); e != nil {
+					return e
 				}
 			}
 			// Product-accepted controls may never have reached native stdin.

@@ -37,7 +37,7 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 		oldDigest, _, oldPrompt, _, _, _, raw, err := receipt(ctx, tx, session, request)
 		if err == nil {
 			if oldPrompt != prompt {
-				return ErrConflict
+				return Admission("request_id_reused", ErrConflict)
 			}
 			if err := validateReceiptIntent(oldDigest, digest); err != nil {
 				return err
@@ -54,8 +54,11 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 		if err != nil {
 			return err
 		}
-		if t.PromptRevision != revision || t.Disposition != "pending" {
-			return ErrConflict
+		if t.PromptRevision != revision {
+			return Admission("prompt_changed", ErrConflict)
+		}
+		if t.Disposition != "pending" {
+			return Admission("already_claimed", ErrConflict)
 		}
 		var unresolved int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM input_deliveries WHERE prompt_id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, prompt).Scan(&unresolved); err != nil {

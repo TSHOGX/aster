@@ -64,13 +64,16 @@ func (s *Store) ControlRun(ctx context.Context, scope Scope, session string, req
 		var run ExecutionRun
 		err = tx.QueryRowContext(ctx, `SELECT id,prompt_id,incarnation_id,owner,state,reconciled_at FROM execution_runs WHERE id=? AND session_id=?`, req.RunID, session).Scan(&run.ID, &run.PromptID, &run.IncarnationID, &run.Owner, &run.State, &run.SettledAt)
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrConflict
+			return Admission("target_ended", ErrConflict)
 		}
 		if err != nil {
 			return err
 		}
-		if run.IncarnationID != req.IncarnationID || run.Owner != req.Owner || run.SettledAt != "" || (run.State != "starting" && run.State != "running" && !(req.Action == "stop" && (run.State == "stopping" || run.State == "unknown"))) {
-			return ErrConflict
+		if run.IncarnationID != req.IncarnationID || run.Owner != req.Owner {
+			return Admission("target_changed", ErrConflict)
+		}
+		if run.SettledAt != "" || (run.State != "starting" && run.State != "running" && !(req.Action == "stop" && (run.State == "stopping" || run.State == "unknown"))) {
+			return Admission("target_ended", ErrConflict)
 		}
 		i, err := liveIncarnation(ctx, tx, session)
 		if err != nil {
@@ -86,8 +89,11 @@ func (s *Store) ControlRun(ctx context.Context, scope Scope, session string, req
 			if err != nil {
 				return err
 			}
-			if t.Disposition != "pending" || t.PromptRevision != req.PromptRevision {
-				return ErrConflict
+			if t.PromptRevision != req.PromptRevision {
+				return Admission("prompt_changed", ErrConflict)
+			}
+			if t.Disposition != "pending" {
+				return Admission("already_claimed", ErrConflict)
 			}
 			kind, turn = "steer", t.ID
 			payload["type"], payload["message"] = kind, t.Content

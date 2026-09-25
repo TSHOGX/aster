@@ -106,6 +106,27 @@ func consumeDelivery(ctx context.Context, tx *sql.Tx, i Incarnation, token strin
 	return err
 }
 
+// handleDelivery records successful extension handling. It is terminal input
+// evidence: the intent must never return to the dispatchable queue, but it is
+// deliberately not a transcript/model-consumption anchor.
+func handleDelivery(ctx context.Context, tx *sql.Tx, i Incarnation, token, run, now string) error {
+	var delivery, prompt, expectedRun, state string
+	if err := tx.QueryRowContext(ctx, `SELECT d.id,d.prompt_id,d.run_id,d.state FROM input_deliveries d WHERE d.input_token=? AND d.session_id=?`, token, i.SessionID).Scan(&delivery, &prompt, &expectedRun, &state); err != nil {
+		return err
+	}
+	if expectedRun != run || state == "consumed" || state == "removed" || state == "rejected" {
+		return ErrConflict
+	}
+	if state == "handled" {
+		return nil
+	}
+	if err := changed(tx.ExecContext(ctx, `UPDATE input_deliveries SET state='handled',consumed_at=?,error='' WHERE id=? AND state IN ('accepted','dispatching','native_queued','unknown')`, now, delivery)); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE turns SET disposition='handled',updated_at=? WHERE id=? AND disposition='claimed'`, now, prompt)
+	return err
+}
+
 func sMessage(ctx context.Context, tx *sql.Tx, i Incarnation, turn, id, role, content string, native []byte, now string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,session_id,turn_id,role,content,native_message,sequence,created_at) VALUES(?,?,?,?,?,?,?,(SELECT coalesce(max(sequence),0)+1 FROM messages WHERE session_id=?),?)`, id, i.ProjectID, i.SessionID, turn, role, content, native, i.SessionID, now)
 	return err
@@ -148,7 +169,7 @@ func deliveryForCommand(ctx context.Context, tx *sql.Tx, command string) (string
 
 func validateReceiptIntent(existingDigest, expected string) error {
 	if existingDigest != expected {
-		return fmt.Errorf("request_id reused with a different intent: %w", ErrConflict)
+		return Admission("request_id_reused", fmt.Errorf("request_id reused with a different intent: %w", ErrConflict))
 	}
 	return nil
 }

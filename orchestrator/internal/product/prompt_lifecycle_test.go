@@ -50,6 +50,24 @@ func TestSteerDeliveryReceiptAndConsumptionEvidence(t *testing.T) {
 	}
 }
 
+func TestExtensionHandledInputIsTerminalWithoutTranscriptAnchor(t *testing.T) {
+	s, scope, i, prompt := agentFixture(t)
+	_, err := s.IngestAgent(ctx, i, record(i, prompt, 1, "command.applied", `{"success":true}`))
+	must(t, err)
+	var token string
+	must(t, s.reader.QueryRow(`SELECT input_token FROM input_deliveries WHERE command_id=?`, prompt.CommandID).Scan(&token))
+	ingestContract(t, s, i, prompt, "native", fmt.Sprintf(`{"type":"inputs_handled","run_id":%q,"input_tokens":[%q],"occurred_at":"2026-09-24T00:00:01Z"}`, prompt.CommandID, token))
+	var delivery, disposition string
+	var messages int
+	must(t, s.reader.QueryRow(`SELECT state FROM input_deliveries WHERE command_id=?`, prompt.CommandID).Scan(&delivery))
+	must(t, s.reader.QueryRow(`SELECT disposition FROM turns WHERE id=?`, prompt.TurnID).Scan(&disposition))
+	must(t, s.reader.QueryRow(`SELECT count(*) FROM messages WHERE turn_id=? AND role='user'`, prompt.TurnID).Scan(&messages))
+	if delivery != "handled" || disposition != "handled" || messages != 0 {
+		t.Fatalf("handled input was not terminal/no-anchor: delivery=%s disposition=%s messages=%d", delivery, disposition, messages)
+	}
+	_ = scope
+}
+
 func TestPromptQueueIsFIFOWithExactCount(t *testing.T) {
 	s, scope, _, _ := agentFixture(t)
 	for n := 0; n < 40; n++ {

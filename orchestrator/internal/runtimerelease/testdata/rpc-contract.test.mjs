@@ -19,10 +19,10 @@ async function fixture(mode = 'normal') {
       if (mode === 'listener_failure' && event.type === 'message_start' && event.message.role === 'user')
         throw new Error('listener failed after consumption');
     },
-    subscribe() { return () => {}; },
+    subscribe(fn) { if (mode === 'queue_failure') listener = fn; return () => {}; },
   };
   const session = {
-    agent, bindExtensions: async () => {}, subscribe(fn) {listener=fn;return () => {};},
+    agent, bindExtensions: async () => {}, subscribe(fn) {listener=mode==='queue_failure' ? (event) => { if (event.type==='queue_update') throw new Error('queue observer failed'); return fn(event); } : fn;return () => {};},
     async prompt(text, options) {
       if (mode === 'handled') return;
       if (mode === 'rejected') throw new Error('preflight rejected');
@@ -32,7 +32,7 @@ async function fixture(mode = 'normal') {
       if (mode === 'failed_after_acceptance') throw new Error('model failed');
     },
     async steer(text) { await preflight.promise; agent.steer({role:'user',content:text}); },
-    clearQueue() { queue.length = 0; }, abortCompaction() {}, abortRetry() {},
+    clearQueue() { queue.length = 0; listener?.({type:'queue_update', steering:[], followUp:[]}); }, abortCompaction() {}, abortRetry() {},
     async abort() { prompt.resolve(); },
   };
   const fakeProcess = new EventEmitter();
@@ -77,7 +77,8 @@ test('exact identities and elapsed evidence precede normal Session events',async
 });
 for(const mode of ['handled','rejected'])test(`${mode} preflight does not strand activePrompt or its ledger`,async()=>{
   const f=await fixture(mode);f.send(normal);await tick();await tick();
-  assert.deepEqual(f.outputs.find(e=>e.type==='inputs_reconciled').removed_input_tokens,['normal']);
+  assert.deepEqual(f.outputs.find(e=>e.type==='inputs_reconciled').removed_input_tokens,mode==='handled'?[]:['normal']);
+  assert.deepEqual(f.outputs.filter(e=>e.type==='inputs_handled').flatMap(e=>e.input_tokens),mode==='handled'?['normal']:[]);
   assert.equal(f.outputs.some(e=>e.type==='input_consumed'),false);
   assert.equal(f.outputs.find(e=>e.type==='response').success,mode==='handled');
   f.send({...normal,id:'next',input_token:'next'});await tick();await tick();
@@ -100,4 +101,12 @@ test('listener failure after input boundary cannot erase or resend consumption',
   f.send({...normal,id:'next',input_token:'next'});await tick();await tick();
   assert.equal(f.outputs.filter(e=>e.type==='input_consumed'&&e.input_token==='normal').length,1);
   assert.ok(f.outputs.some(e=>e.type==='input_consumed'&&e.input_token==='next'));
+});
+test('observer failure during queue cleanup cannot strand native settlement',async()=>{
+  const f=await fixture('queue_failure');f.send(normal);await tick();f.prompt.resolve();await tick();await tick();
+  const first=f.outputs.find(e=>e.type==='prompt_end'&&e.id==='run');
+  assert.ok(first);
+  assert.ok(f.outputs.some(e=>e.type==='inputs_reconciled'&&e.run_id==='run'));
+  f.send({...normal,id:'next',input_token:'next'});await tick();await tick();
+  assert.equal(f.outputs.some(e=>e.id==='next'&&e.type==='response'&&e.success===false&&e.error==='A prompt is still settling'),false);
 });

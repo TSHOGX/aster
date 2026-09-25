@@ -255,6 +255,12 @@ func (d *displayReducer) consume(r displaySource) error {
 	if r.Turn == "" {
 		return nil
 	}
+	if r.Kind == "unknown" {
+		// Process loss is an execution fact. It closes live presentation clocks
+		// without inventing a wall-clock end or elapsed duration.
+		_, err := d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET state='unknown' WHERE session_id=? AND run_id=? AND state IN ('running','settling')`, d.session, r.Command)
+		return err
+	}
 	if r.Kind == "command.completed" {
 		var e struct{ Outcome string }
 		if err := json.Unmarshal(r.Payload, &e); err != nil {
@@ -346,6 +352,23 @@ func (d *displayReducer) consume(r displaySource) error {
 	}
 	switch e.Type {
 	case "message_start", "message_update", "message_end":
+		if e.Message.Role == "user" {
+			if e.Type != "message_start" {
+				return nil
+			}
+			var message, content string
+			if err := d.tx.QueryRowContext(d.ctx, `SELECT id,content FROM messages WHERE session_id=? AND turn_id=? AND role='user' ORDER BY sequence LIMIT 1`, d.session, r.Turn).Scan(&message, &content); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return err
+			}
+			key, pos, err := d.group(r, true)
+			if err != nil {
+				return err
+			}
+			return d.put(DisplayItem{ID: message, TurnID: r.Turn, RunID: r.Command, SegmentID: "", Position: pos, Kind: "user", Content: content, MessageID: message, State: "historical"}, "historical/"+message+"/"+key)
+		}
 		if e.Message.Role != "assistant" {
 			return nil
 		}
@@ -398,12 +421,18 @@ func (d *displayReducer) consume(r displaySource) error {
 			default:
 				continue // Unknown source blocks remain in retained raw evidence.
 			}
-			if segment != "" {
+			sideSegment := segment
+			if prior, lookupErr := d.get(item.ID); lookupErr != nil {
+				return lookupErr
+			} else if prior != nil {
+				sideSegment = prior.SegmentID
+			}
+			if sideSegment != "" {
 				final := ""
 				if e.Type == "message_end" && item.Kind == "assistant" {
 					final = item.MessageID
 				}
-				if _, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET has_work=1,final_message_id=CASE WHEN ?<>'' THEN ? ELSE final_message_id END WHERE session_id=? AND id=?`, final, final, d.session, segment); err != nil {
+				if _, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET has_work=1,final_message_id=CASE WHEN ?<>'' THEN ? ELSE final_message_id END WHERE session_id=? AND id=?`, final, final, d.session, sideSegment); err != nil {
 					return err
 				}
 			}
@@ -464,18 +493,15 @@ func (d *displayReducer) consume(r displaySource) error {
 		if err != nil {
 			return err
 		}
-		if prompt == "" {
-			prompt = r.Turn
-		}
 		item := DisplayItem{ID: id, TurnID: prompt, RunID: r.Command, SegmentID: segment, Position: -1, Kind: "tool", State: "running"}
-		if segment != "" {
-			if _, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET has_work=1 WHERE session_id=? AND id=?`, d.session, segment); err != nil {
-				return err
-			}
-		}
 		if old != nil {
 			item = *old
 			item.State = "running"
+			segment, prompt = old.SegmentID, old.TurnID
+		} else if segment != "" {
+			if _, err = d.tx.ExecContext(d.ctx, `UPDATE conversation_segments SET has_work=1 WHERE session_id=? AND id=?`, d.session, segment); err != nil {
+				return err
+			}
 		}
 		if e.ToolName != "" {
 			item.Name = e.ToolName
@@ -609,7 +635,7 @@ func (d *displayReducer) summaries() error {
 	}
 	for _, t := range summaries {
 		var segment TurnSummary
-		err = d.tx.QueryRowContext(d.ctx, `SELECT s.id,s.run_id,s.state,s.started_at,s.finished_at,s.elapsed_ms,s.final_message_id FROM conversation_segment_inputs i JOIN conversation_segments s ON s.session_id=i.session_id AND s.id=i.segment_id WHERE i.session_id=? AND i.prompt_id=?`, d.session, t.ID).Scan(&segment.SegmentID, &segment.RunID, &segment.State, &segment.CreatedAt, &segment.FinishedAt, &segment.ElapsedMS, &segment.FinalMessageID)
+		err = d.tx.QueryRowContext(d.ctx, `SELECT s.id,s.run_id,CASE WHEN s.state='continued' THEN 'continued' WHEN coalesce(r.state,'')='unknown' THEN 'unknown' WHEN coalesce(r.state,'')='failed' THEN 'failed' WHEN coalesce(r.state,'')='stopping' THEN 'stopping' ELSE s.state END,s.started_at,s.finished_at,s.elapsed_ms,s.final_message_id FROM conversation_segment_inputs i JOIN conversation_segments s ON s.session_id=i.session_id AND s.id=i.segment_id LEFT JOIN execution_runs r ON r.session_id=s.session_id AND r.id=s.run_id WHERE i.session_id=? AND i.prompt_id=?`, d.session, t.ID).Scan(&segment.SegmentID, &segment.RunID, &segment.State, &segment.CreatedAt, &segment.FinishedAt, &segment.ElapsedMS, &segment.FinalMessageID)
 		if err == nil {
 			segment.ID = t.ID
 			segment.Sequence = t.Sequence

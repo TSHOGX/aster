@@ -1,6 +1,7 @@
 package producthttp
 
 import (
+	"errors"
 	"harness-platform/orchestrator/internal/product"
 	"net/http"
 )
@@ -76,7 +77,12 @@ func controlFailure(w http.ResponseWriter, err error) {
 	if code == http.StatusAccepted {
 		code = http.StatusConflict
 	}
-	writeJSON(w, code, map[string]string{"state": "not_admitted", "code": "control_not_admitted", "error": message})
+	admissionCode := "control_not_admitted"
+	var admission *product.AdmissionError
+	if errors.As(err, &admission) {
+		admissionCode = admission.Code
+	}
+	writeJSON(w, code, map[string]string{"state": "not_admitted", "code": admissionCode, "error": message})
 }
 
 func (s *Server) controlResult(w http.ResponseWriter, r *http.Request) {

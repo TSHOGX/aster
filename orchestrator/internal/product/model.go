@@ -12,6 +12,17 @@ var (
 	ErrBusy     = errors.New("project has admitted activity")
 )
 
+// AdmissionError preserves the machine-readable reason for a rejected control
+// while retaining the broad sentinel used by internal transaction tests.
+type AdmissionError struct {
+	Code  string
+	Cause error
+}
+
+func (e *AdmissionError) Error() string        { return e.Code + ": " + e.Cause.Error() }
+func (e *AdmissionError) Unwrap() error        { return e.Cause }
+func Admission(code string, cause error) error { return &AdmissionError{Code: code, Cause: cause} }
+
 type Project struct {
 	ID               string `json:"id"`
 	OwnerID          string `json:"owner_id"`
@@ -78,6 +89,7 @@ type Turn struct {
 	PromptRevision int64  `json:"prompt_revision"`
 	DeliveryID     string `json:"delivery_id,omitempty"`
 	DeliveryState  string `json:"delivery_state,omitempty"`
+	DeliveryError  string `json:"delivery_error,omitempty"`
 	State          string `json:"state"`
 	Sequence       int64  `json:"sequence"`
 	CreatedAt      string `json:"created_at"`

@@ -1,8 +1,9 @@
 # Product database
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-The current fresh lineage has schema version 2 and an exact compiled DDL
-fingerprint. `product.Open` initializes that schema atomically on a new database
+The current fresh lineage has schema version 3 and exact compiled DDL
+fingerprint `sha256:44895d2a2e545ba7232cd42ef06f7d5c7a5342086e8962818b1e9d34a3cf8e22`.
+`product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
 version and fingerprint before a writer opens. Application startup has no
 migration chain or data backfill. The exact-source queued-prompts offline
