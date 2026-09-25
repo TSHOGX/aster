@@ -1,6 +1,8 @@
-# Queued-prompts release preparation
+# Queued-prompts release procedure
 
-Status: development artifact, not deployment authorization.
+The authorized reset, rebuild and restart completed on 2026-09-25. See the
+[current deployment record](../dev/measurements/current-deployment.json) and
+[acceptance](queued-prompts-acceptance.md). The procedure below applies to future resets.
 
 The current product is a fresh-install contract. It uses schema version 3 with
 compiled fingerprint `sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a`
@@ -53,5 +55,6 @@ extension inputs, listener failures during cleanup, delayed Steer preflight,
 process loss, unknown recovery, duplicate expanded text, retry and compaction,
 queue frontier handoff, segment rebuild and destructive reset.
 
-Activation remains separately authorized. No live database, service or runtime
-image is modified by development work alone.
+Future activations require their own task authorization. The completed reset
+removed all former application and engine state and retained only the current
+release plus credentials, TLS and reviewed configuration.

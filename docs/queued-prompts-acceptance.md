@@ -1,49 +1,33 @@
-# Queued-prompts acceptance record
+# Queued-prompts acceptance
 
-Status: historical development acceptance through `50fda5e`; it is superseded
-for the current protocol-4/schema-3 work and is not a deployment sign-off. The normative rows are in the
-private planning package's `03-validation.md` and the behavior specification
-in `02-design.md`.
+Current release: schema 3, native protocol 4. The authorized reset, rebuild and
+restart completed on 2026-09-25. The [current deployment record](../dev/measurements/current-deployment.json)
+binds executable, runtime, schema and frontend identities to the verification
+below. Evidence for retired builds and old schemas has been deleted.
 
-| Rows | Verified evidence | Residual limit |
-| --- | --- | --- |
-| A01-A05 | FIFO queue/count, held-skip/later-Release A,C,B dispatch and projection, claim/reconciliation SQLite tests; queue-only/new-chat, three-slot and real-browser held-row Steer | None in the implemented queue path |
-| A06-A10 | Active Send/Stop, stopping/recovery-disabled action after reload, Enter/IME/Shift+Enter, lost reply, draft preservation, two-tab Steer reconnect and exact Stop receipts | Device-specific soft-keyboard differences are not simulated |
-| A11-A13 | SQLite Stop/new intent serialization; keyboard/focus, mobile touch menu, forced-color/dark/reduced-motion and Chinese browser captures | No physical screen-reader session was run |
-| B01-B06 | Real Pi AgentSession and patched RPC with duplicate templates, two-tool batch and listener failure; pinned Khora cooperative Steer, retry/compaction through runner/journal | Unknown third-party extensions cannot be exhaustively enumerated |
-| B07-B12 | Exact target, concurrent claim, late Steer, preflight rejection, composed Stop removal, worker loss after acceptance and next-run non-leak | Other crash points are qualified by reducer/journal tests rather than one composed test per point |
-| C01-C03 | Durable receipts, prompt-local revision, typed HTTP rejection, browser same-ID retry/local row error and real API two-tab Steer reconnect | No known authority gap |
-| C04-C08 | Store/runner crash and replay cases, release/owner/service/capture/idle, focused race/pressure, composed Khora worker loss and sustained combined load | Fault permutations are bounded by the tested durable identity/state invariants |
-| D01-D03 | Persisted segment/rebuild, consumption order, final ownership/coalescing, page/delta tests and composed native Steer order | No known chronology gap |
-| D04-D07 | Native monotonic elapsed, segment clocks, server/client/off-window frontier races, real-browser two-tab handoff and late tool updates | Running wall-clock label is provisional; terminal duration uses native evidence |
-| D08-D10 | Navigation/page generation, shared/granted message run/segment metadata and new-chat/lost-reply tests | Incompatible historical data is discarded by destructive reset |
+| Contract | Current verification |
+| --- | --- |
+| Input claim and receipts | Go transaction and race tests: one claim path, exact target, same-ID retry, handled/consumed exclusivity |
+| Native lifecycle | Pinned real AgentSession and RPC tests: duplicate templates, tool batch, handled input, observer failure, core cleanup failure |
+| Run settlement | Real Khora release suite: retry/compaction, Steer consumption, Stop removal, next-run non-leak, gateway continuity and owner handoff |
+| Projection | Current-source tests: stable input anchors, page/delta/rebuild order, unknown clocks and late-tool ownership |
+| Browser | Production frontend through real API: Files/PTY, Chinese navigation, schedules and two-tab queued Steer handoff |
+| Deployment | Empty new database and engine store, matching installed artifacts, seven active supervisors, zero restarts |
+| Live smoke | Temporary login, workspace before/after compute, actual provider completion, deployed browser editing, temporary-user/Project cleanup |
 
-## Gates
+`go test ./...`, product/runner/runtime race suites, frontend typecheck, lint,
+206 unit tests and production build passed. One frontend test remains opt-in.
+The first browser run hit a terminal attach timeout and also ran the single-run
+Steer case with a two-request provider gate. The fixture selection was corrected;
+the complete isolated browser rerun passed. No test timeout was relaxed.
 
-- G1: passed for the pinned Session/RPC and full runner/journal path. Exact
-  identity, complete tool-batch timing and native settlement are verified.
-- G2: passed for the fresh schema, API receipts, one run authority and one
-  delivery claim path. The old-format copy transition is qualified separately.
-- G3: passed for controls and recovery. Consumption, removal and unknown are
-  distinct, with no duplicate delivery or next-run leak in component and
-  composed fault tests.
-- G4: passed for current-format projection, queue handoff, navigation and
-  sharing chronology. Historical missing evidence is explicitly unavailable.
-- G5: passed for automated keyboard, touch, narrow, locale and accessibility
-  semantics. A physical assistive-device review remains a release usability check.
-- G6: passed in isolated native, release, fault, real-browser and sustained
-  combined suites. The residual limits above do not weaken the durable
-  consumption, chronology or unknown-outcome invariants.
-- G7: release preparation passed on an exact-source staging copy and pinned
-  candidate runtime. Staging `release-identity` measured executable, schema,
-  runtime and content digests. Final `/etc` identity, old-sandbox retirement
-  and activation require separate release authorization. No deployment.
+Live smoke used the installed artifacts, followed by a second empty
+initialization after confirming no user work existed. Final business tables are
+empty, SQLite integrity is healthy, foreign keys have no errors and credentials
+are preserved. The reset does not retain smoke tombstones.
 
-The implementation record in [queued-prompts-implementation.md](./queued-prompts-implementation.md)
-contains the staged changes and commands. Final release checks must remeasure
-the incumbent and candidate after the authorized quiescent drain.
-
-The 2026-09-25 architecture correction reopens G1/G3/G4/G5/G6. The current
-contract now distinguishes extension handled inputs, exception-safe native
-settlement, unknown-run segment presentation and historical input provenance;
-the previous protocol-3 candidate evidence does not qualify these changes.
+Physical assistive-device testing and arbitrary third-party extensions are not
+covered exhaustively. Running clocks are provisional; settled durations use
+native evidence. The current run did not repeat the sustained combined workload
+or every composed crash permutation, so old performance measurements are not
+presented as current-release results.

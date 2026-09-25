@@ -71,6 +71,6 @@ The current repository checks pass:
 
 Former review regressions cover historical ordering, unknown-run segments,
 late-tool ownership, handled inputs, listener cleanup failure and continued
-segment rendering. A new immutable runtime candidate still needs to be built
-and measured against protocol 4 before release qualification. Development has
-not modified live data, services or runtime images.
+segment rendering. The current immutable runtime passed real release, network and browser gates.
+The authorized live reset and restart passed actual provider/browser smoke.
+See [acceptance](queued-prompts-acceptance.md) for exact coverage and limits.

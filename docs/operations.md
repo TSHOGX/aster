@@ -14,6 +14,10 @@ npm run build
 npm start -- --hostname 127.0.0.1 --port 3000
 ```
 
+Build the supervised HTTP/mTLS entry proxy with `go -C orchestrator build
+-o bin/edge-proxy ./cmd/edge-proxy`. It accepts an absolute HTTP(S) upstream;
+TLS mode requires a certificate, key and client CA together.
+
 Start the application separately:
 
 ```sh

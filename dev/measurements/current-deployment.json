@@ -1,0 +1,93 @@
+{
+  "completed_at": "2026-09-25T05:29:38.261160+00:00",
+  "source_commit": "eaf4100924654ca5dbd72edd387c66c29df5a146",
+  "schema_version": 3,
+  "schema_digest": "sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a",
+  "native_protocol": 4,
+  "runtime_digest": "sha256:2ecad4935ef3c9373fd85e0613e93b1d0c148077838ba1ba328832805c039d5d",
+  "executable_digest": "sha256:f99899b767e0d6533bba66df67c67e6b4df96c5d62ebeaeccf640f268b927e27",
+  "frontend_build_id": "fMWkt6xhXBCgmL0uiOI4D",
+  "engine_store_reinitialized": true,
+  "old_private_entries_deleted": 50,
+  "old_owned_subvolumes_deleted": 7,
+  "old_release_directories_deleted": 3,
+  "retired_measurement_files_deleted": 25,
+  "credentials_preserved": true,
+  "database_integrity": "ok",
+  "foreign_key_errors": 0,
+  "final_counts": {
+    "projects": 0,
+    "sessions": 0,
+    "turns": 0,
+    "messages": 0,
+    "schedules": 0,
+    "terminals": 0,
+    "execution_runs": 0,
+    "input_deliveries": 0,
+    "control_receipts": 0
+  },
+  "services": {
+    "web": {
+      "state": "active",
+      "substate": "running",
+      "restarts": 0
+    },
+    "gateway": {
+      "state": "active",
+      "substate": "running",
+      "restarts": 0
+    },
+    "application": {
+      "state": "active",
+      "substate": "running",
+      "restarts": 0
+    },
+    "frontend": {
+      "state": "active",
+      "substate": "running",
+      "restarts": 0
+    },
+    "engine-tls": {
+      "state": "active",
+      "substate": "running",
+      "restarts": 0
+    },
+    "engine": {
+      "state": "active",
+      "substate": "running",
+      "restarts": 0
+    },
+    "network": {
+      "state": "active",
+      "substate": "exited",
+      "restarts": 0
+    }
+  },
+  "verification": {
+    "go_test_all": "passed",
+    "race_product_runner_runtime": "passed",
+    "frontend_tests_passed": 206,
+    "frontend_tests_skipped": 1,
+    "typescript": "passed",
+    "eslint": "passed",
+    "production_build": "passed",
+    "khora_release": "passed",
+    "khora_network": "passed",
+    "khora_browser": "passed",
+    "live_smoke": {
+      "authentication_and_recurrence_preview": true,
+      "storage_before_compute": true,
+      "runtime_identity_and_workspace": true,
+      "native_model_gateway_completion": true,
+      "live_browser_navigation_and_schedule_edit": true,
+      "temporary_login_removed": true,
+      "smoke_resources_deleted": true
+    },
+    "final_empty_reinitialization_after_smoke": true
+  },
+  "resolved_qualification_failures": [
+    "privileged build used the verified module cache",
+    "browser Steer case moved to its independent provider fixture",
+    "isolated browser rerun passed after initial terminal attach timeout"
+  ]
+}
