@@ -9,7 +9,7 @@ Resource paths below use stored Project and child identities.
 | --- | --- |
 | `/api/auth/login`, `/logout`, `/me` | Sign in, sign out and inspect current identity |
 | `/api/projects` | List and create Projects |
-| `/api/schedules` | Owner-scoped, paginated schedule overview across Projects |
+| `/api/schedules`, `/api/schedules/events` | Owner-scoped schedule overview and metadata invalidation SSE across Projects |
 | `/api/projects/{project}` | Inspect, rename and request deletion |
 | `…/resume`, `…/pause`, `…/restart`, `…/blockers` | Project lifecycle and admission state |
 | `…/sessions` and `…/sessions/{session}` | List/create/inspect/rename/retire Agent Sessions |
@@ -106,14 +106,40 @@ pending outcomes remain distinct from successful completion. Browser access does
 not expose engine handles or operator control routes.
 
 `GET /api/schedules?project_id=OPTIONAL&q=TITLE&status=enabled|paused&after=CURSOR&limit=50`
-returns `{schedules: [...], next?: CURSOR}` with at most 50 metadata rows.
+returns `{schedules: [...], next?: CURSOR, previous?: CURSOR}` with at most 50 metadata rows.
+`before=CURSOR` reads the preceding batch; `anchor=TASK_ID` relocates the window
+at that task in the current authorized/filter-matching catalog. Selectors are
+mutually exclusive. An absent or filtered anchor restarts at the first batch.
 Omit status for all tasks. Unicode lowercase title matching, Project filtering,
 and owner authorization apply before pagination. Automatic tasks sort by next
 occurrence and ID, followed by enabled manual-only tasks and paused tasks.
 Opaque continuation cursors bind the owner and filters to a catalog revision.
 Schedule edits/ticks and relevant Project changes invalidate continuation with
-`409 resync_required`; restart at the first page. The page and revision come from
+`409 resync_required`; reconcile the current window with an anchor read or restart
+at the first page. The page and revision come from
 one database read snapshot. This replaces ID-only overview pagination.
+
+`GET /api/schedules/events?cursor=CURSOR` uses the same Resource SSE envelope,
+`resource` event, opaque incarnation/sequence cursor, `ready`, `resync`, rotation,
+heartbeat, reauthorization, bounded replay ring and subscriber queues as Project
+resource streams. Its scope is the authenticated owner; it creates no Project
+connections or file watchers. Hints use `schedule.created|updated|deleted` and
+`run.created|updated|deleted`, with `resource_id` identifying the task and payload
+containing only `project_id`, `schedule_id` and optional `run_id`. Revision strings
+are outbox positions, not task configuration revisions. Hints never contain
+prompts, run contents or inferred outcomes. Clients must read the authoritative
+endpoints; initial/resync events reconcile their visible scopes. The durable
+owner outbox retains at most 2,048 hints, independently of Project deletion;
+expired/restarted streams explicitly resync rather than silently losing updates.
+
+`GET /api/projects/{project}/schedules/{schedule}/runs` accepts mutually exclusive
+`after=CURSOR`, `before=CURSOR` or `anchor=RUN_ID`, with a maximum `limit=50`, and
+returns `{runs: [...], next: CURSOR_OR_EMPTY, previous?: CURSOR}`. New opaque cursors
+bind the owner, Project, task and immutable creation-time/ID ordering tuple, so
+removing a boundary row does not omit the remaining history. Existing run-ID
+continuations remain accepted; a removed legacy boundary requires resync.
+History state uses the same correlated prompt/execution evidence as conversation
+controls, including claims before consumption and unknown outcomes.
 
 `POST /api/schedules/preview` accepts `{cron, timezone, next_at?}` and returns
 `{valid, cron, timezone, reference_time, occurrences, errors?}`. Field errors use

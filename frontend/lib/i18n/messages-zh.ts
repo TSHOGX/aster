@@ -1,4 +1,22 @@
-import type { MessageKey } from "./messages-en";
+import type {
+  "This task was deleted.": "此任务已被删除。",
+  "Tasks changed. Syncing around your current position.": "任务列表已变化，正在保留当前位置并同步。",
+  "Live": "实时",
+  "Offline. Updates will resume when you return.": "已暂停同步，返回页面后自动恢复。",
+  "Reconnecting…": "正在重新连接…",
+  "Connecting…": "正在连接…",
+  "Load more tasks": "加载更多任务",
+  "Load previous tasks": "加载之前的任务",
+  "Load more runs": "加载更早记录",
+  "Load newer runs": "加载较新记录",
+  "View full history": "查看完整历史",
+  "{count} updates · Back to latest": "有 {count} 条更新 · 返回最新",
+  "History updates do not change your draft.": "执行记录更新不会修改你的草稿。",
+  "Updates may be delayed.": "更新可能延迟。",
+  "Upcoming time is unavailable. Reconnecting…": "暂时无法确认下次执行时间。",
+  "Waiting for the scheduler to confirm the next run…": "已到计划时间，正在等待调度结果…",
+  "Syncing…": "正在同步…",
+  "Last synced: {time}": "上次同步：{time}", MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
   "Copy range": "复制范围",
   "From record": "起始记录",

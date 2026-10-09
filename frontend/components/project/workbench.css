@@ -2233,3 +2233,22 @@ details[open] > .activity-row .activity-chevron {
 @media (forced-colors: active) {
   .selection-picker-option[data-active="true"], .time-picker-values > div[aria-selected="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
 }
+
+.schedule-sync { margin: 0 20px 14px; font-size: 12px; color: var(--color-foreground-muted); display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; min-height: 18px; }
+.schedule-sync-time { font-variant-numeric: tabular-nums; }
+.schedule-load-edge { padding: 12px 0; display: flex; justify-content: center; min-height: 44px; }
+.schedule-viewport { overflow-anchor: none; }
+.history-panel { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--color-border); border-radius: 12px; overflow: hidden; background: var(--color-surface); }
+.history-panel > button, .history-panel > p { margin: 8px 12px; flex-shrink: 0; }
+.run-history-scroll { min-height: 0; }
+.history-expanded .run-history-scroll { height: min(480px, 55dvh); overflow-y: auto; overscroll-behavior: contain; padding: 0 16px; overflow-anchor: none; }
+.history-updates { position: relative; z-index: 2; color: var(--color-accent); }
+.schedule-run-state { font-size: 12px; min-width: 88px; font-weight: 550; }
+.schedule-run-failed, .schedule-run-unknown { color: var(--color-danger, var(--color-foreground)); }
+@container (width < 600px) {
+ .history-expanded { position: absolute; inset: 0; z-index: 4; padding: 20px 16px !important; margin: 0 !important; max-width: none !important; background: var(--color-surface); display: flex; flex-direction: column; }
+ .history-expanded > header { flex-shrink: 0; }
+ .history-expanded .history-panel { flex: 1; }
+ .history-expanded .run-history-scroll { height: auto; flex: 1; }
+ .schedule-detail-pane { position: relative; }
+}

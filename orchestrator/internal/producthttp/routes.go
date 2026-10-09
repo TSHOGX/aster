@@ -38,6 +38,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/schedules", s.scheduleOverview)
+	mux.HandleFunc("GET /api/schedules/events", s.scheduleEvents)
 	mux.HandleFunc("POST /api/schedules/preview", s.previewSchedule)
 	mux.HandleFunc("GET /api/projects/{project}/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/projects/{project}/schedules", s.createSchedule)

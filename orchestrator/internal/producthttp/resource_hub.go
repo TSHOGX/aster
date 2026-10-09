@@ -107,8 +107,14 @@ func newResourceHubs(s *Server) *resourceHubs {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &resourceHubs{ctx: ctx, cancel: cancel, groups: map[product.Scope]*resourceHub{}, server: s}
 }
+func (h *resourceHub) cursorScope() string {
+	if h.scope.ProjectID == "" {
+		return "schedules/" + h.scope.Actor
+	}
+	return h.scope.ProjectID
+}
 func (h *resourceHub) cursor(sequence uint64) string {
-	raw, _ := json.Marshal(resourceCursor{Project: h.scope.ProjectID, Incarnation: h.incarnation, Sequence: sequence, Protocol: 1})
+	raw, _ := json.Marshal(resourceCursor{Project: h.cursorScope(), Incarnation: h.incarnation, Sequence: sequence, Protocol: 1})
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 func (h *resourceHub) frame(kind, id, revision, reason string, payload any) resourceFrame {
@@ -178,7 +184,7 @@ func (h *resourceHub) attach(cursor string) (*resourceSubscription, error) {
 	if cursor != "" {
 		var position resourceCursor
 		raw, err := base64.RawURLEncoding.DecodeString(cursor)
-		if len(cursor) > 2048 || err != nil || json.Unmarshal(raw, &position) != nil || position.Project != h.scope.ProjectID || position.Protocol != 1 {
+		if len(cursor) > 2048 || err != nil || json.Unmarshal(raw, &position) != nil || position.Project != h.cursorScope() || position.Protocol != 1 {
 			return nil, product.ErrInvalid
 		}
 		after = position.Sequence
@@ -252,7 +258,13 @@ func (m *resourceHubs) attach(scope product.Scope, cursor string) (*resourceSubs
 		if len(m.groups) >= 128 {
 			return nil, product.ErrCapacity
 		}
-		_, baseline, err := m.server.Store.EventBounds(m.ctx, scope)
+		var baseline int64
+		var err error
+		if scope.ProjectID == "" {
+			_, baseline, err = m.server.Store.ScheduleEventBounds(m.ctx, scope.Actor)
+		} else {
+			_, baseline, err = m.server.Store.EventBounds(m.ctx, scope)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -323,6 +335,10 @@ func (m *resourceHubs) run(ctx context.Context, h *resourceHub) {
 		}
 		m.mu.Unlock()
 	}()
+	if h.scope.ProjectID == "" {
+		m.runSchedules(ctx, h)
+		return
+	}
 	after := h.outbox
 	// Baseline is captured before the first subscriber can finish its resync reads.
 	// A later event always appears in a poll after this baseline.
@@ -502,5 +518,48 @@ func resourceKind(e product.Event) (string, string) {
 		return "shares", e.ProjectID
 	default:
 		return "resync", ""
+	}
+}
+
+// runSchedules shares the same bounded replay ring and subscriber queues as
+// Project transports, but owns no file watcher or per-Project subscriptions.
+func (m *resourceHubs) runSchedules(ctx context.Context, h *resourceHub) {
+	after := h.outbox
+	ticker := time.NewTicker(eventPoll)
+	defer ticker.Stop()
+	for {
+		pruned, head, err := m.server.Store.ScheduleEventBounds(ctx, h.scope.Actor)
+		if err != nil {
+			h.publish("closed", "", "", "read_failure", nil)
+			return
+		}
+		if after < pruned || after > head {
+			after = head
+			h.publish("resync", "", "", "outbox_expired", nil)
+		}
+		batch, err := m.server.Store.ScheduleEvents(ctx, h.scope.Actor, after, 200)
+		if err != nil {
+			h.publish("closed", "", "", "read_failure", nil)
+			return
+		}
+		hints := map[string]product.ScheduleEvent{}
+		order := []string{}
+		for _, e := range batch {
+			after = e.ID
+			key := e.Kind + "/" + e.ProjectID + "/" + e.ScheduleID
+			if _, ok := hints[key]; !ok {
+				order = append(order, key)
+			}
+			hints[key] = e
+		}
+		for _, key := range order {
+			e := hints[key]
+			h.publish(e.Kind, e.ScheduleID, strconv.FormatInt(e.ID, 10), "", map[string]string{"project_id": e.ProjectID, "schedule_id": e.ScheduleID, "run_id": e.RunID})
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }

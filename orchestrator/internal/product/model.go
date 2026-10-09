@@ -148,6 +148,17 @@ type Event struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+// ScheduleEvent is a deliberately small owner-scoped invalidation hint. It
+// never contains prompts or run contents; clients re-read the authoritative
+// schedule and run endpoints after receiving it.
+type ScheduleEvent struct {
+	ID         int64  `json:"id"`
+	ProjectID  string `json:"project_id"`
+	ScheduleID string `json:"schedule_id,omitempty"`
+	RunID      string `json:"run_id,omitempty"`
+	Kind       string `json:"kind"`
+}
+
 // Scope is provided by the authenticated transport, never decoded wholesale
 // from a user request. Child identity alone does not grant access to its parent.
 type Scope struct{ Actor, ProjectID string }

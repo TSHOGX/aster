@@ -1,5 +1,11 @@
 "use client";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+  type ComponentProps,
+} from "react";
 import { Clock3, Pause, Plus } from "lucide-react";
 import {
   api,
@@ -13,9 +19,16 @@ import {
   type Project,
   type Schedule,
   type SchedulePage,
+  type ScheduleOverview,
   type ScheduleRun,
   type ScheduleRunPage,
 } from "@/lib/project-api";
+import type { WatchHealth } from "@/lib/project-realtime";
+import { useRealtime } from "./resource-provider";
+import { useScheduleWindow } from "./schedule-data";
+import { ScheduleViewport } from "./schedule-viewport";
+import { ScheduleLoadEdge } from "./schedule-load-edge";
+import { changedRuns, ScheduleHintGate } from "@/lib/schedule-window";
 import type { Navigation } from "@/lib/workspace-state";
 import { useLocale, useT } from "@/lib/i18n";
 import { scheduleTime } from "@/lib/schedule-recurrence";
@@ -23,6 +36,17 @@ import { ProjectPicker } from "./project-picker";
 import { Menu, useDialog } from "./ui";
 import { RecurrenceSummary, UpcomingOccurrences } from "./schedule-recurrence";
 import { ScheduleEditor } from "./schedule-editor";
+
+const overviewPage = (page: SchedulePage) => ({
+  rows: page.schedules,
+  next: page.next,
+  previous: page.previous,
+});
+const runsPage = (page: ScheduleRunPage) => ({
+  rows: page.runs,
+  next: page.next,
+  previous: page.previous,
+});
 
 export function Schedules({
   projects,
@@ -43,21 +67,19 @@ export function Schedules({
 }) {
   const tr = useT(),
     locale = useLocale();
-  const [refresh, setRefresh] = useState(0),
+  const [syncHealth, setSyncHealth] = useState<WatchHealth>("connecting"),
     [notice, setNotice] = useState("");
   const [query, setQuery] = useState(nav.scheduleQuery || ""),
     [composing, setComposing] = useState(false);
-  const [page, setPage] = useState<{
-    key: string;
-    value?: SchedulePage;
-    error?: string;
-  }>();
   const [detail, setDetail] = useState<{
     key: string;
     value?: Schedule;
     error?: string;
+    unavailable?: boolean;
   }>();
-  const [detailRefresh, setDetailRefresh] = useState(0);
+  const [detailRefresh, setDetailRefresh] = useState(0),
+    [historyRefresh, setHistoryRefresh] = useState(0);
+  const realtime = useRealtime();
   const navRef = useRef(nav),
     navigateRef = useRef(onNavigate);
   useEffect(() => {
@@ -102,42 +124,90 @@ export function Schedules({
     return () => window.removeEventListener("keydown", escape);
   }, []);
   const filter = nav.scheduleFilter || "",
-    status = nav.scheduleStatus || "",
-    after = nav.scheduleAfter || "";
-  const listKey = JSON.stringify([
-    filter,
-    status,
-    nav.scheduleQuery || "",
-    after,
-    refresh,
-  ]);
+    status = nav.scheduleStatus || "";
+  const list = useScheduleWindow<ScheduleOverview, SchedulePage>(
+    `/api/schedules?project_id=${encode(filter)}&q=${encode(nav.scheduleQuery || "")}&status=${status}`,
+    overviewPage,
+  );
   useEffect(() => {
-    const controller = new AbortController();
-    const url = `/api/schedules?project_id=${encode(filter)}&q=${encode(nav.scheduleQuery || "")}&status=${status}&after=${encode(after)}&limit=50`;
-    void api<SchedulePage>(url, { signal: controller.signal })
-      .then((value) => {
-        if (controller.signal.aborted) return;
-        if (
-          value.schedules.length > 50 ||
-          JSON.stringify(value).length * 3 > 1024 * 1024
-        )
-          throw new Error("Schedule page exceeds its display budget.");
-        setPage({ key: listKey, value });
-      })
-      .catch((e) => {
-        if (controller.signal.aborted) return;
-        if (e instanceof APIError && e.status === 409 && after) {
-          setNotice(tr("Tasks changed. Showing a fresh first page."));
-          navigateRef.current(
-            { ...navRef.current, scheduleAfter: undefined },
-            true,
-          );
+    if (!list.resyncs) return;
+    const message = tr("Tasks changed. Syncing around your current position.");
+    const notify = setTimeout(() => setNotice(message), 0);
+    const clear = setTimeout(
+      () => setNotice((current) => (current === message ? "" : current)),
+      5000,
+    );
+    return () => {
+      clearTimeout(notify);
+      clearTimeout(clear);
+    };
+  }, [list.resyncs, tr]);
+  const listKey = JSON.stringify([filter, status, nav.scheduleQuery || ""]);
+  const loadMore = () => {
+    void list.controller.extend("next");
+  };
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let catalog = false,
+      detail = false,
+      history = false;
+    const flush = () => {
+      timer = undefined;
+      if (catalog) void list.controller.refresh();
+      if (detail) setDetailRefresh((n) => n + 1);
+      if (history) setHistoryRefresh((n) => n + 1);
+      catalog = detail = history = false;
+    };
+    const gate = new ScheduleHintGate();
+    const unsubscribe = realtime.subscribe(
+      "",
+      (event) => {
+        if (event.resource_kind === "ready" || !gate.accept(event)) return;
+        if (event.resource_kind === "closed") {
+          setDetail(undefined);
+          void list.controller.refresh();
           return;
         }
-        setPage({ key: listKey, error: String(e) });
-      });
-    return () => controller.abort();
-  }, [filter, status, nav.scheduleQuery, after, refresh, listKey, tr]);
+        const payload = event.payload as
+          | { project_id?: string; schedule_id?: string }
+          | undefined;
+        const selected = navRef.current;
+        const reset = event.resource_kind === "resync";
+        catalog ||= reset || event.resource_kind.startsWith("schedule.");
+        const relevant =
+          reset ||
+          ((!payload?.project_id ||
+            payload.project_id === selected.scheduleProject) &&
+            (!payload?.schedule_id ||
+              payload.schedule_id === selected.schedule));
+        detail ||=
+          relevant && (reset || event.resource_kind.startsWith("schedule."));
+        history ||=
+          relevant && (reset || event.resource_kind.startsWith("run."));
+        if (!timer) timer = setTimeout(flush, 200);
+      },
+      setSyncHealth,
+    );
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [realtime, list.controller]);
+  useEffect(() => {
+    if (syncHealth === "live" || syncHealth === "closed") return;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const retry = () => {
+      if (!document.hidden) {
+        void list.controller.refresh();
+        setDetailRefresh((n) => n + 1);
+        setHistoryRefresh((n) => n + 1);
+      }
+      timer = setTimeout(retry, Math.min(30000, 5000 * 2 ** attempt++));
+    };
+    timer = setTimeout(retry, 5000);
+    return () => clearTimeout(timer);
+  }, [syncHealth, list.controller]);
   const selectedKey =
     nav.schedule && nav.scheduleProject
       ? `${nav.scheduleProject}:${nav.schedule}`
@@ -151,31 +221,54 @@ export function Schedules({
     )
       .then((value) => {
         if (!controller.signal.aborted) {
-          if (value.deleted) throw new Error("This task was deleted.");
-          setDetail({ key: selectedKey, value });
+          if (value.deleted) {
+            setDetail({
+              key: selectedKey,
+              value,
+              error: tr("This task was deleted."),
+            });
+            return;
+          }
+          setDetail((old) =>
+            old?.key === selectedKey &&
+            (old.value?.revision || 0) > value.revision
+              ? old
+              : { key: selectedKey, value },
+          );
         }
       })
       .catch((e) => {
         if (!controller.signal.aborted)
-          setDetail({ key: selectedKey, error: String(e) });
+          setDetail((old) => ({
+            key: selectedKey,
+            value:
+              e instanceof APIError &&
+              [401, 403, 404].includes(e.status) &&
+              navRef.current.scheduleMode !== "edit"
+                ? undefined
+                : old?.key === selectedKey
+                  ? old.value
+                  : undefined,
+            unavailable:
+              e instanceof APIError && [401, 403, 404].includes(e.status),
+            error: String(e),
+          }));
       });
     return () => controller.abort();
-  }, [selectedKey, nav.scheduleProject, nav.schedule, detailRefresh]);
+  }, [selectedKey, nav.scheduleProject, nav.schedule, detailRefresh, tr]);
   const listRef = useRef<HTMLDivElement>(null);
-  const memoryKey = JSON.stringify([
-    filter,
-    status,
-    nav.scheduleQuery || "",
-    after,
-  ]);
+  const memoryKey = listKey;
   useEffect(() => {
-    if (page?.key !== listKey || !listRef.current) return;
+    if (!listRef.current) return;
     listRef.current.scrollTop =
       listMemoryRef.current.key === memoryKey ? listMemoryRef.current.top : 0;
-  }, [page, listKey, memoryKey, listMemoryRef]);
-  const current = page?.key === listKey ? page : undefined;
+  }, [memoryKey, listMemoryRef]);
+  const current = {
+    value: { schedules: list.rows, next: list.next },
+    error: list.error ? String(list.error) : undefined,
+  };
   const selected = detail?.key === selectedKey ? detail : undefined;
-  const loading = !current;
+  const loading = list.loading;
   const creating = nav.scheduleMode === "create";
   const hasDetail = creating || !!selectedKey;
   const close = () =>
@@ -188,7 +281,7 @@ export function Schedules({
   const saved = (value: Schedule) => {
     setDetail({ key: `${value.project_id}:${value.id}`, value });
     setNotice(tr("Task saved."));
-    setRefresh((n) => n + 1);
+    void list.controller.refresh();
     onNavigate(
       {
         ...nav,
@@ -227,6 +320,31 @@ export function Schedules({
               {tr("Create task")}
             </button>
           </header>
+          <p
+            className={`schedule-sync schedule-sync-${syncHealth}`}
+            role="status"
+          >
+            {syncHealth === "live"
+              ? list.updating
+                ? tr("Syncing…")
+                : tr("Live")
+              : syncHealth === "stale"
+                ? tr("Offline. Updates will resume when you return.")
+                : syncHealth === "closed"
+                  ? tr("Updates may be delayed.")
+                  : syncHealth === "reconnecting"
+                    ? tr("Reconnecting…")
+                    : tr("Connecting…")}
+            {list.syncedAt && (
+              <span className="schedule-sync-time">
+                {tr("Last synced: {time}", {
+                  time: new Date(list.syncedAt).toLocaleTimeString(
+                    locale === "zh" ? "zh-CN" : "en-US",
+                  ),
+                })}
+              </span>
+            )}
+          </p>
           <div className="schedule-filters">
             <div className="row-actions" aria-label={tr("Task status")}>
               {([undefined, "enabled", "paused"] as const).map((value) => (
@@ -260,12 +378,6 @@ export function Schedules({
                 emptyOption={tr("All Projects")}
                 onChange={(id) => setFilter({ scheduleFilter: id })}
               />
-              <button
-                disabled={loading}
-                onClick={() => setRefresh((n) => n + 1)}
-              >
-                {tr("Refresh")}
-              </button>
             </div>
           </div>
           {notice && (
@@ -297,7 +409,7 @@ export function Schedules({
           {current?.error && (
             <p role="alert" className="notice error">
               {current.error}{" "}
-              <button onClick={() => setRefresh((n) => n + 1)}>
+              <button onClick={() => void list.controller.refresh()}>
                 {tr("Retry")}
               </button>
             </p>
@@ -313,108 +425,106 @@ export function Schedules({
             }}
           >
             {loading && <p role="status">{tr("Loading…")}</p>}
-            {current?.value?.schedules.map((s) => (
-              <div
-                key={s.id}
-                className={`schedule-row ${nav.schedule === s.id ? "selected" : ""}`}
-              >
-                {s.enabled ? <Clock3 size={19} /> : <Pause size={19} />}
-                <button
-                  className="schedule-description"
-                  aria-current={nav.schedule === s.id ? "page" : undefined}
-                  onClick={() =>
-                    onNavigate({
-                      ...nav,
-                      schedule: s.id,
-                      scheduleProject: s.project_id,
-                      scheduleMode: undefined,
-                    })
-                  }
-                >
-                  <strong>{s.title}</strong>
-                  <small>
-                    {!s.enabled && `${tr("Paused")} · `}
-                    <RecurrenceSummary cron={s.cron} timezone={s.timezone} />
-                  </small>
-                  {s.enabled && s.cron && s.next_at && (
-                    <small>
-                      {tr("Next run")}:{" "}
-                      {scheduleTime(s.next_at, s.timezone, locale)}
-                    </small>
-                  )}
-                  <small>
-                    {s.project_title} ·{" "}
-                    {s.session_id
-                      ? tr("Existing conversation")
-                      : tr("New conversation each run")}
-                  </small>
-                </button>
-                <Menu
-                  label={`${tr("Schedule actions")} ${s.title}`}
-                  items={[
-                    {
-                      label: tr("Edit task"),
-                      action: () =>
+            <ScheduleLoadEdge
+              enabled={!!list.previous && !list.error}
+              busy={list.updating}
+              onLoad={() => void list.controller.extend("previous")}
+              label={list.updating ? tr("Loading…") : tr("Load previous tasks")}
+            />
+            <ScheduleViewport
+              estimate={150}
+              rows={list.rows.map((s) => ({
+                id: s.id,
+                node: (
+                  <div
+                    key={s.id}
+                    className={`schedule-row ${nav.schedule === s.id ? "selected" : ""}`}
+                  >
+                    {s.enabled ? <Clock3 size={19} /> : <Pause size={19} />}
+                    <button
+                      className="schedule-description"
+                      aria-current={nav.schedule === s.id ? "page" : undefined}
+                      onClick={() =>
                         onNavigate({
                           ...nav,
                           schedule: s.id,
                           scheduleProject: s.project_id,
-                          scheduleMode: "edit",
-                        }),
-                    },
-                  ]}
-                />
-              </div>
-            ))}
-            {current?.value?.schedules.length === 0 && (
-              <div className="empty-state">
-                <Clock3 size={28} />
-                <p>
-                  {filter || status || nav.scheduleQuery
-                    ? tr("No matching tasks.")
-                    : tr("No scheduled tasks yet.")}
-                </p>
-                {(filter || status || nav.scheduleQuery) && (
-                  <button
-                    onClick={() =>
-                      setFilter({
-                        scheduleFilter: undefined,
-                        scheduleQuery: undefined,
-                        scheduleStatus: undefined,
-                      })
-                    }
-                  >
-                    {tr("Clear filters")}
-                  </button>
-                )}
-              </div>
-            )}
+                          scheduleMode: undefined,
+                        })
+                      }
+                    >
+                      <strong>{s.title}</strong>
+                      <small>
+                        {!s.enabled && `${tr("Paused")} · `}
+                        <RecurrenceSummary
+                          cron={s.cron}
+                          timezone={s.timezone}
+                        />
+                      </small>
+                      {s.enabled && s.cron && s.next_at && (
+                        <small>
+                          {tr("Next run")}:{" "}
+                          {scheduleTime(s.next_at, s.timezone, locale)}
+                        </small>
+                      )}
+                      <small>
+                        {s.project_title} ·{" "}
+                        {s.session_id
+                          ? tr("Existing conversation")
+                          : tr("New conversation each run")}
+                      </small>
+                    </button>
+                    <Menu
+                      label={`${tr("Schedule actions")} ${s.title}`}
+                      items={[
+                        {
+                          label: tr("Edit task"),
+                          action: () =>
+                            onNavigate({
+                              ...nav,
+                              schedule: s.id,
+                              scheduleProject: s.project_id,
+                              scheduleMode: "edit",
+                            }),
+                        },
+                      ]}
+                    />
+                  </div>
+                ),
+              }))}
+            />
+            <ScheduleLoadEdge
+              enabled={!!list.next && !list.error}
+              busy={list.updating}
+              onLoad={loadMore}
+              label={list.updating ? tr("Loading…") : tr("Load more tasks")}
+            />
+            {!loading &&
+              !list.error &&
+              current?.value?.schedules.length === 0 && (
+                <div className="empty-state">
+                  <Clock3 size={28} />
+                  <p>
+                    {filter || status || nav.scheduleQuery
+                      ? tr("No matching tasks.")
+                      : tr("No scheduled tasks yet.")}
+                  </p>
+                  {(filter || status || nav.scheduleQuery) && (
+                    <button
+                      onClick={() =>
+                        setFilter({
+                          scheduleFilter: undefined,
+                          scheduleQuery: undefined,
+                          scheduleStatus: undefined,
+                        })
+                      }
+                    >
+                      {tr("Clear filters")}
+                    </button>
+                  )}
+                </div>
+              )}
           </div>
-          <footer className="schedule-pages">
-            {after && (
-              <button
-                disabled={loading}
-                onClick={() =>
-                  onNavigate({ ...nav, scheduleAfter: undefined }, true)
-                }
-              >
-                {tr("First page")}
-              </button>
-            )}
-            {current?.value?.next && (
-              <button
-                disabled={loading}
-                onClick={() =>
-                  onNavigate(
-                    { ...nav, scheduleAfter: current.value!.next },
-                    true,
-                  )
-                }
-              >
-                {tr("Next page")}
-              </button>
-            )}
-          </footer>
         </section>
         <section
           className="schedule-detail-pane"
@@ -432,7 +542,10 @@ export function Schedules({
           ) : selectedKey ? (
             !selected ? (
               <p role="status">{tr("Loading…")}</p>
-            ) : selected.error ? (
+            ) : selected.error &&
+              (!selected.value ||
+                ((selected.value.deleted || selected.unavailable) &&
+                  nav.scheduleMode !== "edit")) ? (
               <div>
                 <button onClick={close}>{tr("Back to tasks")}</button>
                 <p role="alert">
@@ -446,10 +559,13 @@ export function Schedules({
               <SelectedSchedule
                 key={selectedKey}
                 schedule={selected.value}
+                readError={selected.error}
+                onRetry={() => setDetailRefresh((n) => n + 1)}
                 editing={nav.scheduleMode === "edit"}
                 projects={projects}
                 guardRef={guardRef}
                 runRequests={runRequests}
+                liveVersion={historyRefresh}
                 onEdit={() => onNavigate({ ...nav, scheduleMode: "edit" })}
                 onClose={close}
                 onCancel={() => onNavigate({ ...nav, scheduleMode: undefined })}
@@ -460,7 +576,7 @@ export function Schedules({
                     navRef.current.scheduleProject === value.project_id
                   )
                     setDetail({ key: selectedKey, value });
-                  setRefresh((n) => n + 1);
+                  void list.controller.refresh();
                 }}
                 onDeleted={() => {
                   if (
@@ -473,7 +589,7 @@ export function Schedules({
                       scheduleProject: undefined,
                       scheduleMode: undefined,
                     });
-                  setRefresh((n) => n + 1);
+                  void list.controller.refresh();
                 }}
                 onOpen={onOpen}
               />
@@ -489,12 +605,23 @@ export function Schedules({
   );
 }
 
+// Automatic status reads must never change any configuration used by an
+// in-progress edit. The editor's existing explicit conflict reconciliation owns
+// replacement of this baseline when saving.
+function ScheduleDraft(props: ComponentProps<typeof ScheduleEditor>) {
+  const [baseline] = useState(props.schedule);
+  return <ScheduleEditor {...props} schedule={baseline} />;
+}
+
 function SelectedSchedule({
   schedule,
   editing,
   projects,
   guardRef,
   runRequests,
+  liveVersion,
+  readError,
+  onRetry,
   onEdit,
   onClose,
   onCancel,
@@ -508,6 +635,9 @@ function SelectedSchedule({
   projects: Project[];
   guardRef: RefObject<() => Promise<boolean>>;
   runRequests: RefObject<Map<string, string>>;
+  liveVersion: number;
+  readError?: string;
+  onRetry: () => void;
   onEdit: () => void;
   onClose: () => void;
   onCancel: () => void;
@@ -626,8 +756,14 @@ function SelectedSchedule({
 
   return (
     <>
+      {readError && (
+        <p role="alert" className="notice error">
+          {tr("Updates may be delayed.")}{" "}
+          <button onClick={onRetry}>{tr("Retry")}</button>
+        </p>
+      )}
       {editing ? (
-        <ScheduleEditor
+        <ScheduleDraft
           schedule={schedule}
           projects={projects}
           defaultProject=""
@@ -708,13 +844,13 @@ function SelectedSchedule({
                   ? tr("Runs only when you choose Run now.")
                   : schedule.next_at
                     ? `${tr("Next run")}: ${scheduleTime(schedule.next_at, schedule.timezone, locale)}`
-                    : tr("Upcoming time is unavailable. Refresh the task.")}
+                    : tr("Upcoming time is unavailable. Reconnecting…")}
             </p>
             {schedule.enabled &&
               schedule.next_at &&
               Date.parse(schedule.next_at) <= now && (
                 <p>
-                  {tr("The planned time has passed. Refresh for an update.")}
+                  {tr("Waiting for the scheduler to confirm the next run…")}
                 </p>
               )}
           </section>
@@ -735,14 +871,6 @@ function SelectedSchedule({
           )}
           <footer className="schedule-footer">
             <button
-              disabled={busy}
-              onClick={() =>
-                void act(async () => onChanged(await api<Schedule>(path)))
-              }
-            >
-              {tr("Refresh task")}
-            </button>
-            <button
               className="primary"
               disabled={
                 busy ||
@@ -760,9 +888,10 @@ function SelectedSchedule({
         </div>
       )}
       <RunHistory
-        key={historyVersion}
+        key={schedule.id}
         schedule={schedule}
         version={historyVersion}
+        liveVersion={liveVersion}
         editing={editing}
         onOpen={onOpen}
       />
@@ -788,46 +917,93 @@ function Instructions({ text }: { text: string }) {
 function RunHistory({
   schedule,
   version,
+  liveVersion,
   editing,
   onOpen,
 }: {
   schedule: Schedule;
   version: number;
+  liveVersion: number;
   editing: boolean;
   onOpen: (p: string, s: string) => void;
 }) {
   const tr = useT(),
     locale = useLocale();
-  const [opened, setOpened] = useState(!editing),
-    [after, setAfter] = useState(""),
-    [refresh, setRefresh] = useState(0),
-    [expanded, setExpanded] = useState(false);
-  const [data, setData] = useState<{
-    key: string;
-    value?: ScheduleRunPage;
-    error?: string;
+  const [expanded, setExpanded] = useState(false);
+  const [pending, setPending] = useState<{
+    value: ScheduleRunPage;
+    count: number;
   }>();
-  const key = JSON.stringify([after, refresh, version]);
+  const [latest, setLatest] = useState<ScheduleRun[]>([]);
+  const [headError, setHeadError] = useState("");
+  const panel = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const knownHead = useRef<ScheduleRun[]>([]);
+  const history = useScheduleWindow<ScheduleRun, ScheduleRunPage>(
+    `${projectURL(schedule.project_id)}/schedules/${encode(schedule.id)}/runs`,
+    runsPage,
+  );
+  const change = `${version}:${liveVersion}`;
+  const applied = useRef(change);
   useEffect(() => {
-    if (!editing) void Promise.resolve().then(() => setOpened(true));
-  }, [editing]);
+    if (!history.previous && history.pages.length) {
+      knownHead.current = history.pages[0].rows;
+      void Promise.resolve().then(() => setLatest(history.pages[0].rows));
+    } else if (!expanded && history.previous)
+      void history.controller.refresh("");
+  }, [history.previous, history.pages, expanded, history.controller]);
   useEffect(() => {
-    if (!opened) return;
+    if (change === applied.current) return;
+    applied.current = change;
+    if (!expanded || (panel.current?.scrollTop || 0) <= 48) {
+      void history.controller.refresh();
+      return;
+    }
     const controller = new AbortController();
     void api<ScheduleRunPage>(
-      `${projectURL(schedule.project_id)}/schedules/${encode(schedule.id)}/runs?after=${encode(after)}&limit=50`,
+      `${projectURL(schedule.project_id)}/schedules/${encode(schedule.id)}/runs?limit=50`,
       { signal: controller.signal },
     )
       .then((value) => {
-        if (!controller.signal.aborted)
-          setData({ key, value: { ...value, runs: value.runs.slice(0, 50) } });
+        if (controller.signal.aborted) return;
+        if (
+          value.runs.length > 50 ||
+          JSON.stringify(value).length * 3 > 1024 * 1024
+        )
+          throw new Error("Run history exceeds its display budget.");
+        setPending({
+          value,
+          count: changedRuns(knownHead.current, value.runs),
+        });
+        setHeadError("");
       })
       .catch((e) => {
-        if (!controller.signal.aborted) setData({ key, error: String(e) });
+        if (!controller.signal.aborted) setHeadError(String(e));
       });
     return () => controller.abort();
-  }, [opened, schedule.project_id, schedule.id, after, refresh, version, key]);
-  const current = data?.key === key ? data : undefined;
+  }, [change, expanded, history.controller, schedule.project_id, schedule.id]);
+  const close = () => {
+    setExpanded(false);
+    toggleRef.current?.focus();
+  };
+  useEffect(() => {
+    if (!expanded) return;
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        document.querySelector('dialog[open],[role="menu"],[role="listbox"]')
+      )
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setExpanded(false);
+      toggleRef.current?.focus();
+    };
+    window.addEventListener("keydown", escape, true);
+    panel.current?.focus();
+    return () => window.removeEventListener("keydown", escape, true);
+  }, [expanded]);
   const label = (state: string) => {
     switch (state) {
       case "queued":
@@ -852,74 +1028,122 @@ function RunHistory({
         return tr("Outcome unknown");
     }
   };
+  const changes = pending?.count || 0;
+  const rows = expanded
+    ? history.rows
+    : (pending?.value.runs || latest).slice(0, 5);
+  const row = (run: ScheduleRun) => (
+    <article key={run.id}>
+      <span className={`schedule-run-state schedule-run-${run.state}`}>
+        {label(run.state)}
+      </span>
+      <time>
+        {run.due_at
+          ? `${tr("Scheduled trigger")}: ${scheduleTime(run.due_at, schedule.timezone, locale)}`
+          : tr("Manual run")}
+      </time>
+      <button onClick={() => onOpen(run.project_id, run.session_id)}>
+        {tr("Open conversation")}
+      </button>
+    </article>
+  );
   return (
-    <section className="run-history" aria-label={tr("Recent runs")}>
+    <section
+      className={`run-history ${expanded ? "history-expanded" : ""}`}
+      aria-label={tr("Recent runs")}
+    >
       <header>
         <h3>{tr("Recent runs")}</h3>
         <button
+          ref={toggleRef}
+          aria-expanded={expanded}
           onClick={() => {
-            setOpened(true);
-            setAfter("");
-            setRefresh((n) => n + 1);
+            if (expanded) close();
+            else {
+              setExpanded(true);
+              if (pending) {
+                history.controller.replace(runsPage(pending.value));
+                setPending(undefined);
+              }
+            }
           }}
-          disabled={opened && !current}
         >
-          {opened ? tr("Refresh history") : tr("Show history")}
+          {expanded ? tr("Close history") : tr("View full history")}
         </button>
       </header>
-      {opened && (
-        <>
-          {!current && <p role="status">{tr("Loading…")}</p>}
-          {current?.error && (
+      {expanded && (
+        <div className="history-panel">
+          {!!changes && (
+            <button
+              className="history-updates"
+              onClick={() => {
+                if (pending) {
+                  knownHead.current = pending.value.runs;
+                  history.controller.replace(runsPage(pending.value));
+                }
+                setPending(undefined);
+                requestAnimationFrame(() => {
+                  if (panel.current) panel.current.scrollTop = 0;
+                });
+              }}
+            >
+              {tr("{count} updates · Back to latest", { count: changes })}
+            </button>
+          )}
+          {!!(history.error || headError) && (
             <p role="alert">
               {tr("Could not load run history.")}{" "}
-              <button onClick={() => setRefresh((n) => n + 1)}>
+              <button
+                onClick={() => {
+                  applied.current = "";
+                  setHeadError("");
+                  void history.controller.refresh();
+                }}
+              >
                 {tr("Retry")}
               </button>
             </p>
           )}
-          {current?.value?.runs.length === 0 && <p>{tr("No runs yet.")}</p>}
-          {current?.value?.runs.slice(0, expanded ? 50 : 5).map((run) => (
-            <article key={run.id}>
-              <span>{label(run.state)}</span>
-              <time>
-                {run.due_at
-                  ? `${tr("Scheduled trigger")}: ${scheduleTime(run.due_at, schedule.timezone, locale)}`
-                  : tr("Manual run")}
-              </time>
-              <button onClick={() => onOpen(run.project_id, run.session_id)}>
-                {tr("Open conversation")}
-              </button>
-            </article>
-          ))}
-          {(current?.value?.runs.length || 0) > 5 && (
-            <button onClick={() => setExpanded((v) => !v)}>
-              {expanded ? tr("Show less") : tr("Show this page’s runs")}
-            </button>
-          )}
-          <div className="row-actions">
-            {after && (
-              <button
-                onClick={() => {
-                  setAfter("");
-                  setExpanded(false);
-                }}
-              >
-                {tr("First page")}
-              </button>
-            )}
-            {current?.value?.next && (
-              <button
-                onClick={() => {
-                  setAfter(current.value!.next!);
-                  setExpanded(false);
-                }}
-              >
-                {tr("Next page")}
-              </button>
-            )}
+          <div
+            className="run-history-scroll"
+            ref={panel}
+            tabIndex={0}
+            aria-label={tr("Run history")}
+          >
+            <ScheduleLoadEdge
+              enabled={!!history.previous && !history.error}
+              busy={history.updating}
+              onLoad={() => void history.controller.extend("previous")}
+              label={history.updating ? tr("Loading…") : tr("Load newer runs")}
+            />
+            <ScheduleViewport
+              estimate={64}
+              rows={rows.map((run) => ({ id: run.id, node: row(run) }))}
+            />
+            <ScheduleLoadEdge
+              enabled={!!history.next && !history.error}
+              busy={history.updating}
+              onLoad={() => void history.controller.extend("next")}
+              label={history.updating ? tr("Loading…") : tr("Load more runs")}
+            />
           </div>
-        </>
+        </div>
+      )}
+      {!expanded && rows.map(row)}
+      {history.loading && <p role="status">{tr("Loading…")}</p>}
+      {!history.loading && !history.error && history.rows.length === 0 && (
+        <p>{tr("No runs yet.")}</p>
+      )}
+      {!expanded && !!history.error && (
+        <p role="alert">
+          {tr("Could not load run history.")}{" "}
+          <button onClick={() => void history.controller.refresh()}>
+            {tr("Retry")}
+          </button>
+        </p>
+      )}
+      {editing && expanded && (
+        <small>{tr("History updates do not change your draft.")}</small>
       )}
     </section>
   );

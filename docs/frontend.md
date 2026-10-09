@@ -168,12 +168,23 @@ Task detail/create/edit and title/Project/status filters are explicit URL state,
 independent of the chat route. Browser history restores context; list position
 is retained in actor-scoped application memory. Reading and editing are distinct.
 
-The server filters and orders the overview before paging. The browser retains
-one 50-row metadata page (including Cron, never prompts), loads only the selected
-task's full instructions, and refreshes after its mutations or explicit Refresh.
-There is no overview polling or per-Project fan-out. Opaque cursors invalidated by
-concurrent changes restart at the first page with an explanation. Filter/detail
-changes cancel obsolete requests. Loading and failure are distinct from emptiness.
+The server filters and orders the overview before paging. Scheduled owns one
+owner-scoped metadata SSE transport, shared across consumers; it never opens
+per-Project file watchers or connections. Healthy connections perform no fixed
+list polling. Revision hints coalesce before authoritative reads; reconnect gaps
+and returning hidden tabs reconcile visible resources. Disconnected visible
+views fall back from five seconds to thirty seconds between reads.
+
+Overview and full run history load continuously in fifty-row batches with
+keyboard-accessible edge controls. Each retains five adjacent pages (at most
+250 rows and five estimated MiB); larger windows render only visible rows with
+overscan. Bidirectional opaque cursors reload evicted pages. Catalog changes
+invalidate continuation; a bounded anchor read reconciles the resident window
+rather than replaying all preceding pages. Transient failures keep readable
+content and expose Retry, while confirmed unavailable resources clear it.
+Selected full instructions never appear in overview or event replies. Background
+reads preserve visible row anchors and do not remount editors. Actor-scoped
+assembled windows share the application's bounded authenticated memory store.
 
 Creation defaults visibly to Daily 09:00 in the detected IANA timezone (UTC with
 an explanation if detection fails), using a new conversation each run. Daily,
@@ -213,8 +224,12 @@ claim to stop already admitted work.
 
 Conversation choices load only when targeting an existing conversation and retain
 at most 100 options plus an authorized selected lookup. History belongs to the
-selected task, retains at most 50 rows, and initially shows five; Next/First
-replace pages with explicit continuation. Scheduled-trigger timestamps are not
+selected task. Details show five recent rows; full history opens an independently
+scrolling panel, or a full-height drawer on narrow layouts. Reading older rows
+buffers authoritative head changes behind a counted Back to latest control,
+without changing scroll position. Escape closes history before navigating away
+from the task and returns keyboard focus. Full history uses the same bounded
+continuous window as the overview. Scheduled-trigger timestamps are not
 actual start times; manual runs have no invented timestamp. Unknown outcomes,
 history failures, empty history and paused/manual-only configurations stay distinct.
 Search, inbox, conversation grants and frozen public sharing remain supported;

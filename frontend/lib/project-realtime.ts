@@ -146,7 +146,7 @@ export class ProjectRealtime {
       return;
     const serial = ++e.serial,
       source = this.source(
-        `${projectURL(e.project)}/resources/events?cursor=${encodeURIComponent(e.cursor)}`,
+        `${e.project ? `${projectURL(e.project)}/resources/events` : "/api/schedules/events"}?cursor=${encodeURIComponent(e.cursor)}`,
       );
     e.source = source;
     this.setHealth(e, e.cursor ? "reconnecting" : "connecting");

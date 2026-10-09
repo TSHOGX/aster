@@ -346,7 +346,7 @@ export function recalled<T>(key: string, fallback: T): T {
 }
 
 export type ScheduleOverview = Pick<Schedule, "id" | "project_id" | "session_id" | "title" | "cron" | "timezone" | "enabled" | "next_at" | "revision"> & { project_title: string };
-export type SchedulePage = { schedules: ScheduleOverview[]; next?: string };
+export type SchedulePage = { schedules: ScheduleOverview[]; next?: string; previous?: string };
 
 export type TurnIndexItem = {
   id: string;
@@ -363,4 +363,4 @@ export type TurnIndexPage = {
 };
 
 export type SchedulePreview = { valid: boolean; cron: string; timezone: string; reference_time: string; occurrences: string[]; errors?: Record<string, string> };
-export type ScheduleRunPage = { runs: ScheduleRun[]; next?: string };
+export type ScheduleRunPage = { runs: ScheduleRun[]; next?: string; previous?: string };

@@ -26,6 +26,35 @@ func (s *Store) Events(ctx context.Context, scope Scope, after int64, limit int)
 	}
 	return out, rows.Err()
 }
+
+// ScheduleEventBounds and ScheduleEvents read the small durable Scheduled
+// outbox. Every query binds the authenticated owner, even during replay.
+func (s *Store) ScheduleEventBounds(ctx context.Context, actor string) (pruned, head int64, err error) {
+	if actor == "" {
+		return 0, 0, ErrNotFound
+	}
+	err = s.reader.QueryRowContext(ctx, `SELECT coalesce((SELECT retained_after FROM schedule_event_frontiers WHERE owner_id=?),0),coalesce((SELECT head FROM schedule_event_frontiers WHERE owner_id=?),0)`, actor, actor).Scan(&pruned, &head)
+	return
+}
+func (s *Store) ScheduleEvents(ctx context.Context, actor string, after int64, limit int) ([]ScheduleEvent, error) {
+	if actor == "" {
+		return nil, ErrNotFound
+	}
+	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,schedule_id,run_id,kind FROM schedule_events WHERE owner_id=? AND id>? ORDER BY id LIMIT ?`, actor, after, pageSize(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ScheduleEvent{}
+	for rows.Next() {
+		var e ScheduleEvent
+		if err := rows.Scan(&e.ID, &e.ProjectID, &e.ScheduleID, &e.RunID, &e.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
 func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, reader string) error {
 	if !validText(reader, 256) {
 		return ErrInvalid
