@@ -21,6 +21,7 @@ export function OfficeFrameContent() {
     if (!content || parent === window) return;
     let gone = false,
       started = false;
+    let currentSlide = 0;
     let dispose = () => {},
       resize = () => {};
     const send = (kind: string, extra = {}) =>
@@ -80,6 +81,7 @@ export function OfficeFrameContent() {
           navigate.current = (index) => {
             const next = Math.max(0, Math.min(view.slideCount - 1, index));
             view.renderSingleSlide(next);
+            currentSlide = next;
             content.dataset.slide = String(next);
             setSlides({ index: next, count: view.slideCount });
           };
@@ -144,6 +146,11 @@ export function OfficeFrameContent() {
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !event.defaultPrevented) send("escape");
+      if ((event.key === "ArrowRight" || event.key === "ArrowLeft") &&
+        !(event.target instanceof HTMLInputElement) && content.dataset.slide !== undefined) {
+        event.preventDefault();
+        navigate.current(currentSlide + (event.key === "ArrowRight" ? 1 : -1));
+      }
     };
     const resized = () => resize();
     const theme = (event: StorageEvent) => {
@@ -183,6 +190,15 @@ export function OfficeFrameContent() {
           <span aria-live="polite">
             {slides.index + 1} / {slides.count}
           </span>
+          <form onSubmit={event => {
+            event.preventDefault();
+            const value = Number(new FormData(event.currentTarget).get("slide"));
+            if (Number.isSafeInteger(value) && value >= 1 && value <= slides.count) navigate.current(value - 1);
+          }}>
+            <label htmlFor="office-slide-number">{tr("Slide number")}</label>
+            <input key={slides.index} id="office-slide-number" name="slide" type="number" min={1} max={slides.count} defaultValue={slides.index + 1} />
+            <button type="submit">{tr("Go to slide")}</button>
+          </form>
           <button
             data-preview-focus="next"
             disabled={slides.index + 1 >= slides.count}

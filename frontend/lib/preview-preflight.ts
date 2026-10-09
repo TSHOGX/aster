@@ -8,14 +8,20 @@ export type PreviewPlan = {
   pixels: number;
   cells: number;
   rows: number;
+  slides: number;
 };
 function requireLimit(valid: boolean): asserts valid {
   if (!valid) throw new PreviewFailure("container_invalid", "container");
 }
-function requireCapacity(actual: number, limit: number, metric: "bytes" | "entries" | "nodes" | "cells" | "rows" | "slides" | "pixels") {
+function requireCapacity(actual: number, limit: number, metric: "bytes" | "entries" | "nodes" | "cells" | "rows" | "columns" | "slides" | "pixels") {
   if (actual > limit) throw new PreviewFailure("content_limit", "parse", { actual, limit, metric });
 }
 const decoder = new TextDecoder("utf-8", { fatal: true });
+function decodeXML(bytes: Uint8Array) {
+  const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
+    : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+  return new TextDecoder(encoding, { fatal: true }).decode(bytes);
+}
 const word = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const sheet = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
@@ -24,7 +30,45 @@ export function imagePixels(bytes: Uint8Array): number {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let width = 0,
     height = 0;
-  if (
+  if (bytes.length >= 14 && ["GIF87a", "GIF89a"].includes(new TextDecoder().decode(bytes.subarray(0, 6)))) {
+    width = view.getUint16(6, true);
+    height = view.getUint16(8, true);
+    const skipBlocks = (from: number) => {
+      let offset = from;
+      for (;;) {
+        requireLimit(offset < bytes.length);
+        const length = bytes[offset++];
+        if (!length) return offset;
+        requireLimit(offset + length <= bytes.length);
+        offset += length;
+      }
+    };
+    let offset = 13 + (bytes[10] & 0x80 ? 3 * (1 << ((bytes[10] & 7) + 1)) : 0);
+    requireLimit(offset < bytes.length);
+    let frames = 0, trailer = false;
+    while (offset < bytes.length) {
+      const marker = bytes[offset++];
+      if (marker === 0x3b) { trailer = true; break; }
+      if (marker === 0x21) {
+        requireLimit(offset < bytes.length);
+        offset = skipBlocks(offset + 1);
+      } else if (marker === 0x2c) {
+        requireLimit(offset + 9 <= bytes.length);
+        requireLimit(
+          view.getUint16(offset, true) + view.getUint16(offset + 4, true) <= width &&
+          view.getUint16(offset + 2, true) + view.getUint16(offset + 6, true) <= height &&
+          view.getUint16(offset + 4, true) > 0 && view.getUint16(offset + 6, true) > 0,
+        );
+        const flags = bytes[offset + 8];
+        offset += 9 + (flags & 0x80 ? 3 * (1 << ((flags & 7) + 1)) : 0);
+        requireLimit(offset < bytes.length);
+        offset = skipBlocks(offset + 1); // LZW code size, then bounded subblocks.
+        frames++;
+      } else requireLimit(false);
+    }
+    requireLimit(trailer && offset === bytes.length && frames > 0);
+    if (frames > 1) throw new PreviewFailure("unsupported_feature", "parse");
+  } else if (
     bytes.length >= 33 &&
     view.getUint32(0) === 0x89504e47 &&
     view.getUint32(4) === 0x0d0a1a0a &&
@@ -120,7 +164,7 @@ function zipEntries(bytes: Uint8Array): Entry[] {
       view.getUint16(offset + 32, true);
     requireLimit(
       next <= end &&
-        (flags & ~0x808) === 0 &&
+        (flags & ~(method === 8 ? 0x80e : 0x808)) === 0 &&
         [0, 8].includes(method) &&
         local + 30 <= start,
     );
@@ -244,9 +288,9 @@ export async function preflightBytes(
   if (ext === "pdf") {
     // Rendering belongs to the browser's PDF viewer, never an HTML frame parser.
     requireLimit(/^%PDF-\d\.\d/.test(new TextDecoder().decode(bytes.subarray(0, 8))));
-    return { renderBytes: 0, expandedBytes: 0, nodes: 0, pixels: 0, cells: 0, rows: 0 };
+    return { renderBytes: 0, expandedBytes: 0, nodes: 0, pixels: 0, cells: 0, rows: 0, slides: 0 };
   }
-  if (["png", "jpg", "jpeg"].includes(ext || "")) {
+  if (["png", "jpg", "jpeg", "gif"].includes(ext || "")) {
     const pixels = imagePixels(bytes);
     return {
       renderBytes: pixels * 4,
@@ -255,6 +299,7 @@ export async function preflightBytes(
       pixels,
       cells: 0,
       rows: 0,
+      slides: 0,
     };
   }
   if (!["xlsx", "docx", "pptx"].includes(ext || ""))
@@ -279,7 +324,7 @@ export async function preflightBytes(
     paragraphs = 0,
     pages = 1;
   requireCapacity(entries.filter((e) => /^xl\/worksheets\/[^/]+\.xml$/.test(e.name)).length, LIMIT.sheets, "entries");
-  requireCapacity(entries.filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.name)).length, LIMIT.slides, "slides");
+  const slides = entries.filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.name)).length;
   for (const entry of entries) {
     const data = await expand(bytes, entry, signal);
     expandedBytes += data.length;
@@ -288,7 +333,7 @@ export async function preflightBytes(
       continue;
     }
     if (/\.(xml|rels)$/.test(entry.name)) {
-      const xml = decoder.decode(data);
+      const xml = decodeXML(data);
       requireLimit(!/<!DOCTYPE|<!ENTITY/i.test(xml));
       const parser = new SaxesParser({ xmlns: true });
       let depth = 0;
@@ -309,12 +354,11 @@ export async function preflightBytes(
             requireCapacity(++rows, LIMIT.rows, "rows");
             requireCapacity(Number(attr("r") || 0), LIMIT.rows, "rows");
           }
-          if (tag === "col")
-            requireLimit(
-              Number(attr("min")) >= 1 &&
-                Number(attr("max")) <= LIMIT.columns &&
-                Number(attr("width") || 0) <= 256,
-            );
+          if (tag === "col") {
+            requireLimit(Number(attr("min")) >= 1 && Number.isSafeInteger(Number(attr("max"))) &&
+              Number(attr("max")) >= Number(attr("min")) && Number(attr("width") || 0) <= 256);
+            requireCapacity(Number(attr("max")), LIMIT.columns, "columns");
+          }
           if (
             tag === "c" ||
             tag === "dimension" ||
@@ -328,11 +372,9 @@ export async function preflightBytes(
               let column = 0;
               for (const char of match[1])
                 column = column * 26 + char.charCodeAt(0) - 64;
-              requireLimit(
-                column <= LIMIT.columns &&
-                  Number(match[2]) <= LIMIT.rows &&
-                  column * Number(match[2]) <= LIMIT.cells,
-              );
+              requireCapacity(column, LIMIT.columns, "columns");
+              requireCapacity(Number(match[2]), LIMIT.rows, "rows");
+              requireCapacity(column * Number(match[2]), LIMIT.cells, "cells");
             }
           }
         }
@@ -358,7 +400,7 @@ export async function preflightBytes(
       });
       parser.write(xml).close();
     } else if (
-      /^(ppt|xl)\/printerSettings\/printerSettings\d+\.bin$/.test(entry.name)
+      /^(ppt|xl|word)\/printerSettings\/printerSettings\d+\.bin$/.test(entry.name)
     ) {
       // Bounded opaque printer metadata is not used by the preview libraries.
       continue;
@@ -381,7 +423,7 @@ export async function preflightBytes(
     } else {
       // Thumbnails are decoded only after the same pixel checks. Nested archives,
       // OLE objects, macros and fonts need a separately qualified adapter.
-      requireLimit(/\.(png|jpe?g)$/.test(entry.name));
+      requireLimit(/\.(png|jpe?g|gif)$/.test(entry.name));
       pixels += imagePixels(data);
       requireLimit(pixels <= LIMIT.totalPixels);
     }
@@ -389,5 +431,5 @@ export async function preflightBytes(
   const renderBytes =
     expandedBytes * 4 + nodes * 128 + cells * 256 + pixels * 4;
   requireCapacity(renderBytes, LIMIT.renderBytes, "bytes");
-  return { renderBytes, expandedBytes, nodes, pixels, cells, rows };
+  return { renderBytes, expandedBytes, nodes, pixels, cells, rows, slides };
 }

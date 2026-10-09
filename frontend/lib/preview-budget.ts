@@ -12,7 +12,6 @@ export const PREVIEW_LIMITS = Object.freeze({
   rows: 2000,
   columns: 256,
   sheets: 8,
-  slides: 40,
   paragraphs: 2000,
   pages: 100,
   imagePixels: 16_000_000,
@@ -30,7 +29,7 @@ export type PreviewFailureData = {
   stage: PreviewFailureStage;
   actual?: number;
   limit?: number;
-  metric?: "bytes" | "entries" | "nodes" | "cells" | "rows" | "slides" | "pixels" | "frames" | "parses";
+  metric?: "bytes" | "entries" | "nodes" | "cells" | "rows" | "columns" | "slides" | "pixels" | "frames" | "parses";
   retryable: boolean;
 };
 
@@ -68,7 +67,7 @@ export function previewFailureFromWire(value: unknown): PreviewFailure {
     retryable: data.retryable === true,
     actual: Number.isSafeInteger(data.actual) && (data.actual ?? -1) >= 0 ? data.actual : undefined,
     limit: Number.isSafeInteger(data.limit) && (data.limit ?? -1) >= 0 ? data.limit : undefined,
-    metric: ["bytes", "entries", "nodes", "cells", "rows", "slides", "pixels", "frames", "parses"].includes(data.metric ?? "") ? data.metric : undefined,
+    metric: ["bytes", "entries", "nodes", "cells", "rows", "columns", "slides", "pixels", "frames", "parses"].includes(data.metric ?? "") ? data.metric : undefined,
   });
 }
 

@@ -67,7 +67,7 @@ missing-file errors are immediate. Writes are never automatically repeated.
 
 Workspace links reveal ancestor directories; on mobile the tree folds away after
 selection. Files support watches, upload, download, mutation, text editing and
-bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG, XLSX,
+bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG/static GIF, XLSX,
 DOCX, PPTX and native browser PDF previews. All preview reads allow up to 20 MiB.
 Read-only source uses one continuous CodeMirror viewport with line numbers, find,
 jump-to-line and model-backed selection/copy. XML and YAML use lazy grammars for
@@ -86,7 +86,10 @@ renderer owns a disposable browser document; the old document stays readable
 until its prepared replacement is ready. Cancel, timeout and explicit retry keep
 that displayed version. Frame removal releases the renderer's URLs and global
 handlers. Presentation controls support keyboard navigation, localized labels,
-reading-position restoration, theme updates and Escape back to the workspace.
+direct slide jumps, reading-position restoration, theme updates and Escape back
+to the workspace. Simple presentations with 200 slides can reach the final slide;
+ZIP expansion, XML, image and renderer budgets still apply independently of
+the slide count.
 Markdown, HTML, CSV/TSV and JSON expose a keyboard-accessible Preview/Source
 control when both modes are available. Switching uses the same captured bytes
 without fetching again. HTML
@@ -102,7 +105,7 @@ of at most 1 MiB, with no NUL bytes. Binary, unsupported and oversized inputs ha
 no misleading edit action. Source remains read-only; editing is an explicit mode
 with the existing Save/Discard protection for unsaved changes.
 
-See [preview budgets and qualification](performance.md#preview-admission-and-validation).
+See [preview contracts and qualification](file-preview/README.md).
 
 Text/code/Markdown previews up to 256 KiB can reopen from the authenticated memory
 cache while fresh bytes are authorized and checked. A validation notice identifies

@@ -112,7 +112,7 @@ export function FilePreview({
       if (abort.signal.aborted) return;
       let plan;
       if (
-        /\.(png|jpe?g|pdf|xlsx|docx|pptx)$/i.test(path)
+        /\.(png|jpe?g|gif|pdf|xlsx|docx|pptx)$/i.test(path)
       ) {
         const releaseParse = await acquirePreviewParse(abort.signal);
         let releaseBuffers = () => {};
@@ -225,7 +225,7 @@ function previewFailureMessage(error: PreviewFailure, tr: ReturnType<typeof useT
     case "container_invalid": return tr("This file is damaged or has an invalid structure. Download the original or try another copy.");
     case "unsupported_feature": return tr("This file uses a feature this preview cannot display. Download it to open in another app.");
     case "content_limit": return tr("This file has more {metric} than this preview can process ({actual} of {limit}). Download it to read the complete file.", {
-      metric: tr(({ bytes: "Preview bytes", entries: "Preview entries", nodes: "Preview nodes", cells: "Preview cells", rows: "Preview rows", slides: "Preview slides", pixels: "Preview pixels", frames: "Preview frames", parses: "Preview parses" } as const)[error.metric ?? "nodes"]),
+      metric: tr(({ bytes: "Preview bytes", entries: "Preview entries", nodes: "Preview nodes", cells: "Preview cells", rows: "Preview rows", columns: "Preview columns", slides: "Preview slides", pixels: "Preview pixels", frames: "Preview frames", parses: "Preview parses" } as const)[error.metric ?? "nodes"]),
       actual: error.actual ?? "?", limit: error.limit ?? "?",
     });
     case "resource_busy": return tr("Preview resources are busy. Try again in a moment.");

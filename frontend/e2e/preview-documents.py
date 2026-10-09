@@ -1,7 +1,7 @@
 """Bounded synthetic Office fixtures; python-docx 1.2 / openpyxl 3.1 / python-pptx 1.0.
 
 Usage: python preview-documents.py OUTPUT_DIRECTORY
-Maximum generated workload: 20k cells, 1k paragraphs, 40 slides; no user content.
+Maximum generated workload: 20k cells, 1k paragraphs, 200 slides; no user content.
 """
 import hashlib
 import io
@@ -63,6 +63,14 @@ for size in ['small', 'large']:
         slide.shapes.title.text = f'Measured slide {i}'
         slide.placeholders[1].text = 'Battery measurements and 中文 text.'
     save(slides, f'{size}.pptx')
+
+for count in [41, 200]:
+    slides = Presentation()
+    for i in range(count):
+        slide = slides.slides.add_slide(slides.slide_layouts[1])
+        slide.shapes.title.text = f'Measured slide {i}'
+        slide.placeholders[1].text = 'Battery measurements and 中文 text.'
+    save(slides, f'{count}-slides.pptx')
 
 for state in ['charts', 'charts-updated']:
     book = Workbook()

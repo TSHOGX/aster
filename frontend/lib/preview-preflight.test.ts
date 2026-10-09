@@ -127,20 +127,43 @@ it("accepts PDFs at the 20 MiB boundary and rejects larger PDFs", async () => {
 it("admits ordinary 12 megapixel images within the expanded pixel budget", () => {
   expect(imagePixels(png(4000, 3000))).toBe(12_000_000);
 });
+it("admits bounded static GIFs and rejects animated GIFs explicitly", () => {
+  const gif = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACAUwAOw==", "base64");
+  expect(imagePixels(gif)).toBe(1);
+  const extraFrame = Buffer.concat([gif.subarray(0, gif.length - 1), gif.subarray(13, gif.length)]);
+  expect(() => imagePixels(extraFrame)).toThrow("unsupported_feature");
+});
+it("accepts legal deflate options, UTF-16 XML and bounded Word printer metadata", async () => {
+  const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(workbook, "utf16le")]);
+  const archive = zipFixture([
+    { name: "xl/workbook.xml", bytes: utf16, flags: 2 },
+    { name: "xl/worksheets/sheet1.xml", text: sheet("<sheetData/>"), flags: 4 },
+  ]);
+  await expect(preflightPreview(new Blob([new Uint8Array(archive)]), "test.xlsx", new AbortController().signal))
+    .resolves.toMatchObject({ cells: 0 });
+  const document = zipFixture([
+    { name: "word/document.xml", text: '<document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>' },
+    { name: "word/printerSettings/printerSettings1.bin", bytes: Buffer.from([1, 2, 3]) },
+  ]);
+  await expect(preflightPreview(new Blob([new Uint8Array(document)]), "test.docx", new AbortController().signal))
+    .resolves.toMatchObject({ nodes: 1 });
+});
 it("admits larger Office XML entries while retaining structural limits", async () => {
   await expect(check([{ name: "xl/workbook.xml", text: workbook.replace("/>", ">" + " ".repeat(5 * 1024 * 1024) + "</workbook>") }])).resolves.toMatchObject({ cells: 0 });
 });
 
-it("distinguishes corrupt containers, unsupported formats, and slide capacity", async () => {
+it("distinguishes corrupt containers and unsupported formats while admitting simple 200-slide decks", async () => {
   const signal = new AbortController().signal;
   await expect(preflightPreview(new Blob(["broken"]), "report.pptx", signal))
     .rejects.toMatchObject({ code: "container_invalid", stage: "container" });
   await expect(preflightPreview(new Blob(["broken"]), "report.xls", signal))
     .rejects.toMatchObject({ code: "unsupported_feature", stage: "parse" });
-  const entries = [
-    { name: "ppt/presentation.xml", text: "<presentation/>" },
-    ...Array.from({ length: 41 }, (_, i) => ({ name: `ppt/slides/slide${i + 1}.xml`, text: "<slide/>" })),
-  ];
-  await expect(preflightPreview(new Blob([new Uint8Array(zipFixture(entries))]), "report.pptx", signal))
-    .rejects.toMatchObject({ code: "content_limit", metric: "slides", actual: 41, limit: 40 });
+  for (const count of [40, 41, 200]) {
+    const entries = [
+      { name: "ppt/presentation.xml", text: "<presentation/>" },
+      ...Array.from({ length: count }, (_, i) => ({ name: `ppt/slides/slide${i + 1}.xml`, text: "<slide/>" })),
+    ];
+    await expect(preflightPreview(new Blob([new Uint8Array(zipFixture(entries))]), "report.pptx", signal))
+      .resolves.toMatchObject({ slides: count });
+  }
 });
