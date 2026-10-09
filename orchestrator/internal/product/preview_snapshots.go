@@ -256,3 +256,16 @@ func (s *PreviewSnapshots) Close() {
 	s.mu.Unlock()
 	s.group.Wait()
 }
+
+type PreviewSourceStats struct {
+	Leases    int   `json:"leases"`
+	Capturing int   `json:"capturing"`
+	Bytes     int64 `json:"bytes"`
+	Limit     int64 `json:"limit"`
+}
+
+func (s *PreviewSnapshots) Stats() PreviewSourceStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return PreviewSourceStats{Leases: len(s.leases), Capturing: len(s.pending), Bytes: s.bytes, Limit: MaxPreviewSnapshotBytes}
+}

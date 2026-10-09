@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { imagePixels, preflightPreview } from "./preview-preflight";
+import { imagePixels, preflightBytes, preflightPreview } from "./preview-preflight";
 import { zipFixture } from "../e2e/zip-fixture";
 
 function png(width: number, height: number) {
@@ -49,10 +49,11 @@ const workbook =
 const sheet = (content: string) =>
   `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${content}</worksheet>`;
 const check = (entries: Parameters<typeof zipFixture>[0]) =>
-  preflightPreview(
-    new Blob([new Uint8Array(zipFixture(entries))]),
+  preflightBytes(
+    new Uint8Array(zipFixture(entries)),
     "test.xlsx",
     new AbortController().signal,
+    true,
   );
 it("validates actual cells and rejects sparse dimensions that would allocate huge grids", async () => {
   const base = { name: "xl/workbook.xml", text: workbook };
@@ -133,20 +134,15 @@ it("admits bounded static GIFs and rejects animated GIFs explicitly", () => {
   const extraFrame = Buffer.concat([gif.subarray(0, gif.length - 1), gif.subarray(13, gif.length)]);
   expect(() => imagePixels(extraFrame)).toThrow("unsupported_feature");
 });
-it("accepts legal deflate options, UTF-16 XML and bounded Word printer metadata", async () => {
+it("accepts legal deflate options and UTF-16 embedded workbook XML", async () => {
   const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(workbook, "utf16le")]);
   const archive = zipFixture([
     { name: "xl/workbook.xml", bytes: utf16, flags: 2 },
     { name: "xl/worksheets/sheet1.xml", text: sheet("<sheetData/>"), flags: 4 },
   ]);
-  await expect(preflightPreview(new Blob([new Uint8Array(archive)]), "test.xlsx", new AbortController().signal))
+  await expect(preflightBytes(new Uint8Array(archive), "test.xlsx", new AbortController().signal, true))
     .resolves.toMatchObject({ cells: 0 });
-  const document = zipFixture([
-    { name: "word/document.xml", text: '<document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>' },
-    { name: "word/printerSettings/printerSettings1.bin", bytes: Buffer.from([1, 2, 3]) },
-  ]);
-  await expect(preflightPreview(new Blob([new Uint8Array(document)]), "test.docx", new AbortController().signal))
-    .resolves.toMatchObject({ nodes: 1 });
+  for(const path of ["test.xlsx","test.docx"])await expect(preflightPreview(new Blob([new Uint8Array(archive)]),path,new AbortController().signal)).rejects.toMatchObject({code:"unsupported_feature"});
 });
 it("admits larger Office XML entries while retaining structural limits", async () => {
   await expect(check([{ name: "xl/workbook.xml", text: workbook.replace("/>", ">" + " ".repeat(5 * 1024 * 1024) + "</workbook>") }])).resolves.toMatchObject({ cells: 0 });

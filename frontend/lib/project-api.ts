@@ -165,7 +165,7 @@ export class APIError extends Error {
   constructor(
     public status: number,
     message: string,
-    public outcome?: { id?: string; state?: string; error?: string },
+    public outcome?: { id?: string; state?: string; error?: string; code?: string },
   ) {
     super(message);
   }

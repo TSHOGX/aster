@@ -39,9 +39,16 @@ Office reading adapter. A job is keyed by actor scope, Project, source digest,
 adapter version, and format; concurrent requests reuse one conversion. The worker receives
 one immutable source and a private output directory, has no network, Agent,
 application database, cookies, or host paths, and is bounded by CPU, address space,
-temporary disk, output size, and a 45-second deadline. `GET …/files/previews` returns
+temporary disk, output size, and a 45-second deadline. Admission allows two
+simultaneous workers, 16 resident jobs, 64 consumer leases, and 512 MiB aggregate
+source/output reservations. Scratch tmpfs is 64 MiB per worker; output files are
+128 MiB maximum. Source admission is at most 100 MiB; ZIP expansion is 256 MiB,
+entries 4,096, XML nodes 4 million, XML depth 64, populated spreadsheet cells
+1 million, and reading records 100,000 per sheet. `GET …/files/previews` returns
 an expiring job lease; status reports `indexing`, `ready`, or a structured failure.
-Windows contain at most 100 block/row records and carry total count and coverage;
+Windows contain at most 100 block/row records, cap response bytes at 2 MiB, and
+carry source digest, range, total count and coverage. Spreadsheet requests can
+select bounded column tiles instead of sending complete rows to the browser;
 find and rectangular copy operate on the same index. Copy is bounded to 1,000
 records, 256 columns, and 1 MiB. Cancellation or the final lease release kills
 the process and removes source, SQLite, and temporary files. Jobs do not resume
@@ -55,7 +62,8 @@ DOCX/XLSX browser DOMs mount at most 28 records and 14 visible spreadsheet colum
 selected values remain readable in a plain textarea. Sheet/outline navigation,
 full-index find, direct record jumps, adjacent scrolling, and cross-window copy
 do not require the original visual renderer. Reopening restores a digest-scoped
-semantic bookmark; refresh preserves displayed content until the replacement's
+semantic bookmark; same-digest validation preserves subsequent user navigation,
+and refresh preserves displayed content until the replacement's
 initial window is ready. Public frozen shares use these same readers and check
 current share authority on every request. The former docx-preview and Excel DOM/
 canvas libraries and retry-on-drawing parser have been removed.
@@ -72,3 +80,50 @@ canvas libraries and retry-on-drawing parser have been removed.
 The required workload is the actual sample structures plus adversarial boundaries around 8 KiB, 256 KiB, 1 MiB, and 20 MiB. Include malformed ZIP, CRC and length mismatches, XML entities and depth, sparse coordinates, long lines, UTF boundaries, multi-line syntax, script loops, rapid switching, revocation, pause, and cancellation. Verify full-content reachability, semantic find and copy, keyboard and screen-reader paths, 390 px and 200% zoom layouts, repeated open/close cleanup, and stable DOM and memory growth. Candidate latency and 50–150 MB targets remain measurements until production build, device, and trial protocol are fixed.
 
 Implementation order: shared diagnostics and public corpus; continuous source and Office admission; HTML modes and tree windows; snapshots and derived jobs; large DOCX/XLSX models; end-to-end pressure and accessibility qualification. Each stage removes the legacy path it replaces and updates tests and documentation in the same commit.
+
+## Delivered behavior and qualification
+
+The delivered reader architecture uses continuous source, static HTML, a
+single-slide presentation adapter, isolated DOCX block/table-row indexes, sparse
+XLSX tiles, immutable source leases, and a virtual file tree. The old text-section
+UI, directory replacement pager, browser Word renderer, and browser spreadsheet
+renderer are removed. There is no compatibility switch back to those paths.
+Runtime reader protocol 3 is required; rebuild the immutable runtime image when
+adopting this release. Candidate bundles include the companion preview worker
+and third-party notices. Installation requires `bwrap` and `prlimit`.
+
+The current release contract is a simplified reading representation for Word and
+workbooks. It preserves complete body/table text and populated spreadsheet data,
+while original page layout, images/drawings, animation, editing, and recalculation
+belong to the downloaded original. Sheet manifests retain merge/frozen-pane
+metadata; the data viewer does not reproduce original worksheet layout. Nested
+Word tables retain their text inside the containing cell. Semantic bookmarks
+contain positions/digests, are scoped by authenticated actor, and never retain
+file text. HTML scripts execute only outside the workspace through Download.
+
+Qualification performed on 2026-10-09 with the local Linux arm64 Go/Node toolchains,
+Next 16.3.5 production build, and Playwright Chromium:
+
+| Check | Result and scope |
+| --- | --- |
+| Frontend lint/typecheck/build | Passed |
+| Vitest | 221 tests passed; one opt-in instrumentation test skipped |
+| Production UI suite | 189 passed; 28 explicitly optional performance profiles skipped |
+| Final adapter/accessibility checks | 20 passed after the final window and diagnostic changes |
+| Backend/source gates | Build, vet, ordinary Go tests, isolated worker test, integration compilation, document/lockfile/shell/candidate checks passed |
+| Core race gate | Product, Agent runner, and runtime release passed |
+| 50 open/close/navigation/theme cycles | Passed; DOM nodes and listeners stayed at 1,175 and 529 in quiescent snapshots, with zero Office frames and one active text URL |
+| Actual Word/workbook sample indexing | Complete 3,599 semantic Word records and 22,962 worksheet rows; final records remain queryable |
+| Synthetic corpus | 15,599 Word paragraphs/3,000 table rows; 275,544 worksheet cells; 200 slides; end access/find/copy/mobile tests passed |
+
+The actual Word/workbook samples indexed in roughly 0.38/1.71 seconds in single
+local worker trials. These are feasibility observations, not production p95 or
+RSS guarantees. Browser UI fixtures exercise real derived models and controlled
+API responses; they do not certify a live deployment or production network.
+The installed project was not modified or restarted during this refactor.
+
+Candidate source windows beyond 20 MiB, server Office-to-PDF layout conversion,
+in-app HTML scripting, and a persistent metadata search index remain separate
+product extensions. The current implementation exposes its limits and fidelity
+explicitly instead of admitting those workloads through an unbounded legacy
+renderer. No supported file is rewritten by preview, derivation, or fallback.

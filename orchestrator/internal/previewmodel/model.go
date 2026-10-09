@@ -62,6 +62,7 @@ type Item struct {
 	Heading  bool   `json:"heading,omitempty"`
 }
 type Window struct {
+	Digest   string `json:"digest"`
 	Start    int    `json:"start"`
 	Total    int    `json:"total"`
 	Coverage string `json:"coverage"`
@@ -197,7 +198,7 @@ func Build(ctx context.Context, source, output, kind string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(ctx, `PRAGMA journal_mode=OFF; PRAGMA cache_size=-4096; CREATE TABLE items(sheet INTEGER,position INTEGER,row INTEGER,text TEXT,data TEXT,PRIMARY KEY(sheet,position)); CREATE TABLE metadata(data TEXT);`)
+	_, err = db.ExecContext(ctx, `PRAGMA journal_mode=OFF; PRAGMA cache_size=-4096; CREATE TABLE items(sheet INTEGER,position INTEGER,row INTEGER,text TEXT,data TEXT,PRIMARY KEY(sheet,position)); CREATE INDEX item_rows ON items(sheet,row); CREATE TABLE metadata(data TEXT);`)
 	if err != nil {
 		return err
 	}
@@ -442,6 +443,7 @@ func sheetMetadata(source string, index int, sheet *Sheet) (map[int]map[int]stri
 	}
 	defer closer.Close()
 	formulas := map[int]map[int]string{}
+	formulaCount, formulaBytes := 0, 0
 	axis, formula, field := "", "", ""
 	cached := false
 	for {
@@ -479,6 +481,9 @@ func sheetMetadata(source string, index int, sheet *Sheet) (map[int]map[int]stri
 		case xml.CharData:
 			if field == "f" {
 				formula += string(t)
+				if len(formula) > 64<<10 {
+					return nil, ErrLimit
+				}
 			} else if field == "v" && len(t) > 0 {
 				cached = true
 			}
@@ -487,6 +492,11 @@ func sheetMetadata(source string, index int, sheet *Sheet) (map[int]map[int]stri
 				field = ""
 			}
 			if t.Name.Local == "c" && formula != "" && !cached {
+				formulaCount++
+				formulaBytes += len(formula)
+				if formulaCount > 1_000_000 || formulaBytes > 16<<20 {
+					return nil, ErrLimit
+				}
 				col, row, e := excelize.CellNameToCoordinates(axis)
 				if e != nil {
 					return nil, ErrInvalid
@@ -512,8 +522,13 @@ func buildDocument(ctx context.Context, file *os.File, manifest *Manifest, put f
 	}
 	sheet := Sheet{Name: "Document", Columns: 1}
 	found := false
+	parts := map[string]*zip.File{}
 	for _, entry := range archive.File {
-		if entry.Name != "word/document.xml" && entry.Name != "word/footnotes.xml" && entry.Name != "word/endnotes.xml" {
+		parts[entry.Name] = entry
+	}
+	for _, name := range []string{"word/document.xml", "word/footnotes.xml", "word/endnotes.xml"} {
+		entry := parts[name]
+		if entry == nil {
 			continue
 		}
 		if entry.Name == "word/document.xml" {
@@ -527,6 +542,10 @@ func buildDocument(ctx context.Context, file *os.File, manifest *Manifest, put f
 		var paragraph strings.Builder
 		var row *Item
 		var cell *Cell
+		var nested []struct {
+			row  *Item
+			cell *Cell
+		}
 		inText, heading := false, false
 		emit := func(item Item) error {
 			item.Position = sheet.Count
@@ -564,8 +583,15 @@ func buildDocument(ctx context.Context, file *os.File, manifest *Manifest, put f
 				switch t.Name.Local {
 				case "tr":
 					if row != nil {
-						reader.Close()
-						return ErrUnsupported
+						if cell == nil {
+							reader.Close()
+							return ErrInvalid
+						}
+						nested = append(nested, struct {
+							row  *Item
+							cell *Cell
+						}{row, cell})
+						cell = nil
 					}
 					row = &Item{Cells: []Cell{}}
 				case "tc":
@@ -573,7 +599,11 @@ func buildDocument(ctx context.Context, file *os.File, manifest *Manifest, put f
 						reader.Close()
 						return ErrInvalid
 					}
-					cell = &Cell{Column: len(row.Cells), Span: 1}
+					column := 0
+					for _, existing := range row.Cells {
+						column += max(1, existing.Span)
+					}
+					cell = &Cell{Column: column, Span: 1}
 				case "p":
 					paragraph.Reset()
 					heading = false
@@ -642,12 +672,24 @@ func buildDocument(ctx context.Context, file *os.File, manifest *Manifest, put f
 						return ErrInvalid
 					}
 					row.Cells = append(row.Cells, *cell)
-					sheet.Columns = max(sheet.Columns, len(row.Cells))
+					sheet.Columns = max(sheet.Columns, cell.Column+max(1, cell.Span))
 					cell = nil
 				case "tr":
 					if row == nil {
 						reader.Close()
 						return ErrInvalid
+					}
+					if len(nested) > 0 {
+						parent := nested[len(nested)-1]
+						nested = nested[:len(nested)-1]
+						for _, c := range row.Cells {
+							if parent.cell.Text != "" {
+								parent.cell.Text += "\n"
+							}
+							parent.cell.Text += c.Text
+						}
+						row, cell = parent.row, parent.cell
+						continue
 					}
 					if e = emit(*row); e != nil {
 						reader.Close()
@@ -684,8 +726,14 @@ func ReadManifest(ctx context.Context, db *sql.DB) (Manifest, error) {
 	return manifest, err
 }
 func ReadWindow(ctx context.Context, db *sql.DB, sheet, start, limit int) (Window, error) {
+	return ReadTile(ctx, db, sheet, start, limit, -1, 0)
+}
+func ReadTile(ctx context.Context, db *sql.DB, sheet, start, limit, fromColumn, columns int) (Window, error) {
 	window := Window{Start: start, Coverage: "complete", Items: []Item{}}
 	if sheet < 0 || start < 0 || limit < 1 || limit > 100 {
+		return window, ErrInvalid
+	}
+	if fromColumn < -1 || fromColumn > 16_383 || (fromColumn >= 0 && (columns < 1 || columns > 64)) {
 		return window, ErrInvalid
 	}
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM items WHERE sheet=?`, sheet).Scan(&window.Total); err != nil {
@@ -702,14 +750,27 @@ func ReadWindow(ctx context.Context, db *sql.DB, sheet, start, limit int) (Windo
 		if err = rows.Scan(&raw); err != nil {
 			return window, err
 		}
-		bytes += len(raw)
-		if bytes > 2<<20 {
-			return window, ErrLimit
-		}
 		var item Item
 		if err = json.Unmarshal([]byte(raw), &item); err != nil {
 			return window, err
 		}
+		if fromColumn >= 0 && item.Cells != nil {
+			visible := []Cell{}
+			for _, cell := range item.Cells {
+				if cell.Column >= fromColumn && cell.Column < fromColumn+columns {
+					visible = append(visible, cell)
+				}
+			}
+			item.Cells = visible
+		}
+		encoded, e := json.Marshal(item)
+		if e != nil {
+			return window, e
+		}
+		if bytes+len(encoded) > 2<<20 {
+			break
+		}
+		bytes += len(encoded)
 		window.Items = append(window.Items, item)
 	}
 	return window, rows.Err()
@@ -771,4 +832,16 @@ func Copy(ctx context.Context, db *sql.DB, sheet, start, end, fromColumn, toColu
 		}
 	}
 	return text.String(), rows.Err()
+}
+
+func LocateRow(ctx context.Context, db *sql.DB, sheet, row int) (int, error) {
+	if sheet < 0 || row < 1 || row > 1_048_576 {
+		return -1, ErrInvalid
+	}
+	var position int
+	err := db.QueryRowContext(ctx, `SELECT position FROM items WHERE sheet=? AND row>=? ORDER BY row LIMIT 1`, sheet, row).Scan(&position)
+	if errors.Is(err, sql.ErrNoRows) {
+		return -1, nil
+	}
+	return position, err
 }

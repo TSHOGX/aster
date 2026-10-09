@@ -53,7 +53,11 @@ the actual preview worker and derives SQLite fixtures from these documents.
 `office-reading.spec.ts` checks end reachability, find, bounded DOM, mobile fit,
 and lease cleanup. `PREVIEW_TEST_WORKER=/absolute/path/to/preview-worker go test
 ./internal/product -run TestPreviewJobs` exercises the real Linux process sandbox,
-deduplication, range windows and cleanup; it requires `bwrap` and `prlimit`.
+deduplication, range windows, share revocation and cleanup; it requires `bwrap`
+and `prlimit` and runs in `scripts/check.sh backend`. Frontend fixture derivation
+requires the Go toolchain as well as Python. The 50-cycle lifecycle profile is
+explicitly enabled with `PREVIEW_PROFILE_OUTPUT`; it checks heap/DOM/listener/
+frame/URL trends rather than interpreting reservations as measured memory.
 Run
 `npx playwright test --config playwright.ui.config.ts e2e/ui/preview-slides.spec.ts`
 from `frontend/` after building to verify direct navigation through each deck.

@@ -32,6 +32,8 @@ func httpCategory(r *http.Request) string {
 	}
 	p := r.URL.Path
 	switch {
+	case strings.Contains(p, "/files/previews"), strings.Contains(p, "/files/snapshots"):
+		return "preview"
 	case strings.HasSuffix(p, "/events"), strings.HasSuffix(p, "/watch"):
 		return "events"
 	case strings.HasSuffix(p, "/attach"):

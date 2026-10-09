@@ -214,7 +214,7 @@ func (s *Server) previewJobWindow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	window, err := jobs.Window(r.Context(), s.scope(r), r.PathValue("preview"), intParam(q, "sheet", 0), intParam(q, "start", 0), intParam(q, "limit", 100))
+	window, err := jobs.Tile(r.Context(), s.scope(r), r.PathValue("preview"), intParam(q, "sheet", 0), intParam(q, "start", 0), intParam(q, "limit", 100), intParam(q, "from_column", -1), intParam(q, "columns", 0))
 	if err != nil {
 		fail(w, err)
 		return
@@ -302,7 +302,23 @@ func (s *Server) publicPreview(w http.ResponseWriter, r *http.Request) {
 		s.previewJobFind(w, r)
 	case "copy":
 		s.previewJobCopy(w, r)
+	case "locate":
+		s.previewJobLocate(w, r)
 	default:
 		writeError(w, 404, "not found")
 	}
+}
+
+func (s *Server) previewJobLocate(w http.ResponseWriter, r *http.Request) {
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	position, err := jobs.LocateRow(r.Context(), s.scope(r), r.PathValue("preview"), intParam(q, "sheet", 0), intParam(q, "row", 1))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]int{"position": position})
 }

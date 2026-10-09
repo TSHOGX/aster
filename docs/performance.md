@@ -35,6 +35,14 @@ Large files use capped captures and explicit downloads. Cold workspace reads use
 volume APIs without activating compute. A warmed Project reader remains reusable
 without turning each read into a mutation ledger.
 
+Preview ranges use immutable snapshot leases so one version is captured/hashed
+once. DOCX/XLSX indexes run in independent constrained processes; browser DOM
+scales with visible records/columns. Admission reserves source/output bytes
+against a 512 MiB aggregate derived-job quota, independent of download and browser
+reservations. Counters and lifecycle tests do not measure actual RSS; inspect
+process/heap trends and cancellation on the target device. HTTP metrics label
+snapshot/job requests as `preview` without paths, tokens, or source bodies.
+
 ## Measurement
 
 Use `go test` scale and pressure tests for indexed query and queue behavior,

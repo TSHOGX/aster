@@ -18,6 +18,9 @@
 .office-reading-selection > div { display:flex;flex-wrap:wrap;gap:8px;padding:8px 0; }
 .office-reading-selection label { display:flex;gap:4px;align-items:center; }
 .office-reading-selection input { width:80px; }
+.office-reading-column-headings { height:26px;flex:0 0 26px;overflow:hidden;border-bottom:1px solid var(--color-border);background:var(--color-surface-muted); }
+.office-reading-column-headings > div { position:relative;height:26px; }
+.office-reading-column-headings span { position:absolute;text-align:center;font-size:12px;padding:4px;border-right:1px solid var(--color-border); }
 /* Application chrome uses quiet surfaces; content establishes the hierarchy. */
 .project-shell,
 .project-login,

@@ -12,6 +12,7 @@ export const ZH: Record<MessageKey, string> = {
   "Spreadsheet data view": "表格数据视图",
   "Complete text and data; layout and drawings are simplified.": "完整文字与数据；排版和图形已简化。",
   "Go to record": "跳转到记录",
+  "Go to cell": "跳转到单元格",
   "Find next": "查找下一个",
   "Record {current} of {total}": "第 {current} 条，共 {total} 条",
   "No matches in this file.": "文件中没有匹配内容。",
@@ -39,6 +40,7 @@ export const ZH: Record<MessageKey, string> = {
   "Elapsed minutes are unaffected by timezone or daylight saving. Preview times for a new timer are estimates until saved.": "分钟间隔不受时区或夏令时影响。新计时器的预览时间为估计值，保存后确定。",
 
   "Preview unavailable": "暂时无法预览",
+  "This preview expired. Retry to read the current file.": "此预览已过期。请重试以读取当前文件。",
   "Download file": "下载文件",
   "Preview files up to {size}": "支持预览最大 {size} 的文件",
   "File too large to preview": "文件超出预览大小上限",

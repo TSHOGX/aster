@@ -60,6 +60,8 @@ jobs:
         run: scripts/fetch-go-dependencies.sh
       - name: Install pinned native Session test dependencies
         run: npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
+      - name: Install preview process isolation
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap util-linux
       - run: scripts/check.sh backend
       - name: Core race checks (main and explicit qualification)
         if: github.event_name != 'pull_request'
@@ -70,6 +72,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version

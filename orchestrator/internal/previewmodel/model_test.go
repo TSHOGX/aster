@@ -151,6 +151,18 @@ func TestSparseWorkbookMergeFreezeAndFormula(t *testing.T) {
 	if err != nil || window.Items[0].Row != 1000 || window.Items[0].Cells[0].Text != "=SUM(A2:A3)" {
 		t.Fatal(window, err)
 	}
+	position, err := LocateRow(context.Background(), db, 0, 1000)
+	if err != nil || position != 1 {
+		t.Fatal(position, err)
+	}
+	tile, err := ReadTile(context.Background(), db, 0, 0, 100, 25, 1)
+	if err != nil || len(tile.Items[0].Cells) != 0 || len(tile.Items[1].Cells) != 1 || tile.Items[1].Cells[0].Column != 25 {
+		t.Fatal(tile, err)
+	}
+	_, err = ReadTile(context.Background(), db, 0, 0, 100, 0, 65)
+	if err != ErrInvalid {
+		t.Fatal("unbounded tile admitted", err)
+	}
 }
 func TestRejectEntitiesBeforeModelAndHonorCancellation(t *testing.T) {
 	if err := Build(context.Background(), document(t, `<!DOCTYPE x [<!ENTITY y "bad">]><w:p/>`), t.TempDir(), "docx"); err != ErrInvalid {
@@ -160,5 +172,25 @@ func TestRejectEntitiesBeforeModelAndHonorCancellation(t *testing.T) {
 	cancel()
 	if err := Build(canceled, document(t, `<w:p/>`), t.TempDir(), "docx"); err == nil {
 		t.Fatal("ignored cancellation")
+	}
+}
+
+func TestNestedAndMergedDocumentTablesKeepAllText(t *testing.T) {
+	body := `<w:tbl><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Outer</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Nested value</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:tc><w:tc><w:p><w:r><w:t>Final cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>`
+	out := t.TempDir()
+	if err := Build(context.Background(), document(t, body), out, "docx"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	window, err := ReadWindow(context.Background(), db, 0, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.Items[0].Cells[0].Text != "Outer\nNested value" || window.Items[0].Cells[1].Column != 2 {
+		t.Fatal(window)
 	}
 }

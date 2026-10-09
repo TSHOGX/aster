@@ -12,6 +12,13 @@ Run Next.js, the owner and any service gateway under independent supervision
 with explicit state, configuration and credential paths. Use the release
 commands below for orderly updates.
 
+Build the companion reading parser with `CGO_ENABLED=0 go -C orchestrator build
+-o bin/preview-worker ./cmd/preview-worker` and keep it beside `orchestrator`.
+Install `bubblewrap` and util-linux `prlimit`; the application refuses to derive
+Office models without process isolation. Preview indexes are temporary host data
+under the protected application state directory and are reclaimed on release,
+expiry, cancellation and restart. They are independent of the project Agent.
+
 ```sh
 cd frontend
 npm ci
@@ -66,7 +73,9 @@ orchestrator notify --socket /var/lib/batterygpt/control.sock --audience researc
 ```
 
 Diagnostics report resource counts, occupied Projects, pending work and database
-bytes. Network diagnostics distinguish accepted defaults and the last reload
+bytes. Preview diagnostics expose snapshot leases/bytes and running/resident job
+counts with reserved disk bytes; these counts do not expose source paths/tokens.
+Network diagnostics distinguish accepted defaults and the last reload
 result from each Project’s effective policy revision and pending change. Reload
 errors leave accepted defaults intact. Network edits are also detected every two
 seconds; they take effect only at creation/resume, without stopping live work.

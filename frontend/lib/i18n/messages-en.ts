@@ -11,6 +11,7 @@ export const EN = {
   "Spreadsheet data view": "Spreadsheet data view",
   "Complete text and data; layout and drawings are simplified.": "Complete text and data; layout and drawings are simplified.",
   "Go to record": "Go to record",
+  "Go to cell": "Go to cell",
   "Find next": "Find next",
   "Record {current} of {total}": "Record {current} of {total}",
   "No matches in this file.": "No matches in this file.",
@@ -38,6 +39,7 @@ export const EN = {
   "Elapsed minutes are unaffected by timezone or daylight saving. Preview times for a new timer are estimates until saved.": "Elapsed minutes are unaffected by timezone or daylight saving. Preview times for a new timer are estimates until saved.",
 
   "Preview unavailable": "Preview unavailable",
+  "This preview expired. Retry to read the current file.": "This preview expired. Retry to read the current file.",
   "Download file": "Download file",
   "Preview files up to {size}": "Preview files up to {size}",
   "File too large to preview": "File too large to preview",

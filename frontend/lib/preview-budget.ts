@@ -12,8 +12,6 @@ export const PREVIEW_LIMITS = Object.freeze({
   rows: 2000,
   columns: 256,
   sheets: 8,
-  paragraphs: 2000,
-  pages: 100,
   imagePixels: 16_000_000,
   totalPixels: 24_000_000,
   renderers: 2,

@@ -22,7 +22,6 @@ function decodeXML(bytes: Uint8Array) {
     : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
   return new TextDecoder(encoding, { fatal: true }).decode(bytes);
 }
-const word = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const sheet = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
 /** Read dimensions without letting the browser allocate decoded pixel buffers. */
@@ -302,7 +301,7 @@ export async function preflightBytes(
       slides: 0,
     };
   }
-  if (!["xlsx", "docx", "pptx"].includes(ext || ""))
+  if (ext !== "pptx" && !(nested && ext === "xlsx"))
     throw new PreviewFailure("unsupported_feature", "parse");
   const entries = zipEntries(bytes);
   requireLimit(
@@ -311,18 +310,14 @@ export async function preflightBytes(
         e.name ===
         (ext === "xlsx"
           ? "xl/workbook.xml"
-          : ext === "docx"
-            ? "word/document.xml"
-            : "ppt/presentation.xml"),
+          : "ppt/presentation.xml"),
     ),
   );
   let nodes = 0,
     pixels = 0,
     expandedBytes = 0,
     cells = 0,
-    rows = 0,
-    paragraphs = 0,
-    pages = 1;
+    rows = 0;
   requireCapacity(entries.filter((e) => /^xl\/worksheets\/[^/]+\.xml$/.test(e.name)).length, LIMIT.sheets, "entries");
   const slides = entries.filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.name)).length;
   for (const entry of entries) {
@@ -378,17 +373,6 @@ export async function preflightBytes(
             }
           }
         }
-        if (element.uri === word) {
-          if (tag === "p") requireCapacity(++paragraphs, LIMIT.paragraphs, "nodes");
-          const pageBreak =
-            tag === "br" &&
-            Object.values(element.attributes).some(
-              (a) => a.uri === word && a.local === "type" && a.value === "page",
-            );
-          if (tag === "sectPr" || tag === "lastRenderedPageBreak" || pageBreak)
-            requireCapacity(++pages, LIMIT.pages, "nodes");
-          requireLimit(tag !== "altChunk");
-        }
         if (tag === "Relationship")
           requireLimit(
             attr("TargetMode") !== "External" ||
@@ -400,7 +384,7 @@ export async function preflightBytes(
       });
       parser.write(xml).close();
     } else if (
-      /^(ppt|xl|word)\/printerSettings\/printerSettings\d+\.bin$/.test(entry.name)
+      /^(ppt|xl)\/printerSettings\/printerSettings\d+\.bin$/.test(entry.name)
     ) {
       // Bounded opaque printer metadata is not used by the preview libraries.
       continue;

@@ -864,6 +864,7 @@ export function FilesPanel({
                   disabled: busy || !filesAvailable,
                   action: editFile,
                 }] : []),
+                { label: tr("Refresh"), action: refresh },
                 { label: tr("Close file"), action: () => void choose("") },
               ]}
             />

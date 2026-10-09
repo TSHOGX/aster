@@ -106,6 +106,9 @@ func TestPreviewJobsIsolationWindowsDeduplicationAndCleanup(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatal("derived artifacts leaked", entries)
 	}
+	if stats := jobs.Stats(); stats.Bytes != 0 || stats.Resident != 0 || stats.Running != 0 || stats.Leases != 0 {
+		t.Fatal("leaked job quota", stats)
+	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = jobs.Status(canceled, scope, second.ID)

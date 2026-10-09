@@ -31,6 +31,7 @@ type previewJob struct {
 	refs           int
 	cancel         context.CancelFunc
 	ready          chan struct{}
+	reserved       int64
 }
 type previewJobLease struct {
 	scope Scope
@@ -50,6 +51,7 @@ type PreviewJobs struct {
 	closed    bool
 	group     sync.WaitGroup
 	running   int
+	bytes     int64
 }
 
 func (p *PreviewJobs) Open(ctx context.Context, scope Scope, snapshot, kind string) (PreviewJobStatus, error) {
@@ -86,6 +88,9 @@ func (p *PreviewJobs) openSource(ctx context.Context, scope Scope, descriptor Pr
 			release()
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return PreviewJobStatus{}, err
+	}
 	if kind != "docx" && kind != "xlsx" {
 		return PreviewJobStatus{}, previewmodel.ErrUnsupported
 	}
@@ -104,7 +109,8 @@ func (p *PreviewJobs) openSource(ctx context.Context, scope Scope, descriptor Pr
 	}
 	job := p.jobs[key]
 	if job == nil {
-		if len(p.jobs) >= 16 || p.running >= 2 {
+		reservation := previewmodel.MaxOutputBytes + descriptor.Size
+		if len(p.jobs) >= 16 || p.running >= 2 || p.bytes+reservation > 512<<20 {
 			return PreviewJobStatus{}, ErrCapacity
 		}
 		if err := os.MkdirAll(p.Directory, 0700); err != nil {
@@ -115,7 +121,8 @@ func (p *PreviewJobs) openSource(ctx context.Context, scope Scope, descriptor Pr
 			return PreviewJobStatus{}, e
 		}
 		jobCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		job = &previewJob{PreviewJobStatus: PreviewJobStatus{Digest: descriptor.Digest, State: "indexing"}, key: key, directory: directory, cancel: cancel, ready: make(chan struct{})}
+		job = &previewJob{PreviewJobStatus: PreviewJobStatus{Digest: descriptor.Digest, State: "indexing"}, key: key, directory: directory, cancel: cancel, ready: make(chan struct{}), reserved: reservation}
+		p.bytes += reservation
 		p.jobs[key] = job
 		p.running++
 		transferred = true
@@ -168,6 +175,22 @@ func (p *PreviewJobs) run(ctx context.Context, job *previewJob, reader io.Reader
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.running--
+	// Release the source reservation and retain only verified model bytes. The
+	// aggregate quota applies to both preparing and resident jobs.
+	retained := int64(0)
+	if err == nil {
+		if info, e := os.Stat(filepath.Join(job.directory, "model.sqlite")); e == nil {
+			retained = info.Size()
+		} else {
+			failure = "renderer_failed"
+			if db != nil {
+				db.Close()
+				db = nil
+			}
+		}
+	}
+	p.bytes -= job.reserved - retained
+	job.reserved = retained
 	close(job.ready)
 	if job.refs == 0 || p.closed {
 		if db != nil {
@@ -175,6 +198,7 @@ func (p *PreviewJobs) run(ctx context.Context, job *previewJob, reader io.Reader
 		}
 		os.RemoveAll(job.directory)
 		delete(p.jobs, job.key)
+		p.bytes -= job.reserved
 		return
 	}
 	job.db = db
@@ -259,6 +283,9 @@ func (p *PreviewJobs) Status(ctx context.Context, scope Scope, id string) (Previ
 	return status, nil
 }
 func (p *PreviewJobs) Window(ctx context.Context, scope Scope, id string, sheet, start, limit int) (previewmodel.Window, error) {
+	return p.Tile(ctx, scope, id, sheet, start, limit, -1, 0)
+}
+func (p *PreviewJobs) Tile(ctx context.Context, scope Scope, id string, sheet, start, limit, fromColumn, columns int) (previewmodel.Window, error) {
 	job, release, err := p.acquire(ctx, scope, id)
 	if err != nil {
 		return previewmodel.Window{}, err
@@ -270,7 +297,9 @@ func (p *PreviewJobs) Window(ctx context.Context, scope Scope, id string, sheet,
 	if db == nil {
 		return previewmodel.Window{}, p.jobError(job)
 	}
-	return previewmodel.ReadWindow(ctx, db, sheet, start, limit)
+	window, err := previewmodel.ReadTile(ctx, db, sheet, start, limit, fromColumn, columns)
+	window.Digest = job.Digest
+	return window, err
 }
 func (p *PreviewJobs) Find(ctx context.Context, scope Scope, id string, sheet, start int, query string) (int, error) {
 	job, release, err := p.acquire(ctx, scope, id)
@@ -318,6 +347,21 @@ func (p *PreviewJobs) Copy(ctx context.Context, scope Scope, id string, sheet, s
 	}
 	return previewmodel.Copy(ctx, db, sheet, start, end, fromColumn, toColumn)
 }
+
+func (p *PreviewJobs) LocateRow(ctx context.Context, scope Scope, id string, sheet, row int) (int, error) {
+	job, release, err := p.acquire(ctx, scope, id)
+	if err != nil {
+		return -1, err
+	}
+	defer release()
+	p.mu.Lock()
+	db := job.db
+	p.mu.Unlock()
+	if db == nil {
+		return -1, p.jobError(job)
+	}
+	return previewmodel.LocateRow(ctx, db, sheet, row)
+}
 func (p *PreviewJobs) drop(job *previewJob) {
 	job.refs--
 	if job.refs != 0 {
@@ -331,6 +375,7 @@ func (p *PreviewJobs) drop(job *previewJob) {
 		}
 		os.RemoveAll(job.directory)
 		delete(p.jobs, job.key)
+		p.bytes -= job.reserved
 	default:
 	}
 }
@@ -381,4 +426,18 @@ func (p *PreviewJobs) Close() {
 	}
 	p.mu.Unlock()
 	p.group.Wait()
+}
+
+type PreviewJobStats struct {
+	Running  int   `json:"running"`
+	Resident int   `json:"resident"`
+	Leases   int   `json:"leases"`
+	Bytes    int64 `json:"reserved_bytes"`
+	Limit    int64 `json:"byte_limit"`
+}
+
+func (p *PreviewJobs) Stats() PreviewJobStats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return PreviewJobStats{Running: p.running, Resident: len(p.jobs), Leases: len(p.leases), Bytes: p.bytes, Limit: 512 << 20}
 }

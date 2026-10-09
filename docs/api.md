@@ -70,9 +70,13 @@ and lifecycle behavior.
 Office reading uses `GET …/files/previews?path=RELATIVE_PATH&kind=docx|xlsx&max_bytes=N`.
 Status contains `id`, immutable `digest`, `state` (`indexing`, `ready`, `failed`),
 and a complete model manifest or bounded `failure` code. Poll `GET …/files/previews/{id}`;
-read `/window?sheet=0&start=0&limit=100`, find `/find?sheet=0&start=0&q=TEXT`, or
+read `/window?sheet=0&start=0&limit=100` (optional `from_column` and up to 64
+`columns` for sparse tiles), find `/find?sheet=0&start=0&q=TEXT`, or
 copy `/copy?sheet=0&start=0&end=99&from_column=0&to_column=11`. Window records use
-zero-based model positions and original worksheet row coordinates. Copy caps
+zero-based model positions, source `digest`, and original worksheet row coordinates.
+`/locate?sheet=0&row=1000` finds a model position for a natural worksheet row.
+Responses cap 2 MiB and retain a reliable total even when the returned range is
+shorter than the requested transport window. Copy caps
 1,000 records, 256 columns and 1 MiB. `DELETE …/files/previews/{id}` releases the
 consumer. Public frozen shares use the same suffixes under `/api/shared/{token}`
 and revalidate that share on every operation. Revocation/rotation denies old job

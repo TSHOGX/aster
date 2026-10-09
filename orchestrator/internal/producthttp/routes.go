@@ -69,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{project}/files/previews/{preview}/window", s.previewJobWindow)
 	mux.HandleFunc("GET /api/projects/{project}/files/previews/{preview}/find", s.previewJobFind)
 	mux.HandleFunc("GET /api/projects/{project}/files/previews/{preview}/copy", s.previewJobCopy)
+	mux.HandleFunc("GET /api/projects/{project}/files/previews/{preview}/locate", s.previewJobLocate)
 	mux.HandleFunc("DELETE /api/projects/{project}/files/previews/{preview}", s.releasePreviewJob)
 	mux.HandleFunc("GET /api/projects/{project}/files/content", s.readFile)
 	mux.HandleFunc("PUT /api/projects/{project}/files/content", s.writeFile)
