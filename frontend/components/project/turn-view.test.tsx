@@ -22,3 +22,16 @@ test("continued segments are successful boundaries, not unknown outcomes", () =>
   expect(html).not.toContain("Outcome unknown");
   expect(html).toContain("Worked for 2s");
 });
+
+test("continued segments retain tool activity after a steer boundary", () => {
+  const turn = conversationTurns(
+    [
+      { id: "user", turn_id: "prompt", segment_id: "segment", kind: "user", content: "input", cursor: 1 },
+      { id: "tool", turn_id: "prompt", segment_id: "segment", kind: "tool", name: "bash", state: "completed", cursor: 2 },
+      { id: "answer", turn_id: "prompt", segment_id: "segment", kind: "assistant", content: "answer", message_id: "answer", cursor: 3 },
+    ],
+    [{ id: "prompt", segment_id: "segment", run_id: "run", state: "continued", created_at: "2026-09-24T00:00:00Z", finished_at: "2026-09-24T00:00:02Z", elapsed_ms: 2000, final_message_id: "answer" }],
+  )[0];
+  const html = renderToStaticMarkup(<TurnView turn={turn} files={[]} activeRuns={new Set(["run"])} loadMessage={async () => "answer"} loadDetail={async () => ""} actor="a" project="p" session="s" targetMessage="" />);
+  expect(html).toContain('data-timeline-id="tool"');
+});

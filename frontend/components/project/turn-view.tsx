@@ -160,6 +160,10 @@ export function TurnView({
           ? tr("Outcome unknown")
           : "";
   const [expanded, setExpanded] = useState(false);
+  // A Steer closes the current native segment as `continued`. Keep that
+  // segment open when the boundary arrives so its activity does not vanish
+  // from a live transcript; the user can still fold it afterwards.
+  const [continuedCollapsed, setContinuedCollapsed] = useState(false);
   const [collapsedTarget, setCollapsedTarget] = useState("");
   const [copied, setCopied] = useState(false),
     [copyError, setCopyError] = useState(false);
@@ -178,9 +182,11 @@ export function TurnView({
       (!!targetItem && i.id === targetItem),
   );
   const targetKey = targetItem || targetMessage;
+  const continued = summary?.state === "continued";
   const open =
     !completed ||
     expanded ||
+    (continued && !continuedCollapsed) ||
     (targetInHistory && collapsedTarget !== targetKey);
   const running = !!turn.summary && runningTurn(summary!.state);
   const vote = (value: "up" | "down") => {
@@ -235,6 +241,7 @@ export function TurnView({
             disabled={!completed || !intermediate.length}
             onClick={() => {
               setExpanded(!open);
+              if (continued) setContinuedCollapsed(open);
               if (open) setCollapsedTarget(targetKey);
             }}
           >
