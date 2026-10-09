@@ -10,7 +10,7 @@ export function previewSize(bytes: number) {
     : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 }
 
-export function PreviewStatus({ path, href, title, description, loading = false, size, progress, onCancel, onRetry }: {
+export function PreviewStatus({ path, href, title, description, loading = false, size, progress, onCancel, onRetry, maxBytes=PREVIEW_LIMITS.blobBytes }: {
   path: string;
   href: string;
   title: string;
@@ -20,6 +20,7 @@ export function PreviewStatus({ path, href, title, description, loading = false,
   progress?: { received: number; total?: number };
   onCancel?: () => void;
   onRetry?: () => void;
+  maxBytes?: number;
 }) {
   const tr = useT();
   const percent = progress?.total ? Math.min(100, Math.floor(progress.received / progress.total * 100)) : undefined;
@@ -45,7 +46,7 @@ export function PreviewStatus({ path, href, title, description, loading = false,
         {onCancel && <button onClick={onCancel}><X size={16} aria-hidden="true" />{tr("Cancel preview")}</button>}
         {onRetry && <button onClick={onRetry}><RotateCcw size={16} aria-hidden="true" />{tr("Retry")}</button>}
       </div>
-      <small className="preview-status-footnote">{tr("Preview files up to {size}", { size: previewSize(PREVIEW_LIMITS.blobBytes) })}</small>
+      <small className="preview-status-footnote">{tr("Preview files up to {size}", { size: previewSize(maxBytes) })}</small>
     </div>
   </div>;
 }

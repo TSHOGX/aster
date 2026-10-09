@@ -46,7 +46,13 @@ limits, bounded scratch storage, and no application/Agent authority. ZIP CRC,
 expanded lengths, entry paths/duplicates, XML entities/depth, model records and
 output bytes are checked before derived content becomes readable. Every derived
 window and public-share access reauthorizes its source scope. Presentations use a
-separate disposable browser renderer. HTML previews
+separate opaque-origin browser renderer with `sandbox="allow-scripts"`. The
+presentation page CSP blocks networking, forms, nested frames, and objects;
+only static application assets and embedded images/fonts are admitted. Parent
+and child exchange validated content, theme and bounded position messages using
+the expected window identity; neither side reads the other's DOM or storage.
+Public static assets expose CORS for the opaque renderer, never API responses.
+HTML previews
 use a separate opaque-origin iframe with an empty `sandbox` and no
 same-origin, popup, form or top-navigation permission. A leading CSP allows only
 inline styles and embedded image/font data; scripts, network connections, nested

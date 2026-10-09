@@ -8,7 +8,6 @@ import {
 import { PREVIEW_LIMITS } from "@/lib/preview-budget";
 import { useT } from "@/lib/i18n";
 import styles from "./office-frame-content.module.css";
-import { setTheme, THEME_STORAGE_KEY } from "@/lib/theme";
 
 /** No authority or file fetching lives here; the admitted parent transfers bytes. */
 export function OfficeFrameContent() {
@@ -25,10 +24,7 @@ export function OfficeFrameContent() {
     let dispose = () => {},
       resize = () => {};
     const send = (kind: string, extra = {}) =>
-      parent.postMessage(
-        { channel: OFFICE_CHANNEL, kind, ...extra },
-        location.origin,
-      );
+      parent.postMessage({ channel: OFFICE_CHANNEL, kind, ...extra }, "*");
     const stage = document.createElement("div");
     stage.style.height = "100%";
     content.appendChild(stage);
@@ -52,6 +48,13 @@ export function OfficeFrameContent() {
             currentSlide = next;
             content.dataset.slide = String(next);
             setSlides({ index: next, count: view.slideCount });
+            send("position", {
+              position: {
+                top: content.scrollTop,
+                left: content.scrollLeft,
+                slide: next,
+              },
+            });
           };
           navigate.current(0);
           resize = () => {
@@ -110,35 +113,49 @@ export function OfficeFrameContent() {
               target.focus({ preventScroll: true });
             else content.focus({ preventScroll: true });
           });
+      } else if (
+        event.data.kind === "theme" &&
+        (event.data.theme === "dark" || event.data.theme === "light")
+      ) {
+        document.documentElement.dataset.theme = event.data.theme;
       }
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !event.defaultPrevented) send("escape");
-      if ((event.key === "ArrowRight" || event.key === "ArrowLeft") &&
-        !(event.target instanceof HTMLInputElement) && content.dataset.slide !== undefined) {
+      if (
+        (event.key === "ArrowRight" || event.key === "ArrowLeft") &&
+        !(event.target instanceof HTMLInputElement) &&
+        content.dataset.slide !== undefined
+      ) {
         event.preventDefault();
         navigate.current(currentSlide + (event.key === "ArrowRight" ? 1 : -1));
       }
     };
     const resized = () => resize();
-    const theme = (event: StorageEvent) => {
-      if (
-        event.key === THEME_STORAGE_KEY &&
-        (event.newValue === "light" || event.newValue === "dark")
-      )
-        setTheme(event.newValue);
-    };
+    const position = () =>
+      send("position", {
+        position: {
+          top: content.scrollTop,
+          left: content.scrollLeft,
+          slide: currentSlide,
+          focus:
+            document.activeElement?.getAttribute("data-preview-focus") ||
+            undefined,
+        },
+      });
     window.addEventListener("message", message);
     window.addEventListener("keydown", escape);
     window.addEventListener("resize", resized);
-    window.addEventListener("storage", theme);
+    content.addEventListener("scroll", position, { passive: true });
+    window.addEventListener("focusin", position);
     send("boot");
     return () => {
       gone = true;
       window.removeEventListener("message", message);
       window.removeEventListener("keydown", escape);
       window.removeEventListener("resize", resized);
-      window.removeEventListener("storage", theme);
+      content.removeEventListener("scroll", position);
+      window.removeEventListener("focusin", position);
       navigate.current = () => {};
       dispose();
       stage.remove();
@@ -158,14 +175,57 @@ export function OfficeFrameContent() {
           <span aria-live="polite">
             {slides.index + 1} / {slides.count}
           </span>
-          <form onSubmit={event => {
-            event.preventDefault();
-            const value = Number(new FormData(event.currentTarget).get("slide"));
-            if (Number.isSafeInteger(value) && value >= 1 && value <= slides.count) navigate.current(value - 1);
-          }}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const value = Number(
+                new FormData(event.currentTarget).get("slide"),
+              );
+              if (
+                Number.isSafeInteger(value) &&
+                value >= 1 &&
+                value <= slides.count
+              )
+                navigate.current(value - 1);
+            }}
+          >
             <label htmlFor="office-slide-number">{tr("Slide number")}</label>
-            <input key={slides.index} id="office-slide-number" name="slide" type="number" min={1} max={slides.count} defaultValue={slides.index + 1} />
-            <button type="submit">{tr("Go to slide")}</button>
+            <input
+              key={slides.index}
+              id="office-slide-number"
+              name="slide"
+              type="number"
+              min={1}
+              max={slides.count}
+              defaultValue={slides.index + 1}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                const value = Number(event.currentTarget.value);
+                if (
+                  Number.isSafeInteger(value) &&
+                  value >= 1 &&
+                  value <= slides.count
+                )
+                  navigate.current(value - 1);
+              }}
+            />
+            <button
+              type="button"
+              onClick={(event) => {
+                const form = event.currentTarget.form;
+                if (!form) return;
+                const value = Number(new FormData(form).get("slide"));
+                if (
+                  Number.isSafeInteger(value) &&
+                  value >= 1 &&
+                  value <= slides.count
+                )
+                  navigate.current(value - 1);
+              }}
+            >
+              {tr("Go to slide")}
+            </button>
           </form>
           <button
             data-preview-focus="next"

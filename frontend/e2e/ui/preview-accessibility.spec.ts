@@ -48,6 +48,10 @@ for (const locale of ["en-US", "zh-CN"])
               })
               .click();
           const frame = page.frameLocator(".office-frame");
+          await expect(page.locator(".office-frame")).toHaveAttribute("sandbox","allow-scripts");
+          expect(await frame.locator("html").evaluate(()=>{
+            try { void parent.document;return true; } catch { return false; }
+          })).toBe(false);
           const next = frame.getByRole("button", {
             name: chinese ? "下一页" : "Next slide",
             exact: true,

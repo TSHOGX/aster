@@ -101,6 +101,11 @@ export function OfficeReadingPreview({
         if (candidate.state === "failed" || !candidate.manifest)
           throw new Error(candidate.failure || "renderer_failed");
         if (active.current?.digest === candidate.digest) {
+          const previous = active.current;
+          active.current = candidate;
+          adopted = true;
+          setJob(candidate);
+          void releaseReading(project, previous.id);
           setError("");
           return;
         }
@@ -342,6 +347,7 @@ export function OfficeReadingPreview({
   if (!job)
     return (
       <PreviewStatus
+        maxBytes={100 << 20}
         path={path}
         href={href}
         title={tr(

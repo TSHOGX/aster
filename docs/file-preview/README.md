@@ -18,6 +18,13 @@ The current bounded source adapter holds the complete text model through 20 MiB,
 
 The presentation adapter treats slide count as navigation metadata. The existing viewer loads a validated package but mounts one slide at a time; 41 and 200 slide synthetic decks have reached their final slides in a production browser build. ZIP entry count, expanded bytes, XML nodes/depth, image pixels, parser time, and session resources remain hard boundaries. Direct slide jumps and Left/Right keys avoid hundreds of Next clicks. Small static GIFs, legal deflate option flags, UTF-16 Office XML, and bounded Word printer metadata are admitted. Animated GIFs receive `unsupported_feature` until frame budgets and animation behavior are specified. This does not establish general 200 slide performance for chart or image heavy decks.
 
+Presentations use an opaque sandbox origin with script permission for the trusted
+viewer only. A dedicated CSP blocks connections, forms, objects and child frames.
+Static chunks are CORS-readable; product APIs are not. Validated window messages
+transfer bytes and bounded position/focus/theme state. The parent never reads the
+child DOM, and the child has no parent storage/API authority. Browser process CPU
+is still shared; structural/timeout admission is not a hard browser CPU limit.
+
 HTML inspection uses a cancellable parser Worker. Static original layout is admitted through 30,000 elements. Higher node counts produce a clearly labeled simplified representation containing at most 2,000 text blocks of at most 2,000 characters, with explicit partial coverage and complete Source access. The original scripts never run inside the workspace preview. Self-contained script interaction currently uses Download; a resource-limited derived-rendering job is required before an in-app script execution route can be enabled. A browser iframe timeout is not a CPU limit.
 
 ### Failure record
