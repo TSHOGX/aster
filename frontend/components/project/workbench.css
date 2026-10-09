@@ -1021,6 +1021,14 @@
 .source-editor .cm-preview-tag, .source-editor .cm-preview-key { color: var(--color-code-tag, #2b67ad); }
 .source-editor .cm-preview-string, .source-editor .cm-preview-cdata { color: var(--color-code-string, #18805b); }
 .source-editor .cm-preview-comment { color: var(--color-foreground-muted); }
+.html-reader { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.html-reader .preview-reading-hint, .html-simplified .preview-reading-hint { padding: 8px 16px; margin: 0; font-size: 12px; line-height: 1.5; color: var(--color-foreground-muted); background: var(--color-surface-muted); }
+.html-reader .preview-reading-hint a, .html-simplified .preview-reading-hint a { color: var(--color-accent); text-underline-offset: 2px; }
+.html-simplified { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
+.html-simplified article { max-width: 900px; padding: 20px; margin: 0 auto; line-height: 1.6; overflow-wrap: anywhere; }
+.html-simplified article h3 { font-size: 1.1em; font-weight: 700; margin: 20px 0 8px; }
+.html-simplified article p { margin: 8px 0; }
+.html-simplified-row { padding: 6px 10px; border-bottom: 1px solid var(--color-border); font-family: var(--font-mono), ui-monospace, monospace; font-size: 11px; }
 .office-preview {
   flex: 1;
   min-height: 0;

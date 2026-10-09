@@ -278,7 +278,7 @@ function PreviewContent({
       />
     );
   if (loaded.textReadable && (kind.kind === "html" || kind.kind === "table" || kind.kind === "json" && loaded.blob.size <= FORMATTED_TEXT_LIMIT))
-    return <TextPreview key={loaded.digest} path={path} text={loaded.text} />;
+    return <TextPreview key={loaded.digest} path={path} text={loaded.text} href={href} />;
   if (kind.kind === "markdown" && loaded.textReadable && loaded.blob.size <= FORMATTED_TEXT_LIMIT)
     return (
       <div className="file-markdown">

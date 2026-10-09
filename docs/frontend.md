@@ -92,9 +92,12 @@ ZIP expansion, XML, image and renderer budgets still apply independently of
 the slide count.
 Markdown, HTML, CSV/TSV and JSON expose a keyboard-accessible Preview/Source
 control when both modes are available. Switching uses the same captured bytes
-without fetching again. HTML
-uses an opaque-origin sandbox: self-contained styles and inline scripts work;
-remote dependencies, network APIs, forms and application access are blocked.
+without fetching again. HTML renders statically in an opaque-origin sandbox:
+self-contained styles and embedded images work; scripts, remote dependencies,
+network APIs, forms and application access are blocked. A Worker inspects the
+structure first. Node-heavy documents use an explicitly simplified text-block
+representation with coverage, while Source retains the entire document. Script
+content has a Download action for interaction outside the browser preview.
 CSV/TSV previews preserve quoted delimiters and multiline cells, show 100 rows
 per page, and bound parsing to 2,000 rows, 256 columns and 20,000 cells. Truncation
 is explicit; Source and Download retain the complete input. JSON Preview formats

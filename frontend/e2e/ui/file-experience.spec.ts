@@ -17,9 +17,10 @@ for (const [path, body] of [
     const group = page.getByRole("group", {name:"File view"});
     await expect(group.getByRole("button", {name:"Preview",exact:true})).toHaveAttribute("aria-pressed","true");
     if (path.endsWith("html")) {
-      await expect(page.frameLocator(".html-preview").getByRole("heading")).toHaveText("Interactive HTML result");
+      await expect(page.frameLocator(".html-preview").getByRole("heading")).toHaveText("HTML result");
       expect(await page.locator("body").getAttribute("data-compromised")).toBeNull();
-      await expect(page.locator(".html-preview")).toHaveAttribute("sandbox","allow-scripts");
+      await expect(page.locator(".html-preview")).toHaveAttribute("sandbox", "");
+      await expect(page.getByText("Scripts are disabled in this preview.", { exact: false })).toBeVisible();
     } else if (path.endsWith("csv") || path.endsWith("tsv")) {
       await expect(page.locator(".delimited-preview table")).toContainText("42");
     } else if (path.endsWith("md")) await expect(page.locator(".file-markdown h1")).toHaveText("Preview heading");
