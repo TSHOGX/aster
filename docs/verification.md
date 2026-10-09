@@ -47,11 +47,9 @@ produced in the same checkout, matching the candidate layout; `test:ui` and
 UI setup regenerates bounded synthetic Office documents from
 `frontend/e2e/requirements.txt`; accessibility and replacement tests run by
 default. `PYTHON` can select an existing fixture virtualenv interpreter.
-The synthetic corpus includes 41 and 200 slide presentations. To qualify the
-captured private 200 slide package locally, set `ACTUAL_PREVIEW_SAMPLES` to the
-directory containing `pptx_xl_001.pptx` and run
+The synthetic corpus includes 41 and 200 slide presentations. Run
 `npx playwright test --config playwright.ui.config.ts e2e/ui/preview-slides.spec.ts`
-from `frontend/` after building. The private package is never committed.
+from `frontend/` after building to verify direct navigation through each deck.
 
 The instrumentation benchmark requires `INTERACTION_BENCHMARK_OUTPUT`; startup
 comparison tests require `STARTUP_PROFILE_OUTPUT`. Other optional profiles declare

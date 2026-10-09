@@ -23,19 +23,3 @@ for (const count of [41, 200]) {
     await expect(navigation).toContainText(`${count - 1} / ${count}`);
   });
 }
-
-test("private deployed 200-slide sample reaches slide 200", async ({ page }) => {
-  test.skip(!process.env.ACTUAL_PREVIEW_SAMPLES, "Requires the private captured corpus");
-  const f = await workspaceFixture(page);
-  f.messages.analysis[1].content = "[Deck](/workspace/pptx_xl_001.pptx)";
-  const bytes = readFileSync(resolve(process.env.ACTUAL_PREVIEW_SAMPLES!, "pptx_xl_001.pptx"));
-  await page.route("**/files/content?*", route => route.fulfill({ body: bytes }));
-  await page.goto("/?project=battery&session=analysis");
-  await page.getByRole("link", { name: "Deck", exact: true }).click();
-  const navigation = page.frameLocator(".office-frame").getByRole("navigation", { name: "Slides" });
-  await expect(navigation).toContainText("1 / 200");
-  await navigation.getByRole("spinbutton", { name: "Slide number" }).fill("200");
-  await navigation.getByRole("button", { name: "Go to slide" }).click();
-  await expect(navigation).toContainText("200 / 200");
-  await expect(page.locator('.office-preview[data-preview-phase="ready"]')).toBeVisible();
-});

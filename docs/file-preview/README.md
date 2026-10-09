@@ -1,12 +1,12 @@
 # File preview refactor contract
 
-This document is the versioned implementation contract for the file reader and tree. The private research package at `private/file-preview-research-20261009/` contains the measurements and original deployed samples; it must remain untracked. The observed failures and candidate scale targets in that package are evidence and qualification targets, not claims of current support.
+This document is the versioned implementation contract for the file reader and tree. Scale targets in this document are qualification workloads, not claims of current support.
 
 ## User task and completion
 
 From a file tree or chat link, a user can open every target format, see meaningful content, read to the end, find, navigate, copy, switch supported modes, and understand incomplete or simplified fidelity. Rendering and memory must scale with the visible window; browser transport and server parsing have separate budgets. Selection and editor drafts remain independent. Paused project reads do not resume compute.
 
-The target corpus includes the equivalent structures of 15,599 Word paragraphs with a 3,000 × 5 table, 200 presentation slides, 22,962 spreadsheet rows and 275,544 cells, a 2.2 MB HTML document with about 130,000 nodes, and 1–5 MB XML/YAML. Tests must generate distributable equivalents. The original captured samples and hashes remain private.
+The qualification corpus includes 15,599 Word paragraphs with a 3,000 × 5 table, 200 presentation slides, 22,962 spreadsheet rows and 275,544 cells, a 2.2 MB HTML document with about 130,000 nodes, and 1–5 MB XML/YAML. Tests generate reproducible synthetic files with these structures.
 
 ## Reader contract
 
@@ -16,7 +16,7 @@ Source and editing eligibility are independent. Source is a continuous, read-onl
 
 The current bounded source adapter holds the complete text model through 20 MiB, while CodeMirror mounts visible lines. XML and YAML above 1 MiB index compact lexer state in a Worker and color visible lines from that state; smaller files load CodeMirror grammars. The index carries multiline XML comments, CDATA, attribute quotes and YAML block scalar indentation. Input is strict UTF-8 or BOM-marked UTF-16. The 256 KiB threshold now applies only to full-document Markdown/JSON formatting. Byte-windowed source above 20 MiB requires the snapshot protocol below and is not yet provided by this adapter.
 
-The presentation adapter treats slide count as navigation metadata. The existing viewer loads a validated package but mounts one slide at a time; 41 and 200 slide synthetic decks, plus the private captured 200 slide package, have reached their final slides in a production browser build. ZIP entry count, expanded bytes, XML nodes/depth, image pixels, parser time, and session resources remain hard boundaries. Direct slide jumps and Left/Right keys avoid hundreds of Next clicks. Small static GIFs, legal deflate option flags, UTF-16 Office XML, and bounded Word printer metadata are admitted. Animated GIFs receive `unsupported_feature` until frame budgets and animation behavior are specified. This does not establish general 200 slide performance for chart or image heavy decks.
+The presentation adapter treats slide count as navigation metadata. The existing viewer loads a validated package but mounts one slide at a time; 41 and 200 slide synthetic decks have reached their final slides in a production browser build. ZIP entry count, expanded bytes, XML nodes/depth, image pixels, parser time, and session resources remain hard boundaries. Direct slide jumps and Left/Right keys avoid hundreds of Next clicks. Small static GIFs, legal deflate option flags, UTF-16 Office XML, and bounded Word printer metadata are admitted. Animated GIFs receive `unsupported_feature` until frame budgets and animation behavior are specified. This does not establish general 200 slide performance for chart or image heavy decks.
 
 HTML inspection uses a cancellable parser Worker. Static original layout is admitted through 30,000 elements. Higher node counts produce a clearly labeled simplified representation containing at most 2,000 text blocks of at most 2,000 characters, with explicit partial coverage and complete Source access. The original scripts never run inside the workspace preview. Self-contained script interaction currently uses Download; a resource-limited derived-rendering job is required before an in-app script execution route can be enabled. A browser iframe timeout is not a CPU limit.
 
