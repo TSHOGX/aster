@@ -18,9 +18,9 @@ function markdownBytes(size: number) {
 }
 
 async function readingReady(page: Page, text: string) {
-  // Large files intentionally expose one bounded section, not the entire DOM.
+  // Large files expose the first visible line in a continuous viewport.
   if (Buffer.byteLength(text) > 256 * 1024)
-    await expect(page.locator(".large-text-preview .preview-text-page")).toContainText("Measured document");
+    await expect(page.locator(".source-editor .cm-content")).toContainText("Measured document");
   else
     await expect(page.locator(".file-markdown")).toContainText("Complete final line.");
 }
@@ -87,7 +87,7 @@ for (const size of [8 * 1024, 16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024]) {
     writeFileSync(
       resolve(output!, `${size}.json`),
       JSON.stringify(
-        { bytes: Buffer.byteLength(text), readiness: "first readable section", complete, dom, tasks },
+        { bytes: Buffer.byteLength(text), readiness: "first visible line", complete, dom, tasks },
         null,
         2,
       ),
@@ -101,8 +101,8 @@ for (const size of [8 * 1024, 16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024]) {
 }
 
 for (const scenario of ["large", "dense"]) {
-  test(`${scenario} Markdown stays complete and editable through the plain preview`, async ({
-    page,
+test(`${scenario} Markdown stays complete and editable through the reader`, async ({
+    page, context,
   }) => {
     const f = await workspaceFixture(page);
     const body =
@@ -115,18 +115,13 @@ for (const scenario of ["large", "dense"]) {
       .getByRole("link", { name: "the research report", exact: true })
       .click();
     if (scenario === "large") {
-      const preview = page.locator(".large-text-preview");
+      const preview = page.locator(".source-preview");
       await expect(preview).toBeVisible();
-      const next = preview.getByRole("button", { name: "Next section", exact: true });
-      let complete = "";
-      do {
-        const section = await preview.locator(".preview-text-page code").textContent();
-        expect(section!.length).toBeLessThanOrEqual(65536);
-        complete += section;
-        if (await next.isDisabled()) break;
-        await next.click();
-      } while (true);
-      expect(complete).toBe(body);
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await preview.locator(".cm-content").click();
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.keyboard.press("ControlOrMeta+C");
+      await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(body);
       await expect(preview.locator("table,script,img")).toHaveCount(0);
     } else {
       const preview = page.locator(".file-markdown");
@@ -215,7 +210,7 @@ for (const size of [8 * 1024, 64 * 1024, 1024 * 1024]) {
           JSON.stringify(
             {
               bytes: Buffer.byteLength(text),
-              readiness: "first readable section",
+              readiness: "first visible line",
               cpuRate: 4,
               warmups: 1,
               samples,

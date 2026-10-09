@@ -69,8 +69,14 @@ Workspace links reveal ancestor directories; on mobile the tree folds away after
 selection. Files support watches, upload, download, mutation, text editing and
 bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG, XLSX,
 DOCX, PPTX and native browser PDF previews. All preview reads allow up to 20 MiB.
-Larger text files (above 256 KiB) use bounded plain-text sections to keep reading
-responsive, with downloads preserving original formatting. Loading states show
+Read-only source uses one continuous CodeMirror viewport with line numbers, find,
+jump-to-line and model-backed selection/copy. XML and YAML use lazy grammars for
+small files and a line-state index with visible-token rendering above 1 MiB;
+the latter retains comment, CDATA, quote and YAML block-scalar context across
+line windows. UTF-8 and BOM-marked UTF-16 are decoded strictly. Markdown and JSON
+above 256 KiB open as labeled Source because their full-document formatting
+is not admitted; HTML keeps its rendered mode across that threshold. Source
+eligibility does not depend on the 1 MiB editing limit. Loading states show
 file details and transfer progress when available, with cancel/retry/download
 actions. Oversized files identify the 20 MB limit separately from content or
 format limitations. Other formats (including legacy XLS and SVG) remain
@@ -82,7 +88,8 @@ that displayed version. Frame removal releases the renderer's URLs and global
 handlers. Presentation controls support keyboard navigation, localized labels,
 reading-position restoration, theme updates and Escape back to the workspace.
 Markdown, HTML, CSV/TSV and JSON expose a keyboard-accessible Preview/Source
-control. Switching uses the same captured bytes without fetching again. HTML
+control when both modes are available. Switching uses the same captured bytes
+without fetching again. HTML
 uses an opaque-origin sandbox: self-contained styles and inline scripts work;
 remote dependencies, network APIs, forms and application access are blocked.
 CSV/TSV previews preserve quoted delimiters and multiline cells, show 100 rows
@@ -90,7 +97,7 @@ per page, and bound parsing to 2,000 rows, 256 columns and 20,000 cells. Truncat
 is explicit; Source and Download retain the complete input. JSON Preview formats
 valid JSON; Source retains its original whitespace.
 
-The file menu offers Edit text only after validating a supported UTF-8 text file
+The file menu offers Edit text only after validating a supported text file
 of at most 1 MiB, with no NUL bytes. Binary, unsupported and oversized inputs have
 no misleading edit action. Source remains read-only; editing is an explicit mode
 with the existing Save/Discard protection for unsaved changes.

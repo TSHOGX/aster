@@ -125,8 +125,10 @@ export function FilesPanel({
   const [denied, setDenied] = useState(false);
   const [view, setView] = useState<{path: string; mode: "preview" | "source"}>({path: "", mode: "preview"});
   const mode = view.path === selected ? view.mode : "preview";
-  const [textFile, setTextFile] = useState<{path: string; editable: boolean}>({path: "", editable: false});
-  const onTextReady = useCallback((path: string, editable: boolean) => setTextFile({path, editable}), []);
+  const [textFile, setTextFile] = useState<{path: string; readable: boolean; editable: boolean; rendered: boolean}>({path: "", readable: false, editable: false, rendered: false});
+  const onCapabilities = useCallback((path: string, readable: boolean, editable: boolean, rendered: boolean) => setTextFile({path, readable, editable, rendered}), []);
+  const readable = textFile.path === selected && textFile.readable;
+  const rendered = textFile.path === selected && textFile.rendered;
   const editable = textFile.path === selected && textFile.editable;
   const [watchHealth, setWatchHealth] = useState<
     "live" | "reconnecting" | "stale"
@@ -877,7 +879,7 @@ export function FilesPanel({
             ))}
         </nav>
         <div className="row-actions">
-          {selected && hasSourceView(selected) && editable && edit === null && (
+          {selected && hasSourceView(selected) && readable && rendered && edit === null && (
             <div className="file-view-toggle" role="group" aria-label={tr("File view")}>
               <button type="button" aria-pressed={mode === "preview"} onClick={() => setView({path: selected, mode: "preview"})}>
                 <Eye size={14} aria-hidden="true" />{tr("Preview")}
@@ -1038,7 +1040,7 @@ export function FilesPanel({
                 project={project.id}
                 validation={version}
                 mode={mode}
-                onTextReady={onTextReady}
+                onCapabilities={onCapabilities}
                 path={selected}
                 href={fileURL(project.id, selected)}
               />

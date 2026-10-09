@@ -2,9 +2,10 @@
 import { cacheablePreview, rememberPreview } from "@/lib/preview-cache";
 import { useT } from "@/lib/i18n";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { decodeTextFile, isTextFile, TEXT_FILE_LIMIT, TEXT_EDIT_LIMIT, RICH_TEXT_LIMIT } from "@/lib/file-view";
-import { LargeTextPreview, TextPreview } from "./text-preview";
+import { decodeTextFile, isTextFile, TEXT_FILE_LIMIT, TEXT_EDIT_LIMIT, FORMATTED_TEXT_LIMIT } from "@/lib/file-view";
+import { TextPreview } from "./text-preview";
 import { classifyArtifact } from "@/lib/mime";
 import {
   contentDigest,
@@ -13,7 +14,7 @@ import {
 import { useResources } from "./resource-provider";
 import { APIError, readPreview } from "@/lib/project-api";
 import { MarkdownView } from "@/components/workbench/markdown-view";
-import { CodeView } from "@/components/workbench/viewers/code-view";
+const SourcePreview = dynamic(() => import("./source-preview").then(module => module.SourcePreview), { ssr: false });
 import {
   acquirePreviewParse,
   PREVIEW_LIMITS,
@@ -29,19 +30,26 @@ export function FilePreview({
   project,
   validation = 0,
   mode = "preview",
-  onTextReady,
+  onCapabilities,
 }: {
   path: string;
   href: string;
   project: string;
   validation?: number;
   mode?: "preview" | "source";
-  onTextReady?: (path: string, editable: boolean) => void;
+  onCapabilities?: (path: string, readable: boolean, editable: boolean, rendered: boolean) => void;
 }) {
   const tr = useT();
   const resources = useResources();
   const [loaded, setLoaded] = useState<PreviewRepresentation | null>(null);
-  useEffect(() => { onTextReady?.(path, !!loaded?.textReadable && loaded.blob.size <= TEXT_EDIT_LIMIT); }, [path, loaded, onTextReady]);
+  useEffect(() => {
+    const readable = !!loaded?.textReadable;
+    const kind = classifyArtifact(path).kind;
+    const rendered = readable && (["html", "table"].includes(kind) || ["markdown", "json"].includes(kind) && !!loaded && loaded.blob.size <= FORMATTED_TEXT_LIMIT);
+    onCapabilities?.(path, readable, readable && !!loaded && loaded.blob.size <= TEXT_EDIT_LIMIT, rendered);
+  }, [path, loaded, onCapabilities]);
+  const sourcePositionRef = useRef(0);
+  useEffect(() => { sourcePositionRef.current = 0; }, [path]);
   const current = useRef<PreviewRepresentation | null>(null);
   const owned = useRef(new Set<PreviewRepresentation>());
   useEffect(() => {
@@ -93,7 +101,7 @@ export function FilePreview({
       const type = classifyArtifact(path).kind;
       const decoded = await decodeTextFile(path, blob);
       if (isTextFile(path) && blob.size <= TEXT_FILE_LIMIT && decoded === null)
-        throw new Error(tr("This file is not readable as UTF-8 text. Download it to open in another app."));
+        throw new Error(tr("This file is not readable as supported text. Download it to open in another app."));
       const text = decoded ?? "";
       const mime =
         type === "pdf"
@@ -206,7 +214,7 @@ export function FilePreview({
           </a>
         </p>
       )}
-      <PreviewContent loaded={loaded} path={path} href={href} mode={mode} />
+      <PreviewContent loaded={loaded} path={path} href={href} mode={mode} sourcePositionRef={sourcePositionRef} />
     </>
   );
 }
@@ -230,20 +238,20 @@ function PreviewContent({
   path,
   href,
   mode,
+  sourcePositionRef,
 }: {
   loaded: PreviewRepresentation;
   path: string;
   href: string;
   mode: "preview" | "source";
+  sourcePositionRef: { current: number };
 }) {
   const tr = useT();
   const kind = classifyArtifact(path);
-  if (loaded.textReadable && loaded.blob.size > RICH_TEXT_LIMIT)
-    return <LargeTextPreview key={loaded.digest} path={path} href={href} text={loaded.text} />;
   if (kind.kind === "pdf")
     return <PDFPreview loaded={loaded} path={path} href={href} />;
   if (loaded.textReadable && mode === "source")
-    return <CodeView code={loaded.text} language={kind.language} />;
+    return <SourcePreview key={loaded.digest} path={path} text={loaded.text} initialPosition={() => sourcePositionRef.current} onPosition={offset => { sourcePositionRef.current = offset; }} />;
   if (kind.kind === "image" && loaded.plan)
     return (
       <div className="image-preview">
@@ -269,19 +277,16 @@ function PreviewContent({
         href={href}
       />
     );
-  if (loaded.textReadable && ["html", "table", "json"].includes(kind.kind))
+  if (loaded.textReadable && (kind.kind === "html" || kind.kind === "table" || kind.kind === "json" && loaded.blob.size <= FORMATTED_TEXT_LIMIT))
     return <TextPreview key={loaded.digest} path={path} text={loaded.text} />;
-  if (kind.kind === "markdown" && loaded.textReadable)
+  if (kind.kind === "markdown" && loaded.textReadable && loaded.blob.size <= FORMATTED_TEXT_LIMIT)
     return (
       <div className="file-markdown">
         <MarkdownView content={loaded.text} />
       </div>
     );
-  if (
-    ["code", "text", "json", "table"].includes(kind.kind) &&
-    loaded.textReadable
-  )
-    return <CodeView code={loaded.text} language={kind.language} />;
+  if (loaded.textReadable)
+    return <SourcePreview key={loaded.digest} path={path} text={loaded.text} initialPosition={() => sourcePositionRef.current} onPosition={offset => { sourcePositionRef.current = offset; }} />;
   return <PreviewStatus path={path} href={href} title={tr("Preview unavailable")}
     description={tr("This format is not supported for preview. Download the file to open it in another app.")} size={loaded.blob.size} />;
 }

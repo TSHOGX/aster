@@ -18,7 +18,9 @@ export type CodeMirrorLang =
   | "python"
   | "markdown"
   | "html"
-  | "css";
+  | "css"
+  | "xml"
+  | "yaml";
 
 export type LanguageEntry = {
   hljs?: string;
@@ -57,10 +59,10 @@ export const LANGUAGES: Record<string, LanguageEntry> = {
   scss: { hljs: "scss", cm: "css" },
   html: { hljs: "xml", cm: "html" },
   htm: { hljs: "xml", cm: "html" },
-  xml: { hljs: "xml" },
+  xml: { hljs: "xml", cm: "xml" },
   sql: { hljs: "sql" },
-  yaml: { hljs: "yaml" },
-  yml: { hljs: "yaml" },
+  yaml: { hljs: "yaml", cm: "yaml" },
+  yml: { hljs: "yaml", cm: "yaml" },
   toml: { hljs: "ini" },
   ini: { hljs: "ini" },
   md: { cm: "markdown" },

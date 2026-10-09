@@ -4,14 +4,7 @@ import { PREVIEW_LIMITS } from "./preview-budget";
 
 export const TEXT_FILE_LIMIT = PREVIEW_LIMITS.blobBytes;
 export const TEXT_EDIT_LIMIT = 1 << 20;
-export const RICH_TEXT_LIMIT = 256 * 1024;
-export const TEXT_PAGE_CHARS = 64 * 1024;
-
-// Keep UTF-16 surrogate pairs intact at every page boundary.
-export function textPage(text: string, page: number) {
-  const boundary = (offset: number) => offset > 0 && /[\uD800-\uDBFF]/.test(text[offset - 1] ?? "") ? offset - 1 : offset;
-  return text.slice(boundary(page * TEXT_PAGE_CHARS), boundary((page + 1) * TEXT_PAGE_CHARS));
-}
+export const FORMATTED_TEXT_LIMIT = 256 * 1024;
 export function isTextFile(path: string) {
   return ["code", "text", "markdown", "html", "json", "table"].includes(classifyArtifact(path).kind);
 }
@@ -21,7 +14,10 @@ export function hasSourceView(path: string) {
 export async function decodeTextFile(path: string, blob: Blob): Promise<string | null> {
   if (!isTextFile(path) || blob.size > TEXT_FILE_LIMIT) return null;
   try {
-    const text = new TextDecoder("utf-8", {fatal:true}).decode(await blob.arrayBuffer());
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+    const text = new TextDecoder(encoding, {fatal:true}).decode(bytes);
     return text.includes("\0") ? null : text;
   } catch { return null; }
 }

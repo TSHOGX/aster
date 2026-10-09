@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { decodeTextFile, hasSourceView, isTextFile, parseDelimited, TEXT_FILE_LIMIT, textPage, TEXT_PAGE_CHARS } from "./file-view";
+import { decodeTextFile, hasSourceView, isTextFile, parseDelimited, TEXT_FILE_LIMIT } from "./file-view";
 import { classifyArtifact } from "./mime";
 it("offers source and editing only for appropriate, bounded UTF-8 text", async () => {
   for (const path of ["a.md","a.csv","a.tsv","a.html","a.htm","a.json"]) {
@@ -11,6 +11,9 @@ it("offers source and editing only for appropriate, bounded UTF-8 text", async (
   for (const path of ["a.png","a.pdf","a.xlsx","a.zip","a.bin"])
     expect(await decodeTextFile(path, new Blob(["text"]))).toBeNull();
   expect(await decodeTextFile("a.txt", new Blob([new Uint8Array([255])]))).toBeNull();
+  expect(await decodeTextFile("a.xml", new Blob([new Uint8Array([0xff, 0xfe, 0x3c, 0, 0x61, 0, 0x3e, 0])]))).toBe("<a>");
+  expect(await decodeTextFile("a.yaml", new Blob([new Uint8Array([0xfe, 0xff, 0, 0x61, 0, 0x3a])]))).toBe("a:");
+  expect(await decodeTextFile("a.yaml", new Blob([new Uint8Array([0xff, 0xfe, 0x61])]))).toBeNull();
   expect(await decodeTextFile("a.md", new Blob(["abc\0def"]))).toBeNull();
   expect(await decodeTextFile("a.txt", new Blob([new Uint8Array(TEXT_FILE_LIMIT + 1)]))).toBeNull();
   expect(await decodeTextFile("a.txt", new Blob([]))).toBe("");
@@ -35,11 +38,4 @@ it("decodes UTF-8 text up to 20 MiB, including files above the old 1 MiB limit",
   const text = "a".repeat(20 * 1024 * 1024);
   expect(await decodeTextFile("large.txt", new Blob([text]))).toBe(text);
   expect(await decodeTextFile("large.txt", new Blob([text, "a"]))).toBeNull();
-});
-it("pages text without losing characters or splitting emoji across boundaries", () => {
-  const text = "a".repeat(TEXT_PAGE_CHARS - 1) + "🔋" + "b".repeat(TEXT_PAGE_CHARS) + "END";
-  const pages = Array.from({ length: Math.ceil(text.length / TEXT_PAGE_CHARS) }, (_, page) => textPage(text, page));
-  expect(pages.join("")).toBe(text);
-  expect(pages[1].startsWith("🔋")).toBe(true);
-  expect(pages.every(page => page.length <= TEXT_PAGE_CHARS + 1)).toBe(true);
 });
