@@ -180,6 +180,8 @@ type Files struct {
 	active           map[string]bool
 	readerOnce       sync.Once
 	reader           *WorkspaceReader
+	previewOnce      sync.Once
+	previews         *PreviewSnapshots
 }
 
 func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfiles.Request, input io.Reader) (FileOperation, error) {

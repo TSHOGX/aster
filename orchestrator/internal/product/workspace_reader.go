@@ -70,7 +70,10 @@ func (f *Files) List(ctx context.Context, scope Scope, query projectfiles.Direct
 func (f *Files) Capture(ctx context.Context, scope Scope, path string) (*CapturedFile, error) {
 	return f.workspaceReader().Capture(ctx, scope, path)
 }
-func (f *Files) Close() error { return f.workspaceReader().Close() }
+func (f *Files) Close() error {
+	f.PreviewSnapshots().Close()
+	return f.workspaceReader().Close()
+}
 
 type WorkspaceReadStats struct {
 	Readers       int   `json:"reader_entries"`
@@ -457,6 +460,9 @@ func (c *CapturedFile) Close() error {
 	return err
 }
 func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string) (out *CapturedFile, result error) {
+	return w.CaptureLimited(ctx, scope, path, projectfiles.MaxTransfer)
+}
+func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path string, maxBytes int64) (out *CapturedFile, result error) {
 	if projectfiles.Path(path, false) != nil {
 		return nil, ErrInvalid
 	}
@@ -465,7 +471,7 @@ func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string)
 		if err != nil {
 			return nil, err
 		}
-		return w.capturePaused(readctx, scope, r, path, unlock, done)
+		return w.capturePaused(readctx, scope, r, path, maxBytes, unlock, done)
 	}
 	entry, ctx, release, err := w.acquire(ctx, scope, false)
 	if err != nil {
@@ -497,6 +503,9 @@ func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string)
 		case "metadata":
 			if metadata != nil || frame.Metadata == nil || frame.Metadata.Size < 0 || frame.Metadata.Size > projectfiles.MaxTransfer {
 				return ErrInvalid
+			}
+			if frame.Metadata.Size > maxBytes {
+				return ErrPreviewSourceTooLarge
 			}
 			w.mu.Lock()
 			if w.captures+frame.Metadata.Size > MaxCapturedBytes {

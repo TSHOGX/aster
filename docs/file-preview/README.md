@@ -24,6 +24,14 @@ HTML inspection uses a cancellable parser Worker. Static original layout is admi
 
 `PreviewFailure` has `code`, `stage`, `retryable`, and optional `metric`, `actual`, and `limit`. Codes are `source_too_large`, `container_invalid`, `unsupported_feature`, `content_limit`, `resource_busy`, `parse_timeout`, and `renderer_failed`. Later snapshot work adds `snapshot_expired` and `permission_denied`. Only these values cross Worker boundaries. UI messages are localized and provide Retry, Source, or Download when the capability exists. Logs never contain file bodies, raw paths, parser text, tokens, or unfiltered exceptions. Structural counts describe the failed condition; a resource reservation is never reported as a file content limit.
 
+## Immutable source snapshots
+
+`GET …/files/snapshots?path=…&max_bytes=…` captures a fresh verified version and returns a scoped lease with `id`, SHA-256 `digest`, `size`, and `expires`. `GET …/files/snapshots/{id}/content` serves complete content or a single HTTP byte range from that inode. Concurrent requests have independent offsets. `DELETE …/files/snapshots/{id}` releases the lease; active ranges retain their own references until completion. Every operation reauthorizes the actor and Project, including cache hits and conditional responses. IDs grant no authority.
+
+Snapshots expire after five minutes, with at most 64 leases, two simultaneous captures, 100 MiB per source, and 256 MiB of retained snapshot bytes. The caller can impose a smaller source limit; active and paused reads reject it at metadata admission before capturing bytes. Concurrent identical opens share capture work; a later refresh always captures again so equal size/mtime cannot hide changed bytes. Canceling the final waiting consumer cancels capture. Opening a snapshot never resumes a paused Project. Completed snapshots release guest/runtime activity, survive pause/resume, and remain one immutable version until release or expiry. Deleted or unauthorized Projects deny access through old handles. Expiry returns `410 snapshot_expired`; source admission returns `413 source_too_large`. Unlinked inodes vanish on final close or process exit, so restart invalidates handles without leaving temporary files.
+
+The direct download endpoint continues to capture fresh bytes for each request. Derived adapters and large-source windows use leases; they must not issue repeated ranges against live content and assume a shared version.
+
 ## Format and security decisions
 
 - HTML renders statically by default in an opaque origin. Self-contained interaction requires an explicit user action, with network and application authority blocked. A busy script must leave a recovery route; an iframe timeout alone is not CPU isolation.

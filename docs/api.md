@@ -21,6 +21,7 @@ Resource paths below use stored Project and child identities.
 | `…/terminals` and `…/terminals/{terminal}` | Retained PTY metadata and retirement |
 | `…/terminals/{terminal}/start`, `/stop`, `/attach` | Start, stop and WebSocket observation |
 | `…/files`, `/files/content`, `/files/operations/{operation}` | Directory pages, mutations, streaming content and outcome inspection |
+| `…/files/snapshots`, `/files/snapshots/{snapshot}/content`, `/files/snapshots/{snapshot}` | Acquire an immutable source lease, read/range its bytes, and release it |
 | `…/schedules`, `/schedules/{schedule}`, `/run`, `/runs` | Project schedules and their run ledger |
 | `…/sessions/{session}/readers` | Grant/revoke conversation readers |
 | `…/sessions/{session}/shares`, `…/shares/{share}`, `…/shares/{share}/rotate` | Freeze, revoke and rotate public shares |
@@ -54,6 +55,16 @@ conversation source frontier; consumed rows remain as synchronization rows
 until that client's projection catches up. Terminal start can initially return `202`;
 observe its state before attaching. A disconnected response to a mutation is an
 unknown outcome and must be retried only with the original request identity.
+
+Immutable preview sources use `GET …/files/snapshots?path=RELATIVE_PATH&max_bytes=N`
+with a default 20 MiB source limit and a maximum 100 MiB. The response contains
+`id`, SHA-256 `digest`, `size`, and `expires`. Read with
+`GET …/files/snapshots/{id}/content` and optional single `Range`; release with
+`DELETE …/files/snapshots/{id}`. A snapshot never changes versions. Every access
+checks current Project authority; the lease is not a bearer credential. Expired
+handles return `410 snapshot_expired` and oversized sources return
+`413 source_too_large`. See [preview contract](file-preview/README.md) for quotas
+and lifecycle behavior.
 
 File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
 Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase

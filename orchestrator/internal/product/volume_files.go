@@ -292,7 +292,7 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 	}
 	return page, nil
 }
-func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Resources, path string, unlock, release func()) (out *CapturedFile, result error) {
+func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Resources, path string, maxBytes int64, unlock, release func()) (out *CapturedFile, result error) {
 	var reserved int64
 	free := func() { w.mu.Lock(); w.captures -= reserved; w.mu.Unlock(); release() }
 	defer func() {
@@ -311,6 +311,9 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 	}
 	if before.Size < 0 || before.Size > projectfiles.MaxTransfer {
 		return nil, ErrCapacity
+	}
+	if before.Size > maxBytes {
+		return nil, ErrPreviewSourceTooLarge
 	}
 	w.mu.Lock()
 	if w.captures+before.Size > MaxCapturedBytes {

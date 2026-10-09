@@ -95,6 +95,14 @@ func status(err error) (int, string) {
 }
 
 func fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, product.ErrSnapshotExpired) {
+		writeJSON(w, http.StatusGone, map[string]string{"code": "snapshot_expired", "error": "preview snapshot expired"})
+		return
+	}
+	if errors.Is(err, product.ErrPreviewSourceTooLarge) {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"code": "source_too_large", "error": "preview source too large"})
+		return
+	}
 	if errors.Is(err, projectfiles.ErrChangedDuringRead) {
 		writeJSON(w, http.StatusConflict, map[string]string{"code": "changed_during_read", "error": "file changed during read"})
 		return

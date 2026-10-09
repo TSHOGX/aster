@@ -2,7 +2,9 @@ package producthttp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -173,5 +175,72 @@ func TestFileReaderHTTPValidatorsRangesAndNoReadCommands(t *testing.T) {
 		if strings.Contains(b.Kind, "files") {
 			t.Fatal("reads own durable activity", blockers)
 		}
+	}
+}
+
+func TestPreviewSnapshotHTTPImmutableRangesAndAuthority(t *testing.T) {
+	h := newHarness(t)
+	scope := product.Scope{Actor: "alice", ProjectID: "snapshots"}
+	_, err := h.store.CreateProject(ctx, scope.Actor, scope.ProjectID, "Snapshots")
+	must(t, err)
+	must(t, h.lifecycle.EnsureActive(ctx, scope, testProfile()))
+	h.converge(t, scope.ProjectID)
+	backend := &readerHTTPBackend{root: t.TempDir(), processes: map[string]*readHTTPProcess{}}
+	must(t, os.WriteFile(filepath.Join(backend.root, "file"), []byte("abcdefghij"), 0600))
+	files := &product.Files{Store: h.store, Lifecycle: h.lifecycle, Backend: backend, Profile: testProfile()}
+	defer files.Close()
+	server := &Server{Store: h.store, Files: files, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return h.currentActor(), nil })}
+	defer server.Close()
+	handler := server.Handler()
+	request := func(method, path string, headers map[string]string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, "http://fixture/api/projects/snapshots/files"+path, nil)
+		for k, v := range headers {
+			r.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	opened := request("GET", "/snapshots?path=file&max_bytes=10", nil)
+	if opened.Code != 200 {
+		t.Fatal(opened.Code, opened.Body.String())
+	}
+	var descriptor product.PreviewSnapshot
+	must(t, json.Unmarshal(opened.Body.Bytes(), &descriptor))
+	must(t, os.WriteFile(filepath.Join(backend.root, "file"), []byte("ABCDEFGHIJ"), 0600))
+	base := "/snapshots/" + descriptor.ID
+	for n := 0; n < 10; n++ {
+		rangeHeader := fmt.Sprintf("bytes=%d-%d", n, n)
+		r := request("GET", base+"/content", map[string]string{"Range": rangeHeader})
+		if r.Code != 206 || r.Body.String() != string(byte('a'+n)) {
+			t.Fatal(r.Code, r.Body.String())
+		}
+		if r.Header().Get("ETag") != `"sha256:`+descriptor.Digest+`"` {
+			t.Fatal("lost immutable identity")
+		}
+	}
+	if r := request("GET", base+"/content", map[string]string{"Range": "bytes=0-1,3-4"}); r.Code != 400 {
+		t.Fatal(r.Code)
+	}
+	if r := request("GET", "/snapshots?path=file&max_bytes=9", nil); r.Code != 413 || !strings.Contains(r.Body.String(), "source_too_large") {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	h.setActor("foreign")
+	if r := request("GET", base+"/content", nil); r.Code != 404 {
+		t.Fatal("foreign access", r.Code)
+	}
+	if r := request("DELETE", base, nil); r.Code != 404 {
+		t.Fatal("foreign release", r.Code)
+	}
+	h.setActor("alice")
+	if r := request("GET", base+"/content", nil); r.Body.String() != "abcdefghij" {
+		t.Fatal("foreign release invalidated owner")
+	}
+	if r := request("DELETE", base, nil); r.Code != 204 {
+		t.Fatal(r.Code)
+	}
+	if r := request("GET", base+"/content", nil); r.Code != 410 || !strings.Contains(r.Body.String(), "snapshot_expired") {
+		t.Fatal(r.Code, r.Body.String())
 	}
 }
