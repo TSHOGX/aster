@@ -5,7 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      cross_browser:
+        description: Include Firefox and WebKit scheduling controls
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      cross_browser:
+        type: boolean
+        default: false
     secrets:
       KHORA_READ_TOKEN:
         required: true
@@ -75,11 +84,21 @@ jobs:
       - run: npx --no-install playwright install --with-deps chromium
         working-directory: frontend
       - run: scripts/check.sh frontend
+      - name: Install additional release browsers
+        if: inputs.cross_browser
+        run: npx --no-install playwright install --with-deps firefox webkit
+        working-directory: frontend
+      - name: Cross-browser scheduling controls (reuse build)
+        if: inputs.cross_browser
+        run: npx --no-install playwright test --config playwright.pickers.config.ts
+        working-directory: frontend
       - name: Failed browser evidence
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-failure-${{ github.run_attempt }}
-          path: frontend/test-results/ui
+          path: |
+            frontend/test-results/ui
+            frontend/test-results/pickers
           retention-days: 7
           if-no-files-found: ignore

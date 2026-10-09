@@ -36,7 +36,8 @@ qualification is an explicit separate command.
 The UI suite uses controlled API fixtures; it does not qualify the Go edge,
 SSE transport or native runtime. `test:e2e` is the browser component invoked by
 the isolated runtime harness, not a standalone test against an arbitrary URL.
-`test:ui:built` reuses a build produced in the same checkout; `test:ui` and
+`test:ui:built` serves standalone output with its static/public assets from a build
+produced in the same checkout, matching the candidate layout; `test:ui` and
 `test:pickers` build first for direct developer use.
 
 UI setup regenerates bounded synthetic Office documents from
@@ -59,6 +60,8 @@ manual/reusable entry points. Feature-branch pushes do not duplicate PR runs;
 archive branches do not trigger obsolete workflows. Concurrency cancels stale
 runs for the same workflow/ref. All jobs have bounded timeouts and read-only
 repository permissions. Main/manual/release checks add the core race gate.
+Release candidates also run Firefox/WebKit scheduling controls. Manual CI can
+select `cross_browser`; daily Chromium checks reuse the same production build.
 
 Configure repository or organization Actions secret `KHORA_READ_TOKEN` with
 read-only access to the pinned private `TSHOGX/khora` repository. The default
@@ -68,7 +71,7 @@ silently skipping the backend. Never use `pull_request_target` to expose this
 secret to untrusted PR code. Fork PRs can run source/frontend checks, but trusted
 backend qualification must run in a reviewed context with the secret available.
 
-Failed deterministic UI runs retain `frontend/test-results/ui` for seven days.
+Failed deterministic UI/picker runs retain their `frontend/test-results` subdirectories for seven days.
 Do not upload raw production or privileged/provider reports through this job.
 Candidate artifacts have their own bounded retention and are not published as
 GitHub Releases; see [delivery](delivery.md).
