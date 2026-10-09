@@ -3,14 +3,15 @@ import {
   openDirectories,
   replaceDirectoryWindow,
   retainDirectoryWindows,
+  MAX_DIRECTORY_TREE_BYTES,
   type DirectoryTree,
 } from "./directory-window";
 
-it("retains only root and sixteen open branches with one page each", () => {
+it("keeps expansion independent of bounded resident page windows", () => {
   const open = openDirectories(
     Array.from({ length: 100 }, (_, n) => `dir-${n}`),
   );
-  expect(open).toHaveLength(16);
+  expect(open).toHaveLength(100);
   let tree: DirectoryTree = { "": { entries: [] } };
   for (const path of open)
     for (let page = 0; page < 5; page++) {
@@ -24,16 +25,29 @@ it("retains only root and sixteen open branches with one page each", () => {
             size: 0,
             modified: 0,
           })),
-          after: String(page),
+          after: String(page), snapshot: path,
         },
         open,
       );
     }
-  expect(Object.keys(tree)).toHaveLength(17);
-  expect(
-    Object.values(tree).reduce((count, p) => count + p.entries.length, 0),
-  ).toBe(1600);
+  expect(Object.keys(tree).length).toBeLessThan(101);
+  expect(open).toHaveLength(100);
+  expect(JSON.stringify(tree).length * 3).toBeLessThanOrEqual(MAX_DIRECTORY_TREE_BYTES);
+  expect(Object.values(tree).reduce((count, p) => count + p.entries.length, 0)).toBeGreaterThan(0);
   expect(Object.keys(retainDirectoryWindows(tree, []))).toEqual([""]);
+});
+it("retains one contiguous interval while moving forward and backward", () => {
+  const page = (start: number) => ({
+    entries: Array.from({ length: 100 }, (_, i) => ({ name: String(start + i), kind: "file", size: 0, modified: 0 })),
+    snapshot: "one", start, total: 1000, after: `page-${start}`,
+    next: `page-${start + 100}`, previous: start ? `page-${start - 100}` : undefined,
+  });
+  let tree: DirectoryTree = {};
+  for (let start = 0; start < 700; start += 100) tree = replaceDirectoryWindow(tree, "", page(start), []);
+  expect(tree[""].entries.map(entry => entry.name)).toEqual(Array.from({ length: 500 }, (_, i) => String(i + 200)));
+  tree = replaceDirectoryWindow(tree, "", page(100), []);
+  expect(tree[""].entries.map(entry => entry.name)).toEqual(Array.from({ length: 500 }, (_, i) => String(i + 100)));
+  expect(new Set(tree[""].entries.map(entry => entry.name)).size).toBe(500);
 });
 it("refuses an oversized page without changing the current window", () => {
   const original: DirectoryTree = {

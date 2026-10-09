@@ -43,6 +43,7 @@ import { rememberPreview } from "@/lib/preview-cache";
 import { fileImpact, type FileInvalidation } from "@/lib/file-invalidation";
 import { useResources, useRealtime } from "./resource-provider";
 import { FilePreview } from "./file-preview";
+import { FileTreeViewport } from "./file-tree-viewport";
 import { IconButton, Menu, Splitter, useDialog } from "./ui";
 const CodeEditor = dynamic(
   () =>
@@ -53,11 +54,12 @@ const CodeEditor = dynamic(
 );
 import {
   DirectoryWindowLimitError,
-  MAX_OPEN_DIRECTORIES,
+  flattenDirectoryTree,
   openDirectories,
   retainDirectoryWindows,
   replaceDirectoryWindow,
   type DirectoryWindow as Directory,
+  type TreeRow,
 } from "@/lib/directory-window";
 export function FilesPanel({
   project,
@@ -97,6 +99,7 @@ export function FilesPanel({
   const realtime = useRealtime();
   const reads = useRef(new AbortController());
   const directoryRequests = useRef(new Map<string, AbortController>());
+  const directoryAnchors = useRef(new Map<string, string>());
   const loads = useRef(
     new Map<
       string,
@@ -181,7 +184,10 @@ export function FilesPanel({
     run.busy = true;
     setSearch(current => ({matches: current?.query === run.query ? current.matches : [], done: false, limited: false, scanned: current?.scanned ?? 0, query: run.query, page: run.page, busy: true, stale:run.stale}));
     try {
-      const result = await run.job.next(run.abort.signal);
+      const result = await run.job.next(run.abort.signal, 100, result => {
+        if (!run.abort.signal.aborted && searchRun.current === run)
+          setSearch({ ...result, query: run.query, page: run.page, busy: true, stale: run.stale });
+      });
       if (run.abort.signal.aborted || searchRun.current !== run) return;
       run.page++;
       setSearch({...result, query: run.query, page: run.page, busy: false, stale:run.stale});
@@ -224,17 +230,21 @@ export function FilesPanel({
     async function load(
       path: string,
       after = "",
+      seek?: { name: string; mode: "after" | "around" },
     ): Promise<FilePage | undefined> {
+      if (seek && treeRef.current[path]?.entries.some(entry => entry.name === seek.name))
+        return treeRef.current[path];
+      const demand = seek ? `${seek.mode}:${seek.name}` : after;
       const pending = loads.current.get(path);
       if (pending) {
         if (
-          pending.after === after &&
+          pending.after === demand &&
           !directoryRequests.current.get(path)?.signal.aborted
         )
           return pending.promise;
         await pending.promise;
         if (!alive.current) return;
-        return load(path, after);
+        return load(path, after, seek);
       }
       if (path && !expanded.current.includes(path)) return;
       const abort = new AbortController();
@@ -245,31 +255,38 @@ export function FilesPanel({
         setTree((t) => ({
           ...t,
           [path]: {
+            ...t[path],
             entries: t[path]?.entries || [],
-            next: t[path]?.next,
-            after: t[path]?.after,
-            notice: t[path]?.notice,
             loading: true,
           },
         }));
         try {
           let cursor = after;
+          let relocation = seek;
+          if (!cursor && !relocation && (treeRef.current[path]?.start ?? 0) > 0) {
+            const name = directoryAnchors.current.get(path) ?? treeRef.current[path]?.entries[0]?.name;
+            if (name) relocation = { name, mode: "around" };
+          }
+          const requestURL = () => `${base}?path=${encode(path)}&after=${encode(cursor)}&limit=100${relocation ? `&seek=${relocation.mode}&name=${encode(relocation.name)}` : ""}`;
           // A queued watch refresh of the reset first page must not erase the
           // explanation before the user can see it. Paging away clears it.
           let notice = after ? "" : treeRef.current[path]?.notice || "";
           let page: FilePage;
           try {
             page = await readDirectory(
-              `${base}?path=${encode(path)}&after=${encode(cursor)}&limit=100`,
+              requestURL(),
               signal,
             );
           } catch (error) {
             if (!cursor || !(error instanceof APIError) || error.status !== 409)
               throw error;
             cursor = "";
-            notice = tr("Directory changed. Showing the first page.");
+            const resident = treeRef.current[path];
+            const name = directoryAnchors.current.get(path) ?? resident?.entries[0]?.name;
+            relocation = name ? { name, mode: "around" } : undefined;
+            notice = tr("Directory changed. Restored the reading position.");
             page = await readDirectory(
-              `${base}?path=${encode(path)}&after=&limit=100`,
+              requestURL(),
               signal,
             );
           }
@@ -280,8 +297,8 @@ export function FilesPanel({
             (path && !expanded.current.includes(path))
           )
             return;
-          // Each branch owns one bounded snapshot page. Validate before entering
-          // a React updater so capacity failure is handled as a visible read error.
+          // Adjacent transport pages share one directory version. A relocated
+          // snapshot replaces the resident interval at its semantic anchor.
           const next = replaceDirectoryWindow(
             treeRef.current,
             path,
@@ -307,14 +324,14 @@ export function FilesPanel({
                 error:
                   e instanceof DirectoryWindowLimitError
                     ? tr(
-                        "Directory view exceeds its display budget. Close another directory and retry.",
+                        "This directory response exceeds its display budget. Retry with a smaller window.",
                       )
                     : e instanceof Error ? e.message : String(e),
               },
             }));
         }
       })();
-      loads.current.set(path, { after, promise: flight });
+      loads.current.set(path, { after: demand, promise: flight });
       try {
         return await flight;
       } finally {
@@ -520,7 +537,7 @@ export function FilesPanel({
     let gone = false;
     const parts = selected.split("/");
     const parents: string[] = [];
-    for (let i = 1; i < Math.min(parts.length, MAX_OPEN_DIRECTORIES + 1); i++)
+    for (let i = 1; i < Math.min(parts.length, 65); i++)
       parents.push(parts.slice(0, i).join("/"));
     const open = openDirectories([...parents, ...expanded.current]);
     expanded.current = open;
@@ -528,7 +545,9 @@ export function FilesPanel({
     void (async () => {
       for (const dir of ["", ...parents]) {
         if (gone) return;
-        if (!treeRef.current[dir]) await load(dir);
+        const childName = parts[dir ? dir.split("/").length : 0];
+        if (!treeRef.current[dir]?.entries.some(entry => entry.name === childName))
+          await load(dir, "", { name: childName, mode: "around" });
       }
       if (!gone && window.matchMedia("(max-width: 767px)").matches)
         setTreeOpen(false);
@@ -732,111 +751,37 @@ export function FilesPanel({
         })(),
     },
   ];
-  const renderDirectory = (dir: string, depth = 0) => {
-    const page = tree[dir];
-    if (!page) return <p className="list-hint">{tr("Loading…")}</p>;
-    return (
-      <>
-        {page.entries
-          .map((entry) => {
-            const path = dir ? `${dir}/${entry.name}` : entry.name;
-            const isDir = entry.kind === "directory",
-              open = directories.includes(path);
-            return (
-              <div key={path}>
-                <div
-                  className={`file-row ${selected === path ? "selected" : ""}`}
-                  data-file-path={path}
-                  style={{ paddingLeft: 8 + depth * 16 }}
-                >
-                  <button
-                    className="file-name"
-                    title={
-                      entry.kind === "symlink"
-                        ? tr("Symlinks are not followed")
-                        : path
-                    }
-                    disabled={entry.kind === "symlink"}
-                    aria-expanded={isDir ? open : undefined}
-                    onClick={() => {
-                      if (isDir) {
-                        if (
-                          !open &&
-                          directories.length >= MAX_OPEN_DIRECTORIES
-                        ) {
-                          setError(
-                            tr("Close a directory before opening another."),
-                          );
-                          return;
-                        }
-                        const next = open
-                          ? directories.filter(
-                              (p) => p !== path && !p.startsWith(path + "/"),
-                            )
-                          : [...directories, path];
-                        setError("");
-                        expanded.current = next;
-                        onDirectories(next);
-                      } else void choose(path);
-                    }}
-                  >
-                    {isDir ? (
-                      open ? (
-                        <ChevronDown size={14} />
-                      ) : (
-                        <ChevronRight size={14} />
-                      )
-                    ) : (
-                      <span className="tree-indent" />
-                    )}
-                    {isDir ? <Folder size={16} /> : <File size={16} />}
-                    <span>{entry.name}</span>
-                  </button>
-                  <Menu
-                    label={`${tr("File actions")} ${entry.name}`}
-                    items={entryActions(path, entry)}
-                  />
-                </div>
-                {isDir && open && renderDirectory(path, depth + 1)}
-              </div>
-            );
-          })}
-        {page.loading && <small className="list-hint">{tr("Loading…")}</small>}
-        {page.error && (
-          <div className="notice error">
-            {page.error}
-            <button onClick={() => void load(dir)}>{tr("Retry")}</button>
-          </div>
-        )}
-        {!page.loading && !page.error && !page.entries.length && (
-          <small className="list-hint">{tr("This directory is empty.")}</small>
-        )}
-        {page.notice && (
-          <small className="list-hint" role="status">
-            {page.notice}
-          </small>
-        )}
-        {page.after && (
-          <button
-            className="list-hint"
-            disabled={page.loading}
-            onClick={() => void load(dir)}
-          >
-            {tr("First page")}
-          </button>
-        )}
-        {page.next && (
-          <button
-            className="list-hint"
-            disabled={page.loading}
-            onClick={() => void load(dir, page.next)}
-          >
-            {tr("Next page")}
-          </button>
-        )}
-      </>
-    );
+  const renderTreeRow = (row: TreeRow, focusable: boolean) => {
+    if (row.kind === "edge") return <button className="list-hint tree-edge" disabled={row.loading}
+      onClick={() => void load(row.directory, row.cursor)}>{tr(row.direction === "next" ? "Load more files" : "Load previous files")}</button>;
+    if (row.kind === "status") return <div className={`tree-status ${row.message === "error" ? "error" : ""}`} title={row.detail}>
+      {row.message === "loading" ? tr("Loading…") : row.message === "empty" ? tr("This directory is empty.") : row.detail}
+      {row.message === "error" && <button onClick={() => void load(row.directory)}>{tr("Retry")}</button>}
+    </div>;
+    const { entry, path, depth } = row;
+    const isDir = entry.kind === "directory";
+    return <div className={`file-row ${selected === path ? "selected" : ""}`} data-file-path={path}
+      role="treeitem" aria-level={depth + 1} aria-selected={selected === path}
+      aria-expanded={isDir ? row.expanded : undefined} style={{ paddingLeft: 8 + depth * 16 }}>
+      <button className="file-name"
+        tabIndex={focusable ? 0 : -1}
+        title={entry.kind === "symlink" ? tr("Symlinks are not followed") : path}
+        disabled={entry.kind === "symlink"}
+        onClick={() => {
+          if (isDir) {
+            const next = row.expanded
+              ? directories.filter(item => item !== path && !item.startsWith(path + "/"))
+              : [...directories, path];
+            setError(""); expanded.current = next; onDirectories(next);
+          } else void choose(path);
+        }}>
+        {isDir ? row.expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} /> : <span className="tree-indent" />}
+        {isDir ? <Folder size={16} /> : <File size={16} />}<span>{entry.name}</span>
+      </button>
+      <Menu label={`${tr("File actions")} ${entry.name}`} items={entryActions(path, entry)} />
+    </div>;
   };
+  const flattenedTree = useMemo(() => flattenDirectoryTree(tree, directories), [tree, directories]);
   if (denied)
     return (
       <aside className="files-panel">
@@ -1081,8 +1026,12 @@ export function FilesPanel({
                       )}
                     </small>
                   )}
-                <div className="file-tree-scroll">
-                  {!query ? renderDirectory("") : (
+                <div className="file-tree-body">
+                  <div className="file-tree-resident" hidden={!!query}>
+                    <FileTreeViewport selected={selected} rows={flattenedTree} renderRow={renderTreeRow} load={(directory, cursor) => { if (!query) void load(directory, cursor); }}
+                      onAnchor={(directory, name) => directoryAnchors.current.set(directory, name)} />
+                  </div>
+                  {query && (
                     <div role="region" aria-label={tr("File search results")} aria-busy={!search || search.query !== query || search.busy}>
                       {search?.query === query && search.matches.map(({path, entry}) => (
                         <div className={`file-row file-search-row ${selected === path ? "selected" : ""}`} key={path} data-file-path={path}>

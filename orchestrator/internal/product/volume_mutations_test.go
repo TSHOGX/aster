@@ -55,7 +55,7 @@ func TestFreshProjectCanUploadAndBrowseBeforeFirstComputeStart(t *testing.T) {
 	scope := Scope{Actor: "owner", ProjectID: "storage-only"}
 	_, err := f.Store.CreateProject(ctx, scope.Actor, scope.ProjectID, "Storage")
 	must(t, err)
-	page, err := f.List(ctx, scope, "", "", 100)
+	page, err := f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: "", Limit: 100})
 	must(t, err)
 	if len(page.Entries) != 0 {
 		t.Fatal(page)

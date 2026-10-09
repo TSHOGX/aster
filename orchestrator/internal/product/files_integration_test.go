@@ -390,7 +390,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		drive(t, l, scope.ProjectID)
 		_, err = files.Watch(runctx, scope, 0)
 		wantError(t, err, ErrPending)
-		_, err = files.List(runctx, scope, "", "", 100)
+		_, err = files.List(runctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: "", Limit: 100})
 		must(t, err)
 		p, err = s.Project(runctx, scope)
 		must(t, err)

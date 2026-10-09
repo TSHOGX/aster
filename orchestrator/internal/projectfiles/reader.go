@@ -231,10 +231,11 @@ func (r *Reader) expire(now time.Time) {
 		}
 	}
 }
-func (r *Reader) List(ctx context.Context, path, cursor string, limit int) (Page, error) {
-	if Path(path, true) != nil || limit < 1 || limit > MaxPage || len(cursor) > 2048 {
+func (r *Reader) List(ctx context.Context, query DirectoryQuery) (Page, error) {
+	if query.Validate() != nil || len(query.Cursor) > 2048 {
 		return Page{}, ErrPath
 	}
+	path, cursor, limit := query.Path, query.Cursor, query.Limit
 	var current *directorySnapshot
 	index := 0
 	if cursor == "" {
@@ -290,6 +291,17 @@ func (r *Reader) List(ctx context.Context, path, cursor string, limit int) (Page
 		}
 		index = token.Index
 	}
+	if query.Seek != "" {
+		index = sort.Search(len(current.entries), func(i int) bool {
+			if query.Seek == "after" {
+				return current.entries[i].Name > query.Name
+			}
+			return current.entries[i].Name >= query.Name
+		})
+		if query.Seek == "around" {
+			index = max(0, index-limit/2)
+		}
+	}
 	if ctx.Err() != nil {
 		return Page{}, ctx.Err()
 	}
@@ -303,7 +315,11 @@ func (r *Reader) List(ctx context.Context, path, cursor string, limit int) (Page
 		bytes += len(raw) + 1
 		end++
 	}
-	page := Page{Entries: append([]Entry{}, current.entries[index:end]...), Snapshot: current.id}
+	page := Page{Entries: append([]Entry{}, current.entries[index:end]...), Snapshot: current.id, Start: index, Total: len(current.entries)}
+	if index > 0 {
+		raw, _ := json.Marshal(directoryCursor{Snapshot: current.id, Index: max(0, index-limit)})
+		page.Previous = base64.RawURLEncoding.EncodeToString(raw)
+	}
 	if end < len(current.entries) {
 		raw, _ := json.Marshal(directoryCursor{Snapshot: current.id, Index: end})
 		page.Next = base64.RawURLEncoding.EncodeToString(raw)

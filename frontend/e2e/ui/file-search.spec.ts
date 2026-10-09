@@ -15,7 +15,7 @@ for (const state of ["active","paused"]) {
     await page.goto("/?project=battery&session=analysis");
     await page.getByRole("button",{name:"File preview",exact:true}).click();
     const reports=page.getByRole("button",{name:"reports",exact:true});
-    await expect(reports).toHaveAttribute("aria-expanded","false");
+    await expect(reports.locator("..")).toHaveAttribute("aria-expanded","false");
     const input=page.getByRole("searchbox",{name:"Search files"});
     await input.fill(" XLSX ");
     const results=page.getByRole("region",{name:"File search results"});
@@ -45,7 +45,7 @@ test("search results stay bounded and do not depend on the tree's current page",
   await page.getByRole("button",{name:"File preview",exact:true}).click();
   // Let the initial watch attachment validation finish before moving pages.
   await page.waitForTimeout(300);
-  await page.locator(".file-tree").getByRole("button",{name:"Next page",exact:true}).click();
+  await page.locator(".virtual-file-tree").evaluate(node => { node.scrollTop = node.scrollHeight; });
   await expect(page.locator('[data-file-path="result-100.xlsx"]')).toBeVisible();
   const input=page.getByRole("searchbox",{name:"Search files"});
   await input.fill("xlsx");
@@ -62,7 +62,6 @@ test("search results stay bounded and do not depend on the tree's current page",
   await expect(results.locator('[data-file-path="result-000.xlsx"]')).toBeVisible();
   await input.fill("");
   await expect(page.locator('[data-file-path="result-100.xlsx"]')).toBeVisible();
-  await expect(page.locator('[data-file-path="result-000.xlsx"]')).toHaveCount(0);
 });
 
 test("changing a query aborts the prior traversal and ignores its late result",async({page})=>{

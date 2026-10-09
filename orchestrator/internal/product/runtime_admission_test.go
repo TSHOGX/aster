@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"harness-platform/orchestrator/internal/projectfiles"
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
@@ -122,7 +123,7 @@ func TestCapturedReadLeaseLastsThroughBodyClose(t *testing.T) {
 	if files.Store.RuntimeWorkStats()["workspace_read"] != 1 {
 		t.Fatal(files.Store.RuntimeWorkStats())
 	}
-	_, err = files.List(ctx, scope, "", "", 100)
+	_, err = files.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: "", Limit: 100})
 	must(t, err)
 	if files.Store.RuntimeWorkStats()["workspace_read"] != 1 {
 		t.Fatal("listing retained lease", files.Store.RuntimeWorkStats())

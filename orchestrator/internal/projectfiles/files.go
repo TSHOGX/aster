@@ -83,6 +83,33 @@ type Page struct {
 	Snapshot string  `json:"snapshot,omitempty"`
 	Entries  []Entry `json:"entries"`
 	Next     string  `json:"next,omitempty"`
+	Previous string  `json:"previous,omitempty"`
+	Start    int     `json:"start"`
+	Total    int     `json:"total"`
+}
+
+// DirectoryQuery seeks inside one server inventory, never by replaying client pages.
+type DirectoryQuery struct {
+	Path   string
+	Cursor string
+	Limit  int
+	Name   string
+	Seek   string // "after" or "around", empty for an ordinary cursor page.
+}
+
+func (q DirectoryQuery) Validate() error {
+	if Path(q.Path, true) != nil || q.Limit < 1 || q.Limit > MaxPage || len(q.Cursor) > 4096 {
+		return ErrPath
+	}
+	if q.Seek == "" {
+		if q.Name != "" {
+			return ErrPath
+		}
+	} else if q.Cursor != "" || (q.Seek != "after" && q.Seek != "around") ||
+		q.Name == "" || len(q.Name) > 255 || strings.ContainsAny(q.Name, "/\\\x00") || q.Name == "." || q.Name == ".." {
+		return ErrPath
+	}
+	return nil
 }
 
 // directory walks from a duplicated root FD. A substituted symlink is never

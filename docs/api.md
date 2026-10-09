@@ -173,6 +173,15 @@ clears the shared view. Shared-reader authority remains separate from Project
 resource events, live files and terminals.
 
 
+`GET /api/projects/{project}/files` returns bounded sorted directory pages with
+`snapshot`, `start`, `total`, and optional `next`/`previous` cursors. Requests use
+`path`, `limit`, and `after` for cursor navigation. `seek=around&name=...` obtains
+a bounded window containing the requested filename; `seek=after&name=...` starts
+after that name. A seek starts a new metadata observation and cannot be combined
+with a cursor. Active and paused reads apply the same authority and path checks.
+Expired cursors return 409 `resync_required`; clients relocate by name without
+scanning all preceding pages. Directory inventories remain bounded to 100,000 names.
+
 File GETs capture and hash current bytes before returning a strong SHA-256 ETag.
 `If-None-Match` returns 304 only after reauthorization and byte validation. A single
 Range uses that immutable capture; matching `If-Range` returns 206 and mismatching

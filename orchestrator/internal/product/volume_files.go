@@ -183,7 +183,8 @@ func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Res
 	}
 	return nil
 }
-func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resources, path, cursor string, limit int) (projectfiles.Page, error) {
+func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resources, query projectfiles.DirectoryQuery) (projectfiles.Page, error) {
+	path, cursor, limit := query.Path, query.Cursor, query.Limit
 	if r.WorkspaceVolume == "" {
 		if path == "" && cursor == "" {
 			return projectfiles.Page{Entries: []projectfiles.Entry{}}, nil
@@ -261,11 +262,26 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 		w.volumePages[position.ID] = snapshot
 		w.mu.Unlock()
 	}
+	if query.Seek != "" {
+		position.Index = sort.Search(len(snapshot.entries), func(i int) bool {
+			if query.Seek == "after" {
+				return snapshot.entries[i].Name > query.Name
+			}
+			return snapshot.entries[i].Name >= query.Name
+		})
+		if query.Seek == "around" {
+			position.Index = max(0, position.Index-limit/2)
+		}
+	}
 	if position.Index > len(snapshot.entries) {
 		return projectfiles.Page{}, ErrInvalid
 	}
 	end := min(position.Index+limit, len(snapshot.entries))
-	page := projectfiles.Page{Entries: append([]projectfiles.Entry{}, snapshot.entries[position.Index:end]...)}
+	page := projectfiles.Page{Entries: append([]projectfiles.Entry{}, snapshot.entries[position.Index:end]...), Snapshot: position.ID, Start: position.Index, Total: len(snapshot.entries)}
+	if position.Index > 0 {
+		raw, _ := json.Marshal(token{ID: position.ID, Index: max(0, position.Index-limit)})
+		page.Previous = base64.RawURLEncoding.EncodeToString(raw)
+	}
 	if end < len(snapshot.entries) {
 		position.Index = end
 		raw, _ := json.Marshal(position)

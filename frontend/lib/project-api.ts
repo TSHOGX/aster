@@ -100,7 +100,7 @@ export type FileEntry = {
   size: number;
   modified: number;
 };
-export type FilePage = { entries: FileEntry[]; next?: string };
+export type FilePage = { entries: FileEntry[]; next?: string; previous?: string; snapshot?: string; start?: number; total?: number };
 export type Schedule = {
   id: string;
   project_id: string;

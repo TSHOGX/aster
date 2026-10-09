@@ -864,6 +864,15 @@
   min-height: 0;
   padding: 0 5px 12px;
 }
+.file-tree-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
+.file-tree-resident { display: flex; flex: 1; min-height: 0; }
+.file-tree-resident[hidden] { display: none; }
+.virtual-file-tree { position: relative; padding: 0 5px; width: 100%; }
+.virtual-tree-content { position: relative; width: 100%; }
+.virtual-tree-row { position: absolute; left: 0; right: 0; overflow: hidden; }
+.virtual-tree-row .file-row { height: 36px; }
+.tree-status, .tree-edge { display: block; height: 36px; padding: 8px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-status button { margin-left: 5px; color: var(--color-accent); }
 .file-row {
   display: flex;
   align-items: center;

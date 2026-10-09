@@ -95,7 +95,7 @@ func TestReaderDirectorySnapshotPaginationAndExpiry(t *testing.T) {
 	defer reader.Close()
 	now := time.Now()
 	reader.now = func() time.Time { return now }
-	page, err := reader.List(context.Background(), "", "", 47)
+	page, err := reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: "", Limit: 47})
 	mustReader(t, err)
 	firstCursor := page.Next
 	mustReader(t, os.Remove(filepath.Join(root, "f0050")))
@@ -113,27 +113,52 @@ func TestReaderDirectorySnapshotPaginationAndExpiry(t *testing.T) {
 		if page.Next == "" {
 			break
 		}
-		page, err = reader.List(context.Background(), "", page.Next, 47)
+		page, err = reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: page.Next, Limit: 47})
 		mustReader(t, err)
 	}
 	if len(seen) != 503 || !seen["f0050"] {
 		t.Fatal("snapshot didn't retain observation", len(seen))
 	}
-	if _, err = reader.List(context.Background(), "other", firstCursor, 47); !errors.Is(err, ErrPath) {
+	if _, err = reader.List(context.Background(), DirectoryQuery{Path: "other", Cursor: firstCursor, Limit: 47}); !errors.Is(err, ErrPath) {
 		t.Fatal(err)
 	}
 	now = now.Add(SnapshotLifetime + time.Second)
-	if _, err = reader.List(context.Background(), "", firstCursor, 47); !errors.Is(err, ErrSnapshotExpired) {
+	if _, err = reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: firstCursor, Limit: 47}); !errors.Is(err, ErrSnapshotExpired) {
 		t.Fatal(err)
 	}
 	for n := 0; n < 50; n++ {
-		_, err = reader.List(context.Background(), "", "", 1)
+		_, err = reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: "", Limit: 1})
 		mustReader(t, err)
 		now = now.Add(time.Millisecond)
 	}
 	count, bytes := reader.Stats()
 	if count > MaxReaderSnapshots || bytes > MaxReaderSnapshotBytes {
 		t.Fatal(count, bytes)
+	}
+}
+
+func TestReaderDirectorySeekAndBackwardPages(t *testing.T) {
+	root := t.TempDir()
+	for n := 0; n < 10000; n++ {
+		mustReader(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("f%05d", n)), nil, 0600))
+	}
+	reader, err := NewReader(root)
+	mustReader(t, err)
+	defer reader.Close()
+	page, err := reader.List(context.Background(), DirectoryQuery{Limit: 100, Name: "f09000", Seek: "around"})
+	mustReader(t, err)
+	if page.Start != 8950 || page.Total != 10000 || page.Entries[50].Name != "f09000" || page.Previous == "" {
+		t.Fatal("seek did not return a bounded anchor window", page)
+	}
+	previous, err := reader.List(context.Background(), DirectoryQuery{Limit: 100, Cursor: page.Previous})
+	mustReader(t, err)
+	if previous.Start != 8850 || previous.Entries[99].Name != "f08949" || previous.Snapshot != page.Snapshot {
+		t.Fatal("backward page lost snapshot identity", previous)
+	}
+	after, err := reader.List(context.Background(), DirectoryQuery{Limit: 100, Name: "f09000", Seek: "after"})
+	mustReader(t, err)
+	if after.Start != 9001 || after.Entries[0].Name != "f09001" {
+		t.Fatal("name continuation replayed the anchor", after)
 	}
 }
 
@@ -145,7 +170,7 @@ func TestReaderDirectoryEncodedPageBudget(t *testing.T) {
 	reader, err := NewReader(root)
 	mustReader(t, err)
 	defer reader.Close()
-	page, err := reader.List(context.Background(), "", "", 200)
+	page, err := reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: "", Limit: 200})
 	mustReader(t, err)
 	var out bytes.Buffer
 	mustReader(t, WriteWire(&out, ReaderFrameBytes, ReadFrame{Version: ReaderProtocol, ID: strings.Repeat("a", 128), Kind: "complete", Page: &page}))
@@ -170,17 +195,17 @@ func TestReaderInventoryNameBoundary(t *testing.T) {
 	reader, err := NewReader(root)
 	mustReader(t, err)
 	defer reader.Close()
-	page, err := reader.List(context.Background(), "", "", 200)
+	page, err := reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: "", Limit: 200})
 	mustReader(t, err)
 	if len(page.Entries) != 200 || page.Next == "" {
 		t.Fatal(len(page.Entries))
 	}
 	mustReader(t, os.WriteFile(filepath.Join(root, "overflow"), nil, 0600))
-	if _, err = reader.List(context.Background(), "", "", 200); !errors.Is(err, ErrReaderCapacity) {
+	if _, err = reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: "", Limit: 200}); !errors.Is(err, ErrReaderCapacity) {
 		t.Fatal("name limit was not enforced", err)
 	}
 	// Existing snapshot is still usable after live directory grows beyond the cap.
-	if _, err = reader.List(context.Background(), "", page.Next, 200); err != nil {
+	if _, err = reader.List(context.Background(), DirectoryQuery{Path: "", Cursor: page.Next, Limit: 200}); err != nil {
 		t.Fatal(err)
 	}
 }

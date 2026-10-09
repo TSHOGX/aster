@@ -52,12 +52,15 @@ It never reads file bodies or starts compute. Each result window holds at most
 silently searching only the loaded tree. First results and Refresh restart it.
 Incomplete or resource-limited searches are distinguished from a complete search
 with no matches. File changes mark the current search for Refresh without clearing its results.
-The active tree retains the root and at most sixteen open directories, one
-100-entry page per directory, within an estimated 8 MiB aggregate budget. Next/
-First controls replace pages; closing a branch cancels its reads and releases its
-rows. Expired snapshots return to the first page with a notice. Deep links read
-bounded ancestor pages without scanning whole directories; the selected file and
-unsaved editor stay owned even when their row is outside the loaded page.
+The tree flattens expanded branches and renders visible rows with overscan.
+Expansion, keyboard focus and selection remain independent of resident data.
+Each directory retains up to five adjacent 100-entry pages within an estimated
+8 MiB aggregate budget. Near-edge loading extends the continuous interval; explicit
+Load more/Load previous controls provide the same navigation. Closing a branch
+cancels its reads and releases its rows. Expired cursors relocate around the visible
+filename with a notice. Deep links seek bounded windows around each ancestor and
+the selected file; they never replay a directory's pages to locate a name. The
+selected file and unsaved editor remain owned when their row leaves the window.
 Directory scans are serialized per Project, with a second slot available for
 selected file content. Temporary 202/429/503 read responses and captures changed
 during a read retry silently with bounded jittered backoff (at most seven attempts).

@@ -24,7 +24,7 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	page, err := s.Files.List(r.Context(), s.scope(r), q.Get("path"), q.Get("after"), intParam(q, "limit", 100))
+	page, err := s.Files.List(r.Context(), s.scope(r), projectfiles.DirectoryQuery{Path: q.Get("path"), Cursor: q.Get("after"), Limit: intParam(q, "limit", 100), Name: q.Get("name"), Seek: q.Get("seek")})
 	if err != nil {
 		fail(w, err)
 		return
