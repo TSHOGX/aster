@@ -1,4 +1,5 @@
 import { preflightBytes } from "./preview-preflight";
+import { PreviewFailure } from "./preview-budget";
 
 self.onmessage = async (
   event: MessageEvent<{ buffer: ArrayBuffer; path: string }>,
@@ -10,8 +11,11 @@ self.onmessage = async (
       new AbortController().signal,
     );
     self.postMessage({ plan });
-  } catch {
-    // Do not reflect document contents or parser diagnostics into the UI.
-    self.postMessage({ failed: true });
+  } catch (error) {
+    // Only vetted codes and numeric counts may leave the Worker.
+    const failure = error instanceof PreviewFailure
+      ? error
+      : new PreviewFailure("container_invalid", "parse");
+    self.postMessage({ failure: failure.toJSON() });
   }
 };

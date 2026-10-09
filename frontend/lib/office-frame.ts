@@ -1,4 +1,4 @@
-import { PreviewLimitError, reservePreview } from "./preview-budget";
+import { PreviewFailure, reservePreview } from "./preview-budget";
 import type { PreviewRepresentation } from "./preview-representation";
 
 export const OFFICE_CHANNEL = "battery-office-preview-v1";
@@ -50,7 +50,7 @@ export function prepareOfficeFrame(
     settled = true;
     clearTimeout(timer);
     if (value) resolve(value);
-    else reject(error ?? new PreviewLimitError());
+    else reject(error ?? new PreviewFailure("renderer_failed", "render", { retryable: true }));
   };
   const dispose = () => {
     if (disposed) return;
@@ -66,7 +66,7 @@ export function prepareOfficeFrame(
   };
   const abort = () => dispose();
   const timer = setTimeout(() => {
-    finish();
+    finish(undefined, new PreviewFailure("parse_timeout", "render", { retryable: true }));
     dispose();
   }, 15_000);
   const message = (event: MessageEvent) => {
@@ -93,7 +93,7 @@ export function prepareOfficeFrame(
     } else if (event.data.kind === "ready") {
       finish({ drawingsUnavailable: event.data.drawingsUnavailable === true });
     } else if (event.data.kind === "failed") {
-      finish(undefined, new PreviewLimitError());
+      finish(undefined, new PreviewFailure("renderer_failed", "render", { retryable: true }));
     } else if (
       event.data.kind === "escape" &&
       frame.style.visibility !== "hidden"

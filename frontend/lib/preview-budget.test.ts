@@ -10,8 +10,8 @@ it("reserves overlapping representations and releases each lease only once", () 
   const before = previewUsage();
   const one = reservePreview(PREVIEW_LIMITS.retainedBytes / 2, "renderers");
   const two = reservePreview(PREVIEW_LIMITS.retainedBytes / 2, "renderers");
-  expect(() => reservePreview(1)).toThrow("limits");
-  expect(() => reservePreview(0, "renderers")).toThrow("limits");
+  expect(() => reservePreview(1)).toThrow("resource_busy");
+  expect(() => reservePreview(0, "renderers")).toThrow("resource_busy");
   one();
   one();
   two();
@@ -28,7 +28,7 @@ it("bounds queued parses and removes canceled selection work before it can start
   const waiting = acquirePreviewParse(c.signal);
   await expect(
     acquirePreviewParse(new AbortController().signal),
-  ).rejects.toThrow("limits");
+  ).rejects.toThrow("resource_busy");
   b.abort(new Error("superseded"));
   await rejected;
   expect(previewUsage()).toMatchObject({ parses: 1, queued: 1 });

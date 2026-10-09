@@ -1,5 +1,5 @@
 import { SaxesParser } from "saxes";
-import { PREVIEW_LIMITS as LIMIT, PreviewLimitError } from "./preview-budget";
+import { PREVIEW_LIMITS as LIMIT, PreviewFailure } from "./preview-budget";
 
 export type PreviewPlan = {
   renderBytes: number;
@@ -10,7 +10,10 @@ export type PreviewPlan = {
   rows: number;
 };
 function requireLimit(valid: boolean): asserts valid {
-  if (!valid) throw new PreviewLimitError();
+  if (!valid) throw new PreviewFailure("container_invalid", "container");
+}
+function requireCapacity(actual: number, limit: number, metric: "bytes" | "entries" | "nodes" | "cells" | "rows" | "slides" | "pixels") {
+  if (actual > limit) throw new PreviewFailure("content_limit", "parse", { actual, limit, metric });
 }
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const word = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -57,7 +60,8 @@ export function imagePixels(bytes: Uint8Array): number {
       offset += size;
     }
   }
-  requireLimit(width > 0 && height > 0 && width * height <= LIMIT.imagePixels);
+  requireLimit(width > 0 && height > 0);
+  requireCapacity(width * height, LIMIT.imagePixels, "pixels");
   return width * height;
 }
 
@@ -90,9 +94,9 @@ function zipEntries(bytes: Uint8Array): Entry[] {
     view.getUint32(end + 4, true) === 0 &&
       view.getUint16(end + 8, true) === count &&
       count > 0 &&
-      count <= LIMIT.entries &&
       start + view.getUint32(end + 12, true) === end,
   );
+  requireCapacity(count, LIMIT.entries, "entries");
   const entries: Entry[] = [],
     names = new Set<string>();
   let offset = start,
@@ -118,9 +122,9 @@ function zipEntries(bytes: Uint8Array): Entry[] {
       next <= end &&
         (flags & ~0x808) === 0 &&
         [0, 8].includes(method) &&
-        size <= LIMIT.entryBytes &&
         local + 30 <= start,
     );
+    requireCapacity(size, LIMIT.entryBytes, "bytes");
     const name = decoder.decode(
       bytes.subarray(offset + 46, offset + 46 + nameLength),
     );
@@ -150,7 +154,7 @@ function zipEntries(bytes: Uint8Array): Entry[] {
           view.getUint32(local + 22, true) === size,
       );
     expanded += size;
-    requireLimit(expanded <= LIMIT.expandedBytes);
+    requireCapacity(expanded, LIMIT.expandedBytes, "bytes");
     entries.push({
       name,
       size,
@@ -218,7 +222,8 @@ export async function preflightPreview(
   signal: AbortSignal,
   nested = false,
 ): Promise<PreviewPlan> {
-  requireLimit(blob.size <= LIMIT.blobBytes);
+  if (blob.size > LIMIT.blobBytes)
+    throw new PreviewFailure("source_too_large", "download", { actual: blob.size, limit: LIMIT.blobBytes, metric: "bytes" });
   return preflightBytes(
     new Uint8Array(await blob.arrayBuffer()),
     path,
@@ -232,7 +237,8 @@ export async function preflightBytes(
   signal: AbortSignal,
   nested = false,
 ): Promise<PreviewPlan> {
-  requireLimit(bytes.length <= LIMIT.blobBytes);
+  if (bytes.length > LIMIT.blobBytes)
+    throw new PreviewFailure("source_too_large", "download", { actual: bytes.length, limit: LIMIT.blobBytes, metric: "bytes" });
   signal.throwIfAborted();
   const ext = path.toLowerCase().split(".").pop();
   if (ext === "pdf") {
@@ -251,7 +257,8 @@ export async function preflightBytes(
       rows: 0,
     };
   }
-  requireLimit(["xlsx", "docx", "pptx"].includes(ext || ""));
+  if (!["xlsx", "docx", "pptx"].includes(ext || ""))
+    throw new PreviewFailure("unsupported_feature", "parse");
   const entries = zipEntries(bytes);
   requireLimit(
     entries.some(
@@ -271,14 +278,8 @@ export async function preflightBytes(
     rows = 0,
     paragraphs = 0,
     pages = 1;
-  requireLimit(
-    entries.filter((e) => /^xl\/worksheets\/[^/]+\.xml$/.test(e.name)).length <=
-      LIMIT.sheets,
-  );
-  requireLimit(
-    entries.filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.name)).length <=
-      LIMIT.slides,
-  );
+  requireCapacity(entries.filter((e) => /^xl\/worksheets\/[^/]+\.xml$/.test(e.name)).length, LIMIT.sheets, "entries");
+  requireCapacity(entries.filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.name)).length, LIMIT.slides, "slides");
   for (const entry of entries) {
     const data = await expand(bytes, entry, signal);
     expandedBytes += data.length;
@@ -292,21 +293,22 @@ export async function preflightBytes(
       const parser = new SaxesParser({ xmlns: true });
       let depth = 0;
       parser.on("error", () => {
-        throw new PreviewLimitError();
+        throw new PreviewFailure("container_invalid", "parse");
       });
       parser.on("doctype", () => {
-        throw new PreviewLimitError();
+        throw new PreviewFailure("container_invalid", "parse");
       });
       parser.on("opentag", (element) => {
-        requireLimit(++nodes <= LIMIT.xmlNodes && ++depth <= LIMIT.xmlDepth);
+        requireCapacity(++nodes, LIMIT.xmlNodes, "nodes");
+        requireLimit(++depth <= LIMIT.xmlDepth);
         const tag = element.local;
         const attr = (name: string) => element.attributes[name]?.value || "";
         if (element.uri === sheet) {
-          if (tag === "c") requireLimit(++cells <= LIMIT.cells);
-          if (tag === "row")
-            requireLimit(
-              ++rows <= LIMIT.rows && Number(attr("r") || 0) <= LIMIT.rows,
-            );
+          if (tag === "c") requireCapacity(++cells, LIMIT.cells, "cells");
+          if (tag === "row") {
+            requireCapacity(++rows, LIMIT.rows, "rows");
+            requireCapacity(Number(attr("r") || 0), LIMIT.rows, "rows");
+          }
           if (tag === "col")
             requireLimit(
               Number(attr("min")) >= 1 &&
@@ -335,14 +337,14 @@ export async function preflightBytes(
           }
         }
         if (element.uri === word) {
-          if (tag === "p") requireLimit(++paragraphs <= LIMIT.paragraphs);
+          if (tag === "p") requireCapacity(++paragraphs, LIMIT.paragraphs, "nodes");
           const pageBreak =
             tag === "br" &&
             Object.values(element.attributes).some(
               (a) => a.uri === word && a.local === "type" && a.value === "page",
             );
           if (tag === "sectPr" || tag === "lastRenderedPageBreak" || pageBreak)
-            requireLimit(++pages <= LIMIT.pages);
+            requireCapacity(++pages, LIMIT.pages, "nodes");
           requireLimit(tag !== "altChunk");
         }
         if (tag === "Relationship")
@@ -386,6 +388,6 @@ export async function preflightBytes(
   }
   const renderBytes =
     expandedBytes * 4 + nodes * 128 + cells * 256 + pixels * 4;
-  requireLimit(renderBytes <= LIMIT.renderBytes);
+  requireCapacity(renderBytes, LIMIT.renderBytes, "bytes");
   return { renderBytes, expandedBytes, nodes, pixels, cells, rows };
 }

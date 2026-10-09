@@ -1,4 +1,4 @@
-import { PREVIEW_LIMITS, PreviewSizeError } from "./preview-budget";
+import { PREVIEW_LIMITS, PreviewFailure } from "./preview-budget";
 import { fetchFileRead, FILE_BUSY_MESSAGE } from "./file-read";
 import { requestCategory, startTiming } from "./interaction-metrics";
 
@@ -284,6 +284,8 @@ export async function readPreview(
     if (response.status === 401 && typeof window !== "undefined")
       window.dispatchEvent(new Event("project-auth-expired"));
     const data = await response.json().catch(() => ({}));
+    if (response.status === 413 && data.code === "preview_too_large")
+      throw new PreviewFailure("source_too_large", "download", { limit: max, metric: "bytes" });
     throw new APIError(
       response.status,
       [202, 429, 503].includes(response.status) ? FILE_BUSY_MESSAGE : data.error || "The file is not available yet.",
@@ -297,14 +299,14 @@ export async function readPreview(
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   let size = 0;
   try {
-    if (total && total > max) throw new PreviewSizeError(total, max);
+    if (total && total > max) throw new PreviewFailure("source_too_large", "download", { actual: total, limit: max, metric: "bytes" });
     onProgress?.(0, total);
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
       // Once a stream is cut short, its complete size is unknown.
-      if (size > max) throw new PreviewSizeError(undefined, max);
+      if (size > max) throw new PreviewFailure("source_too_large", "download", { limit: max, metric: "bytes" });
       chunks.push(value);
       onProgress?.(size, total);
     }

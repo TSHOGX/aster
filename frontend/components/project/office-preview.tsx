@@ -4,6 +4,7 @@ import { useT } from "@/lib/i18n";
 import {
   acquirePreviewParse,
   PREVIEW_LIMITS,
+  PreviewFailure,
   reservePreview,
 } from "@/lib/preview-budget";
 import {
@@ -35,7 +36,7 @@ export function OfficePreview({
   const cancel = useRef(() => {});
   const [hasReady, setHasReady] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ phase: Phase; drawings: boolean }>({
+  const [state, setState] = useState<{ phase: Phase; drawings: boolean; failure?: PreviewFailure }>({
     phase: "queued",
     drawings: false,
   });
@@ -111,9 +112,9 @@ export function OfficePreview({
         previous?.dispose();
         setHasReady(true);
         setState({ phase: "ready", drawings: result.drawingsUnavailable });
-      } catch {
+      } catch (error) {
         if (!abort.signal.aborted)
-          setState((old) => ({ ...old, phase: "failed" }));
+          setState((old) => ({ ...old, phase: "failed", failure: error instanceof PreviewFailure ? error : new PreviewFailure("renderer_failed", "render", { retryable: true }) }));
       } finally {
         if (!adopted) {
           candidate?.dispose();
@@ -139,7 +140,10 @@ export function OfficePreview({
       {(state.phase === "failed" || state.phase === "canceled") && (
         <PreviewStatus path={path} href={href} size={representation.blob.size}
           title={tr(state.phase === "canceled" ? "Preview canceled." : "Preview unavailable")}
-          description={tr("You can try again or download the original file.")}
+          description={state.phase === "canceled" ? tr("You can try again or download the original file.")
+            : state.failure?.code === "resource_busy" ? tr("Preview resources are busy. Try again in a moment.")
+            : state.failure?.code === "parse_timeout" ? tr("Preparing this preview took too long. Retry or download the file.")
+            : tr("The preview renderer stopped. Retry or download the file.")}
           onRetry={() => setAttempt(value => value + 1)} />
       )}
       {(state.phase === "queued" || state.phase === "parsing") && (

@@ -17,8 +17,7 @@ import { CodeView } from "@/components/workbench/viewers/code-view";
 import {
   acquirePreviewParse,
   PREVIEW_LIMITS,
-  PreviewLimitError,
-  PreviewSizeError,
+  PreviewFailure,
   reservePreview,
 } from "@/lib/preview-budget";
 import { PreviewStatus, previewSize } from "./preview-status";
@@ -79,7 +78,7 @@ export function FilePreview({
     };
     const key = { project, kind: "file" as const, identity: href };
     const prepare = async (blob: Blob) => {
-      if (blob.size > PREVIEW_LIMITS.blobBytes) throw new PreviewSizeError(blob.size, PREVIEW_LIMITS.blobBytes);
+      if (blob.size > PREVIEW_LIMITS.blobBytes) throw new PreviewFailure("source_too_large", "download", { actual: blob.size, limit: PREVIEW_LIMITS.blobBytes, metric: "bytes" });
       setProgress({ received: blob.size, total: blob.size });
       setPhase("preparing");
       const digest = await contentDigest(blob);
@@ -161,14 +160,12 @@ export function FilePreview({
             current.current = null;
             setLoaded(null);
           }
-          setRetryable(e instanceof TypeError || e instanceof APIError && [202, 429, 500, 502, 503, 504].includes(e.status));
-          setErrorTitle(tr(e instanceof PreviewSizeError ? "File too large to preview" : "Preview unavailable"));
-          if (e instanceof PreviewSizeError) setProgress({ received: 0, total: e.size });
+          setRetryable(e instanceof PreviewFailure ? e.retryable : e instanceof TypeError || e instanceof APIError && [202, 429, 500, 502, 503, 504].includes(e.status));
+          setErrorTitle(tr(e instanceof PreviewFailure && e.code === "source_too_large" ? "File too large to preview" : "Preview unavailable"));
+          if (e instanceof PreviewFailure && e.code === "source_too_large") setProgress({ received: 0, total: e.actual });
           setError(
-            e instanceof PreviewSizeError
-              ? tr("This file is larger than the {size} preview limit. Download it to view the complete file.", { size: previewSize(e.limit) })
-              : e instanceof PreviewLimitError
-              ? tr("This file could not be previewed within the supported content limits. Download it to view the complete file.")
+            e instanceof PreviewFailure
+              ? previewFailureMessage(e, tr)
               : e instanceof Error
                 ? e.message
                 : "Preview failed.",
@@ -212,6 +209,21 @@ export function FilePreview({
       <PreviewContent loaded={loaded} path={path} href={href} mode={mode} />
     </>
   );
+}
+function previewFailureMessage(error: PreviewFailure, tr: ReturnType<typeof useT>): string {
+  switch (error.code) {
+    case "source_too_large":
+      return tr("This file is larger than the {size} preview limit. Download it to view the complete file.", { size: previewSize(error.limit ?? PREVIEW_LIMITS.blobBytes) });
+    case "container_invalid": return tr("This file is damaged or has an invalid structure. Download the original or try another copy.");
+    case "unsupported_feature": return tr("This file uses a feature this preview cannot display. Download it to open in another app.");
+    case "content_limit": return tr("This file has more {metric} than this preview can process ({actual} of {limit}). Download it to read the complete file.", {
+      metric: tr(({ bytes: "Preview bytes", entries: "Preview entries", nodes: "Preview nodes", cells: "Preview cells", rows: "Preview rows", slides: "Preview slides", pixels: "Preview pixels", frames: "Preview frames", parses: "Preview parses" } as const)[error.metric ?? "nodes"]),
+      actual: error.actual ?? "?", limit: error.limit ?? "?",
+    });
+    case "resource_busy": return tr("Preview resources are busy. Try again in a moment.");
+    case "parse_timeout": return tr("Preparing this preview took too long. Retry or download the file.");
+    case "renderer_failed": return tr("The preview renderer stopped. Retry or download the file.");
+  }
 }
 function PreviewContent({
   loaded,

@@ -21,18 +21,55 @@ export const PREVIEW_LIMITS = Object.freeze({
   queued: 2,
 });
 
-export class PreviewSizeError extends Error {
-  constructor(readonly size: number | undefined, readonly limit: number) {
-    super("This file is too large to preview. Download it instead.");
+export type PreviewFailureCode =
+  | "source_too_large" | "container_invalid" | "unsupported_feature"
+  | "content_limit" | "resource_busy" | "parse_timeout" | "renderer_failed";
+export type PreviewFailureStage = "download" | "container" | "parse" | "render" | "session";
+export type PreviewFailureData = {
+  code: PreviewFailureCode;
+  stage: PreviewFailureStage;
+  actual?: number;
+  limit?: number;
+  metric?: "bytes" | "entries" | "nodes" | "cells" | "rows" | "slides" | "pixels" | "frames" | "parses";
+  retryable: boolean;
+};
+
+/** Only bounded structural counts cross the Worker boundary, never parser text or file contents. */
+export class PreviewFailure extends Error implements PreviewFailureData {
+  readonly name = "PreviewFailure";
+  readonly retryable: boolean;
+  readonly actual?: number;
+  readonly limit?: number;
+  readonly metric?: PreviewFailureData["metric"];
+  constructor(readonly code: PreviewFailureCode, readonly stage: PreviewFailureStage,
+    details: Omit<Partial<PreviewFailureData>, "code" | "stage"> = {}) {
+    super(code);
+    this.retryable = details.retryable ?? false;
+    this.actual = details.actual;
+    this.limit = details.limit;
+    this.metric = details.metric;
+  }
+  toJSON(): PreviewFailureData {
+    return { code: this.code, stage: this.stage, retryable: this.retryable,
+      ...(this.actual !== undefined ? { actual: this.actual } : {}),
+      ...(this.limit !== undefined ? { limit: this.limit } : {}),
+      ...(this.metric ? { metric: this.metric } : {}) };
   }
 }
 
-export class PreviewLimitError extends Error {
-  constructor() {
-    super(
-      "This file exceeds the supported preview limits. Download it to view the complete file.",
-    );
-  }
+export function previewFailureFromWire(value: unknown): PreviewFailure {
+  if (!value || typeof value !== "object") return new PreviewFailure("renderer_failed", "parse", { retryable: true });
+  const data = value as Partial<PreviewFailureData>;
+  const codes: PreviewFailureCode[] = ["source_too_large", "container_invalid", "unsupported_feature", "content_limit", "resource_busy", "parse_timeout", "renderer_failed"];
+  const stages: PreviewFailureStage[] = ["download", "container", "parse", "render", "session"];
+  if (!data.code || !codes.includes(data.code) || !data.stage || !stages.includes(data.stage))
+    return new PreviewFailure("renderer_failed", "parse", { retryable: true });
+  return new PreviewFailure(data.code, data.stage, {
+    retryable: data.retryable === true,
+    actual: Number.isSafeInteger(data.actual) && (data.actual ?? -1) >= 0 ? data.actual : undefined,
+    limit: Number.isSafeInteger(data.limit) && (data.limit ?? -1) >= 0 ? data.limit : undefined,
+    metric: ["bytes", "entries", "nodes", "cells", "rows", "slides", "pixels", "frames", "parses"].includes(data.metric ?? "") ? data.metric : undefined,
+  });
 }
 
 type Usage = {
@@ -79,7 +116,8 @@ export function reservePreview(
     ((kind === "renderers" || kind === "frames") &&
       usage[kind] >= PREVIEW_LIMITS.renderers)
   )
-    throw new PreviewLimitError();
+    throw new PreviewFailure("resource_busy", "session", { retryable: true,
+      metric: kind === "frames" ? "frames" : undefined });
   usage.bytes += bytes;
   if (kind) usage[kind]++;
   let released = false;
@@ -117,7 +155,7 @@ export function acquirePreviewParse(signal: AbortSignal): Promise<() => void> {
   signal.throwIfAborted();
   if (!usage.parses) return Promise.resolve(grant());
   if (waiters.length >= PREVIEW_LIMITS.queued)
-    return Promise.reject(new PreviewLimitError());
+    return Promise.reject(new PreviewFailure("resource_busy", "session", { retryable: true, metric: "parses" }));
   return new Promise((resolve, reject) => {
     const waiter: Waiter = {
       signal,
