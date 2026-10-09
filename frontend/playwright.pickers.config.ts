@@ -3,6 +3,7 @@ import base from "./playwright.ui.config";
 
 export default defineConfig({
   ...base,
+  globalSetup: undefined,
   testMatch: "schedule-pickers.spec.ts",
   outputDir: "test-results/pickers",
   projects: [

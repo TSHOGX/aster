@@ -12,7 +12,8 @@
 - [Security](security.md): trust domains, authentication and public shares.
 - [Frontend](frontend.md): workbench, bounds, previews and localization.
 - [Queued prompts](queued-prompts-implementation.md): current prompt/run/delivery contract.
-- [Queued-prompts acceptance](queued-prompts-acceptance.md) and [release procedure](queued-prompts-release.md): evidence and format gates.
+- [Delivery](delivery.md): CI, candidate packaging, exact-artifact qualification and deployment handoff.
+- [Queued-prompts acceptance](queued-prompts-acceptance.md) and [release procedure](queued-prompts-release.md): historical reset evidence and format gates.
 - [Interaction architecture](performance.md): implementation progress and performance diagnostics.
 - [Notifications](notifications.md): outcome and operator notifications.
 - [Image build](sandbox-image.md): immutable packaging and release verification.

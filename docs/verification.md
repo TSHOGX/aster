@@ -1,59 +1,107 @@
 # Verification
 
-Run from the repository root:
+Install Go from `orchestrator/go.mod`, Node from `.node-version`, Python 3 and the
+locked frontend dependencies. Node is also required by the Go native RPC tests.
 
 ```sh
-go -C orchestrator test ./...
-go -C orchestrator test -race ./internal/product ./internal/agentrunner ./internal/runtimerelease
-go -C orchestrator vet ./...
-python3 scripts/check-public-docs.py
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r frontend/e2e/requirements.txt
+npm --prefix frontend ci
 cd frontend
-npm run typecheck
-npm run lint
-npm test
-npm run build
-npm run test:ui
+npx --no-install playwright install chromium
+cd ..
+scripts/check.sh all
+scripts/check.sh race
 ```
 
-## Native and application qualification
+On a new Linux browser runner use Playwright's `--with-deps` option. The check
+script never installs dependencies, changes credentials or contacts a live
+installation. `all` means the unprivileged repository gates below; runtime
+qualification is an explicit separate command.
+
+## Test layers
+
+| Gate | Entry point | Coverage and limits |
+| --- | --- | --- |
+| Source | `scripts/check.sh source` | Documentation links/public boundary, lockfile registry, shell syntax and candidate integrity tests |
+| Backend | `scripts/check.sh backend` | Build, vet, all ordinary Go tests, Node RPC handler/full Session tests, compile all `khoraintegration` packages and execute their substrate-independent measurement tests |
+| Core races | `scripts/check.sh race` | Product, Agent runner and runtime release under the Go race detector |
+| Frontend | `scripts/check.sh frontend` | Lint, types, Vitest, one production build and deterministic Chromium UI tests against that build |
+| Cross-browser controls | `npm --prefix frontend run test:pickers` | Scheduling controls in Chromium, Firefox and WebKit; install those browsers first |
+| Runtime | `dev/verify-khora.sh ... --suite all` | Actual owner, immutable guest image, native Pi, Khora, network/files, browser, faults, realtime and sustained mixed workload |
+| Extended workload | `dev/verify-khora.sh ... --suite combined` | Explicit two-tab workload, network profiles and active-owner update |
+| Provider | `dev/verify-khora.sh ... --suite provider` | Explicit external-provider continuity; requires private configuration and incurs provider usage |
+
+The UI suite uses controlled API fixtures; it does not qualify the Go edge,
+SSE transport or native runtime. `test:e2e` is the browser component invoked by
+the isolated runtime harness, not a standalone test against an arbitrary URL.
+`test:ui:built` reuses a build produced in the same checkout; `test:ui` and
+`test:pickers` build first for direct developer use.
+
+UI setup regenerates bounded synthetic Office documents from
+`frontend/e2e/requirements.txt`; accessibility and replacement tests run by
+default. `PYTHON` can select an existing fixture virtualenv interpreter.
+
+The instrumentation benchmark requires `INTERACTION_BENCHMARK_OUTPUT`; startup
+comparison tests require `STARTUP_PROFILE_OUTPUT`. Other optional profiles declare
+their `*_PROFILE_OUTPUT`, `*_LATENCY_OUTPUT` or `HISTORY_WINDOW_OUTPUT` in the
+individual `frontend/e2e/ui/*-budget.spec.ts` and preview/profile tests. Those scenarios
+remain opt-in and their skips do not count as measured performance. The ordinary
+Go suite retains pressure/scale tests without `-short`. A failed test is not
+made green by automatic retries; preserve intermittent failures and investigate
+before treating a repeated pass as stability evidence.
+
+## GitHub CI
+
+[CI](../.github/workflows/ci.yml) runs on pull requests and `main` pushes, with
+manual/reusable entry points. Feature-branch pushes do not duplicate PR runs;
+archive branches do not trigger obsolete workflows. Concurrency cancels stale
+runs for the same workflow/ref. All jobs have bounded timeouts and read-only
+repository permissions. Main/manual/release checks add the core race gate.
+
+Configure repository or organization Actions secret `KHORA_READ_TOKEN` with
+read-only access to the pinned private `TSHOGX/khora` repository. The default
+`GITHUB_TOKEN` cannot read a different private repository. Dependency access is
+required even on a warm module cache; absence fails explicitly instead of
+silently skipping the backend. Never use `pull_request_target` to expose this
+secret to untrusted PR code. Fork PRs can run source/frontend checks, but trusted
+backend qualification must run in a reviewed context with the secret available.
+
+Failed deterministic UI runs retain `frontend/test-results/ui` for seven days.
+Do not upload raw production or privileged/provider reports through this job.
+Candidate artifacts have their own bounded retention and are not published as
+GitHub Releases; see [delivery](delivery.md).
+
+## Runtime qualification
 
 Build a new immutable template with `sandbox-image/build-khora-template.sh`.
-The source and patched-output digests must match the pinned runtime adapter.
-Use [the isolated harness](../dev/README.md) with the exact manifest and newly
-built engine. It creates its own btrfs filesystem, namespaces and test database.
-It must never attach the installed application's database or engine store.
+Use [the isolated harness](../dev/README.md) with the exact exported manifest and
+pinned engine. A candidate bundle can be supplied with `--candidate DIR`; the
+harness verifies its inventory and source revision, then uses its owner executable
+and standalone frontend. Each invocation requires a new output directory so old
+logs cannot masquerade as new evidence. Fingerprints include source files,
+executables, engine, manifest, frontend build and candidate manifest hashes.
 
-`release` covers executable identity, owner handoff, gateway continuity, real Pi
-retry/compaction, queued Steer consumption, Stop removal and next-run non-leak.
-`browser` exercises the built frontend against the real API and native runtime,
-including two-tab Steer handoff. `network` validates accepted policy snapshots.
-`faults` covers process/journal recovery, workspace mutation, PTY and service
-authority. `mixed` and `combined` add sustained workload and two-tab activity.
-A real-provider check is opt-in; normal qualification uses controlled streams.
+`all` includes release, files, network, mixed, browser, realtime and faults.
+`gateway` and `native` are focused subsets of `release`; `provider` and `combined`
+are deliberately excluded from `all`. See [dev/README.md](../dev/README.md) for
+prerequisites and individual suite meanings. Compilation in hosted CI does not
+claim these privileged gates passed.
 
 ## Evidence invariants
 
 - A successful receipt is durable admission, not proof of consumption.
 - One prompt has one effective consumption/handled claim; unknown is not reusable.
-- Stop preserves its original Run target and draft, including while another row
-  or ordinary submission is pending.
-- Core queue cleanup failure emits no successful reconciliation. The runner
-  terminates that process and recovers original journal evidence.
-- Observer failure after proven queue clearing cannot strand settlement.
-- Native user events cannot relocate a consumed input anchor. There is no
-  historical-message fallback or old-format conversion path.
-- Segment state follows its own boundary and the correlated Run; late tool
-  updates keep original ownership. Unknown Runs do not leave running clocks.
+- Stop preserves its original Run target and draft through concurrent actions.
+- Failed core queue cleanup cannot emit successful reconciliation; process recovery
+  retains original journal evidence. Observer failure cannot strand proven cleanup.
+- Native user events cannot relocate consumed input anchors; there is no legacy
+  fallback. Late tool updates retain their original segment/Run ownership.
 - Page, delta, reconnect, rebuild, share and export chronology agree.
-- Current schema fingerprint and protocol are mandatory. Incompatible data is
-  discarded only by the explicitly authorized installation reset.
+- Exact schema/protocol, executable and runtime identities remain mandatory.
 
-## Live reset acceptance
-
-Verify stopped supervisors and absence of descendants before deleting owned
-state. Record deletion counts, new engine Store ID, candidate digests and empty
-product tables before smoke tests. Verify preserved credentials without logging
-their contents. Exercise login, Project provisioning, workspace read/write,
-scheduling, native model completion and deployed browser controls, then remove
-the temporary user and Project. Check service restart counts and final runtime
-identity after smoke cleanup. Publish only sanitized current evidence.
+After a separately authorized live activation, record the actual installed
+identities and smoke results. Historical deployment evidence only describes its
+recorded commit. Reset-specific acceptance belongs in [bootstrap](bootstrap.md);
+ordinary current-format updates use [operations](operations.md).

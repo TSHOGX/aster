@@ -89,8 +89,7 @@ func startMixedCompanion(a *releaseApp) *mixedCompanion {
 	repo, output := os.Getenv("PROJECT_TEST_REPO"), os.Getenv("PROJECT_TEST_OUTPUT")
 	log, err := os.Create(filepath.Join(output, "frontend.log"))
 	require(a.t, err)
-	frontend := exec.CommandContext(a.ctx, "node", filepath.Join(repo, "frontend/node_modules/next/dist/bin/next"), "start", "--hostname", "192.0.2.1", "--port", "18193")
-	frontend.Dir = filepath.Join(repo, "frontend")
+	frontend := releasedFrontend(a.ctx, repo)
 	frontend.Stdout, frontend.Stderr = log, log
 	require(a.t, frontend.Start())
 	require(a.t, log.Close())

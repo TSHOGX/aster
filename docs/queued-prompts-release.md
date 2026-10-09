@@ -1,5 +1,9 @@
 # Queued-prompts release procedure
 
+For the ongoing build/qualification/activation process, use [delivery](delivery.md).
+The reset below records a specific format transition; it is not the default
+procedure for ordinary current-format updates.
+
 The authorized reset, rebuild and restart completed on 2026-09-25. See the
 [current deployment record](../dev/measurements/current-deployment.json) and
 [acceptance](queued-prompts-acceptance.md). The procedure below applies to future resets.

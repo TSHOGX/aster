@@ -12,7 +12,7 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `files`, `network`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
@@ -26,8 +26,13 @@ and verifies that connected observers do not prevent Project pause. The script b
 the pinned engine or accepts `--engine FILE`; module caches remain with the build
 user. No private checkout path is compiled into the public test harness.
 
-Logs, revision metadata, screenshots and workload measurements go to the explicit
-output directory. The disposable filesystem is removed after namespace teardown;
+`all` includes release, files, network, mixed, browser, realtime and faults;
+gateway/native are release subsets and provider/combined remain explicit.
+Only the selected Go test packages are built. Empty test selections fail.
+
+Logs, revision metadata, screenshots and workload measurements go to a new explicit
+output directory; existing directories are refused to prevent mixed evidence.
+The disposable filesystem is removed after namespace teardown;
 the named output directory is retained. Use an untracked location and review its
 contents before sharing. Never place secrets in test fixture arguments.
 
@@ -84,9 +89,16 @@ partial samples or setup-only runs are not successful qualification. Failure-sta
 records retain only synthetic identifiers/states and native error evidence.
 
 Every harness invocation records source hashes (including uncommitted files),
-executable hashes, platform, CPU/memory, Go/Node versions and the frontend build ID
+executable/engine/runtime-manifest hashes, platform, CPU/memory, Go/Node versions and the frontend build ID
 in `fingerprint.json`. Preserve the actual binaries and frontend build together
 with this metadata; source hashes alone cannot recreate an uncommitted build.
+
+For [candidate qualification](../docs/delivery.md), add `--candidate DIR`.
+The bundle inventory must verify and its commit must match the clean checkout.
+The actual packaged owner and standalone frontend are used; the candidate manifest
+hash enters `fingerprint.json`. The source checkout still supplies Playwright and
+test/alternate-owner fixtures. A development run without this option does not
+certify a separately built candidate bundle.
 
 
 The `files` suite exercises the real released application and Khora volume APIs:

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -10,54 +10,76 @@ on:
       KHORA_READ_TOKEN:
         required: true
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache: false
+      - name: Validate workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
+      - run: scripts/check.sh source
+
   backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     env:
       GOPRIVATE: github.com/TSHOGX/khora
-    runs-on: ubuntu-latest
-    container: golang:1.27.1
-    defaults:
-      run:
-        working-directory: orchestrator
     steps:
-      - uses: actions/checkout@v4
-      - name: Install guest protocol test runtime
-        run: apt-get update -qq && apt-get install -y --no-install-recommends python3
-      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Fetch pinned Go dependencies
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Fetch private engine dependency
         env:
           KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
-        run: ../scripts/fetch-go-dependencies.sh
-      - run: go build ./...
-      - run: go vet ./...
-      - run: go test ./...
+        run: scripts/fetch-go-dependencies.sh
+      - run: scripts/check.sh backend
+      - name: Core race checks (main and explicit qualification)
+        if: github.event_name != 'pull_request'
+        run: scripts/check.sh race
 
   frontend:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      # A lockfile committed from a host with an npm mirror configured pins every
-      # `resolved` URL to that mirror, and is then only installable from that one
-      # network. Catch it here rather than as an ECONNRESET on someone's machine.
-      - run: ../scripts/check-lockfile-registry.sh
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "22.23.2"
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-
-  bridge:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s sandbox-image/tests -p 'test_*.py'
-      - run: python3 scripts/check-public-docs.py
-      - run: bash -n sandbox-image/build-rootfs.sh sandbox-image/build-khora-template.sh
+        working-directory: frontend
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: frontend/e2e/requirements.txt
+      - run: python -m pip install -r frontend/e2e/requirements.txt
+      - run: npx --no-install playwright install --with-deps chromium
+        working-directory: frontend
+      - run: scripts/check.sh frontend
+      - name: Failed browser evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-failure-${{ github.run_attempt }}
+          path: frontend/test-results/ui
+          retention-days: 7
+          if-no-files-found: ignore

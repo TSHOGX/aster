@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { workspaceFixture } from "./fixture";
@@ -15,6 +15,14 @@ function markdownBytes(size: number) {
     section.repeat(repeat) +
     "\n\nComplete final line."
   );
+}
+
+async function readingReady(page: Page, text: string) {
+  // Large files intentionally expose one bounded section, not the entire DOM.
+  if (Buffer.byteLength(text) > 256 * 1024)
+    await expect(page.locator(".large-text-preview .preview-text-page")).toContainText("Measured document");
+  else
+    await expect(page.locator(".file-markdown")).toContainText("Complete final line.");
 }
 
 test("plain conversation rendering keeps complete answer copy outside the excerpt", async ({ page, context }) => {
@@ -66,10 +74,7 @@ for (const size of [8 * 1024, 16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024]) {
     await page
       .getByRole("link", { name: "Measured document", exact: true })
       .click();
-    await expect(page.locator(".file-markdown")).toContainText(
-      "Complete final line.",
-      { timeout: 30000 },
-    );
+    await readingReady(page, text);
     const complete = performance.now() - start;
     await page.waitForTimeout(250);
     const profile = await cdp.send("Profiler.stop");
@@ -82,7 +87,7 @@ for (const size of [8 * 1024, 16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024]) {
     writeFileSync(
       resolve(output!, `${size}.json`),
       JSON.stringify(
-        { bytes: Buffer.byteLength(text), complete, dom, tasks },
+        { bytes: Buffer.byteLength(text), readiness: "first readable section", complete, dom, tasks },
         null,
         2,
       ),
@@ -109,20 +114,34 @@ for (const scenario of ["large", "dense"]) {
     await page
       .getByRole("link", { name: "the research report", exact: true })
       .click();
-    const preview = page.locator(".file-markdown");
-    await expect(preview.locator("[data-markdown-mode=plain]")).toBeVisible();
-    expect(await preview.locator(".markdown-plain").textContent()).toBe(body);
-    await expect(preview.locator("table,script,img")).toHaveCount(0);
-    await preview.locator(".markdown-plain").evaluate((node) => {
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      const selection = window.getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
-    });
-    expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(
-      body,
-    );
+    if (scenario === "large") {
+      const preview = page.locator(".large-text-preview");
+      await expect(preview).toBeVisible();
+      const next = preview.getByRole("button", { name: "Next section", exact: true });
+      let complete = "";
+      do {
+        const section = await preview.locator(".preview-text-page code").textContent();
+        expect(section!.length).toBeLessThanOrEqual(65536);
+        complete += section;
+        if (await next.isDisabled()) break;
+        await next.click();
+      } while (true);
+      expect(complete).toBe(body);
+      await expect(preview.locator("table,script,img")).toHaveCount(0);
+    } else {
+      const preview = page.locator(".file-markdown");
+      await expect(preview.locator("[data-markdown-mode=plain]")).toBeVisible();
+      expect(await preview.locator(".markdown-plain").textContent()).toBe(body);
+      await expect(preview.locator("table,script,img")).toHaveCount(0);
+      await preview.locator(".markdown-plain").evaluate((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const selection = window.getSelection()!;
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+      expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(body);
+    }
     await page.getByLabel("File actions", { exact: true }).click();
     await page
       .getByRole("menuitem", { name: "Edit text", exact: true })
@@ -173,10 +192,7 @@ for (const size of [8 * 1024, 64 * 1024, 1024 * 1024]) {
         await expect(link).toBeVisible();
         began = performance.now();
         await link.click();
-        await expect(page.locator(".file-markdown")).toContainText(
-          "Complete final line.",
-          { timeout: 10000 },
-        );
+        await readingReady(page, text);
         if (i >= 0)
           samples.push({ ms: performance.now() - began, status: "ready" });
       } catch (error) {
@@ -199,6 +215,7 @@ for (const size of [8 * 1024, 64 * 1024, 1024 * 1024]) {
           JSON.stringify(
             {
               bytes: Buffer.byteLength(text),
+              readiness: "first readable section",
               cpuRate: 4,
               warmups: 1,
               samples,

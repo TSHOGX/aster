@@ -4,7 +4,7 @@ There is one supported application schema and protocol set. No historical schema
 recognition, migration chain, old-client adapter, rollback candidate override or
 old-release compatibility matrix is provided. A non-current database is refused
 before a writer opens. A format-changing update requires an independently
-separately authorized destructive reset. The queued-prompts transition is
+authorized destructive reset. The queued-prompts transition is
 tracked in [queued-prompts-release.md](queued-prompts-release.md); reset is not
 implicit in application startup.
 

@@ -21,6 +21,7 @@ for (const kind of ["tool", "thinking"]) {
             {
               id: "detail",
               turn_id: "t",
+              run_id: "t",
               cursor: 1,
               kind,
               state: "running",
@@ -128,6 +129,7 @@ async function activityFixture(page: Page) {
                 {
                   id: `thinking-${i}`,
                   turn_id: "t",
+                  run_id: "t",
                   cursor: i * 2 + 3,
                   kind: "thinking",
                   state: "completed",
@@ -136,6 +138,7 @@ async function activityFixture(page: Page) {
                 {
                   id: `tool-${i}`,
                   turn_id: "t",
+                  run_id: "t",
                   cursor: i * 2 + 4,
                   kind: "tool",
                   state: i >= 38 ? "running" : "completed",

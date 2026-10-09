@@ -3,20 +3,22 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output DIR [--engine FILE] [--suite release|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--suite release|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
 Default suite: release. Browser/combined/all require a frontend production build and Chromium.
 Combined is opt-in and adds two real browser tabs, network profiles and gated handoff.
 Set PLAYWRIGHT_BROWSERS_PATH when the browser cache is outside the default location.
+--candidate verifies and uses the packaged owner/frontend instead of rebuilding them.
+All includes release, files, network, mixed, browser, realtime and faults; excludes provider/combined.
 HELP
 }
-template= manifest= output= engine= suite=release
+template= manifest= output= engine= candidate= suite=release
 while (($#)); do
  case "$1" in
  --help|-h) usage;exit 0;;
- --template|--manifest|--output|--engine|--suite)
+ --template|--manifest|--output|--engine|--candidate|--suite)
   (($#>=2)) || { usage >&2;exit 2; }
-  case "$1" in --template) template=$2;; --manifest) manifest=$2;; --output) output=$2;; --engine) engine=$2;; --suite) suite=$2;; esac
+  case "$1" in --template) template=$2;; --manifest) manifest=$2;; --output) output=$2;; --engine) engine=$2;; --candidate) candidate=$2;; --suite) suite=$2;; esac
   shift 2;;
  *) usage >&2;exit 2;;
  esac
@@ -25,7 +27,18 @@ done
 case "$suite" in release|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 for program in go python3 ip unshare mount mkfs.btrfs btrfs runsc sudo; do command -v "$program" >/dev/null || { echo "missing prerequisite: $program" >&2;exit 2; }; done
 if [[ $suite == provider ]]; then : "${PROJECT_PROVIDER_CONFIG:?explicit host-only provider YAML required}"; fi
+if [[ -n $candidate ]]; then
+ candidate=$(realpath "$candidate")
+ python3 "$repo/scripts/candidate.py" verify "$candidate"
+ [[ -z $(git -C "$repo" status --porcelain) ]] || { echo 'candidate qualification requires its clean source checkout' >&2; exit 2; }
+ [[ $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["commit"])' "$candidate/candidate.json") == "$(git -C "$repo" rev-parse HEAD)" ]] || { echo 'candidate/source revision mismatch' >&2; exit 2; }
+fi
+if [[ $suite == browser || $suite == combined || $suite == all ]]; then
+ command -v node >/dev/null
+ [[ -f "$repo/frontend/node_modules/@playwright/test/cli.js" && -f "${candidate:-$repo}/frontend/.next/BUILD_ID" ]] || { echo 'browser qualification requires installed Playwright and a production frontend build' >&2; exit 2; }
+fi
 
+[[ ! -e $output ]] || { echo 'use a new output directory; never mix qualification evidence' >&2; exit 2; }
 mkdir -p "$output"
 output=$(realpath "$output")
 module=$(go -C "$repo/orchestrator" list -m -f '{{.Dir}}' github.com/TSHOGX/khora)
@@ -39,15 +52,25 @@ engine=$(realpath "$engine")
 
 build_revision=$(git -C "$repo" rev-parse HEAD)
 for binary in orchestrator agent-runner workspace-files runtime-cleanup runtime-fixture; do
- if [[ $binary == orchestrator ]]; then
+ if [[ $binary == orchestrator && -n $candidate ]]; then
+  cp "$candidate/bin/orchestrator" "$output/orchestrator"
+ elif [[ $binary == orchestrator ]]; then
   CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -ldflags="-X main.commit=$build_revision" -o "$output/$binary" "./cmd/$binary"
  else
   CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -o "$output/$binary" "./cmd/$binary"
  fi
 done
 CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -ldflags="-X main.version=handoff-fixture-candidate -X main.commit=$build_revision" -o "$output/orchestrator-candidate" ./cmd/orchestrator
-CGO_ENABLED=0 go -C "$repo/orchestrator" test -c -o "$output/projectfiles.test" ./internal/projectfiles
-for package in application product producthttp servicegateway; do
+packages=(application)
+case "$suite" in
+ realtime) packages=(producthttp);;
+ faults) packages=(product producthttp servicegateway);;
+ all) packages=(application product producthttp servicegateway);;
+esac
+if [[ $suite == faults || $suite == all ]]; then
+ CGO_ENABLED=0 go -C "$repo/orchestrator" test -c -o "$output/projectfiles.test" ./internal/projectfiles
+fi
+for package in "${packages[@]}"; do
  go -C "$repo/orchestrator" test -tags khoraintegration -c -o "$output/$package.test" "./internal/$package"
 done
 {
@@ -58,10 +81,11 @@ done
  "$engine" --version
  sha256sum "$manifest" "$output/orchestrator"
 } > "$output/revisions.txt"
-python3 - "$repo" "$output" <<'PYMETA'
+python3 - "$repo" "$output" "$candidate" "$engine" "$manifest" <<'PYMETA'
 import hashlib, json, os, platform, shutil, subprocess, sys
 from pathlib import Path
-repo, output = map(Path, sys.argv[1:])
+repo, output = map(Path, sys.argv[1:3])
+candidate = Path(sys.argv[3]) if sys.argv[3] else None
 files = subprocess.check_output(["git", "-C", str(repo), "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0")
 def digest(p):
     h = hashlib.sha256()
@@ -70,8 +94,11 @@ def digest(p):
     return h.hexdigest()
 sources = {name: digest(repo / name) for name in files if name and (repo / name).is_file()}
 artifacts = {p.name: digest(p) for p in output.iterdir() if p.is_file() and os.access(p, os.X_OK)}
-build_id = repo / "frontend/.next/BUILD_ID"
+build_id = (candidate or repo) / "frontend/.next/BUILD_ID"
 report = {"head": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(), "sources": sources, "artifacts": artifacts, "platform": platform.platform(), "cpu_count": os.cpu_count(), "memory_total_kib": next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemTotal:")), "node": subprocess.check_output(["node", "--version"], text=True).strip() if shutil.which("node") else None, "go": subprocess.check_output(["go", "version"], text=True).strip(), "frontend_build_id": build_id.read_text().strip() if build_id.exists() else None}
+report["engine_sha256"] = digest(Path(sys.argv[4]))
+report["runtime_manifest_sha256"] = digest(Path(sys.argv[5]))
+report["candidate_manifest_sha256"] = digest(candidate / "candidate.json") if candidate else None
 (output / "fingerprint.json").write_text(json.dumps(report, indent=2) + "\n")
 PYMETA
 # Real-provider work is opt-in and never included in the default/all suites.
@@ -97,13 +124,17 @@ if [[ $suite == provider ]]; then
 fi
 run() {
  local package=$1 selection=$2 name=$3 timeout=$4
+ # A renamed/deleted test must fail qualification rather than produce a green no-op.
+ local listed
+ listed=$("$output/$package.test" -test.list "$selection")
+ [[ $listed == *Test* ]] || { echo "no tests selected for $name" >&2; return 2; }
  mkdir -p "$output/$name"
- sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" \
+ sudo -n env PROJECT_TEST_ENGINE="$engine" PROJECT_TEST_TEMPLATE="$(realpath "$template")" PROJECT_TEST_MANIFEST="$(realpath "$manifest")" PROJECT_TEST_OUTPUT="$output/$name" PROJECT_TEST_BIN_DIR="$output" PROJECT_TEST_REPO="$repo" PROJECT_TEST_CANDIDATE="$candidate" PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" PROJECT_PROVIDER_SOCKET="${PROJECT_PROVIDER_SOCKET:-}" PROJECT_PROVIDER_REPORT="${PROJECT_PROVIDER_REPORT:-}" PROJECT_PROVIDER_MODEL="${PROJECT_PROVIDER_MODEL:-}" \
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
 if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedExecutableOnKhora|TestReleasedActivationTarget|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' release 5m;fi
-if [[ $suite == network ]]; then run application '^TestReleasedNetworkPolicyReload$' network 4m;fi
-if [[ $suite == files ]]; then run application '^TestReleasedPausedVolumeFiles$' files 4m;fi
+if [[ $suite == network || $suite == all ]]; then run application '^TestReleasedNetworkPolicyReload$' network 4m;fi
+if [[ $suite == files || $suite == all ]]; then run application '^TestReleasedPausedVolumeFiles$' files 4m;fi
 if [[ $suite == gateway ]]; then run application '^(TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff)$' gateway 2m;fi
 if [[ $suite == native ]]; then run application '^(TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' native 4m;fi
 if [[ $suite == provider ]]; then run application '^TestReleasedRealProviderHandoff$' provider 5m;fi

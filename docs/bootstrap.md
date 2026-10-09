@@ -8,10 +8,12 @@ migration or legacy-format conversion runs at startup.
 For a deliberate destructive reset, close browser ingress and stop the owner,
 gateway, frontend, engine proxy and engine under their supervisors. Confirm the
 old processes and sandbox descendants have stopped before deleting resources.
-Delete the installation's application database and sidecars, captures/shares,
-engine database/state, owned workspace/runtime volumes and overlays. Remove old
-state backups and superseded deployed binaries/templates selected for the reset.
-Do not infer deletion targets from unrelated paths or another engine store.
+Use an explicit reviewed inventory for the installation's application database
+and sidecars, captures/shares, engine state, owned workspace/runtime volumes and
+overlays. Preserve a consistent offline backup when the reset scope requires it;
+backup retention and removal are separate decisions. Delete only the selected
+state and superseded artifacts. Do not infer targets from unrelated paths, another
+engine store or historical reset records.
 
 Keep the deployment's login registry, provider credentials, TLS material and
 reviewed configuration unless those are explicitly part of the reset. Install
