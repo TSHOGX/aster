@@ -2,7 +2,7 @@ import { PreviewFailure, reservePreview } from "./preview-budget";
 import type { PreviewRepresentation } from "./preview-representation";
 
 export const OFFICE_CHANNEL = "battery-office-preview-v1";
-export type OfficeKind = "spreadsheet" | "document" | "presentation";
+export type OfficeKind = "presentation";
 export type OfficePosition = {
   top: number;
   left: number;
@@ -10,7 +10,7 @@ export type OfficePosition = {
   focus?: string;
 };
 export type OfficeFrame = {
-  ready: Promise<{ drawingsUnavailable: boolean }>;
+  ready: Promise<void>;
   position: () => OfficePosition;
   activate: (previous?: OfficeFrame) => void;
   dispose: () => void;
@@ -36,21 +36,21 @@ export function prepareOfficeFrame(
   let disposed = false,
     sent = false,
     settled = false;
-  let resolve!: (value: { drawingsUnavailable: boolean }) => void;
+  let resolve!: () => void;
   let reject!: (error: unknown) => void;
-  const ready = new Promise<{ drawingsUnavailable: boolean }>((yes, no) => {
+  const ready = new Promise<void>((yes, no) => {
     resolve = yes;
     reject = no;
   });
   const finish = (
-    value?: { drawingsUnavailable: boolean },
+    _value?: void,
     error?: unknown,
   ) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    if (value) resolve(value);
-    else reject(error ?? new PreviewFailure("renderer_failed", "render", { retryable: true }));
+    if (error) reject(error);
+    else resolve();
   };
   const dispose = () => {
     if (disposed) return;
@@ -91,7 +91,7 @@ export function prepareOfficeFrame(
         })
         .catch((error) => finish(undefined, error));
     } else if (event.data.kind === "ready") {
-      finish({ drawingsUnavailable: event.data.drawingsUnavailable === true });
+      finish();
     } else if (event.data.kind === "failed") {
       finish(undefined, new PreviewFailure("renderer_failed", "render", { retryable: true }));
     } else if (

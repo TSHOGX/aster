@@ -1,7 +1,7 @@
 """Bounded synthetic Office fixtures; python-docx 1.2 / openpyxl 3.1 / python-pptx 1.0.
 
 Usage: python preview-documents.py OUTPUT_DIRECTORY
-Maximum generated workload: 20k cells, 1k paragraphs, 200 slides; no user content.
+Maximum generated workload: 275,544 cells, 15,599 paragraphs, 200 slides; no user content.
 """
 import hashlib
 import io
@@ -71,6 +71,29 @@ for count in [41, 200]:
         slide.shapes.title.text = f'Measured slide {i}'
         slide.placeholders[1].text = 'Battery measurements and 中文 text.'
     save(slides, f'{count}-slides.pptx')
+
+book = Workbook(write_only=True)
+sheet = book.create_sheet('Measurements')
+for row in range(1, 22963):
+    sheet.append([f'Cell {row}:{col}' for col in range(12)])
+save(book, 'corpus.xlsx')
+
+# Populate a generated legal OOXML body directly to avoid python-docx's repeated
+# table traversal cost; no document bytes come from private evidence.
+doc = Document()
+stream = io.BytesIO()
+doc.save(stream)
+namespace = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+paragraphs = ''.join(f'<w:p><w:r><w:t>Paragraph {i}</w:t></w:r></w:p>' for i in range(599))
+rows = ''.join('<w:tr>' + ''.join(f'<w:tc><w:p><w:r><w:t>Row {row} cell {col}</w:t></w:r></w:p></w:tc>' for col in range(5)) + '</w:tr>' for row in range(3000))
+body = f'<w:document xmlns:w="{namespace}"><w:body>{paragraphs}<w:tbl>{rows}</w:tbl></w:body></w:document>'
+output = io.BytesIO()
+with zipfile.ZipFile(stream) as source, zipfile.ZipFile(output, 'w') as target:
+    for name in source.namelist():
+        target.writestr(name, body.encode() if name == 'word/document.xml' else source.read(name))
+data = canonical(output)
+(root / 'corpus.docx').write_bytes(data)
+manifest['corpus.docx'] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'paragraphs': 15599, 'table_rows': 3000}
 
 for state in ['charts', 'charts-updated']:
     book = Workbook()

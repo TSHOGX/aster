@@ -33,40 +33,8 @@ export function OfficeFrameContent() {
     stage.style.height = "100%";
     content.appendChild(stage);
     const render = async (buffer: ArrayBuffer, format: OfficeKind) => {
-      let drawingsUnavailable = false;
       try {
-        if (format === "spreadsheet") {
-          const { default: renderer } = await import("./office-excel-loader");
-          if (gone) return;
-          const options = { minColLength: 10, minRowLength: 20, xls: false };
-          const view = renderer.init(stage, options);
-          const url = URL.createObjectURL(new Blob([buffer]));
-          dispose = () => {
-            view.destroy();
-            URL.revokeObjectURL(url);
-          };
-          try {
-            await view.preview(url);
-          } catch (error) {
-            if (
-              gone ||
-              !(error instanceof Error) ||
-              !error.message.includes("anchors")
-            )
-              throw error;
-            const converted = { ...options, xls: true };
-            view.setOptions(converted);
-            await view.preview(url);
-            drawingsUnavailable = true;
-          }
-        } else if (format === "document") {
-          const renderer = await import("docx-preview");
-          if (gone) return;
-          await renderer.renderAsync(buffer, stage, undefined, {
-            useBase64URL: true,
-            renderAltChunks: false,
-          });
-        } else {
+        if (format === "presentation") {
           const { init } = await import("pptx-preview");
           if (gone) return;
           const view = init(stage, { width: 720, height: 405, mode: "slide" });
@@ -96,7 +64,7 @@ export function OfficeFrameContent() {
         // Chart initialization is deferred by the pinned library. Do not report
         // readiness or retire the previous frame before that task has run.
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        if (!gone) send("ready", { drawingsUnavailable });
+        if (!gone) send("ready");
       } catch {
         if (!gone) send("failed");
       }
@@ -116,7 +84,7 @@ export function OfficeFrameContent() {
         if (
           !(buffer instanceof ArrayBuffer) ||
           buffer.byteLength > PREVIEW_LIMITS.blobBytes ||
-          !["spreadsheet", "document", "presentation"].includes(format)
+          format !== "presentation"
         )
           return;
         started = true;

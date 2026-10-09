@@ -104,7 +104,7 @@ test("fifty preview, session, fullscreen and theme cycles release owned resource
     await page
       .getByRole("link", { name: names[i % names.length], exact: true })
       .click();
-    await expect(page.locator(".office-preview")).toHaveAttribute(
+    await expect(page.locator(".office-preview, .office-reading-preview")).toHaveAttribute(
       "data-preview-phase",
       "ready",
     );

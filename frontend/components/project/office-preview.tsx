@@ -36,9 +36,8 @@ export function OfficePreview({
   const cancel = useRef(() => {});
   const [hasReady, setHasReady] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ phase: Phase; drawings: boolean; failure?: PreviewFailure }>({
+  const [state, setState] = useState<{ phase: Phase; failure?: PreviewFailure }>({
     phase: "queued",
-    drawings: false,
   });
   useEffect(() => {
     const owned = frames.current;
@@ -103,7 +102,7 @@ export function OfficePreview({
           },
         };
         frames.current.add(candidate);
-        const result = await frame.ready;
+        await frame.ready;
         abort.signal.throwIfAborted();
         const previous = active.current;
         candidate.activate(previous ?? undefined);
@@ -111,7 +110,7 @@ export function OfficePreview({
         adopted = true;
         previous?.dispose();
         setHasReady(true);
-        setState({ phase: "ready", drawings: result.drawingsUnavailable });
+        setState({ phase: "ready" });
       } catch (error) {
         if (!abort.signal.aborted)
           setState((old) => ({ ...old, phase: "failed", failure: error instanceof PreviewFailure ? error : new PreviewFailure("renderer_failed", "render", { retryable: true }) }));
@@ -130,13 +129,6 @@ export function OfficePreview({
   }, [representation, kind, path, attempt]);
   return (
     <>
-      {state.drawings && (
-        <p className="notice">
-          {tr(
-            "Some drawings are unavailable in this preview. Download the workbook to view them.",
-          )}
-        </p>
-      )}
       {(state.phase === "failed" || state.phase === "canceled") && (
         <PreviewStatus path={path} href={href} size={representation.blob.size}
           title={tr(state.phase === "canceled" ? "Preview canceled." : "Preview unavailable")}

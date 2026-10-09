@@ -237,6 +237,7 @@ export function FilesPanel({
       const demand = seek ? `${seek.mode}:${seek.name}` : after;
       const pending = loads.current.get(path);
       if (pending) {
+        const requestedSnapshot = treeRef.current[path]?.snapshot;
         if (
           pending.after === demand &&
           !directoryRequests.current.get(path)?.signal.aborted
@@ -244,6 +245,11 @@ export function FilesPanel({
           return pending.promise;
         await pending.promise;
         if (!alive.current) return;
+        const currentPage = treeRef.current[path];
+        if (!after && !seek && currentPage?.snapshot && currentPage.snapshot !== requestedSnapshot)
+          return currentPage;
+        if (after && after !== currentPage?.next && after !== currentPage?.previous)
+          return currentPage;
         return load(path, after, seek);
       }
       if (path && !expanded.current.includes(path)) return;
@@ -419,9 +425,11 @@ export function FilesPanel({
     let delayedTimer: ReturnType<typeof setTimeout> | undefined;
     const dirtyDirectories = new Set<string>();
     let selectedDirty = false;
+    const attachmentSnapshots = new Map<string,string | undefined>();
     const invalidate = (event: FileInvalidation) => {
+      const initial = ["attachment", "initial", "consumer_attach"].includes(event.reason ?? "");
       const run = searchRun.current;
-      if (run && !["attachment", "initial"].includes(event.reason ?? "")) {
+      if (run && !initial) {
         run.stale = true;
         setSearch(current => current?.query === run.query ? {...current, stale:true} : current);
       }
@@ -430,6 +438,9 @@ export function FilesPanel({
         ...expanded.current,
       ]);
       for (const dir of impact.directories) {
+        if (initial)
+          attachmentSnapshots.set(dir,treeRef.current[dir]?.snapshot);
+        else attachmentSnapshots.delete(dir);
         if (dirtyDirectories.size >= 64) {
           dirtyDirectories.clear();
           dirtyDirectories.add("");
@@ -458,14 +469,15 @@ export function FilesPanel({
       );
       if (
         impact.gap &&
-        event.reason !== "attachment" &&
-        event.reason !== "initial"
+        !initial
       )
         setWatchHealth("stale");
       if (!timer)
         timer = setTimeout(() => {
           timer = undefined;
-          const dirs = [...dirtyDirectories];
+          const dirs = [...dirtyDirectories].filter(dir => !attachmentSnapshots.has(dir) ||
+            !treeRef.current[dir]?.snapshot || treeRef.current[dir]?.snapshot === attachmentSnapshots.get(dir));
+          attachmentSnapshots.clear();
           dirtyDirectories.clear();
           const check = selectedDirty;
           selectedDirty = false;

@@ -1,3 +1,23 @@
+.office-reading-preview { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; }
+.office-reading-tools, .office-reading-footer { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px; border-bottom: 1px solid var(--color-border); }
+.office-reading-tools form, .office-reading-tools label { display: flex; gap: 4px; align-items: center; }
+.office-reading-tools input { width: 110px; min-width: 0; }
+.office-reading-tools select { max-width: 200px; }
+.office-reading-viewport { flex: 1; min-height: 120px; overflow: auto; position: relative; }
+.office-reading-spacer { position: relative; }
+.office-reading-row { position: absolute; left: 0; right: 0; display: flex; border-bottom: 1px solid var(--color-border); }
+.office-reading-index { flex: 0 0 56px; width: 56px; padding: 12px 6px; color: var(--color-foreground-muted); position: sticky; left: 0; z-index: 2; background: var(--color-surface); }
+.office-reading-cells { position: relative; flex: 1 0 auto; }
+.office-reading-cell { position: absolute; top: 0; bottom: 0; border: 0; border-right: 1px solid var(--color-border); border-radius: 0; padding: 8px; text-align: left; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.office-reading-paragraph { flex: 1; min-width: 0; text-align: left; border: none; border-radius: 0; white-space: pre-wrap; overflow: hidden; padding: 8px; }
+.office-reading-row.heading .office-reading-paragraph { font-weight: 600; }
+.office-reading-footer { border-top: 1px solid var(--color-border); border-bottom: 0; }
+.office-reading-footer label { display: flex; flex: 1; min-width: 140px; gap: 8px; align-items: center; }
+.office-reading-footer textarea { resize: vertical; flex: 1; min-width: 0; height: 64px; max-height: 240px; }
+.office-reading-selection { padding: 4px 8px; border-top: 1px solid var(--color-border); }
+.office-reading-selection > div { display:flex;flex-wrap:wrap;gap:8px;padding:8px 0; }
+.office-reading-selection label { display:flex;gap:4px;align-items:center; }
+.office-reading-selection input { width:80px; }
 /* Application chrome uses quiet surfaces; content establishes the hierarchy. */
 .project-shell,
 .project-login,

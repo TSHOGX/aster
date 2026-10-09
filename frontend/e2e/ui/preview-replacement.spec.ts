@@ -11,8 +11,8 @@ for (const action of ["cancel", "timeout"]) {
     page,
   }) => {
     const f = await workspaceFixture(page);
-    f.messages.analysis[1].content = "[Document](/workspace/preview.docx)";
-    let body = readFileSync(resolve(fixtures!, "small.docx"));
+    f.messages.analysis[1].content = "[Document](/workspace/preview.pptx)";
+    let body = readFileSync(resolve(fixtures!, "small.pptx"));
     await page.route("**/files/content?*", (route) => route.fulfill({ body }));
     let loads = 0,
       resume!: () => void;
@@ -32,12 +32,12 @@ for (const action of ["cancel", "timeout"]) {
     await page
       .locator(".office-frame")
       .evaluate((frame) => frame.setAttribute("data-original", "true"));
-    body = readFileSync(resolve(fixtures!, "large.docx"));
+    body = readFileSync(resolve(fixtures!, "large.pptx"));
     await page.evaluate(() =>
       window.dispatchEvent(
         new CustomEvent("fixture-file-event", {
           detail: {
-            path: "preview.docx",
+            path: "preview.pptx",
             operation: "write",
             entry_type: "file",
           },
@@ -63,13 +63,13 @@ for (const action of ["cancel", "timeout"]) {
     );
     await expect(
       page.frameLocator(".office-frame").locator(".office-frame-content"),
-    ).toContainText("Paragraph 999");
+    ).toContainText("Measured slide 0");
     await expect(page.locator(".office-frame[data-original]")).toHaveCount(0);
     resume();
   });
 }
 
-for (const ext of ["docx", "xlsx", "pptx"]) {
+for (const ext of ["pptx"]) {
   test(`prepared ${ext} replacement retains the displayed frame and ignores same bytes`, async ({
     page,
   }) => {
@@ -179,11 +179,11 @@ test("a superseded frame request cannot replace a later text selection", async (
   page,
 }) => {
   const f = await workspaceFixture(page);
-  f.messages.analysis[1].content = "[Document](/workspace/small.docx)";
+  f.messages.analysis[1].content = "[Document](/workspace/small.pptx)";
   await page.route("**/files/content?*", (route) => {
     return new URL(route.request().url()).searchParams.get("path") ===
-      "small.docx"
-      ? route.fulfill({ body: readFileSync(resolve(fixtures!, "small.docx")) })
+      "small.pptx"
+      ? route.fulfill({ body: readFileSync(resolve(fixtures!, "small.pptx")) })
       : route.fallback();
   });
   let requested = false,

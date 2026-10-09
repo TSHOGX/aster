@@ -40,8 +40,13 @@ admission reopens. Candidate startup checks the accepted policy revision during
 owner handoff independently of fixed release compatibility.
 
 Frontend Markdown does not enable raw HTML. File responses use restricted preview
-headers and the browser uses bounded fetched blobs. Office previews are separate
-renderers and should be treated as parsing untrusted documents. HTML previews
+headers and the browser uses bounded fetched blobs. DOCX/XLSX parsing runs in a
+private Linux namespace worker with networking disabled, CPU/address-space/file
+limits, bounded scratch storage, and no application/Agent authority. ZIP CRC,
+expanded lengths, entry paths/duplicates, XML entities/depth, model records and
+output bytes are checked before derived content becomes readable. Every derived
+window and public-share access reauthorizes its source scope. Presentations use a
+separate disposable browser renderer. HTML previews
 use a separate opaque-origin iframe with an empty `sandbox` and no
 same-origin, popup, form or top-navigation permission. A leading CSP allows only
 inline styles and embedded image/font data; scripts, network connections, nested

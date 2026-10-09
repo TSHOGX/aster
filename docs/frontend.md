@@ -71,7 +71,8 @@ missing-file errors are immediate. Writes are never automatically repeated.
 Workspace links reveal ancestor directories; on mobile the tree folds away after
 selection. Files support watches, upload, download, mutation, text editing and
 bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG/static GIF, XLSX,
-DOCX, PPTX and native browser PDF previews. All preview reads allow up to 20 MiB.
+DOCX, PPTX and native browser PDF previews. Browser source/media reads allow up to
+20 MiB; isolated DOCX/XLSX jobs admit up to 100 MiB with separate structural limits.
 Read-only source uses one continuous CodeMirror viewport with line numbers, find,
 jump-to-line and model-backed selection/copy. XML and YAML use lazy grammars for
 small files and a line-state index with visible-token rendering above 1 MiB;
@@ -83,9 +84,13 @@ eligibility does not depend on the 1 MiB editing limit. Loading states show
 file details and transfer progress when available, with cancel/retry/download
 actions. Oversized files identify the 20 MB limit separately from content or
 format limitations. Other formats (including legacy XLS and SVG) remain
-downloadable. Unsupported workbook drawings are identified. Office bytes pass
-bounded format validation in a cancellable Worker before rendering. Each Office
-renderer owns a disposable browser document; the old document stays readable
+downloadable. DOCX and XLSX use isolated server-derived reading indexes: complete
+text and sparse data, continuous windows, outline/sheet navigation, find, selected
+text, and bounded cross-window copy. Layout, images and drawings are explicitly
+simplified; saved spreadsheet values are shown without recalculation. Jobs admit
+sources through 100 MiB with independent ZIP/XML/model/process limits. Presentation
+bytes pass bounded format validation in a cancellable browser Worker before rendering.
+Its renderer owns a disposable browser document; the old document stays readable
 until its prepared replacement is ready. Cancel, timeout and explicit retry keep
 that displayed version. Frame removal releases the renderer's URLs and global
 handlers. Presentation controls support keyboard navigation, localized labels,

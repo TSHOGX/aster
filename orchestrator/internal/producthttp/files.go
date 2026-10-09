@@ -245,3 +245,64 @@ func (s *Server) releasePreviewJob(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) previewJobCopy(w http.ResponseWriter, r *http.Request) {
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	text, err := jobs.Copy(r.Context(), s.scope(r), r.PathValue("preview"), intParam(q, "sheet", 0), intParam(q, "start", 0), intParam(q, "end", 0), intParam(q, "from_column", 0), intParam(q, "to_column", 0))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"text": text})
+}
+
+func (s *Server) openPublicPreview(w http.ResponseWriter, r *http.Request) {
+	if s.Shares == nil {
+		writeError(w, 503, "sharing unavailable")
+		return
+	}
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	status, err := jobs.OpenShared(r.Context(), s.Shares, r.PathValue("token"), q.Get("path"), q.Get("kind"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, status)
+}
+func (s *Server) publicPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "DELETE" && !s.Config.originAllowed(r) {
+		writeError(w, 403, "cross-origin request refused")
+		return
+	}
+	share, err := s.Store.PublicShare(r.Context(), r.PathValue("token"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	r = r.WithContext(withActor(r.Context(), "public:"+r.PathValue("token")))
+	r.SetPathValue("project", share.ProjectID)
+	if r.Method == "DELETE" {
+		s.releasePreviewJob(w, r)
+		return
+	}
+	switch r.PathValue("action") {
+	case "":
+		s.previewJobStatus(w, r)
+	case "window":
+		s.previewJobWindow(w, r)
+	case "find":
+		s.previewJobFind(w, r)
+	case "copy":
+		s.previewJobCopy(w, r)
+	default:
+		writeError(w, 404, "not found")
+	}
+}

@@ -50,7 +50,7 @@ for (const name of [
         ? ".x-spreadsheet"
         : ".pptx-preview-slide-wrapper-0";
     await expect(
-      page.frameLocator(".office-frame").locator(selector).first(),
+      name.endsWith("pptx") ? page.frameLocator(".office-frame").locator(selector).first() : page.locator(".office-reading-row").first(),
     ).toBeVisible({
       timeout: 20000,
     });

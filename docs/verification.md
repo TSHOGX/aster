@@ -47,7 +47,14 @@ produced in the same checkout, matching the candidate layout; `test:ui` and
 UI setup regenerates bounded synthetic Office documents from
 `frontend/e2e/requirements.txt`; accessibility and replacement tests run by
 default. `PYTHON` can select an existing fixture virtualenv interpreter.
-The synthetic corpus includes 41 and 200 slide presentations. Run
+The synthetic corpus includes 41 and 200 slide presentations, 15,599 Word
+paragraphs with a 3,000-by-5 table, and 22,962-by-12 spreadsheets. UI setup builds
+the actual preview worker and derives SQLite fixtures from these documents.
+`office-reading.spec.ts` checks end reachability, find, bounded DOM, mobile fit,
+and lease cleanup. `PREVIEW_TEST_WORKER=/absolute/path/to/preview-worker go test
+./internal/product -run TestPreviewJobs` exercises the real Linux process sandbox,
+deduplication, range windows and cleanup; it requires `bwrap` and `prlimit`.
+Run
 `npx playwright test --config playwright.ui.config.ts e2e/ui/preview-slides.spec.ts`
 from `frontend/` after building to verify direct navigation through each deck.
 

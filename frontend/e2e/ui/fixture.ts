@@ -1,10 +1,13 @@
 import { type Page } from "@playwright/test";
 import { ConversationFixture } from "./conversation-fixture";
+import { ReadingFixture } from "./reading-fixture";
 export async function workspaceFixture(
   page: Page,
   options: { lostFirstReply?: boolean; many?: boolean; projectState?: string } = {},
 ) {
   const views = new Map<string, ConversationFixture>();
+  const reading = new ReadingFixture();
+  page.on("close",()=>reading.close());
   await page.addInitScript(() => {
     let offline = false;
     let sequence = 0;
@@ -209,6 +212,7 @@ export async function workspaceFixture(
       body = req.postDataJSON();
     } catch {}
     calls.push({ method, path, body });
+    if (await reading.reply(route)) return;
     const json = (data: unknown, status = 200) =>
       route.fulfill({
         status,
@@ -366,5 +370,5 @@ export async function workspaceFixture(
     }
     return json({});
   });
-  return { calls, sessions, messages, terminals, files };
+  return { calls, sessions, messages, terminals, files, reading };
 }

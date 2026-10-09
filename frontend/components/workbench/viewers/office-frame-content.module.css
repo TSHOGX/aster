@@ -30,6 +30,3 @@
   min-height: 0;
   overflow: auto;
 }
-.content :global(.docx-wrapper) {
-  padding: 12px !important;
-}

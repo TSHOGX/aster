@@ -64,6 +64,37 @@ func TestPreviewJobsIsolationWindowsDeduplicationAndCleanup(t *testing.T) {
 	if position != 1 {
 		t.Fatal(position)
 	}
+	text, err := jobs.Copy(ctx, scope, first.ID, 0, 0, 1, 0, 0)
+	must(t, err)
+	if text != "Initial content\nFinal content" {
+		t.Fatal(text)
+	}
+	_, err = f.Store.CreateSession(ctx, scope, "shared-preview", "Shared preview")
+	must(t, err)
+	seedMessage(t, f.Store, scope, "shared-preview", "shared-message", "Preview the frozen document")
+	shares := &Shares{Store: f.Store, Files: f, Directory: t.TempDir()}
+	share, token, err := shares.Create(ctx, scope, "shared-preview", []string{"file.docx"}, time.Now().Add(time.Hour))
+	must(t, err)
+	public, err := jobs.OpenShared(ctx, shares, token, "file.docx", "docx")
+	must(t, err)
+	publicScope := Scope{Actor: "public:" + token, ProjectID: scope.ProjectID}
+	for {
+		status, e := jobs.Status(ctx, publicScope, public.ID)
+		must(t, e)
+		if status.State == "failed" {
+			t.Fatal(status)
+		}
+		if status.State == "ready" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_, err = jobs.Window(ctx, publicScope, public.ID, 0, 0, 100)
+	must(t, err)
+	must(t, f.Store.RevokeShare(ctx, scope, share.ID))
+	_, err = jobs.Window(ctx, publicScope, public.ID, 0, 0, 100)
+	wantError(t, err, ErrNotFound)
+	jobs.expire(public.ID)
 	_, err = jobs.Status(ctx, Scope{Actor: "foreign", ProjectID: scope.ProjectID}, first.ID)
 	wantError(t, err, ErrNotFound)
 	must(t, jobs.Release(ctx, scope, first.ID))

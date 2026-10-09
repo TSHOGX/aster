@@ -48,10 +48,9 @@ for (const cpuRate of [1, 4]) {
               const inspect = () => {
                 const frame = document.querySelector<HTMLIFrameElement>(".office-frame");
                 const doc = frame?.contentDocument;
-                const content = name.endsWith("xlsx")
-                  ? frame?.contentWindow && Reflect.get(frame.contentWindow, "officeCellDrawn")
-                  : doc?.body?.textContent?.includes(name.endsWith("docx") ? "Paragraph 0" : "Measured slide 0");
-                if (content && document.querySelector('.office-preview[data-preview-phase="ready"]')) {
+                const content = name.endsWith("pptx") ? doc?.body?.textContent?.includes("Measured slide 0")
+                  : document.querySelector(".office-reading-viewport")?.textContent?.includes(name.endsWith("docx") ? "Paragraph 0" : "Cell 0:0");
+                if (content && document.querySelector('[data-preview-phase="ready"]')) {
                   Reflect.set(window, "officeUsefulMS", performance.now() - started);
                 } else if (performance.now() - started < 20000) requestAnimationFrame(inspect);
               };

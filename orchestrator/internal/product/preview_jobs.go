@@ -60,12 +60,35 @@ func (p *PreviewJobs) Open(ctx context.Context, scope Scope, snapshot, kind stri
 	if err != nil {
 		return PreviewJobStatus{}, err
 	}
+	return p.openSource(ctx, scope, descriptor, reader, release, kind)
+}
+
+func (p *PreviewJobs) OpenShared(ctx context.Context, shares *Shares, token, path, kind string) (PreviewJobStatus, error) {
+	share, err := shares.Store.PublicShare(ctx, token)
+	if err != nil {
+		return PreviewJobStatus{}, err
+	}
+	file, metadata, err := shares.OpenFile(ctx, token, path)
+	if err != nil {
+		return PreviewJobStatus{}, err
+	}
+	if metadata.Size > MaxPreviewSourceBytes {
+		file.Close()
+		return PreviewJobStatus{}, ErrPreviewSourceTooLarge
+	}
+	return p.openSource(ctx, Scope{Actor: "public:" + token, ProjectID: share.ProjectID}, PreviewSnapshot{Digest: metadata.Digest, Size: metadata.Size}, file, func() { file.Close() }, kind)
+}
+
+func (p *PreviewJobs) openSource(ctx context.Context, scope Scope, descriptor PreviewSnapshot, reader io.Reader, release func(), kind string) (PreviewJobStatus, error) {
 	transferred := false
 	defer func() {
 		if !transferred {
 			release()
 		}
 	}()
+	if kind != "docx" && kind != "xlsx" {
+		return PreviewJobStatus{}, previewmodel.ErrUnsupported
+	}
 	if p.Worker == "" || !filepath.IsAbs(p.Worker) {
 		return PreviewJobStatus{}, previewmodel.ErrUnsupported
 	}
@@ -84,7 +107,7 @@ func (p *PreviewJobs) Open(ctx context.Context, scope Scope, snapshot, kind stri
 		if len(p.jobs) >= 16 || p.running >= 2 {
 			return PreviewJobStatus{}, ErrCapacity
 		}
-		if err = os.MkdirAll(p.Directory, 0700); err != nil {
+		if err := os.MkdirAll(p.Directory, 0700); err != nil {
 			return PreviewJobStatus{}, err
 		}
 		directory, e := os.MkdirTemp(p.Directory, "job-")
@@ -205,7 +228,7 @@ func (b *boundedPreviewOutput) Write(data []byte) (int, error) {
 	return n, nil
 }
 func (p *PreviewJobs) acquire(ctx context.Context, scope Scope, id string) (*previewJob, func(), error) {
-	if err := p.Files.PreviewSnapshots().authorize(ctx, scope); err != nil {
+	if err := p.authorize(ctx, scope); err != nil {
 		return nil, nil, err
 	}
 	p.mu.Lock()
@@ -280,6 +303,21 @@ func (p *PreviewJobs) jobError(job *previewJob) error {
 		return errors.New("preview job failed")
 	}
 }
+
+func (p *PreviewJobs) Copy(ctx context.Context, scope Scope, id string, sheet, start, end, fromColumn, toColumn int) (string, error) {
+	job, release, err := p.acquire(ctx, scope, id)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	p.mu.Lock()
+	db := job.db
+	p.mu.Unlock()
+	if db == nil {
+		return "", p.jobError(job)
+	}
+	return previewmodel.Copy(ctx, db, sheet, start, end, fromColumn, toColumn)
+}
 func (p *PreviewJobs) drop(job *previewJob) {
 	job.refs--
 	if job.refs != 0 {
@@ -306,7 +344,7 @@ func (p *PreviewJobs) expire(id string) {
 	}
 }
 func (p *PreviewJobs) Release(ctx context.Context, scope Scope, id string) error {
-	if err := p.Files.PreviewSnapshots().authorize(ctx, scope); err != nil {
+	if err := p.authorize(ctx, scope); err != nil {
 		return err
 	}
 	p.mu.Lock()
@@ -318,6 +356,20 @@ func (p *PreviewJobs) Release(ctx context.Context, scope Scope, id string) error
 	p.mu.Unlock()
 	p.expire(id)
 	return nil
+}
+
+func (p *PreviewJobs) authorize(ctx context.Context, scope Scope) error {
+	if strings.HasPrefix(scope.Actor, "public:") {
+		share, err := p.Files.Store.PublicShare(ctx, strings.TrimPrefix(scope.Actor, "public:"))
+		if err != nil {
+			return err
+		}
+		if share.ProjectID != scope.ProjectID {
+			return ErrNotFound
+		}
+		return nil
+	}
+	return p.Files.PreviewSnapshots().authorize(ctx, scope)
 }
 func (p *PreviewJobs) Close() {
 	p.mu.Lock()

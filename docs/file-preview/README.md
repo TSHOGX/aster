@@ -22,7 +22,7 @@ HTML inspection uses a cancellable parser Worker. Static original layout is admi
 
 ### Failure record
 
-`PreviewFailure` has `code`, `stage`, `retryable`, and optional `metric`, `actual`, and `limit`. Codes are `source_too_large`, `container_invalid`, `unsupported_feature`, `content_limit`, `resource_busy`, `parse_timeout`, and `renderer_failed`. Later snapshot work adds `snapshot_expired` and `permission_denied`. Only these values cross Worker boundaries. UI messages are localized and provide Retry, Source, or Download when the capability exists. Logs never contain file bodies, raw paths, parser text, tokens, or unfiltered exceptions. Structural counts describe the failed condition; a resource reservation is never reported as a file content limit.
+`PreviewFailure` has `code`, `stage`, `retryable`, and optional `metric`, `actual`, and `limit`. Codes are `source_too_large`, `container_invalid`, `unsupported_feature`, `content_limit`, `resource_busy`, `parse_timeout`, and `renderer_failed`. Snapshot expiry uses `410 snapshot_expired`; missing and denied Project scopes use the same `404` response to avoid revealing foreign resources. Only bounded codes/counts cross Worker boundaries. UI messages are localized and provide Retry, Source, or Download when the capability exists. Logs never contain file bodies, raw paths, parser text, tokens, or unfiltered exceptions. Structural counts describe the failed condition; a resource reservation is never reported as a file content limit.
 
 ## Immutable source snapshots
 
@@ -35,20 +35,30 @@ The direct download endpoint continues to capture fresh bytes for each request. 
 ## Derived reading jobs
 
 Large DOCX and XLSX files can be submitted with a snapshot lease to the isolated
-Office reading adapter. A job is keyed by Project, source digest, adapter version,
-format, and options; concurrent requests reuse one conversion. The worker receives
+Office reading adapter. A job is keyed by actor scope, Project, source digest,
+adapter version, and format; concurrent requests reuse one conversion. The worker receives
 one immutable source and a private output directory, has no network, Agent,
 application database, cookies, or host paths, and is bounded by CPU, address space,
 temporary disk, output size, and a 45-second deadline. `GET …/files/previews` returns
 an expiring job lease; status reports `indexing`, `ready`, or a structured failure.
 Windows contain at most 100 block/row records and carry total count and coverage;
-find operates on the same index. Cancellation or the final lease release kills
+find and rectangular copy operate on the same index. Copy is bounded to 1,000
+records, 256 columns, and 1 MiB. Cancellation or the final lease release kills
 the process and removes source, SQLite, and temporary files. Jobs do not resume
 paused Projects. The DOCX model preserves block/table-row order, headings, merged
 cell metadata, and text; the XLSX model uses sparse streamed rows, sheet visibility,
 merges, frozen panes, cached values, and explicit formula text when no cached value
 exists. Drawings, macros, external links, recalculation, and layout pagination are
 omitted and reported in the manifest. Source/download remains available.
+
+DOCX/XLSX browser DOMs mount at most 28 records and 14 visible spreadsheet columns;
+selected values remain readable in a plain textarea. Sheet/outline navigation,
+full-index find, direct record jumps, adjacent scrolling, and cross-window copy
+do not require the original visual renderer. Reopening restores a digest-scoped
+semantic bookmark; refresh preserves displayed content until the replacement's
+initial window is ready. Public frozen shares use these same readers and check
+current share authority on every request. The former docx-preview and Excel DOM/
+canvas libraries and retry-on-drawing parser have been removed.
 
 ## Format and security decisions
 

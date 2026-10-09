@@ -725,3 +725,50 @@ func Find(ctx context.Context, db *sql.DB, sheet, start int, query string) (int,
 	}
 	return position, err
 }
+
+func Copy(ctx context.Context, db *sql.DB, sheet, start, end, fromColumn, toColumn int) (string, error) {
+	if sheet < 0 || start < 0 || end < start || end-start >= 1000 || fromColumn < 0 || toColumn < fromColumn || toColumn-fromColumn >= 256 {
+		return "", ErrInvalid
+	}
+	rows, err := db.QueryContext(ctx, `SELECT data FROM items WHERE sheet=? AND position BETWEEN ? AND ? ORDER BY position`, sheet, start, end)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var text strings.Builder
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return "", err
+		}
+		var item Item
+		if err = json.Unmarshal([]byte(raw), &item); err != nil {
+			return "", err
+		}
+		if text.Len() > 0 {
+			text.WriteByte('\n')
+		}
+		if item.Cells == nil {
+			text.WriteString(item.Text)
+		} else {
+			values := map[int]string{}
+			for _, cell := range item.Cells {
+				values[cell.Column] = cell.Text
+			}
+			for col := fromColumn; col <= toColumn; col++ {
+				if col > fromColumn {
+					text.WriteByte('\t')
+				}
+				value := values[col]
+				if strings.ContainsAny(value, "\t\r\n\"") {
+					value = "\"" + strings.ReplaceAll(value, "\"", "\"\"") + "\""
+				}
+				text.WriteString(value)
+			}
+		}
+		if text.Len() > 1<<20 {
+			return "", ErrLimit
+		}
+	}
+	return text.String(), rows.Err()
+}

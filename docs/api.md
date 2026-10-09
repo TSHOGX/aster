@@ -67,6 +67,17 @@ handles return `410 snapshot_expired` and oversized sources return
 `413 source_too_large`. See [preview contract](file-preview/README.md) for quotas
 and lifecycle behavior.
 
+Office reading uses `GET …/files/previews?path=RELATIVE_PATH&kind=docx|xlsx&max_bytes=N`.
+Status contains `id`, immutable `digest`, `state` (`indexing`, `ready`, `failed`),
+and a complete model manifest or bounded `failure` code. Poll `GET …/files/previews/{id}`;
+read `/window?sheet=0&start=0&limit=100`, find `/find?sheet=0&start=0&q=TEXT`, or
+copy `/copy?sheet=0&start=0&end=99&from_column=0&to_column=11`. Window records use
+zero-based model positions and original worksheet row coordinates. Copy caps
+1,000 records, 256 columns and 1 MiB. `DELETE …/files/previews/{id}` releases the
+consumer. Public frozen shares use the same suffixes under `/api/shared/{token}`
+and revalidate that share on every operation. Revocation/rotation denies old job
+handles immediately. No job opens arbitrary paths outside its original source.
+
 File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
 Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase
 hexadecimal characters**. File-operation responses include `id`, `state`,

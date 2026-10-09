@@ -24,7 +24,19 @@ import {
 import { PreviewStatus, previewSize } from "./preview-status";
 import { OfficePreview } from "./office-preview";
 import { validatePreview } from "@/lib/preview-preflight-client";
+const OfficeReadingPreview = dynamic(() => import("./office-reading-preview").then(module => module.OfficeReadingPreview), { ssr: false });
 export function FilePreview({
+  path, href, project, validation = 0, mode = "preview", onCapabilities,
+}: {
+  path: string; href: string; project: string; validation?: number; mode?: "preview" | "source";
+  onCapabilities?: (path: string, readable: boolean, editable: boolean, rendered: boolean) => void;
+}) {
+  const kind = path.toLowerCase().split(".").pop();
+  if (kind === "docx" || kind === "xlsx")
+    return <OfficeReadingPreview key={`${project}:${path}`} project={project} path={path} href={href} kind={kind} validation={validation} />;
+  return <LocalFilePreview path={path} href={href} project={project} validation={validation} mode={mode} onCapabilities={onCapabilities} />;
+}
+function LocalFilePreview({
   path,
   href,
   project,
@@ -112,7 +124,7 @@ export function FilePreview({
       if (abort.signal.aborted) return;
       let plan;
       if (
-        /\.(png|jpe?g|gif|pdf|xlsx|docx|pptx)$/i.test(path)
+        /\.(png|jpe?g|gif|pdf|pptx)$/i.test(path)
       ) {
         const releaseParse = await acquirePreviewParse(abort.signal);
         let releaseBuffers = () => {};
@@ -264,11 +276,7 @@ function PreviewContent({
         />
       </div>
     );
-  if (
-    (kind.kind === "spreadsheet" && loaded.plan) ||
-    kind.kind === "document" ||
-    kind.kind === "presentation"
-  )
+  if (kind.kind === "presentation")
     return (
       <OfficePreview
         representation={loaded}
