@@ -79,6 +79,14 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		return app, err
 	}
 	app.Store = store
+	if err := store.ConfigureNotificationPolicy(ctx, product.NotificationPolicy{
+		AgentRunOutcome:    cfg.Notifications.AgentRunOutcome,
+		ConversationShared: cfg.Notifications.ConversationShared,
+		OperatorDirected:   cfg.Notifications.OperatorDirected,
+		OperatorBroadcast:  cfg.Notifications.OperatorBroadcast,
+	}); err != nil {
+		return app, err
+	}
 	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
 	if err != nil {
 		return app, err

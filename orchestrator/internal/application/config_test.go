@@ -101,3 +101,76 @@ func TestConfigurationRequiresExplicitVersionAndBoundedFile(t *testing.T) {
 		t.Fatal("oversized configuration accepted")
 	}
 }
+
+func TestNotificationConfigurationDefaultsAndOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		notifications any
+		want          NotificationConfig
+	}{
+		{"omitted", nil, NotificationConfig{ConversationShared: true, OperatorDirected: true, OperatorBroadcast: true}},
+		{"empty", map[string]bool{}, NotificationConfig{ConversationShared: true, OperatorDirected: true, OperatorBroadcast: true}},
+		{"partial", map[string]bool{"agent_run_outcome": true, "operator_directed": false}, NotificationConfig{AgentRunOutcome: true, ConversationShared: true, OperatorBroadcast: true}},
+		{"all disabled", map[string]bool{"agent_run_outcome": false, "conversation_shared": false, "operator_directed": false, "operator_broadcast": false}, NotificationConfig{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, path := configurationFixture(t)
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]any
+			if err = json.Unmarshal(raw, &document); err != nil {
+				t.Fatal(err)
+			}
+			delete(document, "notifications")
+			if tc.notifications != nil {
+				document["notifications"] = tc.notifications
+			}
+			raw, err = json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Notifications != tc.want {
+				t.Fatal(loaded.Notifications, tc.want)
+			}
+		})
+	}
+}
+
+func TestNotificationConfigurationRejectsUnknownFieldsAndNonBooleans(t *testing.T) {
+	for _, setting := range []any{
+		map[string]bool{"unknown_source": true},
+		map[string]string{"agent_run_outcome": "false"},
+		map[string]int{"operator_broadcast": 1},
+		[]bool{true},
+	} {
+		cfg, path := configurationFixture(t)
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document map[string]any
+		if err = json.Unmarshal(raw, &document); err != nil {
+			t.Fatal(err)
+		}
+		document["notifications"] = setting
+		raw, err = json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = LoadConfig(path); err == nil {
+			t.Fatal("invalid notification configuration accepted", setting)
+		}
+	}
+}

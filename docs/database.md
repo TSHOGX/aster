@@ -2,7 +2,7 @@
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
 The current fresh lineage has schema version 3 and exact compiled DDL
-fingerprint `sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a`.
+fingerprint `sha256:7052d97bae793f1094b8c778240245f963eba1a4d44bb94feb4156e17a0b2d87`.
 `product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
 version and fingerprint before a writer opens. Application startup has no
@@ -25,7 +25,8 @@ their separate evidence. Derived conversation segments group consumed input and
 following output without changing the native run. Terminals and their incarnations describe retained
 PTYs. Activity rows account for admission and cleanup blockers. Events and bounded
 projections drive browser recovery. Files operations preserve intent and uncertain
-outcomes. Schedules/runs, reader grants, shares/files, notifications, auth sessions
+outcomes. Schedules/runs, reader grants, shares/files, notifications and their
+persisted source policy, auth sessions
 and immutable content publications complete the product state.
 
 Transactions serialize durable intent before remote side effects. Original IDs,

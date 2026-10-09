@@ -3,6 +3,7 @@ package product
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,12 +21,36 @@ type Notification struct {
 	Read      bool   `json:"read"`
 }
 
+type NotificationPolicy struct {
+	AgentRunOutcome    bool
+	ConversationShared bool
+	OperatorDirected   bool
+	OperatorBroadcast  bool
+}
+
+var ErrNotificationDisabled = errors.New("notification disabled by configuration")
+
+// ConfigureNotificationPolicy installs the application's policy before workers
+// or request handlers start. It does not alter existing notices or read records.
+func (s *Store) ConfigureNotificationPolicy(ctx context.Context, policy NotificationPolicy) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		return changed(tx.ExecContext(ctx, `UPDATE notification_policy SET agent_run_outcome=?,conversation_shared=?,operator_directed=?,operator_broadcast=? WHERE id=1`, policy.AgentRunOutcome, policy.ConversationShared, policy.OperatorDirected, policy.OperatorBroadcast))
+	})
+}
+
 // Notify is an internal operator/application port, never a browser endpoint.
 func (s *Store) Notify(ctx context.Context, audience, title, body string) error {
 	if !validText(title, 256) || !validText(body, 16<<10) || len(audience) > 256 {
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
+		var enabled bool
+		if err := tx.QueryRowContext(ctx, `SELECT CASE WHEN ?='' THEN operator_broadcast ELSE operator_directed END FROM notification_policy WHERE id=1`, audience).Scan(&enabled); err != nil {
+			return err
+		}
+		if !enabled {
+			return ErrNotificationDisabled
+		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO notifications(id,audience,title,body,created_at) VALUES(?,nullif(?,''),?,?,?)`, uuid.NewString(), audience, title, body, s.timestamp())
 		return err
 	})

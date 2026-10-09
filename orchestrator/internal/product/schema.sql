@@ -261,6 +261,16 @@ CREATE TABLE notification_reads (
  PRIMARY KEY(notification_id,actor)
 );
 
+CREATE TABLE notification_policy (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ agent_run_outcome INTEGER NOT NULL CHECK(agent_run_outcome IN (0,1)),
+ conversation_shared INTEGER NOT NULL CHECK(conversation_shared IN (0,1)),
+ operator_directed INTEGER NOT NULL CHECK(operator_directed IN (0,1)),
+ operator_broadcast INTEGER NOT NULL CHECK(operator_broadcast IN (0,1))
+);
+
+INSERT INTO notification_policy(id,agent_run_outcome,conversation_shared,operator_directed,operator_broadcast) VALUES(1,0,1,1,1);
+
 CREATE TABLE notifications (
  id TEXT PRIMARY KEY,
  audience TEXT,
@@ -821,7 +831,7 @@ CREATE TRIGGER index_message_insert AFTER INSERT ON messages BEGIN
 END;
 
 CREATE TRIGGER notify_run_outcome AFTER UPDATE OF state,outcome ON execution_runs
-WHEN (NEW.state='settled' OR NEW.state IN ('failed','unknown')) AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome)
+WHEN (SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 AND (NEW.state='settled' OR NEW.state IN ('failed','unknown')) AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome)
 BEGIN
  INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
  SELECT 'turn/'||t.id,p.owner_id,NEW.project_id,NEW.session_id,'Agent turn '||CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END,'Open the conversation to inspect the outcome.',coalesce(nullif(NEW.settled_at,''),NEW.started_at)

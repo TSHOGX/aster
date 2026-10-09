@@ -21,6 +21,7 @@ tracked example. The example denies guest egress until reachability is declared.
 | `auth` | Credential YAML path, or an explicit loopback-only development actor |
 | `content` | Reviewed Agent configuration/shared-assets source paths and publication capacity |
 | `limits` | Global/per-Project capacities, idle deadlines and worker interval |
+| `notifications` | Per-source Inbox notification policy; changes apply after application restart |
 | `gateways`, `agent_audience` | Independent gateway endpoints and upstream credential environment names |
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
 | `tls_cert`, `tls_key` | Optional browser TLS certificate/key pair |
@@ -91,6 +92,13 @@ Credential files contain `users` entries with `username`, `password_hash` and
 retains the prior valid set on error; changed credentials invalidate existing
 sessions through their saved fingerprint. An explicit `development_actor` is
 mutually exclusive with `users_file` and requires a loopback browser listener.
+
+The `notifications` object controls future Inbox writes independently by source:
+`agent_run_outcome` defaults to `false`, while `conversation_shared`,
+`operator_directed` and `operator_broadcast` default to `true`. These settings are
+fixed application configuration and take effect on restart. Disabling a source
+does not delete notifications already stored. A disabled operator notification
+source makes `orchestrator notify` fail instead of silently discarding the message.
 
 Start the owner before the independent `gateway` command. Only the gateway command
 loads the configured service upstream keys and binds service listeners; `serve`
