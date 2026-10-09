@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"harness-platform/orchestrator/internal/previewmodel"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/projectfiles"
 )
@@ -95,6 +96,10 @@ func status(err error) (int, string) {
 }
 
 func fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, previewmodel.ErrInvalid) || errors.Is(err, previewmodel.ErrLimit) || errors.Is(err, previewmodel.ErrUnsupported) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"code": err.Error(), "error": err.Error()})
+		return
+	}
 	if errors.Is(err, product.ErrSnapshotExpired) {
 		writeJSON(w, http.StatusGone, map[string]string{"code": "snapshot_expired", "error": "preview snapshot expired"})
 		return

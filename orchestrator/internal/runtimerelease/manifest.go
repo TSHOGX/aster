@@ -30,7 +30,7 @@ const NodeVersion = "24.15.0"
 
 // ReaderProtocol is the workspace reader capability required by this release.
 // Keep release inspection independent of guest filesystem implementation.
-const ReaderProtocol = 2
+const ReaderProtocol = 3
 const ManifestPath = "/etc/project-runtime/manifest.json"
 const NativeRoot = "/usr/local/lib/node_modules"
 

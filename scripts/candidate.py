@@ -58,7 +58,7 @@ def verify(root):
         raise ValueError("invalid candidate identity")
     if inventory(root) != report["files"]:
         raise ValueError("candidate files, modes or links differ from the recorded inventory")
-    for name in ("bin/orchestrator", "bin/edge-proxy", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg"):
+    for name in ("bin/orchestrator", "bin/edge-proxy", "bin/preview-worker", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg"):
         if name not in report["files"]:
             raise ValueError(f"missing required artifact: {name}")
     if (root / "frontend/.next/BUILD_ID").read_text().strip() != report["frontend_build_id"]:
@@ -129,8 +129,9 @@ def build(destination):
         shutil.copytree(frontend / ".next/standalone", destination / "frontend", symlinks=True)
         shutil.copytree(frontend / ".next/static", destination / "frontend/.next/static")
         shutil.copytree(frontend / "public", destination / "frontend/public")
+        shutil.copyfile(source / "docs/third-party-notices.md", destination / "THIRD-PARTY-NOTICES.md")
         (destination / "bin").mkdir()
-        for binary in ("orchestrator", "edge-proxy"):
+        for binary in ("orchestrator", "edge-proxy", "preview-worker"):
             subprocess.run([
                 "go", "build", "-mod=readonly", "-trimpath", "-buildvcs=false",
                 "-ldflags", f"-X main.version={version} -X main.commit={commit}",

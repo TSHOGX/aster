@@ -182,6 +182,8 @@ type Files struct {
 	reader           *WorkspaceReader
 	previewOnce      sync.Once
 	previews         *PreviewSnapshots
+	previewJobsOnce  sync.Once
+	previewJobs      *PreviewJobs
 }
 
 func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfiles.Request, input io.Reader) (FileOperation, error) {

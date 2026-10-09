@@ -32,6 +32,24 @@ Snapshots expire after five minutes, with at most 64 leases, two simultaneous ca
 
 The direct download endpoint continues to capture fresh bytes for each request. Derived adapters and large-source windows use leases; they must not issue repeated ranges against live content and assume a shared version.
 
+## Derived reading jobs
+
+Large DOCX and XLSX files can be submitted with a snapshot lease to the isolated
+Office reading adapter. A job is keyed by Project, source digest, adapter version,
+format, and options; concurrent requests reuse one conversion. The worker receives
+one immutable source and a private output directory, has no network, Agent,
+application database, cookies, or host paths, and is bounded by CPU, address space,
+temporary disk, output size, and a 45-second deadline. `GET …/files/previews` returns
+an expiring job lease; status reports `indexing`, `ready`, or a structured failure.
+Windows contain at most 100 block/row records and carry total count and coverage;
+find operates on the same index. Cancellation or the final lease release kills
+the process and removes source, SQLite, and temporary files. Jobs do not resume
+paused Projects. The DOCX model preserves block/table-row order, headings, merged
+cell metadata, and text; the XLSX model uses sparse streamed rows, sheet visibility,
+merges, frozen panes, cached values, and explicit formula text when no cached value
+exists. Drawings, macros, external links, recalculation, and layout pagination are
+omitted and reported in the manifest. Source/download remains available.
+
 ## Format and security decisions
 
 - HTML renders statically by default in an opaque origin. Self-contained interaction requires an explicit user action, with network and application authority blocked. A busy script must leave a recovery route; an iframe timeout alone is not CPU isolation.

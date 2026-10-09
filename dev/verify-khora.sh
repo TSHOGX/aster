@@ -51,9 +51,9 @@ fi
 engine=$(realpath "$engine")
 
 build_revision=$(git -C "$repo" rev-parse HEAD)
-for binary in orchestrator agent-runner workspace-files runtime-cleanup runtime-fixture; do
- if [[ $binary == orchestrator && -n $candidate ]]; then
-  cp "$candidate/bin/orchestrator" "$output/orchestrator"
+for binary in orchestrator preview-worker agent-runner workspace-files runtime-cleanup runtime-fixture; do
+ if [[ ( $binary == orchestrator || $binary == preview-worker ) && -n $candidate ]]; then
+  cp "$candidate/bin/$binary" "$output/$binary"
  elif [[ $binary == orchestrator ]]; then
   CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -ldflags="-X main.commit=$build_revision" -o "$output/$binary" "./cmd/$binary"
  else

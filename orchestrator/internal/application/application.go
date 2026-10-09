@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,6 +133,28 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		return app, err
 	}
 	files := &product.Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile, CaptureDirectory: readDirectory}
+	previewDirectory := filepath.Join(cfg.StateDirectory, "preview-jobs")
+	if err := os.MkdirAll(previewDirectory, 0700); err != nil {
+		return app, err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return app, err
+	}
+	// Jobs are ephemeral. Only this owner writes its private job directory;
+	// restart removes abandoned outputs before admitting new preview work.
+	entries, err := os.ReadDir(previewDirectory)
+	if err != nil {
+		return app, err
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "job-") {
+			if err := os.RemoveAll(filepath.Join(previewDirectory, entry.Name())); err != nil {
+				return app, err
+			}
+		}
+	}
+	files.PreviewJobs(filepath.Join(filepath.Dir(executable), "preview-worker"), previewDirectory)
 	app.Files = files
 	shares := &product.Shares{Store: store, Files: files, Directory: filepath.Join(cfg.StateDirectory, "shares")}
 	app.Shares = shares

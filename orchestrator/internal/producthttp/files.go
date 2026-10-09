@@ -170,3 +170,78 @@ func (s *Server) releasePreviewSnapshot(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) previewJobsAvailable(w http.ResponseWriter) (*product.PreviewJobs, bool) {
+	if !s.filesAvailable(w) {
+		return nil, false
+	}
+	return s.Files.PreviewJobs("/usr/local/bin/preview-worker", ""), true
+}
+func (s *Server) openPreviewJob(w http.ResponseWriter, r *http.Request) {
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	snap, err := s.Files.PreviewSnapshots().Open(r.Context(), s.scope(r), q.Get("path"), int64(intParam(q, "max_bytes", 20<<20)))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	status, err := jobs.Open(r.Context(), s.scope(r), snap.ID, q.Get("kind"))
+	_ = s.Files.PreviewSnapshots().Release(r.Context(), s.scope(r), snap.ID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+func (s *Server) previewJobStatus(w http.ResponseWriter, r *http.Request) {
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	status, err := jobs.Status(r.Context(), s.scope(r), r.PathValue("preview"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+func (s *Server) previewJobWindow(w http.ResponseWriter, r *http.Request) {
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	window, err := jobs.Window(r.Context(), s.scope(r), r.PathValue("preview"), intParam(q, "sheet", 0), intParam(q, "start", 0), intParam(q, "limit", 100))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, window)
+}
+func (s *Server) previewJobFind(w http.ResponseWriter, r *http.Request) {
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	position, err := jobs.Find(r.Context(), s.scope(r), r.PathValue("preview"), intParam(q, "sheet", 0), intParam(q, "start", 0), q.Get("q"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"position": position})
+}
+func (s *Server) releasePreviewJob(w http.ResponseWriter, r *http.Request) {
+	jobs, ok := s.previewJobsAvailable(w)
+	if !ok {
+		return
+	}
+	if err := jobs.Release(r.Context(), s.scope(r), r.PathValue("preview")); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
