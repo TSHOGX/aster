@@ -7,9 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
-import { createAgentSession } from '../../../../sandbox-image/rootfs/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/sdk.js';
-import { SessionManager } from '../../../../sandbox-image/rootfs/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js';
-import { getModel } from '../../../../sandbox-image/rootfs/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.js';
+import { createAgentSession, SessionManager } from '@earendil-works/pi-coding-agent';
+import { getModel } from '@earendil-works/pi-ai';
 
 const code = readFileSync(process.argv[2], 'utf8').replace(/^import .*;\n/gm, '')
   .replace('export async function runRpcMode', 'async function runRpcMode');

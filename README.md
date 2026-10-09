@@ -15,6 +15,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r frontend/e2e/requirements.txt
 npm --prefix frontend ci
+npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
 npx --no-install playwright install chromium
 cd ..

@@ -1,13 +1,17 @@
 # Verification
 
 Install Go from `orchestrator/go.mod`, Node from `.node-version`, Python 3 and the
-locked frontend dependencies. Node is also required by the Go native RPC tests.
+locked frontend dependencies. Node is also required by the Go native RPC tests. Their isolated npm package and
+lockfile live in `orchestrator/internal/runtimerelease`; no local guest rootfs
+or privileged image build is needed. Installation scripts are disabled because
+these tests use controlled model streams, not the optional native tools.
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r frontend/e2e/requirements.txt
 npm --prefix frontend ci
+npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
 npx --no-install playwright install chromium
 cd ..

@@ -58,6 +58,8 @@ jobs:
         env:
           KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
         run: scripts/fetch-go-dependencies.sh
+      - name: Install pinned native Session test dependencies
+        run: npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
       - run: scripts/check.sh backend
       - name: Core race checks (main and explicit qualification)
         if: github.event_name != 'pull_request'

@@ -7,6 +7,7 @@ case "${1:-all}" in
   source)
     python3 scripts/check-public-docs.py
     scripts/check-lockfile-registry.sh
+    scripts/check-lockfile-registry.sh orchestrator/internal/runtimerelease/package-lock.json
     while IFS= read -r -d '' script; do bash -n "$script"; done < <(git ls-files -z '*.sh')
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
     ;;
@@ -14,6 +15,7 @@ case "${1:-all}" in
     # Native RPC tests need Node; do not silently skip them on a Go-only runner.
     command -v node >/dev/null
     command -v python3 >/dev/null
+    node --test orchestrator/internal/runtimerelease/full_session_identity.test.mjs
     go -C orchestrator build -mod=readonly ./...
     go -C orchestrator vet -mod=readonly ./...
     go -C orchestrator test -mod=readonly ./...
