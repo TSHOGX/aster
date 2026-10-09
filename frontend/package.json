@@ -11,8 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:ui": "playwright test --config playwright.ui.config.ts",
-    "test:pickers": "playwright test --config playwright.pickers.config.ts"
+    "test:ui": "npm run build && npm run test:ui:built",
+    "test:ui:built": "playwright test --config playwright.ui.config.ts",
+    "test:pickers": "npm run build && playwright test --config playwright.pickers.config.ts"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

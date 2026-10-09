@@ -1,21 +1,28 @@
 # Development
 
 Use a clean source checkout, fresh Project database and disposable engine state.
+Go uses `orchestrator/go.mod`; host Node uses `.node-version`. The guest Node/Pi
+pins are independent runtime protocol inputs, documented in [image assembly](sandbox-image.md).
 Dependencies are pinned in Go modules and the frontend lockfile. The application
-imports public Khora SDK/Connect packages only; do not reach into engine internals
-or patch its database to emulate a product capability.
+imports public Khora SDK/Connect packages only; do not patch engine internals or
+its database to emulate a product capability.
 
 ```sh
-go -C orchestrator test -race ./...
-go -C orchestrator vet ./...
-python3 scripts/check-public-docs.py
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r frontend/e2e/requirements.txt
+npm --prefix frontend ci
+npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
-npm ci
-npm run typecheck
-npm run lint
-npm test
-npm run build
+npx --no-install playwright install chromium
+cd ..
+scripts/check.sh all
+scripts/check.sh race
 ```
+
+Individual gates and optional measurement/browser/runtime suites are defined in
+[verification](verification.md). Local and GitHub CI use the same check script.
+The frontend gate builds once and runs deterministic UI tests against that build.
 
 The frontend development server needs the Go edge for product HTTP/SSE/WebSocket.
 Configure an explicit loopback-only development actor or the normal credential
@@ -23,18 +30,18 @@ registry. `PROJECT_DEV_ORIGINS` is a comma-separated development host allowlist.
 A gateway-enabled application needs non-loopback frontend/model/engine endpoints
 because its dedicated UID remains subject to Khora's network floor.
 
-[dev/verify-khora.sh](../dev/verify-khora.sh) builds the pinned test executables and
+[dev/verify-khora.sh](../dev/verify-khora.sh) builds selected test executables and
 runs them in disposable mount/network/PID/cgroup namespaces against a separate
 btrfs image. It never addresses a live engine or database. The reusable
 [substrate](../dev/project-substrate.sh) also accepts a custom test command.
 See [dev/README.md](../dev/README.md) for prerequisites and output paths.
 
-The release integration package launches the actual host executable with its
-strict JSON configuration, owner-only Unix APIs, mTLS engine endpoint, published
-content, independent unprivileged gateway process and final guest image. Model fixtures run outside
-the image. Lower-level fault tests may install deterministic fixture tools into
-disposable placements; those tools are never part of the release manifest.
+Release integration launches the actual host executable with strict configuration,
+owner-only Unix APIs, mTLS engine endpoint, independent gateway and final guest
+image. Model fixtures run outside the image. Lower-level fault tests may install
+deterministic tools into disposable placements; those tools never enter a release
+manifest. A candidate bundle supplies the exact deployable owner and frontend.
 
-Keep generated images, logs, credentials and screenshots outside public source.
-The [verification guide](verification.md) describes required evidence. A fake test
-or successful build does not substitute for its corresponding real runtime gate.
+Use [delivery](delivery.md) to build, qualify and inspect a candidate. Keep images,
+logs, credentials and screenshots outside public source. A build or simulated UI
+pass does not substitute for the corresponding real runtime gate.

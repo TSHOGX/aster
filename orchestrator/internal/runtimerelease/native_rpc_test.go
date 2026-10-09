@@ -2,12 +2,32 @@ package runtimerelease
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestSessionFixtureMatchesRuntimePin(t *testing.T) {
+	raw, err := os.ReadFile("package-lock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lock struct {
+		Packages map[string]struct{ Version, Integrity string }
+	}
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{PiPackage, "@earendil-works/pi-ai", "@earendil-works/pi-agent-core", "@earendil-works/pi-tui"} {
+		dependency := lock.Packages["node_modules/"+name]
+		if dependency.Version != PiVersion || (name == PiPackage && dependency.Integrity != PiIntegrity) {
+			t.Fatalf("Session fixture dependency %s differs from the runtime pin", name)
+		}
+	}
+}
 
 func TestPinnedNativeRPCPatch(t *testing.T) {
 	original, err := os.ReadFile("testdata/pi-rpc-0.77.0.js")

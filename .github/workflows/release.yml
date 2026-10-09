@@ -1,0 +1,60 @@
+name: Release candidate
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+    with:
+      cross_browser: true
+    secrets:
+      KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
+
+  package:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require current main history
+        run: git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Fetch private engine dependency
+        env:
+          KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
+        run: scripts/fetch-go-dependencies.sh
+      - name: Build and verify standalone candidate
+        run: |
+          python3 scripts/candidate.py build "$RUNNER_TEMP/candidate"
+          python3 scripts/candidate.py verify "$RUNNER_TEMP/candidate"
+          tar -czf "$RUNNER_TEMP/candidate.tar.gz" -C "$RUNNER_TEMP/candidate" .
+          cd "$RUNNER_TEMP"
+          sha256sum candidate.tar.gz > candidate.tar.gz.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: candidate-linux-amd64-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/candidate.tar.gz
+            ${{ runner.temp }}/candidate.tar.gz.sha256
+          retention-days: 14
+          if-no-files-found: error

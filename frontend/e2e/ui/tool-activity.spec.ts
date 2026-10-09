@@ -56,6 +56,7 @@ test("parallel calls stay visible from preparation to partial output and complet
             id: "a",
             cursor: 18,
             turn_id: "t",
+            run_id: "t",
             kind: "tool",
             name: "bash",
             arguments: JSON.stringify({
@@ -84,6 +85,7 @@ test("parallel calls stay visible from preparation to partial output and complet
             id: "b",
             cursor: 19,
             turn_id: "t",
+            run_id: "t",
             kind: "tool",
             name: "read",
             arguments: JSON.stringify({
@@ -135,7 +137,7 @@ test("parallel calls stay visible from preparation to partial output and complet
   await a.locator("summary").click();
   const evidence = resolve(
     __dirname,
-    "../../../private/uiux-refinement/evidence/screenshots",
+    "../../test-results/ui/screenshots",
   );
   mkdirSync(evidence, { recursive: true });
   await page.screenshot({

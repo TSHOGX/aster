@@ -205,15 +205,12 @@ test("a superseded frame request cannot replace a later text selection", async (
   );
   resume();
   await expect(page.locator(".office-frame")).toHaveCount(0);
-  await expect
-    .poll(() =>
-      page.evaluate(() => Reflect.get(window, "batteryPreviewUsage")()),
-    )
-    .toMatchObject({
-      frames: 0,
-      renderers: 0,
-      workers: 0,
-      parses: 0,
-      queued: 0,
-    });
+  // A fresh preview must still acquire admission after the canceled frame.
+  // Internal budget accounting is tested in Vitest, not via a retired window hook.
+  await page.getByRole("link", { name: "Document", exact: true }).click();
+  await expect(page.locator(".office-preview")).toHaveAttribute("data-preview-phase", "ready");
+  await expect(page.locator(".office-frame")).toHaveCount(1);
+  await page.getByRole("button", { name: "README.md", exact: true }).click();
+  await expect(page.locator(".file-markdown")).toContainText("Battery research");
+  await expect(page.locator(".office-frame")).toHaveCount(0);
 });

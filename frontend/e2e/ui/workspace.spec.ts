@@ -10,7 +10,7 @@ import {
 } from "./conversation-fixture";
 const evidence = resolve(
   __dirname,
-  "../../../private/uiux-refinement/evidence/screenshots",
+  "../../test-results/ui/screenshots",
 );
 test("navigation, draft isolation, independent docks and edit protection", async ({
   page,
@@ -395,6 +395,7 @@ test("consecutive activity has one live ripple line and keeps its phase on compl
     id: "thought",
     cursor: 2,
     turn_id: "t",
+    run_id: "t",
     kind: "thinking",
     content: "Checking the measurements and preparing the next experiment",
   };
@@ -430,6 +431,7 @@ test("consecutive activity has one live ripple line and keeps its phase on compl
                   id: "bash",
                   cursor: 3,
                   turn_id: "t",
+                  run_id: "t",
                   kind: "tool",
                   name: "bash",
                   arguments: JSON.stringify({

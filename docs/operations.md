@@ -1,5 +1,10 @@
 # Operations
 
+Use [delivery](delivery.md) to prepare a verified candidate bundle and choose the
+appropriate update mode. Host binaries and the standalone frontend are activated
+from those qualified artifacts; rebuilding them during activation changes their
+identity. The source build commands below are useful for local development.
+
 Build the host application with `go -C orchestrator build -o bin/orchestrator
 ./cmd/orchestrator`. Prepare an immutable verified image and register it under the
 configured Khora template ID. The engine store must use manual cold recovery.
