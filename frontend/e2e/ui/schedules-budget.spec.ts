@@ -54,6 +54,9 @@ test("tasks load continuously with bounded DOM, one stream and no healthy idle p
   await page.goto("/?view=schedules");
   await expect(page.locator(".schedule-row")).toHaveCount(50);
   await page.clock.runFor(1000);
+  // Virtual time does not wait for HTTP or React commits. The initial read and
+  // consumer-attach reconciliation must settle before measuring healthy idle.
+  await expect(page.locator(".schedule-sync-live")).toContainText(/^Live/);
   const initial = requests.length;
   await page.clock.runFor(60000);
   expect(requests).toHaveLength(initial);
