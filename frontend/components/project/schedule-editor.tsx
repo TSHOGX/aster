@@ -457,7 +457,7 @@ export function ScheduleEditor({
             {tr("Your timezone could not be detected. UTC is selected.")}
           </p>
         )}
-        <label>
+        <label className="schedule-checkbox">
           <input
             type="checkbox"
             checked={notify}
@@ -467,7 +467,7 @@ export function ScheduleEditor({
         </label>
         {rule.mode === "interval" && (
           <fieldset className="schedule-settings">
-            <label>
+            <label className="schedule-checkbox">
               <input
                 type="checkbox"
                 checked={bounded}

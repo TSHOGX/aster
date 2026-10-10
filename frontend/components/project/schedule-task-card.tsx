@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { ArrowUpRight, CalendarClock, Pencil } from "lucide-react";
+import { ScheduleStatus } from "./schedule-status";
 import {
   api,
   command,
@@ -9,7 +11,7 @@ import {
   type ScheduleOverview,
 } from "@/lib/project-api";
 import { useLocale, useT } from "@/lib/i18n";
-import { scheduleStateLabels, scheduleTime } from "@/lib/schedule-recurrence";
+import { scheduleTime } from "@/lib/schedule-recurrence";
 import { navigationURL } from "@/lib/workspace-state";
 import { ScheduleHintGate } from "@/lib/schedule-window";
 import { useRealtime, useResources } from "./resource-provider";
@@ -141,10 +143,18 @@ export function ScheduleTaskCard({
   return (
     <article
       ref={root}
-      className="schedule-card schedule-tool-card"
+      className="schedule-tool-card"
       data-schedule-id={id}
     >
-      <strong>{task?.title || tr("Schedule")}</strong>
+      <header className="schedule-tool-heading">
+        <span className="schedule-tool-icon">
+          <CalendarClock size={20} aria-hidden="true" />
+        </span>
+        <div>
+          <span className="schedule-eyebrow">{tr("Scheduled task")}</span>
+          <strong>{task?.title || tr("Schedule")}</strong>
+        </div>
+      </header>
       {error ? (
         <p role="status">
           {tr("Task status is unavailable.")}{" "}
@@ -154,28 +164,43 @@ export function ScheduleTaskCard({
         </p>
       ) : task ? (
         <>
-          <p>
-            {tr(scheduleStateLabels[task.state])}
-            {task.last_state ? ` · ${task.last_state}` : ""}
-          </p>
-          {task.next_at && (
-            <p>
-              {tr("Next run")}:{" "}
-              {scheduleTime(task.next_at, task.timezone, locale)}
-            </p>
+          <div className="schedule-tool-status">
+            <ScheduleStatus state={task.state} />
+          </div>
+          {task.last_state && (
+            <div className="schedule-latest-result">
+              <span>{tr("Latest result")}</span>
+              <ScheduleStatus state={task.last_state} run />
+            </div>
           )}
-          {task.state === "deleted" && <p>{tr("This task was deleted.")}</p>}
+          {task.next_at && (
+            <dl className="schedule-tool-time">
+              <dt>{tr("Next run")}</dt>
+              <dd>{scheduleTime(task.next_at, task.timezone, locale)}</dd>
+            </dl>
+          )}
+          {task.state === "deleted" && <p className="schedule-tool-note">{tr("This task was deleted.")}</p>}
         </>
       ) : (
         <p>{tr("Loading…")}</p>
       )}
-      <div className="row-actions">
-        <a href={taskURL}>{tr("View task")}</a>
+      <div className="schedule-card-actions">
+        <a href={taskURL}>
+          {tr("View task")}
+          <ArrowUpRight size={15} aria-hidden="true" />
+        </a>
         {resultURL && <a href={resultURL}>{tr("Open conversation")}</a>}
         {task && ["active", "paused"].includes(task.state) && (
           <>
-            <a href={taskURL + "&mode=edit"}>{tr("Edit")}</a>
-            <button disabled={busy} onClick={() => void cancel()}>
+            <a href={taskURL + "&mode=edit"}>
+              <Pencil size={14} aria-hidden="true" />
+              {tr("Edit")}
+            </a>
+            <button
+              className="schedule-card-cancel"
+              disabled={busy}
+              onClick={() => void cancel()}
+            >
               {tr("Cancel task")}
             </button>
           </>

@@ -1,4 +1,7 @@
 export const EN = {
+  "Latest result": "Latest result",
+  "Scheduled task": "Scheduled task",
+  "Handled": "Handled",
 "Check until an event is confirmed": "Check until an event is confirmed",
 "Maximum checks": "Maximum checks",
 "Deadline with UTC offset": "Deadline with UTC offset",

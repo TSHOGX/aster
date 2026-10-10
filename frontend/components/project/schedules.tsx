@@ -7,7 +7,7 @@ import {
   type RefObject,
   type ComponentProps,
 } from "react";
-import { Clock3, Pause, Plus } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock3, Pencil, Pause, Play, Plus } from "lucide-react";
 import {
   api,
   APIError,
@@ -37,6 +37,7 @@ import { ProjectPicker } from "./project-picker";
 import { Menu, useDialog } from "./ui";
 import { RecurrenceSummary, UpcomingOccurrences } from "./schedule-recurrence";
 import { ScheduleEditor } from "./schedule-editor";
+import { ScheduleStatus } from "./schedule-status";
 
 const overviewPage = (page: SchedulePage) => ({
   rows: page.schedules,
@@ -314,6 +315,7 @@ export function Schedules({
           <header className="page-heading">
             <h1>{tr("Scheduled")}</h1>
             <button
+              className="primary"
               onClick={() =>
                 onNavigate({
                   ...nav,
@@ -353,7 +355,7 @@ export function Schedules({
             )}
           </p>
           <div className="schedule-filters">
-            <div className="row-actions" aria-label={tr("Task status")}>
+            <div className="schedule-status-filters" role="group" aria-label={tr("Task status")}>
               {(
                 [
                   undefined,
@@ -366,7 +368,7 @@ export function Schedules({
               ).map((value) => (
                 <button
                   key={value || "all"}
-                  aria-pressed={nav.scheduleStatus === value}
+                  aria-pressed={(nav.scheduleStatus || undefined) === value}
                   onClick={() => setFilter({ scheduleStatus: value })}
                 >
                   {value ? tr(scheduleStateLabels[value]) : tr("All")}
@@ -452,11 +454,6 @@ export function Schedules({
                     key={s.id}
                     className={`schedule-row ${nav.schedule === s.id ? "selected" : ""}`}
                   >
-                    {s.state === "active" ? (
-                      <Clock3 size={19} />
-                    ) : (
-                      <Pause size={19} />
-                    )}
                     <button
                       className="schedule-description"
                       aria-current={nav.schedule === s.id ? "page" : undefined}
@@ -469,10 +466,12 @@ export function Schedules({
                         })
                       }
                     >
-                      <strong>{s.title}</strong>
+                      <span className="schedule-row-title">
+                        <strong>{s.title}</strong>
+                        <ChevronRight size={16} aria-hidden="true" />
+                      </span>
+                      <ScheduleStatus state={s.state} />
                       <small>
-                        {s.state !== "active" &&
-                          `${tr(scheduleStateLabels[s.state])} · `}
                         <RecurrenceSummary
                           cron={s.cron}
                           timezone={s.timezone}
@@ -485,7 +484,12 @@ export function Schedules({
                           {scheduleTime(s.next_at, s.timezone, locale)}
                         </small>
                       )}
-                      {s.last_state && <small>{s.last_state}</small>}
+                      {s.last_state && (
+                        <span className="schedule-latest-result">
+                          <span>{tr("Latest result")}</span>
+                          <ScheduleStatus state={s.last_state} run />
+                        </span>
+                      )}
                       <small>
                         {s.project_title} ·{" "}
                         {s.session_id
@@ -498,6 +502,7 @@ export function Schedules({
                       items={[
                         {
                           label: tr("Edit task"),
+                          disabled: !["active", "paused"].includes(s.state),
                           action: () =>
                             onNavigate({
                               ...nav,
@@ -808,7 +813,7 @@ function SelectedSchedule({
       ) : (
         <div className="schedule-reading">
           <header className="schedule-detail-heading">
-            <span>{tr(scheduleStateLabels[schedule.state])}</span>
+            <ScheduleStatus state={schedule.state} />
             <div className="row-actions">
               <button
                 disabled={
@@ -816,6 +821,7 @@ function SelectedSchedule({
                 }
                 onClick={onEdit}
               >
+                <Pencil size={15} aria-hidden="true" />
                 {tr("Edit")}
               </button>
               <button
@@ -824,6 +830,11 @@ function SelectedSchedule({
                 }
                 onClick={() => void toggle()}
               >
+                {schedule.state === "active" ? (
+                  <Pause size={15} aria-hidden="true" />
+                ) : (
+                  <Play size={15} aria-hidden="true" />
+                )}
                 {schedule.state === "active" ? tr("Pause") : tr("Resume")}
               </button>
               <Menu
@@ -843,7 +854,10 @@ function SelectedSchedule({
                   },
                 ]}
               />
-              <button onClick={onClose}>{tr("Back to tasks")}</button>
+              <button onClick={onClose}>
+                <ArrowLeft size={15} aria-hidden="true" />
+                {tr("Back to tasks")}
+              </button>
             </div>
           </header>
           <h2>{schedule.title}</h2>
@@ -959,6 +973,7 @@ function SelectedSchedule({
               }
               onClick={() => void run()}
             >
+              <Play size={15} aria-hidden="true" />
               {tr("Run now")}
             </button>
             {schedule.state === "paused" && (
@@ -982,7 +997,8 @@ function Instructions({ text }: { text: string }) {
   const tr = useT();
   const [expanded, setExpanded] = useState(false);
   return (
-    <div>
+    <section className="schedule-instructions-section">
+      <h3>{tr("Instructions")}</h3>
       <p className="schedule-instructions">
         {expanded ? text : text.slice(0, 2000)}
       </p>
@@ -991,7 +1007,7 @@ function Instructions({ text }: { text: string }) {
           {expanded ? tr("Show less") : tr("Show all instructions")}
         </button>
       )}
-    </div>
+    </section>
   );
 }
 function RunHistory({
@@ -1084,39 +1100,13 @@ function RunHistory({
     panel.current?.focus();
     return () => window.removeEventListener("keydown", escape, true);
   }, [expanded]);
-  const label = (state: string) => {
-    switch (state) {
-      case "queued":
-        return tr("Queued");
-      case "running":
-        return tr("Running");
-      case "starting":
-        return tr("Starting");
-      case "stopping":
-        return tr("Stopping");
-      case "completed":
-        return tr("Completed");
-      case "failed":
-        return tr("Failed");
-      case "canceled":
-        return tr("Canceled");
-      case "interrupted":
-        return tr("Interrupted");
-      case "held":
-        return tr("Held");
-      default:
-        return tr("Outcome unknown");
-    }
-  };
   const changes = pending?.count || 0;
   const rows = expanded
     ? history.rows
     : (pending?.value.runs || latest).slice(0, 5);
   const row = (run: ScheduleRun) => (
     <article key={run.id}>
-      <span className={`schedule-run-state schedule-run-${run.state}`}>
-        {label(run.state)}
-      </span>
+      <ScheduleStatus state={run.state} run />
       <time>
         {run.due_at
           ? `${tr("Scheduled trigger")}: ${scheduleTime(run.due_at, schedule.timezone, locale)}`

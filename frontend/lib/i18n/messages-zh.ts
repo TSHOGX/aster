@@ -1,5 +1,8 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Latest result": "最近结果",
+  "Scheduled task": "定时任务",
+  "Handled": "已处理",
 "Check until an event is confirmed": "检查直到事件确认",
 "Maximum checks": "最多检查次数",
 "Deadline with UTC offset": "截止时间（含 UTC 偏移）",

@@ -56,6 +56,7 @@ import { Inbox, SearchPanel } from "./adjacent-panels";
 import { SharedConversations } from "./shared-conversations";
 import { Schedules } from "./schedules";
 import "./workbench.css";
+import "./schedules.css";
 import { ResourceProvider } from "./resource-provider";
 
 export function ProjectWorkbench() {

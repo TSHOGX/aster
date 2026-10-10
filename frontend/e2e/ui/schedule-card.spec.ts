@@ -4,8 +4,9 @@ import { conversationRoute } from "./conversation-fixture";
 
 test("native receipt card reads bounded metadata and follows result and tombstone hints", async ({
   page,
-}) => {
+}, info) => {
   await workspaceFixture(page);
+  let title = "Match result";
   let state = "active",
     reads = 0;
   await conversationRoute(page, (route) =>
@@ -68,7 +69,7 @@ test("native receipt card reads bounded metadata and follows result and tombston
         id: "task",
         project_id: "battery",
         project_title: "Battery",
-        title: "Match result",
+        title,
         state,
         trigger_kind: "at",
         run_at: "2099-01-01T00:00:00Z",
@@ -84,11 +85,19 @@ test("native receipt card reads bounded metadata and follows result and tombston
   await page.goto("/?project=battery&session=analysis");
   const card = page.locator('[data-schedule-id="task"]');
   await expect(card).toContainText("Match result");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const controls = card.locator(".schedule-card-actions");
+  await expect(controls.getByRole("link", { name: "View task" })).toBeVisible();
+  expect(await controls.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await controls.getByRole("link", { name: "View task" }).focus();
+  await expect(controls.getByRole("link", { name: "View task" })).toBeFocused();
+  await page.screenshot({ path: info.outputPath("schedule-card-mobile.png"), fullPage: true });
   await expect(card.getByRole("link", { name: "View task" })).toHaveAttribute(
     "href",
     /schedule=task/,
   );
   expect(await card.locator('a[href^="https:"]').count()).toBe(0);
+  title = "A very long scheduled research task title that should remain readable on a narrow mobile screen — " + "x".repeat(80);
   state = "exhausted";
   await page.evaluate(() =>
     window.dispatchEvent(
@@ -101,7 +110,9 @@ test("native receipt card reads bounded metadata and follows result and tombston
       }),
     ),
   );
-  await expect(card).toContainText("completed");
+  await expect(card).toContainText("Completed");
+  await expect(card).toContainText(title);
+  expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await expect(
     card.getByRole("link", { name: "Open conversation" }),
   ).toHaveAttribute("href", /session=result/);
@@ -121,5 +132,11 @@ test("native receipt card reads bounded metadata and follows result and tombston
   await expect(card.getByRole("button", { name: "Cancel task" })).toHaveCount(
     0,
   );
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  const badge = card.locator('.schedule-status[data-state="deleted"]');
+  await expect(badge).toHaveText("Deleted");
+  expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath("schedule-card-deleted.png"), fullPage: true });
   expect(reads).toBeLessThan(8);
 });

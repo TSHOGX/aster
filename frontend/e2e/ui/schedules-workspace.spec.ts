@@ -641,3 +641,31 @@ test("bounded interval editor requires a deadline and preserves the finite budge
  expect(f.saves[0].max_occurrences).toBe(6);expect(f.saves[0].notification_policy).toBe("on_finish");
  await expect(page.locator(".schedule-reading")).toContainText("Checks admitted");
 });
+
+for (const width of [360, 1280, 1600]) {
+  test(`status filters and task actions remain visible without hover at ${width}`, async ({ page }, info) => {
+    await setup(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/?view=schedules");
+    const filters = page.getByRole("group", { name: "Task status" });
+    await expect(filters.getByRole("button")).toHaveCount(6);
+    for (const button of await filters.getByRole("button").all()) {
+      await expect(button).toBeInViewport();
+      expect(await button.evaluate(el => {
+        const group = el.parentElement!.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return box.right <= group.right + 1 && box.left >= group.left - 1 &&
+          el.scrollWidth <= el.clientWidth + 1 && style.cursor === "pointer";
+      })).toBe(true);
+    }
+    await expect(filters.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await filters.getByRole("button", { name: "Deleted", exact: true }).focus();
+    await expect(filters.getByRole("button", { name: "Deleted", exact: true })).toBeFocused();
+    await page.screenshot({ path: info.outputPath(`filters-${width}.png`), fullPage: true });
+    await page.locator(".schedule-description").click();
+    const detail = page.locator(".schedule-reading");
+    await expect(detail.getByRole("heading", { name: "Instructions" })).toBeVisible();
+    expect(await detail.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  });
+}
