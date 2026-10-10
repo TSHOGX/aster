@@ -21,3 +21,6 @@
 - [Navigation, scheduling, and network delivery](implementation-plan.md): implementation decisions and qualification.
 - [Fresh deployment](fresh-deployment.md): removal of migration/legacy support and deployed reset evidence.
 - [Publication boundary](delivery/privacy.md): public reference versus private inputs.
+
+- [Conversational scheduling](scheduling.md): user behavior, tools, bounded checks and deployment contract.
+- [Scheduling implementation and acceptance](conversational-scheduling-implementation.md): authority, invariants and verification limits.

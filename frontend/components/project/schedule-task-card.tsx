@@ -53,7 +53,11 @@ export function ScheduleTaskCard({
       identity: `schedule-card:${project}:${id}`,
     };
     const load = () => {
-      resources.forget(key);
+      resources.invalidate(
+        (candidate) =>
+          candidate.project === key.project &&
+          candidate.identity === key.identity,
+      );
       void resources
         .read(
           key,
@@ -75,6 +79,8 @@ export function ScheduleTaskCard({
     const unsubscribe = realtime.subscribe("", (event) => {
       if (event.resource_kind === "ready" || !gate.accept(event)) return;
       if (event.resource_kind === "closed") {
+        controller.abort();
+        clearTimeout(timer);
         setTask(undefined);
         setError(true);
         return;

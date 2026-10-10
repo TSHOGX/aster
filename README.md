@@ -23,6 +23,10 @@ scripts/check.sh all
 scripts/check.sh race
 ```
 
+Future work can be created in conversation with native scheduling tools or managed
+on the Scheduled page. One-shot tasks, recurrence, and finite event checks use
+the same durable admission path; see [scheduling](docs/scheduling.md).
+
 Start with [configuration](docs/configuration.md) and [operations](docs/operations.md).
 See the [architecture](docs/architecture.md), [development guide](docs/development.md),
 [verification gates](docs/verification.md), [delivery process](docs/delivery.md)

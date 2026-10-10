@@ -23,6 +23,7 @@ func (a *Application) observeGateways(ctx context.Context) (product.GatewayObser
 		return proof, errors.New("stable gateway observation unavailable")
 	}
 	var state struct {
+		ScheduleTools    map[string]bool                        `json:"schedule_tools"`
 		PlatformProtocol int                                    `json:"platform_protocol"`
 		OwnerProtocol    int                                    `json:"owner_handoff_protocol"`
 		Protocol         int                                    `json:"authority_protocol"`
@@ -33,7 +34,7 @@ func (a *Application) observeGateways(ctx context.Context) (product.GatewayObser
 		return proof, errors.New("gateway protocol or registrations differ from owner configuration")
 	}
 	for _, setting := range a.Config.Gateways {
-		if setting.ScheduleTools && state.PlatformProtocol != servicegateway.PlatformVersion {
+		if setting.ScheduleTools && (state.PlatformProtocol != servicegateway.PlatformVersion || !state.ScheduleTools[setting.Audience]) {
 			return proof, errors.New("gateway platform protocol unavailable")
 		}
 		registration, ok := state.Registrations[setting.Audience]

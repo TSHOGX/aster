@@ -205,3 +205,38 @@ func TestSourceRetirementKeepsIndependentScheduleAndRedactsReceipts(t *testing.T
 		t.Fatal("retired source retained receipt details", private)
 	}
 }
+
+func TestOverdueOneShotCanPauseWithoutRearming(t *testing.T) {
+	s, scope, _ := fixture(t)
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	receipt, err := s.MutateSchedule(ctx, scope, oneShotMutation("late", now.Add(time.Minute).Format(time.RFC3339)))
+	must(t, err)
+	now = now.Add(2 * time.Minute)
+	task := receipt.Schedule
+	task.State = "paused"
+	must(t, s.UpdateSchedule(ctx, scope, task, false))
+	n, err := s.TickSchedules(ctx, 10)
+	must(t, err)
+	if n != 0 {
+		t.Fatal(n)
+	}
+	task, err = s.Schedule(ctx, scope, task.ID)
+	must(t, err)
+	task.State = "active"
+	wantError(t, s.UpdateSchedule(ctx, scope, task, false), ErrInvalid)
+}
+func TestScheduleCreateCanonicalDefaultsShareReceipt(t *testing.T) {
+	s, scope, _ := fixture(t)
+	input := oneShotMutation("canonical", s.now().Add(time.Hour).Format(time.RFC3339))
+	first, err := s.MutateSchedule(ctx, scope, input)
+	must(t, err)
+	input.Patch.State = scheduleValue("active")
+	input.Patch.Notify = scheduleValue(true)
+	input.Patch.NotifyPolicy = scheduleValue("each_run")
+	second, err := s.MutateSchedule(ctx, scope, input)
+	must(t, err)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal(first, second)
+	}
+}

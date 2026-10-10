@@ -4,16 +4,12 @@ For the ongoing build/qualification/activation process, use [delivery](delivery.
 The reset below records a specific format transition; it is not the default
 procedure for ordinary current-format updates.
 
-The authorized reset, rebuild and restart completed on 2026-09-25. See the
-[current deployment record](../dev/measurements/current-deployment.json) and
-[acceptance](queued-prompts-acceptance.md). The procedure below applies to future resets.
-
-The current product is a fresh-install contract. It uses schema version 3 with
-compiled fingerprint `sha256:1d6d3b1179b9533f70db17b6647a66d3428d414fe7db843dcd64b9c6afec923f`
-and native protocol 4. The patched Pi RPC output is pinned at
-`sha256:e533d9e5bbe59991460ca018b123fab699554918ca95ba5c8a860642f19a0952`.
-The old protocol-3 candidate and old product database are retired artifacts;
-the application does not recognize or convert them.
+The 2026-09-25 queued-prompts reset is historical; see its
+[acceptance record](queued-prompts-acceptance.md). It does not authorize a reset
+for subsequent features. Current source uses schema 4, native protocol 4, runtime
+manifest 4 and schedule protocol 1. Exact schema and artifact digests come from
+the compiled release identity, never a copied historical fingerprint. Startup
+refuses mismatched databases and unsupported retained manifests without conversion.
 
 ## Release identity
 
@@ -30,7 +26,8 @@ deployment identity.
 
 ## Destructive reset
 
-Backward compatibility is intentionally removed. Before activation:
+Use a fresh-lineage reset only when the deployment task explicitly authorizes
+its concrete data-loss scope. Before that separately authorized activation:
 
 1. Close browser ingress and stop the owner, gateway, frontend, engine proxy
    and engine under their supervisors.
@@ -40,8 +37,8 @@ Backward compatibility is intentionally removed. Before activation:
 3. Delete the old application database and sidecars, captures, shares, engine
    state, owned workspace/runtime volumes, overlays, superseded binaries and
    retired runtime templates. Do not infer unrelated paths as deletion targets.
-4. Install the new executable and frontend, initialize a new schema-3 database,
-   register the protocol-4 immutable template, and bind the new engine store.
+4. Install the new executable and frontend, initialize a new schema-4 database,
+   register the manifest-4/native-protocol-4 immutable template, and bind the new engine store.
 5. Start services and verify readiness, authentication, Project creation,
    workspace access, scheduling, native reply, network policy and browser
    controls. Remove disposable smoke resources afterward.
@@ -59,6 +56,5 @@ extension inputs, listener failures during cleanup, delayed Steer preflight,
 process loss, unknown recovery, duplicate expanded text, retry and compaction,
 queue frontier handoff, segment rebuild and destructive reset.
 
-Future activations require their own task authorization. The completed reset
-removed all former application and engine state and retained only the current
-release plus credentials, TLS and reviewed configuration.
+Current-format releases use the normal delivery process. The scheduling source
+change performs no database reset, live runtime rebuild or deployment.

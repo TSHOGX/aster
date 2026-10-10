@@ -6,7 +6,7 @@ does not authorize deployment.
 
 ## Current authority model
 
-The fresh schema is version 3. `turns` owns immutable input intent, queue policy,
+The fresh schema is version 4. `turns` owns immutable input intent, queue policy,
 prompt revision and disposition. `input_deliveries` owns the exact native token
 and monotonic delivery evidence. `execution_runs` owns execution lifecycle,
 owner/incarnation fencing, reconciliation and outcome. `control_receipts` owns

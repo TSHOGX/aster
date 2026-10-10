@@ -501,12 +501,21 @@ func (d *displayReducer) consume(r displaySource) error {
 }
 func displayResult(raw json.RawMessage) string {
 	var value struct {
+		Details struct {
+			Kind    string `json:"kind"`
+			Version int    `json:"version"`
+		} `json:"details"`
 		Content []struct {
 			Type string
 			Text *string
 		}
 	}
 	if json.Unmarshal(raw, &value) == nil && len(value.Content) > 0 {
+		// Native task receipts retain structured identity through projection.
+		// They remain untrusted until the browser performs its product read.
+		if value.Details.Kind == "schedule_receipt" && value.Details.Version == 1 {
+			return string(raw)
+		}
 		parts := []string{}
 		for _, b := range value.Content {
 			if b.Type != "text" || b.Text == nil {

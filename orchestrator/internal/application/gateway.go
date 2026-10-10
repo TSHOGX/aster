@@ -130,11 +130,13 @@ func (a *GatewayApplication) controlHandler() http.Handler {
 		}
 		checks := map[string]any{}
 		registrations := map[string]product.GatewayRegistration{}
+		scheduleTools := map[string]bool{}
 		for n, gateway := range a.gateways {
 			checks[a.config.Gateways[n].Audience] = gateway.AuthorityStats()
 			registrations[a.config.Gateways[n].Audience] = a.authorities[n].Registration()
+			scheduleTools[a.config.Gateways[n].Audience] = a.config.Gateways[n].ScheduleTools
 		}
-		writeControl(w, map[string]any{"registrations": registrations, "authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "platform_protocol": servicegateway.PlatformVersion, "authority_protocol": servicegateway.AuthorityVersion, "owner_handoff_protocol": product.OwnerHandoffProtocol})
+		writeControl(w, map[string]any{"schedule_tools": scheduleTools, "registrations": registrations, "authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "platform_protocol": servicegateway.PlatformVersion, "authority_protocol": servicegateway.AuthorityVersion, "owner_handoff_protocol": product.OwnerHandoffProtocol})
 	})
 	mux.HandleFunc("POST /stop", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

@@ -174,7 +174,10 @@ export function Schedules({
           | undefined;
         const selected = navRef.current;
         const reset = event.resource_kind === "resync";
-        catalog ||= reset || event.resource_kind.startsWith("schedule.") || event.resource_kind.startsWith("run.");
+        catalog ||=
+          reset ||
+          event.resource_kind.startsWith("schedule.") ||
+          event.resource_kind.startsWith("run.");
         const relevant =
           reset ||
           ((!payload?.project_id ||
@@ -222,7 +225,10 @@ export function Schedules({
     )
       .then((value) => {
         if (!controller.signal.aborted) {
-          if (value.state === "deleted" && navRef.current.scheduleStatus!=="deleted") {
+          if (
+            value.state === "deleted" &&
+            navRef.current.scheduleStatus !== "deleted"
+          ) {
             setDetail({
               key: selectedKey,
               value,
@@ -348,7 +354,16 @@ export function Schedules({
           </p>
           <div className="schedule-filters">
             <div className="row-actions" aria-label={tr("Task status")}>
-              {([undefined, "active", "paused", "exhausted", "canceled", "deleted"] as const).map((value) => (
+              {(
+                [
+                  undefined,
+                  "active",
+                  "paused",
+                  "exhausted",
+                  "canceled",
+                  "deleted",
+                ] as const
+              ).map((value) => (
                 <button
                   key={value || "all"}
                   aria-pressed={nav.scheduleStatus === value}
@@ -437,7 +452,11 @@ export function Schedules({
                     key={s.id}
                     className={`schedule-row ${nav.schedule === s.id ? "selected" : ""}`}
                   >
-                    {s.state === "active" ? <Clock3 size={19} /> : <Pause size={19} />}
+                    {s.state === "active" ? (
+                      <Clock3 size={19} />
+                    ) : (
+                      <Pause size={19} />
+                    )}
                     <button
                       className="schedule-description"
                       aria-current={nav.schedule === s.id ? "page" : undefined}
@@ -452,7 +471,8 @@ export function Schedules({
                     >
                       <strong>{s.title}</strong>
                       <small>
-                        {s.state !== "active" && `${tr(scheduleStateLabels[s.state])} · `}
+                        {s.state !== "active" &&
+                          `${tr(scheduleStateLabels[s.state])} · `}
                         <RecurrenceSummary
                           cron={s.cron}
                           timezone={s.timezone}
@@ -713,7 +733,13 @@ function SelectedSchedule({
       const latest = await api<Schedule>(path);
       const changed = await command<Schedule>(
         path,
-        scheduleWrite({ ...latest, state: schedule.state === "active" ? "paused" : "active" }, newID()),
+        scheduleWrite(
+          {
+            ...latest,
+            state: schedule.state === "active" ? "paused" : "active",
+          },
+          newID(),
+        ),
         "PATCH",
       );
       onChanged(changed);
@@ -723,10 +749,15 @@ function SelectedSchedule({
           : tr("Paused. Already submitted runs are unaffected."),
       );
     });
-  const cancelTask=()=>act(async()=>{
-    const changed=await command<Schedule>(`${path}/cancel`,{request_id:newID(),revision:schedule.revision});
-    onChanged(changed);setNotice(tr("Task canceled. Already submitted runs are unaffected."));
-  });
+  const cancelTask = () =>
+    act(async () => {
+      const changed = await command<Schedule>(`${path}/cancel`, {
+        request_id: newID(),
+        revision: schedule.revision,
+      });
+      onChanged(changed);
+      setNotice(tr("Task canceled. Already submitted runs are unaffected."));
+    });
   const remove = async () => {
     if (
       await ask({
@@ -779,16 +810,31 @@ function SelectedSchedule({
           <header className="schedule-detail-heading">
             <span>{tr(scheduleStateLabels[schedule.state])}</span>
             <div className="row-actions">
-              <button disabled={busy || !["active","paused"].includes(schedule.state)} onClick={onEdit}>
+              <button
+                disabled={
+                  busy || !["active", "paused"].includes(schedule.state)
+                }
+                onClick={onEdit}
+              >
                 {tr("Edit")}
               </button>
-              <button disabled={busy || !["active","paused"].includes(schedule.state)} onClick={() => void toggle()}>
+              <button
+                disabled={
+                  busy || !["active", "paused"].includes(schedule.state)
+                }
+                onClick={() => void toggle()}
+              >
                 {schedule.state === "active" ? tr("Pause") : tr("Resume")}
               </button>
               <Menu
                 label={tr("Task actions")}
                 items={[
-                  {label:tr("Cancel task"),disabled:busy||!["active","paused"].includes(schedule.state),action:()=>void cancelTask()},
+                  {
+                    label: tr("Cancel task"),
+                    disabled:
+                      busy || !["active", "paused"].includes(schedule.state),
+                    action: () => void cancelTask(),
+                  },
                   {
                     label: tr("Delete task"),
                     danger: true,
@@ -802,9 +848,25 @@ function SelectedSchedule({
           </header>
           <h2>{schedule.title}</h2>
           <Instructions text={schedule.prompt} />
-          {schedule.origin_session_id && <button onClick={()=>onOpen(schedule.project_id,schedule.origin_session_id!)}>{tr("Source conversation")}</button>}
-          {schedule.max_occurrences && <p>{tr("Checks admitted")}: {schedule.admitted_count||0} / {schedule.max_occurrences} · {tr("Deadline")}: {scheduleTime(schedule.expires_at!,schedule.timezone,locale)}</p>}
-          {schedule.last_error && <p className="notice warning">{schedule.last_error}</p>}
+          {schedule.origin_session_id && (
+            <button
+              onClick={() =>
+                onOpen(schedule.project_id, schedule.origin_session_id!)
+              }
+            >
+              {tr("Source conversation")}
+            </button>
+          )}
+          {schedule.max_occurrences && (
+            <p>
+              {tr("Checks admitted")}: {schedule.admitted_count || 0} /{" "}
+              {schedule.max_occurrences} · {tr("Deadline")}:{" "}
+              {scheduleTime(schedule.expires_at!, schedule.timezone, locale)}
+            </p>
+          )}
+          {schedule.last_error && (
+            <p className="notice warning">{schedule.last_error}</p>
+          )}
           <section className="schedule-settings">
             <h3>{tr("Runs in")}</h3>
             <dl>
@@ -846,13 +908,19 @@ function SelectedSchedule({
               nextAt={schedule.next_at}
             />
             <p>
-              {!["active","paused"].includes(schedule.state) ? tr(schedule.end_reason==="trigger_consumed" ? "Trigger consumed; inspect the run for its outcome." : "No future runs are scheduled.") : schedule.state !== "active"
-                ? tr("Paused. Resume to continue on this schedule.")
-                : schedule.trigger_kind==="manual"
-                  ? tr("Runs only when you choose Run now.")
-                  : schedule.next_at
-                    ? `${tr("Next run")}: ${scheduleTime(schedule.next_at, schedule.timezone, locale)}`
-                    : tr("Upcoming time is unavailable. Reconnecting…")}
+              {!["active", "paused"].includes(schedule.state)
+                ? tr(
+                    schedule.end_reason === "trigger_consumed"
+                      ? "Trigger consumed; inspect the run for its outcome."
+                      : "No future runs are scheduled.",
+                  )
+                : schedule.state !== "active"
+                  ? tr("Paused. Resume to continue on this schedule.")
+                  : schedule.trigger_kind === "manual"
+                    ? tr("Runs only when you choose Run now.")
+                    : schedule.next_at
+                      ? `${tr("Next run")}: ${scheduleTime(schedule.next_at, schedule.timezone, locale)}`
+                      : tr("Upcoming time is unavailable. Reconnecting…")}
             </p>
             {schedule.state === "active" &&
               schedule.next_at &&
@@ -877,13 +945,16 @@ function SelectedSchedule({
                 tr("Retry Run now to confirm the same request.")}
             </p>
           )}
-          {schedule.trigger_kind==="at" && schedule.state==="active" && <p>{tr("Run now consumes this one-shot task.")}</p>}
+          {schedule.trigger_kind === "at" && schedule.state === "active" && (
+            <p>{tr("Run now consumes this one-shot task.")}</p>
+          )}
           <footer className="schedule-footer">
             <button
               className="primary"
               disabled={
                 busy ||
-                (schedule.state !== "active" && !runRequests.current.has(path)) ||
+                (schedule.state !== "active" &&
+                  !runRequests.current.has(path)) ||
                 targetError
               }
               onClick={() => void run()}

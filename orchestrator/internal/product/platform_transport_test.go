@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -141,10 +142,48 @@ func TestPlatformRealGatewayOwnerReceiptSurvivesLostReply(t *testing.T) {
 	if status != 200 || upstreamCalls.Load() != 1 {
 		t.Fatal("model forwarding changed", status)
 	}
+	// Exercise the shipped JavaScript extension against the same real gateway,
+	// owner socket and SQLite receipt store. Secrets travel on stdin only.
+	native := exec.Command("node", "--input-type=module", "-e", `
+ import {registerScheduleTools} from '../runtimerelease/platform-schedules.mjs';
+ let raw='';for await(const chunk of process.stdin)raw+=chunk;
+ const config=JSON.parse(raw);const tools=new Map();
+ registerScheduleTools({registerTool:tool=>tools.set(tool.name,tool)},config);
+ const result=await tools.get('schedules_create').execute('native-call',{title:'Native transport check',prompt:'Inspect later',trigger:{kind:'at',after_minutes:15,timezone:'UTC'}},undefined,undefined,{sessionManager:{getLeafId:()=> 'assistant-entry',getSessionId:()=> 'native-session'}});
+ process.stdout.write(JSON.stringify(result.details));
+ `)
+	config, _ := json.Marshal(map[string]string{"endpoint": guest.URL + servicegateway.PlatformPath, "credential": token, "session_id": contextResult.Context.SessionID})
+	native.Stdin = bytes.NewReader(config)
+	drop.Store(true)
+	nativeOutput, e := native.Output()
+	if e != nil {
+		t.Fatalf("bundled native extension transport failed: %v", e)
+	}
+	var nativeReceipt struct {
+		Kind       string `json:"kind"`
+		ScheduleID string `json:"schedule_id"`
+	}
+	if e = json.Unmarshal(nativeOutput, &nativeReceipt); e != nil {
+		t.Fatal(e)
+	}
+	nativeTask, e := store.Schedule(context.Background(), scope, nativeReceipt.ScheduleID)
+	if e != nil || nativeReceipt.Kind != "schedule_receipt" || nativeTask.Title != "Native transport check" {
+		t.Fatal(nativeReceipt, nativeTask, e)
+	}
+	if bytes.Contains(nativeOutput, []byte(token)) {
+		t.Fatal("native output leaked credential")
+	}
+
 	// Strict owner decoding rejects guest authority fields and excessive bodies.
 	out := httptest.NewRecorder()
 	owner.ServeHTTP(out, httptest.NewRequest("POST", servicegateway.PlatformOwnerPath, strings.NewReader(`{"request":{},"input":{"action":"context","project_id":"foreign"}}`)))
 	if out.Code != 400 {
 		t.Fatal(out.Code)
+	}
+	oversized := `{"request":{"audience":"model"},"input":{"action":"context","timezone":"` + strings.Repeat("x", product.PlatformScheduleBodyLimit) + `"}}`
+	out = httptest.NewRecorder()
+	owner.ServeHTTP(out, httptest.NewRequest("POST", servicegateway.PlatformOwnerPath, strings.NewReader(oversized)))
+	if out.Code != 400 {
+		t.Fatal("oversized body accepted", out.Code)
 	}
 }

@@ -95,7 +95,7 @@ func TestGatewaySchedulingRequiresPlatformProtocol(t *testing.T) {
 				t.Fatal(err)
 			}
 			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				json.NewEncoder(w).Encode(map[string]any{"authority_protocol": 1, "platform_protocol": version, "owner_handoff_protocol": product.OwnerHandoffProtocol, "registrations": map[string]product.GatewayRegistration{"model": {Instance: "gateway", Generation: 1, Slots: 1}}})
+				json.NewEncoder(w).Encode(map[string]any{"authority_protocol": 1, "platform_protocol": version, "schedule_tools": map[string]bool{"model": version == 1}, "owner_handoff_protocol": product.OwnerHandoffProtocol, "registrations": map[string]product.GatewayRegistration{"model": {Instance: "gateway", Generation: 1, Slots: 1}}})
 			})}
 			go server.Serve(listener)
 			defer server.Close()

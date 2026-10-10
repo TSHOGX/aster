@@ -329,3 +329,26 @@ func TestGatewayRejectsInvalidConfigurationAndBoundsConcurrency(t *testing.T) {
 		t.Fatalf("concurrency bound was not enforced: %d", resp.StatusCode)
 	}
 }
+
+func TestPlatformNamespaceNeverFallsThroughWithoutCapability(t *testing.T) {
+	forwarded := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { forwarded++; w.WriteHeader(200) }))
+	defer upstream.Close()
+	gateway, err := New(newAuthority(), Config{Audience: "model", Upstream: upstream.URL, APIKey: "private-provider-key", MaxRequests: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gateway.Close()
+	for _, path := range []string{"/platform", "/platform/", "/platform/v1/schedules", "/platform/v2/schedules", "/platform/v1/schedules/"} {
+		request := httptest.NewRequest("POST", path, strings.NewReader(`{"prompt":"private task"}`))
+		request.Header.Set("Authorization", "Bearer a")
+		response := httptest.NewRecorder()
+		gateway.ServeHTTP(response, request)
+		if response.Code != 503 || strings.Contains(response.Body.String(), "private") {
+			t.Fatal(path, response.Code, response.Body.String())
+		}
+	}
+	if forwarded != 0 {
+		t.Fatal("platform payload forwarded", forwarded)
+	}
+}

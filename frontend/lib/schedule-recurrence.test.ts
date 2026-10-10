@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   parseRecurrence,
- resolveLocalScheduleTime,
- recurrenceRunAt,
+  resolveLocalScheduleTime,
+  recurrenceRunAt,
   recurrenceCron,
   scheduleConfiguration,
   scheduleTime,
@@ -61,7 +61,9 @@ describe("visual recurrence", () => {
       prompt: "private",
       cron: "0 9 * * *",
       timezone: "UTC",
-      state: "active", trigger_kind: "cron", notify: true,
+      state: "active",
+      trigger_kind: "cron",
+      notify: true,
 
       revision: 1,
     } as Schedule;
@@ -82,21 +84,54 @@ describe("visual recurrence", () => {
   });
 });
 
-describe("one-shot wall time",()=>{
- it("rejects missing spring time and invalid dates",()=>{
-  expect(resolveLocalScheduleTime("2026-03-08T02:30","America/New_York")).toEqual([]);
-  expect(resolveLocalScheduleTime("2026-02-30T09:00","UTC")).toEqual([]);
- });
- it("requires an explicit choice during the repeated fall hour",()=>{
-  const candidates=resolveLocalScheduleTime("2026-11-01T01:30","America/New_York");
-  expect(candidates).toEqual(["2026-11-01T05:30:00.000Z","2026-11-01T06:30:00.000Z"]);
-  const rule={...parseRecurrence(""),mode:"once" as const,localTime:"2026-11-01T01:30"};
-  expect(recurrenceRunAt(rule,"America/New_York")).toBe("");
-  expect(recurrenceRunAt({...rule,atChoice:candidates[1]},"America/New_York")).toBe(candidates[1]);
- });
- it("uses the selected zone independent of browser timezone",()=>{
-  expect(resolveLocalScheduleTime("2026-10-10T23:00","Asia/Shanghai")).toEqual(["2026-10-10T15:00:00.000Z"]);
-  const rule=parseRecurrence("","2026-10-10T15:00:00.000000000Z","Asia/Shanghai");
-  expect(rule.mode).toBe("once");expect(rule.localTime).toBe("2026-10-10T23:00");expect(recurrenceCron(rule)).toBe("");
- });
+describe("one-shot wall time", () => {
+  it("rejects missing spring time and invalid dates", () => {
+    expect(
+      resolveLocalScheduleTime("2026-03-08T02:30", "America/New_York"),
+    ).toEqual([]);
+    expect(resolveLocalScheduleTime("2026-02-30T09:00", "UTC")).toEqual([]);
+  });
+  it("requires an explicit choice during the repeated fall hour", () => {
+    const candidates = resolveLocalScheduleTime(
+      "2026-11-01T01:30",
+      "America/New_York",
+    );
+    expect(candidates).toEqual([
+      "2026-11-01T05:30:00.000Z",
+      "2026-11-01T06:30:00.000Z",
+    ]);
+    const rule = {
+      ...parseRecurrence(""),
+      mode: "once" as const,
+      localTime: "2026-11-01T01:30",
+    };
+    expect(recurrenceRunAt(rule, "America/New_York")).toBe("");
+    expect(
+      recurrenceRunAt({ ...rule, atChoice: candidates[1] }, "America/New_York"),
+    ).toBe(candidates[1]);
+  });
+  it("uses the selected zone independent of browser timezone", () => {
+    expect(
+      resolveLocalScheduleTime("2026-10-10T23:00", "Asia/Shanghai"),
+    ).toEqual(["2026-10-10T15:00:00.000Z"]);
+    const rule = parseRecurrence(
+      "",
+      "2026-10-10T15:00:00.000000000Z",
+      "Asia/Shanghai",
+    );
+    expect(rule.mode).toBe("once");
+    expect(rule.localTime).toBe("2026-10-10T23:00");
+    expect(recurrenceCron(rule)).toBe("");
+  });
+});
+it("content edits preserve an existing one-shot instant including seconds", () => {
+  const at = "2099-01-02T03:04:56.123456789Z";
+  const rule = parseRecurrence("", at, "Asia/Shanghai");
+  expect(recurrenceRunAt(rule, "Asia/Shanghai")).toBe(at);
+  expect(
+    recurrenceRunAt(
+      { ...rule, localTime: "2099-01-02T11:05", atChoice: "" },
+      "Asia/Shanghai",
+    ),
+  ).toBe("2099-01-02T03:05:00.000Z");
 });

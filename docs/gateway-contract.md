@@ -122,7 +122,8 @@ even when model-stream continuation remains valid. New mutations also require an
 open release phase. Authorized exact receipt replay may survive release drain;
 an idle old agent credential cannot inspect it.
 
-Control status advertises `platform_protocol: 1`; release compatibility includes
+Control status advertises `platform_protocol: 1` and a per-audience `schedule_tools`
+capability map; enabled owner audiences must match both. Release compatibility includes
 that protocol. An owner with scheduling enabled refuses handoff qualification
 against a gateway lacking it. Install the prefix-reserving gateway through the
 existing full-quiescence gateway replacement procedure before enabling runtime

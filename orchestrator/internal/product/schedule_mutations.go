@@ -112,6 +112,13 @@ func (s *Store) mutateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 			*field = &canonical
 		}
 	}
+	if input.Operation == "create" {
+		task, e := normalizeSchedule(input.Patch.apply(Schedule{ID: input.ID, State: "active", Notify: true}))
+		if e != nil {
+			return out, e
+		}
+		input.Patch = task.definitionPatch()
+	}
 	digest := creationDigest(input, origin)
 	var stored, result string
 	err := tx.QueryRowContext(ctx, `SELECT digest,result FROM schedule_mutation_receipts WHERE project_id=? AND request_id=?`, scope.ProjectID, input.RequestID).Scan(&stored, &result)

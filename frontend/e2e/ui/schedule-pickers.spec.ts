@@ -39,7 +39,7 @@ async function form(page: Page) {
   return { previews, saved };
 }
 
-test("Repeat lists Interval first and supports keyboard selection, typeahead and Escape", async ({
+test("Repeat includes one-shot work and supports keyboard selection, typeahead and Escape", async ({
   page,
 }) => {
   await form(page);
@@ -47,13 +47,15 @@ test("Repeat lists Interval first and supports keyboard selection, typeahead and
   await repeat.click();
   const list = page.getByRole("listbox", { name: "Repeat", exact: true });
   await expect(list.getByRole("option").first()).toHaveAccessibleName(
-    "Interval",
+    "Once",
   );
-  await expect(list.getByRole("option").nth(1)).toHaveAccessibleName("Daily");
+  await expect(list.getByRole("option").nth(1)).toHaveAccessibleName("Interval");
+  await expect(list.getByRole("option").nth(2)).toHaveAccessibleName("Daily");
   await expect(
     list.getByRole("option", { name: "Daily", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(repeat).toHaveText("Interval");
   await expect(repeat).toBeFocused();
@@ -238,7 +240,7 @@ for (const variant of [
         .getByRole("combobox", { name: zh ? "重复" : "Repeat", exact: true })
         .click();
       await expect(page.getByRole("option").first()).toHaveAccessibleName(
-        zh ? "按间隔" : "Interval",
+        zh ? "仅一次" : "Once",
       );
       await page.screenshot({ path: info.outputPath("repeat-picker.png") });
       await page.keyboard.press("Escape");

@@ -139,7 +139,7 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 		time.Sleep(200 * time.Millisecond)
 		conn.Close()
 	}
-	a.request("POST", "/api/projects/mixed-1/schedules", map[string]any{"id": "mixed-schedule", "session_id": "mixed-agent-1-1", "title": "minute schedule", "prompt": "scheduled workload", "cron": "* * * * *", "timezone": "UTC", "enabled": true}, 201)
+	a.request("POST", "/api/projects/mixed-1/schedules", map[string]any{"id": "mixed-schedule", "session_id": "mixed-agent-1-1", "title": "minute schedule", "prompt": "scheduled workload", "cron": "* * * * *", "timezone": "UTC", "trigger_kind": "cron", "request_id": "create-mixed-schedule"}, 201)
 	// Prevent one Session's host capture directory from accepting exports. Native
 	// completion remains observable and unrelated Sessions must keep progressing.
 	impaired := filepath.Join(a.root, "state/native/mixed-0/mixed-agent-0-0")

@@ -1,85 +1,122 @@
-# Conversational scheduling implementation
+# Conversational scheduling implementation and acceptance
 
-Implementation follows the 2026-10-10 design, with production acceptance tracked
-here. Existing databases and deployments are not changed by this work.
+The implementation completes the 2026-10-10 scheduling design across product,
+transport, native runtime, browser surfaces, delivery and bounded checks.
+Production activation and data retirement are separate from this source change.
 
-| Stage | Status | Deliverable |
-| --- | --- | --- |
-| Domain and admission | Complete | Explicit lifecycle/triggers, one-shot admission, receipts, coalescing, failure isolation, typed browser writes, retirement |
-| Platform transport | Complete | Reserved gateway prefix, protected owner RPC, live grant/slot/Run/release fences |
-| Native runtime | Complete | Measured explicit extension, immutable request identity/retries, capability gating |
-| Surfaces and delivery | Complete | One-shot editor, conversation cards/source links, history filters, scheduled inbox projection |
-| Bounded checks | Complete | Count/deadline bounds, exact scheduled Run finish, quiet pending checks |
-| Final qualification | Pending | Cross-layer tests, release/docs audit, legacy removal |
+## Authority and ownership
 
-The foundation removes schedule `enabled`/`deleted` booleans, tick-driven edit
-revisions, automatic browser CAS rebasing and legacy run-ID history cursors.
-Automatic overlap is serialized per schedule; manual recurring runs remain
-explicit user admissions and do not change cadence. One-shot Run-now always
-consumes the existing occurrence. Receipts are private; metadata invalidation
-never includes prompts or mutation values.
+Schedules persist future input intent. ScheduleRun rows snapshot an admitted
+occurrence, definition revision and notification policy. Prompts and execution
+Runs retain ordinary queue, lifecycle, recovery and outcome authority. There is
+no second runner, broker, workflow engine, guest cron or journal tool protocol.
 
-Schema 4 is a fresh lineage with exact fingerprint enforcement. No automatic
-migration/reset is introduced. Production activation against an existing
-fingerprint needs a separately reviewed data-continuity or fresh-lineage plan;
-new code must never silently replace user data. Conversational tools remain
-unadvertised until transport, runtime and surfaces are qualified together.
+Browser and Agent adapters share transaction-level mutation operations and
+immutable Project-scoped receipts. Expected definition revision fences edits;
+scheduler progress changes catalog/outbox revisions without changing it. Exact
+replay survives edits, cancellation and reopen. Changed payloads conflict.
 
-Foundation validation: `go test ./...` passes; focused schedule/admission race
-tests pass; product/HTTP vet passes; frontend TypeScript and schedule unit tests
-(25 cases) pass; production frontend build and schedule Playwright tests (30
-cases) pass; source/documentation gates pass. Source-only retirement additionally
-verifies that independent future work survives and receipt details are redacted.
-Browser fixture generation uses the existing test Python virtual environment.
+The service gateway reserves all `/platform/` paths before provider dispatch.
+Requests share its bounded grant/slot accounting and cross the protected owner
+Unix socket. Mutation transactions verify configured capability, gateway instance,
+slot sequence/open state, original grant, live Project/Session/incarnation, exact
+execution Run and acquired owner snapshot. Stopping, idle, revoked, expired,
+foreign and superseded authority cannot create future work. New mutations require
+an open release phase. Stream continuation retains its separate drain rules.
 
-Platform validation exercises the actual HTTP gateway, protected Unix socket,
-live product grant and committed receipt with a deliberately dropped owner
-response. Identical replay returns the same receipt, changed intent conflicts,
-and reserved variants never reach the model fixture. Authority cases cover
-revocation, expiry, stopping, idle, owner advancement, closed slot, gateway
-replacement, wrong expected Run, drain and foreign target. Slot acquisition now
-snapshots the execution owner so a delayed platform call cannot cross an owner
-advance, while existing model stream continuation keeps its original rules.
+Native tools load only through an explicit measured Pi extension. Identity hashes
+logical/native Session, persisted assistant entry and provider tool-call ID,
+captured before awaits. Relative time resolves once against the server clock;
+retries retain identical bytes and the original expected Run. Aborted/lost replies
+preserve uncertainty. Host context supplies finish identity and revision.
 
-Platform checks: complete backend tests and vet pass; focused platform/gateway
-race tests and source/documentation checks pass.
+## Admission, delivery and presentation
 
-Native qualification runs the bundled extension against actual pinned Pi 0.77.0,
-including explicit loader discovery restrictions and ordinary native tool events.
-Independent deterministic tests cover parallel identity capture, identical-byte
-retries, server-anchored relative time and abort uncertainty. The same tests run
-on pinned Node 24.15.0. Manifest version 4 measures the extension as data and
-refuses unsupported retained capability or changed source bytes.
+One-shot consumption, Session/Prompt creation and occurrence insertion commit
+atomically. Recurrence coalesces missed times and defers when an earlier occurrence
+is unsettled, including unknown execution. Independent due transactions pause
+invalid tasks or back off transient admission failures; global storage failure
+remains a worker error. No uncertain execution is resubmitted.
 
-Runtime checks: full backend gate (build, vet, native/product tests, privileged
-suite compilation and selected fixture checks), source gates and pinned-Node
-extension tests pass. No live image or deployment was changed.
+Bounded interval tasks have a count/deadline, optional first-check anchor and
+snapshotted delivery policy. Any scheduled input, including a consumed Steer,
+restricts native management. Finish requires one unambiguous scheduled input with
+the unchanged definition revision. Automatic count/deadline exhaustion permits
+its already admitted live check to finish; user changes fence it. Pending checks
+stay quiet; failure, unknown and budget exhaustion remain visible.
 
-Surface qualification includes one-shot creation, timezone/DST gaps and repeated
-hours, receipt-backed browser retry, metadata-only live cards, native-link
-validation, deleted tombstones and latest-result navigation. Scheduled delivery
-covers generic-off and both-on policies, immutable notify snapshots, unknown
-resolution/unread behavior, consumed steers and queued cancellation/handling.
-The gateway transport fixture now waits for acknowledged slot release before
-its next request; a retry denial after a lost mutation reply remains uncertain.
+Scheduled and generic outcome delivery share `turn/<prompt_id>` IDs. Unknown
+resolution updates the same notice; unchanged outcomes do not reset unread.
+Count/deadline attention uses `schedule/<id>` after outstanding work settles.
+No success notice is inferred from exhaustion or from the finish operation.
 
-Surface checks: product/HTTP tests, focused race tests, frontend lint/typecheck,
-233 unit tests (one pre-existing skip), production build, 31 schedule browser
-cases and the live native-card browser case pass. Native retry tests also pass.
+Browser writes use typed authored fields and stable receipts. Metadata lists,
+latest-result projections, source links and visible native cards share bounded,
+authorized queries and one owner invalidation stream. Cards ignore native-supplied
+URLs and show tombstones after deletion. The conversation projector preserves
+structured schedule receipts through ingestion and replay, and card invalidation
+fences reads already in flight. Large inspected prompts appear once in native
+text output rather than being duplicated into structured details. The one-shot editor handles DST gaps and
+repeated offsets, and content edits preserve the exact stored instant.
 
-Bounded checks reuse ordinary interval admission with a finite count/deadline,
-optional first-check anchor and snapshotted delivery policy. Finish uses the
-shared receipt transaction and exact native execution attribution, including
-consumed Steers. Any scheduled input restricts management; mixed inputs cannot
-finish. Tests cover quiet pending checks with global notices enabled, the final
-count-limited occurrence, deadline while running, failure after finish, user
-pause/cancel/edit fences, mixed input, recursive creation denial, exhaustion
-attention, unknown overlap suppression and delayed first admission.
+Removed architecture includes schedule enabled/deleted booleans, tick-driven edit
+revisions, automatic CAS rebasing, inferred save acknowledgments from current
+content, unbounded list prompt bodies and legacy run-ID history continuations.
+Source retirement redacts private receipt results while keeping identity tombstones.
 
-Bounded-stage qualification: full backend gate passes, including privileged-suite
-compilation; focused race checks pass; frontend lint/typecheck/unit/build and 33
-schedule browser cases pass. The existing terminal input fixture had a readiness
-race that could hang before entering its backend; it now waits for the live
-attachment and reports early input failure instead of waiting indefinitely.
-Operational counters/gauges are exposed through existing owner/gateway diagnostic
-surfaces, with a 200-task due-batch test exercising reserved urgent/ingest writers.
+## Verification
+
+| Area | Evidence |
+| --- | --- |
+| Domain | Concurrent one-shot admission, rollback, reopen, immutable receipt replay, canonical defaults, expiry, manual consumption, CAS and source retirement tests |
+| Scheduling | DST/interval phase, delayed first check, poison-row isolation, overlap/unknown suppression, count/deadline tests |
+| Authority/transport | Real HTTP gateway → protected Unix socket → live Store grant; lost committed reply/replay; revoked/expired/stopping/idle/owner/slot/gateway/Run/drain/foreign fences; strict envelope/namespace bounds |
+| Native | Shipped extension through the actual gateway/owner/Store with a lost committed reply; actual pinned Pi 0.77.0 loader and AgentSession; disabled discovery; native tool events; parallel identities; provider-ID reuse; immutable retry bytes; abort/late-denial uncertainty; host-bound finish |
+| Runtime release | Manifest-4 data asset classification, reviewed extension bytes, unsupported retained capability rejection; tests on pinned Node 24.15.0 |
+| Delivery | Generic off/both on, notify snapshots, unknown resolution, scheduled Steers, queued cancellation/handling, quiet pending checks, late finish and failure after finish |
+| Browser | One-shot/bounded creation, existing recurrence editing, receipt retry, conflicts, localized/responsive forms, reconnect/windows, live card result/tombstone links and native URL rejection |
+| Load | 200 due tasks across two Projects with concurrent urgent and ingestion writes; 200 admissions, no lost tasks or reserved-class rejection |
+
+A local load-fixture sample admitted 200 due tasks in approximately 263 ms with
+maximum urgent writer wait about 1.4 ms. The deterministic due clock was one
+minute late. These are local fixture observations, not production throughput or
+start-time guarantees. Existing owner/gateway diagnostics expose eligibility,
+oldest age, retries, errors, outstanding prompts, admission lag and platform
+success/uncertainty alongside writer wait/capacity metrics.
+
+Repository gates include source/docs checks; backend build, vet, tests and race
+suites; privileged-suite compilation; native pinned-package tests; frontend lint,
+typecheck, unit tests, production build and browser tests. An existing terminal
+fixture readiness race was fixed so input tests await the attachment and fail
+explicitly on early return instead of hanging.
+
+Final qualification results:
+
+- Source/docs/lockfile gates, backend build/vet/tests, privileged-suite compilation
+  and the selected nonprivileged integration fixtures passed.
+- Full product/runner/runtime race suites passed; the final scheduling, platform,
+  gateway and projection changes also passed focused race checks.
+- Frontend lint/typecheck, 234 unit tests and production build passed. One existing
+  opt-in unit test remains skipped.
+- The broad browser run passed 203 cases and skipped 28 opt-in cases. Its four
+  failures were picker assertions for the retired ordering; after updating them
+  for the new Once option, all 41 affected schedule/card/picker cases passed.
+  Together these cover all 207 active cases in that browser suite.
+- Six native scheduling tests passed on pinned Node 24.15.0, including a large
+  escaped-prompt result bound, and actual Pi loader/tool-loop qualification.
+
+
+## Release limits
+
+No live database, runtime image, service binding or deployment was reset or
+modified. Physical power-loss behavior, live-provider natural-language selection,
+and a new deployed sandbox route were not exercised in this source qualification.
+Transport uses real local HTTP/Unix sockets with live product authority; native
+model output is deterministic. Privileged runtime suites compile, but deployment
+qualification must run them in a disposable supported builder with the intended
+measured candidate. Existing runtime routing is reused without an egress bypass.
+
+The release requires schema 4, manifest 4, native protocol 4 and schedule protocol
+1. Exact compiled digests govern compatibility. Old databases/manifests are
+refused; there is no implicit migration, reset or compatibility adapter. Follow
+[delivery](delivery.md) and [scheduling enablement](scheduling.md) for activation.

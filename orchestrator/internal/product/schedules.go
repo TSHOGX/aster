@@ -273,7 +273,7 @@ func (s *Store) updateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	sameTrigger := input.TriggerKind == old.TriggerKind && input.Cron == old.Cron && input.RunAt == old.RunAt && input.StartsAt == old.StartsAt && (input.Timezone == old.Timezone || input.TriggerKind == "interval" || input.TriggerKind == "at")
 	if sameTrigger && input.State == old.State {
 		next = old.NextAt
-	} else if input.RunAt != "" && input.RunAt <= s.timestamp() {
+	} else if input.State == "active" && input.RunAt != "" && input.RunAt <= s.timestamp() {
 		return ErrInvalid
 	}
 	if input.ExpiresAt != "" && input.ExpiresAt <= s.timestamp() {
@@ -376,10 +376,10 @@ func (s *Store) runSchedule(ctx context.Context, tx *sql.Tx, scope Scope, schedu
 			return ScheduleRun{}, err
 		}
 	}
+	if _, err = tx.ExecContext(ctx, `UPDATE schedules SET admitted_count=admitted_count+1 WHERE id=?`, schedule.ID); err != nil {
+		return ScheduleRun{}, err
+	}
 	if schedule.MaxOccurrences != nil {
-		if _, err = tx.ExecContext(ctx, `UPDATE schedules SET admitted_count=admitted_count+1 WHERE id=?`, schedule.ID); err != nil {
-			return ScheduleRun{}, err
-		}
 		if schedule.AdmittedCount+1 >= *schedule.MaxOccurrences {
 			if _, err = tx.ExecContext(ctx, `UPDATE schedules SET state='exhausted',end_reason='count',next_at=NULL,retry_at=NULL,updated_at=? WHERE id=?`, s.timestamp(), schedule.ID); err != nil {
 				return ScheduleRun{}, err
@@ -389,23 +389,8 @@ func (s *Store) runSchedule(ctx context.Context, tx *sql.Tx, scope Scope, schedu
 	return ScheduleRun{ID: id, ScheduleID: schedule.ID, ProjectID: scope.ProjectID, SessionID: session, TurnID: turn.ID, RequestID: request, DueAt: due, State: turn.State, ScheduleRevision: schedule.Revision, Notify: schedule.Notify, NotifyPolicy: schedule.NotifyPolicy}, nil
 }
 func (s *Store) ScheduleRuns(ctx context.Context, scope Scope, id, after string, limit int) ([]ScheduleRun, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
-		return nil, err
-	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT `+runColumns+` FROM schedule_runs r JOIN turns t ON t.id=r.turn_id WHERE r.project_id=? AND r.schedule_id=? AND (?='' OR (r.created_at,r.id)<(SELECT created_at,id FROM schedule_runs WHERE id=? AND schedule_id=?)) ORDER BY r.created_at DESC,r.id DESC LIMIT ?`, scope.ProjectID, id, after, after, id, pageSize(limit))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []ScheduleRun{}
-	for rows.Next() {
-		r, err := scanScheduleRun(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	page, err := s.ScheduleRunPage(ctx, scope, id, after, "", "", limit)
+	return page.Runs, err
 }
 
 // TickSchedules uses independent transactions. retry_at removes blocked or bad
