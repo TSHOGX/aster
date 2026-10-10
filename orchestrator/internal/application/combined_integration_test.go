@@ -55,8 +55,9 @@ func startMixedCompanion(a *releaseApp) *mixedCompanion {
 		defer db.Close()
 		result := map[string]any{}
 		for name, query := range map[string]string{
-			"turns":         `SELECT id,session_id,request_id,state,created_at,updated_at FROM turns`,
+			"turns":         `SELECT id,session_id,request_id,queue_policy,disposition,created_at,updated_at FROM turns`,
 			"commands":      `SELECT id,turn_id,kind,state FROM agent_commands`,
+			"runs":          `SELECT id,prompt_id,state,outcome FROM execution_runs`,
 			"native_errors": `SELECT turn_id,json_extract(payload,'$.message.errorMessage') FROM agent_records WHERE kind='native' AND json_extract(payload,'$.message.errorMessage') IS NOT NULL`,
 			"last_records":  `SELECT turn_id,sequence,kind,json_extract(payload,'$.type'),length(payload) FROM agent_records WHERE turn_id IN (SELECT id FROM turns ORDER BY created_at DESC LIMIT 8) AND (kind<>'native' OR json_extract(payload,'$.type') IN ('agent_end','prompt_end')) ORDER BY turn_id,sequence`,
 		} {

@@ -381,7 +381,7 @@ func runReleasedMixedWorkload(t *testing.T, combined bool) {
 	if len(runs["runs"].([]any)) < 4 {
 		t.Fatal("minute schedules did not execute")
 	}
-	a.request("DELETE", fmt.Sprintf("/api/projects/mixed-1/schedules/mixed-schedule?revision=%.0f", schedule["revision"]), nil, 204)
+	a.request("DELETE", fmt.Sprintf("/api/projects/mixed-1/schedules/mixed-schedule?request_id=delete-mixed-schedule&revision=%.0f", schedule["revision"]), nil, 204)
 	for _, path := range terminals {
 		a.request("POST", path+"/stop", nil, 202)
 	}
