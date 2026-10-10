@@ -1,5 +1,5 @@
 "use client";
-import { brandName } from "@/lib/ui-config";
+import { displayName } from "@/lib/ui-config";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { api, encode, type Message, type Share } from "@/lib/project-api";
@@ -48,7 +48,7 @@ function ShareContent({ token }: { token: string }) {
     <main className="public-share">
       <header>
         <small>
-          {brandName} · {tr("Shared snapshot")}
+          {displayName} · {tr("Shared snapshot")}
         </small>
         <h1>{share?.title || tr("Shared conversation")}</h1>
         <p>{tr("A frozen conversation and its selected files.")}</p>

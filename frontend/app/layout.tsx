@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { themeInitScript } from "@/lib/theme";
 import { localeInitScript } from "@/lib/i18n/locale";
-import { brandName } from "@/lib/ui-config";
+import { displayName } from "@/lib/ui-config";
 
 export const metadata: Metadata = {
-  title: brandName,
+  title: displayName,
   description:
-    "AI agent workbench for battery research and engineering — shared Project workspaces with independent agents, terminals, and files",
-  applicationName: brandName,
+    "AI agent workbench for enterprise teams — shared Project workspaces with independent agents, terminals, and files",
+  applicationName: displayName,
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

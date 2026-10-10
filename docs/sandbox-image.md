@@ -5,7 +5,7 @@ The native release pins Pi `0.77.0` and Node `24.15.0`; source/package integrity
 and runtime hashes are recorded by the Go release tooling.
 
 ```sh
-sudo sandbox-image/build-khora-template.sh /srv/build/battery
+sudo sandbox-image/build-khora-template.sh /srv/build/agent-runtime
 ```
 
 The destination and its `.manifest.json` export must not exist. Build in a
@@ -17,7 +17,7 @@ sandboxd from that public module and Go application binaries from this checkout.
 An optional second argument names a pure OS/Pi base filesystem:
 
 ```sh
-sudo sandbox-image/build-khora-template.sh /srv/build/battery /srv/build/os-pi-base
+sudo sandbox-image/build-khora-template.sh /srv/build/agent-runtime /srv/build/os-pi-base
 ```
 
 An application template is not a valid base. Retired application state, secrets,
@@ -39,7 +39,7 @@ A missing capability or an older manifest is rejected. Reader changes require
 a newly assembled immutable template, not replacement of running guest binaries.
 
 ```sh
-go -C orchestrator run ./cmd/runtime-release --root /srv/build/battery --output /srv/build/battery.manifest.json
+go -C orchestrator run ./cmd/runtime-release --root /srv/build/agent-runtime --output /srv/build/agent-runtime.manifest.json
 ```
 
 Use the generated digest verbatim in application configuration. The application
@@ -66,6 +66,9 @@ Stop also cancels native retry and compaction, including preflight continuation.
 The upstream package/version/integrity pin remains recorded alongside the complete
 patched native tree. Generate and guest verification both require the exact native
 RPC extension bytes; a matching tree digest alone cannot claim the capability.
+Even comment-only changes to the generated extension change its pinned hash and
+require a newly assembled runtime image for qualification. Changing only the
+frontend display-name setting does not change the runtime image.
 
 The patcher refuses an existing release or the host root. For manual fresh-root
 assembly, use `runtime-release --patch-native --root ... --output ...`; generation

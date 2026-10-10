@@ -56,7 +56,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	must(t, err)
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
-	profile.TemplateID = "battery"
+	profile.TemplateID = "agent-runtime"
 	profile.MemoryBytes = 1 << 30
 	profile.DiskBytes = 256 << 20
 	must(t, l.EnsureActive(runctx, a, profile))

@@ -18,7 +18,9 @@ npm run test:ui:built
 ```
 
 Configure the Go application's `frontend` origin to this server and open its
-browser edge. Build-time branding uses `NEXT_PUBLIC_PROJECT_BRAND_NAME`.
+browser edge. The display name defaults to Aster; set `NEXT_PUBLIC_PROJECT_BRAND_NAME`
+before building to customize it. See [display-name configuration](../docs/configuration.md#frontend-display-name)
+for examples, affected surfaces and rebuild requirements.
 `PROJECT_DEV_ORIGINS` declares development hosts. The interface supports English
 and Chinese and stores its light/dark preference under `project-theme`.
 

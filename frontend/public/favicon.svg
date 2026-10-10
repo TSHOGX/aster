@@ -1,19 +1,5 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!--
-    BatteryGPT mark — a cell whose interior is a charge/discharge trace.
-    Mirrors components/ui/wordmark.tsx (LogoMark) so the tab icon and the in-app
-    logo are the same drawing; the trace is reduced to three strokes here because
-    the in-app version's finer zig-zag turns to mud at 16px.
-
-    Indigo (--accent) on a transparent ground, which holds up against both light
-    and dark browser chrome. A favicon cannot follow the in-app theme, so the
-    accent is used rather than a foreground color that would need to invert.
-  -->
-  <rect x="48" y="128" width="342" height="256" rx="64"
-        fill="none" stroke="#6366f1" stroke-width="38" />
-  <path d="M448 218 L448 294"
-        stroke="#6366f1" stroke-width="38" stroke-linecap="round" />
-  <path d="M120 300 L176 220 L232 288 L288 196"
-        fill="none" stroke="#6366f1" stroke-width="38"
-        stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Temporary initial mark; replace when the product icon is designed. -->
+  <path d="M112 416L256 96L400 416M166 304H346"
+        stroke="#6366f1" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
 </svg>

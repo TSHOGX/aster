@@ -704,7 +704,7 @@ test("queue controls fit narrow and forced-color layouts", async ({ page }) => {
     expect(button.left).toBeGreaterThanOrEqual(button.outerLeft);
     expect(button.right).toBeLessThanOrEqual(button.outerRight);
   }
-  await page.screenshot({ path: "/tmp/batterygpt-queue-mobile.png" });
+  await page.screenshot({ path: "/tmp/workbench-queue-mobile.png" });
 });
 
 test("localized queue controls remain visible on a narrow screen", async ({ browser }) => {
@@ -740,7 +740,7 @@ test("localized queue controls remain visible on a narrow screen", async ({ brow
       });
     });
     expect(clipped).toBe(false);
-    await page.screenshot({ path: "/tmp/batterygpt-queue-zh-mobile.png" });
+    await page.screenshot({ path: "/tmp/workbench-queue-zh-mobile.png" });
   } finally {
     await context.close();
   }

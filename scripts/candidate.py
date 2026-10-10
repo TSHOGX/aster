@@ -135,7 +135,7 @@ def build(destination):
     version = "candidate-" + commit[:12]
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.mkdir()  # Never overwrite a previous candidate, including a failed build.
-    with tempfile.TemporaryDirectory(prefix="batterygpt-source-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="candidate-source-") as temporary:
         temporary = Path(temporary)
         source = temporary / "source"
         source.mkdir()

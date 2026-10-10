@@ -89,7 +89,7 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 	}
 	const rank = `CASE WHEN s.state<>'active' THEN 2 WHEN s.trigger_kind='manual' THEN 1 ELSE 0 END`
 	if f.Anchor != "" {
-		err = tx.QueryRowContext(ctx, `SELECT `+rank+`,coalesce(s.next_at,''),s.id FROM schedules s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted') AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0 AND ((?='' AND s.state IN ('active','paused')) OR s.state=?)`, f.Anchor, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status).Scan(&cursor.Rank, &cursor.Next, &cursor.ID)
+		err = tx.QueryRowContext(ctx, `SELECT `+rank+`,coalesce(s.next_at,''),s.id FROM schedules s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted') AND (?='' OR s.project_id=?) AND instr(unicode_lower(s.title),unicode_lower(?))>0 AND ((?='' AND s.state IN ('active','paused')) OR s.state=?)`, f.Anchor, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status).Scan(&cursor.Rank, &cursor.Next, &cursor.ID)
 		if err != nil && err != sql.ErrNoRows {
 			return out, err
 		}
@@ -109,7 +109,7 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+scheduleOverviewColumns+` FROM schedules s JOIN projects p ON p.id=s.project_id
  WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted')
- AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0
+ AND (?='' OR s.project_id=?) AND instr(unicode_lower(s.title),unicode_lower(?))>0
  AND ((?='' AND s.state IN ('active','paused')) OR s.state=?)
  AND (`+rank+`,coalesce(s.next_at,''),s.id)`+comparison+`(?,?,?)
  ORDER BY `+rank+` `+ordering+`,coalesce(s.next_at,'') `+ordering+`,s.id `+ordering+` LIMIT ?`, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status, cursor.Rank, cursor.Next, cursor.ID, f.Limit+1)
@@ -160,7 +160,7 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 				r = 1
 			}
 			var previous bool
-			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schedules s JOIN projects p ON p.id=s.project_id WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted') AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0 AND ((?='' AND s.state IN ('active','paused')) OR s.state=?) AND (`+rank+`,coalesce(s.next_at,''),s.id)<(?,?,?))`, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status, r, first.NextAt, first.ID).Scan(&previous)
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schedules s JOIN projects p ON p.id=s.project_id WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted') AND (?='' OR s.project_id=?) AND instr(unicode_lower(s.title),unicode_lower(?))>0 AND ((?='' AND s.state IN ('active','paused')) OR s.state=?) AND (`+rank+`,coalesce(s.next_at,''),s.id)<(?,?,?))`, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status, r, first.NextAt, first.ID).Scan(&previous)
 			if err != nil {
 				return out, err
 			}

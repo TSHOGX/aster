@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { isChineseTag, resolveLocale } from "./locale";
 import { format, translate } from "./index";
+import { defaultDisplayName } from "../ui-config";
 import { EN, type MessageKey } from "./messages-en";
 import { ZH } from "./messages-zh";
 
@@ -74,7 +75,7 @@ describe("catalogs", () => {
 
   it("leaves no English text in the Chinese catalog", () => {
     // Chinese strings may legitimately contain ASCII (key names, /workspace,
-    // placeholders, BatteryGPT), but should contain at least one Han character
+    // placeholders, product names), but should contain at least one Han character
     // unless the English source is itself symbol-only.
     const HAN = /[一-鿿]/;
     // Placeholder names are code, not copy: a string that is nothing but
@@ -127,8 +128,8 @@ describe("translate", () => {
 describe("brand independence", () => {
   it("never hardcodes the default brand name in either catalog", () => {
     for (const key of Object.keys(EN) as MessageKey[]) {
-      expect(EN[key], `EN ${key}`).not.toContain("BatteryGPT");
-      expect(ZH[key], `ZH ${key}`).not.toContain("BatteryGPT");
+      expect(EN[key], `EN ${key}`).not.toContain(defaultDisplayName);
+      expect(ZH[key], `ZH ${key}`).not.toContain(defaultDisplayName);
     }
   });
 });

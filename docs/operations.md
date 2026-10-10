@@ -26,13 +26,13 @@ TLS mode requires a certificate, key and client CA together.
 Start the application separately:
 
 ```sh
-orchestrator serve --config /etc/batterygpt/application.json
+orchestrator serve --config /etc/agent-workbench/application.json
 ```
 
 For declared service gateways, start a separate process after the owner:
 
 ```sh
-orchestrator gateway --config /etc/batterygpt/application.json
+orchestrator gateway --config /etc/agent-workbench/application.json
 ```
 
 Keep it running across owner/frontend restarts. Both the frontend and
@@ -44,11 +44,11 @@ not engine database or volume-directory access.
 Manage credentials without a second product writer:
 
 ```sh
-orchestrator user add --file /etc/batterygpt/users.yaml --username researcher --role user --password-stdin
-orchestrator user password --file /etc/batterygpt/users.yaml --username researcher --password-stdin
-orchestrator user role --file /etc/batterygpt/users.yaml --username researcher --role admin
-orchestrator user list --file /etc/batterygpt/users.yaml
-orchestrator user remove --file /etc/batterygpt/users.yaml --username researcher
+orchestrator user add --file /etc/agent-workbench/users.yaml --username researcher --role user --password-stdin
+orchestrator user password --file /etc/agent-workbench/users.yaml --username researcher --password-stdin
+orchestrator user role --file /etc/agent-workbench/users.yaml --username researcher --role admin
+orchestrator user list --file /etc/agent-workbench/users.yaml
+orchestrator user remove --file /etc/agent-workbench/users.yaml --username researcher
 ```
 
 Password commands read from stdin, never an argument. Feed input using an
@@ -58,11 +58,11 @@ Credential edits are atomic and the live owner reloads the registry.
 Use the protected control socket for live operations:
 
 ```sh
-orchestrator diagnostics --socket /var/lib/batterygpt/control.sock
-orchestrator diagnostics --socket /var/lib/batterygpt/control.sock --project PROJECT_ID
-orchestrator publish --socket /var/lib/batterygpt/control.sock
-orchestrator network-reload --socket /var/lib/batterygpt/control.sock
-orchestrator notify --socket /var/lib/batterygpt/control.sock --audience researcher --title Notice --body 'Maintenance is scheduled.'
+orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock
+orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock --project PROJECT_ID
+orchestrator publish --socket /var/lib/agent-workbench/control.sock
+orchestrator network-reload --socket /var/lib/agent-workbench/control.sock
+orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience researcher --title Notice --body 'Maintenance is scheduled.'
 ```
 
 Diagnostics report resource counts, occupied Projects, pending work and database
@@ -123,10 +123,10 @@ The application supports a persistent admission fence through its protected
 control socket. Use a unique owner ID for each attempt:
 
 ```sh
-orchestrator drain --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --timeout-seconds 120
-orchestrator drain-status --socket /var/lib/batterygpt/control.sock
-orchestrator drain-ready --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
-orchestrator drain-abort --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+orchestrator drain --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --timeout-seconds 120
+orchestrator drain-status --socket /var/lib/agent-workbench/control.sock
+orchestrator drain-ready --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --generation GENERATION
+orchestrator drain-abort --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --generation GENERATION
 ```
 
 `drain` returns the persisted generation, owner, phase and deadline. Repeating
@@ -179,7 +179,7 @@ replacement executable's SHA-256, prefixed with `sha256:`; this is distinct from
 the guest runtime manifest digest. After `drain-ready` succeeds:
 
 ```sh
-orchestrator drain-activate --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION --target sha256:EXECUTABLE_DIGEST
+orchestrator drain-activate --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --generation GENERATION --target sha256:EXECUTABLE_DIGEST
 ```
 
 Activation rechecks generation, deadline, durable blockers and runtime work under
@@ -192,7 +192,7 @@ inode (`/proc/self/exe`) must match the target before maintenance or publication
 starts. Complete the handoff through the replacement's control socket:
 
 ```sh
-orchestrator drain-complete --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+orchestrator drain-complete --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --generation GENERATION
 ```
 
 Startup checks the expected executable under the database lifetime lock before
@@ -217,7 +217,7 @@ reopen from a timeout or an unselected executable.
 Inspect a replacement using that executable itself and the intended configuration:
 
 ```sh
-/path/to/candidate/orchestrator release-identity --config /etc/batterygpt/application.json
+/path/to/candidate/orchestrator release-identity --config /etc/agent-workbench/application.json
 ```
 
 This command reads the pinned guest manifest and reviewed content trees, hashes
@@ -246,12 +246,12 @@ reviewed content and gateway protocol. Schema, template, engine, configuration o
 gateway changes require the default full drain. Keep the gateway process running.
 
 ```sh
-orchestrator drain --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --mode owner --target TARGET_DIGEST --compatibility COMPATIBILITY_DIGEST --timeout-seconds 120
-orchestrator drain-ready --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
-orchestrator drain-activate --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION --target TARGET_DIGEST
+orchestrator drain --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --mode owner --target TARGET_DIGEST --compatibility COMPATIBILITY_DIGEST --timeout-seconds 120
+orchestrator drain-ready --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --generation GENERATION
+orchestrator drain-activate --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --generation GENERATION --target TARGET_DIGEST
 # Wait for the source to retire, then start the inspected executable.
-/path/to/candidate/orchestrator serve --config /etc/batterygpt/application.json
-/path/to/candidate/orchestrator drain-complete --socket /var/lib/batterygpt/control.sock --owner UPDATE_ID --generation GENERATION
+/path/to/candidate/orchestrator serve --config /etc/agent-workbench/application.json
+/path/to/candidate/orchestrator drain-complete --socket /var/lib/agent-workbench/control.sock --owner UPDATE_ID --generation GENERATION
 ```
 
 Copy target and compatibility digests from `release-identity`; use the generation
@@ -294,10 +294,10 @@ existing turns settle. The gateway continues accepting authorized requests for
 those turns while the application is draining. Then run:
 
 ```sh
-orchestrator gateway-status --socket /var/lib/batterygpt/gateway.sock
-orchestrator gateway-stop --socket /var/lib/batterygpt/gateway.sock --owner RELEASE_ID --generation GENERATION
-orchestrator gateway --config /etc/batterygpt/application.json
-orchestrator drain-abort --socket /var/lib/batterygpt/control.sock --owner RELEASE_ID --generation GENERATION
+orchestrator gateway-status --socket /var/lib/agent-workbench/gateway.sock
+orchestrator gateway-stop --socket /var/lib/agent-workbench/gateway.sock --owner RELEASE_ID --generation GENERATION
+orchestrator gateway --config /etc/agent-workbench/application.json
+orchestrator drain-abort --socket /var/lib/agent-workbench/control.sock --owner RELEASE_ID --generation GENERATION
 ```
 
 `gateway-stop` refuses active work, stale release identity or unavailable owner

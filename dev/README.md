@@ -9,7 +9,7 @@ Build an immutable [Project image](../docs/sandbox-image.md), then run as the
 normal build user (the script invokes `sudo -n` for the substrate):
 
 ```sh
-dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/run --suite release
+dev/verify-khora.sh --template /srv/build/agent-runtime --manifest /srv/build/agent-runtime.manifest.json --output /srv/qualification/run --suite release
 ```
 
 Suites are `release`, `files`, `network`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
@@ -52,7 +52,7 @@ file with `base_url` (an HTTPS OpenAI-compatible Chat Completions base), `api_ke
 and `model`. Keep this file outside version control and restrict its permissions.
 
 ```sh
-PROJECT_PROVIDER_CONFIG=/srv/qualification/provider.yaml dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/provider-run --suite provider
+PROJECT_PROVIDER_CONFIG=/srv/qualification/provider.yaml dev/verify-khora.sh --template /srv/build/agent-runtime --manifest /srv/build/agent-runtime.manifest.json --output /srv/qualification/provider-run --suite provider
 ```
 
 The host relay makes at most one provider request, caps generation at 1,536 tokens,
@@ -77,7 +77,7 @@ Run the opt-in combined browser/native workload with the same production fronten
 and Chromium prerequisites:
 
 ```sh
-PLAYWRIGHT_BROWSERS_PATH=/srv/playwright dev/verify-khora.sh --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/combined-run --suite combined
+PLAYWRIGHT_BROWSERS_PATH=/srv/playwright dev/verify-khora.sh --template /srv/build/agent-runtime --manifest /srv/build/agent-runtime.manifest.json --output /srv/qualification/combined-run --suite combined
 ```
 
 It retains the five-minute offered-load budget and adds two browser tabs, loopback

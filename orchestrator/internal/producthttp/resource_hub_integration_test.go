@@ -38,7 +38,7 @@ func TestResourceHubOnKhora(t *testing.T) {
 	defer store.Close()
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
-	profile.TemplateID = "battery"
+	profile.TemplateID = "agent-runtime"
 	profile.DiskBytes = 256 << 20
 	scope := product.Scope{Actor: "owner", ProjectID: "watch-only"}
 	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: 1}

@@ -57,7 +57,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	defer reader.Close()
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
-	profile.TemplateID = "battery"
+	profile.TemplateID = "agent-runtime"
 	profile.DiskBytes = 256 << 20
 	sharedBase, err := api.CreateVolume(runctx, 8<<20)
 	must(t, err)

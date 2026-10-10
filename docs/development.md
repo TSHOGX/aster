@@ -7,6 +7,12 @@ Dependencies are pinned in Go modules and the frontend lockfile. The application
 imports public Khora SDK/Connect packages only; do not patch engine internals or
 its database to emulate a product capability.
 
+Keep code abstractions, packages, protocols, temporary paths and test harness
+identifiers brand-neutral and named for their function. Product names belong in
+documentation and presentation defaults. Frontend components and metadata read
+the shared display-name setting from `frontend/lib/ui-config.ts`; translation
+catalogs must not embed the product name.
+
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
