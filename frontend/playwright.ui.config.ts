@@ -4,7 +4,7 @@ process.env.PREVIEW_FIXTURES ||= resolve(__dirname, "test-results/fixtures");
 export default defineConfig({
   globalSetup: "./e2e/ui-setup.ts",
   testDir: "./e2e/ui",
-  workers: 1,
+  workers: 4,
   forbidOnly: !!process.env.CI,
   timeout: 45000,
   expect: { timeout: 10000 },
