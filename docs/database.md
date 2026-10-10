@@ -159,3 +159,16 @@ mutation results; reusing an identity with different intent conflicts. Receipts
 live until explicit resource retirement. Source Session retirement redacts their
 private result while retaining the identity/digest tombstone. Fixed-target
 retirement cancels future work; source-only retirement clears provenance.
+
+Resource-setting configuration uses `group_resource_policy` for per-dimension
+member defaults/ceilings, `account_resource_settings` for the override revision,
+and `account_resource_overrides` for explicit nonnegative requests. Missing rows
+mean inheritance; zero is an explicit zero allowance. Saved requests survive later
+ceiling reductions. Group deletion previews resolve these requests before and
+after removal, and their dependency fingerprint includes override authority.
+
+The resource-change service computes bounded affected-account configuration and
+whole-environment fit previews, checks dependency revisions on commit, and reuses
+administrative receipts/audit. These configuration methods are internal pending
+the full slot-reservation and usage admission integration; they are not currently
+exposed as editable HTTP settings or claimed as enforced allocation quotas.

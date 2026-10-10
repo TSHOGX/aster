@@ -171,6 +171,17 @@ CREATE TABLE group_resource_policy (
  ceiling INTEGER NOT NULL CHECK(ceiling>=default_value),
  PRIMARY KEY(group_id,dimension)
 );
+CREATE TABLE account_resource_settings (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE account_resource_overrides (
+ account_id TEXT NOT NULL REFERENCES account_resource_settings(account_id) ON DELETE CASCADE,
+ dimension TEXT NOT NULL,
+ requested INTEGER NOT NULL CHECK(requested>=0),
+ PRIMARY KEY(account_id,dimension)
+);
 CREATE TABLE platform_resource_limits (
  dimension TEXT PRIMARY KEY,
  maximum INTEGER NOT NULL CHECK(maximum>=0),

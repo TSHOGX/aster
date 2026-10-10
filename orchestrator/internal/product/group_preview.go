@@ -75,6 +75,7 @@ func groupDeletionDependencies(ctx context.Context, q queryer, id string) (strin
 		`SELECT id,revision FROM account_groups WHERE id=?`,
 		`SELECT a.id,a.authorization_revision FROM account_memberships m JOIN accounts a ON a.id=m.account_id WHERE m.group_id=? ORDER BY a.id`,
 		`SELECT m.account_id,g.id,g.revision,r.dimension,r.default_value,r.ceiling FROM account_memberships m JOIN account_groups g ON g.id=m.group_id LEFT JOIN group_resource_policy r ON r.group_id=g.id WHERE m.account_id IN (SELECT account_id FROM account_memberships WHERE group_id=?) ORDER BY m.account_id,g.id,r.dimension`,
+		`SELECT o.account_id,o.dimension,o.requested FROM account_resource_overrides o WHERE o.account_id IN (SELECT account_id FROM account_memberships WHERE group_id=?) ORDER BY o.account_id,o.dimension`,
 		`SELECT DISTINCT p.id,p.revision FROM account_memberships m JOIN group_policy_bindings b ON b.group_id=m.group_id JOIN permission_policies p ON p.id=b.policy_id WHERE m.account_id IN (SELECT account_id FROM account_memberships WHERE group_id=?) ORDER BY p.id`,
 	}
 	for _, query := range queries {
@@ -218,11 +219,15 @@ func (s *Store) PreviewGroupDeletion(ctx context.Context, token, id, cursor stri
 		if err != nil {
 			return result, err
 		}
-		item.BeforeResources, err = ResolveResources(beforeResources, platform, nil)
+		overrides, err := resourceOverrides(ctx, tx, item.AccountID)
 		if err != nil {
 			return result, err
 		}
-		item.AfterResources, err = ResolveResources(afterResources, platform, nil)
+		item.BeforeResources, err = ResolveResources(beforeResources, platform, overrides)
+		if err != nil {
+			return result, err
+		}
+		item.AfterResources, err = ResolveResources(afterResources, platform, overrides)
 		if err != nil {
 			return result, err
 		}
