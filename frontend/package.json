@@ -7,7 +7,7 @@
     "dev": "next dev --webpack --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "lint": "eslint . --max-warnings=0",
+    "lint": "eslint . --max-warnings=0 --cache --cache-strategy content --cache-location .next/cache/eslint/",
     "typecheck": "tsc --noEmit",
     "typecheck:built": "tsc --noEmit --tsBuildInfoFile .next/cache/.tsbuildinfo",
     "test": "vitest run",

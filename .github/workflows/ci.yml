@@ -75,13 +75,13 @@ jobs:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Restore Next build cache
+      - name: Restore frontend check cache
         uses: actions/cache@v6
         with:
           path: frontend/.next/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-next-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json') }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ runner.arch }}-frontend-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json', 'frontend/eslint.config.mjs') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-next-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json') }}-
+            ${{ runner.os }}-${{ runner.arch }}-frontend-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json', 'frontend/eslint.config.mjs') }}-
       - run: npm ci
         working-directory: frontend
       - uses: actions/setup-python@v7
