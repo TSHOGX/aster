@@ -272,7 +272,7 @@ func TestTerminalFanOutInputOwnershipAndGaps(t *testing.T) {
 	if reader.HoldsInput() {
 		t.Fatal("input must have exactly one holder")
 	}
-	wantError(t, terminals.ClaimInput(reader), ErrConflict)
+	wantError(t, terminals.ClaimInput(ctx, reader), ErrConflict)
 	wantError(t, terminals.Input(ctx, reader, []byte("x")), ErrConflict)
 
 	// Raw bytes reach every observer unchanged, including split UTF-8 and control
@@ -309,7 +309,7 @@ func TestTerminalFanOutInputOwnershipAndGaps(t *testing.T) {
 	// Releasing input does not silently promote another view; it is announced.
 	writer.Close()
 	awaitFrame(t, reader, func(f TerminalFrame) bool { return f.Kind == "status" && !f.Input })
-	must(t, terminals.ClaimInput(reader))
+	must(t, terminals.ClaimInput(ctx, reader))
 	if !reader.HoldsInput() {
 		t.Fatal("an explicit claim must succeed once the owner is gone")
 	}

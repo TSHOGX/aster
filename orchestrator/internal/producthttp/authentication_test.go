@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/testfixture"
 )
 
@@ -250,4 +251,83 @@ func identitySeed(t *testing.T) product.BootstrapSeed {
 	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 32, TerminalSlots: 32}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "test", Version: "v1", Digest: digest}, StoreID: "engine", TemplateID: "agent-runtime", Manifest: manifest}, nil, network)
 	must(t, err)
 	return seed
+}
+
+func TestTerminalSocketUsesCurrentTerminalGrant(t *testing.T) {
+	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "terminal-policy.db"))
+	must(t, err)
+	h := harnessForStore(t, store)
+	account, err := store.BootstrapAccount(ctx, "owner", "owner-password-before", identitySeed(t))
+	must(t, err)
+	h.setActor(account.ID)
+	i := h.terminal(t, "policy-project", "shell")
+	_, token, err := store.Authenticate(ctx, "owner", "owner-password-before")
+	must(t, err)
+	authentication := NewAuthentication(store, Config{})
+	api := &Server{Store: store, Terminals: h.terminals, Lifecycle: h.lifecycle, Profile: testProfile(), Auth: authentication}
+	server := httptest.NewServer(authentication.Handler(api.Handler()))
+	defer server.Close()
+	defer api.Close()
+	policies, err := store.Policies(ctx, token, "", 50)
+	must(t, err)
+	if len(policies.Policies) != 1 {
+		t.Fatal(policies)
+	}
+	policy := policies.Policies[0]
+	policy.Statements[product.ActionProjectsRead] = product.PolicyDeny
+	_, err = store.SavePolicy(ctx, token, policy.ID, product.PolicyChange{RequestID: "deny-project-read", ExpectedRevision: policy.Revision, Statements: &policy.Statements})
+	must(t, err)
+	headers := http.Header{"Cookie": {loginCookie + "=" + token}, "Origin": {server.URL}}
+	target := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/projects/policy-project/terminals/shell/attach?input=1"
+	socket, _, err := websocket.DefaultDialer.Dial(target, headers)
+	must(t, err)
+	defer socket.Close()
+	readText(t, socket, func(frame map[string]any) bool { return frame["kind"] == "status" })
+	// Exercise at least one periodic recheck with Project read denied and Terminal
+	// use still allowed. Both the transport and service observer must remain live.
+	time.Sleep(1200 * time.Millisecond)
+	must(t, socket.WriteMessage(websocket.BinaryMessage, []byte("allowed")))
+	h.backend.stream(i.Reference.Handle).frames <- sandbox.ProcessFrame{Kind: "data", Stream: "pty", Data: []byte("still connected"), Sequence: 2}
+	must(t, socket.SetReadDeadline(time.Now().Add(3*time.Second)))
+	for {
+		kind, data, err := socket.ReadMessage()
+		must(t, err)
+		if kind == websocket.BinaryMessage {
+			if string(data) != "still connected" {
+				t.Fatal(string(data))
+			}
+			break
+		}
+	}
+	policy, err = store.Policy(ctx, token, policy.ID)
+	must(t, err)
+	policy.Statements[product.ActionTerminalsUse] = product.PolicyDeny
+	started := time.Now()
+	_, err = store.SavePolicy(ctx, token, policy.ID, product.PolicyChange{RequestID: "deny-terminal-use", ExpectedRevision: policy.Revision, Statements: &policy.Statements})
+	must(t, err)
+	must(t, socket.SetReadDeadline(started.Add(5*time.Second)))
+	for {
+		if _, _, err = socket.ReadMessage(); err != nil {
+			break
+		}
+	}
+	if time.Since(started) >= 5*time.Second {
+		t.Fatal("terminal grant revocation missed five-second bound")
+	}
+	t.Logf("policy revocation closed terminal in %s", time.Since(started))
+	_, response, err := websocket.DefaultDialer.Dial(target, headers)
+	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatal("revoked attachment accepted", response, err)
+	}
+	live, err := store.LiveTerminal(ctx, product.Scope{Actor: account.ID, ProjectID: "policy-project"}, "shell")
+	must(t, err)
+	if live.State != "running" {
+		t.Fatal("view revocation ended process", live.State)
+	}
+	h.backend.mu.Lock()
+	signals := len(h.backend.signals)
+	h.backend.mu.Unlock()
+	if signals != 0 {
+		t.Fatal("policy revocation signaled PTY", signals)
+	}
 }

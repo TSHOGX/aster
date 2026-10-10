@@ -33,11 +33,28 @@ func liveTerminalIncarnation(ctx context.Context, q queryer, terminal string) (T
 	return scanTerminalIncarnation(q.QueryRowContext(ctx, `SELECT `+terminalIncarnationColumns+` FROM terminal_incarnations WHERE terminal_id=? AND state IN ('starting','running')`, terminal))
 }
 
+// CanUseTerminal authorizes interactive access independently of Project metadata
+// reads. Ownership is resolved first so guessed foreign children remain hidden.
+func (s *Store) CanUseTerminal(ctx context.Context, scope Scope, terminal string) error {
+	child, err := terminalIn(ctx, s.reader, scope, terminal)
+	if err != nil {
+		return err
+	}
+	if child.Deletion != Live {
+		return ErrDeleting
+	}
+	return authorizeAction(ctx, s.reader, scope.Actor, ActionTerminalsUse)
+}
+
 // LiveTerminal returns the Terminal's current PTY process, or ErrNotFound when it
 // has none. A Terminal row without a live incarnation is a terminal that is not
-// running: that is an ordinary state, not a fault.
+// running: that is an ordinary state, not a fault. This reduction/outcome read
+// does not attach to output and remains available after functional grant loss.
 func (s *Store) LiveTerminal(ctx context.Context, scope Scope, terminal string) (TerminalIncarnation, error) {
 	if _, err := terminalIn(ctx, s.reader, scope, terminal); err != nil {
+		return TerminalIncarnation{}, err
+	}
+	if err := activeAccount(ctx, s.reader, scope.Actor); err != nil {
 		return TerminalIncarnation{}, err
 	}
 	return liveTerminalIncarnation(ctx, s.reader, terminal)
@@ -64,6 +81,9 @@ func (s *Store) reserveTerminal(ctx context.Context, scope Scope, terminal strin
 		}
 		if child.Deletion != Live {
 			return ErrDeleting
+		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionTerminalsUse); err != nil {
+			return err
 		}
 		i, err = liveTerminalIncarnation(ctx, tx, terminal)
 		if err == nil {
@@ -156,6 +176,9 @@ func (s *Store) resizeTerminal(ctx context.Context, scope Scope, terminal string
 		}
 		if child.Deletion != Live {
 			return ErrDeleting
+		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionTerminalsUse); err != nil {
+			return err
 		}
 		if expected != nil {
 			current, e := liveTerminalIncarnation(ctx, tx, terminal)

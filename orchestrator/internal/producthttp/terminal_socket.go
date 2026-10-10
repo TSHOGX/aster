@@ -121,7 +121,7 @@ func (s *Server) readSocket(r *http.Request, conn *websocket.Conn, observer *pro
 			case "resize":
 				_ = s.Terminals.ObserverResize(r.Context(), scope, observer, message.Rows, message.Cols)
 			case "claim_input":
-				_ = s.Terminals.ClaimInput(observer)
+				_ = s.Terminals.ClaimInput(r.Context(), observer)
 			case "eof":
 				_ = s.Terminals.ObserverEOF(r.Context(), observer)
 			case "interrupt":
@@ -155,7 +155,7 @@ func (s *Server) writeSocket(r *http.Request, conn *websocket.Conn, observer *pr
 			s.closeSocket(conn, websocket.ClosePolicyViolation, "login no longer valid")
 			return false
 		}
-		if _, err := s.Store.Project(r.Context(), scope); err != nil {
+		if err := s.Store.CanUseTerminal(r.Context(), scope, r.PathValue("terminal")); err != nil {
 			s.closeSocket(conn, websocket.ClosePolicyViolation, closeReason(err))
 			return false
 		}

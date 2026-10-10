@@ -398,3 +398,8 @@ release under a current `agents.run` grant or cancellation. Control outcome read
 also expose this error, separately from the immutable acceptance receipt. Enqueue,
 release and steer require the current grant even on replay; hold, cancel and stop
 retain active-owner reduction authority.
+
+Terminal start/attach/input/keyboard-claim/resize require `terminals.use` independently
+of `projects.read`. Revocation closes an existing attachment within the five-second
+connection target. It leaves the retained PTY alive; explicit owned termination,
+delete and exit settlement remain available through their reduction authority.

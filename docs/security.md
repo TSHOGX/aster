@@ -102,3 +102,12 @@ journal ingestion and settlement authority. An active owner can still hold,
 cancel, or stop owned work after losing functional grants. Background execution
 checks account status and policy independently of browser sessions and temporary
 password setup.
+
+Terminal start, attachment, keyboard claim, input and resize require
+`terminals.use`; Project metadata read does not substitute for it. Each observer
+retains its original account/Project scope and incarnation fence. Service observers
+and WebSockets recheck on committed identity/policy notifications with a one-second
+fallback and close when interactive authority ends. A closed view does not signal
+the PTY. Active owners retain explicit termination (SIGTERM/SIGKILL), EOF, deletion,
+and remaining-life inspection after functional grant loss; settlement uses internal
+incarnation authority. Arbitrary signals are not a reduction-only capability.
