@@ -18,12 +18,11 @@ engine store or historical reset records.
 Keep the deployment's login registry, provider credentials, TLS material and
 reviewed configuration unless those are explicitly part of the reset. Install
 fresh artifacts, register the new immutable template, and update configuration to
-the new engine store ID and runtime manifest. Clear the retained-template catalog
-when no Projects survive. Start the engine/proxy, frontend, owner and gateway,
+the new engine store ID and single current runtime manifest. Start the engine/proxy, frontend, owner and gateway,
 then verify readiness before reopening browser ingress.
 
 Validate the running executable and frontend build against the prepared artifacts.
-Check authentication, new Project provisioning, retained workspace access,
+Check authentication, new Project provisioning, workspace access,
 scheduling and network policy, then remove disposable smoke resources. Report
 what was deleted, what configuration was retained and which checks actually ran.
 

@@ -2,7 +2,7 @@
 
 The implementation completes the 2026-10-10 scheduling design across product,
 transport, native runtime, browser surfaces, delivery and bounded checks.
-Production activation and data retirement are separate from this source change.
+Fresh development deployment qualification follows the source gates below.
 
 ## Authority and ownership
 
@@ -72,7 +72,7 @@ Source retirement redacts private receipt results while keeping identity tombsto
 | Scheduling | DST/interval phase, delayed first check, poison-row isolation, overlap/unknown suppression, count/deadline tests |
 | Authority/transport | Real HTTP gateway → protected Unix socket → live Store grant; lost committed reply/replay; revoked/expired/stopping/idle/owner/slot/gateway/Run/drain/foreign fences; strict envelope/namespace bounds |
 | Native | Shipped extension through the actual gateway/owner/Store with a lost committed reply; actual pinned Pi 0.77.0 loader and AgentSession; disabled discovery; native tool events; parallel identities; provider-ID reuse; immutable retry bytes; abort/late-denial uncertainty; host-bound finish |
-| Runtime release | Manifest-4 data asset classification, reviewed extension bytes, unsupported retained capability rejection; tests on pinned Node 24.15.0 |
+| Runtime release | Manifest-4 data asset classification, reviewed extension bytes, unsupported runtime capability rejection; tests on pinned Node 24.15.0 |
 | Delivery | Generic off/both on, notify snapshots, unknown resolution, scheduled Steers, queued cancellation/handling, quiet pending checks, late finish and failure after finish |
 | Browser | One-shot/bounded creation, existing recurrence editing, receipt retry, conflicts, localized/responsive forms, reconnect/windows, live card result/tombstone links and native URL rejection |
 | Load | 200 due tasks across two Projects with concurrent urgent and ingestion writes; 200 admissions, no lost tasks or reserved-class rejection |

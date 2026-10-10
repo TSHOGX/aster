@@ -309,15 +309,11 @@ immediately restart the old executable. Forced termination is fault recovery,
 not graceful stream preservation.
 
 
-For engine or template replacement within the current contract, settle work,
-close admission and activate the selected owner under the existing gate. Preserve
-its engine store and immutable Project bindings. An incompatible format requires
-a deliberate fresh reset instead.
-
-Changing template defaults affects newly configured Projects. Existing current-
-format Projects retain their exact template/release and volumes. List referenced
-images in `retained_templates` until those Projects retire; startup refuses an
-unlisted binding. A reset with no retained Projects needs only its new template.
+For engine or runtime-template replacement, use the deliberate fresh-installation
+procedure in [bootstrap](bootstrap.md). Only one engine store and runtime binding
+are supported. Existing Projects cannot be rebound to a new image or carried
+through an incompatible schema. Owner updates within the exact current contract
+continue to use the guarded handoff and quiescent procedures above.
 
 Scheduling diagnostics are included in the existing protected `/inspect` output
 under `schedules`: eligible count/oldest age, retrying definitions, paused task

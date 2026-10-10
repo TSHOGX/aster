@@ -91,7 +91,6 @@ type Config struct {
 	ControlSocket     string                  `json:"control_socket"`
 	Engine            engineconfig.Connection `json:"engine"`
 	Template          Template                `json:"template"`
-	RetainedTemplates []Template              `json:"retained_templates,omitempty"`
 	Project           product.Profile         `json:"project"`
 	Auth              Authentication          `json:"auth"`
 	Content           Content                 `json:"content"`
@@ -149,9 +148,6 @@ func LoadConfig(name string) (Config, error) {
 	cfg.ControlSocket = resolve(cfg.ControlSocket)
 	cfg.Auth.UsersFile = resolve(cfg.Auth.UsersFile)
 	cfg.Template.Manifest = resolve(cfg.Template.Manifest)
-	for i := range cfg.RetainedTemplates {
-		cfg.RetainedTemplates[i].Manifest = resolve(cfg.RetainedTemplates[i].Manifest)
-	}
 	cfg.Content.AgentConfig = resolve(cfg.Content.AgentConfig)
 	cfg.Content.SharedAssets = resolve(cfg.Content.SharedAssets)
 	cfg.TLSCert = resolve(cfg.TLSCert)
@@ -199,16 +195,6 @@ func (c Config) Validate() error {
 	}
 	if c.Template.ID == "" || strings.ContainsAny(c.Template.ID, "/\\\x00?# ") || !runtimerelease.ValidDigest(c.Template.Digest) || !filepath.IsAbs(c.Template.Manifest) {
 		return errors.New("template identity and pinned runtime manifest required")
-	}
-	if len(c.RetainedTemplates) > 64 {
-		return errors.New("at most 64 retained template manifests supported")
-	}
-	seen := map[string]bool{c.Template.ID: true}
-	for _, setting := range c.RetainedTemplates {
-		if setting.ID == "" || strings.ContainsAny(setting.ID, "/\\\x00?# ") || seen[setting.ID] || !runtimerelease.ValidDigest(setting.Digest) || !filepath.IsAbs(setting.Manifest) {
-			return errors.New("unique template identities and pinned retained manifests required")
-		}
-		seen[setting.ID] = true
 	}
 	if c.Project.StoreID != "" || c.Project.TemplateID != "" || len(c.Project.PublishedMounts) > 0 || c.Project.ReleaseDigest != "" {
 		return errors.New("Project store, template and publication bindings are derived by the application")

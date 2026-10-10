@@ -9,9 +9,9 @@ import (
 	"harness-platform/orchestrator/internal/runtimerelease"
 )
 
-// A retained Project's manifest and immutable service declaration are the
+// The current runtime and each Project's immutable service declaration are the
 // capability source. Configuring tools cannot silently add a service binding.
-func (a *Application) platformEndpoint(ctx context.Context, scope product.Scope, manifests map[product.ReleasedTemplate]runtimerelease.Manifest) string {
+func (a *Application) platformEndpoint(ctx context.Context, scope product.Scope) string {
 	var gateway *ServiceGateway
 	for i := range a.Config.Gateways {
 		g := &a.Config.Gateways[i]
@@ -27,8 +27,7 @@ func (a *Application) platformEndpoint(ctx context.Context, scope product.Scope,
 	if err != nil {
 		return ""
 	}
-	manifest, ok := manifests[product.ReleasedTemplate{TemplateID: resources.Profile.TemplateID, Digest: resources.Profile.ReleaseDigest}]
-	if !ok || manifest.ScheduleProtocol != runtimerelease.ScheduleProtocol {
+	if resources.Profile.TemplateID != a.Config.Template.ID || resources.Profile.ReleaseDigest != a.Config.Template.Digest || a.Config.Manifest.ScheduleProtocol != runtimerelease.ScheduleProtocol {
 		return ""
 	}
 	route, ok := resources.Profile.Reachability.Audience(gateway.Audience)

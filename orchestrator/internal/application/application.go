@@ -108,18 +108,14 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	if err != nil {
 		return app, err
 	}
-	allowed := make(map[product.ReleasedTemplate]struct{}, len(prepared.templates))
-	for binding, manifest := range prepared.templates {
-		registered, e := client.Template(startup, binding.TemplateID)
-		if e != nil {
-			return app, e
-		}
-		if registered.Manifest.Platform != "" && registered.Manifest.Platform != manifest.Platform {
-			return app, errors.New("retained engine template platform differs from runtime release")
-		}
-		allowed[binding] = struct{}{}
+	registered, err := client.Template(startup, cfg.Template.ID)
+	if err != nil {
+		return app, err
 	}
-	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID, allowed); err != nil {
+	if registered.Manifest.Platform != "" && registered.Manifest.Platform != cfg.Manifest.Platform {
+		return app, errors.New("engine template platform differs from runtime release")
+	}
+	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID, product.ReleasedTemplate{TemplateID: cfg.Template.ID, Digest: cfg.Template.Digest}); err != nil {
 		return app, err
 	}
 	profile, err := app.publishPrepared(startup, prepared.publications)
@@ -132,7 +128,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	agents.MaxPerProject = cfg.Limits.AgentsPerProject
 	agents.ServiceAudience = cfg.AgentAudience
 	agents.PlatformEndpoint = func(ctx context.Context, scope product.Scope) string {
-		return app.platformEndpoint(ctx, scope, prepared.templates)
+		return app.platformEndpoint(ctx, scope)
 	}
 	app.Agents = agents
 	terminals := product.NewTerminals(ctx, store, lifecycle, backend, profile, cfg.Limits.Terminals)
