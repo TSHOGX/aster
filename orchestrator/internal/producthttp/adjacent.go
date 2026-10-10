@@ -22,17 +22,41 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"schedules": items})
 }
-func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
-	var body product.Schedule
-	if !decode(w, r, s.Config.bodyLimit(), &body) {
+
+type scheduleWrite struct {
+	RequestID string `json:"request_id"`
+	ID        string `json:"id"`
+	Revision  int64  `json:"revision"`
+	product.SchedulePatch
+}
+
+func (s *Server) writeSchedule(w http.ResponseWriter, r *http.Request, operation string) {
+	var body scheduleWrite
+	if !decode(w, r, 2<<20, &body) {
 		return
 	}
-	item, err := s.Store.CreateSchedule(r.Context(), s.scope(r), body)
+	if operation != "create" {
+		body.ID = r.PathValue("schedule")
+	}
+	receipt, err := s.Store.MutateSchedule(r.Context(), s.scope(r), product.ScheduleMutation{RequestID: body.RequestID, ID: body.ID, Revision: body.Revision, Operation: operation, Patch: body.SchedulePatch})
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 201, item)
+	status := http.StatusOK
+	if operation == "create" {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, receipt.Schedule)
+}
+func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
+	s.writeSchedule(w, r, "create")
+}
+func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
+	s.writeSchedule(w, r, "update")
+}
+func (s *Server) cancelSchedule(w http.ResponseWriter, r *http.Request) {
+	s.writeSchedule(w, r, "cancel")
 }
 func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 	item, err := s.Store.Schedule(r.Context(), s.scope(r), r.PathValue("schedule"))
@@ -42,26 +66,9 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, item)
 }
-func (s *Server) updateSchedule(w http.ResponseWriter, r *http.Request) {
-	var body product.Schedule
-	if !decode(w, r, s.Config.bodyLimit(), &body) {
-		return
-	}
-	body.ID = r.PathValue("schedule")
-	if err := s.Store.UpdateSchedule(r.Context(), s.scope(r), body, false); err != nil {
-		fail(w, err)
-		return
-	}
-	s.getSchedule(w, r)
-}
 func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
-	item, err := s.Store.Schedule(r.Context(), s.scope(r), r.PathValue("schedule"))
+	_, err := s.Store.MutateSchedule(r.Context(), s.scope(r), product.ScheduleMutation{RequestID: r.URL.Query().Get("request_id"), ID: r.PathValue("schedule"), Revision: int64Param(r.URL.Query(), "revision"), Operation: "delete"})
 	if err != nil {
-		fail(w, err)
-		return
-	}
-	item.Revision = int64Param(r.URL.Query(), "revision")
-	if err = s.Store.UpdateSchedule(r.Context(), s.scope(r), item, true); err != nil {
 		fail(w, err)
 		return
 	}
@@ -370,12 +377,14 @@ func (s *Server) scheduleOverview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) previewSchedule(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Cron     string `json:"cron"`
-		Timezone string `json:"timezone"`
-		NextAt   string `json:"next_at"`
+		TriggerKind string `json:"trigger_kind"`
+		RunAt       string `json:"run_at"`
+		Cron        string `json:"cron"`
+		Timezone    string `json:"timezone"`
+		NextAt      string `json:"next_at"`
 	}
 	if !decode(w, r, 4096, &body) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Store.PreviewSchedule(body.Cron, body.Timezone, body.NextAt))
+	writeJSON(w, http.StatusOK, s.Store.PreviewScheduleTrigger(body.TriggerKind, body.RunAt, body.Cron, body.Timezone, body.NextAt))
 }

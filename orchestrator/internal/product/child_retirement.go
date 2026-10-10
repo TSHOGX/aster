@@ -75,6 +75,8 @@ func (c *ChildRetirement) Step(ctx context.Context, child Child) error {
 			`DELETE FROM share_files WHERE share_id IN (SELECT id FROM shares WHERE session_id=?)`,
 			`DELETE FROM shares WHERE session_id=?`,
 			`DELETE FROM schedule_runs WHERE session_id=?`,
+			`UPDATE schedule_mutation_receipts SET origin_session_id=NULL,origin_run_id=NULL,result='{}' WHERE origin_session_id=?1 OR schedule_id IN (SELECT id FROM schedules WHERE origin_session_id=?1)`,
+			`UPDATE schedules SET origin_session_id=NULL,origin_run_id=NULL,origin_tool_call_id=NULL WHERE origin_session_id=?`,
 			`DELETE FROM native_captures WHERE incarnation_id IN (SELECT id FROM agent_incarnations WHERE session_id=?)`,
 			`DELETE FROM agent_records WHERE incarnation_id IN (SELECT id FROM agent_incarnations WHERE session_id=?)`,
 			`DELETE FROM control_receipts WHERE session_id=?`,

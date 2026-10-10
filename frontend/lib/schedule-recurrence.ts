@@ -126,7 +126,7 @@ export function scheduleConfiguration(s: Schedule) {
     s.cron,
     s.timezone,
     s.session_id || "",
-    s.enabled,
+    s.state, s.trigger_kind, s.run_at || "", s.expires_at || "", s.notify,
   ]);
 }
 export function scheduleTime(value: string, zone: string, locale: string) {
@@ -144,4 +144,13 @@ export function scheduleTime(value: string, zone: string, locale: string) {
   } catch {
     return value;
   }
+}
+
+// The write DTO includes authored fields only; server projections and origin
+// attribution are deliberately excluded. Keep requestId stable across retries.
+export function scheduleWrite(s: Schedule, requestId: string) {
+ return {request_id: requestId, id:s.id, revision:s.revision, title:s.title,
+ prompt:s.prompt, session_id:s.session_id||"", state:s.state,
+ trigger_kind:s.trigger_kind, cron:s.cron, timezone:s.timezone,
+ run_at:s.run_at||"", expires_at:s.expires_at||"", notify:s.notify};
 }

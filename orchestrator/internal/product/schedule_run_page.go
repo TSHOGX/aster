@@ -44,14 +44,7 @@ func (s *Store) ScheduleRunPage(ctx context.Context, scope Scope, id, after, bef
 	if token != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(token)
 		if err != nil || json.Unmarshal(raw, &cursor) != nil {
-			// Existing clients may continue using a run ID as the boundary.
-			if !validID(token) {
-				return out, ErrInvalid
-			}
-			cursor = scheduleRunCursor{Version: 1, Owner: scope.Actor, Project: scope.ProjectID, Schedule: id, ID: token}
-			if err := tx.QueryRowContext(ctx, `SELECT created_at FROM schedule_runs WHERE project_id=? AND schedule_id=? AND id=?`, scope.ProjectID, id, token).Scan(&cursor.Created); err != nil {
-				return out, ErrResync
-			}
+			return out, ErrInvalid
 		} else if cursor.Version != 1 || cursor.Owner != scope.Actor || cursor.Project != scope.ProjectID || cursor.Schedule != id {
 			return out, ErrInvalid
 		}

@@ -61,6 +61,7 @@ func (s *Store) purgeProject(ctx context.Context, tx *sql.Tx, project string) er
 		`DELETE FROM share_files WHERE share_id IN (SELECT id FROM shares WHERE project_id=?)`,
 		`DELETE FROM shares WHERE project_id=?`,
 		`DELETE FROM schedule_runs WHERE project_id=?`,
+		`DELETE FROM schedule_mutation_receipts WHERE project_id=?`,
 		`DELETE FROM schedules WHERE project_id=?`,
 		`DELETE FROM conversation_pending_sessions WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,
 		`DELETE FROM conversation_dirty_turns WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)`,

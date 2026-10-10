@@ -240,7 +240,7 @@ func TestScheduleOwnerHubReplaysWithoutProjectFanout(t *testing.T) {
 		t.Fatal("initial state must reconcile")
 	}
 	ready := nextResource(t, sub).event
-	_, err = h.store.CreateSchedule(ctx, scope, product.Schedule{ID: "task", Title: "Task", Prompt: "private prompt", Timezone: "UTC", Enabled: true})
+	_, err = h.store.CreateSchedule(ctx, scope, product.Schedule{TriggerKind: "manual", ID: "task", Title: "Task", Prompt: "private prompt", Timezone: "UTC", State: "active"})
 	must(t, err)
 	event := nextResource(t, sub).event
 	if event.Kind != "schedule.created" || event.ID != "task" {
@@ -293,9 +293,9 @@ func TestScheduleHTTPHintsAuthorizationAndForeignCursor(t *testing.T) {
 	if read().Kind != "resync" || read().Kind != "ready" {
 		t.Fatal("missing bootstrap handshake")
 	}
-	_, err = h.store.CreateSchedule(ctx, product.Scope{Actor: "bob", ProjectID: "foreign"}, product.Schedule{ID: "secret", Title: "Secret", Prompt: "secret", Timezone: "UTC", Enabled: true})
+	_, err = h.store.CreateSchedule(ctx, product.Scope{Actor: "bob", ProjectID: "foreign"}, product.Schedule{TriggerKind: "manual", ID: "secret", Title: "Secret", Prompt: "secret", Timezone: "UTC", State: "active"})
 	must(t, err)
-	_, err = h.store.CreateSchedule(ctx, scope, product.Schedule{ID: "task", Title: "Task", Prompt: "private", Timezone: "UTC", Enabled: true})
+	_, err = h.store.CreateSchedule(ctx, scope, product.Schedule{TriggerKind: "manual", ID: "task", Title: "Task", Prompt: "private", Timezone: "UTC", State: "active"})
 	must(t, err)
 	event := read()
 	if event.Kind != "schedule.created" || event.ID != "task" {

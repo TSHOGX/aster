@@ -92,14 +92,14 @@ violations return `403`; stale/conflicting intent returns `409`. Capacity and
 pending outcomes remain distinct from successful completion. Browser access does
 not expose engine handles or operator control routes.
 
-`GET /api/schedules?project_id=OPTIONAL&q=TITLE&status=enabled|paused&after=CURSOR&limit=50`
+`GET /api/schedules?project_id=OPTIONAL&q=TITLE&status=active|paused|exhausted|canceled|deleted&after=CURSOR&limit=50`
 returns `{schedules: [...], next?: CURSOR, previous?: CURSOR}` with at most 50 metadata rows.
 `before=CURSOR` reads the preceding batch; `anchor=TASK_ID` relocates the window
 at that task in the current authorized/filter-matching catalog. Selectors are
 mutually exclusive. An absent or filtered anchor restarts at the first batch.
-Omit status for all tasks. Unicode lowercase title matching, Project filtering,
+Omit status for active and paused tasks. Unicode lowercase title matching, Project filtering,
 and owner authorization apply before pagination. Automatic tasks sort by next
-occurrence and ID, followed by enabled manual-only tasks and paused tasks.
+occurrence and ID, followed by active manual-only tasks and paused tasks.
 Opaque continuation cursors bind the owner and filters to a catalog revision.
 Schedule edits/ticks and relevant Project changes invalidate continuation with
 `409 resync_required`; reconcile the current window with an anchor read or restart
@@ -123,15 +123,16 @@ expired/restarted streams explicitly resync rather than silently losing updates.
 `after=CURSOR`, `before=CURSOR` or `anchor=RUN_ID`, with a maximum `limit=50`, and
 returns `{runs: [...], next: CURSOR_OR_EMPTY, previous?: CURSOR}`. New opaque cursors
 bind the owner, Project, task and immutable creation-time/ID ordering tuple, so
-removing a boundary row does not omit the remaining history. Existing run-ID
-continuations remain accepted; a removed legacy boundary requires resync.
+removing a boundary row does not omit the remaining history. Run-ID continuations are not accepted.
 History state uses the same correlated prompt/execution evidence as conversation
 controls, including claims before consumption and unknown outcomes.
 
-`POST /api/schedules/preview` accepts `{cron, timezone, next_at?}` and returns
+`POST /api/schedules/preview` accepts `{trigger_kind?, run_at?, cron, timezone, next_at?}` and returns
 `{valid, cron, timezone, reference_time, occurrences, errors?}`. Field errors use
 `cron`, `interval`, `timezone` or `next_at`. The authenticated, non-mutating endpoint validates with the
 execution parser and returns three upcoming UTC instants or none for manual-only.
+For `trigger_kind: "at"`, supply a future RFC3339 `run_at` with an explicit
+offset and empty `cron`; preview returns that one normalized instant.
 It creates no task or run. `cron` accepts five-field Cron, empty for manual-only,
 or the canonical interval expression `@every Nm` (integer N from 1 to 10080).
 Intervals measure elapsed minutes; the IANA timezone controls their display only.
@@ -145,9 +146,10 @@ An interval first runs one period after creation, enabling, or changing its
 interval. Its saved `next_at` preserves the cadence across worker delays and
 restarts; missed occurrences coalesce into one run and advance to the first
 cadence point after the current time. Name/instruction/target edits, interval
-display-zone changes and manual runs do not reset it. Client-supplied `next_at`
-is ignored on create/update. Existing admission/overlap behavior applies: separate
-conversations may overlap and a shared target conversation queues turns.
+display-zone changes and manual runs do not reset it. Client-supplied operational fields such as `next_at` are rejected on browser
+create/update. An unsettled occurrence blocks the next automatic admission for
+that schedule, retaining the original due instant with a 30-second recheck.
+Different schedules still use ordinary Session queues.
 
 Task mutations and history remain Project-scoped. Run history returns at most 50
 rows and an explicit `next` continuation identity only when another row exists.
@@ -238,3 +240,24 @@ identity/title, selected Session ID, title, Cron (at most 128 characters), timez
 enabled state, next run time and revision. It omits full prompt bodies. Read the
 Project-scoped detail for the selected task; mutations validate the complete
 schedule and revision. Reader grants do not confer schedule authority.
+
+Schedule creation requires `id`, `request_id`, `title`, `prompt`, `trigger_kind`
+and `timezone`; `cron` describes cron/interval triggers, while `run_at` describes
+an absolute one-shot. Optional authored fields are `session_id` (empty creates a
+new Session per occurrence), `state` (`active` or `paused`), `expires_at` and
+`notify` (default true). PATCH uses the same typed authored fields, `revision`
+and `request_id`; omitted fields are preserved. POST `…/{schedule}/cancel`
+requires `revision` and `request_id`. DELETE uses both as query parameters.
+Mutations return the immutable schedule snapshot committed with the receipt;
+GET reads its current state. Exact retries retain their original outcome even
+after edits, cancellation or time passing; changed payloads conflict. New
+mutations are rejected during release drain. The Project limit is 100 active or
+paused definitions. Cancellation stops future admission, not existing Prompts.
+
+A one-shot becomes exhausted when its Prompt is admitted, independently of
+execution success. Run-now consumes its original occurrence, and a retry returns
+that same run. Expiry stops admission without retracting existing work. An
+exhausted one-shot cannot be rearmed: create new intent with a new identity.
+Scheduler failures are isolated per task; invalid configurations pause with a
+bounded diagnostic, transient admission failures back off (5 seconds, 30 seconds,
+then 5 minutes). Unknown execution outcomes are never automatically resubmitted.

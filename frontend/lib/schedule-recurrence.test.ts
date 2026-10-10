@@ -59,8 +59,8 @@ describe("visual recurrence", () => {
       prompt: "private",
       cron: "0 9 * * *",
       timezone: "UTC",
-      enabled: true,
-      deleted: false,
+      state: "active", trigger_kind: "cron", notify: true,
+
       revision: 1,
     } as Schedule;
     expect(

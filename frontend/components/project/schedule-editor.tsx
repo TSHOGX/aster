@@ -23,6 +23,7 @@ import {
   parseRecurrence,
   recurrenceCron,
   scheduleConfiguration,
+  scheduleWrite,
   schedulePreviewKey,
 } from "@/lib/schedule-recurrence";
 import { ProjectPicker } from "./project-picker";
@@ -91,7 +92,7 @@ export function ScheduleEditor({
   const pending = useRef<Schedule | null>(null);
   const cron = ruleChanged || !schedule ? recurrenceCron(rule) : schedule.cron;
   const previewNextAt =
-    baseline?.enabled && cron === baseline.cron ? baseline.next_at : undefined;
+    baseline?.state === "active" && cron === baseline.cron ? baseline.next_at : undefined;
   const value: Schedule = {
     id: schedule?.id || requestId,
     project_id: project,
@@ -100,8 +101,9 @@ export function ScheduleEditor({
     cron: cron ?? "",
     timezone,
     session_id: existing ? session : "",
-    enabled: baseline?.enabled ?? true,
-    deleted: false,
+    state: baseline?.state ?? "active",
+    trigger_kind: cron ? (cron.startsWith("@every ") ? "interval" : "cron") : "manual",
+    notify: baseline?.notify ?? true,
     revision: baseline?.revision ?? 0,
   };
   const [initial] = useState(() =>
@@ -221,7 +223,7 @@ export function ScheduleEditor({
         try {
           result = await command<Schedule>(
             `${projectURL(project)}/schedules`,
-            submitted,
+            scheduleWrite(submitted, requestId),
           );
         } catch (e) {
           if (e instanceof APIError && e.status >= 400 && e.status < 500) {
@@ -240,7 +242,7 @@ export function ScheduleEditor({
         }
       } else {
         try {
-          result = await command<Schedule>(path, submitted, "PATCH");
+          result = await command<Schedule>(path, scheduleWrite(submitted, requestId), "PATCH");
         } catch (e) {
           const found = await api<Schedule>(path).catch(() => null);
           if (
@@ -248,19 +250,7 @@ export function ScheduleEditor({
             scheduleConfiguration(found) === scheduleConfiguration(submitted)
           )
             result = found;
-          else if (
-            e instanceof APIError &&
-            e.status === 409 &&
-            found &&
-            baseline &&
-            scheduleConfiguration(found) === scheduleConfiguration(baseline)
-          ) {
-            result = await command<Schedule>(
-              path,
-              { ...submitted, revision: found.revision },
-              "PATCH",
-            );
-          } else {
+          else {
             if (found && e instanceof APIError && e.status === 409) {
               setLatest(found);
               throw new Error(

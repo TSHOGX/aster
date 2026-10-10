@@ -150,7 +150,7 @@ func TestSessionRetirementKeepsProjectScheduleAndSiblingRuns(t *testing.T) {
 		_, err := s.CreateSession(ctx, scope, id, id)
 		must(t, err)
 	}
-	schedule, err := s.CreateSchedule(ctx, scope, Schedule{ID: "schedule", SessionID: "beta", Title: "Project-owned schedule", Prompt: "work", Timezone: "UTC", Enabled: true})
+	schedule, err := s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "manual", ID: "schedule", SessionID: "beta", Title: "Project-owned schedule", Prompt: "work", Timezone: "UTC", State: "active"})
 	must(t, err)
 	siblingRun, err := s.RunSchedule(ctx, scope, schedule.ID, "beta-run")
 	must(t, err)
@@ -165,7 +165,7 @@ func TestSessionRetirementKeepsProjectScheduleAndSiblingRuns(t *testing.T) {
 	must(t, retirement.Step(ctx, Child{ProjectID: scope.ProjectID, ID: "alpha", Kind: "session", Deletion: Requested}))
 	retained, err := s.Schedule(ctx, scope, schedule.ID)
 	must(t, err)
-	if retained.Enabled {
+	if retained.State == "active" {
 		t.Fatal("retired target's schedule still enabled")
 	}
 	runs, err := s.ScheduleRuns(ctx, scope, schedule.ID, "", 100)

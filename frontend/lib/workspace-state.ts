@@ -70,7 +70,7 @@ export type Navigation = {
   scheduleMode?: "create" | "edit";
   scheduleFilter?: string;
   scheduleQuery?: string;
-  scheduleStatus?: "enabled" | "paused";
+  scheduleStatus?: "active" | "paused";
   scheduleAfter?: string;
 };
 export function normalizeNavigation(n: Navigation): Navigation {
@@ -101,7 +101,7 @@ export function normalizeNavigation(n: Navigation): Navigation {
     }
     if (n.scheduleFilter) base.scheduleFilter = n.scheduleFilter;
     if (n.scheduleQuery) base.scheduleQuery = n.scheduleQuery.slice(0, 256);
-    if (n.scheduleStatus === "enabled" || n.scheduleStatus === "paused")
+    if (n.scheduleStatus === "active" || n.scheduleStatus === "paused")
       base.scheduleStatus = n.scheduleStatus;
     if (n.scheduleAfter) base.scheduleAfter = n.scheduleAfter;
   }
@@ -147,8 +147,8 @@ export function readNavigation(search: string): Navigation {
     scheduleFilter: p.get("filter_project") || "",
     scheduleQuery: p.get("q") || "",
     scheduleStatus:
-      p.get("status") === "enabled"
-        ? "enabled"
+      p.get("status") === "active"
+        ? "active"
         : p.get("status") === "paused"
           ? "paused"
           : undefined,

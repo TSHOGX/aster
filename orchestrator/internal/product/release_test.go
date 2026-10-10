@@ -179,13 +179,13 @@ func TestReleaseFenceLeavesScheduledOccurrenceUnconsumed(t *testing.T) {
 	s, scope, _ := fixture(t)
 	clock := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return clock }
-	schedule, err := s.CreateSchedule(ctx, scope, Schedule{ID: "schedule", Title: "Daily", Prompt: "inspect", Cron: "* * * * *", Timezone: "UTC", Enabled: true})
+	schedule, err := s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "cron", ID: "schedule", Title: "Daily", Prompt: "inspect", Cron: "* * * * *", Timezone: "UTC", State: "active"})
 	must(t, err)
 	_, err = s.BeginReleaseDrain(ctx, "schedules", time.Hour)
 	must(t, err)
 	clock = clock.Add(2 * time.Minute)
 	_, err = s.TickSchedules(ctx, 16)
-	wantError(t, err, ErrDraining)
+	must(t, err)
 	next, err := s.Schedule(ctx, scope, schedule.ID)
 	must(t, err)
 	if next.NextAt != schedule.NextAt {

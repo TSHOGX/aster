@@ -16,7 +16,7 @@ func TestSchedulesShareForegroundAdmissionAndDeduplicate(t *testing.T) {
 	must(t, err)
 	_, err = s.CreateSession(ctx, b, "foreign", "Foreign")
 	must(t, err)
-	input := Schedule{ID: "daily", Title: "Daily check", Prompt: "inspect workspace", Cron: "0 8 * * *", Timezone: "Asia/Shanghai", Enabled: true}
+	input := Schedule{TriggerKind: "cron", ID: "daily", Title: "Daily check", Prompt: "inspect workspace", Cron: "0 8 * * *", Timezone: "Asia/Shanghai", State: "active"}
 	schedule, err := s.CreateSchedule(ctx, a, input)
 	must(t, err)
 	if schedule.NextAt != "2026-09-22T00:00:00.000000000Z" {
@@ -54,8 +54,17 @@ func TestSchedulesShareForegroundAdmissionAndDeduplicate(t *testing.T) {
 	if len(blockers) != 2 {
 		t.Fatal(blockers)
 	}
+	// An unresolved occurrence blocks automatic overlap and retains its due time.
+	clock = clock.Add(3 * 24 * time.Hour)
+	blocked, err := s.TickSchedules(ctx, 32)
+	must(t, err)
+	if blocked != 0 {
+		t.Fatal("overlap admitted", blocked)
+	}
+	_, err = s.db.Exec(`UPDATE turns SET disposition='handled' WHERE id=?`, runs[0].TurnID)
+	must(t, err)
 	// Three missed days coalesce into one run and advance past now.
-	clock = clock.Add(3*24*time.Hour + time.Hour)
+	clock = clock.Add(time.Hour)
 	count, err := s.TickSchedules(ctx, 32)
 	must(t, err)
 	if count != 1 {
@@ -77,13 +86,13 @@ func TestSchedulesShareForegroundAdmissionAndDeduplicate(t *testing.T) {
 		t.Fatal(next)
 	}
 	schedule.Prompt = "changed"
-	wantError(t, s.UpdateSchedule(ctx, a, schedule, false), ErrConflict)
+	must(t, s.UpdateSchedule(ctx, a, schedule, false))
 	// Settling this run cannot release the foreground turn's admission.
-	_, err = s.db.Exec(`UPDATE turns SET disposition='consumed' WHERE id=?`, runs[0].TurnID)
+	_, err = s.db.Exec(`UPDATE turns SET disposition='handled' WHERE id=?`, runs[0].TurnID)
 	must(t, err)
 	blockers, err = s.Blockers(ctx, a)
 	must(t, err)
-	if len(blockers) != 2 {
+	if len(blockers) != 1 {
 		t.Fatal(blockers)
 	}
 }
@@ -92,7 +101,7 @@ func TestScheduleDeletionClosesAllAdmission(t *testing.T) {
 	_, err := s.CreateSession(ctx, a, "target", "Target")
 	must(t, err)
 	for i, session := range []string{"target", ""} {
-		_, err = s.CreateSchedule(ctx, a, Schedule{ID: fmt.Sprint("s", i), SessionID: session, Title: "Check", Prompt: "run", Cron: "* * * * *", Timezone: "UTC", Enabled: true})
+		_, err = s.CreateSchedule(ctx, a, Schedule{TriggerKind: "cron", ID: fmt.Sprint("s", i), SessionID: session, Title: "Check", Prompt: "run", Cron: "* * * * *", Timezone: "UTC", State: "active"})
 		must(t, err)
 	}
 	child, err := s.Session(ctx, a, "target")
@@ -100,7 +109,7 @@ func TestScheduleDeletionClosesAllAdmission(t *testing.T) {
 	must(t, s.DeleteSession(ctx, a, child.ID, child.Revision))
 	schedule, err := s.Schedule(ctx, a, "s0")
 	must(t, err)
-	if schedule.Enabled || schedule.NextAt != "" {
+	if schedule.State == "active" || schedule.NextAt != "" {
 		t.Fatal(schedule)
 	}
 	_, err = s.RunSchedule(ctx, a, "s0", "late")
@@ -126,14 +135,14 @@ func TestScheduleManualOnlyAndInvalidCron(t *testing.T) {
 		_, err := s.CreateSchedule(ctx, a, bad)
 		wantError(t, err, ErrInvalid)
 	}
-	item, err := s.CreateSchedule(ctx, a, Schedule{ID: "manual", Title: "Manual", Prompt: "work", Timezone: "UTC", Enabled: true})
+	item, err := s.CreateSchedule(ctx, a, Schedule{TriggerKind: "manual", ID: "manual", Title: "Manual", Prompt: "work", Timezone: "UTC", State: "active"})
 	must(t, err)
 	if item.NextAt != "" {
 		t.Fatal(item)
 	}
 	_, err = s.RunSchedule(context.Background(), a, item.ID, "one")
 	must(t, err)
-	item.Enabled = false
+	item.State = "paused"
 	must(t, s.UpdateSchedule(ctx, a, item, false))
 	_, err = s.RunSchedule(ctx, a, item.ID, "two")
 	wantError(t, err, ErrConflict)

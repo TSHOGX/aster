@@ -238,8 +238,8 @@ export async function workspaceFixture(
             prompt: "Summarize experiments",
             timezone: "Asia/Shanghai",
             cron: "0 9 * * *",
-            enabled: true,
-            deleted: false,
+            state: "active", trigger_kind: "cron", notify: true,
+
             revision: 1,
             next_at: "2026-09-23T01:00:00Z",
           },

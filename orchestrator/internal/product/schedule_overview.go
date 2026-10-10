@@ -12,16 +12,21 @@ import (
 )
 
 type ScheduleOverview struct {
-	ID           string `json:"id"`
-	ProjectID    string `json:"project_id"`
-	SessionID    string `json:"session_id,omitempty"`
-	Title        string `json:"title"`
-	Cron         string `json:"cron"`
-	Timezone     string `json:"timezone"`
-	Enabled      bool   `json:"enabled"`
-	NextAt       string `json:"next_at,omitempty"`
-	Revision     int64  `json:"revision"`
-	ProjectTitle string `json:"project_title"`
+	ID              string `json:"id"`
+	ProjectID       string `json:"project_id"`
+	SessionID       string `json:"session_id,omitempty"`
+	Title           string `json:"title"`
+	Cron            string `json:"cron"`
+	Timezone        string `json:"timezone"`
+	State           string `json:"state"`
+	TriggerKind     string `json:"trigger_kind"`
+	RunAt           string `json:"run_at,omitempty"`
+	EndReason       string `json:"end_reason,omitempty"`
+	OriginSessionID string `json:"origin_session_id,omitempty"`
+	LastError       string `json:"last_error,omitempty"`
+	NextAt          string `json:"next_at,omitempty"`
+	Revision        int64  `json:"revision"`
+	ProjectTitle    string `json:"project_title"`
 }
 type SchedulePage struct {
 	Schedules []ScheduleOverview `json:"schedules"`
@@ -49,7 +54,7 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 		return out, ErrNotFound
 	}
 	f.Query = strings.TrimSpace(f.Query)
-	if (f.After != "" && f.Before != "") || (f.Anchor != "" && (f.After != "" || f.Before != "")) || len(f.Anchor) > 128 || len(f.Before) > 2048 || len(f.Query) > 256 || (f.Status != "" && f.Status != "enabled" && f.Status != "paused") || len(f.After) > 2048 {
+	if (f.After != "" && f.Before != "") || (f.Anchor != "" && (f.After != "" || f.Before != "")) || len(f.Anchor) > 128 || len(f.Before) > 2048 || len(f.Query) > 256 || (f.Status != "" && f.Status != "active" && f.Status != "paused" && f.Status != "exhausted" && f.Status != "canceled" && f.Status != "deleted") || len(f.After) > 2048 {
 		return out, ErrInvalid
 	}
 	if f.Limit < 1 || f.Limit > 50 {
@@ -79,9 +84,9 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 	if continuation != "" && cursor.Revision != revision {
 		return out, ErrResync
 	}
-	const rank = `CASE WHEN s.enabled=0 THEN 2 WHEN s.cron='' THEN 1 ELSE 0 END`
+	const rank = `CASE WHEN s.state<>'active' THEN 2 WHEN s.trigger_kind='manual' THEN 1 ELSE 0 END`
 	if f.Anchor != "" {
-		err = tx.QueryRowContext(ctx, `SELECT `+rank+`,coalesce(s.next_at,''),s.id FROM schedules s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND s.deleted=0 AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0 AND (?='' OR (?='enabled' AND s.enabled=1) OR (?='paused' AND s.enabled=0))`, f.Anchor, actor, f.Project, f.Project, f.Query, f.Status, f.Status, f.Status).Scan(&cursor.Rank, &cursor.Next, &cursor.ID)
+		err = tx.QueryRowContext(ctx, `SELECT `+rank+`,coalesce(s.next_at,''),s.id FROM schedules s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted') AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0 AND ((?='' AND s.state IN ('active','paused')) OR s.state=?)`, f.Anchor, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status).Scan(&cursor.Rank, &cursor.Next, &cursor.ID)
 		if err != nil && err != sql.ErrNoRows {
 			return out, err
 		}
@@ -99,19 +104,19 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 		comparison = "<"
 		ordering = "DESC"
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT s.id,s.project_id,coalesce(s.session_id,''),s.title,s.cron,s.timezone,s.enabled,coalesce(s.next_at,''),s.revision,p.title FROM schedules s JOIN projects p ON p.id=s.project_id
- WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND s.deleted=0
+	rows, err := tx.QueryContext(ctx, `SELECT s.id,s.project_id,coalesce(s.session_id,''),s.title,s.cron,s.timezone,s.state,s.trigger_kind,coalesce(s.run_at,''),coalesce(s.end_reason,''),coalesce(s.origin_session_id,''),s.last_error,coalesce(s.next_at,''),s.revision,p.title FROM schedules s JOIN projects p ON p.id=s.project_id
+ WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted')
  AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0
- AND (?='' OR (?='enabled' AND s.enabled=1) OR (?='paused' AND s.enabled=0))
+ AND ((?='' AND s.state IN ('active','paused')) OR s.state=?)
  AND (`+rank+`,coalesce(s.next_at,''),s.id)`+comparison+`(?,?,?)
- ORDER BY `+rank+` `+ordering+`,coalesce(s.next_at,'') `+ordering+`,s.id `+ordering+` LIMIT ?`, actor, f.Project, f.Project, f.Query, f.Status, f.Status, f.Status, cursor.Rank, cursor.Next, cursor.ID, f.Limit+1)
+ ORDER BY `+rank+` `+ordering+`,coalesce(s.next_at,'') `+ordering+`,s.id `+ordering+` LIMIT ?`, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status, cursor.Rank, cursor.Next, cursor.ID, f.Limit+1)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item ScheduleOverview
-		if err = rows.Scan(&item.ID, &item.ProjectID, &item.SessionID, &item.Title, &item.Cron, &item.Timezone, &item.Enabled, &item.NextAt, &item.Revision, &item.ProjectTitle); err != nil {
+		if err = rows.Scan(&item.ID, &item.ProjectID, &item.SessionID, &item.Title, &item.Cron, &item.Timezone, &item.State, &item.TriggerKind, &item.RunAt, &item.EndReason, &item.OriginSessionID, &item.LastError, &item.NextAt, &item.Revision, &item.ProjectTitle); err != nil {
 			return out, err
 		}
 		out.Schedules = append(out.Schedules, item)
@@ -129,9 +134,9 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 	}
 	token := func(item ScheduleOverview) string {
 		r := 0
-		if !item.Enabled {
+		if item.State != "active" {
 			r = 2
-		} else if item.Cron == "" {
+		} else if item.TriggerKind == "manual" {
 			r = 1
 		}
 		raw, _ := json.Marshal(scheduleCursor{Version: 1, Revision: revision, Filter: key, Rank: r, Next: item.NextAt, ID: item.ID})
@@ -146,13 +151,13 @@ func (s *Store) ScheduleOverviewPage(ctx context.Context, actor string, f Schedu
 		} else if f.Before == "" && (f.After != "" || cursor.Rank >= 0) {
 			first := out.Schedules[0]
 			r := 0
-			if !first.Enabled {
+			if first.State != "active" {
 				r = 2
-			} else if first.Cron == "" {
+			} else if first.TriggerKind == "manual" {
 				r = 1
 			}
 			var previous bool
-			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schedules s JOIN projects p ON p.id=s.project_id WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND s.deleted=0 AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0 AND (?='' OR (?='enabled' AND s.enabled=1) OR (?='paused' AND s.enabled=0)) AND (`+rank+`,coalesce(s.next_at,''),s.id)<(?,?,?))`, actor, f.Project, f.Project, f.Query, f.Status, f.Status, f.Status, r, first.NextAt, first.ID).Scan(&previous)
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schedules s JOIN projects p ON p.id=s.project_id WHERE p.owner_id=? AND p.state NOT IN ('deleting','deleted') AND (s.state<>'deleted' OR ?='deleted') AND (?='' OR s.project_id=?) AND instr(batterygpt_lower(s.title),batterygpt_lower(?))>0 AND ((?='' AND s.state IN ('active','paused')) OR s.state=?) AND (`+rank+`,coalesce(s.next_at,''),s.id)<(?,?,?))`, actor, f.Status, f.Project, f.Project, f.Query, f.Status, f.Status, r, first.NextAt, first.ID).Scan(&previous)
 			if err != nil {
 				return out, err
 			}

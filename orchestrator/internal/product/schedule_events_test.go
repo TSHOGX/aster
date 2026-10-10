@@ -12,9 +12,9 @@ func TestScheduleHintsCoverTickManualControlAndDeletion(t *testing.T) {
 	s, a, b := fixture(t)
 	now := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	task, err := s.CreateSchedule(ctx, a, Schedule{ID: "scheduled", Title: "Task", Prompt: "secret instructions", Cron: "* * * * *", Timezone: "UTC", Enabled: true})
+	task, err := s.CreateSchedule(ctx, a, Schedule{TriggerKind: "cron", ID: "scheduled", Title: "Task", Prompt: "secret instructions", Cron: "* * * * *", Timezone: "UTC", State: "active"})
 	must(t, err)
-	_, err = s.CreateSchedule(ctx, b, Schedule{ID: "foreign", Title: "Secret", Prompt: "foreign instructions", Timezone: "UTC", Enabled: true})
+	_, err = s.CreateSchedule(ctx, b, Schedule{TriggerKind: "manual", ID: "foreign", Title: "Secret", Prompt: "foreign instructions", Timezone: "UTC", State: "active"})
 	must(t, err)
 	manual, err := s.RunSchedule(ctx, a, task.ID, "once")
 	must(t, err)
@@ -25,7 +25,7 @@ func TestScheduleHintsCoverTickManualControlAndDeletion(t *testing.T) {
 	must(t, err)
 	task, err = s.Schedule(ctx, a, task.ID)
 	must(t, err)
-	task.Enabled = false
+	task.State = "paused"
 	must(t, s.UpdateSchedule(ctx, a, task, false))
 	task, err = s.Schedule(ctx, a, task.ID)
 	must(t, err)
@@ -77,8 +77,8 @@ func TestScheduleOutboxRetentionAndOwnerIsolation(t *testing.T) {
 }
 func TestScheduleBidirectionalWindowsAndDeletedHistoryBoundary(t *testing.T) {
 	s, a, b := fixture(t)
-	for n := 0; n < 105; n++ {
-		_, err := s.CreateSchedule(ctx, a, Schedule{ID: fmt.Sprintf("task-%03d", n), Title: "Task", Prompt: "work", Timezone: "UTC", Enabled: true})
+	for n := 0; n < 100; n++ {
+		_, err := s.CreateSchedule(ctx, a, Schedule{TriggerKind: "manual", ID: fmt.Sprintf("task-%03d", n), Title: "Task", Prompt: "work", Timezone: "UTC", State: "active"})
 		must(t, err)
 	}
 	first, err := s.ScheduleOverviewPage(ctx, a.Actor, ScheduleFilter{})
@@ -134,7 +134,7 @@ func TestScheduleHintsAndStatusFollowCorrelatedExecutionOutcomes(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			s, scope, i, c := agentFixture(t)
 			ingestContract(t, s, i, c, "native", consumedPayload(c))
-			_, err := s.CreateSchedule(ctx, scope, Schedule{ID: "scheduled-input", SessionID: i.SessionID, Title: "Scheduled", Prompt: "scheduled guidance", Timezone: "UTC", Enabled: true})
+			_, err := s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "manual", ID: "scheduled-input", SessionID: i.SessionID, Title: "Scheduled", Prompt: "scheduled guidance", Timezone: "UTC", State: "active"})
 			must(t, err)
 			run, err := s.RunSchedule(ctx, scope, "scheduled-input", "once")
 			must(t, err)

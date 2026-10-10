@@ -358,6 +358,8 @@ CREATE TABLE schedule_runs (
  turn_id TEXT NOT NULL,
  request_id TEXT NOT NULL,
  due_at TEXT NOT NULL,
+ schedule_revision INTEGER NOT NULL CHECK(schedule_revision>0),
+ notify INTEGER NOT NULL CHECK(notify IN (0,1)),
  created_at TEXT NOT NULL,
  UNIQUE(schedule_id,request_id),
  FOREIGN KEY(project_id,session_id,turn_id) REFERENCES turns(project_id,session_id,id)
@@ -371,15 +373,41 @@ CREATE TABLE schedules (
  prompt TEXT NOT NULL,
  cron TEXT NOT NULL,
  timezone TEXT NOT NULL,
- enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
- deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1)),
+ state TEXT NOT NULL CHECK(state IN ('active','paused','exhausted','canceled','deleted')),
+ trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('at','cron','interval','manual')),
+ run_at TEXT,
+ expires_at TEXT,
+ end_reason TEXT,
+ notify INTEGER NOT NULL DEFAULT 1 CHECK(notify IN (0,1)),
+ retry_at TEXT,
+ retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count BETWEEN 0 AND 3),
+ last_error TEXT NOT NULL DEFAULT '' CHECK(length(last_error)<=256),
+ origin_session_id TEXT,
+ origin_run_id TEXT,
+ origin_tool_call_id TEXT,
  next_at TEXT,
  revision INTEGER NOT NULL DEFAULT 1,
  creation_digest TEXT NOT NULL,
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
- FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id)
+ CHECK((trigger_kind='at' AND run_at IS NOT NULL AND cron='') OR (trigger_kind IN ('cron','interval') AND run_at IS NULL AND cron<>'') OR (trigger_kind='manual' AND run_at IS NULL AND cron='')),
+ CHECK(state='active' OR next_at IS NULL),
+ FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id),
+ FOREIGN KEY(project_id,origin_session_id) REFERENCES sessions(project_id,id)
 );
+
+CREATE TABLE schedule_mutation_receipts (
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ request_id TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ schedule_id TEXT NOT NULL REFERENCES schedules(id),
+ result TEXT NOT NULL CHECK(length(result)<=2097152),
+ origin_session_id TEXT,
+ origin_run_id TEXT,
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(project_id,request_id)
+);
+CREATE INDEX schedules_source ON schedules(project_id,origin_session_id,id);
 
 CREATE TABLE service_gateways (
  audience TEXT PRIMARY KEY CHECK(audience<>''),
@@ -687,11 +715,11 @@ CREATE INDEX release_run_pending ON execution_runs(prompt_id) WHERE state IN ('s
 
 CREATE INDEX schedule_runs_project ON schedule_runs(project_id,created_at,id);
 
-CREATE INDEX schedules_due ON schedules(enabled,deleted,next_at,project_id);
+CREATE INDEX schedules_due ON schedules(state,retry_at,next_at,expires_at,project_id);
 
 CREATE INDEX schedules_overview_order ON schedules(
-    deleted,
-    CASE WHEN enabled=0 THEN 2 WHEN cron='' THEN 1 ELSE 0 END,
+    state,
+    CASE WHEN state<>'active' THEN 2 WHEN trigger_kind='manual' THEN 1 ELSE 0 END,
     coalesce(next_at,''),id
 );
 
@@ -1123,11 +1151,11 @@ WHEN NEW.project_id<>OLD.project_id BEGIN SELECT RAISE(ABORT,'immutable Session 
 
 CREATE TRIGGER stop_project_schedules AFTER UPDATE OF state ON projects
 WHEN NEW.state IN ('deleting','deleted')
-BEGIN UPDATE schedules SET enabled=0,next_at=NULL,revision=revision+1 WHERE project_id=NEW.id AND enabled=1; END;
+BEGIN UPDATE schedules SET state='canceled',end_reason='project_deleted',next_at=NULL,retry_at=NULL,revision=revision+1 WHERE project_id=NEW.id AND state IN ('active','paused'); END;
 
 CREATE TRIGGER stop_session_schedules AFTER UPDATE OF deletion_intent ON sessions
 WHEN NEW.deletion_intent>0
-BEGIN UPDATE schedules SET enabled=0,next_at=NULL,revision=revision+1 WHERE session_id=NEW.id AND enabled=1; END;
+BEGIN UPDATE schedules SET state='canceled',end_reason='target_deleted',next_at=NULL,retry_at=NULL,revision=revision+1 WHERE session_id=NEW.id AND state IN ('active','paused'); END;
 
 CREATE TRIGGER terminals_parent_immutable BEFORE UPDATE OF project_id ON terminals
 WHEN NEW.project_id<>OLD.project_id BEGIN SELECT RAISE(ABORT,'immutable Terminal parent'); END;
@@ -1243,7 +1271,7 @@ CREATE TRIGGER schedule_hint_insert AFTER INSERT ON schedules BEGIN
 END;
 CREATE TRIGGER schedule_hint_update AFTER UPDATE ON schedules BEGIN
  INSERT INTO schedule_events(owner_id,project_id,schedule_id,run_id,kind)
- SELECT owner_id,NEW.project_id,NEW.id,'',CASE WHEN NEW.deleted=1 AND OLD.deleted=0 THEN 'schedule.deleted' ELSE 'schedule.updated' END FROM projects WHERE id=NEW.project_id;
+ SELECT owner_id,NEW.project_id,NEW.id,'',CASE WHEN NEW.state='deleted' AND OLD.state<>'deleted' THEN 'schedule.deleted' ELSE 'schedule.updated' END FROM projects WHERE id=NEW.project_id;
 END;
 CREATE TRIGGER schedule_hint_delete BEFORE DELETE ON schedules BEGIN
  INSERT INTO schedule_events(owner_id,project_id,schedule_id,run_id,kind)

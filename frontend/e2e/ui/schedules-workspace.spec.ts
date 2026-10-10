@@ -20,8 +20,8 @@ async function setup(
     prompt: "Inspect research files",
     cron: options.advanced ? "*/15 9-17 1,15 * MON-FRI" : "0 9 * * *",
     timezone: "Asia/Shanghai",
-    enabled: true,
-    deleted: false,
+    state: "active", trigger_kind: "cron", notify: true,
+
     revision: 1,
     next_at: "2026-09-25T01:00:00Z",
   });
@@ -37,10 +37,10 @@ async function setup(
     const q = new URL(route.request().url()).searchParams;
     const items = [...tasks.values()].filter(
       (t) =>
-        !t.deleted &&
+        t.state !== "deleted" &&
         (!q.get("q") ||
           t.title.toLowerCase().includes(q.get("q")!.toLowerCase())) &&
-        (!q.get("status") || (q.get("status") === "enabled") === t.enabled),
+        (!q.get("status") || q.get("status") === t.state),
     );
     return route.fulfill({
       json: {
@@ -51,7 +51,7 @@ async function setup(
           title: task.title,
           cron: task.cron,
           timezone: task.timezone,
-          enabled: task.enabled,
+          state: task.state, trigger_kind: task.trigger_kind, notify: task.notify,
           next_at: task.next_at,
           revision: task.revision,
         })),
@@ -119,7 +119,7 @@ async function setup(
       if (route.request().method() === "PATCH") {
         const body = route.request().postDataJSON() as Schedule;
         saves.push(body);
-        if (options.conflict && !conflicted) {
+        if (options.conflict === "edit" && !conflicted) {
           conflicted = true;
           const current = tasks.get(id)!;
           tasks.set(id, {
@@ -131,7 +131,7 @@ async function setup(
           });
           return route.fulfill({ status: 409, json: { error: "conflict" } });
         }
-        tasks.set(id, { ...body, revision: body.revision + 1 });
+        tasks.set(id, { ...tasks.get(id)!, ...body, revision: body.revision + 1 });
         return route.fulfill({ json: tasks.get(id) });
       }
       if (route.request().method() === "DELETE") {
@@ -236,7 +236,7 @@ test("weekly and monthly controls retain the draft across resize and guard Escap
     "Monthly · 31 · 16:00",
   );
 });
-test("advanced rules survive name edits and tick-only revision conflicts retry once", async ({
+test("advanced rules survive name edits while ticks preserve the definition revision", async ({
   page,
 }) => {
   const f = await setup(page, { advanced: true, conflict: "tick" });
@@ -254,8 +254,8 @@ test("advanced rules survive name edits and tick-only revision conflicts retry o
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
   await expect(page.locator(".schedule-reading h2")).toHaveText("Renamed task");
-  expect(f.saves).toHaveLength(2);
-  expect(f.saves.map((s) => s.revision)).toEqual([1, 2]);
+  expect(f.saves).toHaveLength(1);
+  expect(f.saves.map((s) => s.revision)).toEqual([1]);
   expect(f.tasks.get("task")?.cron).toBe("*/15 9-17 1,15 * MON-FRI");
 });
 test("configuration conflicts retain edits and require an explicit decision", async ({
@@ -364,7 +364,7 @@ test("manual-only is explicit and a stale preview cannot validate a changed rule
       "Manual only",
     );
     expect(f.saves[0].cron).toBe("");
-    expect(f.saves[0].enabled).toBe(true);
+    expect(f.saves[0].state).toBe("active");
   } finally {
     release();
   }

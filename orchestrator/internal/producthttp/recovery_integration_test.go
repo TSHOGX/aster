@@ -556,7 +556,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	t.Run("Project-deletion-reclaims-all-owned-storage-and-artifacts", func(t *testing.T) {
 		share, token, err := shares.Create(runctx, scope, "beta", []string{"owned-by-project"}, time.Now().Add(time.Hour))
 		must(t, err)
-		_, err = store.CreateSchedule(runctx, scope, product.Schedule{ID: "future", Title: "Future", Prompt: "never after deletion", Cron: "* * * * *", Timezone: "UTC", Enabled: true})
+		_, err = store.CreateSchedule(runctx, scope, product.Schedule{TriggerKind: "cron", ID: "future", Title: "Future", Prompt: "never after deletion", Cron: "* * * * *", Timezone: "UTC", State: "active"})
 		must(t, err)
 		r, err := store.Resources(runctx, scope)
 		must(t, err)

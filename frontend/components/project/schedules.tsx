@@ -1,4 +1,5 @@
 "use client";
+import { scheduleWrite } from "@/lib/schedule-recurrence";
 import {
   useEffect,
   useRef,
@@ -221,7 +222,7 @@ export function Schedules({
     )
       .then((value) => {
         if (!controller.signal.aborted) {
-          if (value.deleted) {
+          if (value.state === "deleted") {
             setDetail({
               key: selectedKey,
               value,
@@ -347,13 +348,13 @@ export function Schedules({
           </p>
           <div className="schedule-filters">
             <div className="row-actions" aria-label={tr("Task status")}>
-              {([undefined, "enabled", "paused"] as const).map((value) => (
+              {([undefined, "active", "paused"] as const).map((value) => (
                 <button
                   key={value || "all"}
                   aria-pressed={nav.scheduleStatus === value}
                   onClick={() => setFilter({ scheduleStatus: value })}
                 >
-                  {value === "enabled"
+                  {value === "active"
                     ? tr("Enabled")
                     : value === "paused"
                       ? tr("Paused")
@@ -440,7 +441,7 @@ export function Schedules({
                     key={s.id}
                     className={`schedule-row ${nav.schedule === s.id ? "selected" : ""}`}
                   >
-                    {s.enabled ? <Clock3 size={19} /> : <Pause size={19} />}
+                    {s.state === "active" ? <Clock3 size={19} /> : <Pause size={19} />}
                     <button
                       className="schedule-description"
                       aria-current={nav.schedule === s.id ? "page" : undefined}
@@ -455,13 +456,13 @@ export function Schedules({
                     >
                       <strong>{s.title}</strong>
                       <small>
-                        {!s.enabled && `${tr("Paused")} · `}
+                        {s.state !== "active" && `${tr("Paused")} · `}
                         <RecurrenceSummary
                           cron={s.cron}
                           timezone={s.timezone}
                         />
                       </small>
-                      {s.enabled && s.cron && s.next_at && (
+                      {s.state === "active" && s.cron && s.next_at && (
                         <small>
                           {tr("Next run")}:{" "}
                           {scheduleTime(s.next_at, s.timezone, locale)}
@@ -544,7 +545,7 @@ export function Schedules({
               <p role="status">{tr("Loading…")}</p>
             ) : selected.error &&
               (!selected.value ||
-                ((selected.value.deleted || selected.unavailable) &&
+                ((selected.value.state === "deleted" || selected.unavailable) &&
                   nav.scheduleMode !== "edit")) ? (
               <div>
                 <button onClick={close}>{tr("Back to tasks")}</button>
@@ -714,12 +715,12 @@ function SelectedSchedule({
       const latest = await api<Schedule>(path);
       const changed = await command<Schedule>(
         path,
-        { ...latest, enabled: !schedule.enabled },
+        scheduleWrite({ ...latest, state: schedule.state === "active" ? "paused" : "active" }, newID()),
         "PATCH",
       );
       onChanged(changed);
       setNotice(
-        changed.enabled
+        changed.state === "active"
           ? tr("Task enabled.")
           : tr("Paused. Already submitted runs are unaffected."),
       );
@@ -734,7 +735,7 @@ function SelectedSchedule({
     )
       void act(async () => {
         await command(
-          `${path}?revision=${schedule.revision}`,
+          `${path}?revision=${schedule.revision}&request_id=${newID()}`,
           undefined,
           "DELETE",
         );
@@ -774,13 +775,13 @@ function SelectedSchedule({
       ) : (
         <div className="schedule-reading">
           <header className="schedule-detail-heading">
-            <span>{schedule.enabled ? tr("Enabled") : tr("Paused")}</span>
+            <span>{schedule.state === "active" ? tr("Enabled") : tr("Paused")}</span>
             <div className="row-actions">
               <button disabled={busy} onClick={onEdit}>
                 {tr("Edit")}
               </button>
               <button disabled={busy} onClick={() => void toggle()}>
-                {schedule.enabled ? tr("Pause") : tr("Resume")}
+                {schedule.state === "active" ? tr("Pause") : tr("Resume")}
               </button>
               <Menu
                 label={tr("Task actions")}
@@ -834,11 +835,11 @@ function SelectedSchedule({
             <UpcomingOccurrences
               cron={schedule.cron}
               timezone={schedule.timezone}
-              enabled={schedule.enabled}
+              enabled={schedule.state === "active"}
               nextAt={schedule.next_at}
             />
             <p>
-              {!schedule.enabled
+              {schedule.state !== "active"
                 ? tr("Paused. Resume to continue on this schedule.")
                 : !schedule.cron
                   ? tr("Runs only when you choose Run now.")
@@ -846,7 +847,7 @@ function SelectedSchedule({
                     ? `${tr("Next run")}: ${scheduleTime(schedule.next_at, schedule.timezone, locale)}`
                     : tr("Upcoming time is unavailable. Reconnecting…")}
             </p>
-            {schedule.enabled &&
+            {schedule.state === "active" &&
               schedule.next_at &&
               Date.parse(schedule.next_at) <= now && (
                 <p>
@@ -874,14 +875,14 @@ function SelectedSchedule({
               className="primary"
               disabled={
                 busy ||
-                (!schedule.enabled && !runRequests.current.has(path)) ||
+                (schedule.state !== "active" && !runRequests.current.has(path)) ||
                 targetError
               }
               onClick={() => void run()}
             >
               {tr("Run now")}
             </button>
-            {!schedule.enabled && (
+            {schedule.state !== "active" && (
               <small>{tr("Resume this task to run it now.")}</small>
             )}
           </footer>
