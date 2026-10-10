@@ -13,6 +13,7 @@ const profiling = [
   "READ_LATENCY_OUTPUT",
   "STARTUP_PROFILE_OUTPUT",
 ].some((name) => process.env[name]);
+const officeTests = ["office-visual.spec.ts", "preview-accessibility.spec.ts"];
 export default defineConfig({
   globalSetup: "./e2e/ui-setup.ts",
   testDir: "./e2e/ui",
@@ -26,7 +27,10 @@ export default defineConfig({
   // so its waiting time overlaps their work. Every test still runs once.
   projects: [
     { name: "idle", testMatch: "realtime-idle.spec.ts" },
-    { name: "ui", testIgnore: "realtime-idle.spec.ts" },
+    // Large corpus rendering and CPU-throttled accessibility cases compete
+    // heavily on a two-core runner. Run one alongside the lighter UI files.
+    { name: "office", testMatch: officeTests, workers: 1 },
+    { name: "ui", testIgnore: ["realtime-idle.spec.ts", ...officeTests] },
   ],
   use: {
     baseURL: "http://127.0.0.1:3107",
