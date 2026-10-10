@@ -42,5 +42,6 @@
     "conversation_shared": true,
     "operator_directed": true,
     "operator_broadcast": true
-  }
+  },
+  "admin_frontend": "http://127.0.0.1:3001"
 }

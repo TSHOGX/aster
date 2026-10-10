@@ -230,7 +230,7 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	engine := engineTLS(t, root, endpoint)
 	engine["store_id"] = identity.StoreID
 	cfg := map[string]any{
-		"version": 1, "listen": "127.0.0.1:18192", "frontend": "http://192.0.2.1:18193", "state_directory": "state",
+		"version": 1, "listen": "127.0.0.1:18192", "frontend": "http://192.0.2.1:18193", "admin_frontend": "http://192.0.2.1:18194", "state_directory": "state",
 		"engine":   engine,
 		"template": map[string]any{"version": "v1", "id": "agent-runtime", "manifest": "manifest.json", "digest": digest},
 		"content":  map[string]any{"agent_config": "content", "shared_assets": "assets"},

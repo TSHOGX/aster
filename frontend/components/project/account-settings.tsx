@@ -1,9 +1,10 @@
 "use client";
+import type { Identity } from "@web/identity";
 
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { api, APIError, command, type Identity } from "@/lib/project-api";
-import type { Accent, ThemeMode } from "@/lib/theme";
+import { api, APIError, command } from "@/lib/project-api";
+import type { Accent, ThemeMode } from "@web/appearance";
 import { useT } from "@/lib/i18n";
 import { IconButton, trapDialogFocus, useDialog } from "./ui";
 import type { AccountAppearance } from "./account-appearance";

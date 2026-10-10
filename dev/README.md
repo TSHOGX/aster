@@ -18,7 +18,7 @@ a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
 target identity. Its deterministic model does not qualify an external provider. `native` isolates real Pi retry, cancellation and post-run/preflight compaction
 settlement using deterministic provider responses. `mixed` runs over five minutes. `browser`
-requires `npm run build` in the frontend and an installed Playwright Chromium.
+requires `scripts/check.sh frontend-build` for both frontends and an installed Playwright Chromium.
 Provide `PLAYWRIGHT_BROWSERS_PATH` when the build user owns the browser cache;
 the isolated substrate runs as root and otherwise searches its own cache.
 `realtime` qualifies empty-workspace watch continuity over two real rotations
@@ -95,7 +95,7 @@ with this metadata; source hashes alone cannot recreate an uncommitted build.
 
 For [candidate qualification](../docs/delivery.md), add `--candidate DIR`.
 The bundle inventory must verify and its commit must match the clean checkout.
-The actual packaged owner and standalone frontend are used; the candidate manifest
+The actual packaged owner and both standalone frontends are used; the candidate manifest
 hash enters `fingerprint.json`. The source checkout still supplies Playwright and
 test/alternate-owner fixtures. A development run without this option does not
 certify a separately built candidate bundle.

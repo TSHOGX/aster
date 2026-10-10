@@ -7,6 +7,7 @@ case "${1:-all}" in
   source)
     python3 scripts/check-public-docs.py
     scripts/check-lockfile-registry.sh
+    scripts/check-lockfile-registry.sh admin-frontend/package-lock.json
     scripts/check-lockfile-registry.sh orchestrator/internal/runtimerelease/package-lock.json
     while IFS= read -r -d '' script; do bash -n "$script"; done < <(git ls-files -z '*.sh')
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
@@ -28,34 +29,37 @@ case "${1:-all}" in
     go -C orchestrator test -mod=readonly -race ./internal/product ./internal/agentrunner ./internal/runtimerelease
     ;;
   frontend-lint)
-    cd frontend
-    npm run lint
+    npm --prefix frontend run lint
+    npm --prefix admin-frontend run lint
     ;;
   frontend-unit)
-    cd frontend
-    npm test
+    npm --prefix frontend test
+    npm --prefix admin-frontend test
     ;;
   frontend-build)
-    cd frontend
-    npm run build
-    # Next suppresses diagnostics in spec/test files. Retain the full check,
-    # reusing its incremental cache and the Office assets just built above.
-    npm run typecheck:built
+    for frontend in frontend admin-frontend; do
+      npm --prefix "$frontend" run build
+      npm --prefix "$frontend" run typecheck:built
+    done
     ;;
   frontend-ui)
-    cd frontend
-    npm run test:ui:built
+    npm --prefix frontend run test:ui:built
+    npm --prefix admin-frontend run test:ui:built
+    ;;
+  frontend-edge)
+    go -C orchestrator test -mod=readonly -tags webintegration ./internal/edge -run TestProductionFrontendBoundary -count=1
     ;;
   frontend)
     "$0" frontend-lint
     "$0" frontend-unit
     "$0" frontend-build
     "$0" frontend-ui
+    "$0" frontend-edge
     ;;
   all)
     "$0" source
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|frontend-edge|all]' >&2; exit 2 ;;
 esac

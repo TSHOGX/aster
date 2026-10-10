@@ -83,6 +83,7 @@ type Config struct {
 	Listen            string                  `json:"listen"`
 	ApplicationSocket string                  `json:"application_socket"`
 	Frontend          string                  `json:"frontend"`
+	AdminFrontend     string                  `json:"admin_frontend"`
 	StateDirectory    string                  `json:"state_directory"`
 	ControlSocket     string                  `json:"control_socket"`
 	Engine            engineconfig.Connection `json:"engine"`
@@ -102,7 +103,7 @@ type Config struct {
 }
 
 func defaults() Config {
-	return Config{Listen: "127.0.0.1:8080", Frontend: "http://127.0.0.1:3000", Content: Content{VolumeBytes: 64 << 20}, Limits: Limits{Projects: 4, Agents: 32, AgentsPerProject: 8, Terminals: 32, TerminalsPerProject: 8, IdleAfter: Duration(5 * time.Minute), IdleAgentAfter: Duration(time.Minute), Interval: Duration(250 * time.Millisecond)}, Notifications: NotificationConfig{ConversationShared: true, OperatorDirected: true, OperatorBroadcast: true}}
+	return Config{Listen: "127.0.0.1:8080", Frontend: "http://127.0.0.1:3000", AdminFrontend: "http://127.0.0.1:3001", Content: Content{VolumeBytes: 64 << 20}, Limits: Limits{Projects: 4, Agents: 32, AgentsPerProject: 8, Terminals: 32, TerminalsPerProject: 8, IdleAfter: Duration(5 * time.Minute), IdleAgentAfter: Duration(time.Minute), Interval: Duration(250 * time.Millisecond)}, Notifications: NotificationConfig{ConversationShared: true, OperatorDirected: true, OperatorBroadcast: true}}
 }
 func LoadConfig(name string) (Config, error) {
 	cfg := defaults()
@@ -180,9 +181,11 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(c.ApplicationSocket) || c.ApplicationSocket == c.ControlSocket {
 		return errors.New("distinct absolute private application and control sockets required")
 	}
-	frontend, err := url.Parse(c.Frontend)
-	if err != nil || frontend.Host == "" || frontend.User != nil || frontend.RawQuery != "" || frontend.Fragment != "" || (frontend.Path != "" && frontend.Path != "/") || (frontend.Scheme != "http" && frontend.Scheme != "https") {
-		return errors.New("frontend must be an HTTP(S) origin")
+	for name, origin := range map[string]string{"frontend": c.Frontend, "admin_frontend": c.AdminFrontend} {
+		frontend, err := url.Parse(origin)
+		if err != nil || frontend.Host == "" || frontend.User != nil || frontend.RawQuery != "" || frontend.Fragment != "" || (frontend.Path != "" && frontend.Path != "/") || (frontend.Scheme != "http" && frontend.Scheme != "https") {
+			return fmt.Errorf("%s must be an HTTP(S) origin", name)
+		}
 	}
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return errors.New("browser TLS certificate and key must be supplied together")
@@ -218,7 +221,7 @@ func (c Config) Validate() error {
 			return errors.New("gateway control socket must differ from owner sockets")
 		}
 
-		for name, origin := range map[string]string{"engine": c.Engine.Endpoint, "frontend": c.Frontend} {
+		for name, origin := range map[string]string{"engine": c.Engine.Endpoint, "frontend": c.Frontend, "admin_frontend": c.AdminFrontend} {
 			if gatewayFloorOrigin(origin) {
 				return fmt.Errorf("%s origin is blocked by Khora's gateway UID network floor; use a non-loopback endpoint", name)
 			}

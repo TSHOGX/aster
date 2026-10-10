@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { displayName, displayInitial } from "../../lib/ui-config";
+import { displayName, displayInitial } from "../../../web/brand";
 import { workspaceFixture } from "./fixture";
 
 test("deployment display name appears on sign-in, navigation and public shares", async ({ page }) => {

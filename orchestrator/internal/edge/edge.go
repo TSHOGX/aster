@@ -27,6 +27,8 @@ type Config struct {
 	ApplicationSocket string
 	// Frontend serves assets and server-rendered pages.
 	Frontend *url.URL
+	// AdminFrontend is the independent application built with /admin basePath.
+	AdminFrontend *url.URL
 	// PageAccount supplies a verified account ID for first-paint appearance only.
 	// Product APIs continue to resolve authority from the session cookie.
 	PageAccount func(*http.Request) (string, error)
@@ -50,10 +52,10 @@ func (c Config) prefixes() []string {
 // cannot address: a half-configured origin would serve the frontend for API
 // paths and look like a mysterious 404 in the browser.
 func New(config Config) (http.Handler, error) {
-	if config.Application == nil || config.Frontend == nil {
-		return nil, errors.New("edge requires both application and frontend upstreams")
+	if config.Application == nil || config.Frontend == nil || config.AdminFrontend == nil {
+		return nil, errors.New("edge requires application, workbench and admin frontend upstreams")
 	}
-	for _, upstream := range []*url.URL{config.Application, config.Frontend} {
+	for _, upstream := range []*url.URL{config.Application, config.Frontend, config.AdminFrontend} {
 		if upstream.Scheme != "http" && upstream.Scheme != "https" {
 			return nil, fmt.Errorf("edge upstream %q needs an http or https scheme", upstream)
 		}
@@ -84,6 +86,7 @@ func New(config Config) (http.Handler, error) {
 	}
 	application := reverseProxy(config.Application, applicationTransport)
 	frontend := reverseProxy(config.Frontend, transport)
+	admin := reverseProxy(config.AdminFrontend, transport)
 	prefixes := config.prefixes()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del(PageAccountHeader)
@@ -93,13 +96,19 @@ func New(config Config) (http.Handler, error) {
 				return
 			}
 		}
-		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		adminPath := r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/")
+		page := r.URL.Path == "/" || adminPath && !strings.HasPrefix(r.URL.Path, "/admin/_next") && r.URL.Path != "/admin/favicon.svg"
+		if page && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			w.Header().Set("Cache-Control", "private, no-store")
 			if config.PageAccount != nil {
 				if account, err := config.PageAccount(r); err == nil && account != "" {
 					r.Header.Set(PageAccountHeader, account)
 				}
 			}
+		}
+		if adminPath {
+			admin.ServeHTTP(w, r)
+			return
 		}
 		frontend.ServeHTTP(w, r)
 	}), nil

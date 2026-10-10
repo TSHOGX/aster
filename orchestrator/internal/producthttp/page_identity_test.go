@@ -28,7 +28,7 @@ func TestPageIdentityComesFromCurrentCookieAndCannotBeForged(t *testing.T) {
 	must(t, err)
 	frontendURL, err := url.Parse(frontend.URL)
 	must(t, err)
-	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL, PageAccount: authentication.Actor})
+	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL, AdminFrontend: frontendURL, PageAccount: authentication.Actor})
 	must(t, err)
 	browser := httptest.NewServer(handler)
 	defer browser.Close()

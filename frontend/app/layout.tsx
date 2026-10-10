@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
-import { themeInitScript } from "@/lib/theme";
+import { themeInitScript } from "@web/appearance";
 import { localeInitScript } from "@/lib/i18n/locale";
-import { displayName } from "@/lib/ui-config";
+import { displayName } from "@web/brand";
 
 export const metadata: Metadata = {
   title: displayName,

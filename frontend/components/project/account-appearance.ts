@@ -5,7 +5,7 @@ import { api, APIError, command } from "@/lib/project-api";
 import {
   applyAppearance, appearanceKey, bindAppearance, cacheAppearance, cachedAppearance,
   DEFAULT_APPEARANCE, type Appearance, type Preferences,
-} from "@/lib/theme";
+} from "@web/appearance";
 
 type State = {
   saved: Preferences;

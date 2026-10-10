@@ -1,5 +1,5 @@
 "use client";
-import { displayName } from "@/lib/ui-config";
+import { displayName } from "@web/brand";
 import { useT } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { api, encode, type Message, type Share } from "@/lib/project-api";

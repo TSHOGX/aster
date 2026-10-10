@@ -1,5 +1,7 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Administration": "管理后台",
+  "Opening administration…": "正在打开管理后台…",
   "Settings": "设置",
   "Close settings": "关闭设置",
   "Appearance": "外观",

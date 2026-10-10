@@ -1,4 +1,5 @@
 "use client";
+import type { Identity } from "@web/identity";
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
@@ -27,7 +28,6 @@ import {
   remember,
   sessionURL,
   type AgentSession,
-  type Identity,
   type Project,
 } from "@/lib/project-api";
 import {
@@ -40,8 +40,9 @@ import {
   type Navigation,
 } from "@/lib/workspace-state";
 import { useT } from "@/lib/i18n";
-import { displayName, displayInitial } from "@/lib/ui-config";
-import { ACTIVE_APPEARANCE_KEY, applyAppearance, DEFAULT_APPEARANCE, clearAppearanceBinding } from "@/lib/theme";
+import { displayName, displayInitial } from "@web/brand";
+import { ACTIVE_APPEARANCE_KEY, applyAppearance, DEFAULT_APPEARANCE, clearAppearanceBinding } from "@web/appearance";
+import { adminReturnPath } from "@web/return-path";
 import { useAccountAppearance } from "./account-appearance";
 import { AccountSettings } from "./account-settings";
 import {
@@ -121,6 +122,9 @@ export function ProjectWorkbench() {
     update(); system.addEventListener("change", update);
     return () => system.removeEventListener("change", update);
   }, [booted, identity]);
+  const adminReturn = identity && !identity.must_change_password
+    ? adminReturnPath(new URLSearchParams(window.location.search).get("return_to"), window.location.origin) : null;
+  useEffect(() => { if (adminReturn) window.location.replace(adminReturn); }, [adminReturn]);
   if (!booted)
     return (
       <main className="project-loading">{tr("Opening your workbench…")}</main>
@@ -205,6 +209,7 @@ export function ProjectWorkbench() {
         </form>
       </main>
     );
+  if (adminReturn) return <main className="project-loading">{tr("Opening administration…")}</main>;
   return (
     <DialogProvider key={identity.id}>
       <ResourceProvider actor={identity.id}>
@@ -826,6 +831,13 @@ function Application({
                 label: tr("Settings"),
                 action: () => setSettingsOpen(true),
               },
+              ...(identity.role === "admin" ? [{
+                label: tr("Administration"),
+                action: () => void (async () => {
+                  // The independent admin build needs a full navigation through the edge.
+                  if (await guard.current()) window.location.assign(new URL("/admin", window.location.origin).href);
+                })(),
+              }] : []),
               {
                 label: tr("Sign out"),
                 action: () =>

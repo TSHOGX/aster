@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { runInNewContext } from "node:vm";
-import { ACTIVE_APPEARANCE_KEY, appearanceKey, cachedAppearance, themeInitScript, validAppearance } from "./theme";
+import { ACTIVE_APPEARANCE_KEY, appearanceKey, cachedAppearance, themeInitScript, validAppearance } from "../../web/appearance";
 
 afterEach(() => vi.unstubAllGlobals());
 it("requires a supported cache bound to the exact immutable account", () => {

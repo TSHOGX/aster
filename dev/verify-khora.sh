@@ -5,10 +5,10 @@ usage() {
  cat <<'HELP'
 Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--suite release|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
-Default suite: release. Browser/combined/all require a frontend production build and Chromium.
+Default suite: release. Browser/combined/all require both frontend production builds and Chromium.
 Combined is opt-in and adds two real browser tabs, network profiles and gated handoff.
 Set PLAYWRIGHT_BROWSERS_PATH when the browser cache is outside the default location.
---candidate verifies and uses the packaged owner/frontend instead of rebuilding them.
+--candidate verifies and uses the packaged owner/frontends instead of rebuilding them.
 All includes release, files, network, mixed, browser, realtime and faults; excludes provider/combined.
 HELP
 }
@@ -35,7 +35,7 @@ if [[ -n $candidate ]]; then
 fi
 if [[ $suite == browser || $suite == combined || $suite == all ]]; then
  command -v node >/dev/null
- [[ -f "$repo/frontend/node_modules/@playwright/test/cli.js" && -f "${candidate:-$repo}/frontend/.next/BUILD_ID" ]] || { echo 'browser qualification requires installed Playwright and a production frontend build' >&2; exit 2; }
+ [[ -f "$repo/frontend/node_modules/@playwright/test/cli.js" && -f "${candidate:-$repo}/frontend/.next/BUILD_ID" && -f "${candidate:-$repo}/admin-frontend/.next/BUILD_ID" ]] || { echo 'browser qualification requires installed Playwright and both production frontend builds' >&2; exit 2; }
 fi
 
 [[ ! -e $output ]] || { echo 'use a new output directory; never mix qualification evidence' >&2; exit 2; }
@@ -94,8 +94,8 @@ def digest(p):
     return h.hexdigest()
 sources = {name: digest(repo / name) for name in files if name and (repo / name).is_file()}
 artifacts = {p.name: digest(p) for p in output.iterdir() if p.is_file() and os.access(p, os.X_OK)}
-build_id = (candidate or repo) / "frontend/.next/BUILD_ID"
-report = {"head": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(), "sources": sources, "artifacts": artifacts, "platform": platform.platform(), "cpu_count": os.cpu_count(), "memory_total_kib": next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemTotal:")), "node": subprocess.check_output(["node", "--version"], text=True).strip() if shutil.which("node") else None, "go": subprocess.check_output(["go", "version"], text=True).strip(), "frontend_build_id": build_id.read_text().strip() if build_id.exists() else None}
+build_ids = {name: (candidate or repo) / name / ".next/BUILD_ID" for name in ("frontend", "admin-frontend")}
+report = {"head": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(), "sources": sources, "artifacts": artifacts, "platform": platform.platform(), "cpu_count": os.cpu_count(), "memory_total_kib": next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemTotal:")), "node": subprocess.check_output(["node", "--version"], text=True).strip() if shutil.which("node") else None, "go": subprocess.check_output(["go", "version"], text=True).strip(), "frontend_build_ids": {name: path.read_text().strip() if path.exists() else None for name, path in build_ids.items()}}
 report["engine_sha256"] = digest(Path(sys.argv[4]))
 report["runtime_manifest_sha256"] = digest(Path(sys.argv[5]))
 report["candidate_manifest_sha256"] = digest(candidate / "candidate.json") if candidate else None

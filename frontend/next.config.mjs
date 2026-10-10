@@ -58,8 +58,9 @@ const securityHeaders = [
 
 const nextConfig = {
   distDir: ".next",
+  turbopack: { root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..") },
   output: "standalone",
-  outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
+  outputFileTracingRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
   reactStrictMode: true,
   // Document contents do not become console retention roots.
   compiler: { removeConsole: { exclude: ["warn", "error"] } },

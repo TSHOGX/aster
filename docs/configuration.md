@@ -11,7 +11,8 @@ tracked example. The example denies guest egress until reachability is declared.
 | Field | Purpose |
 | --- | --- |
 | `listen` | Browser edge address; default `127.0.0.1:8080` |
-| `frontend` | Next.js HTTP(S) origin; default `http://127.0.0.1:3000` |
+| `frontend` | Workbench Next.js HTTP(S) origin; default `http://127.0.0.1:3000` |
+| `admin_frontend` | Independent `/admin` Next.js origin; default `http://127.0.0.1:3001` |
 | `state_directory` | Product database, native captures and frozen-share files |
 | `application_socket`, `control_socket` | Distinct private Unix sockets; default below state directory |
 | `engine` | Explicit endpoint and persistent store ID; HTTPS requires CA and client certificate/key |
@@ -42,7 +43,7 @@ authority over old resources.
 `ca_file`, `client_cert` and `client_key`; ambient proxy configuration is disabled.
 When gateways are enabled, the owner and gateway run as separate processes under
 Khora's dedicated non-engine `--via-uid`: use non-loopback addresses for the engine TLS edge,
-frontend and model upstream because Khora blocks that UID's loopback connections.
+both frontends and model upstream because Khora blocks that UID's loopback connections.
 See the [gateway contract](gateway-contract.md).
 
 A service example inside `project.reachability` is:

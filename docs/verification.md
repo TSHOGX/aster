@@ -11,6 +11,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r frontend/e2e/requirements.txt
 npm --prefix frontend ci
+npm --prefix admin-frontend ci
 npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
 npx --no-install playwright install chromium
@@ -31,7 +32,8 @@ qualification is an explicit separate command.
 | Source | `scripts/check.sh source` | Documentation links/public boundary, lockfile registry, shell syntax and candidate integrity tests |
 | Backend | `scripts/check.sh backend` | Build, vet, all ordinary Go tests, Node RPC handler/full Session tests, compile all `khoraintegration` packages and execute their substrate-independent measurement tests |
 | Core races | `scripts/check.sh race` | Product, Agent runner and runtime release under the Go race detector |
-| Frontend | `scripts/check.sh frontend` | Lint, types, Vitest, one production build and deterministic Chromium UI tests against that build |
+| Frontend | `scripts/check.sh frontend` | Lint, types, Vitest, both production builds, deterministic Chromium UI tests and the real Go edge against those builds |
+| Browser edge | `scripts/check.sh frontend-edge` | Real Go cookie identity and both already-built standalone frontends, deep links and asset base paths; no engine required |
 | Cross-browser controls | `npm --prefix frontend run test:pickers` | Scheduling controls in Chromium, Firefox and WebKit; install those browsers first |
 | Runtime | `dev/verify-khora.sh ... --suite all` | Actual owner, immutable guest image, native Pi, Khora, network/files, browser, faults, realtime and sustained mixed workload |
 | Extended workload | `dev/verify-khora.sh ... --suite combined` | Explicit two-tab workload, network profiles and active-owner update |
@@ -44,8 +46,8 @@ the isolated runtime harness, not a standalone test against an arbitrary URL.
 produced in the same checkout, matching the candidate layout; `test:ui` and
 `test:pickers` build first for direct developer use.
 
-The frontend gate composes `frontend-lint`, `frontend-unit`, `frontend-build`
-and `frontend-ui`; CI calls these same stages separately so their timings and
+The frontend gate composes `frontend-lint`, `frontend-unit`, `frontend-build`,
+`frontend-ui` and `frontend-edge`; CI calls these same stages separately so their timings and
 failures are visible. The production build runs Next's TypeScript check, followed
 by `typecheck:built` using the same incremental cache. This second full check is
 required because Next suppresses diagnostics in spec/test files. It reuses the
@@ -151,3 +153,11 @@ After a separately authorized live activation, record the actual installed
 identities and smoke results. Historical deployment evidence only describes its
 recorded commit. Reset-specific acceptance belongs in [bootstrap](bootstrap.md);
 ordinary current-format updates use [operations](operations.md).
+
+The admin build uses `/admin` as its Next base path. Workbench and admin assets
+are separate; `/administrator` remains a workbench path. Shared appearance,
+branding and identity types live in `web/`, without workbench runtime state.
+Both builds use the repository as their tracing root; the exact standalone
+project subdirectory is packaged, with its own dependencies and static assets.
+The real-edge gate requires Go and the pinned module dependencies in addition to
+Node; CI provisions both toolchains for this gate.

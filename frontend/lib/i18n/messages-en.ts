@@ -1,4 +1,6 @@
 export const EN = {
+  "Administration": "Administration",
+  "Opening administration…": "Opening administration…",
   "Settings": "Settings",
   "Close settings": "Close settings",
   "Appearance": "Appearance",

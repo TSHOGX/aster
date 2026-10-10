@@ -189,9 +189,16 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	frontend.Stderr = log
 	must(t, frontend.Start())
 	defer func() { _ = frontend.Process.Kill(); _ = frontend.Wait() }()
+	admin := exec.CommandContext(runctx, "node", filepath.Join(repo, "admin-frontend/node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", "18194")
+	admin.Dir = filepath.Join(repo, "admin-frontend")
+	admin.Stdout = log
+	admin.Stderr = log
+	must(t, admin.Start())
+	defer func() { _ = admin.Process.Kill(); _ = admin.Wait() }()
+	adminURL, _ := url.Parse("http://127.0.0.1:18194")
 	frontendURL, _ := url.Parse("http://127.0.0.1:18193")
 	appURL, _ := url.Parse(app.URL)
-	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL, PageAccount: authentication.Actor})
+	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL, AdminFrontend: adminURL, PageAccount: authentication.Actor})
 	must(t, err)
 	edgeServer := httptest.NewServer(handler)
 	defer edgeServer.Close()

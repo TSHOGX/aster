@@ -10,7 +10,7 @@ Enterprise deployments can set their own [frontend display name](docs/configurat
 Packages, protocols and operational identifiers use functional, brand-neutral names.
 
 The Go application owns authentication, the product database, HTTP/SSE/WebSocket,
-runtime workers and the browser edge. Next.js serves the workbench and assets.
+runtime workers and the browser edge. Independent Next.js builds serve the workbench and `/admin`, with separate assets.
 Native Pi runs under the Go Agent guardian inside the Project. Khora is the only
 execution backend, accessed through its pinned public SDK and Connect APIs.
 
@@ -19,6 +19,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r frontend/e2e/requirements.txt
 npm --prefix frontend ci
+npm --prefix admin-frontend ci
 npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
 npx --no-install playwright install chromium

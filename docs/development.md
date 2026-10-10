@@ -10,7 +10,7 @@ its database to emulate a product capability.
 Keep code abstractions, packages, protocols, temporary paths and test harness
 identifiers brand-neutral and named for their function. Product names belong in
 documentation and presentation defaults. Frontend components and metadata read
-the shared display-name setting from `frontend/lib/ui-config.ts`; translation
+the shared display-name setting from `web/brand.ts`; translation
 catalogs must not embed the product name.
 
 ```sh
@@ -18,6 +18,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r frontend/e2e/requirements.txt
 npm --prefix frontend ci
+npm --prefix admin-frontend ci
 npm ci --ignore-scripts --prefix orchestrator/internal/runtimerelease
 cd frontend
 npx --no-install playwright install chromium

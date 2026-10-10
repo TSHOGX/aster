@@ -1,0 +1,9 @@
+@import "../../web/appearance.css";
+* { box-sizing: border-box; }
+:root { color-scheme: light; --bg: #f7f7f8; --surface: #fff; --surface-muted: #eeeef0; --foreground: #292a2d; --foreground-muted: #64666b; --border: #d8dae0; --danger: #b91c1c; --success: #047857; }
+[data-theme="dark"] { color-scheme: dark; --bg: #191a1c; --surface: #202123; --surface-muted: #2c2d30; --foreground: #e6edf3; --foreground-muted: #b0b2b8; --border: #45474d; --danger: #fca5a5; --success: #6ee7b7; }
+body { margin: 0; background: var(--bg); color: var(--foreground); font-family: Inter, system-ui, sans-serif; font-size: 16px; }
+main { max-width: 80rem; margin: auto; padding: 2rem; }
+a { color: var(--accent); }
+button,input,select { font: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

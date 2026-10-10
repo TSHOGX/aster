@@ -65,7 +65,7 @@ export function detectLocale(): Locale {
 }
 
 /**
- * Sets `<html lang>` before first paint, mirroring lib/theme.ts's init script.
+ * Sets `<html lang>` before first paint, mirroring web/appearance.ts's init script.
  *
  * The attribute matters beyond tidiness: it is what screen readers use to pick a
  * pronunciation voice, and what the browser's own translate prompt reads. The

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { workspaceFixture } from "./fixture";
-import type { Preferences } from "../../lib/theme";
+import type { Preferences } from "../../../web/appearance";
 
 async function openSettings(page: Page) {
   if ((page.viewportSize()?.width || 1600) < 768)
