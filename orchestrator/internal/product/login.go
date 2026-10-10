@@ -124,7 +124,7 @@ func (s *Store) ChangePassword(ctx context.Context, token, currentPassword, newP
 		return LoginSession{}, "", err
 	}
 	if !setup && (len(currentPassword) > 512 || !auth.VerifyPassword(a.hash, currentPassword)) {
-		return LoginSession{}, "", ErrUnauthorized
+		return LoginSession{}, "", Admission("current_password_invalid", ErrInvalid)
 	}
 	hash, err := auth.HashPassword(newPassword)
 	if err != nil {

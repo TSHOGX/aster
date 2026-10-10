@@ -49,6 +49,10 @@ func (a *Authentication) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/me/password", a.password)
 	mux.HandleFunc("DELETE /api/me/sessions", a.logoutAll)
 	mux.HandleFunc("GET /api/users", a.listUsers)
+	mux.HandleFunc("GET /api/me/preferences", a.preferences)
+	mux.HandleFunc("PATCH /api/me/preferences", a.preferences)
+	mux.HandleFunc("GET /api/me/profile", a.profile)
+	mux.HandleFunc("PATCH /api/me/profile", a.profile)
 	mux.Handle("/", next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (strings.HasPrefix(r.URL.Path, "/api/auth/") || strings.HasPrefix(r.URL.Path, "/api/me/")) && r.Method != "GET" && !a.Config.originAllowed(r) {
@@ -68,6 +72,11 @@ func authFailure(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, product.ErrInvalid) {
+		var admission *product.AdmissionError
+		if errors.As(err, &admission) && admission.Code == "current_password_invalid" {
+			writeJSON(w, 422, map[string]string{"code": "current_password_invalid", "error": "current password is incorrect"})
+			return
+		}
 		writeJSON(w, 422, map[string]string{"code": "password_invalid", "error": "password must contain 12 to 128 characters and at most 512 UTF-8 bytes"})
 		return
 	}

@@ -41,7 +41,9 @@ import {
 } from "@/lib/workspace-state";
 import { useT } from "@/lib/i18n";
 import { displayName, displayInitial } from "@/lib/ui-config";
-import { setTheme } from "@/lib/theme";
+import { ACTIVE_APPEARANCE_KEY, applyAppearance, DEFAULT_APPEARANCE, clearAppearanceBinding } from "@/lib/theme";
+import { useAccountAppearance } from "./account-appearance";
+import { AccountSettings } from "./account-settings";
 import {
   DialogProvider,
   IconButton,
@@ -67,15 +69,24 @@ export function ProjectWorkbench() {
   const [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
     [busy, setBusy] = useState(false);
+  const authGeneration = useRef(0);
+  const acceptIdentity = useCallback((value: Identity | null) => {
+    authGeneration.current++;
+    setIdentity(current => current && value && current.id === value.id && current.revision > value.revision ? current : value);
+    if (value) setError("");
+  }, []);
   useEffect(() => {
     let gone = false;
+    const generation = ++authGeneration.current;
     void api<Identity>("/api/auth/session")
       .then((user) => {
-        if (!gone) setIdentity(user);
+        if (!gone && generation === authGeneration.current) { acceptIdentity(user); if (user.must_change_password) clearAppearanceBinding(); }
       })
       .catch((e) => {
-        if (!gone && !(e instanceof APIError && e.status === 401))
-          setError(String(e));
+        if (!gone && generation === authGeneration.current) {
+          if (e instanceof APIError && e.status === 401) clearAppearanceBinding();
+          else setError(String(e));
+        }
       })
       .finally(() => {
         if (!gone) setBooted(true);
@@ -83,16 +94,33 @@ export function ProjectWorkbench() {
     return () => {
       gone = true;
     };
-  }, []);
+  }, [acceptIdentity]);
   useEffect(() => {
-    const expired = () => {
-      clearPreferenceMemory();
-      setIdentity(null);
-      setError(tr("Your login expired. Sign in again."));
+    let alive = true;
+    const revalidate = () => {
+      const generation = ++authGeneration.current;
+      void api<Identity>("/api/auth/session").then(user => {
+        if (!alive || generation !== authGeneration.current) return;
+        acceptIdentity(user);
+        if (user.must_change_password) clearAppearanceBinding();
+      }).catch(() => {
+        if (!alive || generation !== authGeneration.current) return;
+        clearPreferenceMemory(); clearAppearanceBinding(); acceptIdentity(null);
+        setError(tr("Your login expired. Sign in again."));
+      });
     };
-    window.addEventListener("project-auth-expired", expired);
-    return () => window.removeEventListener("project-auth-expired", expired);
-  }, [tr]);
+    const storage = (event: StorageEvent) => { if (event.key === ACTIVE_APPEARANCE_KEY || event.key === null) revalidate(); };
+    window.addEventListener("project-auth-expired", revalidate);
+    window.addEventListener("storage", storage);
+    return () => { alive = false; window.removeEventListener("project-auth-expired", revalidate); window.removeEventListener("storage", storage); };
+  }, [tr, acceptIdentity]);
+  useEffect(() => {
+    if (!booted || identity && !identity.must_change_password) return;
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => applyAppearance(DEFAULT_APPEARANCE);
+    update(); system.addEventListener("change", update);
+    return () => system.removeEventListener("change", update);
+  }, [booted, identity]);
   if (!booted)
     return (
       <main className="project-loading">{tr("Opening your workbench…")}</main>
@@ -107,7 +135,7 @@ export function ProjectWorkbench() {
             setError("");
             void command<Identity>("/api/auth/login", { username, password })
               .then((user) => {
-                setIdentity(user);
+                acceptIdentity(user);
                 setPassword("");
               })
               .catch((e) => setError(String(e)))
@@ -155,7 +183,7 @@ export function ProjectWorkbench() {
           setBusy(true);
           setError("");
           void command<Identity>("/api/auth/password/setup", { new_password: password })
-            .then((user) => { setIdentity(user); setPassword(""); })
+            .then((user) => { acceptIdentity(user); setPassword(""); })
             .catch((e) => setError(String(e)))
             .finally(() => setBusy(false));
         }}>
@@ -170,7 +198,7 @@ export function ProjectWorkbench() {
           <button type="button" disabled={busy} onClick={() => {
             setBusy(true);
             void command("/api/auth/logout", {})
-              .then(() => { setIdentity(null); setPassword(""); setError(""); })
+              .then(() => { clearAppearanceBinding(); acceptIdentity(null); setPassword(""); setError(""); })
               .catch((e) => setError(String(e)))
               .finally(() => setBusy(false));
           }}>{tr("Sign out")}</button>
@@ -182,9 +210,12 @@ export function ProjectWorkbench() {
       <ResourceProvider actor={identity.id}>
         <Application
           identity={identity}
+          onIdentity={acceptIdentity}
+          onProfile={value => setIdentity(current => current?.id === value.id ? { ...current, ...value } : current)}
           onLogout={() => {
             clearPreferenceMemory();
-            setIdentity(null);
+            clearAppearanceBinding();
+            acceptIdentity(null);
           }}
         />
       </ResourceProvider>
@@ -193,14 +224,20 @@ export function ProjectWorkbench() {
 }
 function Application({
   identity,
+  onIdentity,
+  onProfile,
   onLogout,
 }: {
   identity: Identity;
+  onIdentity: (value: Identity) => void;
+  onProfile: (value: Pick<Identity, "id" | "username" | "display_name" | "revision">) => void;
   onLogout: () => void;
 }) {
   const tr = useT(),
     ask = useDialog(),
     actor = identity.id;
+  const appearance = useAccountAppearance(actor);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [nav, dispatch] = useReducer(
     (_: Navigation, n: Navigation) => n,
     undefined,
@@ -227,6 +264,7 @@ function Application({
     const previous = document.activeElement as HTMLElement;
     sidebar.current?.querySelector<HTMLElement>("a,button")?.focus();
     const keys = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.target instanceof Element && e.target.closest("dialog[open], [role='dialog']")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         setDrawer(false);
@@ -594,6 +632,12 @@ function Application({
     <main
       className={`project-shell ${drawer ? "navigation-open" : ""} ${fullscreen ? "file-fullscreen" : ""}`}
     >
+      {settingsOpen && <AccountSettings identity={identity} appearance={appearance} onIdentity={onIdentity} onProfile={onProfile}
+        onClose={() => setSettingsOpen(false)} onLogoutAll={async () => {
+          if (!await guard.current()) return;
+          await command("/api/me/sessions", undefined, "DELETE");
+          onLogout();
+        }} />}
       {drawer && (
         <button
           className="navigation-backdrop"
@@ -779,13 +823,8 @@ function Application({
             label={tr("Account")}
             items={[
               {
-                label: tr("Theme"),
-                action: () =>
-                  setTheme(
-                    document.documentElement.dataset.theme === "dark"
-                      ? "light"
-                      : "dark",
-                  ),
+                label: tr("Settings"),
+                action: () => setSettingsOpen(true),
               },
               {
                 label: tr("Sign out"),
@@ -801,7 +840,7 @@ function Application({
             ]}
           >
             <Settings2 size={18} />
-            <span>{identity.display_name}</span>
+            <span>{identity.display_name}{Object.keys(appearance.changes).length > 0 && <small className="account-status">{tr("Unsaved appearance")}</small>}</span>
           </Menu>
         </footer>
       </aside>

@@ -213,7 +213,7 @@ test("global schedules, project selection and keyboard account menu", async ({
   await expect(editor).toHaveCount(0);
   await page.getByLabel("Account", { exact: true }).click();
   await expect(
-    page.getByRole("menuitem", { name: "Theme", exact: true }),
+    page.getByRole("menuitem", { name: "Settings", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(
@@ -1401,10 +1401,7 @@ for (const theme of ["light", "dark"] as const)
     page,
   }) => {
     await workspaceFixture(page);
-    await page.addInitScript(
-      (theme) => localStorage.setItem("project-theme", theme),
-      theme,
-    );
+    await page.emulateMedia({ colorScheme: theme === "dark" ? "dark" : "light" });
     await page.goto("/?project=battery&session=analysis");
     const input = page.getByLabel("Message Compare cycle performance", {
         exact: true,

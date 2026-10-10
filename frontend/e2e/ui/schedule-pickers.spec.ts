@@ -230,10 +230,7 @@ for (const variant of [
       page,
     }, info) => {
       await workspaceFixture(page);
-      await page.addInitScript(
-        (theme) => localStorage.setItem("project-theme", theme),
-        variant.theme,
-      );
+      await page.emulateMedia({ colorScheme: variant.theme === "dark" ? "dark" : "light" });
       await page.goto("/?view=schedules&mode=create");
       const zh = variant.locale === "zh-CN";
       await page

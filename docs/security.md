@@ -10,6 +10,13 @@ WebSocket authorization. The browser edge replaces forwarded identity headers an
 preserves Origin. Private API and operator Unix sockets are mode 0600 under
 protected directories. Keep them inaccessible to unrelated host users.
 
+For the workbench document, the edge strips any incoming `X-Project-Account-ID`
+and supplies only the current normal-session account ID for first-paint appearance.
+Anonymous, expired and restricted sessions have no page identity. The marker is
+removed from API, asset and public-share requests. It grants no API authority;
+all product requests continue to authenticate the session cookie. Identity-bearing
+pages are private and non-cacheable.
+
 Account usernames are canonical lowercase labels; immutable random account IDs own
 resources. Permanent sessions last seven days. Password replacement, recovery and
 sign-out-all invalidate previous cookies. Active SSE and terminal connections

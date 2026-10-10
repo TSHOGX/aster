@@ -4,6 +4,11 @@ export async function workspaceFixture(
   page: Page,
   options: { lostFirstReply?: boolean; many?: boolean; projectState?: string } = {},
 ) {
+  // The standalone UI fixture supplies the metadata normally set by the Go edge.
+  await page.setExtraHTTPHeaders({ "X-Project-Account-ID": "researcher" });
+  const identity = { id: "researcher", username: "researcher", display_name: "researcher", status: "active", role: "user", revision: 1, session_revision: 1, must_change_password: false };
+  let preferences = { revision: 1, theme_mode: "system", accent: "neutral" };
+  let signedIn = true;
   const views = new Map<string, ConversationFixture>();
   await page.addInitScript(() => {
     let offline = false;
@@ -216,7 +221,26 @@ export async function workspaceFixture(
         body: JSON.stringify(data),
       });
     if (path === "/api/auth/session")
-      return json({ id: "researcher", username: "researcher", display_name: "researcher", status: "active", role: "user", revision: 1, session_revision: 1, must_change_password: false });
+      return signedIn ? json(identity) : json({ error: "login required" }, 401);
+    if (path === "/api/auth/logout" || path === "/api/me/sessions") { signedIn = false; return route.fulfill({status:204}); }
+    if (path === "/api/me/preferences") {
+      if (method === "PATCH") {
+        if (body?.expected_revision !== preferences.revision) return json({ error: "revision conflict" }, 409);
+        preferences = { revision: preferences.revision + 1, theme_mode: String(body?.theme_mode ?? preferences.theme_mode), accent: String(body?.accent ?? preferences.accent) };
+      }
+      return json(preferences);
+    }
+    if (path === "/api/me/profile") {
+      if (method === "PATCH") {
+        if (body?.expected_revision !== identity.revision) return json({ error: "revision conflict" }, 409);
+        identity.display_name = String(body?.display_name); identity.revision++;
+      }
+      return json({ id: identity.id, username: identity.username, display_name: identity.display_name, revision: identity.revision });
+    }
+    if (path === "/api/me/password") {
+      if (body?.current_password !== "current-password") return json({ error: "current password is incorrect" }, 422);
+      identity.revision++; identity.session_revision++; return json(identity);
+    }
     if (path.endsWith("/events") || path.endsWith("/watch"))
       return route.fulfill({
         contentType: "text/event-stream",

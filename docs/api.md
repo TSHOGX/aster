@@ -12,11 +12,24 @@ and logout. Setup submits `new_password`. Self-change submits `current_password`
 and `new_password`; both password endpoints replace the cookie only after the
 transaction commits. Other devices must sign in again after password changes.
 
+Preferences contain only `revision`, `theme_mode` (`system`, `light`, `dark`) and
+`accent` (`neutral`, `blue`, `green`, `violet`). Before first initialization, GET
+returns revision 0 and system/neutral. PATCH requires `expected_revision` and at
+least one changed appearance field. A simultaneous initializer or stale edit
+returns 409. Profile PATCH requires `expected_revision` and `display_name`
+(1–128 Unicode characters); its read projection contains only ID, username,
+display name and revision. Unknown privilege/resource fields are rejected.
+Restricted password-setup sessions cannot call either settings API. Invalid
+settings and an incorrect current password return 422; an expired login returns
+401. A profile update preserves the current session.
+
 | Scope | Operations |
 | --- | --- |
 | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/session` | Sign in, sign out and inspect current database identity |
 | `POST /api/auth/password/setup` | Exchange a restricted temporary-login session for a permanent password and normal session |
 | `POST /api/me/password`, `DELETE /api/me/sessions` | Change the current password or revoke all account sessions |
+| `GET/PATCH /api/me/preferences` | Revisioned theme mode and accent for the signed-in account |
+| `GET/PATCH /api/me/profile` | Immutable ID/username and revisioned display name |
 | `GET /api/users` | Authenticated sharing directory containing immutable IDs and display labels |
 | `/api/projects` | List and create Projects |
 | `/api/schedules`, `/api/schedules/events` | Owner-scoped schedule overview and metadata invalidation SSE across Projects |

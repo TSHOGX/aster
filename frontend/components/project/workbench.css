@@ -51,8 +51,14 @@
 .project-shell button.primary,
 .project-login button.primary,
 .app-dialog button.primary {
-  background: var(--color-foreground);
-  color: var(--color-surface);
+  background: var(--button-primary);
+  color: var(--button-primary-foreground);
+  transition: none;
+}
+.project-shell button.primary:hover,
+.project-login button.primary:hover,
+.app-dialog button.primary:hover {
+  background: var(--button-primary-hover);
 }
 .project-shell button.danger,
 .action-menu button.danger,

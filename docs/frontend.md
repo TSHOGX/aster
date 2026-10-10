@@ -6,6 +6,27 @@ on navigation, URL parsing, and browser history. Mixed URLs are replaced with
 their canonical form. Project workspace preferences restore only Project views;
 leaving a Project checks unsaved files before releasing its view and subscriptions.
 
+The account menu opens Settings without replacing the selected Project, Session,
+draft or file editor. Its desktop dialog becomes a full-screen mobile panel.
+Appearance supports system/light/dark mode and neutral/blue/green/violet accents;
+semantic status colors retain their meaning. The system mode follows live OS
+changes. Profile and security forms edit the display name, change the password
+or sign out all sessions. Closing with typed passwords or an unsaved display name
+requires a discard decision. Logout uses the existing unsaved-file guard and
+leaves autonomous work running.
+
+Preference/profile writes carry the current server revision. Appearance changes
+preview immediately, with pending, saved or unsaved state. A failed or conflicting
+save retains the changed fields and offers retry/reapply or revert; unrelated
+server changes remain intact. The confirmed preference cache is keyed and bound
+to immutable account identity. The Go edge replaces incoming page-identity metadata
+with the account verified from the current cookie; the server-rendered page uses
+that identity to select the first-paint cache. An expired cookie cannot select a
+previous account's cache. Logout clears the active binding; anonymous/public
+pages use system/neutral defaults. Local tabs synchronize through storage events,
+and a returning visible page refreshes server preferences. Password fields never
+enter browser storage.
+
 Received conversation details use `/?view=shared&conversation=<session-id>`.
 Selection is reflected in browser history. A grant-specific detail read validates
 eligibility before messages or SSE start, independently of list pagination.
@@ -215,10 +236,10 @@ Search, inbox, conversation grants and frozen public sharing remain supported;
 read-only conversation sharing does not grant live Files or PTY access. Browser
 auth expiry returns to sign-in and tears down user-scoped state/connections.
 
-The UI supports browser-selected English/Chinese, light/dark themes, keyboard
+The UI supports browser-selected English/Chinese, system/light/dark themes, keyboard
 menus/dialogs and resizable separators. Narrow screens use navigation and file
 workspaces as drawers/overlays. Branding uses `NEXT_PUBLIC_PROJECT_BRAND_NAME`;
-theme preference uses `project-theme`. Next.js only serves pages/assets: the Go
+appearance preferences belong to the signed-in account. Next.js only serves pages/assets: the Go
 edge retains all HTTP/SSE/WebSocket authority, datastore and runtime ownership.
 
 Run `npm run test:ui` for deterministic Chromium interactions and screenshots

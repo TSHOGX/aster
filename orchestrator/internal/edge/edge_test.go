@@ -242,3 +242,22 @@ func TestEdgeRefusesIncompleteConfigurationAndReportsBadGateway(t *testing.T) {
 		t.Fatal(response.StatusCode)
 	}
 }
+
+func TestEdgeStripsPageIdentityFromAPIRequests(t *testing.T) {
+	application := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, r.Header.Get(PageAccountHeader)) }))
+	defer application.Close()
+	frontend := httptest.NewServer(http.NotFoundHandler())
+	defer frontend.Close()
+	handler, err := New(Config{Application: mustURL(t, application.URL), Frontend: mustURL(t, frontend.URL), PageAccount: func(*http.Request) (string, error) {
+		t.Error("API request resolved page identity")
+		return "verified", nil
+	}})
+	must(t, err)
+	request := httptest.NewRequest("GET", "http://app/api/projects", nil)
+	request.Header.Set(PageAccountHeader, "forged")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Body.String() != "" {
+		t.Fatal("page metadata entered API authority")
+	}
+}

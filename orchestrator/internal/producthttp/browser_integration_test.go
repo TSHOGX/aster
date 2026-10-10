@@ -191,7 +191,7 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	defer func() { _ = frontend.Process.Kill(); _ = frontend.Wait() }()
 	frontendURL, _ := url.Parse("http://127.0.0.1:18193")
 	appURL, _ := url.Parse(app.URL)
-	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL})
+	handler, err := edge.New(edge.Config{Application: appURL, Frontend: frontendURL, PageAccount: authentication.Actor})
 	must(t, err)
 	edgeServer := httptest.NewServer(handler)
 	defer edgeServer.Close()

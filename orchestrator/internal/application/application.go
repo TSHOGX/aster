@@ -172,7 +172,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	app.servers = append(app.servers, app.server(mux))
 	frontendURL, _ := url.Parse(cfg.Frontend)
 	applicationURL, _ := url.Parse("http://project-application")
-	proxy, err := edge.New(edge.Config{Application: applicationURL, ApplicationSocket: cfg.ApplicationSocket, Frontend: frontendURL})
+	proxy, err := edge.New(edge.Config{Application: applicationURL, ApplicationSocket: cfg.ApplicationSocket, Frontend: frontendURL, PageAccount: app.Auth.Actor})
 	if err != nil {
 		return app, err
 	}

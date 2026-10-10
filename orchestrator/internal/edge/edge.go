@@ -27,12 +27,17 @@ type Config struct {
 	ApplicationSocket string
 	// Frontend serves assets and server-rendered pages.
 	Frontend *url.URL
+	// PageAccount supplies a verified account ID for first-paint appearance only.
+	// Product APIs continue to resolve authority from the session cookie.
+	PageAccount func(*http.Request) (string, error)
 	// APIPrefixes are routed to Application. Everything else goes to Frontend.
 	APIPrefixes []string
 	// ResponseHeaderTimeout bounds an upstream's time to first byte. It must not
 	// bound the body, because the event stream and terminal sockets are long-lived.
 	ResponseHeaderTimeout time.Duration
 }
+
+const PageAccountHeader = "X-Project-Account-ID"
 
 func (c Config) prefixes() []string {
 	if len(c.APIPrefixes) > 0 {
@@ -81,10 +86,19 @@ func New(config Config) (http.Handler, error) {
 	frontend := reverseProxy(config.Frontend, transport)
 	prefixes := config.prefixes()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Del(PageAccountHeader)
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(r.URL.Path, prefix) {
 				application.ServeHTTP(w, r)
 				return
+			}
+		}
+		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			w.Header().Set("Cache-Control", "private, no-store")
+			if config.PageAccount != nil {
+				if account, err := config.PageAccount(r); err == nil && account != "" {
+					r.Header.Set(PageAccountHeader, account)
+				}
 			}
 		}
 		frontend.ServeHTTP(w, r)

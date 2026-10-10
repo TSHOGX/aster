@@ -217,6 +217,17 @@ func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
 				t.Fatal("conversation revocation missed five-second bound")
 			}
 			t.Logf("%s revoked SSE and terminal in %s", change, time.Since(started))
+			live, err := h.store.LiveTerminal(ctx, product.Scope{Actor: account.ID, ProjectID: "authenticated-project"}, "shell")
+			must(t, err)
+			if live.State != "running" {
+				t.Fatal("self-service revocation stopped retained work", live.State)
+			}
+			h.backend.mu.Lock()
+			signals := len(h.backend.signals)
+			h.backend.mu.Unlock()
+			if signals != 0 {
+				t.Fatal("self-service revocation signaled the retained process", signals)
+			}
 			if replacement != "" {
 				if _, err = h.store.Login(ctx, replacement); err != nil {
 					t.Fatal("replacement session invalid", err)

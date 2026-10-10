@@ -548,3 +548,25 @@
 .hljs-strong { color: var(--hl-base); font-weight: bold; }
 .hljs-addition { color: var(--hl-addition-fg); background-color: var(--hl-addition-bg); }
 .hljs-deletion { color: var(--hl-deletion-fg); background-color: var(--hl-deletion-bg); }
+
+/* Account-owned accents change interaction colors, never semantic status colors. */
+:root, [data-accent="neutral"] { --accent: #374151; --accent-hover: #111827; --accent-control: #374151; --accent-control-hover: #111827; --accent-control-ink: #fff; --accent-foreground: #fff; }
+[data-accent="blue"] { --accent: #1d4ed8; --accent-hover: #1e40af; --accent-control: #1d4ed8; --accent-control-hover: #1e40af; }
+[data-accent="green"] { --accent: #047857; --accent-hover: #065f46; --accent-control: #047857; --accent-control-hover: #065f46; }
+[data-accent="violet"] { --accent: #6d28d9; --accent-hover: #5b21b6; --accent-control: #6d28d9; --accent-control-hover: #5b21b6; }
+[data-theme="dark"] { --accent: #d1d5db; --accent-hover: #f3f4f6; --accent-control: #d1d5db; --accent-control-hover: #f3f4f6; --accent-control-ink: #111827; --accent-foreground: #111827; }
+[data-theme="dark"][data-accent="blue"] { --accent: #93c5fd; --accent-hover: #bfdbfe; --accent-control: #2563eb; --accent-control-hover: #1d4ed8; --accent-control-ink: #fff; }
+[data-theme="dark"][data-accent="green"] { --accent: #6ee7b7; --accent-hover: #a7f3d0; --accent-control: #047857; --accent-control-hover: #065f46; --accent-control-ink: #fff; }
+[data-theme="dark"][data-accent="violet"] { --accent: #c4b5fd; --accent-hover: #ddd6fe; --accent-control: #7c3aed; --accent-control-hover: #6d28d9; --accent-control-ink: #fff; }
+:root[data-accent] {
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --button-primary: var(--accent-control);
+  --button-primary-hover: var(--accent-control-hover);
+  --button-primary-foreground: var(--accent-control-ink);
+  --button-soft: var(--accent-soft);
+  --button-soft-hover: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  --button-soft-foreground: var(--accent);
+  --selection-bg: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  --selection-ink: var(--foreground);
+  --user-bubble: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}

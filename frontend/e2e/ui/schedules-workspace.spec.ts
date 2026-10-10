@@ -401,10 +401,7 @@ for (const locale of ["en-US", "zh-CN"])
         page,
       }, info) => {
         await setup(page);
-        await page.addInitScript(
-          (theme) => localStorage.setItem("project-theme", theme),
-          theme,
-        );
+        await page.emulateMedia({ colorScheme: theme === "dark" ? "dark" : "light" });
         await page.goto("/?view=schedules&mode=create");
         await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
         const editor = page.locator(".schedule-editor");

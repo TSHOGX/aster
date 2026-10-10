@@ -128,7 +128,10 @@ test("fifty preview, session, fullscreen and theme cycles release owned resource
         page.getByLabel("Enter Full Screen", { exact: true }),
       ).toBeFocused();
       await page.getByRole("button", { name: "Account", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Theme", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+      await page.getByRole("combobox", { name: "Theme mode", exact: true }).selectOption("dark");
+      await expect(page.getByRole("combobox", { name: "Theme mode", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.getByLabel("Close file preview", { exact: true }).click();
       await page
         .getByRole("button", {
