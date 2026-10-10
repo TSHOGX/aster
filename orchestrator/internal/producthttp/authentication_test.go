@@ -169,6 +169,19 @@ func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
 			if response.StatusCode != 200 {
 				t.Fatal(response.StatusCode)
 			}
+			_, err = h.store.CreateSession(ctx, product.Scope{Actor: account.ID, ProjectID: "authenticated-project"}, "observed-conversation", "Observed")
+			must(t, err)
+			conversationRequest, err := http.NewRequest("GET", server.URL+"/api/conversations/observed-conversation/events", nil)
+			must(t, err)
+			conversationRequest.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+			conversationResponse, err := server.Client().Do(conversationRequest)
+			must(t, err)
+			defer conversationResponse.Body.Close()
+			if conversationResponse.StatusCode != 200 {
+				t.Fatal(conversationResponse.StatusCode)
+			}
+			conversationDone := make(chan struct{})
+			go func() { io.Copy(io.Discard, conversationResponse.Body); close(conversationDone) }()
 			streamDone := make(chan struct{})
 			go func() { io.Copy(io.Discard, response.Body); close(streamDone) }()
 			headers := http.Header{"Cookie": {loginCookie + "=" + token}, "Origin": {server.URL}}
@@ -197,6 +210,11 @@ func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
 			case <-streamDone:
 			case <-time.After(time.Until(started.Add(5 * time.Second))):
 				t.Fatal("stream revocation missed five-second bound")
+			}
+			select {
+			case <-conversationDone:
+			case <-time.After(time.Until(started.Add(5 * time.Second))):
+				t.Fatal("conversation revocation missed five-second bound")
 			}
 			t.Logf("%s revoked SSE and terminal in %s", change, time.Since(started))
 			if replacement != "" {

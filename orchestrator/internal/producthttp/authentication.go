@@ -179,3 +179,7 @@ func (a *Authentication) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"users": result})
 }
 func (a *Authentication) GC() { a.attempts.GC(); a.requests.GC() }
+
+func (a *Authentication) IdentityInvalidations() <-chan struct{} {
+	return a.Store.IdentityInvalidations()
+}

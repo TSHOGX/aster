@@ -13,13 +13,18 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/projectfiles"
 )
 
+// Bound an in-flight write and a closing frame below the five-second
+// authority-revocation target, including when a client stops reading.
+const authorityWriteWait = 2 * time.Second
+
 // Authenticator resolves the actor for a request. The composed deployment
-// supplies the existing cookie session lookup; a request with no valid identity
+// supplies the database session lookup; a request with no valid identity
 // yields an empty actor and is refused before any store call.
 type Authenticator interface {
 	Actor(*http.Request) (string, error)
@@ -212,4 +217,11 @@ func int64Param(values map[string][]string, key string) int64 {
 		return 0
 	}
 	return n
+}
+
+func identityInvalidations(auth Authenticator) <-chan struct{} {
+	if source, ok := auth.(interface{ IdentityInvalidations() <-chan struct{} }); ok {
+		return source.IdentityInvalidations()
+	}
+	return nil
 }

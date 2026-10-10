@@ -196,7 +196,7 @@ func (s *Store) resetAccount(ctx context.Context, actor, id, name, password stri
 	if err != nil {
 		return err
 	}
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeIdentity(ctx, func(tx *sql.Tx) error {
 		if !recoverAdmin {
 			if err := requireAdmin(ctx, tx, actor); err != nil {
 				return err
@@ -237,7 +237,7 @@ func (s *Store) ChangeAccountAuthority(ctx context.Context, actor, id, role, sta
 		return Account{}, ErrInvalid
 	}
 	var result Account
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeIdentity(ctx, func(tx *sql.Tx) error {
 		if err := requireAdmin(ctx, tx, actor); err != nil {
 			return err
 		}

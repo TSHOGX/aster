@@ -188,10 +188,11 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
 	closed := func() {
-		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_ = controller.SetWriteDeadline(time.Now().Add(authorityWriteWait))
 		_, _ = io.WriteString(w, "event: closed\ndata: {}\n\n")
 		_ = controller.Flush()
 	}
+	invalidations := identityInvalidations(s.Auth)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	timer := time.NewTimer(25 * time.Second)
@@ -205,12 +206,12 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		frontier, err := s.Store.ConversationFrontier(r.Context(), actor, session)
 		if err != nil {
-			_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_ = controller.SetWriteDeadline(time.Now().Add(authorityWriteWait))
 			_, _ = io.WriteString(w, "event: closed\ndata: {}\n\n")
 			_ = controller.Flush()
 			return
 		}
-		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_ = controller.SetWriteDeadline(time.Now().Add(authorityWriteWait))
 		frame := ": heartbeat\n\n"
 		if frontier != after {
 			frame = fmt.Sprintf("id: %d\nevent: conversation\ndata: {}\n\n", frontier)
@@ -228,6 +229,8 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		case <-timer.C:
 			return
 		case <-ticker.C:
+		case <-invalidations:
+			invalidations = identityInvalidations(s.Auth)
 		}
 		current, err := s.Auth.Actor(r)
 		if err != nil || current != actor {
@@ -351,7 +354,7 @@ func (s *Server) publicFile(w http.ResponseWriter, r *http.Request) {
 		}
 		n, err := file.Read(buffer)
 		if n > 0 {
-			_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_ = controller.SetWriteDeadline(time.Now().Add(authorityWriteWait))
 			if _, e := w.Write(buffer[:n]); e != nil {
 				return
 			}

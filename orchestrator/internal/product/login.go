@@ -135,7 +135,7 @@ func (s *Store) ChangePassword(ctx context.Context, token, currentPassword, newP
 		return LoginSession{}, "", err
 	}
 	var result LoginSession
-	err = s.write(ctx, func(tx *sql.Tx) error {
+	err = s.writeIdentity(ctx, func(tx *sql.Tx) error {
 		active, err := s.readLogin(ctx, tx, token)
 		if err != nil {
 			return err
@@ -169,7 +169,11 @@ func (s *Store) ChangePassword(ctx context.Context, token, currentPassword, newP
 	return result, replacement, nil
 }
 func (s *Store) RevokeLogin(ctx context.Context, token string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	if len(token) != 43 {
+		return nil
+	}
+	revoked := false
+	err := s.write(ctx, func(tx *sql.Tx) error {
 		session, err := s.readLogin(ctx, tx, token)
 		if errors.Is(err, ErrUnauthorized) {
 			return nil
@@ -180,11 +184,16 @@ func (s *Store) RevokeLogin(ctx context.Context, token string) error {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_digest=?`, tokenDigest(token)); err != nil {
 			return err
 		}
+		revoked = true
 		return s.auditAccount(ctx, tx, session.Account.ID, "account.logout", session.Account.ID, session.Account.Revision)
 	})
+	if err == nil && revoked {
+		s.invalidateIdentities()
+	}
+	return err
 }
 func (s *Store) RevokeAllLogins(ctx context.Context, token string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeIdentity(ctx, func(tx *sql.Tx) error {
 		session, err := s.readLogin(ctx, tx, token)
 		if err != nil {
 			return err

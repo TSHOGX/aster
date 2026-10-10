@@ -13,7 +13,8 @@ protected directories. Keep them inaccessible to unrelated host users.
 Account usernames are canonical lowercase labels; immutable random account IDs own
 resources. Permanent sessions last seven days. Password replacement, recovery and
 sign-out-all invalidate previous cookies. Active SSE and terminal connections
-recheck current database identity at least once per second. Single-use temporary
+recheck current database identity when a committed security mutation broadcasts
+invalidation, with a periodic fallback at least once per second. Single-use temporary
 passwords expire after 24 hours and grant only a 15-minute password-setup session.
 Restricted sessions cannot access product data. Credential hashes and session
 secrets are excluded from identity responses and security audit records.
