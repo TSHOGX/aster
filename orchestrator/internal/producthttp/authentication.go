@@ -1,13 +1,10 @@
 package producthttp
 
 import (
-	"crypto/sha256"
-	"fmt"
+	"errors"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"harness-platform/orchestrator/internal/auth"
@@ -16,102 +13,67 @@ import (
 
 const loginCookie = "project_login"
 
-type AuthUser struct {
-	Username     string `json:"username" yaml:"username"`
-	PasswordHash string `json:"-" yaml:"password_hash"`
-	Role         string `json:"role" yaml:"role"`
-}
 type Authentication struct {
-	Store            *product.Store
-	Config           Config
-	DevelopmentActor string
-	mu               sync.RWMutex
-	users            map[string]AuthUser
-	attempts         *auth.RateLimiter
-	requests         *auth.IPRateLimiter
+	Store    *product.Store
+	Config   Config
+	attempts *auth.RateLimiter
+	requests *auth.IPRateLimiter
 }
 
-func NewAuthentication(store *product.Store, config Config, users []AuthUser, developmentActor string) (*Authentication, error) {
-	a := &Authentication{Store: store, Config: config, DevelopmentActor: developmentActor, attempts: auth.NewRateLimiter(5, 15*time.Minute), requests: auth.NewIPRateLimiter(2, 10)}
-	if len(users) == 0 && developmentActor == "" {
-		return nil, fmt.Errorf("credentials or explicit development actor required")
-	}
-	if len(users) > 0 && developmentActor != "" {
-		return nil, fmt.Errorf("credentials and development actor are mutually exclusive")
-	}
-	if err := a.ReplaceUsers(users); err != nil {
-		return nil, err
-	}
-	return a, nil
+func NewAuthentication(store *product.Store, config Config) *Authentication {
+	return &Authentication{Store: store, Config: config, attempts: auth.NewRateLimiter(5, 15*time.Minute), requests: auth.NewIPRateLimiter(2, 10)}
 }
-func (a *Authentication) ReplaceUsers(users []AuthUser) error {
-	updated := map[string]AuthUser{}
-	for _, user := range users {
-		if len(user.Username) < 1 || len(user.Username) > 64 || !auth.ValidPasswordHash(user.PasswordHash) {
-			return fmt.Errorf("valid username and PBKDF2 hash required")
-		}
-		for _, c := range user.Username {
-			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
-				return fmt.Errorf("invalid username")
-			}
-		}
-		if _, exists := updated[user.Username]; exists {
-			return fmt.Errorf("duplicate username")
-		}
-		if user.Role == "" {
-			user.Role = "user"
-		}
-		if user.Role != "user" && user.Role != "admin" {
-			return fmt.Errorf("invalid role")
-		}
-		updated[user.Username] = user
-	}
-	a.mu.Lock()
-	a.users = updated
-	a.mu.Unlock()
-	return nil
-}
-func credentialDigest(hash string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(hash))) }
-func (a *Authentication) Actor(r *http.Request) (string, error) {
-	if a.DevelopmentActor != "" {
-		return a.DevelopmentActor, nil
-	}
+func requestToken(r *http.Request) string {
 	cookie, err := r.Cookie(loginCookie)
 	if err != nil {
-		return "", product.ErrNotFound
+		return ""
 	}
-	actor, digest, err := a.Store.Login(r.Context(), cookie.Value)
+	return cookie.Value
+}
+func (a *Authentication) Actor(r *http.Request) (string, error) {
+	session, err := a.Store.Login(r.Context(), requestToken(r))
 	if err != nil {
 		return "", err
 	}
-	a.mu.RLock()
-	user, exists := a.users[actor]
-	a.mu.RUnlock()
-	if !exists || credentialDigest(user.PasswordHash) != digest {
-		return "", product.ErrNotFound
+	if session.Restricted {
+		return "", product.ErrUnauthorized
 	}
-	return actor, nil
+	return session.Account.ID, nil
 }
 func (a *Authentication) Handler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/auth/logout", a.logout)
 	mux.HandleFunc("GET /api/auth/session", a.session)
+	mux.HandleFunc("POST /api/auth/password/setup", a.password)
+	mux.HandleFunc("POST /api/me/password", a.password)
+	mux.HandleFunc("DELETE /api/me/sessions", a.logoutAll)
 	mux.HandleFunc("GET /api/users", a.listUsers)
 	mux.Handle("/", next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/auth/") && (r.Method != "GET" && !a.Config.originAllowed(r)) {
+		if (strings.HasPrefix(r.URL.Path, "/api/auth/") || strings.HasPrefix(r.URL.Path, "/api/me/")) && r.Method != "GET" && !a.Config.originAllowed(r) {
 			writeError(w, 403, "cross-origin request refused")
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
 }
-func (a *Authentication) login(w http.ResponseWriter, r *http.Request) {
-	if a.DevelopmentActor != "" {
-		a.session(w, r)
+func authFailure(w http.ResponseWriter, err error) {
+	if errors.Is(err, product.ErrUnauthorized) {
+		writeJSON(w, 401, map[string]string{"code": "login_required", "error": "invalid or expired credentials"})
 		return
 	}
+	if errors.Is(err, product.ErrForbidden) {
+		writeJSON(w, 403, map[string]string{"code": "action_denied", "error": "action denied"})
+		return
+	}
+	if errors.Is(err, product.ErrInvalid) {
+		writeJSON(w, 422, map[string]string{"code": "password_invalid", "error": "password must contain 12 to 128 characters and at most 512 UTF-8 bytes"})
+		return
+	}
+	fail(w, err)
+}
+func (a *Authentication) login(w http.ResponseWriter, r *http.Request) {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if a.Config.TrustForwardedHost {
 		ip = r.Header.Get("X-Real-IP")
@@ -127,81 +89,93 @@ func (a *Authentication) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, 16<<10, &body) {
 		return
 	}
-	key := ip + "/" + body.Username
+	key := ip + "/" + strings.ToLower(body.Username)
 	if !a.attempts.Allowed(key) {
 		writeError(w, 429, "too many login attempts")
 		return
 	}
-	a.mu.RLock()
-	user, exists := a.users[body.Username]
-	dummy := ""
-	if !exists {
-		for _, candidate := range a.users {
-			dummy = candidate.PasswordHash
-			break
-		}
-	}
-	a.mu.RUnlock()
-	encoded := user.PasswordHash
-	if !exists {
-		encoded = dummy
-	}
-	valid := auth.VerifyPassword(encoded, body.Password)
-	if !exists || !valid {
+	session, token, err := a.Store.Authenticate(r.Context(), body.Username, body.Password)
+	if err != nil {
 		a.attempts.RecordFailure(key)
-		writeError(w, 401, "invalid credentials")
+		authFailure(w, err)
 		return
 	}
 	a.attempts.RecordSuccess(key)
-	token, err := a.Store.CreateLogin(r.Context(), user.Username, credentialDigest(user.PasswordHash), 7*24*time.Hour)
-	if err != nil {
-		fail(w, err)
-		return
+	a.sessionCookie(w, r, token, session.Restricted)
+	writeJSON(w, 200, session.Account)
+}
+func (a *Authentication) sessionCookie(w http.ResponseWriter, r *http.Request, value string, restricted bool) {
+	age := 7 * 24 * 3600
+	if restricted {
+		age = 15 * 60
 	}
-	a.cookie(w, r, token, 7*24*3600)
-	writeJSON(w, 200, map[string]any{"username": user.Username, "role": user.Role})
+	a.cookie(w, r, value, age)
 }
 func (a *Authentication) cookie(w http.ResponseWriter, r *http.Request, value string, age int) {
 	secure := r.TLS != nil || a.Config.TrustForwardedHost && r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{Name: loginCookie, Value: value, Path: "/", MaxAge: age, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 }
 func (a *Authentication) logout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(loginCookie); err == nil {
-		if err = a.Store.RevokeLogin(r.Context(), cookie.Value); err != nil {
-			fail(w, err)
-			return
-		}
+	if err := a.Store.RevokeLogin(r.Context(), requestToken(r)); err != nil {
+		authFailure(w, err)
+		return
+	}
+	a.cookie(w, r, "", -1)
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *Authentication) logoutAll(w http.ResponseWriter, r *http.Request) {
+	if err := a.Store.RevokeAllLogins(r.Context(), requestToken(r)); err != nil {
+		authFailure(w, err)
+		return
 	}
 	a.cookie(w, r, "", -1)
 	w.WriteHeader(http.StatusNoContent)
 }
 func (a *Authentication) session(w http.ResponseWriter, r *http.Request) {
-	actor, err := a.Actor(r)
+	session, err := a.Store.Login(r.Context(), requestToken(r))
 	if err != nil {
-		writeError(w, 401, "login required")
+		authFailure(w, err)
 		return
 	}
-	a.mu.RLock()
-	user := a.users[actor]
-	a.mu.RUnlock()
-	role := user.Role
-	if role == "" {
-		role = "user"
+	writeJSON(w, 200, session.Account)
+}
+func (a *Authentication) password(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Current string `json:"current_password"`
+		New     string `json:"new_password"`
 	}
-	writeJSON(w, 200, map[string]any{"username": actor, "role": role, "development": a.DevelopmentActor != ""})
+	if !decode(w, r, 4096, &body) {
+		return
+	}
+	session, token, err := a.Store.ChangePassword(r.Context(), requestToken(r), body.Current, body.New, r.URL.Path == "/api/auth/password/setup")
+	if err != nil {
+		authFailure(w, err)
+		return
+	}
+	a.sessionCookie(w, r, token, false)
+	writeJSON(w, 200, session.Account)
 }
 func (a *Authentication) listUsers(w http.ResponseWriter, r *http.Request) {
-	if _, err := a.Actor(r); err != nil {
-		writeError(w, 401, "login required")
+	actor, err := a.Actor(r)
+	if err != nil {
+		authFailure(w, err)
 		return
 	}
-	a.mu.RLock()
-	users := make([]string, 0, len(a.users))
-	for name := range a.users {
-		users = append(users, name)
+	users, err := a.Store.AccountDirectory(r.Context(), actor)
+	if err != nil {
+		authFailure(w, err)
+		return
 	}
-	a.mu.RUnlock()
-	sort.Strings(users)
-	writeJSON(w, 200, map[string]any{"users": users})
+	// Share recipients use immutable IDs; labels are returned separately.
+	type entry struct {
+		ID          string `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+	}
+	result := make([]entry, 0, len(users))
+	for _, u := range users {
+		result = append(result, entry{u.ID, u.Username, u.DisplayName})
+	}
+	writeJSON(w, 200, map[string]any{"users": result})
 }
 func (a *Authentication) GC() { a.attempts.GC(); a.requests.GC() }

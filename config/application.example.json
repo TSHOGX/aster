@@ -20,7 +20,6 @@
     "runtime_bytes": 536870912,
     "reachability": {}
   },
-  "auth": { "users_file": "auth-users.yaml" },
   "content": {
     "agent_config": "agent-config.example",
     "shared_assets": "shared-assets",

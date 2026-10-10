@@ -58,11 +58,38 @@ CREATE TABLE application_release (
  updated_at TEXT NOT NULL DEFAULT ''
 , current_instance TEXT NOT NULL DEFAULT '', activation_instance TEXT NOT NULL DEFAULT '', target_digest TEXT NOT NULL DEFAULT '', finished_digest TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'quiescent' CHECK(mode IN ('quiescent','owner')), compatibility_digest TEXT NOT NULL DEFAULT '', schema_digest TEXT NOT NULL DEFAULT '', gateway_snapshot TEXT NOT NULL DEFAULT '');
 
+CREATE TABLE accounts (
+ id TEXT PRIMARY KEY,
+ username TEXT NOT NULL UNIQUE,
+ display_name TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+ role TEXT NOT NULL CHECK(role IN ('user','admin')),
+ password_hash TEXT NOT NULL,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ session_revision INTEGER NOT NULL DEFAULT 1 CHECK(session_revision>0),
+ must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+ temporary_expires_at TEXT NOT NULL DEFAULT '',
+ temporary_consumed INTEGER NOT NULL DEFAULT 0 CHECK(temporary_consumed IN (0,1)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
 CREATE TABLE auth_sessions (
  token_digest TEXT PRIMARY KEY,
- actor TEXT NOT NULL,
- credential_digest TEXT NOT NULL,
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ session_revision INTEGER NOT NULL,
+ restricted INTEGER NOT NULL CHECK(restricted IN (0,1)),
  expires_at TEXT NOT NULL
+);
+CREATE INDEX auth_sessions_account ON auth_sessions(account_id);
+
+CREATE TABLE account_audit (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ actor_id TEXT NOT NULL,
+ action TEXT NOT NULL,
+ target_id TEXT NOT NULL REFERENCES accounts(id),
+ revision INTEGER NOT NULL,
+ created_at TEXT NOT NULL
 );
 
 CREATE TABLE content_publications (

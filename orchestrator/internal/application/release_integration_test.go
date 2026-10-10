@@ -20,7 +20,6 @@ import (
 	"time"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
-	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 )
@@ -188,9 +187,6 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	digest, err := runtimerelease.Digest(raw)
 	require(t, err)
 	require(t, os.WriteFile(filepath.Join(root, "manifest.json"), raw, 0644))
-	hash, err := auth.HashPasswordWithIterations("isolated-browser-fixture", 1000)
-	require(t, err)
-	require(t, os.WriteFile(filepath.Join(root, "users.yaml"), []byte("users:\n  - username: researcher\n    password_hash: "+hash+"\n    role: admin\n"), 0644))
 	models := `{"providers":{"gateway":{"baseUrl":"http://model.internal:443","api":"anthropic-messages","apiKey":"project-service-token","models":[{"id":"local-model","name":"Local model","reasoning":false,"input":["text"],"contextWindow":8192,"maxTokens":256,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}}}`
 	if os.Getenv("PROJECT_PROVIDER_SOCKET") != "" {
 		raw, _ := json.Marshal(map[string]any{"providers": map[string]any{"gateway": map[string]any{"baseUrl": "http://model.internal:443/v1", "api": "openai-completions", "apiKey": "project-service-token", "models": []any{map[string]any{"id": os.Getenv("PROJECT_PROVIDER_MODEL"), "name": "Qualified provider", "reasoning": false, "input": []string{"text"}, "contextWindow": 32768, "maxTokens": 4096, "compat": map[string]any{"supportsDeveloperRole": false, "maxTokensField": "max_tokens"}, "cost": map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}}}}})
@@ -237,7 +233,7 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		"version": 1, "listen": "127.0.0.1:18192", "frontend": "http://192.0.2.1:18193", "state_directory": "state",
 		"engine":   engine,
 		"template": map[string]any{"id": "agent-runtime", "manifest": "manifest.json", "digest": digest},
-		"auth":     map[string]any{"users_file": "users.yaml"}, "content": map[string]any{"agent_config": "content", "shared_assets": "assets"},
+		"content":  map[string]any{"agent_config": "content", "shared_assets": "assets"},
 		"project":  map[string]any{"cpu_millis": 2000, "memory_bytes": 2 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 128 << 20, "runtime_bytes": 128 << 20, "reachability": map[string]any{"services": []any{map[string]any{"audience": "model", "destination": "10.80.0.1", "port": 443, "gateway": "192.0.2.1:18891"}}, "hosts": map[string]string{"model.internal": "model"}}},
 		"gateways": []any{map[string]any{"audience": "model", "listen": "192.0.2.1:18891", "upstream": "http://192.0.2.1:18890", "api_key_env": "PROJECT_RELEASE_SECRET", "max_requests": 8, "schedule_tools": os.Getenv("PROJECT_RELEASE_SCHEDULE_TOOLS") == "1"}}, "agent_audience": "model",
 		"limits": map[string]any{"idle_after": "10s", "idle_agent_after": "5s", "interval": "100ms"},
@@ -253,6 +249,13 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	candidate := a.cli("release-identity", "--config", a.config)
 	if _, err = os.Stat(filepath.Join(root, "state/product.db")); !os.IsNotExist(err) {
 		t.Fatal("candidate inspection opened application state", err)
+	}
+	bootstrap := exec.CommandContext(ctx, a.binary, "account", "bootstrap", "--config", a.config, "--username", "researcher", "--password-stdin")
+	bootstrap.Stdin = strings.NewReader("isolated-browser-fixture\n")
+	bootstrap.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: a.uid, Gid: a.gid}}
+	bootstrapOutput, err := bootstrap.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v: %s", err, bootstrapOutput)
 	}
 	a.start()
 	current := a.cli("diagnostics", "--socket", filepath.Join(root, "state/control.sock"))["release_identity"]

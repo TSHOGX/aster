@@ -86,11 +86,11 @@ for arbitrary live changes. `publish` prepares content through the running owner
 restart the application to select current publications as new Project defaults.
 Existing Projects keep their original publication IDs.
 
-Credential files contain `users` entries with `username`, `password_hash` and
-`role` (`user` or `admin`). Missing authentication fails startup. Registry reload
-retains the prior valid set on error; changed credentials invalidate existing
-sessions through their saved fingerprint. An explicit `development_actor` is
-mutually exclusive with `users_file` and requires a loopback browser listener.
+Accounts and hashed credentials live in the product database. There is no authentication
+configuration block. Before starting a fresh owner, use the protected offline
+`account bootstrap` command described in [operations](operations.md). An empty
+account database permits no product login. Sessions reference immutable account IDs
+and revocation revisions; password changes and resets revoke earlier sessions.
 
 The `notifications` object controls future Inbox writes independently by source:
 `agent_run_outcome` defaults to `false`, while `conversation_shared`,

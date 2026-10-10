@@ -1,7 +1,0 @@
-# Start an empty private registry, then add users with password input on stdin:
-# orchestrator user add --file /etc/agent-workbench/users.yaml --username researcher --password-stdin
-# An empty registry does not enable open access.
-users: []
-# The CLI writes entries with username, password_hash and role (user/admin).
-# The running owner retains the prior valid registry on reload errors and
-# revokes sessions when a credential fingerprint changes.

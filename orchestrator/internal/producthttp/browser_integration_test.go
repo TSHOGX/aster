@@ -19,7 +19,6 @@ import (
 	"time"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
-	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/sandbox"
@@ -162,10 +161,9 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); workers.Run(workerctx) }()
 	defer func() { stopWorkers(); <-workerDone }()
-	hash, err := auth.HashPasswordWithIterations("isolated-browser-fixture", 1000)
+	_, err = store.BootstrapAccount(runctx, "researcher", "isolated-browser-fixture")
 	must(t, err)
-	authentication, err := NewAuthentication(store, Config{TrustForwardedHost: true}, []AuthUser{{Username: "researcher", PasswordHash: hash}}, "")
-	must(t, err)
+	authentication := NewAuthentication(store, Config{TrustForwardedHost: true})
 	app := httptest.NewServer(authentication.Handler((&Server{Store: store, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Lifecycle: lifecycle, Profile: profile, Auth: authentication, Config: Config{TrustForwardedHost: true}}).Handler()))
 	defer app.Close()
 	log, err := os.Create(filepath.Join(os.Getenv("PROJECT_TEST_BIN_DIR"), "S08-frontend.log"))

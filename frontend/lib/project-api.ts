@@ -174,7 +174,16 @@ export type Projection = {
   revision: number;
   kind: string;
 };
-export type Identity = { username: string; role: string; development: boolean };
+export type Identity = {
+  id: string;
+  username: string;
+  display_name: string;
+  status: "active" | "disabled";
+  role: "user" | "admin";
+  revision: number;
+  session_revision: number;
+  must_change_password: boolean;
+};
 export class APIError extends Error {
   constructor(
     public status: number,

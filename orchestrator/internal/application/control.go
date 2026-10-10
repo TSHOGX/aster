@@ -45,6 +45,20 @@ func listenControl(name string) (net.Listener, error) {
 }
 func (a *Application) controlHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /account/recover-admin", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if !decodeControl(w, r, &body) {
+			return
+		}
+		if err := a.Store.RecoverAdmin(r.Context(), body.Username, body.Password); err != nil {
+			http.Error(w, "account recovery refused", 409)
+			return
+		}
+		writeControl(w, map[string]string{"status": "recovered"})
+	})
 	mux.HandleFunc("GET /network", func(w http.ResponseWriter, r *http.Request) {
 		report, err := a.networkReport(r.Context())
 		if err != nil {

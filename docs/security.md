@@ -5,10 +5,18 @@ workspace files, processes and readable runtime state under guest root. Logical
 Session directories organize history and attribution; they do not isolate hostile
 siblings. Separate Projects provide separate sandbox/resource authorization.
 
-Go owns cookie authentication, credential fingerprints, CSRF Origin checks and
+Go owns cookie authentication, database account/session revisions, CSRF Origin checks and
 WebSocket authorization. The browser edge replaces forwarded identity headers and
 preserves Origin. Private API and operator Unix sockets are mode 0600 under
 protected directories. Keep them inaccessible to unrelated host users.
+
+Account usernames are canonical lowercase labels; immutable random account IDs own
+resources. Permanent sessions last seven days. Password replacement, recovery and
+sign-out-all invalidate previous cookies. Active SSE and terminal connections
+recheck current database identity at least once per second. Single-use temporary
+passwords expire after 24 hours and grant only a 15-minute password-setup session.
+Restricted sessions cannot access product data. Credential hashes and session
+secrets are excluded from identity responses and security audit records.
 
 Every child lookup authorizes its stored Project parent in the same operation.
 A child ID alone conveys no permission. Foreign and missing resources use the same

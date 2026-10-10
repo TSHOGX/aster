@@ -41,19 +41,29 @@ Protect the engine API and its TLS termination independently of browser access.
 The application user needs its state directory and reviewed configuration files,
 not engine database or volume-directory access.
 
-Manage credentials without a second product writer:
+Bootstrap the first administrator while the owner is stopped:
 
 ```sh
-orchestrator user add --file /etc/agent-workbench/users.yaml --username researcher --role user --password-stdin
-orchestrator user password --file /etc/agent-workbench/users.yaml --username researcher --password-stdin
-orchestrator user role --file /etc/agent-workbench/users.yaml --username researcher --role admin
-orchestrator user list --file /etc/agent-workbench/users.yaml
-orchestrator user remove --file /etc/agent-workbench/users.yaml --username researcher
+orchestrator account bootstrap --config /etc/agent-workbench/application.json --username administrator --password-stdin
 ```
 
-Password commands read from stdin, never an argument. Feed input using an
-appropriate secret mechanism. Output lists identity/role, not password hashes.
-Credential edits are atomic and the live owner reloads the registry.
+The exclusive database lock prevents a second writer. Bootstrap refuses an existing
+account database. Passwords contain 12–128 Unicode characters and at most 512 UTF-8
+bytes. Read passwords from stdin through an appropriate secret mechanism; never
+put them in command arguments. Output contains identity fields, never hashes.
+
+Recover an existing administrator through the running owner's mode-0600 socket:
+
+```sh
+orchestrator account recover-admin --socket /var/lib/agent-workbench/control.sock --username administrator --password-stdin
+```
+
+With the owner stopped, replace `--socket PATH` with `--config FILE` for offline
+recovery under the same writer lock. Recovery restores the account's active admin
+role and installs the supplied password as a single-use temporary credential. It
+expires after 24 hours; login issues a 15-minute session that permits only password
+setup, session inspection and logout. Setup installs a permanent password and
+revokes the temporary session. Lost or expired setup sessions require another reset.
 
 Use the protected control socket for live operations:
 

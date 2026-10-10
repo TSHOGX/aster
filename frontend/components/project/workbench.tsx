@@ -147,9 +147,39 @@ export function ProjectWorkbench() {
         </form>
       </main>
     );
+  if (identity.must_change_password)
+    return (
+      <main className="project-login">
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError("");
+          void command<Identity>("/api/auth/password/setup", { new_password: password })
+            .then((user) => { setIdentity(user); setPassword(""); })
+            .catch((e) => setError(String(e)))
+            .finally(() => setBusy(false));
+        }}>
+          <h1>{tr("Set your password")}</h1>
+          <p>{tr("Choose a permanent password with 12 to 128 characters.")}</p>
+          {error && <p className="notice error" role="alert">{error}</p>}
+          <label>{tr("New password")}
+            <input required type="password" autoComplete="new-password" value={password}
+              onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          <button className="primary" disabled={busy}>{tr("Save password")}</button>
+          <button type="button" disabled={busy} onClick={() => {
+            setBusy(true);
+            void command("/api/auth/logout", {})
+              .then(() => { setIdentity(null); setPassword(""); setError(""); })
+              .catch((e) => setError(String(e)))
+              .finally(() => setBusy(false));
+          }}>{tr("Sign out")}</button>
+        </form>
+      </main>
+    );
   return (
-    <DialogProvider key={identity.username}>
-      <ResourceProvider actor={identity.username}>
+    <DialogProvider key={identity.id}>
+      <ResourceProvider actor={identity.id}>
         <Application
           identity={identity}
           onLogout={() => {
@@ -170,7 +200,7 @@ function Application({
 }) {
   const tr = useT(),
     ask = useDialog(),
-    actor = identity.username;
+    actor = identity.id;
   const [nav, dispatch] = useReducer(
     (_: Navigation, n: Navigation) => n,
     undefined,
@@ -771,7 +801,7 @@ function Application({
             ]}
           >
             <Settings2 size={18} />
-            <span>{actor}</span>
+            <span>{identity.display_name}</span>
           </Menu>
         </footer>
       </aside>

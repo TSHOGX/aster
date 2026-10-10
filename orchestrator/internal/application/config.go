@@ -12,10 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	"harness-platform/orchestrator/internal/engineconfig"
 	"harness-platform/orchestrator/internal/product"
-	"harness-platform/orchestrator/internal/producthttp"
 	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/titler"
 )
@@ -40,10 +38,6 @@ type Template struct {
 	ID       string `json:"id"`
 	Manifest string `json:"manifest"`
 	Digest   string `json:"digest"`
-}
-type Authentication struct {
-	UsersFile        string `json:"users_file"`
-	DevelopmentActor string `json:"development_actor"`
 }
 type Content struct {
 	AgentConfig  string `json:"agent_config"`
@@ -92,7 +86,6 @@ type Config struct {
 	Engine            engineconfig.Connection `json:"engine"`
 	Template          Template                `json:"template"`
 	Project           product.Profile         `json:"project"`
-	Auth              Authentication          `json:"auth"`
 	Content           Content                 `json:"content"`
 	Limits            Limits                  `json:"limits"`
 	Notifications     NotificationConfig      `json:"notifications"`
@@ -146,7 +139,6 @@ func LoadConfig(name string) (Config, error) {
 	cfg.StateDirectory = resolve(cfg.StateDirectory)
 	cfg.ApplicationSocket = resolve(cfg.ApplicationSocket)
 	cfg.ControlSocket = resolve(cfg.ControlSocket)
-	cfg.Auth.UsersFile = resolve(cfg.Auth.UsersFile)
 	cfg.Template.Manifest = resolve(cfg.Template.Manifest)
 	cfg.Content.AgentConfig = resolve(cfg.Content.AgentConfig)
 	cfg.Content.SharedAssets = resolve(cfg.Content.SharedAssets)
@@ -212,15 +204,6 @@ func (c Config) Validate() error {
 	if c.Content.VolumeBytes <= 0 {
 		return errors.New("positive content publication capacity required")
 	}
-	if (c.Auth.UsersFile == "") == (c.Auth.DevelopmentActor == "") {
-		return errors.New("choose a credential file or an explicit development actor")
-	}
-	if c.Auth.DevelopmentActor != "" {
-		host, _, _ := net.SplitHostPort(c.Listen)
-		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-			return errors.New("development actor requires a loopback browser listener")
-		}
-	}
 	l := c.Limits
 	if l.Projects < 1 || l.Projects > 128 || l.Agents < 1 || l.Agents > 256 || l.Terminals < 1 || l.Terminals > 256 || l.AgentsPerProject < 1 || l.AgentsPerProject > l.Agents || l.TerminalsPerProject < 1 || l.TerminalsPerProject > l.Terminals || time.Duration(l.IdleAfter) < time.Second || time.Duration(l.IdleAgentAfter) < time.Second || time.Duration(l.Interval) < 50*time.Millisecond || time.Duration(l.Interval) > 10*time.Second {
 		return errors.New("invalid runtime capacity or timing bounds")
@@ -262,41 +245,7 @@ func (c Config) Validate() error {
 	if c.AgentAudience != "" && !audiences[c.AgentAudience] {
 		return errors.New("Agent audience requires its configured gateway")
 	}
-	if c.Auth.UsersFile != "" {
-		if _, err := ReadUsers(c.Auth.UsersFile); err != nil {
-			return err
-		}
-	}
 	return nil
-}
-func ReadUsers(name string) ([]producthttp.AuthUser, error) {
-	file, err := os.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
-		return nil, errors.New("credential registry must be a regular file of at most one MiB")
-	}
-	decoder := yaml.NewDecoder(io.LimitReader(file, 1<<20))
-	decoder.KnownFields(true)
-	var document struct {
-		Users []producthttp.AuthUser `yaml:"users"`
-	}
-	if err = decoder.Decode(&document); err != nil {
-		return nil, err
-	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return nil, errors.New("trailing credential document")
-	}
-	if len(document.Users) > 10000 {
-		return nil, errors.New("credential registry exceeds bound")
-	}
-	return document.Users, nil
 }
 func (c Config) titleGenerator() product.TitleGenerator {
 	if c.Titles.BaseURL == "" || c.Titles.Model == "" {

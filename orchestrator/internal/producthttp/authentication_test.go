@@ -1,13 +1,16 @@
 package producthttp
 
 import (
+	"encoding/json"
+	"github.com/gorilla/websocket"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"harness-platform/orchestrator/internal/auth"
 	"harness-platform/orchestrator/internal/product"
 )
 
@@ -15,10 +18,9 @@ func TestCookieAuthenticationRevocationAndOrigin(t *testing.T) {
 	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "auth.db"))
 	must(t, err)
 	defer store.Close()
-	hash, err := auth.HashPasswordWithIterations("correct", 1000)
+	admin, err := store.BootstrapAccount(ctx, "Alice", "correct-password")
 	must(t, err)
-	authentication, err := NewAuthentication(store, Config{}, []AuthUser{{Username: "alice", PasswordHash: hash}}, "")
-	must(t, err)
+	authentication := NewAuthentication(store, Config{})
 	handler := authentication.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor, err := authentication.Actor(r)
 		if err != nil {
@@ -27,68 +29,180 @@ func TestCookieAuthenticationRevocationAndOrigin(t *testing.T) {
 		}
 		writeJSON(w, 200, map[string]string{"actor": actor})
 	}))
+	request := func(method, path, origin string, body any, cookie *http.Cookie) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		r := httptest.NewRequest(method, "https://app"+path, strings.NewReader(string(raw)))
+		r.Header.Set("Origin", origin)
+		if cookie != nil {
+			r.AddCookie(cookie)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
 	login := func(origin, password string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest("POST", "https://app/api/auth/login", strings.NewReader(`{"username":"alice","password":"`+password+`"}`))
-		request.Header.Set("Origin", origin)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		return response
+		return request("POST", "/api/auth/login", origin, map[string]string{"username": "ALICE", "password": password}, nil)
 	}
 	for _, origin := range []string{"https://foreign", "http://app", "https://app/path", "https://user@app"} {
-		if got := login(origin, "correct"); got.Code != 403 {
+		if got := login(origin, "correct-password"); got.Code != 403 {
 			t.Fatal(origin, got.Code)
 		}
 	}
 	if got := login("https://app", "incorrect"); got.Code != 401 {
 		t.Fatal(got.Code)
 	}
-	result := login("https://app", "correct")
-	if result.Code != 200 {
-		t.Fatal(result.Code, result.Body.String())
-	}
-	cookies := result.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteLaxMode {
-		t.Fatal(cookies)
-	}
-	request := httptest.NewRequest("GET", "https://app/private", nil)
-	request.AddCookie(cookies[0])
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	response := login("https://app", "correct-password")
 	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	cookie := response.Result().Cookies()[0]
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatal(cookie)
+	}
+	response = request("GET", "/private", "https://app", nil, cookie)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), admin.ID) {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	response = request("POST", "/api/me/password", "https://foreign", map[string]string{"current_password": "correct-password", "new_password": "replacement-password"}, cookie)
+	if response.Code != 403 {
 		t.Fatal(response.Code)
 	}
-	changed, err := auth.HashPasswordWithIterations("changed", 1000)
+	response = request("POST", "/api/me/password", "https://app", map[string]string{"current_password": "correct-password", "new_password": "replacement-password"}, cookie)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	replacement := response.Result().Cookies()[0]
+	if got := request("GET", "/private", "https://app", nil, cookie); got.Code != 401 {
+		t.Fatal("old cookie survived", got.Code)
+	}
+	if got := request("GET", "/private", "https://app", nil, replacement); got.Code != 200 {
+		t.Fatal("replacement refused", got.Code)
+	}
+	if got := request("DELETE", "/api/me/sessions", "https://app", nil, replacement); got.Code != 204 {
+		t.Fatal(got.Code)
+	}
+	if got := request("GET", "/private", "https://app", nil, replacement); got.Code != 401 {
+		t.Fatal("sign out all retained cookie")
+	}
+}
+
+func TestRestrictedLoginOnlyAuthorizesSetupSessionAndLogout(t *testing.T) {
+	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "auth.db"))
 	must(t, err)
-	must(t, authentication.ReplaceUsers([]AuthUser{{Username: "alice", PasswordHash: changed}}))
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	defer store.Close()
+	admin, err := store.BootstrapAccount(ctx, "admin", "correct-password")
+	must(t, err)
+	_, password, err := store.CreateAccount(ctx, admin.ID, "user", "User", "user")
+	must(t, err)
+	authentication := NewAuthentication(store, Config{})
+	api := (&Server{Store: store, Auth: authentication}).Handler()
+	handler := authentication.Handler(api)
+	perform := func(method, path string, body any, cookie *http.Cookie) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		r := httptest.NewRequest(method, "https://app"+path, strings.NewReader(string(raw)))
+		if cookie != nil {
+			r.AddCookie(cookie)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	response := perform("POST", "/api/auth/login", map[string]string{"username": "user", "password": password}, nil)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	cookie := response.Result().Cookies()[0]
+	if cookie.MaxAge != 900 {
+		t.Fatal(cookie.MaxAge)
+	}
+	for _, path := range []string{"/api/projects", "/api/users"} {
+		if got := perform("GET", path, nil, cookie); got.Code != 401 {
+			t.Fatal(path, got.Code)
+		}
+	}
+	response = perform("GET", "/api/auth/session", nil, cookie)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"must_change_password":true`) {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	response = perform("POST", "/api/auth/login", map[string]string{"username": "user", "password": password}, nil)
 	if response.Code != 401 {
-		t.Fatal("password rotation retained cookie")
+		t.Fatal("temporary credential reused", response.Code)
 	}
-	result = login("https://app", "changed")
-	if result.Code != 200 {
-		t.Fatal(result.Code)
+	response = perform("POST", "/api/auth/password/setup", map[string]string{"new_password": "permanent-password"}, cookie)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
 	}
-	cookie := result.Result().Cookies()[0]
-	logout := httptest.NewRequest("POST", "https://app/api/auth/logout", nil)
-	logout.Header.Set("Origin", "https://app")
-	logout.AddCookie(cookie)
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, logout)
-	if response.Code != 204 {
-		t.Fatal(response.Code)
-	}
-	request = httptest.NewRequest("GET", "https://app/private", nil)
-	request.AddCookie(cookie)
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	replacement := response.Result().Cookies()[0]
+	response = perform("POST", "/api/auth/password/setup", map[string]string{"new_password": "duplicate-password"}, cookie)
 	if response.Code != 401 {
-		t.Fatal("logout retained cookie")
+		t.Fatal("duplicate setup", response.Code)
 	}
-	if _, err = NewAuthentication(store, Config{}, nil, ""); err == nil {
-		t.Fatal("missing credentials enabled open access")
+	if got := perform("GET", "/api/projects", nil, replacement); got.Code != 200 {
+		t.Fatal(got.Code, got.Body.String())
 	}
-	if _, err = NewAuthentication(store, Config{}, []AuthUser{{Username: "alice", PasswordHash: hash}}, "local"); err == nil {
-		t.Fatal("ambiguous authentication mode")
+}
+
+// The runtime is scripted, but authentication, cookies, SQL, HTTP streaming and
+// WebSocket transport are real. Revocation must end existing browser authority.
+func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
+	for _, change := range []string{"password", "all-sessions"} {
+		t.Run(change, func(t *testing.T) {
+			h := newHarness(t)
+			account, err := h.store.BootstrapAccount(ctx, "owner", "owner-password-before")
+			must(t, err)
+			h.setActor(account.ID)
+			h.terminal(t, "authenticated-project", "shell")
+			_, token, err := h.store.Authenticate(ctx, "owner", "owner-password-before")
+			must(t, err)
+			authentication := NewAuthentication(h.store, Config{})
+			api := &Server{Store: h.store, Terminals: h.terminals, Lifecycle: h.lifecycle, Profile: testProfile(), Auth: authentication}
+			server := httptest.NewServer(authentication.Handler(api.Handler()))
+			defer server.Close()
+			defer api.Close()
+			request, err := http.NewRequest("GET", server.URL+"/api/projects/authenticated-project/resources/events", nil)
+			must(t, err)
+			request.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+			response, err := server.Client().Do(request)
+			must(t, err)
+			defer response.Body.Close()
+			if response.StatusCode != 200 {
+				t.Fatal(response.StatusCode)
+			}
+			streamDone := make(chan struct{})
+			go func() { io.Copy(io.Discard, response.Body); close(streamDone) }()
+			headers := http.Header{"Cookie": {loginCookie + "=" + token}, "Origin": {server.URL}}
+			socket, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/projects/authenticated-project/terminals/shell/attach", headers)
+			must(t, err)
+			defer socket.Close()
+			readText(t, socket, func(frame map[string]any) bool { return frame["kind"] == "status" })
+			started := time.Now()
+			replacement := ""
+			if change == "password" {
+				_, replacement, err = h.store.ChangePassword(ctx, token, "owner-password-before", "owner-password-after", false)
+			} else {
+				err = h.store.RevokeAllLogins(ctx, token)
+			}
+			must(t, err)
+			must(t, socket.SetReadDeadline(started.Add(5*time.Second)))
+			for {
+				if _, _, err = socket.ReadMessage(); err != nil {
+					break
+				}
+			}
+			if time.Since(started) >= 5*time.Second {
+				t.Fatal("terminal revocation missed five-second bound")
+			}
+			select {
+			case <-streamDone:
+			case <-time.After(time.Until(started.Add(5 * time.Second))):
+				t.Fatal("stream revocation missed five-second bound")
+			}
+			t.Logf("%s revoked SSE and terminal in %s", change, time.Since(started))
+			if replacement != "" {
+				if _, err = h.store.Login(ctx, replacement); err != nil {
+					t.Fatal("replacement session invalid", err)
+				}
+			}
+		})
 	}
 }

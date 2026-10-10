@@ -5,11 +5,13 @@ package product
 import "errors"
 
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("stale revision or conflicting intent")
-	ErrDeleting = errors.New("resource is deleting")
-	ErrInvalid  = errors.New("invalid request")
-	ErrBusy     = errors.New("project has admitted activity")
+	ErrUnauthorized = errors.New("login required")
+	ErrForbidden    = errors.New("action denied")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("stale revision or conflicting intent")
+	ErrDeleting     = errors.New("resource is deleting")
+	ErrInvalid      = errors.New("invalid request")
+	ErrBusy         = errors.New("project has admitted activity")
 )
 
 // AdmissionError preserves the machine-readable reason for a rejected control

@@ -216,7 +216,7 @@ export async function workspaceFixture(
         body: JSON.stringify(data),
       });
     if (path === "/api/auth/session")
-      return json({ username: "researcher", role: "user", development: false });
+      return json({ id: "researcher", username: "researcher", display_name: "researcher", status: "active", role: "user", revision: 1, session_revision: 1, must_change_password: false });
     if (path.endsWith("/events") || path.endsWith("/watch"))
       return route.fulfill({
         contentType: "text/event-stream",

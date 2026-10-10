@@ -1,7 +1,7 @@
 # Product database
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-The current fresh lineage has schema version 4. Its exact compiled DDL
+The current fresh lineage has schema version 5. Its exact compiled DDL
 fingerprint is returned by `product.SchemaIdentity`; release manifests must use
 that measured value.
 `product.Open` initializes that schema atomically on a new database

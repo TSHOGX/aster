@@ -148,23 +148,13 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	recovery := &product.AgentRecovery{Store: store, Lifecycle: lifecycle, Backend: backend}
 	retirement := &product.ChildRetirement{Store: store, Lifecycle: lifecycle, Backend: backend, Captures: captures, Shares: shares}
 	app.Workers = &product.Workers{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Captures: captures, Recovery: recovery, Retirement: retirement, Titles: cfg.titleGenerator(), IdleAfter: time.Duration(cfg.Limits.IdleAfter), IdleAgentAfter: time.Duration(cfg.Limits.IdleAgentAfter), Interval: time.Duration(cfg.Limits.Interval), Report: func(kind string, err error) { logger.Warn("application work pending", "scope", kind, "error", err) }}
-	var users []producthttp.AuthUser
-	if cfg.Auth.UsersFile != "" {
-		users, err = ReadUsers(cfg.Auth.UsersFile)
-		if err != nil {
-			return app, err
-		}
-	}
 	transportConfig := producthttp.Config{TrustForwardedHost: true}
 	if cfg.HTTPMetrics {
 		transportConfig.ObserveHTTP = func(o producthttp.HTTPObservation) {
 			logger.Info("http timing", "category", o.Category, "status", o.Status, "bytes", o.Bytes, "duration_ms", o.Duration.Milliseconds())
 		}
 	}
-	app.Auth, err = producthttp.NewAuthentication(store, transportConfig, users, cfg.Auth.DevelopmentActor)
-	if err != nil {
-		return app, err
-	}
+	app.Auth = producthttp.NewAuthentication(store, transportConfig)
 	app.API = &producthttp.Server{Store: store, Lifecycle: lifecycle, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Profile: profile, Auth: app.Auth, Config: transportConfig}
 	api := app.API.Handler()
 	mux := http.NewServeMux()
@@ -235,7 +225,7 @@ func (a *Application) Run(ctx context.Context) error {
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.Workers.Run(a.ctx) }()
 	a.group.Add(1)
-	go func() { defer a.group.Done(); a.watchCredentials() }()
+	go func() { defer a.group.Done(); a.collectAuthenticationLimits() }()
 	a.group.Add(1)
 	go func() { defer a.group.Done(); a.watchNetworkPolicy() }()
 	failures := make(chan error, len(a.servers))
@@ -312,31 +302,15 @@ func (a *Application) retireAfterActivation() {
 	})
 }
 
-func (a *Application) watchCredentials() {
+func (a *Application) collectAuthenticationLimits() {
 	timer := time.NewTicker(2 * time.Second)
 	defer timer.Stop()
-	lastError := ""
 	for {
 		select {
 		case <-a.ctx.Done():
 			return
 		case <-timer.C:
-		}
-		a.Auth.GC()
-		if a.Config.Auth.UsersFile == "" {
-			continue
-		}
-		users, err := ReadUsers(a.Config.Auth.UsersFile)
-		if err == nil {
-			err = a.Auth.ReplaceUsers(users)
-		}
-		if err != nil {
-			if err.Error() != lastError {
-				a.logger.Warn("credential reload refused; previous valid registry retained", "error", err)
-				lastError = err.Error()
-			}
-		} else {
-			lastError = ""
+			a.Auth.GC()
 		}
 	}
 }

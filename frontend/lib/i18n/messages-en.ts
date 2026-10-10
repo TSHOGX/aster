@@ -1,4 +1,8 @@
 export const EN = {
+  "Set your password": "Set your password",
+  "Choose a permanent password with 12 to 128 characters.": "Choose a permanent password with 12 to 128 characters.",
+  "New password": "New password",
+  "Save password": "Save password",
   "Latest result": "Latest result",
   "Scheduled task": "Scheduled task",
   "Handled": "Handled",

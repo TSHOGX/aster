@@ -30,7 +30,6 @@ func configurationFixture(t *testing.T) (Config, string) {
 	cfg.Template = Template{ID: "test", Manifest: "runtime.json", Digest: digest}
 	cfg.Engine.Endpoint = "http://127.0.0.1:18191"
 	cfg.Engine.StoreID = "store"
-	cfg.Auth.DevelopmentActor = "local"
 	cfg.Project = product.Profile{CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}
 	return cfg, filepath.Join(directory, "application.json")
 }
@@ -56,8 +55,8 @@ func TestConfigurationHasOneStrictProjectSurface(t *testing.T) {
 		t.Fatal("retired driver-plan configuration accepted")
 	}
 }
-func TestConfigurationRefusesImplicitAuthAndUserSelectedBindings(t *testing.T) {
-	for _, change := range []func(*Config){func(c *Config) { c.Auth.DevelopmentActor = "" }, func(c *Config) { c.Listen = "0.0.0.0:8080" }, func(c *Config) { c.Project.StoreID = "another" }, func(c *Config) { c.Project.TemplateID = "another" }, func(c *Config) { c.Limits.AgentsPerProject = 1000 }} {
+func TestConfigurationRefusesUserSelectedBindings(t *testing.T) {
+	for _, change := range []func(*Config){func(c *Config) { c.Project.StoreID = "another" }, func(c *Config) { c.Project.TemplateID = "another" }, func(c *Config) { c.Limits.AgentsPerProject = 1000 }} {
 		cfg, path := configurationFixture(t)
 		change(&cfg)
 		raw, _ := json.Marshal(cfg)
@@ -171,6 +170,23 @@ func TestNotificationConfigurationRejectsUnknownFieldsAndNonBooleans(t *testing.
 		}
 		if _, err = LoadConfig(path); err == nil {
 			t.Fatal("invalid notification configuration accepted", setting)
+		}
+	}
+}
+
+func TestConfigurationRejectsRetiredAuthentication(t *testing.T) {
+	for _, old := range []string{`{"users_file":"users.yaml"}`, `{"development_actor":"local"}`} {
+		cfg, path := configurationFixture(t)
+		raw, _ := json.Marshal(cfg)
+		var document map[string]any
+		json.Unmarshal(raw, &document)
+		document["auth"] = json.RawMessage(old)
+		raw, _ = json.Marshal(document)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatal("retired authentication accepted")
 		}
 	}
 }

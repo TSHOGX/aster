@@ -1,5 +1,9 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Set your password": "设置密码",
+  "Choose a permanent password with 12 to 128 characters.": "请设置包含 12 至 128 个字符的长期密码。",
+  "New password": "新密码",
+  "Save password": "保存密码",
   "Latest result": "最近结果",
   "Scheduled task": "定时任务",
   "Handled": "已处理",

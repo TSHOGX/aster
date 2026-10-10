@@ -63,12 +63,16 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 // status maps application errors onto HTTP without inventing detail. A missing,
-// foreign and unauthorized resource are all 404: a client must not be able to
+// foreign resource are both 404: a client must not be able to
 // probe for the existence of another Project's children.
 func status(err error) (int, string) {
 	switch {
 	case err == nil:
 		return http.StatusOK, ""
+	case errors.Is(err, product.ErrUnauthorized):
+		return http.StatusUnauthorized, "login required"
+	case errors.Is(err, product.ErrForbidden):
+		return http.StatusForbidden, "action denied"
 	case errors.Is(err, product.ErrNotFound):
 		return http.StatusNotFound, "not found"
 	case errors.Is(err, product.ErrInvalid):
