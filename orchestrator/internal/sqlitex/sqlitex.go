@@ -16,7 +16,7 @@ import (
 func init() {
 	// SQLite's built-in lower() handles ASCII only. User-facing title filters
 	// need the same Unicode lowercase operation on the stored title and query.
-	if err := sqlite.RegisterDeterministicScalarFunction("batterygpt_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	if err := sqlite.RegisterDeterministicScalarFunction("unicode_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		value, _ := args[0].(string)
 		return strings.ToLower(value), nil
 	}); err != nil {

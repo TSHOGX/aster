@@ -92,7 +92,7 @@ func (e *engineFixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func createRequest() sandbox.CreateRequest {
-	return sandbox.CreateRequest{IdempotencyKey: "stable-key", TemplateID: "battery-template", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30, Mounts: []sandbox.Mount{{VolumeID: "workspace", Destination: "/workspace", Access: "exclusive"}}}
+	return sandbox.CreateRequest{IdempotencyKey: "stable-key", TemplateID: "runtime-template", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30, Mounts: []sandbox.Mount{{VolumeID: "workspace", Destination: "/workspace", Access: "exclusive"}}}
 }
 
 func TestCreateInspectsBindingAndPreservesDurableKeyAfterLostResponse(t *testing.T) {

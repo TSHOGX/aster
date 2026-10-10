@@ -102,7 +102,7 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, r p
 			o.VolumeID = resources.WorkspaceVolume
 			o.Reference = sandbox.ProcessReference{StoreID: resources.Reference.StoreID}
 			if r.Operation == "write" {
-				o.StagingPath = path.Join(path.Dir(r.Path), ".batterygpt-upload-"+uuid.NewString())
+				o.StagingPath = path.Join(path.Dir(r.Path), ".workspace-upload-"+uuid.NewString())
 			}
 			kind = "files"
 		}

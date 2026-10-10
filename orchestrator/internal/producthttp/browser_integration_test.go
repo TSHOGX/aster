@@ -144,7 +144,7 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	defer store.Close()
 	profile := testProfile()
 	profile.StoreID = identity.StoreID
-	profile.TemplateID = "battery"
+	profile.TemplateID = "agent-runtime"
 	profile.DiskBytes = 256 << 20
 	lifecycle := &product.Lifecycle{Store: store, Backend: fixture, MaxProjects: 4}
 	agents := product.NewAgents(runctx, store, lifecycle, backend, profile, 8)

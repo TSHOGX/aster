@@ -1,19 +1,30 @@
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!--
-    BatteryGPT mark — a cell whose interior is a charge/discharge trace.
-    Mirrors components/ui/wordmark.tsx (LogoMark) so the tab icon and the in-app
-    logo are the same drawing; the trace is reduced to three strokes here because
-    the in-app version's finer zig-zag turns to mud at 16px.
-
-    Indigo (--accent) on a transparent ground, which holds up against both light
-    and dark browser chrome. A favicon cannot follow the in-app theme, so the
-    accent is used rather than a foreground color that would need to invert.
-  -->
-  <rect x="48" y="128" width="342" height="256" rx="64"
-        fill="none" stroke="#6366f1" stroke-width="38" />
-  <path d="M448 218 L448 294"
-        stroke="#6366f1" stroke-width="38" stroke-linecap="round" />
-  <path d="M120 300 L176 220 L232 288 L288 196"
-        fill="none" stroke="#6366f1" stroke-width="38"
-        stroke-linecap="round" stroke-linejoin="round" />
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mark-fill" x1="12" y1="12" x2="52" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7357ff" />
+      <stop offset=".5" stop-color="#5035ff" />
+      <stop offset="1" stop-color="#8b72ff" />
+    </linearGradient>
+  </defs>
+  <style>
+    .tile { fill: #fff; }
+    .mark { fill: url(#mark-fill); }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #24242c; }
+      .mark { fill: #fff; }
+    }
+  </style>
+  <rect class="tile" width="64" height="64" rx="16" />
+  <path class="mark" fill-rule="evenodd" d="
+    M35 6
+    C33 22 43 28 58 30
+    C43 34 36 43 32 58
+    C30 43 21 37 6 34
+    C21 31 29 20 35 6Z
+    M34 20
+    C33 28 39 31 47 32
+    C39 34 35 39 32 47
+    C31 39 27 35 19 34
+    C27 32 31 27 34 20Z
+  " />
 </svg>

@@ -103,7 +103,7 @@ report["candidate_manifest_sha256"] = digest(candidate / "candidate.json") if ca
 PYMETA
 # Real-provider work is opt-in and never included in the default/all suites.
 if [[ $suite == provider ]]; then
- provider_dir=$(mktemp -d /tmp/batterygpt-provider.XXXXXX)
+ provider_dir=$(mktemp -d /tmp/provider-config.XXXXXX)
  provider_pid=
  cleanup_provider() {
   if [[ -n $provider_pid ]]; then kill -TERM "$provider_pid" 2>/dev/null || true; wait "$provider_pid" || true; fi

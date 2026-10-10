@@ -1,5 +1,5 @@
 {
-  "name": "batterygpt-native-session-tests",
+  "name": "native-session-tests",
   "private": true,
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.77.0",

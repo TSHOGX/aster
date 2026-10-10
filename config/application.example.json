@@ -8,8 +8,8 @@
     "store_id": "REPLACE_WITH_ENGINE_STORE_ID"
   },
   "template": {
-    "id": "battery",
-    "manifest": "../releases/battery.manifest.json",
+    "id": "agent-runtime",
+    "manifest": "../releases/agent-runtime.manifest.json",
     "digest": "REPLACE_WITH_RUNTIME_RELEASE_DIGEST"
   },
   "project": {

@@ -9,7 +9,7 @@ SQLite database.
 go build -o bin/orchestrator ./cmd/orchestrator
 go test -race ./...
 go vet ./...
-bin/orchestrator serve --config /etc/batterygpt/application.json
+bin/orchestrator serve --config /etc/agent-workbench/application.json
 ```
 
 Guest commands are `agent-runner`, `workspace-files`, `runtime-cleanup` and

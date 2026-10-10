@@ -44,6 +44,8 @@ jobs:
           KHORA_READ_TOKEN: ${{ secrets.KHORA_READ_TOKEN }}
         run: scripts/fetch-go-dependencies.sh
       - name: Build and verify standalone candidate
+        env:
+          NEXT_PUBLIC_PROJECT_BRAND_NAME: ${{ vars.NEXT_PUBLIC_PROJECT_BRAND_NAME }}
         run: |
           python3 scripts/candidate.py build "$RUNNER_TEMP/candidate"
           python3 scripts/candidate.py verify "$RUNNER_TEMP/candidate"

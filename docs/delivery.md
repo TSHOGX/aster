@@ -23,7 +23,9 @@ builds Next standalone output and static/public assets, and compiles the host
 inputs and stale frontend output cannot enter through the working directory.
 The build intentionally runs dependency install/build hooks; use reviewed source.
 `NEXT_PUBLIC_PROJECT_BRAND_NAME` is an explicit public build input recorded in
-the manifest. Do not pass credentials as public build variables.
+the manifest. It defaults to Aster; see [display-name configuration](configuration.md#frontend-display-name).
+The release workflow forwards the repository variable of the same name.
+Do not pass credentials as public build variables.
 
 The bundle contains `bin/`, `frontend/` and `candidate.json`. The manifest binds
 source commit, platform, tool versions, dependency lock hashes, frontend build ID
@@ -56,7 +58,7 @@ Prepare the pinned Khora engine and a new immutable guest template according to
 checkout and qualify with a new evidence directory:
 
 ```sh
-dev/verify-khora.sh --candidate /srv/candidates/new-candidate --template /srv/build/battery --manifest /srv/build/battery.manifest.json --output /srv/qualification/new-candidate --suite all
+dev/verify-khora.sh --candidate /srv/candidates/new-candidate --template /srv/build/agent-runtime --manifest /srv/build/agent-runtime.manifest.json --output /srv/qualification/new-candidate --suite all
 ```
 
 The harness uses the candidate's actual owner and standalone frontend, records
@@ -73,7 +75,7 @@ when omitted. Private qualification outputs stay outside CI/public artifacts.
 2. Verify the staged bundle, then inspect it against the reviewed target config:
 
    ```sh
-   python3 scripts/candidate.py inspect /srv/candidates/new-candidate --config /etc/batterygpt/application.json
+   python3 scripts/candidate.py inspect /srv/candidates/new-candidate --config /etc/agent-workbench/application.json
    ```
 
    This runs `release-identity` after inventory verification. It does not open

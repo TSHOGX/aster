@@ -89,7 +89,7 @@ if (
   "document" in globalThis &&
   process.env.NEXT_PUBLIC_INTERACTION_METRICS === "1"
 ) {
-  Object.defineProperty(globalThis, "batteryPreviewUsage", {
+  Object.defineProperty(globalThis, "previewResourceUsage", {
     value: previewUsage,
     configurable: true,
   });

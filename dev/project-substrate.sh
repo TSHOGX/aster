@@ -7,8 +7,8 @@ if [[ ${1:-} == --inner ]]; then
  base=$PROJECT_TEST_BASE
  [[ $EUID == 0 && $base == /tmp/project-khora-runtime.* ]] || exit 2
  [[ $(readlink /proc/self/ns/mnt) != "$PROJECT_TEST_HOST_NS" ]] || exit 2
- mount --bind "$PROJECT_TEST_TEMPLATE" "$base/templates/battery"
- mount -o remount,bind,ro "$base/templates/battery"
+ mount --bind "$PROJECT_TEST_TEMPLATE" "$base/templates/agent-runtime"
+ mount -o remount,bind,ro "$base/templates/agent-runtime"
 
  mount -t tmpfs tmpfs /run
  ip link set lo up
@@ -55,7 +55,7 @@ cleanup() {
  python3 -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' "$base"
 }
 trap cleanup EXIT
-mkdir -p "$PROJECT_TEST_CGROUP" "$base/fs" "$base/tmp" "$base/templates/battery"
+mkdir -p "$PROJECT_TEST_CGROUP" "$base/fs" "$base/tmp" "$base/templates/agent-runtime"
 chmod 1777 "$base/tmp"
 truncate -s 16G "$base/disk.img"
 mkfs.btrfs -f -O squota "$base/disk.img" >/dev/null

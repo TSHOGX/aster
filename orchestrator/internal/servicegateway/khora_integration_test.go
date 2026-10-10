@@ -167,7 +167,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	must(t, err)
 	synthetic := netip.MustParseAddr("10.80.0.1")
 	profile := product.Profile{
-		StoreID: identity.StoreID, TemplateID: "battery",
+		StoreID: identity.StoreID, TemplateID: "agent-runtime",
 		CPUMillis: 2000, MemoryBytes: 2 << 30, DiskBytes: 256 << 20,
 		WorkspaceBytes: 64 << 20, RuntimeBytes: 64 << 20,
 		Reachability: product.Reachability{

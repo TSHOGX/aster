@@ -23,7 +23,7 @@ const outputs = await Promise.all(formats.map(async format => {
 }));
 // Report a failed bootstrap before the engine can install its message listener.
 // Only a fixed failure code crosses the boundary, never exception or file text.
-const bootstrap = `(function(){var channel='battery-office-visual-v2',token=location.hash.slice(1);window.officeLoadFailed=function(){parent.postMessage({channel:channel,token:token,kind:'failed',reason:'viewer_load_failed'},'*')};window.addEventListener('error',window.officeLoadFailed);parent.postMessage({channel:channel,token:token,kind:'shell-ready'},'*')})()`;
+const bootstrap = `(function(){var channel='office-visual-v2',token=location.hash.slice(1);window.officeLoadFailed=function(){parent.postMessage({channel:channel,token:token,kind:'failed',reason:'viewer_load_failed'},'*')};window.addEventListener('error',window.officeLoadFailed);parent.postMessage({channel:channel,token:token,kind:'shell-ready'},'*')})()`;
 const pages = formats.map(format => ({ name: `${format}.html`, content:
   `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><link rel="stylesheet" href="./${format}.css"><title>Office preview</title><script>${bootstrap}</script></head><body><nav id="navigation" hidden></nav><div id="content" tabindex="-1" data-preview-focus="content" class="office-frame-content"><div id="stage"></div></div><script defer crossorigin="anonymous" src="./${format}.js" onerror="officeLoadFailed()"></script></body></html>` }));
 const hash = createHash('sha256');

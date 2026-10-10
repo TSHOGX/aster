@@ -1,9 +1,13 @@
-# BatteryGPT
+# Aster
 
-BatteryGPT is a Project workbench for concurrent Agent conversations, retained
+Aster is a Project workbench for concurrent Agent conversations, retained
 Terminals and shared workspace files. A Project owns one Khora sandbox, one
 workspace volume and one runtime volume. Sessions and Terminals are independent
 children of that Project. Closing a browser view leaves its work running.
+
+Source: [TSHOGX/aster](https://github.com/TSHOGX/aster).
+Enterprise deployments can set their own [frontend display name](docs/configuration.md#frontend-display-name).
+Packages, protocols and operational identifiers use functional, brand-neutral names.
 
 The Go application owns authentication, the product database, HTTP/SSE/WebSocket,
 runtime workers and the browser edge. Next.js serves the workbench and assets.

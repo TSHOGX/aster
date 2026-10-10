@@ -107,6 +107,37 @@ product Store or engine connection. Its mode-0600 operator socket is
 second gateway lifetime, including directory aliases. Never unlink the lock file.
 Keep gateway supervision independent of owner/frontend restart policies.
 
+## Frontend display name
+
+The default display name is **Aster**. Set `NEXT_PUBLIC_PROJECT_BRAND_NAME` when
+building the frontend to use your organization's name:
+
+```sh
+NEXT_PUBLIC_PROJECT_BRAND_NAME='Example Research' npm --prefix frontend run build
+```
+
+The same value appears on the sign-in page, desktop and mobile navigation,
+public shares, browser title and application metadata. The sign-in and navigation
+badges use its first character. Surrounding whitespace is removed; an unset,
+empty or whitespace-only value uses the default. The bundled favicon is a static
+asset at `frontend/public/favicon.svg` and can be replaced for a deployment.
+
+This is a public **build-time** setting, not a field in the Go application JSON.
+Changing it requires rebuilding and deploying the frontend; restarting an existing
+build with a different environment value does not change its display name.
+For development, set it before `npm --prefix frontend run dev` or in
+`frontend/.env.local`. For immutable candidates, pass it to
+`python3 scripts/candidate.py build /srv/candidates/new-candidate`; the builder
+records the public build input in the candidate manifest and excludes local env files.
+The release workflow also accepts the `NEXT_PUBLIC_PROJECT_BRAND_NAME` repository
+variable. Never put credentials in public frontend settings.
+
+Product branding does not change package names, API routes, database schemas or
+operational identities. Documentation uses `/etc/agent-workbench`,
+`/var/lib/agent-workbench` and the example template ID `agent-runtime`.
+Existing installations must keep their actual configured paths and template IDs;
+these example names do not require moving data or rebinding existing Projects.
+
 ## Mutable network defaults
 
 The running owner checks its original configuration file every two seconds. Only

@@ -40,7 +40,7 @@ import {
   type Navigation,
 } from "@/lib/workspace-state";
 import { useT } from "@/lib/i18n";
-import { brandName } from "@/lib/ui-config";
+import { displayName, displayInitial } from "@/lib/ui-config";
 import { setTheme } from "@/lib/theme";
 import {
   DialogProvider,
@@ -114,8 +114,8 @@ export function ProjectWorkbench() {
               .finally(() => setBusy(false));
           }}
         >
-          <span className="brand-mark">B</span>
-          <h1>{brandName}</h1>
+          <span className="brand-mark" aria-hidden="true">{displayInitial}</span>
+          <h1>{displayName}</h1>
           <p>{tr("Your research, agents, and workspace.")}</p>
           {error && (
             <p className="notice error" role="alert">
@@ -586,8 +586,8 @@ function Application({
               void navigate(readNavigation(""));
             }}
           >
-            <span className="brand-mark">B</span>
-            <strong>{brandName}</strong>
+            <span className="brand-mark" aria-hidden="true">{displayInitial}</span>
+            <strong>{displayName}</strong>
           </Link>
           <IconButton label={tr("Search")} onClick={() => page("search")}>
             <Search size={18} />
@@ -783,7 +783,7 @@ function Application({
           >
             <MenuIcon size={20} />
           </IconButton>
-          <span>{brandName}</span>
+          <span>{displayName}</span>
         </div>
         {data.error && (
           <p className="notice error" role="alert">
