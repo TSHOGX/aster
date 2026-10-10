@@ -91,3 +91,14 @@ Project workspace and engine store identity. The application does not gain host
 volume-directory access. Direct reads/writes share the lifecycle execution lane
 with resume/deletion and validate path components while compute remains stopped.
 Runtime and publication volumes are never accepted from browser-supplied IDs.
+
+Agent enqueue, explicit queue release, steering, process reservation, and command
+dispatch check current `agents.run` authority against the Project owner's immutable
+account ID. Replays of work-increasing requests also require the current grant.
+Ordinary policy revocation rejects pending dispatch with `permission_revoked`;
+unsent inputs return to held prompts with a durable `dispatch_error`. Grant
+restoration does not release them automatically. Already sent commands retain
+journal ingestion and settlement authority. An active owner can still hold,
+cancel, or stop owned work after losing functional grants. Background execution
+checks account status and policy independently of browser sessions and temporary
+password setup.

@@ -48,6 +48,14 @@ func (s *Store) ControlRun(ctx context.Context, scope Scope, session string, req
 		if err != nil {
 			return err
 		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+			return err
+		}
+		if req.Action == "steer" {
+			if err := authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun); err != nil {
+				return err
+			}
+		}
 		old, _, _, _, _, _, raw, err := receipt(ctx, tx, session, req.RequestID)
 		if err == nil {
 			if err = validateReceiptIntent(old, digest); err != nil {
@@ -167,8 +175,11 @@ func (s *Store) ControlResult(ctx context.Context, scope Scope, session, request
 	if _, err = sessionIn(ctx, tx, scope, session); err != nil {
 		return out, err
 	}
+	if err = activeAccount(ctx, tx, scope.Actor); err != nil {
+		return out, err
+	}
 	var raw []byte
-	err = tx.QueryRowContext(ctx, `SELECT c.result,coalesce(d.state,''),coalesce(a.state,''),coalesce(r.state,''),coalesce(d.error,a.error,'') FROM control_receipts c LEFT JOIN input_deliveries d ON d.id=c.delivery_id LEFT JOIN agent_commands a ON a.id=coalesce(d.command_id,json_extract(c.result,'$.command_id')) LEFT JOIN execution_runs r ON r.id=c.run_id WHERE c.session_id=? AND c.request_id=?`, session, request).Scan(&raw, &out.DeliveryState, &out.CommandState, &out.RunState, &out.Error)
+	err = tx.QueryRowContext(ctx, `SELECT c.result,coalesce(d.state,''),coalesce(a.state,''),coalesce(r.state,''),coalesce(nullif(d.error,''),nullif(a.error,''),t.dispatch_error,'') FROM control_receipts c LEFT JOIN turns t ON t.id=c.prompt_id LEFT JOIN input_deliveries d ON d.id=c.delivery_id LEFT JOIN agent_commands a ON a.id=coalesce(d.command_id,json_extract(c.result,'$.command_id')) LEFT JOIN execution_runs r ON r.id=c.run_id WHERE c.session_id=? AND c.request_id=?`, session, request).Scan(&raw, &out.DeliveryState, &out.CommandState, &out.RunState, &out.Error)
 	if err != nil {
 		return out, missing(err)
 	}

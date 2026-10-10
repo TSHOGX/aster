@@ -48,6 +48,7 @@ export type Turn = {
   delivery_id?: string;
   delivery_state?: string;
   delivery_error?: string;
+  dispatch_error?: string;
 };
 export type PromptQueuePage = {
   items: Turn[];

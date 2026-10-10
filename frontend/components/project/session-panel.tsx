@@ -1142,7 +1142,7 @@ export function SessionPanel({
                   <X size={16} />{tr("Cancel prompt")}
                 </button>
               </div>
-              {(rowErrors[turn.id] || turn.delivery_error) && <p role="status">{rowErrors[turn.id] || turn.delivery_error}</p>}
+              {(rowErrors[turn.id] || turn.dispatch_error || turn.delivery_error) && <p role="status">{rowErrors[turn.id] || turn.dispatch_error || turn.delivery_error}</p>}
             </div>
           ))}
           {!!queuePage?.next_after && (

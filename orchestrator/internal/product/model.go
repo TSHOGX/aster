@@ -80,6 +80,7 @@ type Terminal struct {
 }
 
 type Turn struct {
+	DispatchError  string `json:"dispatch_error,omitempty"`
 	QueuePolicy    string `json:"queue_policy"`
 	Disposition    string `json:"disposition"`
 	ID             string `json:"id"`

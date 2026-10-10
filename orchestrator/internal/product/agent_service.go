@@ -76,7 +76,7 @@ func (a *Agents) Close() {
 // Session selected by a bounded fair worker. Startup doesn't allocate a sandbox
 // for the Session: all children resolve the same Project lifecycle reservation.
 func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
-	if _, err := sessionIn(ctx, a.Store.reader, scope, session); err != nil {
+	if err := a.Store.agentAdmission(ctx, scope, session); err != nil {
 		return err
 	}
 	if err := a.Lifecycle.EnsureConfiguredActive(ctx, scope, a.Profile); err != nil {

@@ -20,11 +20,11 @@ const promptStatus = `CASE turns.disposition
  ELSE coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
   FROM input_deliveries d JOIN execution_runs r ON r.id=d.run_id
   WHERE d.prompt_id=turns.id AND d.state='consumed' ORDER BY d.acceptance_sequence DESC LIMIT 1),'consumed') END`
-const turnColumns = `id,project_id,session_id,request_id,content,initially_held,prompt_revision,queue_policy,disposition,` + promptStatus + `,sequence,created_at,updated_at`
-const queueColumns = `id,project_id,session_id,request_id,substr(content,1,4096),initially_held,prompt_revision,queue_policy,disposition,` + promptStatus + `,sequence,created_at,updated_at`
+const turnColumns = `id,project_id,session_id,request_id,content,initially_held,prompt_revision,queue_policy,disposition,` + promptStatus + `,sequence,created_at,updated_at,dispatch_error`
+const queueColumns = `id,project_id,session_id,request_id,substr(content,1,4096),initially_held,prompt_revision,queue_policy,disposition,` + promptStatus + `,sequence,created_at,updated_at,dispatch_error`
 
 func scanTurn(row scanner) (t Turn, err error) {
-	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt))
+	err = missing(row.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DispatchError))
 	return
 }
 
@@ -57,6 +57,9 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 		}
 		if child.Deletion != Live {
 			return ErrDeleting
+		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun); err != nil {
+			return err
 		}
 		old, err := scanTurn(tx.QueryRowContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE session_id=? AND request_id=?`, session, request))
 		if err == nil {
@@ -196,7 +199,7 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 	hasMore := false
 	for rows.Next() {
 		var t Turn
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState, &t.DeliveryError); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DispatchError, &t.DeliveryID, &t.DeliveryState, &t.DeliveryError); err != nil {
 			return PromptQueuePage{}, err
 		}
 		if len(items) == limit {

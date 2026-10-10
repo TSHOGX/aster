@@ -391,3 +391,10 @@ conflicts. Zero-member groups need only revision validation. Deletion detaches
 memberships/bindings without assigning another group or removing admin roles.
 The numeric preview currently covers group/platform values; per-user numeric
 overrides are integrated with the resource-settings implementation.
+
+Queued prompt responses expose `dispatch_error` when current Agent authority
+rejects pending work. `permission_revoked` holds the prompt until an explicit
+release under a current `agents.run` grant or cancellation. Control outcome reads
+also expose this error, separately from the immutable acceptance receipt. Enqueue,
+release and steer require the current grant even on replay; hold, cancel and stop
+retain active-owner reduction authority.
