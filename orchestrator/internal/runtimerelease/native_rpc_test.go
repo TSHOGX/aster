@@ -70,7 +70,7 @@ func TestNativeSettlementCapabilityCannotBeDeclaredWithoutPatchedBytes(t *testin
 	if _, err := Load(bytes.NewReader(raw), digest); err == nil {
 		t.Fatal("old runtime format accepted")
 	}
-	manifest.Version = 3
+	manifest.Version = 4
 	original, err := os.ReadFile("testdata/pi-rpc-0.77.0.js")
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestNativeSettlementCapabilityCannotBeDeclaredWithoutPatchedBytes(t *testin
 	if err = os.WriteFile(filepath.Join(root, strings.TrimPrefix(NativeRPCPath, "/")), original, 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Even a manifest that hashes the unpatched tree must not claim protocol 2.
+	// Even a manifest that hashes the unpatched tree must not claim the current protocol.
 	manifest.NativeTree, err = nativeTree(root)
 	if err != nil {
 		t.Fatal(err)

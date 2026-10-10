@@ -1,6 +1,7 @@
 import type { Schedule } from "./project-api";
 import type { MessageKey } from "./i18n/messages-en";
 export type RepeatMode =
+  | "once"
   | "daily"
   | "weekdays"
   | "weekly"
@@ -16,8 +17,11 @@ export type Recurrence = {
   dates: number[];
   advanced: string;
   intervalMinutes: string;
+  localTime: string;
+  atChoice: string;
 };
 export const repeatLabels: Record<RepeatMode, MessageKey> = {
+  once: "Once",
   interval: "Interval",
   daily: "Daily",
   weekdays: "Monday–Friday",
@@ -36,9 +40,15 @@ export const weekdayLabels: MessageKey[] = [
   "Friday",
   "Saturday",
 ];
-export function parseRecurrence(expression: string): Recurrence {
+export function parseRecurrence(
+  expression: string,
+  at = "",
+  zone = "UTC",
+): Recurrence {
   const base: Recurrence = {
-    mode: expression ? "advanced" : "manual",
+    mode: at ? "once" : expression ? "advanced" : "manual",
+    localTime: at ? localScheduleTime(at, zone) : "",
+    atChoice: at,
     time: "09:00",
     weekdays: [1],
     dates: [1],
@@ -86,7 +96,7 @@ export function parseRecurrence(expression: string): Recurrence {
   return base;
 }
 export function recurrenceCron(rule: Recurrence): string | null {
-  if (rule.mode === "manual") return "";
+  if (rule.mode === "manual" || rule.mode === "once") return "";
   if (rule.mode === "advanced") return rule.advanced;
   if (rule.mode === "interval") {
     const value = Number(rule.intervalMinutes);
@@ -115,8 +125,9 @@ export function schedulePreviewKey(
   cron: string | null,
   timezone: string,
   nextAt?: string,
+  runAt = "",
 ) {
-  return JSON.stringify([cron, timezone, nextAt || ""]);
+  return JSON.stringify([cron, timezone, nextAt || "", runAt]);
 }
 export function scheduleConfiguration(s: Schedule) {
   return JSON.stringify([
@@ -126,7 +137,14 @@ export function scheduleConfiguration(s: Schedule) {
     s.cron,
     s.timezone,
     s.session_id || "",
-    s.enabled,
+    s.state,
+    s.trigger_kind,
+    s.run_at || "",
+    s.expires_at || "",
+    s.notify,
+    s.max_occurrences || 0,
+    s.starts_at || "",
+    s.notification_policy || "each_run",
   ]);
 }
 export function scheduleTime(value: string, zone: string, locale: string) {
@@ -145,3 +163,94 @@ export function scheduleTime(value: string, zone: string, locale: string) {
     return value;
   }
 }
+
+// The write DTO includes authored fields only; server projections and origin
+// attribution are deliberately excluded. Keep requestId stable across retries.
+export function scheduleWrite(s: Schedule, requestId: string) {
+  return {
+    request_id: requestId,
+    id: s.id,
+    revision: s.revision,
+    title: s.title,
+    prompt: s.prompt,
+    session_id: s.session_id || "",
+    state: s.state,
+    trigger_kind: s.trigger_kind,
+    cron: s.cron,
+    timezone: s.timezone,
+    run_at: s.run_at || "",
+    expires_at: s.expires_at || "",
+    notify: s.notify,
+    max_occurrences: s.max_occurrences || 0,
+    starts_at: s.starts_at || "",
+    notification_policy: s.notification_policy || "each_run",
+  };
+}
+
+export function localScheduleTime(at: string, zone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(at));
+  const p = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+// Enumerate offsets near this wall time so gaps are rejected and repeated
+// times require an explicit choice, without silently using browser timezone.
+export function resolveLocalScheduleTime(
+  local: string,
+  zone: string,
+): string[] {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local)) return [];
+  const wall = Date.parse(local + ":00Z");
+  if (
+    !Number.isFinite(wall) ||
+    new Date(wall).toISOString().slice(0, 16) !== local
+  )
+    return [];
+  try {
+    const offsets = new Set<number>();
+    for (let hours = -36; hours <= 36; hours += 6) {
+      const sample = wall + hours * 3600000;
+      offsets.add(
+        Date.parse(
+          localScheduleTime(new Date(sample).toISOString(), zone) + ":00Z",
+        ) - sample,
+      );
+    }
+    return [...offsets]
+      .map((offset) => new Date(wall - offset).toISOString())
+      .filter((at) => localScheduleTime(at, zone) === local)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+export function recurrenceRunAt(rule: Recurrence, zone: string) {
+  if (rule.mode !== "once") return "";
+  if (
+    rule.atChoice &&
+    Number.isFinite(Date.parse(rule.atChoice)) &&
+    localScheduleTime(rule.atChoice, zone) === rule.localTime
+  )
+    return rule.atChoice;
+  const candidates = resolveLocalScheduleTime(rule.localTime, zone);
+  return candidates.length === 1
+    ? candidates[0]
+    : candidates.includes(rule.atChoice)
+      ? rule.atChoice
+      : "";
+}
+
+export const scheduleStateLabels: Record<Schedule["state"], MessageKey> = {
+  active: "Enabled",
+  paused: "Paused",
+  exhausted: "Exhausted",
+  canceled: "Canceled",
+  deleted: "Deleted",
+};

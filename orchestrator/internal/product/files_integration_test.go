@@ -358,6 +358,13 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		watch, err := files.Watch(watchctx, scope, 0)
 		must(t, err)
 		defer watch.Close()
+		// Initial subscription is asynchronous. Its reset frame establishes the
+		// baseline; a mutation before that frame belongs to the initial snapshot.
+		initial, err := watch.Next()
+		must(t, err)
+		if !initial.Reset || initial.Reason != "initial" || initial.Epoch != r.Reference.Epoch {
+			t.Fatalf("missing initial watch baseline: %+v", initial)
+		}
 		var sequence uint64
 		for rotation := 0; rotation < 3; rotation++ {
 			if rotation > 0 {

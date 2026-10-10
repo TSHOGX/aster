@@ -8,7 +8,7 @@ const summary = (n: number) => ({
   title: `Task ${n}`,
   timezone: "UTC",
   cron: "",
-  enabled: true,
+  state: "active", trigger_kind: "cron", notify: true,
   revision: 1,
 });
 const hint = async (page: Page, kind: string) =>
@@ -112,7 +112,7 @@ test("filter changes fence late replies and read full instructions only for the 
       json: {
         ...summary(1),
         prompt: "The complete private scheduled prompt",
-        deleted: false,
+
       },
     });
   });
@@ -171,7 +171,7 @@ async function historyFixture(page: Page) {
             title: `Version ${revision}`,
             prompt: "Original prompt",
             cron: revision > 1 ? "0 9 * * *" : "",
-            deleted: false,
+
           },
         });
   });

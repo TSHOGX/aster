@@ -23,15 +23,20 @@ func (a *Application) observeGateways(ctx context.Context) (product.GatewayObser
 		return proof, errors.New("stable gateway observation unavailable")
 	}
 	var state struct {
-		OwnerProtocol int                                    `json:"owner_handoff_protocol"`
-		Protocol      int                                    `json:"authority_protocol"`
-		Stopping      bool                                   `json:"stopping"`
-		Registrations map[string]product.GatewayRegistration `json:"registrations"`
+		ScheduleTools    map[string]bool                        `json:"schedule_tools"`
+		PlatformProtocol int                                    `json:"platform_protocol"`
+		OwnerProtocol    int                                    `json:"owner_handoff_protocol"`
+		Protocol         int                                    `json:"authority_protocol"`
+		Stopping         bool                                   `json:"stopping"`
+		Registrations    map[string]product.GatewayRegistration `json:"registrations"`
 	}
 	if json.Unmarshal(raw.Bytes(), &state) != nil || state.Stopping || state.Protocol != servicegateway.AuthorityVersion || state.OwnerProtocol != product.OwnerHandoffProtocol || len(state.Registrations) != len(a.Config.Gateways) {
 		return proof, errors.New("gateway protocol or registrations differ from owner configuration")
 	}
 	for _, setting := range a.Config.Gateways {
+		if setting.ScheduleTools && (state.PlatformProtocol != servicegateway.PlatformVersion || !state.ScheduleTools[setting.Audience]) {
+			return proof, errors.New("gateway platform protocol unavailable")
+		}
 		registration, ok := state.Registrations[setting.Audience]
 		if !ok || registration.Slots != setting.MaxRequests {
 			return proof, errors.New("gateway capacity differs from owner configuration")

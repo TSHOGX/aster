@@ -33,7 +33,7 @@ Node and builtin system context, and hashes the complete native dependency tree.
 Native dependency symlinks must resolve inside that hashed tree. All ELF runtime
 components must share a supported Linux architecture. The manifest records
 engine/native/protocol pins, platform and required workspace/runtime paths.
-Manifest version 3 requires agent protocol 2 (bounded flow/pressure telemetry),
+Manifest version 4 requires agent protocol 2 (bounded flow/pressure telemetry),
 reader protocol 3 with per-request chunk credits and directory seek windows, and native input identity/settlement protocol 4.
 A missing capability or an older manifest is rejected. Reader changes require
 a newly assembled immutable template, not replacement of running guest binaries.
@@ -43,13 +43,12 @@ go -C orchestrator run ./cmd/runtime-release --root /srv/build/battery --output 
 ```
 
 Use the generated digest verbatim in application configuration. The application
-loads all default and retained exported manifests and checks their engine template
-platforms. Before each placement gains child runtime authority, the host reads
+loads the current exported manifest and checks its engine template platform. Before each placement gains child runtime authority, the host reads
 `/etc/project-runtime/manifest.json`, validates its pinned digest and current
 protocol requirements, then runs the image's `runtime-verify`. An older image
 cannot establish compatibility merely by passing its own older verifier. Saved
-Projects require an exact binding in the configured
-[template catalog](configuration.md).
+Projects require an exact binding to the
+[current template](configuration.md).
 Verification is idempotent by sandbox/epoch/digest and can reconcile a lost reply.
 A component or native dependency mismatch refuses activation.
 

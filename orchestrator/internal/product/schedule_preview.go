@@ -57,3 +57,20 @@ func (s *Store) PreviewSchedule(expression, zone, nextAt string) SchedulePreview
 	out.Valid = true
 	return out
 }
+
+// PreviewScheduleTrigger also validates absolute one-shot times. RFC3339's
+// explicit offset makes repeated local wall times unambiguous.
+func (s *Store) PreviewScheduleTrigger(kind, at, expression, zone, nextAt string) SchedulePreview {
+	if kind != "at" {
+		return s.PreviewSchedule(expression, zone, nextAt)
+	}
+	out := SchedulePreview{Timezone: zone, ReferenceTime: s.timestamp(), Occurrences: []string{}}
+	task, err := normalizeSchedule(Schedule{ID: "preview", Title: "preview", Prompt: "preview", State: "active", TriggerKind: kind, RunAt: at, Cron: expression, Timezone: zone})
+	if err != nil || task.RunAt <= out.ReferenceTime {
+		out.Errors = map[string]string{"run_at": "Choose a future RFC3339 time with an explicit UTC offset."}
+		return out
+	}
+	out.Valid = true
+	out.Occurrences = append(out.Occurrences, task.RunAt)
+	return out
+}

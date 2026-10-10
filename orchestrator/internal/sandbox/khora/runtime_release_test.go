@@ -27,10 +27,10 @@ func (f *successfulRuntimeVerifier) Start(_ context.Context, r *connect.Request[
 }
 
 func TestHostRejectsOldRuntimeEvenWhenItsVerifierWouldSucceed(t *testing.T) {
-	for _, version := range []int{2, 3} {
+	for _, version := range []int{3, 4} {
 		digest := "sha256:" + strings.Repeat("a", 64)
-		manifest := runtimerelease.Manifest{Version: version, NativeProtocol: runtimerelease.NativeProtocol, Platform: "linux/arm64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, ReaderProtocol: runtimerelease.ReaderProtocol, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
-		if version == 2 {
+		manifest := runtimerelease.Manifest{Version: version, ScheduleProtocol: runtimerelease.ScheduleProtocol, NativeProtocol: runtimerelease.NativeProtocol, Platform: "linux/arm64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, ReaderProtocol: runtimerelease.ReaderProtocol, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
+		if version == 3 {
 			manifest.NativeProtocol = 0
 		}
 		for _, name := range runtimerelease.Components {
@@ -67,7 +67,7 @@ func TestHostRejectsOldRuntimeEvenWhenItsVerifierWouldSucceed(t *testing.T) {
 		}
 		err = backend.VerifyRuntime(context.Background(), sandbox.Reference{StoreID: "store", SandboxID: "sandbox", Epoch: 1}, digest)
 		server.Close()
-		if version == 2 {
+		if version == 3 {
 			if !sandbox.Is(err, sandbox.Incompatible) || verifier.starts.Load() != 0 {
 				t.Fatal("older self-verifier bypassed host capability requirements", err, verifier.starts.Load())
 			}

@@ -13,7 +13,7 @@ func TestMinuteIntervalCadenceSurvivesEditsDelayAndRestart(t *testing.T) {
 	start := time.Date(2026, 9, 24, 8, 7, 12, 345000000, time.UTC)
 	now := start
 	s.now = func() time.Time { return now }
-	input := Schedule{ID: "interval", Title: "Interval", Prompt: "work", Cron: "@every 90m", Timezone: "Asia/Shanghai", Enabled: true, NextAt: "2099-01-01T00:00:00Z"}
+	input := Schedule{TriggerKind: "interval", ID: "interval", Title: "Interval", Prompt: "work", Cron: "@every 90m", Timezone: "Asia/Shanghai", State: "active", NextAt: "2099-01-01T00:00:00Z"}
 	item, err := s.CreateSchedule(ctx, scope, input)
 	must(t, err)
 	first := start.Add(90 * time.Minute)
@@ -49,6 +49,9 @@ func TestMinuteIntervalCadenceSurvivesEditsDelayAndRestart(t *testing.T) {
 	if !preview.Valid || preview.Occurrences[0] != item.NextAt {
 		t.Fatal("preview lost phase", preview)
 	}
+	// Resolve the prior occurrence before the next automatic admission.
+	_, err = s.db.Exec(`UPDATE turns SET disposition='handled' WHERE id IN (SELECT turn_id FROM schedule_runs WHERE schedule_id=?)`, item.ID)
+	must(t, err)
 	// A new Store instance has no in-memory anchor; next_at carries the phase.
 	var seq int
 	var name, path string
@@ -89,7 +92,7 @@ func TestMinuteIntervalCadenceSurvivesEditsDelayAndRestart(t *testing.T) {
 	if item.NextAt != next {
 		t.Fatal("display timezone reset interval")
 	}
-	item.Enabled = false
+	item.State = "paused"
 	must(t, s.UpdateSchedule(ctx, scope, item, false))
 	item, err = s.Schedule(ctx, scope, item.ID)
 	must(t, err)
@@ -97,7 +100,7 @@ func TestMinuteIntervalCadenceSurvivesEditsDelayAndRestart(t *testing.T) {
 		t.Fatal(item)
 	}
 	now = now.Add(4 * time.Hour)
-	item.Enabled = true
+	item.State = "active"
 	must(t, s.UpdateSchedule(ctx, scope, item, false))
 	item, err = s.Schedule(ctx, scope, item.ID)
 	must(t, err)
@@ -149,7 +152,7 @@ func TestMinuteIntervalConcurrentTicksAdmitOnce(t *testing.T) {
 	s, scope, _ := fixture(t)
 	now := time.Now().UTC()
 	s.now = func() time.Time { return now }
-	_, err := s.CreateSchedule(ctx, scope, Schedule{ID: "interval", Title: "Interval", Prompt: "work", Cron: "@every 1m", Timezone: "UTC", Enabled: true})
+	_, err := s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "interval", ID: "interval", Title: "Interval", Prompt: "work", Cron: "@every 1m", Timezone: "UTC", State: "active"})
 	must(t, err)
 	now = now.Add(3*time.Minute + time.Second)
 	var wg sync.WaitGroup
@@ -179,7 +182,7 @@ func TestScheduleContentEditPreservesOverdueCron(t *testing.T) {
 	s, scope, _ := fixture(t)
 	now := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	item, err := s.CreateSchedule(ctx, scope, Schedule{ID: "daily", Title: "Daily", Prompt: "work", Cron: "0 9 * * *", Timezone: "UTC", Enabled: true})
+	item, err := s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "cron", ID: "daily", Title: "Daily", Prompt: "work", Cron: "0 9 * * *", Timezone: "UTC", State: "active"})
 	must(t, err)
 	due := item.NextAt
 	now = now.Add(2 * time.Hour)

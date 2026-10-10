@@ -25,8 +25,9 @@ type ReleaseIdentity struct {
 	ConfigurationDigest   string            `json:"configuration_digest"`
 	RuntimeDigest         string            `json:"runtime_digest"`
 	ContentDigests        map[string]string `json:"content_digests"`
-	RuntimeCatalog        map[string]string `json:"runtime_catalog"`
+	RuntimeTemplate       string            `json:"runtime_template"`
 	OwnerProtocol         int               `json:"owner_protocol"`
+	PlatformProtocol      int               `json:"platform_protocol"`
 	GatewayProtocol       int               `json:"gateway_protocol"`
 	CompatibilityDigest   string            `json:"compatibility_digest"`
 	NetworkPolicyRevision string            `json:"network_policy_revision"`
@@ -41,7 +42,6 @@ type preparedRelease struct {
 	config       Config
 	identity     ReleaseIdentity
 	publications []preparedPublication
-	templates    map[product.ReleasedTemplate]runtimerelease.Manifest
 }
 
 func executableDigest() (string, error) {
@@ -108,35 +108,18 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 		return out, err
 	}
 	out.config = cfg
-	out.templates = map[product.ReleasedTemplate]runtimerelease.Manifest{{TemplateID: cfg.Template.ID, Digest: cfg.Template.Digest}: cfg.Manifest}
-	for _, setting := range cfg.RetainedTemplates {
-		file, e := os.Open(setting.Manifest)
-		if e != nil {
-			return out, e
-		}
-		manifest, e := runtimerelease.Load(file, setting.Digest)
-		e = errors.Join(e, file.Close())
-		if e != nil {
-			return out, fmt.Errorf("retained template %s: %w", setting.ID, e)
-		}
-		out.templates[product.ReleasedTemplate{TemplateID: setting.ID, Digest: setting.Digest}] = manifest
-	}
 	out.publications, err = readPublications(cfg)
 	if err != nil {
 		return out, err
 	}
-	// Version 3 includes elapsed interval recurrence semantics. A Cron-only owner
-	// must not be treated as the same deployment contract for handoff.
-	id := ReleaseIdentity{Version: 3, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
+	// Version 4 includes the reserved platform protocol and schedule lifecycle.
+	id := ReleaseIdentity{Version: 4, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
 	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
 	if err != nil {
 		return out, err
 	}
 	id.NetworkPolicyRevision = policy.Revision
-	id.RuntimeCatalog = make(map[string]string, len(out.templates))
-	for binding := range out.templates {
-		id.RuntimeCatalog[binding.TemplateID] = binding.Digest
-	}
+	id.RuntimeTemplate = cfg.Template.ID
 	id.SchemaVersion, id.SchemaDigest, err = product.SchemaIdentity()
 	if err != nil {
 		return out, err

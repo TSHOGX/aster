@@ -7,6 +7,7 @@ import { MarkdownView } from "@/components/workbench/markdown-view";
 import { FilePreview } from "./file-preview";
 import { ResourceProvider } from "./resource-provider";
 import "./workbench.css";
+import "./schedules.css";
 export function PublicShare({ token }: { token: string }) {
   return <ResourceProvider key={token} actor="public-share"><ShareContent token={token} /></ResourceProvider>;
 }

@@ -309,12 +309,18 @@ immediately restart the old executable. Forced termination is fault recovery,
 not graceful stream preservation.
 
 
-For engine or template replacement within the current contract, settle work,
-close admission and activate the selected owner under the existing gate. Preserve
-its engine store and immutable Project bindings. An incompatible format requires
-a deliberate fresh reset instead.
+For engine or runtime-template replacement, use the deliberate fresh-installation
+procedure in [bootstrap](bootstrap.md). Only one engine store and runtime binding
+are supported. Existing Projects cannot be rebound to a new image or carried
+through an incompatible schema. Owner updates within the exact current contract
+continue to use the guarded handoff and quiescent procedures above.
 
-Changing template defaults affects newly configured Projects. Existing current-
-format Projects retain their exact template/release and volumes. List referenced
-images in `retained_templates` until those Projects retire; startup refuses an
-unlisted binding. A reset with no retained Projects needs only its new template.
+Scheduling diagnostics are included in the existing protected `/inspect` output
+under `schedules`: eligible count/oldest age, retrying definitions, paused task
+errors, outstanding Prompts, admitted/overlap/error counts, and cumulative/max
+admission lag. Platform success/error counts use the same process-local counters.
+Gateway `/status` authority statistics include platform successes and uncertain
+mutation replies. Counts reset on process restart; task/receipt state remains
+durable. No prompts, credentials or private receipt bodies appear in diagnostics.
+Use these alongside writer control/ingest wait and rejection metrics. Due time
+means eligibility, not a hard real-time start guarantee.

@@ -199,7 +199,7 @@ export function SharePanel({
 export function Inbox({
   onOpen,
 }: {
-  onOpen: (project: string, session?: string) => void;
+  onOpen: (project: string, session?: string, message?: string) => void;
 }) {
   const tr = useT();
   const [items, setItems] = useState<Notice[]>([]);
@@ -240,9 +240,10 @@ export function Inbox({
           <p>{notice.body}</p>
           <small>{new Date(notice.created_at).toLocaleString()}</small>
           <div className="row-actions">
-            {notice.project_id && (
+            {notice.schedule_id && notice.project_id && <a href={`/?view=schedules&schedule_project=${encode(notice.project_id)}&schedule=${encode(notice.schedule_id)}&status=exhausted`}>{tr("View task")}</a>}
+            {notice.project_id && notice.session_id && (
               <button
-                onClick={() => onOpen(notice.project_id!, notice.session_id)}
+                onClick={() => onOpen(notice.project_id!, notice.session_id,notice.message_id)}
               >
                 {tr("Open conversation")}
               </button>

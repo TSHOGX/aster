@@ -109,8 +109,20 @@ export type Schedule = {
   prompt: string;
   cron: string;
   timezone: string;
-  enabled: boolean;
-  deleted: boolean;
+  state: "active" | "paused" | "exhausted" | "canceled" | "deleted";
+  trigger_kind: "at" | "cron" | "interval" | "manual";
+  run_at?: string;
+  expires_at?: string;
+ max_occurrences?: number;
+ admitted_count?: number;
+ starts_at?: string;
+ completed_by_run_id?: string;
+ notification_policy?: "each_run" | "on_finish";
+  end_reason?: string;
+  notify: boolean;
+  origin_session_id?: string;
+  origin_run_id?: string;
+  last_error?: string;
   next_at?: string;
   revision: number;
 };
@@ -123,6 +135,8 @@ export type ScheduleRun = {
   due_at: string;
 };
 export type Notice = {
+ schedule_id?: string;
+ message_id?: string;
   id: string;
   project_id?: string;
   session_id?: string;
@@ -345,7 +359,7 @@ export function recalled<T>(key: string, fallback: T): T {
   }
 }
 
-export type ScheduleOverview = Pick<Schedule, "id" | "project_id" | "session_id" | "title" | "cron" | "timezone" | "enabled" | "next_at" | "revision"> & { project_title: string };
+export type ScheduleOverview = Pick<Schedule, "id" | "project_id" | "session_id" | "title" | "cron" | "timezone" | "state" | "trigger_kind" | "run_at" | "end_reason" | "origin_session_id" | "last_error" | "next_at" | "revision"> & { project_title: string; last_state?: string; last_session_id?: string; last_turn_id?: string };
 export type SchedulePage = { schedules: ScheduleOverview[]; next?: string; previous?: string };
 
 export type TurnIndexItem = {

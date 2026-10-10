@@ -20,8 +20,8 @@ async function setup(
     prompt: "Inspect research files",
     cron: options.advanced ? "*/15 9-17 1,15 * MON-FRI" : "0 9 * * *",
     timezone: "Asia/Shanghai",
-    enabled: true,
-    deleted: false,
+    state: "active", trigger_kind: "cron", notify: true,
+
     revision: 1,
     next_at: "2026-09-25T01:00:00Z",
   });
@@ -37,10 +37,10 @@ async function setup(
     const q = new URL(route.request().url()).searchParams;
     const items = [...tasks.values()].filter(
       (t) =>
-        !t.deleted &&
+        t.state !== "deleted" &&
         (!q.get("q") ||
           t.title.toLowerCase().includes(q.get("q")!.toLowerCase())) &&
-        (!q.get("status") || (q.get("status") === "enabled") === t.enabled),
+        (!q.get("status") || q.get("status") === t.state),
     );
     return route.fulfill({
       json: {
@@ -51,7 +51,7 @@ async function setup(
           title: task.title,
           cron: task.cron,
           timezone: task.timezone,
-          enabled: task.enabled,
+          state: task.state, trigger_kind: task.trigger_kind, notify: task.notify,
           next_at: task.next_at,
           revision: task.revision,
         })),
@@ -119,7 +119,7 @@ async function setup(
       if (route.request().method() === "PATCH") {
         const body = route.request().postDataJSON() as Schedule;
         saves.push(body);
-        if (options.conflict && !conflicted) {
+        if (options.conflict === "edit" && !conflicted) {
           conflicted = true;
           const current = tasks.get(id)!;
           tasks.set(id, {
@@ -131,7 +131,7 @@ async function setup(
           });
           return route.fulfill({ status: 409, json: { error: "conflict" } });
         }
-        tasks.set(id, { ...body, revision: body.revision + 1 });
+        tasks.set(id, { ...tasks.get(id)!, ...body, revision: body.revision + 1 });
         return route.fulfill({ json: tasks.get(id) });
       }
       if (route.request().method() === "DELETE") {
@@ -182,7 +182,8 @@ test("daily creation has an authoritative preview, no conversation fan-out, and 
     .getByRole("button", { name: "Create task", exact: true })
     .click();
   await expect(page.locator(".schedule-reading h2")).toHaveText("Daily checks");
-  expect(f.saves).toHaveLength(1);
+  expect(f.saves).toHaveLength(2);
+  expect(f.saves[1]).toEqual(f.saves[0]);
   expect(f.saves[0].cron).toBe("0 9 * * *");
   expect(f.saves[0].session_id).toBe("");
   expect(new URL(page.url()).searchParams.get("project")).toBeNull();
@@ -236,7 +237,7 @@ test("weekly and monthly controls retain the draft across resize and guard Escap
     "Monthly · 31 · 16:00",
   );
 });
-test("advanced rules survive name edits and tick-only revision conflicts retry once", async ({
+test("advanced rules survive name edits while ticks preserve the definition revision", async ({
   page,
 }) => {
   const f = await setup(page, { advanced: true, conflict: "tick" });
@@ -254,8 +255,8 @@ test("advanced rules survive name edits and tick-only revision conflicts retry o
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
   await expect(page.locator(".schedule-reading h2")).toHaveText("Renamed task");
-  expect(f.saves).toHaveLength(2);
-  expect(f.saves.map((s) => s.revision)).toEqual([1, 2]);
+  expect(f.saves).toHaveLength(1);
+  expect(f.saves.map((s) => s.revision)).toEqual([1]);
   expect(f.tasks.get("task")?.cron).toBe("*/15 9-17 1,15 * MON-FRI");
 });
 test("configuration conflicts retain edits and require an explicit decision", async ({
@@ -364,7 +365,7 @@ test("manual-only is explicit and a stale preview cannot validate a changed rule
       "Manual only",
     );
     expect(f.saves[0].cron).toBe("");
-    expect(f.saves[0].enabled).toBe(true);
+    expect(f.saves[0].state).toBe("active");
   } finally {
     release();
   }
@@ -614,3 +615,57 @@ test("confirming unchanged custom pickers does not rewrite a saved recurrence", 
   await expect(page.locator(".schedule-reading h2")).toHaveText("Name-only edit");
   expect(fixture.saves.at(-1)?.cron).toBe("00 09 * * *");
 });
+
+test("one-shot creation saves the resolved instant and delivery preference",async({page})=>{
+ const f=await setup(page);
+ const editor=await createDraft(page);
+ await chooseOption(page,"Repeat","Once");
+ await editor.getByLabel("Date and time",{exact:true}).fill("2099-01-02T03:04");
+ await editor.getByLabel("Notify me when the result is available").uncheck();
+ await editor.getByRole("button",{name:"Create task",exact:true}).click();
+ await expect(page.locator(".schedule-reading h2")).toHaveText("Daily checks");
+ expect(f.saves).toHaveLength(1);
+ expect(f.saves[0].trigger_kind).toBe("at");expect(f.saves[0].run_at).toMatch(/^2099-01-0[12]T/);expect(f.saves[0].notify).toBe(false);
+ await expect(page.locator(".schedule-reading")).toContainText("Run now consumes this one-shot task.");
+});
+
+test("bounded interval editor requires a deadline and preserves the finite budget",async({page})=>{
+ const f=await setup(page);const editor=await createDraft(page);
+ await chooseOption(page,"Repeat","Interval");
+ await editor.getByLabel("Check until an event is confirmed",{exact:true}).check();
+ await expect(editor.getByRole("button",{name:"Create task",exact:true})).toBeDisabled();
+ await editor.getByLabel("Deadline with UTC offset",{exact:true}).fill("2099-01-02T23:00:00+08:00");
+ await editor.getByLabel("Maximum checks",{exact:true}).fill("6");
+ await editor.getByRole("button",{name:"Create task",exact:true}).click();
+ await expect(page.locator(".schedule-reading h2")).toHaveText("Daily checks");
+ expect(f.saves[0].max_occurrences).toBe(6);expect(f.saves[0].notification_policy).toBe("on_finish");
+ await expect(page.locator(".schedule-reading")).toContainText("Checks admitted");
+});
+
+for (const width of [360, 1280, 1600]) {
+  test(`status filters and task actions remain visible without hover at ${width}`, async ({ page }, info) => {
+    await setup(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/?view=schedules");
+    const filters = page.getByRole("group", { name: "Task status" });
+    await expect(filters.getByRole("button")).toHaveCount(6);
+    for (const button of await filters.getByRole("button").all()) {
+      await expect(button).toBeInViewport();
+      expect(await button.evaluate(el => {
+        const group = el.parentElement!.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return box.right <= group.right + 1 && box.left >= group.left - 1 &&
+          el.scrollWidth <= el.clientWidth + 1 && style.cursor === "pointer";
+      })).toBe(true);
+    }
+    await expect(filters.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await filters.getByRole("button", { name: "Deleted", exact: true }).focus();
+    await expect(filters.getByRole("button", { name: "Deleted", exact: true })).toBeFocused();
+    await page.screenshot({ path: info.outputPath(`filters-${width}.png`), fullPage: true });
+    await page.locator(".schedule-description").click();
+    const detail = page.locator(".schedule-reading");
+    await expect(detail.getByRole("heading", { name: "Instructions" })).toBeVisible();
+    expect(await detail.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  });
+}

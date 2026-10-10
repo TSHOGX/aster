@@ -93,8 +93,8 @@ when omitted. Private qualification outputs stay outside CI/public artifacts.
 | Change | Required procedure |
 | --- | --- |
 | Owner/API binary only, matching compatibility and transfer predicate | Owner handoff; retain the independent gateway |
-| Frontend, gateway, engine, configuration or current-format runtime changes | Full quiescent procedure; preserve exact retained Project bindings |
-| Incompatible schema/protocol | Stop; a deliberate destructive reset needs its own explicit scope and authorization |
+| Frontend, gateway or configuration changes within the current runtime contract | Full quiescent procedure |
+| Engine, runtime template or schema/protocol changes | Deliberate fresh installation under an explicitly authorized reset scope |
 
 Do not clear state or silently fall back to an old executable after activation
 failure. Repair the selected candidate while admission remains fenced, following

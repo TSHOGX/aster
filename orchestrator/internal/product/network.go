@@ -34,6 +34,7 @@ type ServiceGrant struct {
 // bounds that request's lifetime. TurnID is resolved from the incarnation's live
 // turn at authorization time, never supplied by the guest.
 type Attribution struct {
+	RunOwner int64
 	RunID    string
 	Grant    ServiceGrant
 	TurnID   string
@@ -111,11 +112,11 @@ func authorizeService(ctx context.Context, q queryer, now, audience, token strin
 	}
 	var a Attribution
 	var digest string
-	err := q.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,r.prompt_id,r.state,r.id
+	err := q.QueryRowContext(ctx, `SELECT g.id,g.project_id,g.session_id,g.incarnation_id,g.audience,g.credential_digest,g.expires_at,g.state,r.prompt_id,r.state,r.id,r.owner
  FROM service_grants g JOIN projects p ON p.id=g.project_id
  JOIN agent_incarnations i ON i.id=g.incarnation_id AND i.session_id=g.session_id
  JOIN execution_runs r ON r.incarnation_id=i.id AND r.owner=i.owner AND r.state IN ('starting','running')
-	WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' `, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.RunState, &a.RunID)
+	WHERE g.id=? AND g.audience=? AND g.state='active' AND g.expires_at>? AND p.state='active' AND i.state='running' `, id, audience, now).Scan(&a.Grant.ID, &a.Grant.ProjectID, &a.Grant.SessionID, &a.Grant.IncarnationID, &a.Grant.Audience, &digest, &a.Grant.ExpiresAt, &a.Grant.State, &a.TurnID, &a.RunState, &a.RunID, &a.RunOwner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Attribution{}, ErrNotFound
 	}

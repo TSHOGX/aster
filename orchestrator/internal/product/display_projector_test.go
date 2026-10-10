@@ -323,3 +323,26 @@ func TestDisplayGoldenAndReusedRunnerTurns(t *testing.T) {
 		t.Fatal("reused runner merged separate turns")
 	}
 }
+
+func TestNativeScheduleReceiptSurvivesProjectionAndReplay(t *testing.T) {
+	s, _, i, c := agentFixture(t)
+	payloads := []string{consumedPayload(c), `{"type":"message_start","message":{"role":"assistant","content":[]}}`, `{"type":"message_update","message":{"role":"assistant","content":[{"type":"toolCall","id":"task-call","name":"schedules_create","arguments":{"title":"Check result"}}]}}`, `{"type":"tool_execution_end","toolCallId":"task-call","toolName":"schedules_create","result":{"content":[{"type":"text","text":"Task saved"}],"details":{"kind":"schedule_receipt","version":1,"project_id":"a","schedule_id":"task"}}}`}
+	for n, payload := range payloads {
+		_, err := s.IngestAgent(ctx, i, record(i, c, uint64(n+1), "native", payload))
+		must(t, err)
+	}
+	must(t, s.ProjectConversation(ctx, i.SessionID))
+	items := displayItems(t, s, i.SessionID)
+	if len(items) != 2 {
+		t.Fatal(items)
+	}
+	var decoded map[string]json.RawMessage
+	must(t, json.Unmarshal([]byte(items[1].Result), &decoded))
+	if !strings.Contains(string(decoded["details"]), `"schedule_id":"task"`) || items[1].Name != "schedules_create" || items[1].State != "completed" {
+		t.Fatal(items[1])
+	}
+	must(t, s.ProjectConversation(ctx, i.SessionID))
+	if displayItems(t, s, i.SessionID)[1].Result != items[1].Result {
+		t.Fatal("replay lost receipt")
+	}
+}

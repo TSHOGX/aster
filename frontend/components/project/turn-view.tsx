@@ -11,6 +11,8 @@ import {
   type ConversationTurn,
 } from "@/lib/conversation-turns";
 import { groupTimeline } from "@/lib/timeline-activity";
+import { scheduleReceiptID } from "@/lib/schedule-receipt";
+import { ScheduleTaskCard } from "./schedule-task-card";
 import { ActivityGroup } from "./activity-group";
 import { IconButton } from "./ui";
 
@@ -173,7 +175,8 @@ export function TurnView({
     return value === "up" || value === "down" ? value : null;
   });
   const users = turn.items.filter((i) => i.kind === "user");
-  const body = turn.items.filter((i) => i.kind !== "user");
+  const receipts=turn.items.flatMap(item=>{const id=scheduleReceiptID(item,project);return id ? [{key:item.id,id}] : [];});
+  const body = turn.items.filter((i) => i.kind !== "user" && !scheduleReceiptID(i,project));
   const finalIDs = new Set(final.map((i) => i.id));
   const intermediate = body.filter((i) => !finalIDs.has(i.id));
   const targetInHistory = intermediate.some(
@@ -266,6 +269,7 @@ export function TurnView({
           )}
         </div>
       )}
+      {receipts.map(receipt=><ScheduleTaskCard key={receipt.key} project={project} id={receipt.id} />)}
       {open && (
         <div className="turn-process">
           <Transcript

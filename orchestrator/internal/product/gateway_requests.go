@@ -108,7 +108,8 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 		var sequence int64
 		var closed bool
 		var grant, turn, run string
-		e = tx.QueryRowContext(ctx, `SELECT sequence,closed,grant_id,turn_id,run_id FROM service_request_slots WHERE audience=? AND slot=?`, r.Audience, r.Slot).Scan(&sequence, &closed, &grant, &turn, &run)
+		var runOwner int64
+		e = tx.QueryRowContext(ctx, `SELECT sequence,closed,grant_id,turn_id,run_id,run_owner FROM service_request_slots WHERE audience=? AND slot=?`, r.Audience, r.Slot).Scan(&sequence, &closed, &grant, &turn, &run, &runOwner)
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
@@ -129,7 +130,7 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 			}
 		}
 		if sequence == r.Sequence {
-			if out.Grant.ID != grant || out.TurnID != turn || out.RunID != run {
+			if out.Grant.ID != grant || out.TurnID != turn || out.RunID != run || out.RunOwner != runOwner {
 				return ErrConflict
 			}
 		} else {
@@ -140,7 +141,7 @@ func (s *Store) AcquireGatewayRequest(ctx context.Context, r ServiceRequest, tok
 			if count >= 256 {
 				return ErrCapacity
 			}
-			_, e = tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed,grant_id,turn_id,run_id) VALUES(?,?,?,0,?,?,?) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=0,grant_id=excluded.grant_id,turn_id=excluded.turn_id,run_id=excluded.run_id`, r.Audience, r.Slot, r.Sequence, out.Grant.ID, out.TurnID, out.RunID)
+			_, e = tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed,grant_id,turn_id,run_id,run_owner) VALUES(?,?,?,0,?,?,?,?) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=0,grant_id=excluded.grant_id,turn_id=excluded.turn_id,run_id=excluded.run_id,run_owner=excluded.run_owner`, r.Audience, r.Slot, r.Sequence, out.Grant.ID, out.TurnID, out.RunID, out.RunOwner)
 			if e != nil {
 				return e
 			}
@@ -174,7 +175,7 @@ func (s *Store) ReleaseGatewayRequest(ctx context.Context, r ServiceRequest) err
 		if e := checkGateway(ctx, tx, r); e != nil {
 			return e
 		}
-		_, e := tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed) VALUES(?,?,?,1) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=1,grant_id='',turn_id='',run_id='' WHERE service_request_slots.sequence<=excluded.sequence`, r.Audience, r.Slot, r.Sequence)
+		_, e := tx.ExecContext(ctx, `INSERT INTO service_request_slots(audience,slot,sequence,closed) VALUES(?,?,?,1) ON CONFLICT(audience,slot) DO UPDATE SET sequence=excluded.sequence,closed=1,grant_id='',turn_id='',run_id='',run_owner=0 WHERE service_request_slots.sequence<=excluded.sequence`, r.Audience, r.Slot, r.Sequence)
 		return e
 	})
 }

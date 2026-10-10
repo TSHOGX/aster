@@ -1,13 +1,15 @@
 # Product database
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
-The current fresh lineage has schema version 3 and exact compiled DDL
-fingerprint `sha256:1d6d3b1179b9533f70db17b6647a66d3428d414fe7db843dcd64b9c6afec923f`.
+The current fresh lineage has schema version 4. Its exact compiled DDL
+fingerprint is returned by `product.SchemaIdentity`; release manifests must use
+that measured value.
 `product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
 version and fingerprint before a writer opens. Application startup has no
-migration chain or data backfill. An incompatible database is retired during
-the separately authorized destructive reset.
+migration chain or data backfill. An incompatible database is refused without
+modification. Use the explicitly scoped [fresh-installation procedure](bootstrap.md)
+when replacing the schema; there is no data-continuity adapter.
 
 Application startup validates pending activation against the measured executable
 through a read-only connection under the same lock. Only the selected replacement
@@ -141,3 +143,13 @@ clients can explicitly resync. A counted Session-to-task index maps control
 changes to task hints without scanning all historical runs. These are disposable
 invalidation projections; queue policy, delivery consumption and execution
 outcomes remain authoritative in their existing tables.
+
+Schedules have one definition lifecycle (`active`, `paused`, `exhausted`,
+`canceled`, `deleted`) and an explicit `at`, `cron`, `interval`, or `manual`
+trigger. Definition revisions change on edits; scheduler progress changes only
+catalog/event revisions. Admission, occurrence snapshot and trigger consumption
+commit together. `schedule_mutation_receipts` preserves immutable Project-scoped
+mutation results; reusing an identity with different intent conflicts. Receipts
+live until explicit resource retirement. Source Session retirement redacts their
+private result while retaining the identity/digest tombstone. Fixed-target
+retirement cancels future work; source-only retirement clears provenance.

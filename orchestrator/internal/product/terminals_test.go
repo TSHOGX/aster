@@ -153,7 +153,16 @@ func startTerminal(t *testing.T, terminals *Terminals, backend *fakePTY, scope S
 	}
 	for time.Now().Before(deadline) {
 		live, err := terminals.Store.LiveTerminal(ctx, scope, id)
-		if err == nil && live.State == "running" {
+		terminals.mu.Lock()
+		attachment := terminals.attachments[id]
+		terminals.mu.Unlock()
+		ready := false
+		if attachment != nil {
+			attachment.mu.Lock()
+			ready = attachment.ready && attachment.err == nil
+			attachment.mu.Unlock()
+		}
+		if err == nil && live.State == "running" && ready {
 			return live
 		}
 		time.Sleep(time.Millisecond)

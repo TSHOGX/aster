@@ -440,7 +440,7 @@ test("schedule metadata opens complete editable prompts through the Go edge", as
   const created = await context.request.post("/api/projects", { headers, data: { id: project, title: "Scheduled research" } });
   expect(created.status()).toBe(201);
   const prompt = "Complete scheduled prompt\n".repeat(1000);
-  const scheduled = await context.request.post(`/api/projects/${project}/schedules`, { headers, data: { id: "browser-schedule", title: "Editable task", prompt, timezone: "UTC", cron: "", enabled: true } });
+  const scheduled = await context.request.post(`/api/projects/${project}/schedules`, { headers, data: { id: "browser-schedule", title: "Editable task", prompt, timezone: "UTC", cron: "", trigger_kind: "manual", request_id: "browser-schedule" } });
   expect(scheduled.status()).toBe(201);
   try {
     await page.getByRole("button", { name: "Scheduled", exact: true }).click();
@@ -478,7 +478,7 @@ test("schedule metadata opens complete editable prompts through the Go edge", as
     const disabled = await context.request.get(`/api/projects/${project}/schedules/browser-schedule`);
     const data = await disabled.json();
     expect(data.prompt).toBe(revised + "Keep interval cadence\n");
-    expect(data.enabled).toBe(false);
+    expect(data.state).toBe("paused");
   } finally {
     const current = await context.request.get(`/api/projects/${project}`);
     expect((await context.request.delete(`/api/projects/${project}?revision=${(await current.json()).revision}`, { headers })).status()).toBe(202);

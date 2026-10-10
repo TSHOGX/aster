@@ -25,7 +25,7 @@ func TestSchedulePreviewMatchesExecutionAcrossDST(t *testing.T) {
 				t.Fatal(preview)
 			}
 			for _, want := range tc.want {
-				next, err := scheduleNext(Schedule{Cron: tc.rule, Timezone: tc.zone, Enabled: true}, now)
+				next, err := scheduleNext(Schedule{TriggerKind: "cron", Cron: tc.rule, Timezone: tc.zone, State: "active"}, now)
 				must(t, err)
 				if next != want {
 					t.Fatal(next, want)

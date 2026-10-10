@@ -39,7 +39,7 @@ func TestAdjacentHTTPRoutesAndReaderRevocation(t *testing.T) {
 		must(t, err)
 		return response.StatusCode, data
 	}
-	status, body := do("POST", "/api/projects/project/schedules", `{"id":"scheduled","title":"Scheduled","prompt":"work","timezone":"UTC","enabled":true}`)
+	status, body := do("POST", "/api/projects/project/schedules", `{"id":"scheduled","title":"Scheduled","prompt":"work","timezone":"UTC","trigger_kind":"manual","request_id":"create-task"}`)
 	if status != 201 {
 		t.Fatal(status, string(body))
 	}

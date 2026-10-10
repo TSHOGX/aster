@@ -9,7 +9,7 @@ tracked in [queued-prompts-release.md](queued-prompts-release.md); reset is not
 implicit in application startup.
 
 `release-identity` reports the executable, exact schema fingerprint, fixed
-configuration, current runtime catalog and content digests. Its compatibility
+configuration, single current runtime and content digests. Its compatibility
 field is a deployment-contract digest for guarded owner handoff, not a promise
 that older builds or persisted formats are supported.
 
@@ -24,21 +24,14 @@ If a pinned gateway is replaced after activation, the selected owner can complet
 only after all retained work settles and full quiescence is established.
 
 The runtime still verifies its exact current manifest/native/journal/reader
-protocols and pinned Khora build. Retained templates are references to immutable
-images for current-format Projects, not readers for retired formats. Schema,
-engine and runtime identity checks remain mandatory.
+protocols and pinned Khora build. There is one runtime template per installation. Schema, engine and runtime
+identity checks remain mandatory; a different image requires a fresh installation.
 
 A deliberate data reset is described in [bootstrap](bootstrap.md). It removes the
 old installation's state and starts a new engine store and application database;
 it does not convert history or restore an old database afterward.
 
-Release identity format 3 declares elapsed minute intervals in schedule recurrence.
-The database schema is unchanged. Crossing from a Cron-only owner requires a
-quiescent update; its different deployment digest prevents owner-only handoff to
-a build that cannot execute interval rules.
-
-Scheduled continuous browsing adds a bounded owner invalidation outbox, its
-frontiers, Session-to-task run counts and history indexes to the current schema.
-This changes the exact schema fingerprint. Existing installations follow the
-format-changing deployment contract above; there is no startup migration or
-implicit reset. The UI/API changes do not alter execution or recurrence cadence.
+Release identity format 4 declares schema 4, runtime manifest 4, native protocol 4
+and schedule platform protocol 1. Conversational scheduling includes immutable
+mutation receipts, one-shot admission, bounded checks and an owner invalidation
+outbox. Old databases and runtime manifests are refused without conversion.

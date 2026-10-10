@@ -16,11 +16,12 @@ import (
 )
 
 type agentAttachment struct {
+	scope         Scope
 	projectID     string
 	statusQueried time.Time
 	incarnation   Incarnation
 	// credential is this incarnation's service token, delivered once in the
-	// opening sync frame. It is empty when the deployment declares no service.
+	// start environment. It is empty when the deployment declares no service.
 	credential string
 	cancel     context.CancelFunc
 	input      chan struct{}
@@ -40,20 +41,21 @@ type Agents struct {
 	// ServiceAudience names the Project profile service that agents may reach.
 	// Empty means this deployment issues no service credentials at all, which is
 	// a supported zero-gateway configuration.
-	ServiceAudience string
-	ServiceTTL      time.Duration
-	Store           *Store
-	Lifecycle       *Lifecycle
-	Backend         AgentBackend
-	RunnerBinary    string
-	Profile         Profile
-	MaxProcesses    int
-	MaxPerProject   int
-	mu              sync.Mutex
-	attachments     map[string]*agentAttachment
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	PlatformEndpoint func(context.Context, Scope) string
+	ServiceAudience  string
+	ServiceTTL       time.Duration
+	Store            *Store
+	Lifecycle        *Lifecycle
+	Backend          AgentBackend
+	RunnerBinary     string
+	Profile          Profile
+	MaxProcesses     int
+	MaxPerProject    int
+	mu               sync.Mutex
+	attachments      map[string]*agentAttachment
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
 }
 
 func NewAgents(ctx context.Context, s *Store, l *Lifecycle, b AgentBackend, profile Profile, max int) *Agents {
@@ -108,7 +110,7 @@ func (a *Agents) Step(ctx context.Context, scope Scope, session string) error {
 		// Reserve a local slot before asynchronous attachment. Durable process
 		// reservation below is independent from this acceleration map.
 		attachctx, cancel := context.WithCancel(a.ctx)
-		attachment = &agentAttachment{cancel: cancel, projectID: scope.ProjectID}
+		attachment = &agentAttachment{cancel: cancel, projectID: scope.ProjectID, scope: scope}
 		a.attachments[session] = attachment
 		a.mu.Unlock()
 		i, err := a.Store.reserveAgent(ctx, scope, session)
@@ -381,6 +383,11 @@ func (a *Agents) attach(ctx context.Context, attachment *agentAttachment) error 
 			// frame: the framed stream is journaled durable evidence and must not
 			// retain a secret, and a reconnect must not need to resend one.
 			environment = append(environment, "PROJECT_SERVICE_CREDENTIAL="+attachment.credential)
+		}
+		if a.PlatformEndpoint != nil && attachment.credential != "" {
+			if endpoint := a.PlatformEndpoint(ctx, attachment.scope); endpoint != "" {
+				environment = append(environment, "PROJECT_PLATFORM_ENDPOINT="+endpoint)
+			}
 		}
 		stream, err = a.Backend.StartProcess(ctx, sandbox.StartProcessRequest{ProcessReference: i.Reference, IdempotencyKey: i.ID, Command: a.RunnerBinary, Arguments: []string{"--session", i.SessionID, "--incarnation", i.ID}, Directory: "/workspace", Environment: environment})
 	} else {

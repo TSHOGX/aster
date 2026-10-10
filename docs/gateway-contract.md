@@ -94,3 +94,37 @@ Owner-only readiness never permits gateway shutdown. If gateway replacement occu
 after owner activation, the selected owner requires full quiescence before
 completing with the changed gateway.
 
+
+## Reserved schedule platform route
+
+The whole `/platform/` namespace (and bare `/platform`) is reserved locally on
+every gateway, even when scheduling tools are disabled. Unknown versions, paths,
+trailing slashes and missing handlers return a bounded local error. They never
+reach model providers or receive provider credentials. Normal model requests
+retain the existing proxy behavior.
+
+Set `schedule_tools: true` only on a configured audience selected for platform
+capabilities. POST `/platform/v1/schedules` supports `context` and `execute`;
+execute has a fixed create/list/get/update/cancel allowlist. The 2 MiB strict JSON
+envelope shares gateway request capacity and existing grant acquisition/release
+accounting. Get history is capped at 20 rows, list metadata at 50 rows, and list
+never contains prompts. The endpoint is derived from the declared service origin,
+not a provider-specific `/v1/messages` URL.
+
+The gateway forwards to `/platform-owner/v1/schedules` on the protected owner Unix
+socket. It opens no product database. Guest identity headers are ignored. The
+owner checks the immutable configured audience capability and rechecks the
+registered gateway instance, slot sequence/open state, original grant, Project,
+Session, incarnation, execution Run and owner snapshot inside the mutation
+transaction. Fresh platform work requires a starting/running Run and its exact
+expected ID. Stopping, completed, revoked, expired and stale-owner requests fail,
+even when model-stream continuation remains valid. New mutations also require an
+open release phase. Authorized exact receipt replay may survive release drain;
+an idle old agent credential cannot inspect it.
+
+Control status advertises `platform_protocol: 1` and a per-audience `schedule_tools`
+capability map; enabled owner audiences must match both. Release compatibility includes
+that protocol. An owner with scheduling enabled refuses handoff qualification
+against a gateway lacking it. Install the prefix-reserving gateway through the
+existing full-quiescence gateway replacement procedure before enabling runtime
+tools. Owner-only handoff cannot install a changed schema or gateway protocol.

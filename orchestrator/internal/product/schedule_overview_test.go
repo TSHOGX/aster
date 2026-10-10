@@ -18,10 +18,10 @@ func TestScheduleOverviewOwnershipPaginationAndDeletion(t *testing.T) {
 		if i%2 == 1 {
 			scope.ProjectID = "second"
 		}
-		_, err = s.CreateSchedule(ctx, scope, Schedule{ID: fmt.Sprintf("schedule-%03d", i), Title: "Task", Prompt: "work", Timezone: "UTC", Enabled: true})
+		_, err = s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "manual", ID: fmt.Sprintf("schedule-%03d", i), Title: "Task", Prompt: "work", Timezone: "UTC", State: "active"})
 		must(t, err)
 	}
-	_, err = s.CreateSchedule(ctx, b, Schedule{ID: "foreign", Title: "Secret", Prompt: "work", Timezone: "UTC", Enabled: true})
+	_, err = s.CreateSchedule(ctx, b, Schedule{TriggerKind: "manual", ID: "foreign", Title: "Secret", Prompt: "work", Timezone: "UTC", State: "active"})
 	must(t, err)
 	first, err := s.ScheduleOverviewPage(ctx, a.Actor, ScheduleFilter{Limit: 50})
 	must(t, err)
@@ -63,14 +63,15 @@ func TestScheduleOverviewFiltersOrderAndInvalidatedCursor(t *testing.T) {
 	now := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	for i := 0; i < 65; i++ {
-		input := Schedule{ID: fmt.Sprintf("task-%03d", i), Title: fmt.Sprintf("ÄBC report %d", i), Prompt: "private", Timezone: "UTC", Enabled: i < 60}
+		input := Schedule{TriggerKind: "manual", ID: fmt.Sprintf("task-%03d", i), Title: fmt.Sprintf("ÄBC report %d", i), Prompt: "private", Timezone: "UTC", State: map[bool]string{true: "active", false: "paused"}[i < 60]}
 		if i%2 == 0 {
+			input.TriggerKind = "cron"
 			input.Cron = fmt.Sprintf("%d 9 * * *", i%60)
 		}
 		_, err := s.CreateSchedule(ctx, a, input)
 		must(t, err)
 	}
-	_, err := s.CreateSchedule(ctx, b, Schedule{ID: "foreign", Title: "ÄBC secret", Prompt: "secret", Timezone: "UTC", Enabled: true})
+	_, err := s.CreateSchedule(ctx, b, Schedule{TriggerKind: "manual", ID: "foreign", Title: "ÄBC secret", Prompt: "secret", Timezone: "UTC", State: "active"})
 	must(t, err)
 	f := ScheduleFilter{Query: "äbc", Limit: 10}
 	seen := map[string]bool{}
@@ -85,7 +86,7 @@ func TestScheduleOverviewFiltersOrderAndInvalidatedCursor(t *testing.T) {
 			}
 			seen[item.ID] = true
 			rank := 0
-			if !item.Enabled {
+			if item.State != "active" {
 				rank = 2
 			} else if item.Cron == "" {
 				rank = 1
@@ -135,7 +136,7 @@ func TestScheduleOverviewFiltersOrderAndInvalidatedCursor(t *testing.T) {
 func TestScheduleOverviewDoesNotLoadPromptBodies(t *testing.T) {
 	store, scope, _ := fixture(t)
 	prompt := strings.Repeat("private-prompt-body", 50000)
-	_, err := store.CreateSchedule(ctx, scope, Schedule{ID: "large-prompt", Title: "Summary", Prompt: prompt, Timezone: "UTC", Enabled: true})
+	_, err := store.CreateSchedule(ctx, scope, Schedule{TriggerKind: "manual", ID: "large-prompt", Title: "Summary", Prompt: prompt, Timezone: "UTC", State: "active"})
 	must(t, err)
 	page, err := store.ScheduleOverviewPage(ctx, scope.Actor, ScheduleFilter{Limit: 50})
 	must(t, err)

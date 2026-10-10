@@ -1,11 +1,12 @@
-# Queued-prompts acceptance
+# Queued-prompts acceptance — 2026-09-25
 
-Current release: schema 3, native protocol 4. The authorized reset, rebuild and
-restart completed on 2026-09-25. The [current deployment record](../dev/measurements/current-deployment.json)
+Historical qualification: schema 3, native protocol 4. The authorized reset, rebuild and
+restart completed on 2026-09-25. The [deployment record](../dev/measurements/current-deployment.json)
 binds executable, runtime, schema and frontend identities to the verification
-below. Evidence for retired builds and old schemas has been deleted.
+below. This is historical deployment evidence, not qualification of the current schema-4
+scheduling implementation. See [scheduling acceptance](conversational-scheduling-implementation.md).
 
-| Contract | Current verification |
+| Contract | Verification at that release |
 | --- | --- |
 | Input claim and receipts | Go transaction and race tests: one claim path, exact target, same-ID retry, handled/consumed exclusivity |
 | Native lifecycle | Pinned real AgentSession and RPC tests: duplicate templates, tool batch, handled input, observer failure, core cleanup failure |

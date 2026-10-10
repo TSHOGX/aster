@@ -16,7 +16,6 @@ tracked example. The example denies guest egress until reachability is declared.
 | `application_socket`, `control_socket` | Distinct private Unix sockets; default below state directory |
 | `engine` | Explicit endpoint and persistent store ID; HTTPS requires CA and client certificate/key |
 | `template` | Engine template ID, exported Go runtime manifest and `sha256:` digest |
-| `retained_templates` | Up to 64 additional template entries, each with `id`, `manifest` and `digest`, for saved Project bindings |
 | `project` | Positive CPU, memory, overlay-disk, workspace/runtime capacities and reachability |
 | `auth` | Credential YAML path, or an explicit loopback-only development actor |
 | `content` | Reviewed Agent configuration/shared-assets source paths and publication capacity |
@@ -30,15 +29,15 @@ The application derives Project store/template/release/publication bindings.
 Those fields, including `network_policy_revision`, cannot be supplied inside
 `project`. Existing Projects retain fixed template/resource/service settings;
 direct/DNS defaults apply at the next creation/resume boundary. Startup
-validates every default/retained manifest against the current host protocols and
-checks each registered template platform. Template IDs must be unique. Every
-non-deleted Project, including paused Projects, must match an exact template ID
-and digest in this catalog. When changing the default, list the previous template
-in `retained_templates` until its Projects retire. Relative retained manifest paths
-resolve against the configuration directory.
+validates the single configured runtime against the current host protocols and
+checks its registered engine template platform. Every non-deleted Project,
+including paused Projects, must match that exact template ID and digest.
+Replacing the runtime requires a fresh installation; there is no retained-image
+catalog or compatibility adapter.
 
-Startup rejects missing catalog bindings and bindings to another engine store
-before publication or workers start. It never treats a fresh engine's IDs as authority over old resources.
+Startup rejects different runtime bindings and bindings to another engine store
+before publication or workers start. It never treats a fresh engine's IDs as
+authority over old resources.
 
 `engine.endpoint` permits plain HTTP only on a loopback IP. HTTPS requires
 `ca_file`, `client_cert` and `client_key`; ambient proxy configuration is disabled.
@@ -137,3 +136,10 @@ tuples, not domain or HTTP filters. DNS permission alone does not grant HTTPS
 egress. Public downloads also require the deployment's forwarding/NAT/upstream
 path; the isolated runtime gate does not qualify that external path. Python
 package installation still requires a suitable virtual environment under PEP 668.
+
+Each `gateways` entry optionally sets `schedule_tools` (default false). This
+permits the bounded schedule platform handler for that declared audience; it
+does not add a service binding to an existing Project. A Project with no eligible
+gateway continues to manage schedules through the browser. Enable runtime tools
+only after the gateway advertises platform protocol 1 and the measured current
+runtime contains the scheduling extension. See the [gateway contract](gateway-contract.md).

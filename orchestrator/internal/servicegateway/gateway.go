@@ -39,6 +39,7 @@ type Config struct {
 	// Zero selects five seconds; deployments cannot increase this ceiling.
 	AuthorityGrace time.Duration
 	Transport      http.RoundTripper
+	Platform       Platform
 }
 type Gateway struct {
 	authority                                            Authority
@@ -50,6 +51,7 @@ type Gateway struct {
 	next                                                 uint64
 	closed                                               bool
 	authorityFailures, authorityExpired, authorityDenied atomic.Uint64
+	platformSuccess, platformUnknown                     atomic.Uint64
 }
 
 func New(authority Authority, config Config) (*Gateway, error) {
@@ -80,7 +82,7 @@ func (g *Gateway) Close() {
 	}
 }
 func (g *Gateway) AuthorityStats() map[string]uint64 {
-	return map[string]uint64{"unavailable": g.authorityFailures.Load(), "expired": g.authorityExpired.Load(), "denied": g.authorityDenied.Load()}
+	return map[string]uint64{"unavailable": g.authorityFailures.Load(), "expired": g.authorityExpired.Load(), "denied": g.authorityDenied.Load(), "platform_success": g.platformSuccess.Load(), "platform_outcome_unknown": g.platformUnknown.Load()}
 }
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -180,6 +182,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	// Reserve the entire namespace, including unknown versions, before any
+	// provider URL construction or credential injection.
+	if r.URL.Path == "/platform" || strings.HasPrefix(r.URL.Path, "/platform/") {
+		g.servePlatform(w, r.WithContext(ctx), attribution)
+		return
+	}
 	proxy := httputil.NewSingleHostReverseProxy(g.target)
 	proxy.Transport = g.config.Transport
 	original := proxy.Director
