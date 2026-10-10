@@ -9,6 +9,7 @@
     "start": "next start --hostname 0.0.0.0",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
+    "typecheck:built": "tsc --noEmit --tsBuildInfoFile .next/cache/.tsbuildinfo",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:ui": "npm run build && npm run test:ui:built",
