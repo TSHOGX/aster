@@ -2,9 +2,7 @@ package product
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -62,16 +60,8 @@ func (s *Store) Account(ctx context.Context, id string) (Account, error) {
 	a, err := readAccount(ctx, s.reader, "id", id)
 	return a.Account, err
 }
-func requireAdmin(ctx context.Context, tx *sql.Tx, actor string) error {
-	a, err := readAccount(ctx, tx, "id", actor)
-	if err != nil || a.Status != "active" || a.Role != "admin" || a.MustChangePassword {
-		return ErrForbidden
-	}
-	return nil
-}
 func (s *Store) auditAccount(ctx context.Context, tx *sql.Tx, actor, action, target string, revision int64) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO account_audit(actor_id,action,target_id,revision,created_at) VALUES(?,?,?,?,?)`, actor, action, target, revision, s.timestamp())
-	return err
+	return s.auditEvent(ctx, tx, actor, action, "account", target, "", revision, nil)
 }
 func (s *Store) insertAccount(ctx context.Context, tx *sql.Tx, name, display, role, hash string, temporary bool) (Account, error) {
 	var count int
@@ -79,7 +69,7 @@ func (s *Store) insertAccount(ctx context.Context, tx *sql.Tx, name, display, ro
 		return Account{}, err
 	}
 	if count != 0 {
-		return Account{}, ErrConflict
+		return Account{}, Admission("username_taken", ErrConflict)
 	}
 	a := Account{ID: uuid.NewString(), Username: name, DisplayName: display, Status: "active", Role: role, Revision: 1, SessionRevision: 1, MustChangePassword: temporary, CreatedAt: s.timestamp(), UpdatedAt: s.timestamp()}
 	expires := ""
@@ -133,63 +123,13 @@ func (s *Store) BootstrapAccount(ctx context.Context, username, password string,
 	return account, err
 }
 
-// CreateAccount returns a temporary password once. No recoverable secret is stored.
-func (s *Store) CreateAccount(ctx context.Context, actor, username, display, role string) (Account, string, error) {
-	name, err := canonicalUsername(username)
-	if err != nil || !validateDisplayName(display) || (role != "admin" && role != "user") {
-		return Account{}, "", ErrInvalid
-	}
-	raw := make([]byte, 18)
-	if _, err = rand.Read(raw); err != nil {
-		return Account{}, "", err
-	}
-	password := base64.RawURLEncoding.EncodeToString(raw)
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		return Account{}, "", err
-	}
-	var account Account
-	err = s.write(ctx, func(tx *sql.Tx) error {
-		if err := requireAdmin(ctx, tx, actor); err != nil {
-			return err
-		}
-		var err error
-		account, err = s.insertAccount(ctx, tx, name, display, role, hash, true)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO account_memberships(account_id,group_id) VALUES(?,?)`, account.ID, StandardUsersGroup); err != nil {
-			return err
-		}
-		return s.auditAccount(ctx, tx, actor, "account.create", account.ID, account.Revision)
-	})
-	if err != nil {
-		return Account{}, "", err
-	}
-	return account, password, nil
-}
-
-func (s *Store) ResetAccountPassword(ctx context.Context, actor, id string, expected int64) (string, error) {
-	raw := make([]byte, 18)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	password := base64.RawURLEncoding.EncodeToString(raw)
-	err := s.resetAccount(ctx, actor, id, "", password, expected, false)
-	if err != nil {
-		return "", err
-	}
-	return password, nil
-}
+// RecoverAdmin is confined to the protected operator interface and writer lock.
 func (s *Store) RecoverAdmin(ctx context.Context, username, password string) error {
 	name, err := canonicalUsername(username)
 	if err != nil {
 		return err
 	}
-	return s.resetAccount(ctx, "operator", "", name, password, 0, true)
-}
-func (s *Store) resetAccount(ctx context.Context, actor, id, name, password string, expected int64, recoverAdmin bool) error {
-	if err := ValidatePassword(password); err != nil {
+	if err = ValidatePassword(password); err != nil {
 		return err
 	}
 	hash, err := auth.HashPassword(password)
@@ -197,80 +137,26 @@ func (s *Store) resetAccount(ctx context.Context, actor, id, name, password stri
 		return err
 	}
 	return s.writeIdentity(ctx, func(tx *sql.Tx) error {
-		if !recoverAdmin {
-			if err := requireAdmin(ctx, tx, actor); err != nil {
-				return err
-			}
-		}
-		column, value := "id", id
-		if recoverAdmin {
-			column, value = "username", name
-		}
-		a, err := readAccount(ctx, tx, column, value)
+		before, err := readAccount(ctx, tx, "username", name)
 		if err != nil {
 			return err
 		}
-		if !recoverAdmin && a.Revision != expected {
-			return ErrConflict
-		}
-		role, status := a.Role, a.Status
-		if recoverAdmin {
-			role, status = "admin", "active"
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET password_hash=?,must_change_password=1,temporary_consumed=0,temporary_expires_at=?,role=?,status=?,revision=revision+1,session_revision=session_revision+1,updated_at=? WHERE id=?`, hash, sqlitex.FormatTime(s.now().Add(24*time.Hour)), role, status, s.timestamp(), a.ID); err != nil {
+		after, err := s.replaceAccountPassword(ctx, tx, before.Account, hash, "admin", "active")
+		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE account_id=?`, a.ID); err != nil {
-			return err
-		}
-		action := "account.password.reset"
-		if recoverAdmin {
-			action = "account.recover"
-		}
-		return s.auditAccount(ctx, tx, actor, action, a.ID, a.Revision+1)
+		return s.auditEvent(ctx, tx, "operator", "account.recover", "account", after.ID, "", after.Revision, map[string]any{"before": accountConfiguration(before.Account), "after": accountConfiguration(after)})
 	})
 }
-
-// ChangeAccountAuthority serializes last-admin protection with the mutation.
-func (s *Store) ChangeAccountAuthority(ctx context.Context, actor, id, role, status string, expected int64) (Account, error) {
-	if (role != "admin" && role != "user") || (status != "active" && status != "disabled") {
-		return Account{}, ErrInvalid
+func (s *Store) replaceAccountPassword(ctx context.Context, tx *sql.Tx, a Account, hash, role, status string) (Account, error) {
+	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET password_hash=?,must_change_password=1,temporary_consumed=0,temporary_expires_at=?,role=?,status=?,revision=revision+1,session_revision=session_revision+1,updated_at=? WHERE id=?`, hash, sqlitex.FormatTime(s.now().Add(24*time.Hour)), role, status, s.timestamp(), a.ID); err != nil {
+		return Account{}, err
 	}
-	var result Account
-	err := s.writeIdentity(ctx, func(tx *sql.Tx) error {
-		if err := requireAdmin(ctx, tx, actor); err != nil {
-			return err
-		}
-		a, err := readAccount(ctx, tx, "id", id)
-		if err != nil {
-			return err
-		}
-		if a.Revision != expected {
-			return ErrConflict
-		}
-		if a.Role == "admin" && a.Status == "active" && (role != "admin" || status != "active") {
-			var count int
-			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE role='admin' AND status='active' AND id<>?`, id).Scan(&count); err != nil {
-				return err
-			}
-			if count == 0 {
-				return Admission("last_admin", ErrConflict)
-			}
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET role=?,status=?,revision=revision+1,session_revision=session_revision+1,updated_at=? WHERE id=?`, role, status, s.timestamp(), id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE account_id=?`, id); err != nil {
-			return err
-		}
-		if err = s.auditAccount(ctx, tx, actor, "account.authority", id, a.Revision+1); err != nil {
-			return err
-		}
-		next, err := readAccount(ctx, tx, "id", id)
-		result = next.Account
-		return err
-	})
-	return result, err
+	if _, err := tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE account_id=?`, a.ID); err != nil {
+		return Account{}, err
+	}
+	after, err := readAccount(ctx, tx, "id", a.ID)
+	return after.Account, err
 }
 
 func (s *Store) AccountDirectory(ctx context.Context, actor string) ([]Account, error) {

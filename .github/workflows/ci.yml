@@ -138,6 +138,7 @@ jobs:
           path: |
             frontend/test-results/ui
             admin-frontend/test-results/ui
+            admin-frontend/test-results/live
             frontend/test-results/pickers
             frontend/test-results/office-browsers
           retention-days: 7
@@ -150,6 +151,7 @@ jobs:
           path: |
             frontend/test-results/ui-report.json
             admin-frontend/test-results/ui-report.json
+            admin-frontend/test-results/live-report.json
             frontend/test-results/pickers-report.json
             frontend/test-results/office-report.json
           retention-days: 7

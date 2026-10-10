@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
 	"harness-platform/orchestrator/internal/testfixture"
 	"path/filepath"
 	"strings"
@@ -85,7 +86,7 @@ func TestAccountBootstrapAtomicAndRestart(t *testing.T) {
 func TestTemporaryLoginSingleUseResetAndExpiry(t *testing.T) {
 	ctx := context.Background()
 	s, admin := accountStore(t)
-	user, password, err := s.CreateAccount(ctx, admin.ID, "User", "Example User", "user")
+	user, password, err := createTestAccount(t, s, admin.ID, "User", "Example User", "user")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestTemporaryLoginSingleUseResetAndExpiry(t *testing.T) {
 	if err = s.RevokeAllLogins(ctx, token); !errors.Is(err, ErrForbidden) {
 		t.Fatal(err)
 	}
-	replacement, err := s.ResetAccountPassword(ctx, admin.ID, user.ID, user.Revision)
+	replacement, err := s.ResetAccountPassword(ctx, adminTestToken(t, s, admin), user.ID, AccountRevision{RequestID: uuid.NewString(), ExpectedRevision: user.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +136,7 @@ func TestTemporaryLoginSingleUseResetAndExpiry(t *testing.T) {
 	if _, _, err = s.Authenticate(ctx, "user", password); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal("reset retained old temporary password", err)
 	}
-	_, token, err = s.Authenticate(ctx, "user", replacement)
+	_, token, err = s.Authenticate(ctx, "user", replacement.TemporaryPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,19 +150,19 @@ func TestTemporaryLoginSingleUseResetAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expired, err := s.ResetAccountPassword(ctx, admin.ID, user.ID, latest.Revision)
+	expired, err := s.ResetAccountPassword(ctx, adminTestToken(t, s, admin), user.ID, AccountRevision{RequestID: uuid.NewString(), ExpectedRevision: latest.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.now = func() time.Time { return now.Add(25 * time.Hour) }
-	if _, _, err = s.Authenticate(ctx, "user", expired); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err = s.Authenticate(ctx, "user", expired.TemporaryPassword); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal("expired password accepted", err)
 	}
 }
 func TestSetupCompletionAndPermanentChangeAreAtomic(t *testing.T) {
 	ctx := context.Background()
 	s, admin := accountStore(t)
-	_, password, err := s.CreateAccount(ctx, admin.ID, "user", "User", "user")
+	_, password, err := createTestAccount(t, s, admin.ID, "user", "User", "user")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,38 +201,43 @@ func TestSetupCompletionAndPermanentChangeAreAtomic(t *testing.T) {
 	}
 }
 func TestConcurrentLastAdminProtection(t *testing.T) {
-	for _, status := range []string{"demote", "disable"} {
-		t.Run(status, func(t *testing.T) {
+	for _, mode := range []string{"demote", "disable"} {
+		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			s, first := accountStore(t)
-			second, password, err := s.CreateAccount(ctx, first.ID, "second", "Second", "admin")
+			firstToken := adminTestToken(t, s, first)
+			created, err := s.CreateAccount(ctx, firstToken, AccountCreate{RequestID: uuid.NewString(), Username: "second", DisplayName: "Second", Role: "admin"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, token, err := s.Authenticate(ctx, "second", password)
+			_, setup, err := s.Authenticate(ctx, "second", created.TemporaryPassword)
 			if err != nil {
 				t.Fatal(err)
 			}
-			session, _, err := s.ChangePassword(ctx, token, "", "second-admin-password", true)
+			second, secondToken, err := s.ChangePassword(ctx, setup, "", "second-admin-password", true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			second = session.Account
 			start := make(chan struct{})
-			var wg sync.WaitGroup
 			results := make(chan error, 2)
-			for _, a := range []Account{first, second} {
+			var wg sync.WaitGroup
+			for _, entry := range []struct {
+				account Account
+				token   string
+			}{{first, firstToken}, {second.Account, secondToken}} {
 				wg.Add(1)
-				go func(a Account) {
+				go func(a Account, token string) {
 					defer wg.Done()
 					<-start
-					role, state := "user", "active"
-					if status == "disable" {
-						role, state = "admin", "disabled"
+					var err error
+					if mode == "disable" {
+						_, err = s.SuspendAccount(ctx, token, a.ID, AccountRevision{RequestID: uuid.NewString(), ExpectedRevision: a.Revision})
+					} else {
+						role := "user"
+						_, err = s.UpdateAccount(ctx, token, a.ID, AccountEdit{RequestID: uuid.NewString(), ExpectedRevision: a.Revision, Role: &role})
 					}
-					_, err := s.ChangeAccountAuthority(ctx, a.ID, a.ID, role, state, a.Revision)
 					results <- err
-				}(a)
+				}(entry.account, entry.token)
 			}
 			close(start)
 			wg.Wait()
@@ -275,4 +281,22 @@ func bootstrapSeedFixture(t *testing.T) BootstrapSeed {
 		t.Fatal(err)
 	}
 	return seed
+}
+
+func adminTestToken(t *testing.T, s *Store, a Account) string {
+	t.Helper()
+	_, token, err := s.Authenticate(ctx, a.Username, "permanent-admin-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+func createTestAccount(t *testing.T, s *Store, actor, username, display, role string) (Account, string, error) {
+	t.Helper()
+	a, err := s.Account(ctx, actor)
+	if err != nil {
+		return Account{}, "", err
+	}
+	result, err := s.CreateAccount(ctx, adminTestToken(t, s, a), AccountCreate{RequestID: uuid.NewString(), Username: username, DisplayName: display, Role: role})
+	return result.User.Account, result.TemporaryPassword, err
 }

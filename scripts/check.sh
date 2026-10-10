@@ -22,6 +22,7 @@ case "${1:-all}" in
     go -C orchestrator test -mod=readonly ./...
     # Compile every privileged test without executing it on a shared runner.
     go -C orchestrator test -mod=readonly -tags khoraintegration -run '^$' ./...
+    go -C orchestrator test -mod=readonly -tags webintegration -run '^$' ./internal/edge
     go -C orchestrator test -mod=readonly -tags khoraintegration -run '^TestMixed(PercentilesUseNearestRank|ProjectionObservationIsIndependentAndRequiresReady)$' ./internal/application
     ;;
   race)

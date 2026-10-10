@@ -1,27 +1,73 @@
 import { expect, test } from "@playwright/test";
+import { adminFixture } from "./fixture";
 const account = { id: "admin-id", username: "admin", display_name: "Administrator", role: "admin", status: "active", revision: 1, session_revision: 1, must_change_password: false };
 test("production admin deep links keep every script under the admin base path", async ({ page }) => {
-  await page.route("**/api/auth/session", route => route.fulfill({ json: account }));
-  await page.goto("/admin/users/example");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("administration");
-  await expect(page.getByRole("status")).toHaveCount(0);
+  await adminFixture(page);
+  await page.goto("/admin/users/user-id");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("ordinary");
   const scripts = await page.locator("script[src]").evaluateAll(nodes => nodes.map(node => node.getAttribute("src")!));
   expect(scripts.filter(src => src.includes("/_next/static/")).every(src => src.startsWith("/admin/_next/static/"))).toBe(true);
-  await page.reload();
-  await expect(page.getByRole("status")).toHaveCount(0);
+  await page.reload(); await expect(page.getByRole("heading", { level: 1 })).toHaveText("ordinary");
 });
 test("non-admin access is denied without a login redirect loop", async ({ page }) => {
-  const privileged: string[] = [];
-  page.on("request", request => { if (request.url().includes("/api/admin/")) privileged.push(request.url()); });
-  await page.route("**/api/auth/session", route => route.fulfill({ json: { ...account, role: "user" } }));
-  await page.goto("/admin/users");
+  const fixture = await adminFixture(page, "user"); await page.goto("/admin/users");
   await expect(page.getByRole("heading", { name: "Access denied" })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe("/admin/users");
-  expect(privileged).toEqual([]);
+  expect(fixture.calls.filter(call => call.path.startsWith("/api/admin/"))).toEqual([]);
   await expect(page.getByRole("link", { name: "Return to workbench" })).toHaveAttribute("href", "/");
 });
 for (const restricted of [false, true]) test(`login and password setup return to the requested admin page (${restricted})`, async ({ page }) => {
   await page.route("**/api/auth/session", route => route.fulfill(restricted ? { json: { ...account, must_change_password: true } } : { status: 401, json: { error: "login required" } }));
-  await page.goto("/admin/users/example?tab=security");
-  await page.waitForURL(url => url.pathname === "/" && url.searchParams.get("return_to") === "/admin/users/example?tab=security");
+  await page.goto("/admin/users/user-id?tab=security");
+  await page.waitForURL(url => url.pathname === "/" && url.searchParams.get("return_to") === "/admin/users/user-id?tab=security");
+});
+for (const width of [390, 1440]) test(`create, edit and one-time credential forms fit ${width}px`, async ({ page }, info) => {
+  const fixture = await adminFixture(page); await page.setViewportSize({ width, height: 900 });
+  await page.goto("/admin/users/new");
+  await page.getByLabel("Username", { exact: true }).fill("u".repeat(64));
+  await page.getByLabel("Display name", { exact: true }).fill("N".repeat(128));
+  await page.getByRole("combobox", { name: "Membership", exact: true }).selectOption("none");
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  const dialog = page.getByRole("dialog"); await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Temporary password", { exact: true })).toHaveValue("temporary-password-value");
+  expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+  await expect(dialog.getByLabel("Temporary password", { exact: true })).toBeFocused();
+  await page.keyboard.press("Shift+Tab"); await expect(dialog.getByRole("button", { name: "Done", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab"); await expect(dialog.getByLabel("Temporary password", { exact: true })).toBeFocused();
+  expect(fixture.calls.find(call => call.path === "/api/admin/users" && call.method === "POST")!.body!.group_ids).toEqual([]);
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/admin/users/created-id");
+  await expect(page.getByLabel("Temporary password", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Display name", { exact: true }).fill("Updated user");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Updated user");
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1); expect(overflow).toBe(false);
+  await page.screenshot({ path: info.outputPath("user-details.png") });
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain("temporary-password-value");
+});
+test("lost create reply retries the original request without duplicating or replaying a password", async ({ page }) => {
+  const fixture = await adminFixture(page); fixture.controls.loseCreateReply = true;
+  await page.goto("/admin/users/new"); await page.getByLabel("Username", { exact: true }).fill("lost-user"); await page.getByLabel("Display name", { exact: true }).fill("Lost user");
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await page.getByRole("button", { name: "Check original request", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("password cannot be shown again");
+  const calls = fixture.calls.filter(call => call.method === "POST" && call.path === "/api/admin/users"); expect(calls).toHaveLength(2); expect(calls[0].body).toEqual(calls[1].body);
+  expect(fixture.users.filter(user => user.username === "lost-user")).toHaveLength(1); await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+test("stale edits retain the changed field and preserve an unrelated new role", async ({ page }) => {
+  const fixture = await adminFixture(page); fixture.controls.conflictEdit = true;
+  await page.goto("/admin/users/user-id"); await page.getByLabel("Display name", { exact: true }).fill("Reapplied name");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.locator("main").getByRole("alert")).toContainText("changed elsewhere");
+  await expect(page.getByRole("combobox", { name: "Management role", exact: true })).toHaveValue("admin");
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue("Reapplied name");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  const calls = fixture.calls.filter(call => call.method === "PATCH"); expect(calls[1].body).toMatchObject({ expected_revision: 2, display_name: "Reapplied name" }); expect(calls[1].body).not.toHaveProperty("role");
+});
+test("audit filters and accepted operations report observed state", async ({ page }) => {
+  const fixture = await adminFixture(page); await page.goto("/admin/audit");
+  await page.getByLabel("Actor ID", { exact: true }).fill("admin-id"); await page.getByRole("button", { name: "Filter", exact: true }).click();
+  await expect(page.getByText("account.create", { exact: true })).toBeVisible(); expect(fixture.calls.some(call => call.path === "/api/admin/audit-events")).toBe(true);
+  await page.goto("/admin/operations/operation"); await expect(page.getByRole("status")).toHaveText("accepted");
+  await expect(page.getByText("The request is recorded. Resource work has not been confirmed complete.")).toBeVisible();
 });

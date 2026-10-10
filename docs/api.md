@@ -31,6 +31,11 @@ settings and an incorrect current password return 422; an expired login returns
 | `GET/PATCH /api/me/preferences` | Revisioned theme mode and accent for the signed-in account |
 | `GET/PATCH /api/me/profile` | Immutable ID/username and revisioned display name |
 | `GET /api/users` | Authenticated sharing directory containing immutable IDs and display labels |
+| `GET/POST /api/admin/users`, `GET/PATCH /api/admin/users/{id}` | Administrator account list/detail/create and display-name/role edits |
+| `POST /api/admin/users/{id}/password-reset` | Issue a one-time temporary credential and revoke that account's sessions |
+| `GET /api/admin/groups` | Bounded group choices for account creation |
+| `GET /api/admin/audit-events` | Bounded actor/target/action/time-filtered administrative/security audit |
+| `POST /api/admin/users/{id}/suspend`, `/enable`; `GET /api/admin/operations/{id}` | Durable account-state intent and observed operation state |
 | `/api/projects` | List and create Projects |
 | `/api/schedules`, `/api/schedules/events` | Owner-scoped schedule overview and metadata invalidation SSE across Projects |
 | `/api/projects/{project}` | Inspect, rename and request deletion |
@@ -325,3 +330,34 @@ exhaustion posts one `schedule/<id>` attention notice once admitted work settles
 a still-live final check can complete without a premature exhaustion notice.
 `notify: false` suppresses the task's notices. Finish does not emit success until
 native execution settles; failure after finish remains stopped and notifies.
+
+## Administration
+
+Every admin service checks a current normal session and platform-admin role.
+Writes recheck that authority inside the same transaction as mutation, audit and
+receipt. Origin protection applies to every admin mutation. List endpoints accept
+`limit` (1–100, default 50) and opaque `cursor`. User filtering by `search`, `status`
+and `role` happens before pagination; audit supports `actor`, `target`, `action`,
+`after` and `before` (RFC3339 times). Cursors cannot be reused with other filters.
+
+Create sends `request_id`, `username`, `display_name`, `role` and optional
+`group_ids`. Omission selects the standard group; an explicit empty array selects
+none. At most 256 distinct current groups may be selected. Edits send
+`request_id`, `expected_revision` and the changed `display_name` and/or `role`.
+Username is immutable. Reset/suspend/enable send request ID and expected revision.
+Role changes revoke affected sessions; the last active admin cannot be removed.
+
+A mutation result contains `user`, `replayed` and, on the first successful create
+or reset response only, `temporary_password`. A same-ID/body replay returns its
+recorded non-secret result before stale revision checks; another action, target or
+body conflicts. Results are snapshots of that mutation; use detail/operation GET
+for current state. Requests still require current authority to read their outcome.
+An uncertain credential response is resolved by checking the original request,
+then explicitly resetting with a new request ID if a new password is needed.
+
+Account suspension commits disabled status, revocation and durable operation/
+project targets before returning 202. This development stage records the intent;
+resource stop/pause reconciliation is not yet implemented. The operation remains
+`accepted`, never falsely `succeeded`. Enable restores identity only and leaves
+resource/share/schedule reactivation separate. The admin UI currently exposes
+account metadata/security and audit; suspension controls await that reconciler.

@@ -172,4 +172,13 @@ func TestProductionFrontendBoundary(t *testing.T) {
 	if response.StatusCode != 404 || strings.Contains(string(raw), "/admin/_next/static/") {
 		t.Fatal("administrator matched admin routing")
 	}
+
+	browserTest := exec.CommandContext(ctx, "node", filepath.Join(repo, "admin-frontend/node_modules/@playwright/test/cli.js"), "test", "--config", "playwright.live.config.ts")
+	browserTest.Dir = filepath.Join(repo, "admin-frontend")
+	browserTest.Env = append(os.Environ(), "ADMIN_LIVE_URL="+browser.URL)
+	output, err := browserTest.CombinedOutput()
+	t.Log(string(output))
+	if err != nil {
+		t.Fatal("real administration browser journey failed", err)
+	}
 }

@@ -42,6 +42,7 @@ func (a *Authentication) Actor(r *http.Request) (string, error) {
 }
 func (a *Authentication) Handler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	a.adminRoutes(mux)
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/auth/logout", a.logout)
 	mux.HandleFunc("GET /api/auth/session", a.session)
@@ -55,7 +56,7 @@ func (a *Authentication) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("PATCH /api/me/profile", a.profile)
 	mux.Handle("/", next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (strings.HasPrefix(r.URL.Path, "/api/auth/") || strings.HasPrefix(r.URL.Path, "/api/me/")) && r.Method != "GET" && !a.Config.originAllowed(r) {
+		if (strings.HasPrefix(r.URL.Path, "/api/auth/") || strings.HasPrefix(r.URL.Path, "/api/me/") || strings.HasPrefix(r.URL.Path, "/api/admin/")) && r.Method != "GET" && !a.Config.originAllowed(r) {
 			writeError(w, 403, "cross-origin request refused")
 			return
 		}

@@ -19,7 +19,8 @@ func TestSelfSettingsRejectPrivilegesRestrictedSessionsAndStaleUpdates(t *testin
 	must(t, err)
 	_, token, err := store.Authenticate(ctx, "admin", "permanent-admin-password")
 	must(t, err)
-	_, temporary, err := store.CreateAccount(ctx, admin.ID, "user", "User", "user")
+	created, err := store.CreateAccount(ctx, token, product.AccountCreate{RequestID: "create-user", Username: "user", DisplayName: "User", Role: "user"})
+	temporary := created.TemporaryPassword
 	must(t, err)
 	_, restricted, err := store.Authenticate(ctx, "user", temporary)
 	must(t, err)

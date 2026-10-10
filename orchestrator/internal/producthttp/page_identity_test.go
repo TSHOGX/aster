@@ -78,7 +78,10 @@ func TestPageIdentityComesFromCurrentCookieAndCannotBeForged(t *testing.T) {
 	if got := read("/", cookie); got != "" {
 		t.Fatal("revoked cookie selected account cache", got)
 	}
-	_, temporary, err := store.CreateAccount(ctx, admin.ID, "setup", "Setup", "user")
+	_, adminToken, err := store.Authenticate(ctx, admin.Username, "permanent-admin-password")
+	must(t, err)
+	created, err := store.CreateAccount(ctx, adminToken, product.AccountCreate{RequestID: "create-setup", Username: "setup", DisplayName: "Setup", Role: "user"})
+	temporary := created.TemporaryPassword
 	must(t, err)
 	cookie = login("setup", temporary)
 	if got := read("/", cookie); got != "" {

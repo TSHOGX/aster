@@ -1,31 +1,94 @@
 "use client";
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, APIError } from "@/lib/api";
 import type { Identity } from "@web/identity";
 import { displayName } from "@web/brand";
+import { ACTIVE_APPEARANCE_KEY, appearanceKey, applyAppearance, bindAppearance, cacheAppearance, cachedAppearance, clearAppearanceBinding, DEFAULT_APPEARANCE, type Preferences } from "@web/appearance";
+import { UserList } from "./user-list";
+import { UserEditor } from "./user-editor";
+import { AuditView, OperationView } from "./audit-view";
 export function Administration({ route }: { route: string[] }) {
-  const [status, setStatus] = useState("loading");
-  useEffect(() => {
-    let active = true;
-    void api<Identity>("/api/auth/session").then(account => {
-      if (!active) return;
-      if (account.must_change_password) { location.replace(`/?return_to=${encodeURIComponent(location.pathname + location.search)}`); return; }
-      setStatus(account.role === "admin" ? "ready" : "denied");
+  const [identity, setIdentity] = useState<Identity | null>(null), [status, setStatus] = useState("loading"), [dirty, setDirty] = useState(false), [error, setError] = useState("");
+  const generation = useRef(0);
+  const dirtyRef = useRef(false);
+  const reloadIdentity = useCallback(() => {
+    const current = ++generation.current;
+    return api<Identity>("/api/auth/session").then(account => {
+      if (current !== generation.current) return;
+      if (account.must_change_password) { dirtyRef.current = false; setIdentity(null); clearAppearanceBinding(); location.replace(`/?return_to=${encodeURIComponent(location.pathname + location.search)}`); return; }
+      setIdentity(account); setStatus(account.role === "admin" ? "ready" : "denied");
     }).catch(error => {
-      if (!active) return;
-      if (error instanceof APIError && error.status === 401) { location.replace(`/?return_to=${encodeURIComponent(location.pathname + location.search)}`); return; }
+      if (current !== generation.current) return;
+      if (error instanceof APIError && error.status === 401) { dirtyRef.current = false; setIdentity(null); clearAppearanceBinding(); location.replace(`/?return_to=${encodeURIComponent(location.pathname + location.search)}`); return; }
       setStatus("unavailable");
     });
-    return () => { active = false; };
   }, []);
-  return <main><h1>{displayName} administration</h1>
-    {status === "loading" && <p role="status">Opening administration…</p>}
-    {status === "denied" && <><h2>Access denied</h2><p>A platform administrator role is required.</p><WorkbenchLink /></>}
-    {status === "unavailable" && <p role="alert">Account access is unavailable. Reload to retry.</p>}
-    {status === "ready" && <p>{route.length ? route.join(" / ") : "Administration"}</p>}
-  </main>;
+  useEffect(() => {
+    void reloadIdentity();
+    const changed = () => void reloadIdentity();
+    const visible = () => { if (!document.hidden) changed(); };
+    const storage = (event: StorageEvent) => { if (event.key === ACTIVE_APPEARANCE_KEY || event.key === null) changed(); };
+    window.addEventListener("admin-auth-expired", changed); window.addEventListener("admin-authority-denied", changed);
+    window.addEventListener("storage", storage); document.addEventListener("visibilitychange", visible);
+    return () => { window.removeEventListener("admin-auth-expired", changed); window.removeEventListener("admin-authority-denied", changed); window.removeEventListener("storage", storage); document.removeEventListener("visibilitychange", visible); };
+  }, [reloadIdentity]);
+  const accountID = identity?.id;
+  useEffect(() => {
+    if (!accountID) return;
+    let active = true;
+    bindAppearance(accountID);
+    let preferences = cachedAppearance(accountID) || DEFAULT_APPEARANCE;
+    const refresh = () => void api<Preferences>("/api/me/preferences").then(value => {
+      if (!active) return;
+      if (value.revision > 0) { preferences = value; cacheAppearance(accountID, value); }
+      applyAppearance(preferences);
+    }).catch(() => {});
+    refresh();
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
+    const changed = () => applyAppearance(preferences);
+    const storage = (event: StorageEvent) => { if (event.key === appearanceKey(accountID)) refresh(); };
+    system.addEventListener("change", changed); window.addEventListener("storage", storage);
+    return () => { active = false; system.removeEventListener("change", changed); window.removeEventListener("storage", storage); };
+  }, [accountID]);
+  useEffect(() => {
+    if (!dirty) return;
+    const before = (event: BeforeUnloadEvent) => { if (dirtyRef.current) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", before); return () => window.removeEventListener("beforeunload", before);
+  }, [dirty]);
+  const setEditorDirty = useCallback((value: boolean) => { dirtyRef.current = value; setDirty(value); }, []);
+  const mayLeave = () => {
+    if (dirtyRef.current && !window.confirm("Leave without saving these changes? An unconfirmed request may already have completed.")) return false;
+    dirtyRef.current = false; setDirty(false); return true;
+  };
+  const logout = async () => {
+    if (!mayLeave()) return;
+    try { await api("/api/auth/logout", { method: "POST" }); clearAppearanceBinding(); location.assign(new URL("/", location.origin).href); }
+    catch (error) { setError(String(error)); }
+  };
+  return <div className="admin-shell">
+    <header className="admin-header"><strong>{displayName} <span>Administration</span></strong><nav aria-label="Administration" onClick={event => { if ((event.target as Element).closest("a") && !mayLeave()) event.preventDefault(); }}>
+      {status === "ready" && <><Link href="/users" aria-current={!route.length || route[0] === "users" ? "page" : undefined}>Users</Link><Link href="/audit" aria-current={route[0] === "audit" ? "page" : undefined}>Audit</Link></>}
+      <WorkbenchLink />{identity && <button onClick={() => void logout()}>Sign out</button>}
+    </nav></header>
+    <main>
+      {error && <p role="alert" className="error">{error}</p>}
+      {status === "loading" && <p role="status">Opening administration…</p>}
+      {status === "denied" && <><h1>Access denied</h1><p>A platform administrator role is required.</p></>}
+      {status === "unavailable" && <><p role="alert">Account access is unavailable.</p><button onClick={() => void reloadIdentity()}>Retry access check</button></>}
+      {status === "ready" && identity && <div key={identity.id} onClickCapture={event => {
+        const link = (event.target as Element).closest("a");
+        if (link && !mayLeave()) { event.preventDefault(); event.stopPropagation(); }
+      }}>
+        {(!route.length || route[0] === "users" && route.length === 1) ? <UserList />
+          : route[0] === "users" && route.length === 2 ? <UserEditor key={route[1]} id={route[1] === "new" ? undefined : route[1]} onDirty={setEditorDirty} />
+          : route[0] === "audit" && route.length === 1 ? <AuditView />
+          : route[0] === "operations" && route.length === 2 ? <OperationView id={route[1]} />
+          : <><h1>Page not found</h1><Link href="/users">Open users</Link></>}
+      </div>}
+    </main>
+  </div>;
 }
-
 function WorkbenchLink() {
   return (
     // The workbench is a separate build; Next Link would add /admin to this URL.

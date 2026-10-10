@@ -18,6 +18,11 @@ One application owns all writes; operator control commands use that owner.
 Accounts, credential hashes, session revisions, group membership and resource
 policy seeds belong to this same database. First-admin creation and all bootstrap
 seed records commit together; audit failure rolls the entire initialization back.
+`audit_events` is the common redacted audit surface. `admin_receipts` binds each
+actor/request ID to an action, target and body digest with a non-secret result;
+credential plaintext is never stored there. Account edits and receipts share the
+same writer transaction. `admin_operations` and its project targets retain account
+suspension intent separately from actual remote completion.
 
 Projects, saved profiles, owned resources and lifecycle operations describe
 parent authority. Sessions and prompt rows own immutable input and queue policy;

@@ -63,6 +63,9 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (Lo
 			}
 			ttl = 15 * time.Minute
 		}
+		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET last_login_at=? WHERE id=?`, s.timestamp(), a.ID); err != nil {
+			return err
+		}
 		result = LoginSession{Account: current.Account, Restricted: current.MustChangePassword}
 		if err = s.insertLogin(ctx, tx, token, current.Account, current.MustChangePassword, ttl); err != nil {
 			return err

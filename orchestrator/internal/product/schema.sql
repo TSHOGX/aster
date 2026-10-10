@@ -70,6 +70,7 @@ CREATE TABLE accounts (
  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
  temporary_expires_at TEXT NOT NULL DEFAULT '',
  temporary_consumed INTEGER NOT NULL DEFAULT 0 CHECK(temporary_consumed IN (0,1)),
+ last_login_at TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL
 );
@@ -90,13 +91,49 @@ CREATE TABLE auth_sessions (
 );
 CREATE INDEX auth_sessions_account ON auth_sessions(account_id);
 
-CREATE TABLE account_audit (
+CREATE TABLE audit_events (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  actor_id TEXT NOT NULL,
  action TEXT NOT NULL,
- target_id TEXT NOT NULL REFERENCES accounts(id),
+ target_kind TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ request_id TEXT NOT NULL DEFAULT '',
  revision INTEGER NOT NULL,
+ details TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details)),
  created_at TEXT NOT NULL
+);
+CREATE INDEX audit_events_actor ON audit_events(actor_id,id);
+CREATE INDEX audit_events_target ON audit_events(target_kind,target_id,id);
+CREATE INDEX audit_events_action ON audit_events(action,id);
+CREATE INDEX audit_events_time ON audit_events(created_at,id);
+
+CREATE TABLE admin_receipts (
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
+ request_id TEXT NOT NULL,
+ action TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ body_digest TEXT NOT NULL CHECK(length(body_digest)=64),
+ result TEXT NOT NULL CHECK(json_valid(result)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(actor_id,request_id)
+);
+CREATE TABLE admin_operations (
+ id TEXT PRIMARY KEY,
+ actor_id TEXT NOT NULL REFERENCES accounts(id),
+ action TEXT NOT NULL,
+ target_kind TEXT NOT NULL,
+ target_id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('accepted','running','succeeded','failed','unknown')),
+ error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE admin_operation_targets (
+ operation_id TEXT NOT NULL REFERENCES admin_operations(id),
+ project_id TEXT NOT NULL REFERENCES projects(id),
+ state TEXT NOT NULL DEFAULT 'accepted' CHECK(state IN ('accepted','running','succeeded','failed','unknown')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(operation_id,project_id)
 );
 
 CREATE TABLE account_groups (

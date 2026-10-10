@@ -93,7 +93,10 @@ func TestRestrictedLoginOnlyAuthorizesSetupSessionAndLogout(t *testing.T) {
 	defer store.Close()
 	admin, err := store.BootstrapAccount(ctx, "admin", "correct-password", identitySeed(t))
 	must(t, err)
-	_, password, err := store.CreateAccount(ctx, admin.ID, "user", "User", "user")
+	_, adminToken, err := store.Authenticate(ctx, admin.Username, "correct-password")
+	must(t, err)
+	created, err := store.CreateAccount(ctx, adminToken, product.AccountCreate{RequestID: "create-user", Username: "user", DisplayName: "User", Role: "user"})
+	password := created.TemporaryPassword
 	must(t, err)
 	authentication := NewAuthentication(store, Config{})
 	api := (&Server{Store: store, Auth: authentication}).Handler()

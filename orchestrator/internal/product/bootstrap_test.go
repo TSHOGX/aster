@@ -20,7 +20,7 @@ func TestBootstrapSeedsRollbackAndSingleInitialization(t *testing.T) {
 	if _, err = s.InitializeNetworkPolicy(ctx, seed.Network); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.ExecContext(ctx, `CREATE TEMP TRIGGER fail_bootstrap_audit BEFORE INSERT ON account_audit BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {
+	if _, err = s.db.ExecContext(ctx, `CREATE TEMP TRIGGER fail_bootstrap_audit BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.BootstrapAccount(ctx, "admin", "administrator-password", seed); err == nil {

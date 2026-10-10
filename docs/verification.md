@@ -33,7 +33,7 @@ qualification is an explicit separate command.
 | Backend | `scripts/check.sh backend` | Build, vet, all ordinary Go tests, Node RPC handler/full Session tests, compile all `khoraintegration` packages and execute their substrate-independent measurement tests |
 | Core races | `scripts/check.sh race` | Product, Agent runner and runtime release under the Go race detector |
 | Frontend | `scripts/check.sh frontend` | Lint, types, Vitest, both production builds, deterministic Chromium UI tests and the real Go edge against those builds |
-| Browser edge | `scripts/check.sh frontend-edge` | Real Go cookie identity and both already-built standalone frontends, deep links and asset base paths; no engine required |
+| Browser edge | `scripts/check.sh frontend-edge` | Real Go/SQLite cookies, both standalone frontends, deep links/assets and a browser account-management journey with an injected lost reply; no engine required |
 | Cross-browser controls | `npm --prefix frontend run test:pickers` | Scheduling controls in Chromium, Firefox and WebKit; install those browsers first |
 | Runtime | `dev/verify-khora.sh ... --suite all` | Actual owner, immutable guest image, native Pi, Khora, network/files, browser, faults, realtime and sustained mixed workload |
 | Extended workload | `dev/verify-khora.sh ... --suite combined` | Explicit two-tab workload, network profiles and active-owner update |

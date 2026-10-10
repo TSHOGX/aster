@@ -65,6 +65,13 @@ expires after 24 hours; login issues a 15-minute session that permits only passw
 setup, session inspection and logout. Setup installs a permanent password and
 revokes the temporary session. Lost or expired setup sessions require another reset.
 
+Use `/admin/users` for user creation, role/display-name editing and password
+reset. Temporary passwords are displayed once and are absent from retries and
+audit records. If a response is lost, retry the original request to determine its
+outcome; explicitly issue another reset if a password must be reissued. Usernames
+remain reserved when disabled. `/admin/audit` exposes bounded security/change
+history, and operation links show accepted versus observed completion.
+
 Use the protected control socket for live operations:
 
 ```sh

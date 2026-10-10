@@ -66,7 +66,7 @@ func TestPreferencesInitializeOnceAndPreserveUnrelatedFields(t *testing.T) {
 func TestSelfSettingsUseCurrentSessionAndAreIndependentOfMembership(t *testing.T) {
 	ctx := context.Background()
 	s, admin := accountStore(t)
-	account, temporary, err := s.CreateAccount(ctx, admin.ID, "ordinary", "Ordinary", "user")
+	account, temporary, err := createTestAccount(t, s, admin.ID, "ordinary", "Ordinary", "user")
 	if err != nil {
 		t.Fatal(err)
 	}
