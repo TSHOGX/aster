@@ -27,18 +27,35 @@ case "${1:-all}" in
     command -v node >/dev/null
     go -C orchestrator test -mod=readonly -race ./internal/product ./internal/agentrunner ./internal/runtimerelease
     ;;
-  frontend)
+  frontend-lint)
     cd frontend
     npm run lint
-    npm run typecheck
+    ;;
+  frontend-unit)
+    cd frontend
     npm test
+    ;;
+  frontend-build)
+    cd frontend
     npm run build
+    # Next suppresses diagnostics in spec/test files. Retain the full check,
+    # reusing its incremental cache and the Office assets just built above.
+    npm run typecheck:built
+    ;;
+  frontend-ui)
+    cd frontend
     npm run test:ui:built
+    ;;
+  frontend)
+    "$0" frontend-lint
+    "$0" frontend-unit
+    "$0" frontend-build
+    "$0" frontend-ui
     ;;
   all)
     "$0" source
     "$0" backend
     "$0" frontend
     ;;
-  *) echo 'Usage: scripts/check.sh [source|backend|race|frontend|all]' >&2; exit 2 ;;
+  *) echo 'Usage: scripts/check.sh [source|backend|race|frontend|frontend-lint|frontend-unit|frontend-build|frontend-ui|all]' >&2; exit 2 ;;
 esac

@@ -8,26 +8,29 @@ import {
   type DirectoryTree,
 } from "./directory-window";
 
+// All 500 updates / 50,000 rows remain covered. Give this scale check its own
+// execution budget; hosted runners have exceeded the default five seconds.
 it("keeps expansion independent of bounded resident page windows", () => {
   const open = openDirectories(
     Array.from({ length: 100 }, (_, n) => `dir-${n}`),
   );
   expect(open).toHaveLength(100);
+  const pages = Array.from({ length: 5 }, (_, page) => ({
+    entries: Array.from({ length: 100 }, (_, n) => ({
+      name: `file-${page}-${n}`,
+      kind: "file",
+      size: 0,
+      modified: 0,
+    })),
+    after: String(page),
+  }));
   let tree: DirectoryTree = { "": { entries: [] } };
   for (const path of open)
-    for (let page = 0; page < 5; page++) {
+    for (const page of pages) {
       tree = replaceDirectoryWindow(
         tree,
         path,
-        {
-          entries: Array.from({ length: 100 }, (_, n) => ({
-            name: `file-${page}-${n}`,
-            kind: "file",
-            size: 0,
-            modified: 0,
-          })),
-          after: String(page), snapshot: path,
-        },
+        { ...page, snapshot: path },
         open,
       );
     }
@@ -36,7 +39,7 @@ it("keeps expansion independent of bounded resident page windows", () => {
   expect(JSON.stringify(tree).length * 3).toBeLessThanOrEqual(MAX_DIRECTORY_TREE_BYTES);
   expect(Object.values(tree).reduce((count, p) => count + p.entries.length, 0)).toBeGreaterThan(0);
   expect(Object.keys(retainDirectoryWindows(tree, []))).toEqual([""]);
-});
+}, 10000);
 it("retains one contiguous interval while moving forward and backward", () => {
   const page = (start: number) => ({
     entries: Array.from({ length: 100 }, (_, i) => ({ name: String(start + i), kind: "file", size: 0, modified: 0 })),
