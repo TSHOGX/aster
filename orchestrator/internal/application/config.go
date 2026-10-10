@@ -67,13 +67,14 @@ type NotificationConfig struct {
 	OperatorBroadcast  bool `json:"operator_broadcast"`
 }
 type ServiceGateway struct {
-	Audience    string `json:"audience"`
-	Listen      string `json:"listen"`
-	Upstream    string `json:"upstream"`
-	APIKeyEnv   string `json:"api_key_env"`
-	TLSCert     string `json:"tls_cert"`
-	TLSKey      string `json:"tls_key"`
-	MaxRequests int    `json:"max_requests"`
+	ScheduleTools bool   `json:"schedule_tools"`
+	Audience      string `json:"audience"`
+	Listen        string `json:"listen"`
+	Upstream      string `json:"upstream"`
+	APIKeyEnv     string `json:"api_key_env"`
+	TLSCert       string `json:"tls_cert"`
+	TLSKey        string `json:"tls_key"`
+	MaxRequests   int    `json:"max_requests"`
 }
 type TitleService struct {
 	BaseURL   string `json:"base_url"`

@@ -27,6 +27,7 @@ type ReleaseIdentity struct {
 	ContentDigests        map[string]string `json:"content_digests"`
 	RuntimeCatalog        map[string]string `json:"runtime_catalog"`
 	OwnerProtocol         int               `json:"owner_protocol"`
+	PlatformProtocol      int               `json:"platform_protocol"`
 	GatewayProtocol       int               `json:"gateway_protocol"`
 	CompatibilityDigest   string            `json:"compatibility_digest"`
 	NetworkPolicyRevision string            `json:"network_policy_revision"`
@@ -125,9 +126,8 @@ func prepareRelease(cfg Config) (out preparedRelease, err error) {
 	if err != nil {
 		return out, err
 	}
-	// Version 3 includes elapsed interval recurrence semantics. A Cron-only owner
-	// must not be treated as the same deployment contract for handoff.
-	id := ReleaseIdentity{Version: 3, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
+	// Version 4 includes the reserved platform protocol and schedule lifecycle.
+	id := ReleaseIdentity{Version: 4, PlatformProtocol: servicegateway.PlatformVersion, OwnerProtocol: product.OwnerHandoffProtocol, ExecutableDigest: executable, RuntimeDigest: cfg.Template.Digest, GatewayProtocol: servicegateway.AuthorityVersion, ContentDigests: map[string]string{}}
 	policy, err := product.NewNetworkPolicy(cfg.Project.Reachability)
 	if err != nil {
 		return out, err

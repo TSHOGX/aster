@@ -6,7 +6,7 @@ here. Existing databases and deployments are not changed by this work.
 | Stage | Status | Deliverable |
 | --- | --- | --- |
 | Domain and admission | Complete | Explicit lifecycle/triggers, one-shot admission, receipts, coalescing, failure isolation, typed browser writes, retirement |
-| Platform transport | Pending | Reserved gateway prefix, protected owner RPC, live grant/slot/Run/release fences |
+| Platform transport | Complete | Reserved gateway prefix, protected owner RPC, live grant/slot/Run/release fences |
 | Native runtime | Pending | Measured explicit extension, immutable request identity/retries, capability gating |
 | Surfaces and delivery | Pending | One-shot editor, conversation cards/source links, history filters, scheduled inbox projection |
 | Bounded checks | Pending | Count/deadline bounds, exact scheduled Run finish, quiet pending checks |
@@ -31,3 +31,15 @@ tests pass; product/HTTP vet passes; frontend TypeScript and schedule unit tests
 cases) pass; source/documentation gates pass. Source-only retirement additionally
 verifies that independent future work survives and receipt details are redacted.
 Browser fixture generation uses the existing test Python virtual environment.
+
+Platform validation exercises the actual HTTP gateway, protected Unix socket,
+live product grant and committed receipt with a deliberately dropped owner
+response. Identical replay returns the same receipt, changed intent conflicts,
+and reserved variants never reach the model fixture. Authority cases cover
+revocation, expiry, stopping, idle, owner advancement, closed slot, gateway
+replacement, wrong expected Run, drain and foreign target. Slot acquisition now
+snapshots the execution owner so a delayed platform call cannot cross an owner
+advance, while existing model stream continuation keeps its original rules.
+
+Platform checks: complete backend tests and vet pass; focused platform/gateway
+race tests and source/documentation checks pass.

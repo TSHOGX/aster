@@ -78,7 +78,11 @@ func NewGatewayApplication(ctx context.Context, cfg Config, logger *slog.Logger)
 			return app, err
 		}
 		app.authorities = append(app.authorities, authority)
-		gateway, err := servicegateway.New(authority, servicegateway.Config{Audience: setting.Audience, Upstream: setting.Upstream, APIKey: secret, MaxRequests: setting.MaxRequests})
+		var platform servicegateway.Platform
+		if setting.ScheduleTools {
+			platform = authority
+		}
+		gateway, err := servicegateway.New(authority, servicegateway.Config{Audience: setting.Audience, Upstream: setting.Upstream, APIKey: secret, MaxRequests: setting.MaxRequests, Platform: platform})
 		if err != nil {
 			return app, err
 		}
@@ -130,7 +134,7 @@ func (a *GatewayApplication) controlHandler() http.Handler {
 			checks[a.config.Gateways[n].Audience] = gateway.AuthorityStats()
 			registrations[a.config.Gateways[n].Audience] = a.authorities[n].Registration()
 		}
-		writeControl(w, map[string]any{"registrations": registrations, "authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "authority_protocol": servicegateway.AuthorityVersion, "owner_handoff_protocol": product.OwnerHandoffProtocol})
+		writeControl(w, map[string]any{"registrations": registrations, "authority_checks": checks, "pid": os.Getpid(), "active": a.active, "pending": pending, "stopping": a.stopping, "platform_protocol": servicegateway.PlatformVersion, "authority_protocol": servicegateway.AuthorityVersion, "owner_handoff_protocol": product.OwnerHandoffProtocol})
 	})
 	mux.HandleFunc("POST /stop", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

@@ -66,6 +66,11 @@ func (a *Application) controlHandler() http.Handler {
 		audiences[gateway.Audience] = gateway.MaxRequests
 	}
 	mux.Handle(servicegateway.AuthorityPath, servicegateway.AuthorityHandler(a.Store, audiences))
+	platformAudiences := map[string]bool{}
+	for _, gateway := range a.Config.Gateways {
+		platformAudiences[gateway.Audience] = gateway.ScheduleTools
+	}
+	mux.Handle(servicegateway.PlatformOwnerPath, servicegateway.PlatformHandler(a.Store, platformAudiences))
 	mux.HandleFunc("GET /release", func(w http.ResponseWriter, r *http.Request) {
 		status, err := a.Store.ReleaseDrainStatus(r.Context())
 		if err != nil {

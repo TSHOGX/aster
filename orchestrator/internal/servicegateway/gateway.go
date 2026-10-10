@@ -39,6 +39,7 @@ type Config struct {
 	// Zero selects five seconds; deployments cannot increase this ceiling.
 	AuthorityGrace time.Duration
 	Transport      http.RoundTripper
+	Platform       Platform
 }
 type Gateway struct {
 	authority                                            Authority
@@ -180,6 +181,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	// Reserve the entire namespace, including unknown versions, before any
+	// provider URL construction or credential injection.
+	if r.URL.Path == "/platform" || strings.HasPrefix(r.URL.Path, "/platform/") {
+		g.servePlatform(w, r.WithContext(ctx), attribution)
+		return
+	}
 	proxy := httputil.NewSingleHostReverseProxy(g.target)
 	proxy.Transport = g.config.Transport
 	original := proxy.Director

@@ -137,3 +137,10 @@ tuples, not domain or HTTP filters. DNS permission alone does not grant HTTPS
 egress. Public downloads also require the deployment's forwarding/NAT/upstream
 path; the isolated runtime gate does not qualify that external path. Python
 package installation still requires a suitable virtual environment under PEP 668.
+
+Each `gateways` entry optionally sets `schedule_tools` (default false). This
+permits the bounded schedule platform handler for that declared audience; it
+does not add a service binding to an existing Project. A Project with no eligible
+gateway continues to manage schedules through the browser. Enable runtime tools
+only after the gateway advertises platform protocol 1 and the measured retained
+runtime contains the scheduling extension. See the [gateway contract](gateway-contract.md).

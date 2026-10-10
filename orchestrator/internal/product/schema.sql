@@ -438,6 +438,7 @@ CREATE TABLE service_request_slots (
  grant_id TEXT NOT NULL DEFAULT '',
  turn_id TEXT NOT NULL DEFAULT '',
  run_id TEXT NOT NULL DEFAULT '',
+ run_owner INTEGER NOT NULL DEFAULT 0 CHECK(run_owner>=0),
  PRIMARY KEY(audience,slot)
 );
 

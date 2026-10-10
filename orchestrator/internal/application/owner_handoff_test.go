@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -80,6 +81,27 @@ func TestGatewayHandoffObservation(t *testing.T) {
 			proof, err := app.observeGateways(context.Background())
 			if (err == nil) != test.wantOK {
 				t.Fatal(test.name, proof, err)
+			}
+		})
+	}
+}
+
+func TestGatewaySchedulingRequiresPlatformProtocol(t *testing.T) {
+	for _, version := range []int{0, 1} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			app := &Application{Config: Config{StateDirectory: t.TempDir(), Gateways: []ServiceGateway{{Audience: "model", MaxRequests: 1, ScheduleTools: true}}}}
+			listener, err := listenControl(app.Config.GatewaySocket())
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]any{"authority_protocol": 1, "platform_protocol": version, "owner_handoff_protocol": product.OwnerHandoffProtocol, "registrations": map[string]product.GatewayRegistration{"model": {Instance: "gateway", Generation: 1, Slots: 1}}})
+			})}
+			go server.Serve(listener)
+			defer server.Close()
+			_, err = app.observeGateways(context.Background())
+			if (err == nil) != (version == 1) {
+				t.Fatal(version, err)
 			}
 		})
 	}
