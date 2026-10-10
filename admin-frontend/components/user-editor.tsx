@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, APIError, mutate } from "@/lib/api";
 import { date, type Group, type Mutation, type User } from "@/lib/models";
+import { EffectiveAccessView } from "./effective-access";
 import { CredentialDialog } from "./credential-dialog";
 
 type Pending = { path: string; body: Record<string, unknown>; method: string; kind: "create" | "edit" | "reset" };
@@ -100,6 +101,7 @@ export function UserEditor({ id, onDirty }: { id?: string; onDirty: (dirty: bool
       <button disabled={busy || !!pending || changedName || changedRole} onClick={() => void submit({ path: `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, body: { request_id: crypto.randomUUID(), expected_revision: user.revision }, method: "POST", kind: "reset" })}>Reset password</button>
       <Link className="inline-link" href={`/audit?target=${encodeURIComponent(user.id)}`}>View account audit</Link>
     </section>}
+    {user && <EffectiveAccessView accountID={user.id} />}
     {credential && <CredentialDialog username={credential.username} password={credential.password} onClose={() => {
       setCredential(null); setNotice("Credential dialog closed. Issue a new reset if another password is needed.");
       if (!id && user) router.replace(`/users/${encodeURIComponent(user.id)}`);

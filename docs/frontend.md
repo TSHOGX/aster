@@ -336,3 +336,15 @@ preview/excerpt bounds, with a notice; markup and links remain literal. Selectio
 original-file download and model-based answer copying stay available. See
 [Markdown qualification](performance.md#bounded-markdown-rendering) for the limits
 and the measured large-file layout cost.
+
+Administration includes independent Groups and Policies pages. Groups expose
+revisioned metadata, complete policy bindings, paginated membership editing, and
+a deletion preview showing effective grant losses and resource entitlement changes.
+Confirmed populated-group deletion sends the preview dependency fingerprint; a
+stale preview must be refreshed. No replacement membership is assigned silently.
+Policies edit only the closed action registry with unset/allow/deny selectors.
+
+User details include effective access with group/policy provenance and account/role
+constraints. Editors retain the original request body after an uncertain response,
+replay the durable receipt, and preserve changed fields when explicitly reloading
+stale data. Unsaved edits guard navigation across admin screens and the workbench.

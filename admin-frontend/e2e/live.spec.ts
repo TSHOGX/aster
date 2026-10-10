@@ -66,3 +66,61 @@ test("real owner authenticates both builds and preserves administrative request 
     await expect(ordinary.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   } finally { await ordinaryContext.close(); }
 });
+
+test("real group and policy UI resolves provenance and fences deletion impact", async({page})=>{
+  await page.goto("/admin/groups");
+  await page.getByLabel("Username",{exact:true}).fill("administrator");
+  await page.getByLabel("Password",{exact:true}).fill("web-test-permanent-password");
+  await page.getByRole("button",{name:"Sign in",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Groups",exact:true})).toBeVisible();
+  const created=await page.request.post("/api/admin/users",{data:{request_id:crypto.randomUUID(),username:"policy-reader",display_name:"Policy Reader",role:"user",group_ids:[]}});
+  expect(created.status()).toBe(201);const account=(await created.json()).user;
+  await page.getByRole("link",{name:"Policies",exact:true}).click();
+  await page.getByRole("link",{name:"Create policy",exact:true}).click();
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Read without export");
+  await page.getByRole("combobox",{name:"files.read",exact:true}).selectOption("allow");
+  await page.getByRole("combobox",{name:"files.export",exact:true}).selectOption("deny");
+  let lost=false;
+  await page.route("**/api/admin/policies",async route=>{
+    if(route.request().method()==="POST"&&!lost){lost=true;const response=await route.fetch();expect(response.ok()).toBe(true);await response.dispose();await route.abort("failed");return;}
+    await route.continue();
+  });
+  await page.getByRole("button",{name:"Save policy",exact:true}).click();
+  await page.getByRole("button",{name:"Check original request",exact:true}).click();
+  await expect(page.getByRole("status")).toHaveText("Original change confirmed.");
+  const policies=(await (await page.request.get("/api/admin/policies?limit=100")).json()).policies;
+  const matches=policies.filter((p:{name:string})=>p.name==="Read without export");expect(matches).toHaveLength(1);let policy=matches[0];
+  await page.getByRole("link",{name:"Groups",exact:true}).click();
+  await page.getByRole("link",{name:"Create group",exact:true}).click();
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Read reviewers");
+  await page.getByRole("button",{name:"Save group",exact:true}).click();
+  await expect(page.getByRole("heading",{level:1})).toHaveText("Read reviewers");
+  await page.getByLabel("Read without export",{exact:true}).check();
+  await page.getByRole("button",{name:"Save policy bindings",exact:true}).click();
+  await page.getByRole("combobox",{name:"Account to add",exact:true}).selectOption(account.id);
+  await page.getByRole("button",{name:"Add member",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Remove policy-reader",exact:true})).toBeVisible();
+  const groups=(await(await page.request.get("/api/admin/groups?limit=100")).json()).groups;
+  const group=groups.find((g:{name:string})=>g.name==="Read reviewers");
+  await page.getByRole("link",{name:"Policy Reader",exact:true}).click();
+  const access=page.getByRole("region",{name:"Effective access"});
+  await expect(access.getByRole("row").filter({has:page.getByRole("cell",{name:"files.read",exact:true})})).toContainText("Allowed");
+  await expect(access.getByRole("row").filter({has:page.getByRole("cell",{name:"files.export",exact:true})})).toContainText("Denied");
+  await page.goto(`/admin/groups/${group.id}`);
+  await page.getByRole("button",{name:"Preview deletion",exact:true}).click();
+  await expect(page.locator(".impact-card")).toContainText("files.read");
+  // A bound policy revision changes the impact fingerprint independently of the
+  // group's revision. Confirming the old preview must fail in the real store.
+  policy=(await(await page.request.get(`/api/admin/policies/${policy.id}`)).json());
+  expect((await page.request.patch(`/api/admin/policies/${policy.id}`,{data:{request_id:crypto.randomUUID(),expected_revision:policy.revision,description:"Changed after preview"}})).ok()).toBe(true);
+  await page.getByRole("checkbox",{name:/I reviewed the impact/}).check();
+  await page.getByRole("button",{name:"Delete group",exact:true}).click();
+  await expect(page.getByRole("alert").filter({hasText:"Preview deletion again"})).toBeVisible();
+  await page.getByRole("button",{name:"Preview deletion",exact:true}).click();
+  await page.getByRole("checkbox",{name:/I reviewed the impact/}).check();
+  await page.getByRole("button",{name:"Delete group",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Group deleted",exact:true})).toBeVisible();
+  const current=await(await page.request.get(`/api/admin/users/${account.id}/effective-access`)).json();expect(current.actions["files.read"].allowed).toBe(false);
+  const user=await(await page.request.get(`/api/admin/users/${account.id}`)).json();expect(user.groups).toEqual([]);
+  const audit=await(await page.request.get(`/api/admin/audit-events?target=${group.id}`)).json();expect(audit.events.some((e:{action:string})=>e.action==="group.delete")).toBe(true);
+});

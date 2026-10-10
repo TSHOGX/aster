@@ -71,3 +71,63 @@ test("audit filters and accepted operations report observed state", async ({ pag
   await page.goto("/admin/operations/operation"); await expect(page.getByRole("status")).toHaveText("accepted");
   await expect(page.getByText("The request is recorded. Resource work has not been confirmed complete.")).toBeVisible();
 });
+
+for(const width of [390,1440]) test(`group policy bindings, membership and deletion impact fit ${width}px`,async({page},info)=>{
+  const fixture=await adminFixture(page);await page.setViewportSize({width,height:900});
+  await page.goto("/admin/groups/new");
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Researchers");
+  await page.getByRole("textbox",{name:"Description",exact:true}).fill("Research group");
+  await page.getByRole("button",{name:"Save group",exact:true}).click();
+  await expect(page.getByRole("heading",{level:1})).toHaveText("Researchers");
+  await page.getByLabel("Standard operations",{exact:true}).check();
+  await page.getByRole("button",{name:"Save policy bindings",exact:true}).click();
+  await page.getByRole("combobox",{name:"Account to add",exact:true}).selectOption("user-id");
+  await page.getByRole("button",{name:"Add member",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Remove ordinary",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Preview deletion",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Grants lost",exact:true})).toBeVisible();
+  await expect(page.locator(".impact-card")).toContainText("agents.run");
+  await page.getByText("Resource entitlement changes",{exact:true}).click();
+  await page.screenshot({path:info.outputPath("group-impact.png"),fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  fixture.controls.stalePreview=true;
+  await page.getByRole("checkbox",{name:/I reviewed the impact/}).check();
+  await page.getByRole("button",{name:"Delete group",exact:true}).click();
+  await expect(page.getByRole("alert").filter({hasText:"Preview deletion again"})).toBeVisible();
+  await page.getByRole("button",{name:"Preview deletion",exact:true}).click();
+  await page.getByRole("checkbox",{name:/I reviewed the impact/}).check();
+  await page.getByRole("button",{name:"Delete group",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Group deleted",exact:true})).toBeVisible();
+});
+
+test("policy creation retries original intent and stale edits retain only changed fields",async({page})=>{
+  const fixture=await adminFixture(page);fixture.controls.losePolicyReply=true;
+  await page.goto("/admin/policies/new");
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Export denial");
+  await page.getByRole("combobox",{name:"files.export",exact:true}).selectOption("deny");
+  await page.getByRole("button",{name:"Save policy",exact:true}).click();
+  await page.getByRole("button",{name:"Check original request",exact:true}).click();
+  await expect(page.getByRole("status")).toHaveText("Original change confirmed.");
+  expect(fixture.policies.filter(policy=>policy.name==="Export denial")).toHaveLength(1);
+  const creates=fixture.calls.filter(call=>call.path==="/api/admin/policies"&&call.method==="POST");expect(creates).toHaveLength(2);expect(creates[1].body).toEqual(creates[0].body);
+  fixture.controls.conflictPolicy=true;
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Edited denial");
+  await page.getByRole("button",{name:"Save policy",exact:true}).click();
+  await page.getByRole("button",{name:"Reload current data",exact:true}).click();
+  await expect(page.getByRole("textbox",{name:"Description",exact:true})).toHaveValue("Concurrent description");
+  await expect(page.getByRole("textbox",{name:"Name",exact:true})).toHaveValue("Edited denial");
+  await page.getByRole("button",{name:"Save policy",exact:true}).click();
+  await expect(page.getByRole("heading",{level:1})).toHaveText("Edited denial");
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Unsaved");
+  page.once("dialog",dialog=>dialog.dismiss());
+  await page.getByRole("link",{name:"Groups",exact:true}).click();
+  await expect(page.getByRole("textbox",{name:"Name",exact:true})).toHaveValue("Unsaved");
+});
+
+test("effective access explains each policy source",async({page})=>{
+  await adminFixture(page);await page.goto("/admin/users/user-id");
+  const access=page.getByRole("region",{name:"Effective access"});
+  await expect(access.getByRole("row").filter({has:page.getByRole("cell",{name:"files.read",exact:true})})).toContainText("Allowed");
+  await expect(access.getByRole("row").filter({has:page.getByRole("cell",{name:"admin.content.read",exact:true})})).toContainText("No grant");
+  await expect(access.getByRole("link",{name:"Standard operations"}).first()).toHaveAttribute("href","/admin/policies/standard-policy");
+});
