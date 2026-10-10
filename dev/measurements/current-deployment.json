@@ -1,33 +1,29 @@
 {
-  "completed_at": "2026-10-10T07:13:39.420851+00:00",
-  "source_commit": "7be4a672624a5e26c1f5e5b92d83a6cc2148f723",
-  "test_followup_commit": "f15c5311",
+  "completed_at": "2026-10-10T07:56:34.542946+00:00",
+  "source_commit": "614acba618c6c85c7d60c7649fffd7cd328e7bf6",
   "schema_version": 4,
   "schema_digest": "sha256:64fa1dfc64d0df97629fb2856345fb57c716f42c87e63ae91423403ff5b32e45",
   "native_protocol": 4,
   "runtime_manifest": 4,
   "schedule_protocol": 1,
   "runtime_digest": "sha256:bdb5bb2160c90b63c853a398b1e8a6199ec654d5791363dd01bf0163f80cfcd6",
-  "executable_digest": "sha256:00f386dcbfd29934b2fe74f056c0848ecb274571693179a55b3212e6ff7c450e",
-  "frontend_build_id": "5zLDOBx2jQkZ7L7OU5e8s",
-  "engine_store_reinitialized": true,
+  "executable_digest": "sha256:5b61d4dfe3f555dad23a822e71fbab00ca6446dbcdb03c10bdb2cd62d7f26cfc",
+  "frontend_build_id": "f_DvGPOSR_3wnE7QVk4aq",
+  "engine_store_reinitialized": false,
   "single_runtime_binding": true,
-  "old_owned_subvolumes_deleted": 7,
-  "old_runtime_templates_deleted": 2,
-  "old_release_directories_deleted": 5,
   "credentials_preserved": true,
   "database_integrity": "ok",
   "foreign_key_errors": 0,
   "final_counts": {
-    "projects": 3,
-    "sessions": 2,
-    "turns": 0,
-    "messages": 0,
-    "schedules": 0,
+    "projects": 4,
+    "sessions": 4,
+    "turns": 21,
+    "messages": 43,
+    "schedules": 1,
     "terminals": 0,
-    "execution_runs": 0,
-    "input_deliveries": 0,
-    "control_receipts": 0
+    "execution_runs": 21,
+    "input_deliveries": 21,
+    "control_receipts": 21
   },
   "active_projects": 0,
   "services": {
@@ -39,7 +35,7 @@
     "gateway": {
       "state": "active",
       "substate": "running",
-      "restarts": 1
+      "restarts": 0
     },
     "application": {
       "state": "active",
@@ -69,7 +65,7 @@
   },
   "verification": {
     "source_backend_race": "passed",
-    "frontend_source_gates": "passed in source qualification",
+    "frontend_source_gates": "lint, typecheck and production build passed",
     "candidate_inventory": "passed",
     "khora_release": "passed",
     "native_scheduling_guest_route": "passed",
@@ -82,7 +78,11 @@
     "live_provider_scheduling_browser": "passed",
     "temporary_login_removed": true,
     "smoke_resources_deleted": true,
-    "preserved_input_hashes_match": true
+    "preserved_input_hashes_match": true,
+    "scheduling_ui_browser_cases": 44,
+    "scheduling_ui_unit_cases": 23,
+    "packaged_runtime_browser": "passed",
+    "existing_data_preserved": true
   },
   "mixed_workload": {
     "rounds": 60,
@@ -102,6 +102,9 @@
     "File-watch fixture waits for initial snapshot baseline; deployed code unchanged.",
     "Browser suite explicitly used the installed Playwright cache.",
     "Post-candidate source changes are test/documentation only.",
-    "Gateway made one startup retry while the fresh owner initialized, then remained ready."
-  ]
+    "Gateway made one startup retry while the fresh owner initialized, then remained ready.",
+    "Minimal scheduling UI candidate qualified with 44 focused browser cases and the packaged real-runtime browser suite; backend/runtime behavior is unchanged."
+  ],
+  "previous_source_commit": "7be4a672624a5e26c1f5e5b92d83a6cc2148f723",
+  "update": "Quiescent scheduling UI update; existing Project and Session data preserved."
 }

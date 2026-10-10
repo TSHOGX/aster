@@ -4,6 +4,10 @@ The 2026-10-10 development installation runs the conversational scheduling relea
 with schema 4, runtime manifest 4, native protocol 4 and schedule protocol 1.
 The [sanitized deployment record](../dev/measurements/current-deployment.json)
 identifies the exact committed candidate, installed artifacts and completed checks.
+The subsequent scheduling UI refinement used a quiescent update, preserving the
+existing Project and conversations. It adds minimal text actions, wrapping status
+filters and consistent conversation cards; 44 focused browser cases and the
+packaged real-runtime browser suite passed.
 
 The authorized reset replaced the application database, captures, engine store,
 owned volumes and runtime templates. Login/provider credentials, TLS and reviewed

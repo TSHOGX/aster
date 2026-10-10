@@ -4,6 +4,11 @@ Create future work in conversation when `schedules_*` tools are available, or us
 the Scheduled page. Both surfaces manage the same persisted Project tasks. A
 saved task survives browser closure, Agent exit and idle compute suspension.
 
+Status tabs filter the task list and wrap on narrow screens. Underlined text and
+icon actions open details or change future work; the main action is filled. Task
+status and the latest execution result appear separately in both the list and
+conversation cards, including after cancellation or deletion.
+
 Examples:
 
 - “At 23:00 Asia/Shanghai, check the final score and report a source here.”
