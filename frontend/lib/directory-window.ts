@@ -103,7 +103,10 @@ export function flattenDirectoryTree(tree: DirectoryTree, expanded: readonly str
       rows.push({ id: path, kind: "entry", directory, depth, path, entry, expanded: entry.kind === "directory" && open.has(path) });
       if (entry.kind === "directory" && open.has(path) && depth < 64) visit(path, depth + 1);
     }
-    if (page.loading) rows.push({ id: `${directory}:busy`, directory, depth, kind: "status", message: "loading" });
+    // Refresh existing rows in place: inserting a transient status row moves
+    // later siblings underneath an in-flight pointer click. Empty pages still
+    // need a loading row to drive their initial demand.
+    if (page.loading && !page.entries.length) rows.push({ id: `${directory}:busy`, directory, depth, kind: "status", message: "loading" });
     if (page.error) rows.push({ id: `${directory}:error`, directory, depth, kind: "status", message: "error", detail: page.error });
     if (page.notice) rows.push({ id: `${directory}:notice`, directory, depth, kind: "status", message: "notice", detail: page.notice });
     if (!page.loading && !page.error && !page.entries.length) rows.push({ id: `${directory}:empty`, directory, depth, kind: "status", message: "empty" });

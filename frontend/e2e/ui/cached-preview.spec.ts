@@ -99,3 +99,32 @@ test("a late validation cannot replace another selected cached file", async ({ p
     await expect(page.locator(".file-markdown")).not.toContainText("Late response");
   } finally { release(); }
 });
+
+test("directory refresh preserves a sibling file's pointer target",async({page})=>{
+  await workspaceFixture(page);
+  await page.goto("/?project=battery&session=analysis");
+  await page.getByRole("link",{name:"the research report"}).click();
+  await expect(page.locator(".file-markdown")).toContainText("Cycle performance report");
+  const tree=page.getByRole("tree",{name:"File tree",exact:true});
+  await expect(tree).toHaveAttribute("aria-busy","false");
+  const readme=page.getByRole("button",{name:"README.md",exact:true});
+  const before=await readme.boundingBox();expect(before).not.toBeNull();
+  let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});let waiting=false;
+  await page.route("**/api/projects/battery/files?*",async route=>{
+    if(new URL(route.request().url()).searchParams.get("path")!=="reports")return route.fallback();
+    waiting=true;await held;await route.fallback();
+  });
+  try{
+    await expect.poll(()=>page.evaluate(()=>Reflect.get(window,"fixtureReadyResources"))).toBeGreaterThan(0);
+    await page.evaluate(()=>window.dispatchEvent(new CustomEvent("fixture-file-event",{detail:{path:"reports/another.md",operation:"write",entry_type:"file"}})));
+    await expect.poll(()=>waiting).toBe(true);
+    await expect(tree).toHaveAttribute("aria-busy","true");
+    expect((await readme.boundingBox())!.y).toBe(before!.y);
+    await page.mouse.move(before!.x+before!.width/2,before!.y+before!.height/2);
+    await page.mouse.down();release();
+    await expect(tree).toHaveAttribute("aria-busy","false");
+    expect((await readme.boundingBox())!.y).toBe(before!.y);
+    await page.mouse.up();
+    await expect(page.locator(".file-markdown")).toContainText("Battery research");
+  }finally{release();}
+});

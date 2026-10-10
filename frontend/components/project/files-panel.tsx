@@ -1051,7 +1051,7 @@ export function FilesPanel({
                   )}
                 <div className="file-tree-body">
                   <div className="file-tree-resident" hidden={!!query}>
-                    <FileTreeViewport selected={selected} rows={flattenedTree} renderRow={renderTreeRow} load={(directory, cursor) => { if (!query) void load(directory, cursor); }}
+                    <FileTreeViewport busy={Object.values(tree).some(page => page.loading)} selected={selected} rows={flattenedTree} renderRow={renderTreeRow} load={(directory, cursor) => { if (!query) void load(directory, cursor); }}
                       onAnchor={(directory, name) => directoryAnchors.current.set(directory, name)} />
                   </div>
                   {query && (
