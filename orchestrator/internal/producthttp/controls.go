@@ -73,6 +73,9 @@ func (s *Server) turnIndex(w http.ResponseWriter, r *http.Request) {
 
 // A failed admission never returns 202. Accepted requests have durable receipts.
 func controlFailure(w http.ResponseWriter, err error) {
+	if quotaFailure(w, err) {
+		return
+	}
 	code, message := status(err)
 	if code == http.StatusAccepted {
 		code = http.StatusConflict

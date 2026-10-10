@@ -23,6 +23,10 @@ export async function fetchFileRead(url: string, init: RequestInit = {}) {
     init.signal?.throwIfAborted();
     const response = await fetch(url, init);
     let retry = [202, 429, 503].includes(response.status);
+    if (response.status === 429) {
+      const error = await response.clone().json().catch(() => ({}));
+      if (error.code === "quota_exceeded") return response;
+    }
     if (response.status === 409) {
       const error = await response.clone().json().catch(() => ({}));
       retry = error.code === "changed_during_read";

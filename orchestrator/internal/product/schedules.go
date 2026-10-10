@@ -203,6 +203,11 @@ func (s *Store) createSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	if err = validateScheduleTarget(ctx, tx, scope, input.SessionID); err != nil {
 		return Schedule{}, err
 	}
+	if input.State == "active" {
+		if err := admitCount(ctx, tx, scope.Actor, ResourceSchedules, 1); err != nil {
+			return Schedule{}, err
+		}
+	}
 	input.NextAt = ""
 	next, err := scheduleNext(input, s.now())
 	if err != nil {
@@ -264,6 +269,11 @@ func (s *Store) updateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	}
 	if err = validateScheduleTarget(ctx, tx, scope, input.SessionID); err != nil {
 		return err
+	}
+	if input.State == "active" && old.State != "active" {
+		if err := admitCount(ctx, tx, scope.Actor, ResourceSchedules, 1); err != nil {
+			return err
+		}
 	}
 	input.NextAt = ""
 	next, err := scheduleNext(input, s.now())
@@ -482,7 +492,7 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 			}
 			permanent := errors.Is(err, ErrInvalid) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrDeleting)
 			// Unexpected database failures are global, not invented task outcomes.
-			if !permanent && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrCapacity) && !errors.Is(err, ErrDraining) {
+			if !permanent && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrCapacity) && !errors.Is(err, ErrDraining) && !errors.Is(err, ErrQuotaExceeded) {
 				return count, err
 			}
 			if e := s.write(ctx, func(tx *sql.Tx) error {

@@ -327,6 +327,9 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 	if before.Size < 0 || before.Size > projectfiles.MaxTransfer {
 		return nil, ErrCapacity
 	}
+	if err := admitTransfer(ctx, w.Store.reader, scope.Actor, before.Size); err != nil {
+		return nil, err
+	}
 	if before.Size > maxBytes {
 		return nil, ErrPreviewSourceTooLarge
 	}

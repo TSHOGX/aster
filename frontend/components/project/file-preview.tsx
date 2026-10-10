@@ -170,7 +170,7 @@ export function FilePreview({
             current.current = null;
             setLoaded(null);
           }
-          setRetryable(e instanceof PreviewFailure ? e.retryable : e instanceof TypeError || e instanceof APIError && [202, 429, 500, 502, 503, 504].includes(e.status));
+          setRetryable(e instanceof PreviewFailure ? e.retryable : e instanceof TypeError || e instanceof APIError && e.outcome?.code !== "quota_exceeded" && [202, 429, 500, 502, 503, 504].includes(e.status));
           setErrorTitle(tr(e instanceof PreviewFailure && e.code === "source_too_large" ? "File too large to preview" : "Preview unavailable"));
           if (e instanceof PreviewFailure && e.code === "source_too_large") setProgress({ received: 0, total: e.actual });
           setError(

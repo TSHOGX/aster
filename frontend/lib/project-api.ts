@@ -1,3 +1,4 @@
+import { resourceQuotaMessage } from "@web/resource-errors";
 import { PREVIEW_LIMITS, PreviewFailure } from "./preview-budget";
 import { fetchFileRead, FILE_BUSY_MESSAGE } from "./file-read";
 import { requestCategory, startTiming } from "./interaction-metrics";
@@ -255,6 +256,7 @@ export async function api<T>(
       response.status,
       data.state === "unknown"
         ? "The operation's outcome is unknown. Inspect its current state before trying again."
+        : data.code === "quota_exceeded" ? resourceQuotaMessage(data.quota)
         : [429, 503].includes(response.status) && !mutation && path.includes("/files")
           ? FILE_BUSY_MESSAGE
           : data.error || `Request failed (${response.status})`,
@@ -310,7 +312,8 @@ export async function readPreview(
       throw new PreviewFailure("source_too_large", "download", { limit: max, metric: "bytes" });
     throw new APIError(
       response.status,
-      [202, 429, 503].includes(response.status) ? FILE_BUSY_MESSAGE : data.error || "The file is not available yet.",
+      data.code === "quota_exceeded" ? resourceQuotaMessage(data.quota) : [202, 429, 503].includes(response.status) ? FILE_BUSY_MESSAGE : data.error || "The file is not available yet.",
+      data,
     );
   }
   const reader = response.body?.getReader();

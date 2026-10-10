@@ -43,3 +43,8 @@ describe("Project command outcomes", () => {
     expect(await pending).toBeInstanceOf(APIError);
   });
 });
+
+it("retains exact quota quantities and distinguishes them from read pressure",async()=>{
+  vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({code:"quota_exceeded",quota:{dimension:"transfer_bytes",used:"0",reserved:"0",requested_delta:"9007199254740993",limit:"3"}}),{status:429})));
+  await expect(api("/api/projects/p/files/content?path=file")).rejects.toMatchObject({status:429,message:expect.stringContaining("9,007,199,254,740,993"),outcome:{code:"quota_exceeded"}});
+});

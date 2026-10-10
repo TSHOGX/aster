@@ -134,6 +134,9 @@ func (s *Store) CreateProject(ctx context.Context, actor, id, title string) (Pro
 		if err := authorizeAction(ctx, tx, actor, ActionProjectsCreate); err != nil {
 			return err
 		}
+		if err := admitCount(ctx, tx, actor, ResourceProjects, 1); err != nil {
+			return err
+		}
 		now := s.timestamp()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,owner_id,title,creation_digest,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, actor, title, creationDigest(title), now, now); err != nil {
 			return err

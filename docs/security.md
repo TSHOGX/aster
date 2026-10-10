@@ -160,3 +160,13 @@ transaction, including idempotent active/pending cases. Internal action services
 enter the shared lifecycle only after their own named admission. The Terminal
 stop endpoint uses active-owner reduction authority directly; it does not require
 Project metadata read or interactive Terminal permission.
+
+Resource admission resolves current group defaults/ceilings, platform bounds and
+user overrides in the product writer transaction. It checks Project count, complete
+owned storage plans and mount caps, running/aggregate compute, startup-inclusive
+Agent/Terminal concurrency, active schedules and per-request file-transfer bytes.
+Full-plan storage includes reserved deferred slots. Current limits are checked
+again before an undispatched storage/compute step; a local quota rejection does
+not claim an unknown remote outcome. Already issued effects can settle, and
+existing workspace I/O within its saved capacity remains possible after storage
+reductions. Pause, deletion and other reductions do not require quota headroom.

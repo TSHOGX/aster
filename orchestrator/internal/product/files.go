@@ -89,6 +89,11 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, act
 		if !errors.Is(e, ErrNotFound) {
 			return e
 		}
+		if r.Operation == "write" {
+			if err := admitTransfer(ctx, tx, scope.Actor, r.Size); err != nil {
+				return err
+			}
+		}
 		if !volume && p.State != "active" || volume && p.State != "paused" && p.State != "created" {
 			return ErrPending
 		}
@@ -221,6 +226,11 @@ func (f *Files) execute(ctx context.Context, scope Scope, id string, action Prod
 		return old, fileResult(old)
 	} else if !errors.Is(err, ErrNotFound) {
 		return FileOperation{}, err
+	}
+	if r.Operation == "write" {
+		if err := admitTransfer(ctx, f.Store.reader, scope.Actor, r.Size); err != nil {
+			return FileOperation{}, err
+		}
 	}
 	if p, e := ownedProject(ctx, f.Store.reader, scope); e != nil {
 		return FileOperation{}, e

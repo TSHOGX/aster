@@ -64,6 +64,7 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	for index := 0; index < 3; index++ {
 		profile.Volumes = append(profile.Volumes, VolumePlan{Key: fmt.Sprintf("extra-%d", index), Role: "data", Destination: fmt.Sprintf("/extra/%d", index), Storage: "owned", Access: "read_write", CapacityBytes: 8 << 20})
 	}
+	fixtureResourceLimit(t, store, scope.Actor, ResourcePersistent, 152<<20)
 	files := &Files{Store: store, Lifecycle: lifecycle, Backend: backend, Profile: profile}
 	defer files.Close()
 	_, err = files.Upload(runctx, scope, "before-compute", writeRequest("retained", "storage-only upload"), strings.NewReader("storage-only upload"))
@@ -75,6 +76,13 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	if before.Occupied || before.Reference.SandboxID != "" || beforeUsage.Allocated != 64<<20 || beforeUsage.Reserved != 88<<20 {
 		t.Fatal("first upload did not reserve full plan without compute", before, beforeUsage)
 	}
+	deniedScope := Scope{Actor: scope.Actor, ProjectID: "quota-denied-project"}
+	_, err = store.CreateProject(runctx, deniedScope.Actor, deniedScope.ProjectID, "Over quota")
+	must(t, err)
+	_, err = files.Upload(runctx, deniedScope, "denied-upload", writeRequest("blocked", "bytes"), strings.NewReader("bytes"))
+	wantError(t, err, ErrQuotaExceeded)
+	_, err = store.Resources(runctx, deniedScope)
+	wantError(t, err, ErrNotFound)
 	must(t, lifecycle.EnsureActive(runctx, scope, profile))
 	converge := func() {
 		t.Helper()
@@ -161,5 +169,5 @@ func TestProjectVolumeSlotsOnKhora(t *testing.T) {
 	}
 	must(t, backend.DeleteVolume(runctx, source.VolumeReference))
 	must(t, backend.DeleteVolume(runctx, staging.VolumeReference))
-	t.Logf("first upload: 64MiB allocated + 88MiB reserved, no compute; observed %d mounts; independent native copies, read-only owned/shared mounts, 152MiB owned charge, zero after cleanup", len(mounts))
+	t.Logf("first upload: 64MiB allocated + 88MiB reserved, no compute; second full plan denied at 152MiB quota; observed %d mounts; independent native copies, read-only owned/shared mounts, 152MiB owned charge, zero after cleanup", len(mounts))
 }

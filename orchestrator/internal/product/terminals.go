@@ -92,6 +92,9 @@ func (s *Store) reserveTerminal(ctx context.Context, scope Scope, terminal strin
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		if err := admitCount(ctx, tx, scope.Actor, ResourceTerminals, 1); err != nil {
+			return err
+		}
 		r, err := resources(ctx, tx, scope.ProjectID)
 		if err != nil {
 			return err

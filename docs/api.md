@@ -445,3 +445,10 @@ returns an audit ID and commits its target/purpose/bounds audit before exposing
 content. Native records, credentials, live workspace and arbitrary paths are not
 part of this API. Messages are limited to 16,384 characters each and 256 KiB per
 page, with explicit truncation and continuation. Audit failure returns no content.
+
+Quota admission returns HTTP 429 with `code: "quota_exceeded"` and a `quota` object
+containing `dimension`, `used`, `reserved`, `requested_delta`, and `limit`. Numeric
+quantities are decimal strings so clients retain exact integer values. These are
+accounted counts/capacities, not sampled CPU or filesystem utilization. Quota denial
+is distinct from temporary platform/engine capacity pressure and is not retried by
+the file-read client. Platform schedule errors preserve the same quota details.

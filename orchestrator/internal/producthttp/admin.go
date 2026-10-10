@@ -9,6 +9,9 @@ import (
 )
 
 func adminFailure(w http.ResponseWriter, err error) {
+	if quotaFailure(w, err) {
+		return
+	}
 	code := "request_failed"
 	var admission *product.AdmissionError
 	if errors.As(err, &admission) {

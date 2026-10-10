@@ -106,3 +106,39 @@ func TestAdminHTTPAuthorityIdempotencyAndCredentialProjection(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 }
+
+func TestQuotaHTTPReturnsOwnedCountsAndAppliesToAdministrator(t *testing.T) {
+	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "quota.db"))
+	must(t, err)
+	defer store.Close()
+	admin, err := store.BootstrapAccount(ctx, "admin", "permanent-admin-password", identitySeed(t))
+	must(t, err)
+	_, token, err := store.Authenticate(ctx, admin.Username, "permanent-admin-password")
+	must(t, err)
+	zero := int64(0)
+	change := product.ResourceChange{Kind: "user", TargetID: admin.ID, Overrides: map[product.ResourceDimension]*int64{product.ResourceProjects: &zero}}
+	preview, err := store.PreviewResourceChange(ctx, token, change, "", 10)
+	must(t, err)
+	_, err = store.ApplyResourceChange(ctx, token, product.ResourceMutation{ResourceChange: change, RequestID: "zero-projects", ExpectedDependencies: preview.ExpectedDependencies})
+	must(t, err)
+	auth := NewAuthentication(store, Config{})
+	api := &Server{Store: store, Auth: auth}
+	defer api.Close()
+	handler := auth.Handler(api.Handler())
+	request := httptest.NewRequest("POST", "https://app/api/projects", strings.NewReader(`{"id":"denied","title":"Denied"}`))
+	request.Header.Set("Origin", "https://app")
+	request.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	var body struct {
+		Code  string            `json:"code"`
+		Quota map[string]string `json:"quota"`
+	}
+	must(t, json.Unmarshal(response.Body.Bytes(), &body))
+	if body.Code != "quota_exceeded" || body.Quota["dimension"] != "projects" || body.Quota["used"] != "0" || body.Quota["reserved"] != "0" || body.Quota["requested_delta"] != "1" || body.Quota["limit"] != "0" {
+		t.Fatal(body)
+	}
+}

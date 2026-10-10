@@ -122,6 +122,9 @@ func (s *Store) bindVolumePlan(ctx context.Context, tx *sql.Tx, project string, 
 	if err := profile.Validate(); err != nil {
 		return err
 	}
+	if err := admitStoragePlan(ctx, tx, actor, profile); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(profile)
 	if err != nil {
 		return err
@@ -188,7 +191,7 @@ func (l *Lifecycle) materializeSlot(ctx context.Context, r Resources, key string
 			if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, r.ProjectID).Scan(&actor); err != nil {
 				return err
 			}
-			if err := activeAccount(ctx, tx, actor); err != nil {
+			if err := admitReservedStorage(ctx, tx, actor, r.Profile); err != nil {
 				return err
 			}
 			return changed(tx.ExecContext(ctx, `UPDATE project_volume_slots SET state='creating' WHERE project_id=? AND slot_key=? AND state='reserved'`, r.ProjectID, key))
@@ -434,7 +437,10 @@ func (s *Store) recordSlotFailure(ctx context.Context, project, key string, caus
 	code := "volume_operation_unconfirmed"
 	var admission *AdmissionError
 	var mechanism *sandbox.Error
-	if errors.As(cause, &admission) {
+	var quota *QuotaError
+	if errors.As(cause, &quota) {
+		code = "quota_exceeded:" + string(quota.Dimension)
+	} else if errors.As(cause, &admission) {
 		code = admission.Code
 	} else if errors.As(cause, &mechanism) {
 		code = "volume_" + string(mechanism.Class)

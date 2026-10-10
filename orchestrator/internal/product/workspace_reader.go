@@ -521,6 +521,9 @@ func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path 
 			if metadata != nil || frame.Metadata == nil || frame.Metadata.Size < 0 || frame.Metadata.Size > projectfiles.MaxTransfer {
 				return ErrInvalid
 			}
+			if err := admitTransfer(ctx, w.Store.reader, scope.Actor, frame.Metadata.Size); err != nil {
+				return err
+			}
 			if frame.Metadata.Size > maxBytes {
 				return ErrPreviewSourceTooLarge
 			}

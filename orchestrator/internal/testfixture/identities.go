@@ -38,6 +38,17 @@ func SeedIdentities(ctx context.Context, tx *sql.Tx) error {
 	if _, err = tx.ExecContext(ctx, `INSERT INTO group_policy_bindings(group_id,policy_id) VALUES('fixture-users','fixture-policy')`); err != nil {
 		return err
 	}
+	// Explicit finite fixture entitlements. Real bootstrap remains separate;
+	// production never substitutes these when numeric authority is missing.
+	limits := map[string]int64{"projects": 10000, "running_projects": 128, "cpu_millis": 64000, "memory_bytes": 64 << 30, "overlay_bytes": 64 << 30, "workspace_bytes": 64 << 30, "runtime_bytes": 64 << 30, "aggregate_cpu_millis": 8192000, "aggregate_memory_bytes": 8 << 40, "owned_volume_bytes": 64 << 30, "project_owned_volume_bytes": 128 << 30, "mount_count": 128, "persistent_bytes": 1 << 50, "agents": 256, "terminals": 256, "schedules": 10000, "transfer_bytes": 256 << 20}
+	for dimension, value := range limits {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO group_resource_policy(group_id,dimension,default_value,ceiling) VALUES('fixture-users',?,?,?)`, dimension, value, value); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO platform_resource_limits(dimension,maximum) VALUES(?,?)`, dimension, value); err != nil {
+			return err
+		}
+	}
 	for _, id := range []string{"alice", "bob", "carol", "owner", "reader", "user", "researcher", "other"} {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO accounts(id,username,display_name,role,password_hash,created_at,updated_at) VALUES(?,?,?,'user',?,?,?)`, id, "fixture-"+id, id, hash, now, now); err != nil {
 			return err

@@ -230,6 +230,9 @@ func (s *PreviewSnapshots) Acquire(ctx context.Context, scope Scope, id string) 
 		return PreviewSnapshot{}, nil, nil, ErrSnapshotExpired
 	}
 	c := lease.capture
+	if err := admitTransfer(ctx, s.files.Store.reader, scope.Actor, c.size); err != nil {
+		return PreviewSnapshot{}, nil, nil, err
+	}
 	c.refs++
 	var once sync.Once
 	release := func() { once.Do(func() { s.mu.Lock(); s.drop(c); s.mu.Unlock() }) }

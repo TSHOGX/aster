@@ -203,6 +203,9 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 		}
 		r, err := resources(ctx, tx, p.ID)
 		if errors.Is(err, ErrNotFound) {
+			if err = admitCompute(ctx, tx, scope.Actor, profile, false); err != nil {
+				return err
+			}
 			if err = l.reserve(ctx, tx); err != nil {
 				return err
 			}
@@ -242,6 +245,9 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 		}
 		if pendingFiles > 0 {
 			return ErrBusy
+		}
+		if err = admitCompute(ctx, tx, scope.Actor, r.Profile, false); err != nil {
+			return err
 		}
 		if err = l.reserve(ctx, tx); err != nil {
 			return err
@@ -338,6 +344,7 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 	defer lock.Unlock()
 	var o operation
 	var r Resources
+	var quotaDenial error
 	err := l.Store.write(ctx, func(tx *sql.Tx) error {
 		var err error
 		o, err = pendingOperation(ctx, tx, project)
@@ -404,11 +411,41 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 			}
 			r.Occupied = true
 		}
+		if o.State == "pending" && (o.Kind == "create" || o.Kind == "resume") && o.Phase == "sandbox" {
+			var actor string
+			if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=?`, project).Scan(&actor); err != nil {
+				return err
+			}
+			if err := admitCompute(ctx, tx, actor, r.Profile, r.Occupied); err != nil {
+				if !errors.Is(err, ErrQuotaExceeded) {
+					return err
+				}
+				quotaDenial = err
+				if _, e := tx.ExecContext(ctx, `UPDATE project_operations SET error=? WHERE id=?`, err.Error(), o.ID); e != nil {
+					return e
+				}
+				result, e := tx.ExecContext(ctx, `UPDATE projects SET failure=? WHERE id=? AND failure<>?`, err.Error(), project, err.Error())
+				if e != nil {
+					return e
+				}
+				count, e := result.RowsAffected()
+				if e != nil {
+					return e
+				}
+				if count > 0 {
+					return l.Store.bumpProject(ctx, tx, project, "project.quota_exceeded")
+				}
+				return nil
+			}
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE project_operations SET state='issued',attempted_at=? WHERE id=?`, l.Store.timestamp(), o.ID)
 		return err
 	})
 	if err != nil {
 		return err
+	}
+	if quotaDenial != nil {
+		return quotaDenial
 	}
 	if o.ID == "" {
 		return nil
@@ -452,7 +489,11 @@ func (l *Lifecycle) unknown(ctx context.Context, o operation, cause error) error
 	settle, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer done()
 	err := l.Store.write(settle, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(settle, `UPDATE project_operations SET state='unknown',error=? WHERE id=? AND state<>'succeeded'`, cause.Error(), o.ID); err != nil {
+		state := "unknown"
+		if errors.Is(cause, ErrQuotaExceeded) {
+			state = "pending"
+		}
+		if _, err := tx.ExecContext(settle, `UPDATE project_operations SET state=?,error=? WHERE id=? AND state<>'succeeded'`, state, cause.Error(), o.ID); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(settle, `UPDATE projects SET failure=? WHERE id=? AND failure<>?`, cause.Error(), o.ProjectID, cause.Error())

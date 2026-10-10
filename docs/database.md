@@ -180,6 +180,8 @@ The resource-change service computes bounded affected-account configuration and
 whole-environment fit previews, checks dependency revisions on commit, and reuses
 administrative receipts/audit. These configuration methods are internal pending
 database-selected allocation and quota admission integration; they are not
-currently exposed as editable HTTP settings or claimed as enforced allocation
-quotas. The slot reservation ledger records full declared capacities, not measured
-filesystem byte consumption or a promise of available engine capacity.
+currently exposed as editable HTTP settings. Product admission enforces their
+resolved effective allowances against current reservations and requested plans;
+selecting allocation defaults from the database environment is still separate
+unfinished integration. The slot ledger records full declared capacities, not
+measured filesystem byte consumption or a promise of available engine capacity.

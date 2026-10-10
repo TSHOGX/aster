@@ -67,6 +67,9 @@ func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (
 		if err := authorizeAction(ctx, tx, scope.Actor, ActionAgentsRun); err != nil {
 			return err
 		}
+		if err := admitCount(ctx, tx, scope.Actor, ResourceAgents, 1); err != nil {
+			return err
+		}
 		r, err := resources(ctx, tx, scope.ProjectID)
 		if err != nil {
 			return err

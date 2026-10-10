@@ -94,6 +94,8 @@ func status(err error) (int, string) {
 		return http.StatusConflict, "project has admitted activity"
 	case errors.Is(err, product.ErrPending):
 		return http.StatusAccepted, "operation pending"
+	case errors.Is(err, product.ErrQuotaExceeded):
+		return http.StatusTooManyRequests, "resource allowance exceeded"
 	case errors.Is(err, product.ErrCapacity):
 		return http.StatusServiceUnavailable, "capacity exhausted"
 	case errors.Is(err, product.ErrDraining):
@@ -103,7 +105,18 @@ func status(err error) (int, string) {
 	}
 }
 
+func quotaFailure(w http.ResponseWriter, err error) bool {
+	var quota *product.QuotaError
+	if !errors.As(err, &quota) {
+		return false
+	}
+	writeJSON(w, http.StatusTooManyRequests, map[string]any{"code": "quota_exceeded", "error": "resource allowance exceeded", "quota": quota})
+	return true
+}
 func fail(w http.ResponseWriter, err error) {
+	if quotaFailure(w, err) {
+		return
+	}
 	if errors.Is(err, product.ErrSnapshotExpired) {
 		writeJSON(w, http.StatusGone, map[string]string{"code": "snapshot_expired", "error": "preview snapshot expired"})
 		return

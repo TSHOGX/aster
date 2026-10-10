@@ -35,7 +35,14 @@ func decodePlatform(w http.ResponseWriter, r *http.Request, out any) bool {
 }
 func platformError(w http.ResponseWriter, err error) {
 	code, status := "unavailable", http.StatusServiceUnavailable
+	var quota *product.QuotaError
 	switch {
+	case errors.As(err, &quota):
+		code, status = "quota_exceeded", http.StatusTooManyRequests
+	case errors.Is(err, product.ErrForbidden):
+		code, status = "forbidden", http.StatusForbidden
+	case errors.Is(err, product.ErrUnauthorized):
+		code, status = "unauthorized", http.StatusUnauthorized
 	case errors.Is(err, product.ErrInvalid):
 		code, status = "invalid", 400
 	case errors.Is(err, product.ErrConflict):
@@ -50,7 +57,11 @@ func platformError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
+	body := map[string]any{"error": code}
+	if quota != nil {
+		body["quota"] = quota
+	}
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // PlatformHandler belongs only on the protected owner socket. The capability
@@ -114,6 +125,10 @@ func (a *RemoteAuthority) PlatformSchedules(ctx context.Context, slot product.Se
 		return out, nil
 	case 400:
 		return out, product.ErrInvalid
+	case 401:
+		return out, product.ErrUnauthorized
+	case 403:
+		return out, product.ErrForbidden
 	case 404:
 		return out, product.ErrNotFound
 	case 409:
@@ -121,6 +136,19 @@ func (a *RemoteAuthority) PlatformSchedules(ctx context.Context, slot product.Se
 	case 423:
 		return out, product.ErrDraining
 	case 429:
+		var body struct {
+			Error string              `json:"error"`
+			Quota *product.QuotaError `json:"quota"`
+		}
+		if json.NewDecoder(io.LimitReader(response.Body, 8192)).Decode(&body) != nil {
+			return out, ErrAuthorityUnavailable
+		}
+		if body.Error == "quota_exceeded" {
+			if body.Quota == nil {
+				return out, ErrAuthorityUnavailable
+			}
+			return out, body.Quota
+		}
 		return out, product.ErrCapacity
 	default:
 		return out, ErrAuthorityUnavailable

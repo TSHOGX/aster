@@ -19,7 +19,7 @@ import (
 
 // First upload saves and reserves every slot, then materializes only workspace.
 // Callers hold the existing Project lifecycle lane through readiness.
-func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope, action ProductAction) (Resources, error) {
+func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope, action ProductAction, bytes int64) (Resources, error) {
 	var r Resources
 	err := f.Store.write(ctx, func(tx *sql.Tx) error {
 		p, err := mutableOwnedProject(ctx, tx, scope)
@@ -28,6 +28,11 @@ func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope, action 
 		}
 		if err := authorizeAction(ctx, tx, scope.Actor, action); err != nil {
 			return err
+		}
+		if action == ActionFilesUpload || action == ActionFilesEdit {
+			if err := admitTransfer(ctx, tx, scope.Actor, bytes); err != nil {
+				return err
+			}
 		}
 		if p.State != "created" && p.State != "paused" {
 			return ErrPending
@@ -98,7 +103,7 @@ func (f *Files) executeVolume(ctx context.Context, scope Scope, id string, actio
 		return FileOperation{}, ErrPending
 	}
 	defer release()
-	r, err := f.ensureWorkspaceStorage(runctx, scope, action)
+	r, err := f.ensureWorkspaceStorage(runctx, scope, action, request.Size)
 	if err != nil {
 		return FileOperation{}, err
 	}
