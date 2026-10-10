@@ -1,19 +1,25 @@
-# Fresh deployment
+# Fresh development deployment
 
-This is a historical installation record, not verification of the current branch
-tip or an instruction to reset the next deployment. Use [delivery](delivery.md)
-for new candidates and [operations](operations.md) for current-format updates.
+The 2026-10-10 development installation runs the conversational scheduling release
+with schema 4, runtime manifest 4, native protocol 4 and schedule protocol 1.
+The [sanitized deployment record](../dev/measurements/current-deployment.json)
+identifies the exact committed candidate, installed artifacts and completed checks.
 
-The installed application is rebuilt from the current source after deleting
-incompatible database, engine, volume, capture and deployment state. The reset
-preserves login/provider credentials, TLS and reviewed configuration only.
+The authorized reset replaced the application database, captures, engine store,
+owned volumes and runtime templates. Login/provider credentials, TLS and reviewed
+configuration inputs were preserved. All supervised application components now use
+one candidate; the configuration has one runtime binding and enables native
+scheduling for the declared Agent gateway audience.
 
-The canonical schema is initialized directly. There is no migration chain,
-format converter, historical fingerprint reader or rollback override. Current
-process recovery, journal identity and owner fencing remain required.
+Qualification exercised the packaged frontend and owner with the fresh measured
+image: real Pi scheduling tools and guest routing, one-shot delivery, bounded-check
+finish, network policy, paused Files, mixed workload, browsers and fault recovery.
+A separate installed-service smoke checked browser authentication, actual model
+selection of the native scheduling tool, its persisted card and automatic result.
+Disposable smoke resources and the temporary login were removed afterward.
 
-The [current sanitized deployment record](../dev/measurements/current-deployment.json)
-was written after live verification. All final business tables are empty;
-the smoke run was followed by an empty reinitialization of the same verified artifacts.
-See [bootstrap](bootstrap.md), [release](queued-prompts-release.md) and
-[verification](verification.md) for the procedure and acceptance checks.
+This is a measured installation record, not automatic authorization to discard
+another installation's data. Follow [delivery](delivery.md), [bootstrap](bootstrap.md)
+and [operations](operations.md) for subsequent work. No migration or compatibility
+adapter is provided. Physical power-loss testing and the optional combined-load
+and external-provider handoff suites are outside this qualification.

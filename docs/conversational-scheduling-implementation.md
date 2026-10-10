@@ -106,17 +106,45 @@ Final qualification results:
   escaped-prompt result bound, and actual Pi loader/tool-loop qualification.
 
 
-## Release limits
+## Fresh deployment qualification
 
-No live database, runtime image, service binding or deployment was reset or
-modified. Physical power-loss behavior, live-provider natural-language selection,
-and a new deployed sandbox route were not exercised in this source qualification.
-Transport uses real local HTTP/Unix sockets with live product authority; native
-model output is deterministic. Privileged runtime suites compile, but deployment
-qualification must run them in a disposable supported builder with the intended
-measured candidate. Existing runtime routing is reused without an egress bypass.
+The 2026-10-10 development reset installed the verified candidate and a fresh
+OS/Pi runtime built from the pinned inputs. Product and engine state, owned
+volumes and obsolete runtime templates were replaced. Credential, TLS and reviewed
+content hashes were identical after removing the temporary smoke login.
+The runtime catalog has been removed: all Projects must match the single current
+runtime binding. Supervised services use the same candidate.
 
-The release requires schema 4, manifest 4, native protocol 4 and schedule protocol
-1. Exact compiled digests govern compatibility. Old databases/manifests are
-refused; there is no implicit migration, reset or compatibility adapter. Follow
-[delivery](delivery.md) and [scheduling enablement](scheduling.md) for activation.
+The isolated release suite passed against the candidate's actual executables and
+packaged frontend. Real Pi called create/list/get/update/cancel through the guest
+service route; automatic one-shot admission produced a durable result notice, and
+a new-Session bounded check finished through host-bound authority. The suites also
+passed owner handoff/outage, native retries and compaction, queued input, network
+reload, paused Files, real browsers, realtime invalidation and fault recovery.
+
+A five-minute mixed workload completed 60 rounds with HTTP p95 approximately
+6.8 ms, completion-to-display p95 390 ms and maximum combined owner/gateway RSS
+63 MiB. These are local qualification measurements, not production guarantees.
+The workload repaired its intentionally impaired capture lane, met fairness bounds
+and reclaimed its resources.
+
+The installed-service browser smoke authenticated, submitted a natural-language
+request to the configured model, observed its successful native scheduling receipt
+and persisted card, then waited for automatic execution and the Inbox result.
+Disposable Projects and the temporary login were removed. Only retired Project
+and Session tombstones remain; no active Project or scheduled work remains.
+Database integrity and foreign-key checks passed.
+
+Qualification corrected three test fixtures: a prompt-state SQL query now reads
+execution authority, workload deletion supplies its required request ID, and file
+watching waits for the initial baseline before generating changes. The final
+file-watch test correction and deployment documentation do not change the
+installed candidate's executable code. Exact source and artifact identities are
+recorded in the [sanitized deployment record](../dev/measurements/current-deployment.json).
+
+Physical power-loss behavior and the optional combined-load and external-provider
+handoff suites were not exercised. The installed smoke verifies actual model tool
+selection for one scheduling request; deterministic native tests cover the full
+tool lifecycle. The release requires schema 4, manifest 4, native protocol 4 and
+schedule protocol 1. Old databases/manifests are refused; there is no migration or
+compatibility adapter. Follow [delivery](delivery.md) and [bootstrap](bootstrap.md).

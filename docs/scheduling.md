@@ -58,7 +58,7 @@ third-party message or extra summarization model call is involved.
 ## Enablement and release
 
 Configure `schedule_tools: true` on the Agent's declared gateway audience. The
-owner checks platform protocol 1 and the Project's measured retained runtime
+owner checks platform protocol 1 and the Project's measured current runtime
 before launching tools. A zero-gateway Project can still use the Scheduled page.
 Existing immutable service bindings are never silently modified.
 
@@ -67,8 +67,10 @@ protocol 1. Install a measured runtime containing the reviewed explicit extensio
 and qualify the reserved gateway prefix before enabling it. Gateway replacement
 requires full quiescence. Owner-only handoff is insufficient for this schema or
 runtime transition. Existing databases are refused without modification; a
-production transition requires a separately reviewed data-continuity or explicitly
-authorized fresh-lineage release. This refactor does not reset or deploy live data.
+fresh installation follows the explicitly scoped reset in [bootstrap](bootstrap.md).
+There is one supported runtime and schema, with no migrations or retained-image
+catalog. The development installation has been reset and qualified with these
+contracts; see [deployment evidence](fresh-deployment.md).
 
 See [API](api.md), [gateway contract](gateway-contract.md),
 [runtime](sandbox-runtime.md), [operations](operations.md), and

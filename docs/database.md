@@ -7,9 +7,9 @@ that measured value.
 `product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
 version and fingerprint before a writer opens. Application startup has no
-migration chain or data backfill. An incompatible database is refused without modification. This change does not
-authorize retirement or reset of existing data; deploying to an existing lineage
-requires a separately reviewed data-continuity or fresh-lineage release procedure.
+migration chain or data backfill. An incompatible database is refused without
+modification. Use the explicitly scoped [fresh-installation procedure](bootstrap.md)
+when replacing the schema; there is no data-continuity adapter.
 
 Application startup validates pending activation against the measured executable
 through a read-only connection under the same lock. Only the selected replacement

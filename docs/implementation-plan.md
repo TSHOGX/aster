@@ -1,122 +1,31 @@
-# Navigation, scheduling, and network policy delivery
+# Navigation, scheduling and network implementation
 
-The original delivery implemented global route isolation, visual scheduling and
-network policy reload. The subsequent destructive reset request replaces its
-migration-preserving database approach with a fresh current-only installation.
-The original sequence below records that work; the follow-up takes precedence.
+The current implementation uses one canonical schema and one measured runtime
+per installation. Format and runtime changes use a deliberate fresh installation;
+there is no migration chain, old-client adapter or retained-template catalog.
 
-## Fresh-installation follow-up
+## Delivered behavior
 
-The subsequent destructive-reset request supersedes the original preservation
-and migration plan below. The current implementation has one canonical schema,
-no migration chain, no historical schema branches, no migration-only read cleanup,
-and no old-executable rollback override. Deployment replaced legacy application
-and engine state with fresh stores. The [fresh deployment](fresh-deployment.md)
-is complete and supersedes the original no-deployment boundary. See [bootstrap](bootstrap.md) and the
-[current contract](compatibility.md). The earlier qualification record describes
-its recorded source only, not the newly rebuilt deployment.
+- Global routes normalize selection independently of Project workspace preferences.
+  Received conversations require an active reader grant. Navigation protects drafts
+  and fences late responses.
+- The Scheduled workspace provides owner-authorized filtering, bounded lists and
+  history, live invalidation, complete prompt editing, shared mutation receipts and
+  explicit revision conflicts.
+- One-shot, Cron, elapsed minute intervals and manual tasks use one admission path.
+  One-shot consumption is transactional. Definition revisions change only on edits;
+  scheduler progress does not invalidate them. Unknown execution is not retried.
+- Measured native Pi tools manage the same tasks through the reserved gateway route
+  and protected owner authority. Persisted cards, source links and Inbox delivery
+  connect conversation intent to its actual result.
+- Bounded interval checks stop on count, deadline or a host-bound finish operation.
+  Pending checks can remain quiet while failures and unresolved outcomes stay visible.
+- Direct IPv4 and DNS defaults are durable policy snapshots selected at creation or
+  resume. Conditional engine updates and DNS projection precede guest admission;
+  running Projects retain their effective policy.
 
-## Minute interval follow-up
-
-Scheduled now supports fixed elapsed intervals of 1–10,080 minutes, represented
-by `@every Nm` in its existing recurrence field. Persisted next-run time anchors
-the cadence across delayed ticks/restarts. Creation, enabling and interval changes
-start a new timer; other edits retain it. No schema change, migration or reset is
-needed. Arbitrary units, custom date anchors and finite schedules remain outside
-this minute-interval option.
-
-## Original ordered stages
-
-1. **Route isolation.** Normalize routes on parsing, navigation, serialization,
-   and history. Give received conversations their own explicit selection and an
-   authoritative grant lookup. Guard unsaved files before leaving a Project.
-   Test stale URLs, late reads, revocation, deep links, and Back/Forward.
-2. **Scheduling contracts.** Add authoritative recurrence previews, bounded
-   recurrence metadata, owner-scoped title/status filtering, and chronological
-   pagination with explicit invalidation on concurrent changes. Characterize DST
-   using the scheduler's parser. Keep prompts out of overview responses.
-3. **Scheduled workspace.** Replace the modal editor with responsive list/detail
-   and explicit create/edit routes. Add visual recurrence controls, localized
-   summaries, previews, draft guards, lossless advanced rules, selected history,
-   idempotent actions, and revision-conflict reconciliation.
-4. **Network lifecycle.** Publish validated immutable direct/DNS policy snapshots;
-   reject unsupported configuration edits. Record target policy in durable
-   creation/resume intent, conditionally update paused Khora bindings, reconcile
-   uncertain replies, and project matching DNS before admitting guest work.
-   Running placements retain their effective policy. Integrate diagnostics and
-   release/handoff identity explicitly.
-5. **Qualification and documentation.** Remove superseded implementations and
-   stale contracts, run race/vet and frontend production checks, exercise focused
-   browser journeys, and record runtime qualification separately from fixtures.
-
-Each implementation stage received a Conventional Commit after its relevant
-checks. Follow-up fixes discovered during qualification were committed separately
-with regression coverage.
-
-## Original design constraints
-
-- Global routes never inherit Project selection. Workspace preferences are
-  remembered state, not current-page authority.
-- A received-conversation detail requires an active reader grant independently
-  of the paginated list. Generic owner-or-reader message access remains valid.
-- Schedule search and ordering apply before pagination. Pages remain bounded;
-  there is no per-row detail fan-out or overview polling.
-- Daily 09:00 in the detected IANA zone is the visible creation default. Manual
-  execution is explicit. Complex Cron remains exact unless deliberately replaced.
-- Preview and execution share the same parser. No arbitrary intervals, one-time
-  schedules, notification settings, or schedule-level completion are invented.
-- Mutable network settings are limited to direct IPv4 rules and resolvers.
-  Retained model routes, host mappings, resource identities, and volumes survive.
-- Existing schema migration and owner activation gates govern persistence changes.
-  Historical release qualification does not certify the new contracts.
-
-## Initial review findings
-
-All proposal documents were reviewed, including their acceptance and deferred
-scope. The initial code confirmed route spreading and unvalidated shared selection, an
-ID-paged schedule overview and modal Cron editor, and saved startup profiles with
-no paused network-update adapter. The repository already had schema migrations
-and schema-13 qualification, despite the root README claiming no migrations.
-The README and affected architecture/API/operations contracts have been corrected.
-
-## Progress
-
-## Root causes and final authority
-
-| Problem | Root cause | Final authority and behavior |
-| --- | --- | --- |
-| Global views display an unrelated conversation | Route spreading combined workspace identity with global-page selection; generic owner read access was treated as received sharing | Central normalization and destination construction discard unrelated fields; a grant-specific detail lookup precedes shared messages/SSE |
-| Ordinary task creation requires Cron expertise | The modal exposed a raw expression and defaulted silently to manual-only | Visible Daily 09:00 default, visual presets, explicit manual/advanced modes, exact expression preservation and scheduler-backed previews |
-| Global task filters/order cannot scale honestly | ID-only pagination and client-local state could not represent chronological filtered results | Owner-authorized server filtering and sorting with catalog-revision cursors from one read snapshot |
-| Drafts or task selection can be lost on asynchronous work | Editing, reading, navigation and operation outcome were conflated | Explicit routes/modes, shared draft guards, selected-response fencing, stable uncertain request identities and bounded conflict rebase |
-| Network configuration edits leave existing Projects stale | Defaults were copied at startup and saved profiles were reused without a lifecycle update phase | Durable accepted defaults are selected transactionally into creation/resume intent; running placements retain their policy |
-| Interrupted network updates risk mixed permissions or lost authority | Engine mutation, saved profile and guest DNS had no coordinated update protocol | Complete conditional paused-binding verification, durable target recovery, atomic effective-profile/revision commit and readiness-gated projection |
-| Mutable settings weaken release identity | One digest mixed fixed deployment inputs with network defaults | Fixed compatibility plus an independently checked accepted policy revision; reload is fenced during handoff |
-
-## Original delivery boundaries
-
-Schema 15 requires the existing full quiescent activation gate. Older schema
-owners and the retired browser route/schedule contracts are not supported
-rollback targets. No live deployment, production configuration, credentials or
-outbound policy was changed. Public Internet/NAT connectivity remains a deployment
-qualification, and the proposed moderated usability study was not performed.
-Arbitrary intervals, one-time tasks, schedule-level completion, notification
-preferences and richer execution timestamps remain intentionally deferred.
-
-Raw evidence is retained privately. Public qualification contains synthetic
-identities, source/artifact digests and outcomes only. Existing user data and
-uncertain-operation evidence remain accounted for throughout migration/recovery.
-
-## Commit sequence
-
-| Stage | Commit |
-| --- | --- |
-| Review and ordered delivery plan | `adb77f2` |
-| Global routes and grant-specific shared selection | `e7b1a61` |
-| Schedule preview, filtering and cursor contracts | `afebf37` |
-| Visual Scheduled workspace | `7d4483e` |
-| Durable network policy reload and lifecycle | `4d6989e` |
-| Async navigation and recovery authority | `ea9ec4b` |
-| Recovery notices and multibyte form validation | `81f2006` |
-| Current binary-preview browser contract | `7d17896` |
-
+See [conversational scheduling acceptance](conversational-scheduling-implementation.md)
+for authority, lifecycle and qualification details, and [configuration](configuration.md)
+for network reload boundaries. [Delivery](delivery.md) defines candidate checks and
+[bootstrap](bootstrap.md) defines the scoped reset procedure. The latest installed
+artifacts and checks are recorded in [fresh deployment](fresh-deployment.md).

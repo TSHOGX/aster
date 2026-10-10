@@ -1,23 +1,26 @@
 {
-  "completed_at": "2026-09-25T05:29:38.261160+00:00",
-  "source_commit": "eaf4100924654ca5dbd72edd387c66c29df5a146",
-  "schema_version": 3,
-  "schema_digest": "sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a",
+  "completed_at": "2026-10-10T07:13:39.420851+00:00",
+  "source_commit": "7be4a672624a5e26c1f5e5b92d83a6cc2148f723",
+  "test_followup_commit": "f15c5311",
+  "schema_version": 4,
+  "schema_digest": "sha256:64fa1dfc64d0df97629fb2856345fb57c716f42c87e63ae91423403ff5b32e45",
   "native_protocol": 4,
-  "runtime_digest": "sha256:2ecad4935ef3c9373fd85e0613e93b1d0c148077838ba1ba328832805c039d5d",
-  "executable_digest": "sha256:f99899b767e0d6533bba66df67c67e6b4df96c5d62ebeaeccf640f268b927e27",
-  "frontend_build_id": "fMWkt6xhXBCgmL0uiOI4D",
+  "runtime_manifest": 4,
+  "schedule_protocol": 1,
+  "runtime_digest": "sha256:bdb5bb2160c90b63c853a398b1e8a6199ec654d5791363dd01bf0163f80cfcd6",
+  "executable_digest": "sha256:00f386dcbfd29934b2fe74f056c0848ecb274571693179a55b3212e6ff7c450e",
+  "frontend_build_id": "5zLDOBx2jQkZ7L7OU5e8s",
   "engine_store_reinitialized": true,
-  "old_private_entries_deleted": 50,
+  "single_runtime_binding": true,
   "old_owned_subvolumes_deleted": 7,
-  "old_release_directories_deleted": 3,
-  "retired_measurement_files_deleted": 25,
+  "old_runtime_templates_deleted": 2,
+  "old_release_directories_deleted": 5,
   "credentials_preserved": true,
   "database_integrity": "ok",
   "foreign_key_errors": 0,
   "final_counts": {
-    "projects": 0,
-    "sessions": 0,
+    "projects": 3,
+    "sessions": 2,
     "turns": 0,
     "messages": 0,
     "schedules": 0,
@@ -26,6 +29,7 @@
     "input_deliveries": 0,
     "control_receipts": 0
   },
+  "active_projects": 0,
   "services": {
     "web": {
       "state": "active",
@@ -35,7 +39,7 @@
     "gateway": {
       "state": "active",
       "substate": "running",
-      "restarts": 0
+      "restarts": 1
     },
     "application": {
       "state": "active",
@@ -64,30 +68,40 @@
     }
   },
   "verification": {
-    "go_test_all": "passed",
-    "race_product_runner_runtime": "passed",
-    "frontend_tests_passed": 206,
-    "frontend_tests_skipped": 1,
-    "typescript": "passed",
-    "eslint": "passed",
-    "production_build": "passed",
+    "source_backend_race": "passed",
+    "frontend_source_gates": "passed in source qualification",
+    "candidate_inventory": "passed",
     "khora_release": "passed",
+    "native_scheduling_guest_route": "passed",
     "khora_network": "passed",
+    "khora_files": "passed",
+    "khora_mixed": "passed",
     "khora_browser": "passed",
-    "live_smoke": {
-      "authentication_and_recurrence_preview": true,
-      "storage_before_compute": true,
-      "runtime_identity_and_workspace": true,
-      "native_model_gateway_completion": true,
-      "live_browser_navigation_and_schedule_edit": true,
-      "temporary_login_removed": true,
-      "smoke_resources_deleted": true
-    },
-    "final_empty_reinitialization_after_smoke": true
+    "khora_realtime": "passed",
+    "khora_faults": "passed",
+    "live_provider_scheduling_browser": "passed",
+    "temporary_login_removed": true,
+    "smoke_resources_deleted": true,
+    "preserved_input_hashes_match": true
   },
-  "resolved_qualification_failures": [
-    "privileged build used the verified module cache",
-    "browser Steer case moved to its independent provider fixture",
-    "isolated browser rerun passed after initial terminal attach timeout"
+  "mixed_workload": {
+    "rounds": 60,
+    "http_p95_ms": 6.834598,
+    "projection_p95_ms": 389.707779,
+    "rss_max_kib": 64092,
+    "round_max_seconds": 0.749029439
+  },
+  "omitted": [
+    "physical power loss",
+    "optional combined-load suite",
+    "optional external-provider handoff suite"
+  ],
+  "qualification_notes": [
+    "Initial scheduling test corrected to query execution authority.",
+    "Workload deletion fixture updated with a stable request ID.",
+    "File-watch fixture waits for initial snapshot baseline; deployed code unchanged.",
+    "Browser suite explicitly used the installed Playwright cache.",
+    "Post-candidate source changes are test/documentation only.",
+    "Gateway made one startup retry while the fresh owner initialized, then remained ready."
   ]
 }

@@ -124,10 +124,10 @@ Runtime manifest version 4 requires schedule protocol 1 and measures
 `/usr/local/share/project-runtime/platform-schedules.mjs` as a data asset. The
 release builder installs the embedded reviewed source, and generation and guest
 verification compare its bytes with that source. A missing, changed or unsupported
-bundle fails qualification; older retained manifests are refused by this host.
+bundle fails qualification; older manifests are refused by this host.
 The extension is not an executable binary and needs no execute permission.
 
-For a Project whose retained manifest qualifies and whose declared Agent audience
+For a Project whose current manifest qualifies and whose declared Agent audience
 has `schedule_tools: true`, the owner verifies gateway platform protocol support
 before providing the runner a platform endpoint. The endpoint uses the Project's
 immutable synthetic service destination, port and configured TLS mode. No gateway
