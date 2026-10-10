@@ -80,7 +80,13 @@ export function ProjectPicker({
     };
     const scroll = (e: Event) => {
       if (e.target instanceof Node && popup.current?.contains(e.target)) return;
-      dismiss();
+      // Opening/focusing the picker can finish a pending scroll into view,
+      // especially in WebKit. Keep a visible trigger's popup attached to it.
+      const rect = trigger.current?.getBoundingClientRect();
+      const top = window.visualViewport?.offsetTop || 0;
+      const bottom = top + (window.visualViewport?.height || window.innerHeight);
+      if (!rect || rect.bottom < top || rect.top > bottom) dismiss();
+      else setPosition(popupPosition(rect));
     };
     document.addEventListener("pointerdown", outside);
     document.addEventListener("focusin", outside);
