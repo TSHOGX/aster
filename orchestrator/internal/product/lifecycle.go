@@ -284,6 +284,18 @@ func (l *Lifecycle) requestPause(ctx context.Context, scope Scope, revision int6
 		if err != nil {
 			return err
 		}
+		// Idle reconciliation retains service authority. Explicit controls use
+		// the current active owner; restarting allocates work and needs manage.
+		if idle == nil {
+			if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+				return err
+			}
+			if restart {
+				if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+					return err
+				}
+			}
+		}
 		if p.Revision != revision || p.State != "active" {
 			return ErrConflict
 		}

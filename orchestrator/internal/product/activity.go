@@ -139,7 +139,7 @@ func blockers(ctx context.Context, q queryer, project string) ([]Blocker, error)
 	return out, rows.Err()
 }
 func (s *Store) Blockers(ctx context.Context, scope Scope) ([]Blocker, error) {
-	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
+	if _, err := activeOwnedProject(ctx, s.reader, scope); err != nil {
 		return nil, err
 	}
 	return blockers(ctx, s.reader, scope.ProjectID)

@@ -141,3 +141,8 @@ An already attributed request may drain after ordinary group-policy revocation;
 account suspension ends its continuation authority. Grant renewal checks account
 status without treating browser password setup or cookie revocation as suspension.
 Gateway release retains narrowly scoped settlement authority.
+
+Explicit Project pause, blocker inspection, recovery retry and unknown-outcome
+acknowledgment require a current active owner but no functional grant. Restart and
+force-restart also require `projects.manage`, since they admit renewed compute.
+Idle reconciliation and internal recovery retain their service authority.

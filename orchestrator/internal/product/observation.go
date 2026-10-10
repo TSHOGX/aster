@@ -181,6 +181,9 @@ func (l *Lifecycle) ForceRestart(ctx context.Context, scope Scope, revision int6
 		if err != nil {
 			return err
 		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+			return err
+		}
 		if p.Revision != revision || p.State != "active" {
 			return ErrConflict
 		}

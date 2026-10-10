@@ -240,6 +240,9 @@ func (s *Store) ContinueSession(ctx context.Context, scope Scope, session string
 		if err != nil {
 			return err
 		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+			return err
+		}
 		if child.State != "blocked" || child.Revision != revision || child.Deletion != Live {
 			return ErrConflict
 		}
@@ -270,6 +273,9 @@ func (s *Store) RetryRecovery(ctx context.Context, scope Scope, session string, 
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
 		if err != nil {
+			return err
+		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
 			return err
 		}
 		if child.Revision != revision || child.Deletion != Live {
