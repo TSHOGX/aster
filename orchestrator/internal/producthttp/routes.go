@@ -43,6 +43,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{project}/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/projects/{project}/schedules", s.createSchedule)
 	mux.HandleFunc("GET /api/projects/{project}/schedules/{schedule}", s.getSchedule)
+	mux.HandleFunc("GET /api/projects/{project}/schedules/{schedule}/metadata", s.scheduleMetadata)
 	mux.HandleFunc("PATCH /api/projects/{project}/schedules/{schedule}", s.updateSchedule)
 	mux.HandleFunc("DELETE /api/projects/{project}/schedules/{schedule}", s.deleteSchedule)
 	mux.HandleFunc("POST /api/projects/{project}/schedules/{schedule}/cancel", s.cancelSchedule)

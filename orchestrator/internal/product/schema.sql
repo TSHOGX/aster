@@ -715,6 +715,7 @@ CREATE INDEX release_terminal_start_pending ON terminal_incarnations(id) WHERE s
 CREATE INDEX release_run_pending ON execution_runs(prompt_id) WHERE state IN ('starting','running','stopping','unknown');
 
 CREATE INDEX schedule_runs_project ON schedule_runs(project_id,created_at,id);
+CREATE INDEX schedule_runs_latest ON schedule_runs(schedule_id,created_at DESC,id DESC);
 
 CREATE INDEX schedules_due ON schedules(state,retry_at,next_at,expires_at,project_id);
 
@@ -860,15 +861,30 @@ CREATE TRIGGER index_message_insert AFTER INSERT ON messages BEGIN
 END;
 
 CREATE TRIGGER notify_run_outcome AFTER UPDATE OF state,outcome ON execution_runs
-WHEN (SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 AND (NEW.state='settled' OR NEW.state IN ('failed','unknown')) AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome)
+WHEN (NEW.state='settled' OR NEW.state IN ('failed','unknown')) AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome)
 BEGIN
- INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
+ DELETE FROM notification_reads WHERE notification_id IN
+  (SELECT n.id FROM notifications n JOIN turns t ON n.id='turn/'||t.id
+   WHERE (t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed'))
+   AND ((SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 OR EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notify=1))
+   AND n.title<>'Agent turn '||CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END);
+ INSERT INTO notifications(id,audience,project_id,session_id,title,body,created_at)
  SELECT 'turn/'||t.id,p.owner_id,NEW.project_id,NEW.session_id,'Agent turn '||CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END,'Open the conversation to inspect the outcome.',coalesce(nullif(NEW.settled_at,''),NEW.started_at)
  FROM turns t JOIN projects p ON p.id=NEW.project_id AND p.state NOT IN ('deleting','deleted')
- WHERE t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed')
+ WHERE (t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed'))
+ AND ((SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 OR EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notify=1))
+ ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,created_at=excluded.created_at WHERE notifications.title<>excluded.title;
+END;
+
+CREATE TRIGGER notify_scheduled_disposition AFTER UPDATE OF disposition ON turns
+WHEN NEW.disposition IN ('canceled','handled') AND NEW.disposition<>OLD.disposition
+BEGIN
+ INSERT INTO notifications(id,audience,project_id,session_id,title,body,created_at)
+ SELECT 'turn/'||NEW.id,p.owner_id,NEW.project_id,NEW.session_id,'Scheduled input '||NEW.disposition,'Open the conversation to inspect the input.',NEW.updated_at
+ FROM projects p WHERE p.id=NEW.project_id AND p.state NOT IN ('deleting','deleted')
+ AND EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=NEW.id AND sr.notify=1)
  ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,created_at=excluded.created_at;
- DELETE FROM notification_reads WHERE notification_id IN
-  (SELECT 'turn/'||t.id FROM turns t WHERE t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed'));
+ DELETE FROM notification_reads WHERE notification_id='turn/'||NEW.id;
 END;
 
 CREATE TRIGGER project_event_account_delete AFTER DELETE ON events BEGIN

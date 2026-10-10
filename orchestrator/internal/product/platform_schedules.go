@@ -143,30 +143,12 @@ func (s *Store) PlatformSchedules(ctx context.Context, slot ServiceRequest, inpu
 			}
 			return rows.Err()
 		case "list":
-			if len(input.After) > 128 || input.Limit < 0 || input.Limit > 50 {
-				return ErrInvalid
-			}
-			if input.Limit == 0 {
-				input.Limit = 20
-			}
-			rows, e := tx.QueryContext(ctx, `SELECT id,project_id,coalesce(session_id,''),title,cron,timezone,state,trigger_kind,coalesce(run_at,''),coalesce(end_reason,''),coalesce(origin_session_id,''),last_error,coalesce(next_at,''),revision FROM schedules WHERE project_id=? AND id>? AND state<>'deleted' ORDER BY id LIMIT ?`, scope.ProjectID, input.After, input.Limit+1)
+			page, e := scheduleList(ctx, tx, scope, input.After, input.Limit)
 			if e != nil {
 				return e
 			}
-			defer rows.Close()
-			out.Schedules = []ScheduleOverview{}
-			for rows.Next() {
-				var item ScheduleOverview
-				if e = rows.Scan(&item.ID, &item.ProjectID, &item.SessionID, &item.Title, &item.Cron, &item.Timezone, &item.State, &item.TriggerKind, &item.RunAt, &item.EndReason, &item.OriginSessionID, &item.LastError, &item.NextAt, &item.Revision); e != nil {
-					return e
-				}
-				out.Schedules = append(out.Schedules, item)
-			}
-			if len(out.Schedules) > input.Limit {
-				out.Schedules = out.Schedules[:input.Limit]
-				out.Next = out.Schedules[input.Limit-1].ID
-			}
-			return rows.Err()
+			out.Schedules, out.Next = page.Schedules, page.Next
+			return nil
 		default:
 			return ErrInvalid
 		}

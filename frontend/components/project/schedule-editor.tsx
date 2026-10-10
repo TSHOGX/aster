@@ -22,6 +22,7 @@ import { useT } from "@/lib/i18n";
 import {
   parseRecurrence,
   recurrenceCron,
+  recurrenceRunAt,
   scheduleConfiguration,
   scheduleWrite,
   schedulePreviewKey,
@@ -65,8 +66,9 @@ export function ScheduleEditor({
     schedule?.timezone || detectedZone || "UTC",
   );
   const [rule, setRule] = useState(() =>
-    parseRecurrence(schedule?.cron ?? "0 9 * * *"),
+    parseRecurrence(schedule?.cron ?? "0 9 * * *",schedule?.run_at,schedule?.timezone),
   );
+  const [notify,setNotify]=useState(schedule?.notify ?? true);
   const [ruleChanged, setRuleChanged] = useState(false);
   const [existing, setExisting] = useState(!!schedule?.session_id),
     [session, setSession] = useState(schedule?.session_id || "");
@@ -93,6 +95,7 @@ export function ScheduleEditor({
   const cron = ruleChanged || !schedule ? recurrenceCron(rule) : schedule.cron;
   const previewNextAt =
     baseline?.state === "active" && cron === baseline.cron ? baseline.next_at : undefined;
+  const runAt=recurrenceRunAt(rule,timezone);
   const value: Schedule = {
     id: schedule?.id || requestId,
     project_id: project,
@@ -102,8 +105,10 @@ export function ScheduleEditor({
     timezone,
     session_id: existing ? session : "",
     state: baseline?.state ?? "active",
-    trigger_kind: cron ? (cron.startsWith("@every ") ? "interval" : "cron") : "manual",
-    notify: baseline?.notify ?? true,
+    run_at: runAt,
+    expires_at: baseline?.expires_at,
+    trigger_kind: rule.mode==="once" ? "at" : cron ? (cron.startsWith("@every ") ? "interval" : "cron") : "manual",
+    notify,
     revision: baseline?.revision ?? 0,
   };
   const [initial] = useState(() =>
@@ -111,9 +116,9 @@ export function ScheduleEditor({
   );
   const dirty = scheduleConfiguration(value) !== initial;
   const recurrenceUnchanged =
-    !!baseline && cron === baseline.cron && timezone === baseline.timezone;
+    !!baseline && cron === baseline.cron && timezone === baseline.timezone && runAt === (baseline.run_at ? new Date(baseline.run_at).toISOString() : "");
   const previewValid =
-    validation?.key === schedulePreviewKey(cron, timezone, previewNextAt) &&
+    validation?.key === schedulePreviewKey(cron, timezone, previewNextAt,rule.mode==="once" ? runAt || "invalid" : "") &&
     validation.valid;
   const targetValid =
     !existing ||
@@ -217,49 +222,24 @@ export function ScheduleEditor({
     const submitted = pending.current || { ...value };
     const path = `${projectURL(submitted.project_id)}/schedules/${encode(submitted.id)}`;
     try {
-      let result: Schedule;
-      if (!schedule) {
-        pending.current = submitted;
-        try {
-          result = await command<Schedule>(
-            `${projectURL(project)}/schedules`,
-            scheduleWrite(submitted, requestId),
-          );
-        } catch (e) {
-          if (e instanceof APIError && e.status >= 400 && e.status < 500) {
-            pending.current = null;
-            setUncertain(false);
-            throw e;
+      pending.current=submitted;
+      const send=()=>command<Schedule>(schedule ? path : `${projectURL(project)}/schedules`,scheduleWrite(submitted,requestId),schedule ? "PATCH" : "POST");
+      let result:Schedule;
+      try { result=await send(); }
+      catch(e) {
+        if(e instanceof APIError && e.status>=400 && e.status<500) {
+          pending.current=null;setUncertain(false);
+          if(schedule && e.status===409) {
+            const found=await api<Schedule>(path).catch(()=>null);
+            if(found)setLatest(found);
+            throw new Error(tr("The task changed. Your edits have been kept."));
           }
-          setUncertain(true);
-          const found = await api<Schedule>(path).catch(() => null);
-          if (
-            !found ||
-            scheduleConfiguration(found) !== scheduleConfiguration(submitted)
-          )
-            throw e;
-          result = found;
+          throw e;
         }
-      } else {
-        try {
-          result = await command<Schedule>(path, scheduleWrite(submitted, requestId), "PATCH");
-        } catch (e) {
-          const found = await api<Schedule>(path).catch(() => null);
-          if (
-            found &&
-            scheduleConfiguration(found) === scheduleConfiguration(submitted)
-          )
-            result = found;
-          else {
-            if (found && e instanceof APIError && e.status === 409) {
-              setLatest(found);
-              throw new Error(
-                tr("The task changed. Your edits have been kept."),
-              );
-            }
-            throw e;
-          }
-        }
+        setUncertain(true);
+        // Exact receipt replay, with the original snapshot and identity. Current
+        // task content is never treated as proof that this mutation committed.
+        result=await send();
       }
       pending.current = null;
       setUncertain(false);
@@ -424,6 +404,7 @@ export function ScheduleEditor({
             {tr("Your timezone could not be detected. UTC is selected.")}
           </p>
         )}
+        <label><input type="checkbox" checked={notify} onChange={e=>setNotify(e.target.checked)} />{tr("Notify me when the result is available")}</label>
         <RecurrenceFields
           disabled={busy || uncertain}
           rule={rule}

@@ -82,6 +82,13 @@ func TestPlatformRealGatewayOwnerReceiptSurvivesLostReply(t *testing.T) {
 		if bytes.Contains(raw, []byte(token)) || bytes.Contains(raw, []byte("provider-secret")) {
 			t.Fatal("credential leaked")
 		}
+		deadline := time.Now().Add(time.Second)
+		for authority.Pending() != 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if authority.Pending() != 0 {
+			t.Fatal("gateway slot release was not acknowledged")
+		}
 		return response.StatusCode, raw
 	}
 	status, raw := call(servicegateway.PlatformPath, product.PlatformScheduleRequest{Action: "context"})

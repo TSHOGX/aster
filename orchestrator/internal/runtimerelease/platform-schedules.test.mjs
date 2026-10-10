@@ -94,3 +94,13 @@ test('real pinned Pi loads only the explicit bundle and emits normal native tool
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a retry denial cannot turn a lost mutation reply into definite failure', async () => {
+  let attempts = 0;
+  const tools = toolsFor(async (_url, options) => {
+    if (JSON.parse(options.body).action === 'context') return response({ context });
+    if (++attempts === 1) throw new Error('reply lost after commit');
+    return { ok: false, status: 429, text: async () => JSON.stringify({ error: 'capacity' }) };
+  });
+  await assert.rejects(tools.get('schedules_create').execute('call', args, undefined, undefined, { sessionManager: { getLeafId: () => 'assistant', getSessionId: () => 'native' } }), /outcome_unknown/);
+});

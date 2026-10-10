@@ -15,6 +15,7 @@ type Notification struct {
 	ID        string `json:"id"`
 	ProjectID string `json:"project_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
 	Title     string `json:"title"`
 	Body      string `json:"body"`
 	CreatedAt string `json:"created_at"`
@@ -59,7 +60,7 @@ func (s *Store) Notifications(ctx context.Context, actor, after string, limit in
 	if actor == "" {
 		return nil, ErrNotFound
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT n.id,coalesce(n.project_id,''),coalesce(n.session_id,''),n.title,n.body,n.created_at,EXISTS(SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id AND r.actor=?) FROM notifications n WHERE (n.audience IS NULL OR n.audience=?) AND (?='' OR (n.created_at,n.id)<(SELECT created_at,id FROM notifications WHERE id=? AND (audience IS NULL OR audience=?))) ORDER BY n.created_at DESC,n.id DESC LIMIT ?`, actor, actor, after, after, actor, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT n.id,coalesce(n.project_id,''),coalesce(n.session_id,''),coalesce((SELECT m.id FROM messages m WHERE substr(n.id,1,5)='turn/' AND m.turn_id=substr(n.id,6) AND m.role='user' ORDER BY m.sequence LIMIT 1),''),n.title,n.body,n.created_at,EXISTS(SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id AND r.actor=?) FROM notifications n WHERE (n.audience IS NULL OR n.audience=?) AND (?='' OR (n.created_at,n.id)<(SELECT created_at,id FROM notifications WHERE id=? AND (audience IS NULL OR audience=?))) ORDER BY n.created_at DESC,n.id DESC LIMIT ?`, actor, actor, after, after, actor, pageSize(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +68,7 @@ func (s *Store) Notifications(ctx context.Context, actor, after string, limit in
 	out := []Notification{}
 	for rows.Next() {
 		var n Notification
-		if err = rows.Scan(&n.ID, &n.ProjectID, &n.SessionID, &n.Title, &n.Body, &n.CreatedAt, &n.Read); err != nil {
+		if err = rows.Scan(&n.ID, &n.ProjectID, &n.SessionID, &n.MessageID, &n.Title, &n.Body, &n.CreatedAt, &n.Read); err != nil {
 			return nil, err
 		}
 		out = append(out, n)

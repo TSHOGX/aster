@@ -8,7 +8,7 @@ here. Existing databases and deployments are not changed by this work.
 | Domain and admission | Complete | Explicit lifecycle/triggers, one-shot admission, receipts, coalescing, failure isolation, typed browser writes, retirement |
 | Platform transport | Complete | Reserved gateway prefix, protected owner RPC, live grant/slot/Run/release fences |
 | Native runtime | Complete | Measured explicit extension, immutable request identity/retries, capability gating |
-| Surfaces and delivery | Pending | One-shot editor, conversation cards/source links, history filters, scheduled inbox projection |
+| Surfaces and delivery | Complete | One-shot editor, conversation cards/source links, history filters, scheduled inbox projection |
 | Bounded checks | Pending | Count/deadline bounds, exact scheduled Run finish, quiet pending checks |
 | Final qualification | Pending | Cross-layer tests, release/docs audit, legacy removal |
 
@@ -54,3 +54,15 @@ refuses unsupported retained capability or changed source bytes.
 Runtime checks: full backend gate (build, vet, native/product tests, privileged
 suite compilation and selected fixture checks), source gates and pinned-Node
 extension tests pass. No live image or deployment was changed.
+
+Surface qualification includes one-shot creation, timezone/DST gaps and repeated
+hours, receipt-backed browser retry, metadata-only live cards, native-link
+validation, deleted tombstones and latest-result navigation. Scheduled delivery
+covers generic-off and both-on policies, immutable notify snapshots, unknown
+resolution/unread behavior, consumed steers and queued cancellation/handling.
+The gateway transport fixture now waits for acknowledged slot release before
+its next request; a retry denial after a lost mutation reply remains uncertain.
+
+Surface checks: product/HTTP tests, focused race tests, frontend lint/typecheck,
+233 unit tests (one pre-existing skip), production build, 31 schedule browser
+cases and the live native-card browser case pass. Native retry tests also pass.

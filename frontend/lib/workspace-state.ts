@@ -70,7 +70,7 @@ export type Navigation = {
   scheduleMode?: "create" | "edit";
   scheduleFilter?: string;
   scheduleQuery?: string;
-  scheduleStatus?: "active" | "paused";
+  scheduleStatus?: "active" | "paused" | "exhausted" | "canceled" | "deleted";
   scheduleAfter?: string;
 };
 export function normalizeNavigation(n: Navigation): Navigation {
@@ -101,7 +101,7 @@ export function normalizeNavigation(n: Navigation): Navigation {
     }
     if (n.scheduleFilter) base.scheduleFilter = n.scheduleFilter;
     if (n.scheduleQuery) base.scheduleQuery = n.scheduleQuery.slice(0, 256);
-    if (n.scheduleStatus === "active" || n.scheduleStatus === "paused")
+    if (n.scheduleStatus && ["active","paused","exhausted","canceled","deleted"].includes(n.scheduleStatus))
       base.scheduleStatus = n.scheduleStatus;
     if (n.scheduleAfter) base.scheduleAfter = n.scheduleAfter;
   }
@@ -146,12 +146,7 @@ export function readNavigation(search: string): Navigation {
           : undefined,
     scheduleFilter: p.get("filter_project") || "",
     scheduleQuery: p.get("q") || "",
-    scheduleStatus:
-      p.get("status") === "active"
-        ? "active"
-        : p.get("status") === "paused"
-          ? "paused"
-          : undefined,
+    scheduleStatus: ["active","paused","exhausted","canceled","deleted"].includes(p.get("status") || "") ? p.get("status") as Navigation["scheduleStatus"] : undefined,
     scheduleAfter: p.get("after") || "",
   });
 }

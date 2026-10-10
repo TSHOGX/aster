@@ -130,6 +130,7 @@ export type ScheduleRun = {
   due_at: string;
 };
 export type Notice = {
+ message_id?: string;
   id: string;
   project_id?: string;
   session_id?: string;
@@ -352,7 +353,7 @@ export function recalled<T>(key: string, fallback: T): T {
   }
 }
 
-export type ScheduleOverview = Pick<Schedule, "id" | "project_id" | "session_id" | "title" | "cron" | "timezone" | "state" | "trigger_kind" | "run_at" | "end_reason" | "origin_session_id" | "last_error" | "next_at" | "revision"> & { project_title: string };
+export type ScheduleOverview = Pick<Schedule, "id" | "project_id" | "session_id" | "title" | "cron" | "timezone" | "state" | "trigger_kind" | "run_at" | "end_reason" | "origin_session_id" | "last_error" | "next_at" | "revision"> & { project_title: string; last_state?: string; last_session_id?: string; last_turn_id?: string };
 export type SchedulePage = { schedules: ScheduleOverview[]; next?: string; previous?: string };
 
 export type TurnIndexItem = {

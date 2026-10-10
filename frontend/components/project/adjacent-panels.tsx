@@ -199,7 +199,7 @@ export function SharePanel({
 export function Inbox({
   onOpen,
 }: {
-  onOpen: (project: string, session?: string) => void;
+  onOpen: (project: string, session?: string, message?: string) => void;
 }) {
   const tr = useT();
   const [items, setItems] = useState<Notice[]>([]);
@@ -242,7 +242,7 @@ export function Inbox({
           <div className="row-actions">
             {notice.project_id && (
               <button
-                onClick={() => onOpen(notice.project_id!, notice.session_id)}
+                onClick={() => onOpen(notice.project_id!, notice.session_id,notice.message_id)}
               >
                 {tr("Open conversation")}
               </button>

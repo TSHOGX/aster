@@ -182,7 +182,8 @@ test("daily creation has an authoritative preview, no conversation fan-out, and 
     .getByRole("button", { name: "Create task", exact: true })
     .click();
   await expect(page.locator(".schedule-reading h2")).toHaveText("Daily checks");
-  expect(f.saves).toHaveLength(1);
+  expect(f.saves).toHaveLength(2);
+  expect(f.saves[1]).toEqual(f.saves[0]);
   expect(f.saves[0].cron).toBe("0 9 * * *");
   expect(f.saves[0].session_id).toBe("");
   expect(new URL(page.url()).searchParams.get("project")).toBeNull();
@@ -613,4 +614,17 @@ test("confirming unchanged custom pickers does not rewrite a saved recurrence", 
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.locator(".schedule-reading h2")).toHaveText("Name-only edit");
   expect(fixture.saves.at(-1)?.cron).toBe("00 09 * * *");
+});
+
+test("one-shot creation saves the resolved instant and delivery preference",async({page})=>{
+ const f=await setup(page);
+ const editor=await createDraft(page);
+ await chooseOption(page,"Repeat","Once");
+ await editor.getByLabel("Date and time",{exact:true}).fill("2099-01-02T03:04");
+ await editor.getByLabel("Notify me when the result is available").uncheck();
+ await editor.getByRole("button",{name:"Create task",exact:true}).click();
+ await expect(page.locator(".schedule-reading h2")).toHaveText("Daily checks");
+ expect(f.saves).toHaveLength(1);
+ expect(f.saves[0].trigger_kind).toBe("at");expect(f.saves[0].run_at).toMatch(/^2099-01-0[12]T/);expect(f.saves[0].notify).toBe(false);
+ await expect(page.locator(".schedule-reading")).toContainText("Run now consumes this one-shot task.");
 });

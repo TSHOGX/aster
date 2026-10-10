@@ -261,3 +261,27 @@ exhausted one-shot cannot be rearmed: create new intent with a new identity.
 Scheduler failures are isolated per task; invalid configurations pause with a
 bounded diagnostic, transient admission failures back off (5 seconds, 30 seconds,
 then 5 minutes). Unknown execution outcomes are never automatically resubmitted.
+
+`GET …/schedules/{schedule}/metadata` returns a prompt-free definition projection
+with source Session, lifecycle, next time and latest occurrence state/Session/Prompt
+IDs. It uses the same ownership checks as full definitions, including deleted
+resource tombstones. Visible native receipt cards use this endpoint and the
+shared owner-scoped invalidation stream. `GET …/schedules` also returns metadata
+only, with a maximum 50-row page and `next` ID continuation; full prompts are
+available only from individual GET. Both browser and native list operations use
+the same product query.
+
+The Scheduled page supports one-shot local date/time entry, explicit repeated-hour
+offset selection, result notifications, cancellation and exhausted/canceled/deleted
+history filters. Missing DST wall times cannot be saved. Native receipt cards
+validate IDs against the current Project, ignore embedded navigation URLs, and
+fetch authoritative metadata while visible. Source/result links use normal
+resource authorization. Tombstones replace active promises after deletion.
+
+Scheduled result delivery and generic Agent outcome delivery share
+`turn/<prompt_id>` notice IDs. The per-occurrence notify snapshot composes with the
+global setting, including scheduled inputs consumed as steers. Unknown resolution
+updates the same notice and resets unread only for a changed outcome. Scheduled
+queued cancellation/handled disposition can notify without an execution Run;
+queueing or trigger exhaustion alone never reports success. Inbox navigation uses
+the input's materialized message when available and otherwise its Session.

@@ -201,25 +201,6 @@ func validateScheduleTarget(ctx context.Context, tx *sql.Tx, scope Scope, id str
 	}
 	return nil
 }
-func (s *Store) Schedules(ctx context.Context, scope Scope, after string, limit int) ([]Schedule, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
-		return nil, err
-	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE project_id=? AND id>? AND state<>'deleted' ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Schedule{}
-	for rows.Next() {
-		v, err := scanSchedule(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
 func (s *Store) UpdateSchedule(ctx context.Context, scope Scope, input Schedule, remove bool) error {
 	operation := "update"
 	patch := input.definitionPatch()

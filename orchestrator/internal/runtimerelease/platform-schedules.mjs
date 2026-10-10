@@ -48,6 +48,7 @@ export function registerScheduleTools(pi, config, transport = fetch) {
   const endpoint = new URL(config.endpoint);
   if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.pathname !== '/platform/v1/schedules' || endpoint.search || endpoint.hash || endpoint.username || endpoint.password || !config.credential || !config.session_id) throw new Error('Scheduling configuration unavailable');
   async function post(body, signal) {
+    let uncertain = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (signal?.aborted) throw new Error('outcome_unknown');
       try {
@@ -59,9 +60,11 @@ export function registerScheduleTools(pi, config, transport = fetch) {
         if (raw.length > 2097152) throw new Error('outcome_unknown');
         let data; try { data = JSON.parse(raw); } catch { throw new Error('outcome_unknown'); }
         if (response.ok) return data;
-        if (response.status >= 400 && response.status < 500 && knownErrors.has(data.error)) throw new Error(data.error);
+        if (response.status >= 400 && response.status < 500 && knownErrors.has(data.error)) throw new Error(uncertain ? 'outcome_unknown' : data.error);
+        uncertain = true;
       } catch (error) {
         if (knownErrors.has(error.message)) throw error;
+        uncertain = true;
         if (signal?.aborted) throw new Error('outcome_unknown');
       }
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));

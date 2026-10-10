@@ -6,6 +6,8 @@ import { Globe2, Repeat2 } from "lucide-react";
 import { timezoneOptions } from "@/lib/timezone-options";
 import {
   parseRecurrence,
+ recurrenceRunAt,
+ resolveLocalScheduleTime,
   recurrenceCron,
   repeatLabels,
   scheduleTime,
@@ -21,12 +23,16 @@ import { TimePicker } from "./time-picker";
 export function RecurrenceSummary({
   cron,
   timezone,
+ runAt,
 }: {
   cron: string;
   timezone: string;
+ runAt?: string;
 }) {
   const tr = useT();
-  const rule = parseRecurrence(cron);
+  const rule = parseRecurrence(cron,runAt,timezone);
+ const locale=useLocale();
+ if(runAt) return <span>{tr("Once")} · {scheduleTime(runAt,timezone,locale)}</span>;
   return (
     <span>
       {rule.mode === "interval"
@@ -38,7 +44,7 @@ export function RecurrenceSummary({
       {["monthly", "dates"].includes(rule.mode)
         ? ` · ${rule.dates.join(", ")}`
         : ""}
-      {!["manual", "advanced", "interval"].includes(rule.mode)
+      {!["manual", "advanced", "interval", "once"].includes(rule.mode)
         ? ` · ${rule.time}`
         : ""}
       {rule.mode === "advanced" ? ` · ${cron}` : ""} · {timezone}
@@ -158,17 +164,19 @@ export function RecurrenceFields({
     value?: SchedulePreview;
     failed?: boolean;
   }>();
-  const key = schedulePreviewKey(cron, timezone, nextAt);
+  const runAt=recurrenceRunAt(rule,timezone);
+ const candidates=rule.mode==="once" ? resolveLocalScheduleTime(rule.localTime,timezone) : [];
+ const key = schedulePreviewKey(cron, timezone, nextAt,rule.mode==="once" ? runAt || "invalid" : "");
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      if (cron === null) {
+      if (cron === null || rule.mode==="once" && !runAt) {
         onValidity(key, false);
         return;
       }
       void api<SchedulePreview>("/api/schedules/preview", {
         method: "POST",
-        body: JSON.stringify({ cron, timezone, next_at: nextAt }),
+        body: JSON.stringify({ cron, timezone, next_at: nextAt, ...(rule.mode==="once" ? {trigger_kind:"at",run_at:runAt} : {}) }),
         signal: controller.signal,
       })
         .then((value) => {
@@ -188,7 +196,7 @@ export function RecurrenceFields({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [cron, timezone, nextAt, key, attempt, onValidity]);
+  }, [cron, timezone, nextAt, key, attempt, onValidity,runAt,rule.mode]);
   const current = preview?.key === key ? preview : undefined;
   const toggle = (values: number[], n: number) =>
     values.includes(n) ? values.filter((v) => v !== n) : [...values, n];
@@ -223,6 +231,11 @@ export function RecurrenceFields({
         }))}
         onChange={(value) => void switchMode(value as RepeatMode)}
       />
+      {rule.mode === "once" && <>
+        <label>{tr("Date and time")}<input type="datetime-local" value={rule.localTime} required onChange={e=>onRule({...rule,localTime:e.target.value,atChoice:""})} /></label>
+        {rule.localTime && candidates.length===0 && <p role="alert">{tr("This local time does not exist in the selected timezone.")}</p>}
+        {candidates.length>1 && <><p>{tr("This time occurs twice. Choose which occurrence.")}</p><SelectPicker label={tr("Choose a UTC offset")} value={rule.atChoice} options={candidates.map(at=>({value:at,label:scheduleTime(at,timezone,locale)}))} onChange={atChoice=>onRule({...rule,atChoice})} /></>}
+      </>}
       {rule.mode === "interval" && (
         <>
           <label>
@@ -302,7 +315,7 @@ export function RecurrenceFields({
           </div>
         </fieldset>
       )}
-      {!["manual", "advanced", "interval"].includes(rule.mode) && (
+      {!["manual", "advanced", "interval", "once"].includes(rule.mode) && (
         <TimePicker
           value={rule.time}
           disabled={disabled}

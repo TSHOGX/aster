@@ -15,12 +15,12 @@ import (
 
 func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	items, err := s.Store.Schedules(r.Context(), s.scope(r), q.Get("after"), intParam(q, "limit", 100))
+	items, err := s.Store.ScheduleList(r.Context(), s.scope(r), q.Get("after"), intParam(q, "limit", 20))
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"schedules": items})
+	writeJSON(w, 200, items)
 }
 
 type scheduleWrite struct {
@@ -387,4 +387,13 @@ func (s *Server) previewSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.Store.PreviewScheduleTrigger(body.TriggerKind, body.RunAt, body.Cron, body.Timezone, body.NextAt))
+}
+
+func (s *Server) scheduleMetadata(w http.ResponseWriter, r *http.Request) {
+	item, err := s.Store.ScheduleMetadata(r.Context(), s.scope(r), r.PathValue("schedule"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, item)
 }

@@ -1,5 +1,5 @@
 "use client";
-import { scheduleWrite } from "@/lib/schedule-recurrence";
+import { scheduleWrite, scheduleStateLabels } from "@/lib/schedule-recurrence";
 import {
   useEffect,
   useRef,
@@ -174,7 +174,7 @@ export function Schedules({
           | undefined;
         const selected = navRef.current;
         const reset = event.resource_kind === "resync";
-        catalog ||= reset || event.resource_kind.startsWith("schedule.");
+        catalog ||= reset || event.resource_kind.startsWith("schedule.") || event.resource_kind.startsWith("run.");
         const relevant =
           reset ||
           ((!payload?.project_id ||
@@ -222,7 +222,7 @@ export function Schedules({
     )
       .then((value) => {
         if (!controller.signal.aborted) {
-          if (value.state === "deleted") {
+          if (value.state === "deleted" && navRef.current.scheduleStatus!=="deleted") {
             setDetail({
               key: selectedKey,
               value,
@@ -348,17 +348,13 @@ export function Schedules({
           </p>
           <div className="schedule-filters">
             <div className="row-actions" aria-label={tr("Task status")}>
-              {([undefined, "active", "paused"] as const).map((value) => (
+              {([undefined, "active", "paused", "exhausted", "canceled", "deleted"] as const).map((value) => (
                 <button
                   key={value || "all"}
                   aria-pressed={nav.scheduleStatus === value}
                   onClick={() => setFilter({ scheduleStatus: value })}
                 >
-                  {value === "active"
-                    ? tr("Enabled")
-                    : value === "paused"
-                      ? tr("Paused")
-                      : tr("All")}
+                  {value ? tr(scheduleStateLabels[value]) : tr("All")}
                 </button>
               ))}
             </div>
@@ -456,18 +452,20 @@ export function Schedules({
                     >
                       <strong>{s.title}</strong>
                       <small>
-                        {s.state !== "active" && `${tr("Paused")} · `}
+                        {s.state !== "active" && `${tr(scheduleStateLabels[s.state])} · `}
                         <RecurrenceSummary
                           cron={s.cron}
                           timezone={s.timezone}
+                          runAt={s.run_at}
                         />
                       </small>
-                      {s.state === "active" && s.cron && s.next_at && (
+                      {s.state === "active" && s.next_at && (
                         <small>
                           {tr("Next run")}:{" "}
                           {scheduleTime(s.next_at, s.timezone, locale)}
                         </small>
                       )}
+                      {s.last_state && <small>{s.last_state}</small>}
                       <small>
                         {s.project_title} ·{" "}
                         {s.session_id
@@ -725,6 +723,10 @@ function SelectedSchedule({
           : tr("Paused. Already submitted runs are unaffected."),
       );
     });
+  const cancelTask=()=>act(async()=>{
+    const changed=await command<Schedule>(`${path}/cancel`,{request_id:newID(),revision:schedule.revision});
+    onChanged(changed);setNotice(tr("Task canceled. Already submitted runs are unaffected."));
+  });
   const remove = async () => {
     if (
       await ask({
@@ -775,17 +777,18 @@ function SelectedSchedule({
       ) : (
         <div className="schedule-reading">
           <header className="schedule-detail-heading">
-            <span>{schedule.state === "active" ? tr("Enabled") : tr("Paused")}</span>
+            <span>{tr(scheduleStateLabels[schedule.state])}</span>
             <div className="row-actions">
-              <button disabled={busy} onClick={onEdit}>
+              <button disabled={busy || !["active","paused"].includes(schedule.state)} onClick={onEdit}>
                 {tr("Edit")}
               </button>
-              <button disabled={busy} onClick={() => void toggle()}>
+              <button disabled={busy || !["active","paused"].includes(schedule.state)} onClick={() => void toggle()}>
                 {schedule.state === "active" ? tr("Pause") : tr("Resume")}
               </button>
               <Menu
                 label={tr("Task actions")}
                 items={[
+                  {label:tr("Cancel task"),disabled:busy||!["active","paused"].includes(schedule.state),action:()=>void cancelTask()},
                   {
                     label: tr("Delete task"),
                     danger: true,
@@ -799,6 +802,8 @@ function SelectedSchedule({
           </header>
           <h2>{schedule.title}</h2>
           <Instructions text={schedule.prompt} />
+          {schedule.origin_session_id && <button onClick={()=>onOpen(schedule.project_id,schedule.origin_session_id!)}>{tr("Source conversation")}</button>}
+          {schedule.last_error && <p className="notice warning">{schedule.last_error}</p>}
           <section className="schedule-settings">
             <h3>{tr("Runs in")}</h3>
             <dl>
@@ -831,6 +836,7 @@ function SelectedSchedule({
             <RecurrenceSummary
               cron={schedule.cron}
               timezone={schedule.timezone}
+              runAt={schedule.run_at}
             />
             <UpcomingOccurrences
               cron={schedule.cron}
@@ -839,9 +845,9 @@ function SelectedSchedule({
               nextAt={schedule.next_at}
             />
             <p>
-              {schedule.state !== "active"
+              {!["active","paused"].includes(schedule.state) ? tr(schedule.end_reason==="trigger_consumed" ? "Trigger consumed; inspect the run for its outcome." : "No future runs are scheduled.") : schedule.state !== "active"
                 ? tr("Paused. Resume to continue on this schedule.")
-                : !schedule.cron
+                : schedule.trigger_kind==="manual"
                   ? tr("Runs only when you choose Run now.")
                   : schedule.next_at
                     ? `${tr("Next run")}: ${scheduleTime(schedule.next_at, schedule.timezone, locale)}`
@@ -870,6 +876,7 @@ function SelectedSchedule({
                 tr("Retry Run now to confirm the same request.")}
             </p>
           )}
+          {schedule.trigger_kind==="at" && schedule.state==="active" && <p>{tr("Run now consumes this one-shot task.")}</p>}
           <footer className="schedule-footer">
             <button
               className="primary"
@@ -882,7 +889,7 @@ function SelectedSchedule({
             >
               {tr("Run now")}
             </button>
-            {schedule.state !== "active" && (
+            {schedule.state === "paused" && (
               <small>{tr("Resume this task to run it now.")}</small>
             )}
           </footer>

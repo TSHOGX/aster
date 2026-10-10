@@ -134,7 +134,7 @@ func TestScheduleHintsAndStatusFollowCorrelatedExecutionOutcomes(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			s, scope, i, c := agentFixture(t)
 			ingestContract(t, s, i, c, "native", consumedPayload(c))
-			_, err := s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "manual", ID: "scheduled-input", SessionID: i.SessionID, Title: "Scheduled", Prompt: "scheduled guidance", Timezone: "UTC", State: "active"})
+			_, err := s.CreateSchedule(ctx, scope, Schedule{TriggerKind: "manual", ID: "scheduled-input", Notify: true, SessionID: i.SessionID, Title: "Scheduled", Prompt: "scheduled guidance", Timezone: "UTC", State: "active"})
 			must(t, err)
 			run, err := s.RunSchedule(ctx, scope, "scheduled-input", "once")
 			must(t, err)
@@ -161,6 +161,11 @@ func TestScheduleHintsAndStatusFollowCorrelatedExecutionOutcomes(t *testing.T) {
 			must(t, err)
 			if runs[0].State != outcome {
 				t.Fatal("scheduled outcome disagrees with execution", runs)
+			}
+			notices, e := s.Notifications(ctx, scope.Actor, "", 20)
+			must(t, e)
+			if len(notices) != 1 || notices[0].ID != "turn/"+run.TurnID {
+				t.Fatal("scheduled steer delivery", notices)
 			}
 			events, err := s.ScheduleEvents(ctx, scope.Actor, before, 100)
 			must(t, err)
