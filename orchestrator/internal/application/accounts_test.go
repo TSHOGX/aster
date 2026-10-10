@@ -3,7 +3,9 @@ package application
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,7 +15,18 @@ import (
 
 func TestOfflineBootstrapAndProtectedOwnerRecovery(t *testing.T) {
 	ctx := context.Background()
-	cfg := Config{StateDirectory: t.TempDir()}
+	declaration, path := configurationFixture(t)
+	raw, err := json.Marshal(declaration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	account, err := AccountOperation(ctx, cfg, "bootstrap", "Administrator", "permanent-admin-password")
 	if err != nil {
 		t.Fatal(err)

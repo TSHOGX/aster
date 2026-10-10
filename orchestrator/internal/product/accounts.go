@@ -93,7 +93,10 @@ func (s *Store) insertAccount(ctx context.Context, tx *sql.Tx, name, display, ro
 // BootstrapAccount is an offline operator operation under the Store lifetime lock.
 // The first administrator uses the supplied permanent password; recovery and
 // browser-created credentials always require the restricted setup exchange.
-func (s *Store) BootstrapAccount(ctx context.Context, username, password string) (Account, error) {
+func (s *Store) BootstrapAccount(ctx context.Context, username, password string, seed BootstrapSeed) (Account, error) {
+	if err := seed.Validate(); err != nil {
+		return Account{}, err
+	}
 	name, err := canonicalUsername(username)
 	if err != nil {
 		return Account{}, err
@@ -115,8 +118,14 @@ func (s *Store) BootstrapAccount(ctx context.Context, username, password string)
 			return ErrConflict
 		}
 		var err error
+		if err = s.insertBootstrapSeed(ctx, tx, seed); err != nil {
+			return err
+		}
 		account, err = s.insertAccount(ctx, tx, name, name, "admin", hash, false)
 		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO account_memberships(account_id,group_id) VALUES(?,?)`, account.ID, StandardUsersGroup); err != nil {
 			return err
 		}
 		return s.auditAccount(ctx, tx, "operator", "account.bootstrap", account.ID, account.Revision)
@@ -147,6 +156,9 @@ func (s *Store) CreateAccount(ctx context.Context, actor, username, display, rol
 		var err error
 		account, err = s.insertAccount(ctx, tx, name, display, role, hash, true)
 		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO account_memberships(account_id,group_id) VALUES(?,?)`, account.ID, StandardUsersGroup); err != nil {
 			return err
 		}
 		return s.auditAccount(ctx, tx, actor, "account.create", account.ID, account.Revision)

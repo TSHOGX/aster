@@ -10,7 +10,8 @@
   "template": {
     "id": "agent-runtime",
     "manifest": "../releases/agent-runtime.manifest.json",
-    "digest": "REPLACE_WITH_RUNTIME_RELEASE_DIGEST"
+    "digest": "REPLACE_WITH_RUNTIME_RELEASE_DIGEST",
+    "version": "v1"
   },
   "project": {
     "cpu_millis": 2000,
@@ -33,7 +34,8 @@
     "terminals_per_project": 8,
     "idle_after": "5m",
     "idle_agent_after": "1m",
-    "interval": "250ms"
+    "interval": "250ms",
+    "max_mounts_per_project": 8
   },
   "notifications": {
     "agent_run_outcome": false,

@@ -92,6 +92,77 @@ CREATE TABLE account_audit (
  created_at TEXT NOT NULL
 );
 
+CREATE TABLE account_groups (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE permission_policies (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE,
+ description TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+ statements TEXT NOT NULL CHECK(json_valid(statements)),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE group_policy_bindings (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ policy_id TEXT NOT NULL REFERENCES permission_policies(id) ON DELETE CASCADE,
+ PRIMARY KEY(group_id,policy_id)
+);
+CREATE TABLE account_memberships (
+ account_id TEXT NOT NULL REFERENCES accounts(id),
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ PRIMARY KEY(account_id,group_id)
+);
+CREATE TABLE group_resource_policy (
+ group_id TEXT NOT NULL REFERENCES account_groups(id) ON DELETE CASCADE,
+ dimension TEXT NOT NULL,
+ default_value INTEGER NOT NULL CHECK(default_value>=0),
+ ceiling INTEGER NOT NULL CHECK(ceiling>=default_value),
+ PRIMARY KEY(group_id,dimension)
+);
+CREATE TABLE platform_resource_limits (
+ dimension TEXT PRIMARY KEY,
+ maximum INTEGER NOT NULL CHECK(maximum>=0),
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
+);
+CREATE TABLE registered_sandboxes (
+ id TEXT NOT NULL,
+ version TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ template_id TEXT NOT NULL,
+ manifest TEXT NOT NULL CHECK(json_valid(manifest)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(id,version)
+);
+CREATE TABLE builtin_volumes (
+ id TEXT NOT NULL,
+ version TEXT NOT NULL,
+ digest TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ publication_purpose TEXT NOT NULL,
+ minimum_bytes INTEGER NOT NULL CHECK(minimum_bytes>0),
+ roles TEXT NOT NULL CHECK(json_valid(roles)),
+ clean_runtime INTEGER NOT NULL CHECK(clean_runtime IN (0,1)),
+ entries TEXT NOT NULL CHECK(json_valid(entries)),
+ enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(id,version)
+);
+CREATE TABLE default_environment (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ document TEXT NOT NULL CHECK(json_valid(document)),
+ updated_at TEXT NOT NULL
+);
+
 CREATE TABLE content_publications (
  store_id TEXT NOT NULL,
  purpose TEXT NOT NULL CHECK(purpose IN ('assets','config')),

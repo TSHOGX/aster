@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"harness-platform/orchestrator/internal/testfixture"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,7 +20,7 @@ func accountStore(t *testing.T) (*Store, Account) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	a, err := s.BootstrapAccount(context.Background(), "Admin", "permanent-admin-password")
+	a, err := s.BootstrapAccount(context.Background(), "Admin", "permanent-admin-password", bootstrapSeedFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,14 +37,14 @@ func TestAccountBootstrapAtomicAndRestart(t *testing.T) {
 	if _, err = Open(ctx, name); err == nil {
 		t.Fatal("second writer opened")
 	}
-	if _, err = s.BootstrapAccount(ctx, "admin", "short"); !errors.Is(err, ErrInvalid) {
+	if _, err = s.BootstrapAccount(ctx, "admin", "short", bootstrapSeedFixture(t)); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
-	a, err := s.BootstrapAccount(ctx, "Admin", "permanent-admin-password")
+	a, err := s.BootstrapAccount(ctx, "Admin", "permanent-admin-password", bootstrapSeedFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.BootstrapAccount(ctx, "other", "another-admin-password"); !errors.Is(err, ErrConflict) {
+	if _, err = s.BootstrapAccount(ctx, "other", "another-admin-password", bootstrapSeedFixture(t)); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	session, token, err := s.Authenticate(ctx, "ADMIN", "permanent-admin-password")
@@ -260,4 +261,18 @@ func TestPasswordValidationCountsUnicodeAndBytes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func bootstrapSeedFixture(t *testing.T) BootstrapSeed {
+	t.Helper()
+	manifest, digest := testfixture.RuntimeManifest()
+	network, err := NewNetworkPolicy(Reachability{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := NewBootstrapSeed(ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 32, TerminalSlots: 32}, RegisteredSandbox{Reference: ArtifactReference{ID: "test", Version: "v1", Digest: digest}, StoreID: "engine", TemplateID: "agent-runtime", Manifest: manifest}, nil, network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seed
 }

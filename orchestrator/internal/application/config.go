@@ -35,6 +35,7 @@ func (d *Duration) UnmarshalJSON(raw []byte) error {
 func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(time.Duration(d).String()) }
 
 type Template struct {
+	Version  string `json:"version"`
 	ID       string `json:"id"`
 	Manifest string `json:"manifest"`
 	Digest   string `json:"digest"`
@@ -45,6 +46,7 @@ type Content struct {
 	VolumeBytes  int64  `json:"volume_bytes"`
 }
 type Limits struct {
+	MaxMountsPerProject int      `json:"max_mounts_per_project"`
 	Projects            int      `json:"projects"`
 	Agents              int      `json:"agents"`
 	AgentsPerProject    int      `json:"agents_per_project"`
@@ -185,7 +187,7 @@ func (c Config) Validate() error {
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return errors.New("browser TLS certificate and key must be supplied together")
 	}
-	if c.Template.ID == "" || strings.ContainsAny(c.Template.ID, "/\\\x00?# ") || !runtimerelease.ValidDigest(c.Template.Digest) || !filepath.IsAbs(c.Template.Manifest) {
+	if c.Template.Version == "" || len(c.Template.Version) > 128 || c.Template.ID == "" || strings.ContainsAny(c.Template.ID, "/\\\x00?# ") || !runtimerelease.ValidDigest(c.Template.Digest) || !filepath.IsAbs(c.Template.Manifest) {
 		return errors.New("template identity and pinned runtime manifest required")
 	}
 	if c.Project.StoreID != "" || c.Project.TemplateID != "" || len(c.Project.PublishedMounts) > 0 || c.Project.ReleaseDigest != "" {
@@ -205,7 +207,7 @@ func (c Config) Validate() error {
 		return errors.New("positive content publication capacity required")
 	}
 	l := c.Limits
-	if l.Projects < 1 || l.Projects > 128 || l.Agents < 1 || l.Agents > 256 || l.Terminals < 1 || l.Terminals > 256 || l.AgentsPerProject < 1 || l.AgentsPerProject > l.Agents || l.TerminalsPerProject < 1 || l.TerminalsPerProject > l.Terminals || time.Duration(l.IdleAfter) < time.Second || time.Duration(l.IdleAgentAfter) < time.Second || time.Duration(l.Interval) < 50*time.Millisecond || time.Duration(l.Interval) > 10*time.Second {
+	if l.MaxMountsPerProject < 2 || l.MaxMountsPerProject > 128 || l.Projects < 1 || l.Projects > 128 || l.Agents < 1 || l.Agents > 256 || l.Terminals < 1 || l.Terminals > 256 || l.AgentsPerProject < 1 || l.AgentsPerProject > l.Agents || l.TerminalsPerProject < 1 || l.TerminalsPerProject > l.Terminals || time.Duration(l.IdleAfter) < time.Second || time.Duration(l.IdleAgentAfter) < time.Second || time.Duration(l.Interval) < 50*time.Millisecond || time.Duration(l.Interval) > 10*time.Second {
 		return errors.New("invalid runtime capacity or timing bounds")
 	}
 	if len(c.Gateways) > 64 {

@@ -15,11 +15,10 @@ tracked example. The example denies guest egress until reachability is declared.
 | `state_directory` | Product database, native captures and frozen-share files |
 | `application_socket`, `control_socket` | Distinct private Unix sockets; default below state directory |
 | `engine` | Explicit endpoint and persistent store ID; HTTPS requires CA and client certificate/key |
-| `template` | Engine template ID, exported Go runtime manifest and `sha256:` digest |
+| `template` | Engine template ID, immutable application version, exported Go runtime manifest and `sha256:` digest |
 | `project` | Positive CPU, memory, overlay-disk, workspace/runtime capacities and reachability |
-| `auth` | Credential YAML path, or an explicit loopback-only development actor |
 | `content` | Reviewed Agent configuration/shared-assets source paths and publication capacity |
-| `limits` | Global/per-Project capacities, idle deadlines and worker interval |
+| `limits` | Global/per-Project capacities, explicit qualified `max_mounts_per_project`, idle deadlines and worker interval |
 | `notifications` | Per-source Inbox notification policy; changes apply after application restart |
 | `gateways`, `agent_audience` | Independent gateway endpoints and upstream credential environment names |
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
@@ -91,6 +90,19 @@ configuration block. Before starting a fresh owner, use the protected offline
 `account bootstrap` command described in [operations](operations.md). An empty
 account database permits no product login. Sessions reference immutable account IDs
 and revocation revisions; password changes and resets revoke earlier sessions.
+
+Bootstrap atomically records the first administrator, `standard-users` membership,
+its named permission policy, per-member resource defaults/ceilings, platform
+per-user bounds, initial registered release/publication metadata, and the default
+environment/network declarations. Repeating bootstrap refuses to overwrite any
+of these records. Bootstrap validates local manifest/content inputs before opening
+its write transaction and performs no engine allocation inside it.
+
+`template.version` is an explicit immutable version label. Set
+`limits.max_mounts_per_project` to a positive bound qualified for the installation;
+all owned and system publication mounts count. The application accepts a bound
+from 2 to 128; this validation range is not an engine capability claim. The example
+uses 8 as an operator declaration that must be qualified on the chosen substrate.
 
 The `notifications` object controls future Inbox writes independently by source:
 `agent_run_outcome` defaults to `false`, while `conversation_shared`,

@@ -18,9 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"bytes"
 	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 )
@@ -145,6 +147,18 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	profile.StoreID = identity.StoreID
 	profile.TemplateID = "agent-runtime"
 	profile.DiskBytes = 256 << 20
+	manifestBytes, err := os.ReadFile(os.Getenv("PROJECT_TEST_MANIFEST"))
+	must(t, err)
+	releaseDigest, err := runtimerelease.Digest(manifestBytes)
+	must(t, err)
+	manifest, err := runtimerelease.Load(bytes.NewReader(manifestBytes), releaseDigest)
+	must(t, err)
+	profile.ReleaseDigest = releaseDigest
+	network, err := product.NewNetworkPolicy(profile.Reachability)
+	must(t, err)
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.WorkspaceBytes, Runtime: profile.RuntimeBytes, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, nil, network)
+	must(t, err)
+
 	lifecycle := &product.Lifecycle{Store: store, Backend: fixture, MaxProjects: 4}
 	agents := product.NewAgents(runctx, store, lifecycle, backend, profile, 8)
 	defer agents.Close()
@@ -161,7 +175,7 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); workers.Run(workerctx) }()
 	defer func() { stopWorkers(); <-workerDone }()
-	_, err = store.BootstrapAccount(runctx, "researcher", "isolated-browser-fixture")
+	_, err = store.BootstrapAccount(runctx, "researcher", "isolated-browser-fixture", seed)
 	must(t, err)
 	authentication := NewAuthentication(store, Config{TrustForwardedHost: true})
 	app := httptest.NewServer(authentication.Handler((&Server{Store: store, Agents: agents, Terminals: terminals, Files: files, Shares: shares, Lifecycle: lifecycle, Profile: profile, Auth: authentication, Config: Config{TrustForwardedHost: true}}).Handler()))

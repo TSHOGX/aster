@@ -12,13 +12,14 @@ import (
 	"time"
 
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/testfixture"
 )
 
 func TestCookieAuthenticationRevocationAndOrigin(t *testing.T) {
 	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "auth.db"))
 	must(t, err)
 	defer store.Close()
-	admin, err := store.BootstrapAccount(ctx, "Alice", "correct-password")
+	admin, err := store.BootstrapAccount(ctx, "Alice", "correct-password", identitySeed(t))
 	must(t, err)
 	authentication := NewAuthentication(store, Config{})
 	handler := authentication.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +91,7 @@ func TestRestrictedLoginOnlyAuthorizesSetupSessionAndLogout(t *testing.T) {
 	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "auth.db"))
 	must(t, err)
 	defer store.Close()
-	admin, err := store.BootstrapAccount(ctx, "admin", "correct-password")
+	admin, err := store.BootstrapAccount(ctx, "admin", "correct-password", identitySeed(t))
 	must(t, err)
 	_, password, err := store.CreateAccount(ctx, admin.ID, "user", "User", "user")
 	must(t, err)
@@ -148,7 +149,7 @@ func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
 	for _, change := range []string{"password", "all-sessions"} {
 		t.Run(change, func(t *testing.T) {
 			h := newHarness(t)
-			account, err := h.store.BootstrapAccount(ctx, "owner", "owner-password-before")
+			account, err := h.store.BootstrapAccount(ctx, "owner", "owner-password-before", identitySeed(t))
 			must(t, err)
 			h.setActor(account.ID)
 			h.terminal(t, "authenticated-project", "shell")
@@ -205,4 +206,14 @@ func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
 			}
 		})
 	}
+}
+
+func identitySeed(t *testing.T) product.BootstrapSeed {
+	t.Helper()
+	manifest, digest := testfixture.RuntimeManifest()
+	network, err := product.NewNetworkPolicy(product.Reachability{})
+	must(t, err)
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: 1000, Memory: 1 << 30, Overlay: 256 << 20, Workspace: 1 << 30, Runtime: 1 << 29, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 32, TerminalSlots: 32}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "test", Version: "v1", Digest: digest}, StoreID: "engine", TemplateID: "agent-runtime", Manifest: manifest}, nil, network)
+	must(t, err)
+	return seed
 }

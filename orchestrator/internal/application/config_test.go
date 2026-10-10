@@ -26,8 +26,9 @@ func configurationFixture(t *testing.T) (Config, string) {
 	}
 	cfg := defaults()
 	cfg.Version = 1
+	cfg.Limits.MaxMountsPerProject = 8
 	cfg.StateDirectory = "state"
-	cfg.Template = Template{ID: "test", Manifest: "runtime.json", Digest: digest}
+	cfg.Template = Template{Version: "v1", ID: "test", Manifest: "runtime.json", Digest: digest}
 	cfg.Engine.Endpoint = "http://127.0.0.1:18191"
 	cfg.Engine.StoreID = "store"
 	cfg.Project = product.Profile{CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}

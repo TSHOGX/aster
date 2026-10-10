@@ -5,9 +5,19 @@ actor; body fields never supply an owner. State-changing requests and WebSocket
 handshakes check Origin. Unknown request fields and trailing JSON are rejected.
 Resource paths below use stored Project and child identities.
 
+Identity responses contain `id`, canonical `username`, `display_name`, `status`,
+`role`, `revision`, `session_revision` and `must_change_password`; never hashes or
+session tokens. Temporary login permits only session inspection, password setup
+and logout. Setup submits `new_password`. Self-change submits `current_password`
+and `new_password`; both password endpoints replace the cookie only after the
+transaction commits. Other devices must sign in again after password changes.
+
 | Scope | Operations |
 | --- | --- |
-| `/api/auth/login`, `/logout`, `/me` | Sign in, sign out and inspect current identity |
+| `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/session` | Sign in, sign out and inspect current database identity |
+| `POST /api/auth/password/setup` | Exchange a restricted temporary-login session for a permanent password and normal session |
+| `POST /api/me/password`, `DELETE /api/me/sessions` | Change the current password or revoke all account sessions |
+| `GET /api/users` | Authenticated sharing directory containing immutable IDs and display labels |
 | `/api/projects` | List and create Projects |
 | `/api/schedules`, `/api/schedules/events` | Owner-scoped schedule overview and metadata invalidation SSE across Projects |
 | `/api/projects/{project}` | Inspect, rename and request deletion |

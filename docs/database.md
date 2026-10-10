@@ -15,8 +15,9 @@ Application startup validates pending activation against the measured executable
 through a read-only connection under the same lock. Only the selected replacement
 can acquire authority; a rejected candidate cannot change schema or ownership.
 One application owns all writes; operator control commands use that owner.
-Credentials are an independently managed atomic YAML registry, not a second
-product database.
+Accounts, credential hashes, session revisions, group membership and resource
+policy seeds belong to this same database. First-admin creation and all bootstrap
+seed records commit together; audit failure rolls the entire initialization back.
 
 Projects, saved profiles, owned resources and lifecycle operations describe
 parent authority. Sessions and prompt rows own immutable input and queue policy;
