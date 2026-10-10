@@ -36,3 +36,9 @@ Release identity format 3 declares elapsed minute intervals in schedule recurren
 The database schema is unchanged. Crossing from a Cron-only owner requires a
 quiescent update; its different deployment digest prevents owner-only handoff to
 a build that cannot execute interval rules.
+
+Scheduled continuous browsing adds a bounded owner invalidation outbox, its
+frontiers, Session-to-task run counts and history indexes to the current schema.
+This changes the exact schema fingerprint. Existing installations follow the
+format-changing deployment contract above; there is no startup migration or
+implicit reset. The UI/API changes do not alter execution or recurrence cadence.

@@ -17,9 +17,10 @@ for (const [path, body] of [
     const group = page.getByRole("group", {name:"File view"});
     await expect(group.getByRole("button", {name:"Preview",exact:true})).toHaveAttribute("aria-pressed","true");
     if (path.endsWith("html")) {
-      await expect(page.frameLocator(".html-preview").getByRole("heading")).toHaveText("Interactive HTML result");
+      await expect(page.frameLocator(".html-preview").getByRole("heading")).toHaveText("HTML result");
       expect(await page.locator("body").getAttribute("data-compromised")).toBeNull();
-      await expect(page.locator(".html-preview")).toHaveAttribute("sandbox","allow-scripts");
+      await expect(page.locator(".html-preview")).toHaveAttribute("sandbox", "");
+      await expect(page.getByText("Scripts are disabled in this preview.", { exact: false })).toBeVisible();
     } else if (path.endsWith("csv") || path.endsWith("tsv")) {
       await expect(page.locator(".delimited-preview table")).toContainText("42");
     } else if (path.endsWith("md")) await expect(page.locator(".file-markdown h1")).toHaveText("Preview heading");
@@ -28,7 +29,7 @@ for (const [path, body] of [
     const source = group.getByRole("button", {name:"Source",exact:true});
     await source.focus(); await page.keyboard.press("Space");
     await expect(source).toHaveAttribute("aria-pressed","true");
-    await expect(page.locator(".selected-file pre")).toContainText(body);
+    await expect(page.locator(".source-editor .cm-content")).toContainText(body.split("\n")[0]);
     await group.getByRole("button",{name:"Preview",exact:true}).click();
     expect(f.calls.filter(c=>c.path.endsWith("/files/content") && c.method==="GET")).toHaveLength(reads);
     await page.getByLabel("File actions", {exact:true}).click();
@@ -50,6 +51,26 @@ for (const [path, body] of [["data.bin",Buffer.from("binary")],["invalid.txt",Bu
     await expect(page.getByRole("menuitem",{name:"Edit text",exact:true})).toHaveCount(0);
     await expect(page.getByRole("group",{name:"File view"})).toHaveCount(0);
   });
+
+test("HTML above the edit limit keeps rendered and source modes without another download", async ({ page }) => {
+  const f = await workspaceFixture(page);
+  f.messages.analysis[1].content = "[Artifact](/workspace/large.html)";
+  const body = `<html><body><h1>Large page</h1><!--${"x".repeat(1 << 20)}--></body></html>`;
+  await page.route("**/files/content?*", route => route.fulfill({ body }));
+  await page.goto("/?project=battery&session=analysis");
+  await page.getByRole("link", { name: "Artifact", exact: true }).click();
+  await expect(page.frameLocator(".html-preview").getByRole("heading", { name: "Large page" })).toBeVisible();
+  const group = page.getByRole("group", { name: "File view" });
+  await expect(group).toBeVisible();
+  const reads = f.calls.filter(call => call.path.endsWith("/files/content") && call.method === "GET").length;
+  await group.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(page.locator(".source-editor .cm-content")).toContainText("Large page");
+  await group.getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(page.frameLocator(".html-preview").getByRole("heading", { name: "Large page" })).toBeVisible();
+  expect(f.calls.filter(call => call.path.endsWith("/files/content") && call.method === "GET")).toHaveLength(reads);
+  await page.getByLabel("File actions", { exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Edit text", exact: true })).toHaveCount(0);
+});
 
 test("tree and preview recover from temporary capacity without an error notice", async ({page}) => {
   await workspaceFixture(page);

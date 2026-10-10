@@ -27,8 +27,9 @@ Regular content is opened through the selected descriptor. Symlinks, special
 files, absolute paths, traversal and private runtime access are rejected.
 
 Active read-only access uses a reusable framed helper per Project/placement. Directory
-pages freeze a sorted metadata observation with opaque expiring cursors; they
-contain at most 200 entries and obey encoded-byte bounds. One scan observes at
+pages freeze a sorted metadata observation with opaque expiring forward and
+backward cursors. Name seeks return a bounded window from one server inventory.
+Pages contain at most 200 entries and obey encoded-byte bounds. One scan observes at
 most 100,000 names; snapshots are not atomic filesystem snapshots. Reads reject
 symlink/special-file substitutions using the same descriptor traversal as writes.
 

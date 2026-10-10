@@ -1,16 +1,12 @@
-import { PreviewLimitError, reservePreview } from "./preview-budget";
+import { PreviewFailure, reservePreview } from "./preview-budget";
 import type { PreviewRepresentation } from "./preview-representation";
 
-export const OFFICE_CHANNEL = "battery-office-preview-v1";
-export type OfficeKind = "spreadsheet" | "document" | "presentation";
-export type OfficePosition = {
-  top: number;
-  left: number;
-  slide: number;
-  focus?: string;
-};
+import { OFFICE_CHANNEL, OFFICE_LIMITS, validPosition, type OfficeKind, type OfficePosition, type OfficeStage, type ViewerLabels } from "../office/protocol";
+import { OFFICE_VIEWER_ROOT } from "./office-build";
+export { OFFICE_CHANNEL } from "../office/protocol";
+export type { OfficeKind, OfficePosition } from "../office/protocol";
 export type OfficeFrame = {
-  ready: Promise<{ drawingsUnavailable: boolean }>;
+  ready: Promise<void>;
   position: () => OfficePosition;
   activate: (previous?: OfficeFrame) => void;
   dispose: () => void;
@@ -22,78 +18,125 @@ export function prepareOfficeFrame(
   representation: PreviewRepresentation,
   kind: OfficeKind,
   signal: AbortSignal,
+  labels: ViewerLabels,
+  onStage: (stage: OfficeStage) => void,
+  onFailure: (failure: PreviewFailure) => void,
 ): OfficeFrame {
   signal.throwIfAborted();
   const releaseFrame = reservePreview(0, "frames");
   const frame = document.createElement("iframe");
-  frame.src = "/preview/office";
+  const token = crypto.randomUUID();
+  frame.src = `${OFFICE_VIEWER_ROOT}/${kind}.html#${token}`;
+  frame.setAttribute("sandbox", "allow-scripts");
   frame.title = representation.path;
   frame.className = "office-frame";
   frame.style.cssText =
     "position:absolute;inset:0;width:100%;height:100%;border:0;visibility:hidden";
   frame.tabIndex = -1;
   frame.setAttribute("aria-hidden", "true");
+  const theme = () =>
+    frame.contentWindow?.postMessage(
+      {
+        channel: OFFICE_CHANNEL, token,
+        kind: "theme",
+        theme:
+          document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+      },
+      "*",
+    );
+  const themeObserver = new MutationObserver(theme);
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
   let disposed = false,
     sent = false,
-    settled = false;
-  let resolve!: (value: { drawingsUnavailable: boolean }) => void;
+    settled = false,
+    readyReported = false;
+  let resolve!: () => void;
   let reject!: (error: unknown) => void;
-  const ready = new Promise<{ drawingsUnavailable: boolean }>((yes, no) => {
+  const ready = new Promise<void>((yes, no) => {
     resolve = yes;
     reject = no;
   });
-  const finish = (
-    value?: { drawingsUnavailable: boolean },
-    error?: unknown,
-  ) => {
+  const finish = (_value?: void, error?: unknown) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    if (value) resolve(value);
-    else reject(error ?? new PreviewLimitError());
+    if (error) reject(error);
+    else resolve();
   };
   const dispose = () => {
     if (disposed) return;
     disposed = true;
     signal.removeEventListener("abort", abort);
     window.removeEventListener("message", message);
+    themeObserver.disconnect();
     frame.remove();
     releaseFrame();
-    finish(
-      undefined,
-      signal.reason ?? new DOMException("Preview closed", "AbortError"),
-    );
+    finish(undefined, signal.reason ?? new DOMException("Preview closed", "AbortError"));
   };
   const abort = () => dispose();
-  const timer = setTimeout(() => {
-    finish();
+  let timer = setTimeout(() => {
+    finish(
+      undefined,
+      new PreviewFailure("parse_timeout", "render", { retryable: true }),
+    );
     dispose();
-  }, 15_000);
+  }, OFFICE_LIMITS.bootMs);
   const message = (event: MessageEvent) => {
     if (
       disposed ||
       event.source !== frame.contentWindow ||
-      event.origin !== location.origin ||
-      event.data?.channel !== OFFICE_CHANNEL
+      event.origin !== "null" ||
+      event.data?.channel !== OFFICE_CHANNEL || event.data.token !== token
     )
       return;
-    if (event.data.kind === "boot" && !sent) {
+    if (event.data.kind === "shell-ready") {
+      onStage("loading-engine");
+    } else if (event.data.kind === "boot" && !sent) {
       sent = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        finish(undefined, new PreviewFailure("parse_timeout", "render", { retryable: true }));
+        dispose();
+      }, OFFICE_LIMITS.renderMs);
       void representation.blob
         .arrayBuffer()
         .then((buffer) => {
           if (!disposed)
             frame.contentWindow?.postMessage(
-              { channel: OFFICE_CHANNEL, kind: "render", format: kind, buffer },
-              location.origin,
+              { channel: OFFICE_CHANNEL, token, kind: "render", format: kind, buffer, labels, locale: document.documentElement.lang },
+              "*",
               [buffer],
             );
         })
         .catch((error) => finish(undefined, error));
-    } else if (event.data.kind === "ready") {
-      finish({ drawingsUnavailable: event.data.drawingsUnavailable === true });
+    } else if (event.data.kind === "ready" && sent && !settled) {
+      readyReported = true;
+      finish();
+    } else if (event.data.kind === "stage" && ["loading-engine", "rendering"].includes(event.data.stage)) {
+      onStage(event.data.stage);
     } else if (event.data.kind === "failed") {
-      finish(undefined, new PreviewLimitError());
+      const failure = new PreviewFailure(
+        !readyReported && event.data.reason === "viewer_load_failed" ? "viewer_load_failed" : "renderer_failed",
+        "render", { retryable: true },
+      );
+      // ready is a one-shot promise, but slide changes can fail after adoption.
+      if (readyReported) onFailure(failure);
+      else finish(undefined, failure);
+    } else if (event.data.kind === "position" && event.data.position) {
+      const p = event.data.position as OfficePosition;
+      if (validPosition(p))
+        savedPosition = {
+          top: p.top,
+          left: p.left,
+          slide: p.slide,
+          focus:
+            typeof p.focus === "string" && p.focus.length < 128
+              ? p.focus
+              : undefined,
+        };
     } else if (
       event.data.kind === "escape" &&
       frame.style.visibility !== "hidden"
@@ -104,21 +147,8 @@ export function prepareOfficeFrame(
     }
   };
   // Snapshot only the outgoing frame's own reading position, never application data.
-  const position = (): OfficePosition => {
-    const content = frame.contentDocument?.querySelector<HTMLElement>(
-      ".office-frame-content",
-    );
-    const focused = frame.contentDocument?.activeElement;
-    return {
-      top: content?.scrollTop ?? 0,
-      left: content?.scrollLeft ?? 0,
-      slide: Number(content?.dataset.slide ?? 0),
-      focus:
-        document.activeElement === frame
-          ? focused?.getAttribute("data-preview-focus") || "content"
-          : undefined,
-    };
-  };
+  let savedPosition: OfficePosition = { top: 0, left: 0, slide: 0 };
+  const position = () => savedPosition;
   const result: OfficeFrame = {
     ready,
     position,
@@ -130,9 +160,10 @@ export function prepareOfficeFrame(
       frame.removeAttribute("tabindex");
       if (saved)
         frame.contentWindow?.postMessage(
-          { channel: OFFICE_CHANNEL, kind: "restore", position: saved },
-          location.origin,
+          { channel: OFFICE_CHANNEL, token, kind: "restore", position: saved },
+          "*",
         );
+      theme();
     },
     dispose,
   };

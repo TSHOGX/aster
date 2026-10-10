@@ -246,6 +246,7 @@ func TestNotificationPagingKeepsNewestFirstAndCountsAudience(t *testing.T) {
 
 func TestNotificationTracksResolvedNativeOutcome(t *testing.T) {
 	s, scope, _, command := agentFixture(t)
+	must(t, s.ConfigureNotificationPolicy(ctx, NotificationPolicy{AgentRunOutcome: true, ConversationShared: true, OperatorDirected: true, OperatorBroadcast: true}))
 	_, err := s.db.Exec(`UPDATE execution_runs SET state='unknown' WHERE id=?`, command.CommandID)
 	must(t, err)
 	notices, err := s.Notifications(ctx, scope.Actor, "", 100)
@@ -260,5 +261,125 @@ func TestNotificationTracksResolvedNativeOutcome(t *testing.T) {
 	must(t, err)
 	if len(notices) != 1 || notices[0].Title != "Agent turn completed" || notices[0].Read {
 		t.Fatal("resolved evidence left a stale notification", notices)
+	}
+	must(t, s.ReadNotification(ctx, scope.Actor, notices[0].ID))
+	must(t, s.ConfigureNotificationPolicy(ctx, NotificationPolicy{}))
+	_, err = s.db.Exec(`UPDATE execution_runs SET state='failed',outcome='failed' WHERE id=?`, command.CommandID)
+	must(t, err)
+	notices, err = s.Notifications(ctx, scope.Actor, "", 100)
+	must(t, err)
+	if len(notices) != 1 || notices[0].Title != "Agent turn completed" || !notices[0].Read {
+		t.Fatal("disabled source changed historical notice or read record", notices)
+	}
+}
+
+func TestRunOutcomeNotificationsDisabledByDefault(t *testing.T) {
+	s, scope, _, command := agentFixture(t)
+	for _, outcome := range []string{"unknown", "failed", "completed", "canceled"} {
+		state := outcome
+		if outcome == "completed" || outcome == "canceled" {
+			state = "settled"
+		}
+		_, err := s.db.Exec(`UPDATE execution_runs SET state=?,outcome=? WHERE id=?`, state, outcome, command.CommandID)
+		must(t, err)
+		notices, err := s.Notifications(ctx, scope.Actor, "", 100)
+		must(t, err)
+		unread, err := s.UnreadNotifications(ctx, scope.Actor)
+		must(t, err)
+		if len(notices) != 0 || unread != 0 {
+			t.Fatal("run outcome notification was enabled by default", outcome, notices, unread)
+		}
+	}
+
+}
+
+func TestConversationShareNotificationPolicyPreservesGrantAndHistory(t *testing.T) {
+	s, scope, _ := fixture(t)
+	_, err := s.CreateSession(ctx, scope, "session", "Conversation")
+	must(t, err)
+	must(t, s.GrantConversation(ctx, scope, "session", "bob"))
+	notices, err := s.Notifications(ctx, "bob", "", 100)
+	must(t, err)
+	if len(notices) != 1 || notices[0].Title != "Conversation shared with you" {
+		t.Fatal("default share notification missing", notices)
+	}
+	must(t, s.ReadNotification(ctx, "bob", notices[0].ID))
+	must(t, s.ConfigureNotificationPolicy(ctx, NotificationPolicy{}))
+	must(t, s.GrantConversation(ctx, scope, "session", "bob"))
+	must(t, s.GrantConversation(ctx, scope, "session", "carol"))
+	must(t, s.CanReadConversation(ctx, "carol", "session"))
+	carol, err := s.Notifications(ctx, "carol", "", 100)
+	must(t, err)
+	if len(carol) != 0 {
+		t.Fatal("disabled share notification was written", carol)
+	}
+	notices, err = s.Notifications(ctx, "bob", "", 100)
+	must(t, err)
+	if len(notices) != 1 || !notices[0].Read {
+		t.Fatal("policy change removed share history or read record", notices)
+	}
+	must(t, s.ConfigureNotificationPolicy(ctx, NotificationPolicy{ConversationShared: true}))
+	must(t, s.GrantConversation(ctx, scope, "session", "carol"))
+	carol, err = s.Notifications(ctx, "carol", "", 100)
+	must(t, err)
+	if len(carol) != 1 {
+		t.Fatal("re-enabled share notification missing", carol)
+	}
+}
+
+func TestOperatorNotificationPoliciesAreIndependent(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		directed, broadcast bool
+	}{
+		{"both", true, true},
+		{"directed", true, false},
+		{"broadcast", false, true},
+		{"neither", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := fixture(t)
+			must(t, s.ConfigureNotificationPolicy(ctx, NotificationPolicy{OperatorDirected: tc.directed, OperatorBroadcast: tc.broadcast}))
+			for _, notice := range []struct {
+				audience string
+				enabled  bool
+			}{{"alice", tc.directed}, {"", tc.broadcast}} {
+				err := s.Notify(ctx, notice.audience, "Notice", "body")
+				if notice.enabled {
+					must(t, err)
+				} else {
+					wantError(t, err, ErrNotificationDisabled)
+				}
+			}
+			alice, err := s.Notifications(ctx, "alice", "", 100)
+			must(t, err)
+			bob, err := s.Notifications(ctx, "bob", "", 100)
+			must(t, err)
+			wantAlice, wantBob := 0, 0
+			if tc.directed {
+				wantAlice++
+			}
+			if tc.broadcast {
+				wantAlice++
+				wantBob++
+			}
+			if len(alice) != wantAlice || len(bob) != wantBob {
+				t.Fatal("operator source policy or audience isolation failed", alice, bob)
+			}
+			for _, notice := range alice {
+				must(t, s.ReadNotification(ctx, "alice", notice.ID))
+			}
+			must(t, s.ConfigureNotificationPolicy(ctx, NotificationPolicy{}))
+			retained, err := s.Notifications(ctx, "alice", "", 100)
+			must(t, err)
+			if len(retained) != len(alice) {
+				t.Fatal("operator history removed", retained)
+			}
+			for _, notice := range retained {
+				if !notice.Read {
+					t.Fatal("operator read record removed", notice)
+				}
+			}
+		})
 	}
 }

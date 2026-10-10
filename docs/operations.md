@@ -66,7 +66,8 @@ orchestrator notify --socket /var/lib/batterygpt/control.sock --audience researc
 ```
 
 Diagnostics report resource counts, occupied Projects, pending work and database
-bytes. Network diagnostics distinguish accepted defaults and the last reload
+bytes. Preview diagnostics expose snapshot leases/bytes without source paths/tokens.
+Network diagnostics distinguish accepted defaults and the last reload
 result from each Project’s effective policy revision and pending change. Reload
 errors leave accepted defaults intact. Network edits are also detected every two
 seconds; they take effect only at creation/resume, without stopping live work.

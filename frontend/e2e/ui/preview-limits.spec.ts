@@ -12,7 +12,7 @@ for (const [name, data] of [
       },
       {
         name: "xl/worksheets/sheet1.xml",
-        text: '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:XFD1048576"/></worksheet>',
+        text: '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:XFE1048577"/></worksheet>',
       },
     ]),
   ],
@@ -38,10 +38,11 @@ for (const [name, data] of [
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/?project=battery&session=analysis");
     await page.getByRole("link", { name: "Document", exact: true }).click();
-    await expect(page.getByRole("region", { name: `File ${name}`, exact: true }).getByRole("status")).toContainText(
-      name === "unknown.xls" ? "This format is not supported" : "supported content limits",
-      { timeout: 5000 },
-    );
+    const expected = name === "unknown.xls" ? "This format is not supported"
+      : name === "malformed.pptx" || name === "expansion.docx" ? "damaged or has an invalid structure"
+      : "than this preview can process";
+    await expect(page.getByRole("region", { name: `File ${name}`, exact: true }).getByRole("status"))
+      .toContainText(expected, { timeout: 5000 });
     await expect(
       page.getByRole("link", { name: `Download ${name}`, exact: true }),
     ).toHaveAttribute("download", "");

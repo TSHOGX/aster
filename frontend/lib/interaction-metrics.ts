@@ -39,7 +39,7 @@ export function requestCategory(
 ): ResourceCategory {
   if (mutation) return "control";
   const route = path.split("?", 1)[0];
-  if (/\/files\/content$/.test(route)) return "file";
+  if (/\/files\/(content|previews|snapshots)(\/|$)/.test(route)) return "file";
   if (/\/files$/.test(route)) return "directory";
   if (route.includes("/view/") || route.endsWith("/messages"))
     return "conversation";

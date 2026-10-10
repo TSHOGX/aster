@@ -38,7 +38,7 @@ export class WorkspaceFileSearch {
   }
   private pop() { this.bytes -= this.stack.pop()?.bytes ?? 0; }
 
-  async next(signal: AbortSignal, pageBudget = 100): Promise<SearchPage> {
+  async next(signal: AbortSignal, pageBudget = 100, onProgress?: (page: SearchPage) => void): Promise<SearchPage> {
     signal.throwIfAborted();
     const matches = this.pending;
     const started = performance.now();
@@ -82,6 +82,7 @@ export class WorkspaceFileSearch {
       }
       const entry = branch.page.entries[branch.index];
       if (!entry) {
+        onProgress?.({ matches: [...matches], done: false, limited: this.limited, scanned: this.scanned });
         const next = branch.page.next;
         if (next && next !== branch.after) { branch.after = next; branch.page = undefined; this.bytes -= branch.bytes; branch.bytes = 0; }
         else {

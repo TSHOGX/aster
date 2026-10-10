@@ -64,6 +64,9 @@ describe("codeMirrorLang", () => {
     ["mdx", "markdown"],
     ["html", "html"],
     ["htm", "html"],
+    ["xml", "xml"],
+    ["yaml", "yaml"],
+    ["yml", "yaml"],
     ["css", "css"],
     ["scss", "css"]
   ];
@@ -71,7 +74,7 @@ describe("codeMirrorLang", () => {
     expect(codeMirrorLang(ext)).toBe(key);
   });
   it("returns undefined for plain-text extensions", () => {
-    for (const ext of ["go", "rs", "txt", "sql", "yaml"]) {
+    for (const ext of ["go", "rs", "txt", "sql"]) {
       expect(codeMirrorLang(ext)).toBeUndefined();
     }
   });

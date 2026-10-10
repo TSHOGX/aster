@@ -2,9 +2,10 @@
 import { cacheablePreview, rememberPreview } from "@/lib/preview-cache";
 import { useT } from "@/lib/i18n";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { decodeTextFile, isTextFile, TEXT_FILE_LIMIT, TEXT_EDIT_LIMIT, RICH_TEXT_LIMIT } from "@/lib/file-view";
-import { LargeTextPreview, TextPreview } from "./text-preview";
+import { decodeTextFile, isTextFile, TEXT_FILE_LIMIT, TEXT_EDIT_LIMIT, FORMATTED_TEXT_LIMIT } from "@/lib/file-view";
+import { TextPreview } from "./text-preview";
 import { classifyArtifact } from "@/lib/mime";
 import {
   contentDigest,
@@ -13,36 +14,44 @@ import {
 import { useResources } from "./resource-provider";
 import { APIError, readPreview } from "@/lib/project-api";
 import { MarkdownView } from "@/components/workbench/markdown-view";
-import { CodeView } from "@/components/workbench/viewers/code-view";
+const SourcePreview = dynamic(() => import("./source-preview").then(module => module.SourcePreview), { ssr: false });
 import {
   acquirePreviewParse,
   PREVIEW_LIMITS,
-  PreviewLimitError,
-  PreviewSizeError,
+  PreviewFailure,
   reservePreview,
 } from "@/lib/preview-budget";
 import { PreviewStatus, previewSize } from "./preview-status";
 import { OfficePreview } from "./office-preview";
 import { validatePreview } from "@/lib/preview-preflight-client";
+import { OFFICE_LIMITS, officeKind } from "@/office/protocol";
 export function FilePreview({
   path,
   href,
   project,
   validation = 0,
   mode = "preview",
-  onTextReady,
+  onCapabilities,
 }: {
   path: string;
   href: string;
   project: string;
   validation?: number;
   mode?: "preview" | "source";
-  onTextReady?: (path: string, editable: boolean) => void;
+  onCapabilities?: (path: string, readable: boolean, editable: boolean, rendered: boolean) => void;
 }) {
   const tr = useT();
+  const maxBytes = officeKind(path) ? OFFICE_LIMITS.sourceBytes : PREVIEW_LIMITS.blobBytes;
   const resources = useResources();
   const [loaded, setLoaded] = useState<PreviewRepresentation | null>(null);
-  useEffect(() => { onTextReady?.(path, !!loaded?.textReadable && loaded.blob.size <= TEXT_EDIT_LIMIT); }, [path, loaded, onTextReady]);
+  useEffect(() => {
+    const readable = !!loaded?.textReadable;
+    const kind = classifyArtifact(path).kind;
+    const rendered = readable && (["html", "table"].includes(kind) || ["markdown", "json"].includes(kind) && !!loaded && loaded.blob.size <= FORMATTED_TEXT_LIMIT);
+    onCapabilities?.(path, readable, readable && !!loaded && loaded.blob.size <= TEXT_EDIT_LIMIT, rendered);
+  }, [path, loaded, onCapabilities]);
+  const sourcePositionRef = useRef(0);
+  useEffect(() => { sourcePositionRef.current = 0; }, [path]);
   const current = useRef<PreviewRepresentation | null>(null);
   const owned = useRef(new Set<PreviewRepresentation>());
   useEffect(() => {
@@ -79,7 +88,7 @@ export function FilePreview({
     };
     const key = { project, kind: "file" as const, identity: href };
     const prepare = async (blob: Blob) => {
-      if (blob.size > PREVIEW_LIMITS.blobBytes) throw new PreviewSizeError(blob.size, PREVIEW_LIMITS.blobBytes);
+      if (blob.size > maxBytes) throw new PreviewFailure("source_too_large", "download", { actual: blob.size, limit: maxBytes, metric: "bytes" });
       setProgress({ received: blob.size, total: blob.size });
       setPhase("preparing");
       const digest = await contentDigest(blob);
@@ -94,7 +103,7 @@ export function FilePreview({
       const type = classifyArtifact(path).kind;
       const decoded = await decodeTextFile(path, blob);
       if (isTextFile(path) && blob.size <= TEXT_FILE_LIMIT && decoded === null)
-        throw new Error(tr("This file is not readable as UTF-8 text. Download it to open in another app."));
+        throw new Error(tr("This file is not readable as supported text. Download it to open in another app."));
       const text = decoded ?? "";
       const mime =
         type === "pdf"
@@ -104,15 +113,13 @@ export function FilePreview({
             : "application/octet-stream";
       if (abort.signal.aborted) return;
       let plan;
-      if (
-        /\.(png|jpe?g|pdf|xlsx|docx|pptx)$/i.test(path)
-      ) {
+      if (/\.(png|jpe?g|gif|pdf|pptx|xlsx|docx)$/i.test(path)) {
         const releaseParse = await acquirePreviewParse(abort.signal);
         let releaseBuffers = () => {};
         try {
           abort.signal.throwIfAborted();
           releaseBuffers = reservePreview(
-            blob.size + PREVIEW_LIMITS.entryBytes * 8,
+            blob.size + (officeKind(path) ? OFFICE_LIMITS.entryBytes * 2 : PREVIEW_LIMITS.entryBytes * 8),
           );
           plan = await validatePreview(blob, path, abort.signal);
         } finally {
@@ -147,7 +154,7 @@ export function FilePreview({
           }
         }
         if (abort.signal.aborted) return;
-        const blob = await resources.read(key, signal => readPreview(href, signal, PREVIEW_LIMITS.blobBytes, (received, total) => {
+        const blob = await resources.read(key, signal => readPreview(href, signal, maxBytes, (received, total) => {
           if (!abort.signal.aborted) setProgress({ received, total });
         }), abort.signal, 0);
         if (abort.signal.aborted) return;
@@ -161,14 +168,12 @@ export function FilePreview({
             current.current = null;
             setLoaded(null);
           }
-          setRetryable(e instanceof TypeError || e instanceof APIError && [202, 429, 500, 502, 503, 504].includes(e.status));
-          setErrorTitle(tr(e instanceof PreviewSizeError ? "File too large to preview" : "Preview unavailable"));
-          if (e instanceof PreviewSizeError) setProgress({ received: 0, total: e.size });
+          setRetryable(e instanceof PreviewFailure ? e.retryable : e instanceof TypeError || e instanceof APIError && [202, 429, 500, 502, 503, 504].includes(e.status));
+          setErrorTitle(tr(e instanceof PreviewFailure && e.code === "source_too_large" ? "File too large to preview" : "Preview unavailable"));
+          if (e instanceof PreviewFailure && e.code === "source_too_large") setProgress({ received: 0, total: e.actual });
           setError(
-            e instanceof PreviewSizeError
-              ? tr("This file is larger than the {size} preview limit. Download it to view the complete file.", { size: previewSize(e.limit) })
-              : e instanceof PreviewLimitError
-              ? tr("This file could not be previewed within the supported content limits. Download it to view the complete file.")
+            e instanceof PreviewFailure
+              ? previewFailureMessage(e, tr)
               : e instanceof Error
                 ? e.message
                 : "Preview failed.",
@@ -179,7 +184,7 @@ export function FilePreview({
     return () => {
       abort.abort();
     };
-  }, [href, path, validation, resources, project, tr, retry]);
+  }, [href, path, validation, resources, project, tr, retry, maxBytes]);
   const restart = () => {
     userCanceled.current = false;
     setError("");
@@ -188,9 +193,9 @@ export function FilePreview({
     setRetry(n => n + 1);
   };
   if (error && !loaded)
-    return <PreviewStatus path={path} href={href} title={errorTitle} description={error} size={progress.total} onRetry={retryable ? restart : undefined} />;
+    return <PreviewStatus maxBytes={maxBytes} path={path} href={href} title={errorTitle} description={error} size={progress.total} onRetry={retryable ? restart : undefined} />;
   if (!loaded)
-    return <PreviewStatus path={path} href={href}
+    return <PreviewStatus maxBytes={maxBytes} path={path} href={href}
       title={tr(phase === "canceled" ? "Preview canceled." : phase === "preparing" ? "Preparing preview…" : "Loading preview…")}
       description={tr(phase === "canceled" ? "You can try again or download the original file." : "Larger files may take a moment. You can keep working while the preview loads.")}
       loading={phase !== "canceled"} size={progress.total} progress={phase === "loading" ? progress : undefined}
@@ -209,29 +214,45 @@ export function FilePreview({
           </a>
         </p>
       )}
-      <PreviewContent loaded={loaded} path={path} href={href} mode={mode} />
+      <PreviewContent loaded={loaded} path={path} href={href} mode={mode} sourcePositionRef={sourcePositionRef} />
     </>
   );
+}
+function previewFailureMessage(error: PreviewFailure, tr: ReturnType<typeof useT>): string {
+  switch (error.code) {
+    case "source_too_large":
+      return tr("This file is larger than the {size} preview limit. Download it to view the complete file.", { size: previewSize(error.limit ?? PREVIEW_LIMITS.blobBytes) });
+    case "container_invalid": return tr("This file is damaged or has an invalid structure. Download the original or try another copy.");
+    case "unsupported_feature": return tr("This file uses a feature this preview cannot display. Download it to open in another app.");
+    case "content_limit": return tr("This file has more {metric} than this preview can process ({actual} of {limit}). Download it to read the complete file.", {
+      metric: tr(({ bytes: "Preview bytes", entries: "Preview entries", nodes: "Preview nodes", cells: "Preview cells", rows: "Preview rows", columns: "Preview columns", slides: "Preview slides", pixels: "Preview pixels", frames: "Preview frames", parses: "Preview parses" } as const)[error.metric ?? "nodes"]),
+      actual: error.actual ?? "?", limit: error.limit ?? "?",
+    });
+    case "resource_busy": return tr("Preview resources are busy. Try again in a moment.");
+    case "parse_timeout": return tr("Preparing this preview took too long. Retry or download the file.");
+    case "viewer_load_failed": return tr("The Office viewer could not load. Retry or download the file.");
+    case "renderer_failed": return tr("The preview renderer stopped. Retry or download the file.");
+  }
 }
 function PreviewContent({
   loaded,
   path,
   href,
   mode,
+  sourcePositionRef,
 }: {
   loaded: PreviewRepresentation;
   path: string;
   href: string;
   mode: "preview" | "source";
+  sourcePositionRef: { current: number };
 }) {
   const tr = useT();
   const kind = classifyArtifact(path);
-  if (loaded.textReadable && loaded.blob.size > RICH_TEXT_LIMIT)
-    return <LargeTextPreview key={loaded.digest} path={path} href={href} text={loaded.text} />;
   if (kind.kind === "pdf")
     return <PDFPreview loaded={loaded} path={path} href={href} />;
   if (loaded.textReadable && mode === "source")
-    return <CodeView code={loaded.text} language={kind.language} />;
+    return <SourcePreview key={loaded.digest} path={path} text={loaded.text} initialPosition={() => sourcePositionRef.current} onPosition={offset => { sourcePositionRef.current = offset; }} />;
   if (kind.kind === "image" && loaded.plan)
     return (
       <div className="image-preview">
@@ -244,32 +265,26 @@ function PreviewContent({
         />
       </div>
     );
-  if (
-    (kind.kind === "spreadsheet" && loaded.plan) ||
-    kind.kind === "document" ||
-    kind.kind === "presentation"
-  )
+  const visual = officeKind(path);
+  if (visual && loaded.plan)
     return (
       <OfficePreview
         representation={loaded}
-        kind={kind.kind}
+        kind={visual}
         path={path}
         href={href}
       />
     );
-  if (loaded.textReadable && ["html", "table", "json"].includes(kind.kind))
-    return <TextPreview key={loaded.digest} path={path} text={loaded.text} />;
-  if (kind.kind === "markdown" && loaded.textReadable)
+  if (loaded.textReadable && (kind.kind === "html" || kind.kind === "table" || kind.kind === "json" && loaded.blob.size <= FORMATTED_TEXT_LIMIT))
+    return <TextPreview key={loaded.digest} path={path} text={loaded.text} href={href} />;
+  if (kind.kind === "markdown" && loaded.textReadable && loaded.blob.size <= FORMATTED_TEXT_LIMIT)
     return (
       <div className="file-markdown">
         <MarkdownView content={loaded.text} />
       </div>
     );
-  if (
-    ["code", "text", "json", "table"].includes(kind.kind) &&
-    loaded.textReadable
-  )
-    return <CodeView code={loaded.text} language={kind.language} />;
+  if (loaded.textReadable)
+    return <SourcePreview key={loaded.digest} path={path} text={loaded.text} initialPosition={() => sourcePositionRef.current} onPosition={offset => { sourcePositionRef.current = offset; }} />;
   return <PreviewStatus path={path} href={href} title={tr("Preview unavailable")}
     description={tr("This format is not supported for preview. Download the file to open it in another app.")} size={loaded.blob.size} />;
 }

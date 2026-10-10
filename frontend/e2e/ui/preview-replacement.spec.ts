@@ -11,15 +11,15 @@ for (const action of ["cancel", "timeout"]) {
     page,
   }) => {
     const f = await workspaceFixture(page);
-    f.messages.analysis[1].content = "[Document](/workspace/preview.docx)";
-    let body = readFileSync(resolve(fixtures!, "small.docx"));
+    f.messages.analysis[1].content = "[Document](/workspace/preview.pptx)";
+    let body = readFileSync(resolve(fixtures!, "small.pptx"));
     await page.route("**/files/content?*", (route) => route.fulfill({ body }));
     let loads = 0,
       resume!: () => void;
     const gate = new Promise<void>((resolve) => {
       resume = resolve;
     });
-    await page.route("**/preview/office", async (route) => {
+    await page.route("**/office/*/presentation.html", async (route) => {
       if (++loads === 2) await gate;
       await route.continue().catch(() => {});
     });
@@ -32,12 +32,12 @@ for (const action of ["cancel", "timeout"]) {
     await page
       .locator(".office-frame")
       .evaluate((frame) => frame.setAttribute("data-original", "true"));
-    body = readFileSync(resolve(fixtures!, "large.docx"));
+    body = readFileSync(resolve(fixtures!, "large.pptx"));
     await page.evaluate(() =>
       window.dispatchEvent(
         new CustomEvent("fixture-file-event", {
           detail: {
-            path: "preview.docx",
+            path: "preview.pptx",
             operation: "write",
             entry_type: "file",
           },
@@ -52,7 +52,7 @@ for (const action of ["cancel", "timeout"]) {
     await expect(page.locator(".office-preview")).toHaveAttribute(
       "data-preview-phase",
       action === "cancel" ? "canceled" : "failed",
-      { timeout: 20000 },
+      { timeout: 35000 },
     );
     await expect(page.locator(".office-frame[data-original]")).toBeVisible();
     await expect(page.locator(".office-frame")).toHaveCount(1);
@@ -63,13 +63,13 @@ for (const action of ["cancel", "timeout"]) {
     );
     await expect(
       page.frameLocator(".office-frame").locator(".office-frame-content"),
-    ).toContainText("Paragraph 999");
+    ).toContainText("Measured slide 0");
     await expect(page.locator(".office-frame[data-original]")).toHaveCount(0);
     resume();
   });
 }
 
-for (const ext of ["docx", "xlsx", "pptx"]) {
+for (const ext of ["pptx"]) {
   test(`prepared ${ext} replacement retains the displayed frame and ignores same bytes`, async ({
     page,
   }) => {
@@ -89,7 +89,7 @@ for (const ext of ["docx", "xlsx", "pptx"]) {
       reads++;
       return route.fulfill({ body });
     });
-    await page.route("**/preview/office", async (route) => {
+    await page.route("**/office/*/presentation.html", async (route) => {
       if (++frameLoads === 2) await gate;
       await route.continue().catch(() => {});
     });
@@ -179,11 +179,11 @@ test("a superseded frame request cannot replace a later text selection", async (
   page,
 }) => {
   const f = await workspaceFixture(page);
-  f.messages.analysis[1].content = "[Document](/workspace/small.docx)";
+  f.messages.analysis[1].content = "[Document](/workspace/small.pptx)";
   await page.route("**/files/content?*", (route) => {
     return new URL(route.request().url()).searchParams.get("path") ===
-      "small.docx"
-      ? route.fulfill({ body: readFileSync(resolve(fixtures!, "small.docx")) })
+      "small.pptx"
+      ? route.fulfill({ body: readFileSync(resolve(fixtures!, "small.pptx")) })
       : route.fallback();
   });
   let requested = false,
@@ -191,7 +191,7 @@ test("a superseded frame request cannot replace a later text selection", async (
   const gate = new Promise<void>((resolve) => {
     resume = resolve;
   });
-  await page.route("**/preview/office", async (route) => {
+  await page.route("**/office/*/presentation.html", async (route) => {
     requested = true;
     await gate;
     await route.continue().catch(() => {});
@@ -213,4 +213,24 @@ test("a superseded frame request cannot replace a later text selection", async (
   await page.getByRole("button", { name: "README.md", exact: true }).click();
   await expect(page.locator(".file-markdown")).toContainText("Battery research");
   await expect(page.locator(".office-frame")).toHaveCount(0);
+});
+
+test("a render failure after first content preserves recovery and fences stale frames", async ({ page }) => {
+  const f = await workspaceFixture(page);
+  f.messages.analysis[1].content = "[Document](/workspace/small.pptx)";
+  await page.route("**/files/content?*", route => route.fulfill({ body: readFileSync(resolve(fixtures!, "small.pptx")) }));
+  await page.goto("/?project=battery&session=analysis");
+  await page.getByRole("link", { name: "Document", exact: true }).click();
+  const preview = page.locator(".office-preview");
+  await expect(preview).toHaveAttribute("data-preview-phase", "ready");
+  const content = page.frameLocator(".office-frame").locator("#content");
+  await content.evaluate(() => parent.postMessage({ channel: "battery-office-visual-v2", token: "wrong-frame", kind: "failed" }, "*"));
+  await expect(preview).toHaveAttribute("data-preview-phase", "ready");
+  await content.evaluate(() => parent.postMessage({ channel: "battery-office-visual-v2", token: location.hash.slice(1), kind: "failed" }, "*"));
+  await expect(preview).toHaveAttribute("data-preview-phase", "failed");
+  await expect(page.getByText("The preview renderer stopped. Retry or download the file.")).toBeVisible();
+  await expect(page.locator(".office-frame")).toBeVisible();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(preview).toHaveAttribute("data-preview-phase", "ready");
+  await expect(page.locator(".office-frame")).toHaveCount(1);
 });

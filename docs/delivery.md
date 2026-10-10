@@ -32,6 +32,9 @@ files fail verification. A local HTTP smoke checks the packaged page, public ass
 and JavaScript chunk. The host package excludes guest images, engine state,
 configuration, credentials, databases and fixture executables.
 
+Office visual assets are built before Next and included under `frontend/public/office`.
+The application and viewer use the same content-addressed asset identity.
+
 Checksums detect changes relative to a trusted manifest; they are not signatures
 or evidence that arbitrary downloaded code is trustworthy. Preserve the workflow
 run/source identity and the original artifact. Do not rebuild a qualified candidate

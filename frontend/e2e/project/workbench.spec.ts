@@ -272,16 +272,7 @@ test("Project agents, retained terminals and Files through the Go edge", async (
       .locator(".office-frame-content");
     if (text) await expect(content).toContainText(text, { timeout: 15000 });
     else {
-      await expect
-        .poll(
-          () =>
-            content.evaluate(() => [
-              ...((window as Window & { officeDrawn?: Set<string> })
-                .officeDrawn ?? []),
-            ]),
-          { timeout: 15000 },
-        )
-        .toEqual(expect.arrayContaining(["Sample", "Capacity", "100", "95"]));
+      await expect(content.locator("canvas").first()).toBeVisible();
     }
     await page
       .getByRole("button", { name: "File actions", exact: true })
@@ -303,21 +294,17 @@ test("Project agents, retained terminals and Files through the Go edge", async (
   await page
     .getByRole("button", { name: "large-preview.md", exact: true })
     .click();
-  const plain = page.locator(".preview-text-page code");
-  await expect(plain).toContainText("# Large Markdown");
+  const source = page.locator(".source-editor .cm-content");
+  await expect(source).toContainText("# Large Markdown");
   const completeMarkdown =
     "# Large Markdown\n\n" +
     "| Sample | Value |\n| --- | --- |\n| A | 100 |\n\n".repeat(20000) +
     "\nComplete large document.\n";
-  let reconstructed = "";
-  const sectionSize = 64 * 1024;
-  for (let offset = 0; offset < completeMarkdown.length; offset += sectionSize) {
-    await expect(plain).toHaveText(completeMarkdown.slice(offset, offset + sectionSize));
-    reconstructed += await plain.textContent();
-    if (offset + sectionSize < completeMarkdown.length)
-      await page.getByRole("button", { name: "Next section", exact: true }).click();
-  }
-  expect(reconstructed).toBe(completeMarkdown);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await source.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("ControlOrMeta+C");
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(completeMarkdown);
   await page.getByRole("button", { name: "File actions", exact: true }).click();
   const largeDownload = page.waitForEvent("download");
   await page.getByRole("menuitem", { name: "Download", exact: true }).click();

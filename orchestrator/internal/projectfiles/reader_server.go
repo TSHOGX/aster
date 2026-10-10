@@ -172,7 +172,7 @@ func ServeReader(ctx context.Context, root string, input io.ReadCloser, output i
 					}
 				case "list":
 					var page Page
-					page, err = reader.List(requestCtx, request.Path, request.Cursor, request.Limit)
+					page, err = reader.List(requestCtx, DirectoryQuery{Path: request.Path, Cursor: request.Cursor, Limit: request.Limit, Name: request.Name, Seek: request.Seek})
 					if err == nil {
 						err = emit(ReadFrame{Kind: "complete", Page: &page})
 					}

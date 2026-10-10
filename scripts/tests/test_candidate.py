@@ -14,7 +14,7 @@ class CandidateIntegrityTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for name in ("bin/orchestrator", "bin/edge-proxy", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg"):
+        for name in ("bin/orchestrator", "bin/edge-proxy", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg", "frontend/public/office/fixture/document.html", "frontend/public/office/fixture/document.js", "frontend/public/office/fixture/document.css", "frontend/public/office/fixture/spreadsheet.html", "frontend/public/office/fixture/spreadsheet.js", "frontend/public/office/fixture/spreadsheet.css", "frontend/public/office/fixture/presentation.html", "frontend/public/office/fixture/presentation.js", "frontend/public/office/fixture/presentation.css"):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture")

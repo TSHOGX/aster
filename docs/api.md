@@ -9,7 +9,7 @@ Resource paths below use stored Project and child identities.
 | --- | --- |
 | `/api/auth/login`, `/logout`, `/me` | Sign in, sign out and inspect current identity |
 | `/api/projects` | List and create Projects |
-| `/api/schedules` | Owner-scoped, paginated schedule overview across Projects |
+| `/api/schedules`, `/api/schedules/events` | Owner-scoped schedule overview and metadata invalidation SSE across Projects |
 | `/api/projects/{project}` | Inspect, rename and request deletion |
 | `…/resume`, `…/pause`, `…/restart`, `…/blockers` | Project lifecycle and admission state |
 | `…/sessions` and `…/sessions/{session}` | List/create/inspect/rename/retire Agent Sessions |
@@ -21,6 +21,7 @@ Resource paths below use stored Project and child identities.
 | `…/terminals` and `…/terminals/{terminal}` | Retained PTY metadata and retirement |
 | `…/terminals/{terminal}/start`, `/stop`, `/attach` | Start, stop and WebSocket observation |
 | `…/files`, `/files/content`, `/files/operations/{operation}` | Directory pages, mutations, streaming content and outcome inspection |
+| `…/files/snapshots`, `/files/snapshots/{snapshot}/content`, `/files/snapshots/{snapshot}` | Acquire an immutable source lease, read/range its bytes, and release it |
 | `…/schedules`, `/schedules/{schedule}`, `/run`, `/runs` | Project schedules and their run ledger |
 | `…/sessions/{session}/readers` | Grant/revoke conversation readers |
 | `…/sessions/{session}/shares`, `…/shares/{share}`, `…/shares/{share}/rotate` | Freeze, revoke and rotate public shares |
@@ -55,6 +56,19 @@ until that client's projection catches up. Terminal start can initially return `
 observe its state before attaching. A disconnected response to a mutation is an
 unknown outcome and must be retried only with the original request identity.
 
+Immutable preview sources use `GET …/files/snapshots?path=RELATIVE_PATH&max_bytes=N`
+with a default 20 MiB source limit and a maximum 100 MiB. The response contains
+`id`, SHA-256 `digest`, `size`, and `expires`. Read with
+`GET …/files/snapshots/{id}/content` and optional single `Range`; release with
+`DELETE …/files/snapshots/{id}`. A snapshot never changes versions. Every access
+checks current Project authority; the lease is not a bearer credential. Expired
+handles return `410 snapshot_expired` and oversized sources return
+`413 source_too_large`. See [preview contract](file-preview/README.md) for quotas
+and lifecycle behavior.
+
+Office visual previews use the existing authorized content endpoint. No Office
+job, window or copy API is required. See the [preview contract](file-preview/README.md).
+
 File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
 Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase
 hexadecimal characters**. File-operation responses include `id`, `state`,
@@ -79,14 +93,40 @@ pending outcomes remain distinct from successful completion. Browser access does
 not expose engine handles or operator control routes.
 
 `GET /api/schedules?project_id=OPTIONAL&q=TITLE&status=enabled|paused&after=CURSOR&limit=50`
-returns `{schedules: [...], next?: CURSOR}` with at most 50 metadata rows.
+returns `{schedules: [...], next?: CURSOR, previous?: CURSOR}` with at most 50 metadata rows.
+`before=CURSOR` reads the preceding batch; `anchor=TASK_ID` relocates the window
+at that task in the current authorized/filter-matching catalog. Selectors are
+mutually exclusive. An absent or filtered anchor restarts at the first batch.
 Omit status for all tasks. Unicode lowercase title matching, Project filtering,
 and owner authorization apply before pagination. Automatic tasks sort by next
 occurrence and ID, followed by enabled manual-only tasks and paused tasks.
 Opaque continuation cursors bind the owner and filters to a catalog revision.
 Schedule edits/ticks and relevant Project changes invalidate continuation with
-`409 resync_required`; restart at the first page. The page and revision come from
+`409 resync_required`; reconcile the current window with an anchor read or restart
+at the first page. The page and revision come from
 one database read snapshot. This replaces ID-only overview pagination.
+
+`GET /api/schedules/events?cursor=CURSOR` uses the same Resource SSE envelope,
+`resource` event, opaque incarnation/sequence cursor, `ready`, `resync`, rotation,
+heartbeat, reauthorization, bounded replay ring and subscriber queues as Project
+resource streams. Its scope is the authenticated owner; it creates no Project
+connections or file watchers. Hints use `schedule.created|updated|deleted` and
+`run.created|updated|deleted`, with `resource_id` identifying the task and payload
+containing only `project_id`, `schedule_id` and optional `run_id`. Revision strings
+are outbox positions, not task configuration revisions. Hints never contain
+prompts, run contents or inferred outcomes. Clients must read the authoritative
+endpoints; initial/resync events reconcile their visible scopes. The durable
+owner outbox retains at most 2,048 hints, independently of Project deletion;
+expired/restarted streams explicitly resync rather than silently losing updates.
+
+`GET /api/projects/{project}/schedules/{schedule}/runs` accepts mutually exclusive
+`after=CURSOR`, `before=CURSOR` or `anchor=RUN_ID`, with a maximum `limit=50`, and
+returns `{runs: [...], next: CURSOR_OR_EMPTY, previous?: CURSOR}`. New opaque cursors
+bind the owner, Project, task and immutable creation-time/ID ordering tuple, so
+removing a boundary row does not omit the remaining history. Existing run-ID
+continuations remain accepted; a removed legacy boundary requires resync.
+History state uses the same correlated prompt/execution evidence as conversation
+controls, including claims before consumption and unknown outcomes.
 
 `POST /api/schedules/preview` accepts `{cron, timezone, next_at?}` and returns
 `{valid, cron, timezone, reference_time, occurrences, errors?}`. Field errors use
@@ -172,6 +212,15 @@ grant-specific detail endpoint without reloading message bodies. Revocation clos
 clears the shared view. Shared-reader authority remains separate from Project
 resource events, live files and terminals.
 
+
+`GET /api/projects/{project}/files` returns bounded sorted directory pages with
+`snapshot`, `start`, `total`, and optional `next`/`previous` cursors. Requests use
+`path`, `limit`, and `after` for cursor navigation. `seek=around&name=...` obtains
+a bounded window containing the requested filename; `seek=after&name=...` starts
+after that name. A seek starts a new metadata observation and cannot be combined
+with a cursor. Active and paused reads apply the same authority and path checks.
+Expired cursors return 409 `resync_required`; clients relocate by name without
+scanning all preceding pages. Directory inventories remain bounded to 100,000 names.
 
 File GETs capture and hash current bytes before returning a strong SHA-256 ETag.
 `If-None-Match` returns 304 only after reauthorization and byte validation. A single

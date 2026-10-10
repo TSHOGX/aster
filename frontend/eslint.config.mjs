@@ -7,7 +7,8 @@ const config = [
     // backups of a build are minified bundles, and linting them buried the real
     // source findings under ~90 errors from generated code.
     ignores: [
-      ".next/**", ".next-perf/**",
+      "test-results/**", "playwright-report/**",
+      "public/office/**", "lib/office-build.ts", ".next/**", ".next-perf/**",
       ".next.bak-*/**",
       ".next.backup.*/**",
       "out/**",

@@ -87,17 +87,12 @@ func (s *Server) scheduleRuns(w http.ResponseWriter, r *http.Request) {
 	if limit < 1 || limit > 50 {
 		limit = 50
 	}
-	items, err := s.Store.ScheduleRuns(r.Context(), s.scope(r), r.PathValue("schedule"), q.Get("after"), limit+1)
+	page, err := s.Store.ScheduleRunPage(r.Context(), s.scope(r), r.PathValue("schedule"), q.Get("after"), q.Get("before"), q.Get("anchor"), limit)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	next := ""
-	if len(items) > limit {
-		items = items[:limit]
-		next = items[limit-1].ID
-	}
-	writeJSON(w, 200, map[string]any{"runs": items, "next": next})
+	writeJSON(w, 200, page)
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -365,7 +360,7 @@ func (s *Server) publicFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) scheduleOverview(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, err := s.Store.ScheduleOverviewPage(r.Context(), actorFrom(r.Context()), product.ScheduleFilter{Project: q.Get("project_id"), Query: q.Get("q"), Status: q.Get("status"), After: q.Get("after"), Limit: intParam(q, "limit", 50)})
+	page, err := s.Store.ScheduleOverviewPage(r.Context(), actorFrom(r.Context()), product.ScheduleFilter{Project: q.Get("project_id"), Query: q.Get("q"), Status: q.Get("status"), After: q.Get("after"), Before: q.Get("before"), Anchor: q.Get("anchor"), Limit: intParam(q, "limit", 50)})
 	if err != nil {
 		fail(w, err)
 		return

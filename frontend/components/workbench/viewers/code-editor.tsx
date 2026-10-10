@@ -21,6 +21,8 @@ import { python } from "@codemirror/lang-python";
 import { markdown } from "@codemirror/lang-markdown";
 import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
+import { xml } from "@codemirror/lang-xml";
+import { yaml } from "@codemirror/lang-yaml";
 
 import { codeMirrorLang, type CodeMirrorLang } from "@/lib/languages";
 
@@ -45,6 +47,10 @@ function extensionForLang(lang: CodeMirrorLang): Extension {
       return html();
     case "css":
       return css();
+    case "xml":
+      return xml();
+    case "yaml":
+      return yaml();
   }
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"harness-platform/orchestrator/internal/product"
 )
 
 func (s *Server) resources(w http.ResponseWriter, r *http.Request) {
@@ -13,6 +15,12 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.streamResources(w, r, scope)
+}
+
+// streamResources gives both Project and owner Scheduled streams the same
+// bounded transport, rotation, replay and authentication lifetime.
+func (s *Server) streamResources(w http.ResponseWriter, r *http.Request, scope product.Scope) {
 	cursor := r.URL.Query().Get("cursor")
 	if value := r.Header.Get("Last-Event-ID"); value != "" {
 		cursor = value
@@ -87,12 +95,15 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request) {
 				_ = control.Flush()
 				return
 			}
-			if _, e = s.Store.Project(r.Context(), scope); e != nil {
-				_ = control.SetWriteDeadline(time.Now().Add(5 * time.Second))
-				fmt.Fprint(w, "event: closed\ndata: {\"reason\":\"authorization\"}\n\n")
-				_ = control.Flush()
-				return
+			if scope.ProjectID != "" {
+				if _, e = s.Store.Project(r.Context(), scope); e != nil {
+					_ = control.SetWriteDeadline(time.Now().Add(5 * time.Second))
+					fmt.Fprint(w, "event: closed\ndata: {\"reason\":\"authorization\"}\n\n")
+					_ = control.Flush()
+					return
+				}
 			}
+
 		case <-heartbeat.C:
 			_ = control.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if _, e := fmt.Fprint(w, ": heartbeat\n\n"); e != nil || control.Flush() != nil {

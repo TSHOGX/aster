@@ -1,37 +1,15 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useMemo, useState } from "react";
 import { classifyArtifact } from "@/lib/mime";
-import { parseDelimited, textPage, TEXT_PAGE_CHARS } from "@/lib/file-view";
+import { parseDelimited } from "@/lib/file-view";
 import { isNumericText } from "@/lib/table-cells";
 import { useT } from "@/lib/i18n";
-import { reservePreview } from "@/lib/preview-budget";
 import { CodeView } from "@/components/workbench/viewers/code-view";
+import { HTMLPreview } from "./html-preview";
 
-// An opaque-origin frame can run self-contained charts, but cannot access the
-// application, credentials, network services, popups, forms or top navigation.
-const HTML_POLICY = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
-function HTMLPreview({text, path}: {text: string; path: string}) {
-  const tr = useT();
-  const [admitted, setAdmitted] = useState(false);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let release = () => {};
-    const ready = setTimeout(() => {
-      try { release = reservePreview(0, "frames"); setAdmitted(true); }
-      catch { setFailed(true); }
-    }, 0);
-    return () => { clearTimeout(ready); release(); };
-  }, []);
-  if (failed) return <p className="notice">{tr("Preview is busy. Choose Source to read this file.")}</p>;
-  if (!admitted) return <p className="notice">{tr("Loading preview…")}</p>;
-  return <iframe className="document-frame html-preview" title={`${tr("Preview")} ${path}`} sandbox="allow-scripts" referrerPolicy="no-referrer"
-    srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="${HTML_POLICY}"><meta name="referrer" content="no-referrer">${text}`} />;
-}
-
-export function TextPreview({path, text}: {path: string; text: string}) {
+export function TextPreview({path, text, href}: {path: string; text: string; href: string}) {
   const kind = classifyArtifact(path);
-  if (kind.kind === "html") return <HTMLPreview text={text} path={path} />;
+  if (kind.kind === "html") return <HTMLPreview text={text} path={path} href={href} />;
   if (kind.kind === "table") return <DelimitedPreview path={path} text={text} delimiter={kind.delimiter ?? ","} />;
   let formatted = text;
   try { formatted = JSON.stringify(JSON.parse(text), null, 2); } catch { /* Preserve readable source for incomplete JSON. */ }
@@ -40,55 +18,32 @@ export function TextPreview({path, text}: {path: string; text: string}) {
 
 function DelimitedPreview({path, text, delimiter}: {path: string; text: string; delimiter: "," | "\t"}) {
   const tr = useT();
-  const [page, setPage] = useState(0);
+  const [limit, setLimit] = useState(100);
   const parsed = useMemo(() => {
     try { return parseDelimited(text, delimiter); } catch { return null; }
   }, [text, delimiter]);
   if (!parsed) return <p className="notice">{tr("This table could not be formatted. Choose Source to view the original text.")}</p>;
   if (!parsed.rows.length) return <p className="notice">{tr("This file is empty.")}</p>;
   const columns = Math.max(...parsed.rows.map(row => row.length));
-  const pages = Math.ceil(parsed.rows.length / 100);
   return <div className="delimited-preview">
     <div className="table-summary">
+      <span>{tr("Table")}</span>
       <span>{tr("{rows} rows · {columns} columns", {rows:parsed.rows.length, columns})}</span>
-      {pages > 1 && <div className="table-pagination">
-        <button aria-label={tr("Previous rows")} disabled={page === 0} onClick={() => setPage(n => n - 1)}><ChevronLeft size={15} /></button>
-        <span>{page + 1} / {pages}</span>
-        <button aria-label={tr("Next rows")} disabled={page + 1 === pages} onClick={() => setPage(n => n + 1)}><ChevronRight size={15} /></button>
-      </div>}
     </div>
-    {parsed.truncated && <p className="list-hint" role="status">{tr("Showing the first part of this table. Source and Download contain the complete file.")}</p>}
-    <div className="delimited-scroll" tabIndex={0} role="region" aria-label={`${tr("Table")} ${path}`}>
+    {parsed.truncated && <p className="list-hint" role="status">{tr("This table is larger than the in-app preview. Source and Download contain the complete file.")}</p>}
+    <div className="delimited-scroll" tabIndex={0} role="region" aria-label={`${tr("Table")} ${path}`} onScroll={event => {
+      const node = event.currentTarget;
+      if (node.scrollTop + node.clientHeight > node.scrollHeight - 240)
+        setLimit(value => Math.min(parsed.rows.length, value + 100));
+    }}>
       <table><caption className="sr-only">{path}</caption>
         <thead><tr><th aria-label={tr("Row")} />{Array.from({length:columns}, (_, i) => <th key={i} scope="col">{i + 1}</th>)}</tr></thead>
-        <tbody>{parsed.rows.slice(page * 100, (page + 1) * 100).map((row, i) => <tr key={i}>
-          <th scope="row">{page * 100 + i + 1}</th>
+        <tbody>{parsed.rows.slice(0, limit).map((row, i) => <tr key={i}>
+          <th scope="row">{i + 1}</th>
           {Array.from({length:columns}, (_, j) => <td key={j} data-numeric={isNumericText(row[j] ?? "")} title={row[j]}>{row[j] ?? ""}</td>)}
         </tr>)}</tbody>
       </table>
+      {limit < parsed.rows.length && <p className="table-load-status" role="status">{tr("Scroll to load more rows")}</p>}
     </div>
-  </div>;
-}
-
-// Large text uses bounded plain-text pages, including HTML/Markdown/JSON, so
-// formatters and DOM construction never process an entire multi-megabyte file.
-export function LargeTextPreview({ path, href, text }: { path: string; href: string; text: string }) {
-  const tr = useT();
-  const [page, setPage] = useState(0);
-  const pages = Math.ceil(text.length / TEXT_PAGE_CHARS);
-  return <div className="large-text-preview">
-    <div className="preview-reading-bar">
-      <span>{tr("Large file · Plain text view")}</span>
-      <a href={href} download>{tr("Download file")}</a>
-    </div>
-    <p className="preview-reading-hint">{tr("Shown in sections to keep scrolling smooth. Download for the original formatting.")}</p>
-    <div className="preview-text-page" role="region" aria-label={`${tr("Preview")} ${path}`} tabIndex={0}>
-      <CodeView key={page} code={textPage(text, page)} />
-    </div>
-    <nav className="preview-text-pagination" aria-label={tr("Text sections")}>
-      <button disabled={page === 0} onClick={() => setPage(n => n - 1)}><ChevronLeft size={16} aria-hidden="true" />{tr("Previous section")}</button>
-      <span role="status">{tr("Section {current} of {total}", { current: page + 1, total: pages })}</span>
-      <button disabled={page + 1 >= pages} onClick={() => setPage(n => n + 1)}>{tr("Next section")}<ChevronRight size={16} aria-hidden="true" /></button>
-    </nav>
   </div>;
 }

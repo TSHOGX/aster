@@ -61,6 +61,13 @@ def verify(root):
     for name in ("bin/orchestrator", "bin/edge-proxy", "frontend/server.js", "frontend/.next/BUILD_ID", "frontend/public/favicon.svg"):
         if name not in report["files"]:
             raise ValueError(f"missing required artifact: {name}")
+    office_pages = list((root / "frontend/public/office").glob("*/document.html"))
+    if not office_pages:
+        raise ValueError("missing required Office viewer assets")
+    for page in office_pages:
+        for asset in ("document.js", "document.css", "spreadsheet.html", "spreadsheet.js", "spreadsheet.css", "presentation.html", "presentation.js", "presentation.css"):
+            if not (page.parent / asset).is_file():
+                raise ValueError("missing required Office viewer entry")
     if (root / "frontend/.next/BUILD_ID").read_text().strip() != report["frontend_build_id"]:
         raise ValueError("frontend build identity mismatch")
     return report
@@ -95,6 +102,19 @@ def smoke(root):
                 with urllib.request.urlopen(origin + asset, timeout=5) as response:
                     if response.status != 200 or not response.read():
                         raise ValueError(f"empty or unavailable frontend asset: {asset}")
+            for page in (root / "frontend/public/office").glob("*/document.html"):
+                for asset in page.parent.iterdir():
+                    if not asset.is_file():
+                        continue
+                    url = "/" + asset.relative_to(root / "frontend/public").as_posix()
+                    with urllib.request.urlopen(origin + url, timeout=5) as response:
+                        if response.status != 200 or not response.read():
+                            raise ValueError("Office viewer asset unavailable")
+                        if response.headers.get("Access-Control-Allow-Origin") != "*":
+                            raise ValueError("Office viewer assets need opaque-origin CORS")
+                        policy = response.headers.get("Content-Security-Policy", "")
+                        if "connect-src blob:" not in policy or "form-action 'none'" not in policy:
+                            raise ValueError("Office viewer isolation policy missing")
         finally:
             server.terminate()
             try:
@@ -129,6 +149,7 @@ def build(destination):
         shutil.copytree(frontend / ".next/standalone", destination / "frontend", symlinks=True)
         shutil.copytree(frontend / ".next/static", destination / "frontend/.next/static")
         shutil.copytree(frontend / "public", destination / "frontend/public")
+        shutil.copyfile(source / "docs/third-party-notices.md", destination / "THIRD-PARTY-NOTICES.md")
         (destination / "bin").mkdir()
         for binary in ("orchestrator", "edge-proxy"):
             subprocess.run([

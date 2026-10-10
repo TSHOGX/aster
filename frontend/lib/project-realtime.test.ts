@@ -133,3 +133,36 @@ it("hidden tabs release transport and revalidate visible scopes before becoming 
   off();
   rt.clear();
 });
+
+it("shares one owner Scheduled stream and replays it with the same transport guarantees", async () => {
+  vi.useFakeTimers();
+  const sources: Source[] = [];
+  const rt = new ProjectRealtime(new ResourceStore("actor"), (url) => {
+    const s = new Source(url);
+    sources.push(s);
+    return s as unknown as EventSource;
+  });
+  const received: ResourceEvent[] = [];
+  const off = rt.subscribe("", (e) => received.push(e));
+  const off2 = rt.subscribe("", () => {});
+  await Promise.resolve();
+  received.length = 0;
+  expect(sources).toHaveLength(1);
+  expect(sources[0].url).toBe("/api/schedules/events?cursor=");
+  const hint = {
+    protocol_version: 1,
+    stream_incarnation: "owner",
+    cursor: "opaque",
+    resource_kind: "run.updated",
+    revision: "12",
+  };
+  sources[0].emit("resource", hint);
+  sources[0].emit("resource", hint);
+  expect(received).toHaveLength(1);
+  sources[0].emit("rotate", {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(sources[1].url).toBe("/api/schedules/events?cursor=opaque");
+  off();
+  off2();
+  rt.clear();
+});

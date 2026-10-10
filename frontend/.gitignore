@@ -5,3 +5,6 @@ node_modules/
 # Next 生成的文件,dev 与 build 会把 routes.d.ts 的 import 路径改来改去
 # (dev 用 .next/dev/types,build 用 .next/types),入库只会一直产生噪音 diff
 next-env.d.ts
+
+/public/office/
+/lib/office-build.ts

@@ -35,5 +35,11 @@
     "idle_after": "5m",
     "idle_agent_after": "1m",
     "interval": "250ms"
+  },
+  "notifications": {
+    "agent_run_outcome": false,
+    "conversation_shared": true,
+    "operator_directed": true,
+    "operator_broadcast": true
   }
 }

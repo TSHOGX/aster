@@ -63,6 +63,24 @@ export function patchPresentationSource(source) {
   }
   return patched;
 }
+// The pinned Excel engine omits unsupported chart drawing models, then
+// dereferences them during reconciliation. Skip only that absent drawing;
+// worksheet cells/styles still follow the same parser and visual renderer.
+export function patchSpreadsheetSource(source) {
+  const changes = [
+    ["t.drawings[_r88].anchors.forEach", "(t.drawings[_r88]?.anchors||[]).forEach"],
+    ["var r=e.drawings[t],n=e.drawingRels[t];n&&", "var r=e.drawings[t],n=e.drawingRels[t];r&&n&&"],
+  ];
+  let original = source;
+  for (const [before, after] of changes) original = original.replace(after, before);
+  if (hash(original) !== "24d8ac1d52359b6faf42cb55769ca853e9c465bdae67399ea6655e2c1307b676")
+    throw new Error("Unreviewed Excel renderer; review drawing reconciliation before building");
+  for (const [before, after] of changes) {
+    if (original.split(before).length !== 2) throw new Error("Ambiguous Excel patch");
+    original = original.replace(before, after);
+  }
+  return original;
+}
 export function patchOfficeViewers() {
   const target = new URL(
     "../node_modules/pptx-preview/dist/pptx-preview.es.js",
@@ -71,6 +89,10 @@ export function patchOfficeViewers() {
   const source = readFileSync(target, "utf8");
   const patched = patchPresentationSource(source);
   if (source !== patched) writeFileSync(target, patched);
+  const excel = new URL("../node_modules/@js-preview/excel/lib/index.js", import.meta.url);
+  const excelSource = readFileSync(excel, "utf8");
+  const excelPatched = patchSpreadsheetSource(excelSource);
+  if (excelSource !== excelPatched) writeFileSync(excel, excelPatched);
 }
 if (
   process.argv[1] &&

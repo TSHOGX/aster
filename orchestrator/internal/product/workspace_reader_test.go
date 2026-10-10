@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"harness-platform/orchestrator/internal/projectfiles"
 )
 
 func TestWorkspaceReaderReusesHelperWithoutReadLedgerWrites(t *testing.T) {
@@ -33,7 +35,7 @@ func TestWorkspaceReaderReusesHelperWithoutReadLedgerWrites(t *testing.T) {
 	var changesBefore, changesAfter int
 	must(t, f.Store.db.QueryRow(`SELECT total_changes()`).Scan(&changesBefore))
 	for n := 0; n < 50; n++ {
-		page, e := f.List(ctx, scope, "", "", 100)
+		page, e := f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: "", Limit: 100})
 		must(t, e)
 		if len(page.Entries) != 1 {
 			t.Fatal(page)
@@ -79,17 +81,17 @@ func TestWorkspaceReaderScopedSnapshotAndLifecycle(t *testing.T) {
 	for n := 0; n < 5; n++ {
 		must(t, os.WriteFile(filepath.Join(backend.root, fmt.Sprint(n)), nil, 0600))
 	}
-	page, err := f.List(ctx, scope, "", "", 2)
+	page, err := f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: "", Limit: 2})
 	must(t, err)
 	if page.Next == "" {
 		t.Fatal("missing continuation")
 	}
-	_, err = f.List(ctx, Scope{Actor: "foreign", ProjectID: scope.ProjectID}, "", page.Next, 2)
+	_, err = f.List(ctx, Scope{Actor: "foreign", ProjectID: scope.ProjectID}, projectfiles.DirectoryQuery{Path: "", Cursor: page.Next, Limit: 2})
 	wantError(t, err, ErrNotFound)
-	_, err = f.List(ctx, scope, "other", page.Next, 2)
+	_, err = f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "other", Cursor: page.Next, Limit: 2})
 	wantError(t, err, ErrInvalid)
 	must(t, os.Remove(filepath.Join(backend.root, "2")))
-	next, err := f.List(ctx, scope, "", page.Next, 2)
+	next, err := f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: page.Next, Limit: 2})
 	must(t, err)
 	if next.Entries[0].Name != "2" {
 		t.Fatal(next)
@@ -110,7 +112,7 @@ func TestWorkspaceReaderScopedSnapshotAndLifecycle(t *testing.T) {
 	if _, err = capture.Read(make([]byte, 1)); !errors.Is(err, context.Canceled) {
 		t.Fatal("old capture survived placement pause", err)
 	}
-	_, err = f.List(ctx, scope, "", "", 2)
+	_, err = f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: "", Limit: 2})
 	must(t, err)
 	p, err := f.Store.Project(ctx, scope)
 	must(t, err)
@@ -127,7 +129,7 @@ func TestWorkspaceReaderScopedSnapshotAndLifecycle(t *testing.T) {
 	}
 	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
 	drive(t, f.Lifecycle, scope.ProjectID)
-	_, err = f.List(ctx, scope, "", page.Next, 2)
+	_, err = f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: page.Next, Limit: 2})
 	wantError(t, err, ErrResync)
 }
 
@@ -188,10 +190,23 @@ func TestPausedFilesUseVolumeWithoutComputeAndRetainCapturesAcrossResume(t *test
 	must(t, f.Lifecycle.Pause(ctx, scope, p.Revision))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	starts := backend.starts
-	page, err := f.List(ctx, scope, "", "", 100)
+	page, err := f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "", Cursor: "", Limit: 100})
 	must(t, err)
 	if len(page.Entries) != 1 {
 		t.Fatal(page)
+	}
+	for n := 0; n < 30; n++ {
+		must(t, os.WriteFile(filepath.Join(backend.root, fmt.Sprintf("record-%02d", n)), nil, 0600))
+	}
+	window, err := f.List(ctx, scope, projectfiles.DirectoryQuery{Limit: 10, Name: "record-20", Seek: "around"})
+	must(t, err)
+	if len(window.Entries) != 10 || window.Entries[5].Name != "record-20" || window.Previous == "" {
+		t.Fatal("paused seek lost bounded anchor", window)
+	}
+	previous, err := f.List(ctx, scope, projectfiles.DirectoryQuery{Limit: 10, Cursor: window.Previous})
+	must(t, err)
+	if previous.Snapshot != window.Snapshot || previous.Start != window.Start-10 {
+		t.Fatal("paused backward read lost version", previous)
 	}
 	capture, err := f.Capture(ctx, scope, "file")
 	must(t, err)
@@ -224,7 +239,7 @@ func TestPausedVolumePathsRejectLinksAndNeverWakeForMissingFiles(t *testing.T) {
 	must(t, err)
 	must(t, f.Lifecycle.Pause(ctx, scope, p.Revision))
 	drive(t, f.Lifecycle, scope.ProjectID)
-	_, err = f.List(ctx, scope, "link", "", 100)
+	_, err = f.List(ctx, scope, projectfiles.DirectoryQuery{Path: "link", Cursor: "", Limit: 100})
 	wantError(t, err, ErrInvalid)
 	_, err = f.Capture(ctx, scope, "link/file")
 	wantError(t, err, ErrInvalid)

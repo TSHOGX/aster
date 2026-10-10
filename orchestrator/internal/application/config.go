@@ -60,6 +60,12 @@ type Limits struct {
 	IdleAgentAfter      Duration `json:"idle_agent_after"`
 	Interval            Duration `json:"interval"`
 }
+type NotificationConfig struct {
+	AgentRunOutcome    bool `json:"agent_run_outcome"`
+	ConversationShared bool `json:"conversation_shared"`
+	OperatorDirected   bool `json:"operator_directed"`
+	OperatorBroadcast  bool `json:"operator_broadcast"`
+}
 type ServiceGateway struct {
 	Audience    string `json:"audience"`
 	Listen      string `json:"listen"`
@@ -89,6 +95,7 @@ type Config struct {
 	Auth              Authentication          `json:"auth"`
 	Content           Content                 `json:"content"`
 	Limits            Limits                  `json:"limits"`
+	Notifications     NotificationConfig      `json:"notifications"`
 	Gateways          []ServiceGateway        `json:"gateways"`
 	AgentAudience     string                  `json:"agent_audience"`
 	Titles            TitleService            `json:"titles"`
@@ -100,7 +107,7 @@ type Config struct {
 }
 
 func defaults() Config {
-	return Config{Listen: "127.0.0.1:8080", Frontend: "http://127.0.0.1:3000", Content: Content{VolumeBytes: 64 << 20}, Limits: Limits{Projects: 4, Agents: 32, AgentsPerProject: 8, Terminals: 32, TerminalsPerProject: 8, IdleAfter: Duration(5 * time.Minute), IdleAgentAfter: Duration(time.Minute), Interval: Duration(250 * time.Millisecond)}}
+	return Config{Listen: "127.0.0.1:8080", Frontend: "http://127.0.0.1:3000", Content: Content{VolumeBytes: 64 << 20}, Limits: Limits{Projects: 4, Agents: 32, AgentsPerProject: 8, Terminals: 32, TerminalsPerProject: 8, IdleAfter: Duration(5 * time.Minute), IdleAgentAfter: Duration(time.Minute), Interval: Duration(250 * time.Millisecond)}, Notifications: NotificationConfig{ConversationShared: true, OperatorDirected: true, OperatorBroadcast: true}}
 }
 func LoadConfig(name string) (Config, error) {
 	cfg := defaults()

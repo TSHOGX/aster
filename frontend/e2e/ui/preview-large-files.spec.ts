@@ -48,19 +48,20 @@ test("a 20 MiB PDF opens in the browser viewer without a limit error", async ({ 
   await page.screenshot({ path: test.info().outputPath("pdf-preview.png") });
 });
 
-test("20 MiB text is readable in bounded sections and leaves the workspace responsive", async ({ page }) => {
+test("20 MiB text scrolls continuously with bounded visible DOM and leaves the workspace responsive", async ({ page }) => {
   const f = await workspaceFixture(page);
-  f.messages.analysis[1].content = "[Document](/workspace/large.md)";
-  const section = 64 * 1024;
-  const text = "FIRST SECTION\n".padEnd(section, "a") + "SECOND SECTION\n".padEnd(20 * 1024 * 1024 - section, "b");
+  f.messages.analysis[1].content = "[Document](/workspace/large.txt)";
+  const prefix = "FIRST SECTION\n" + ("a".repeat(999) + "\n").repeat(1000);
+  const text = (prefix + "SECOND SECTION\n" + ("b".repeat(999) + "\n").repeat(20000)).slice(0, 20 * 1024 * 1024);
   await page.route("**/files/content?*", route => route.fulfill({ body: text }));
   await page.goto("/?project=battery&session=analysis");
   await page.getByRole("link", { name: "Document", exact: true }).click();
-  await expect(page.locator(".large-text-preview")).toBeVisible();
-  await expect(page.locator(".preview-text-page code")).toContainText("FIRST SECTION");
-  await page.getByRole("button", { name: "Next section", exact: true }).click();
-  await expect(page.locator(".preview-text-page code")).toContainText("SECOND SECTION");
-  expect(await page.locator(".preview-text-page code").evaluate(node => node.textContent!.length)).toBeLessThanOrEqual(section + 1);
+  await expect(page.locator(".source-preview")).toBeVisible();
+  await expect(page.locator(".source-editor .cm-content")).toContainText("FIRST SECTION");
+  await page.getByLabel("Go to line").fill("1002");
+  await page.getByRole("button", { name: "Go", exact: true }).click();
+  await expect(page.locator(".source-editor .cm-content")).toContainText("SECOND SECTION");
+  expect(await page.locator(".source-editor").evaluate(node => node.querySelectorAll("*").length)).toBeLessThan(1000);
   await page.locator(".agent-panel textarea").fill("Still working");
   await page.screenshot({ path: test.info().outputPath("large-text.png") });
 });

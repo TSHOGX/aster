@@ -64,13 +64,16 @@ func (f *Files) workspaceReader() *WorkspaceReader {
 	f.readerOnce.Do(func() { f.reader = newWorkspaceReader(f) })
 	return f.reader
 }
-func (f *Files) List(ctx context.Context, scope Scope, path, cursor string, limit int) (projectfiles.Page, error) {
-	return f.workspaceReader().List(ctx, scope, path, cursor, limit)
+func (f *Files) List(ctx context.Context, scope Scope, query projectfiles.DirectoryQuery) (projectfiles.Page, error) {
+	return f.workspaceReader().List(ctx, scope, query)
 }
 func (f *Files) Capture(ctx context.Context, scope Scope, path string) (*CapturedFile, error) {
 	return f.workspaceReader().Capture(ctx, scope, path)
 }
-func (f *Files) Close() error { return f.workspaceReader().Close() }
+func (f *Files) Close() error {
+	f.PreviewSnapshots().Close()
+	return f.workspaceReader().Close()
+}
 
 type WorkspaceReadStats struct {
 	Readers       int   `json:"reader_entries"`
@@ -347,17 +350,18 @@ type workspaceCursor struct {
 	Cursor        string
 }
 
-func (w *WorkspaceReader) List(ctx context.Context, scope Scope, path, cursor string, limit int) (projectfiles.Page, error) {
-	if projectfiles.Path(path, true) != nil || limit < 1 || limit > projectfiles.MaxPage || len(cursor) > 4096 {
+func (w *WorkspaceReader) List(ctx context.Context, scope Scope, query projectfiles.DirectoryQuery) (projectfiles.Page, error) {
+	if query.Validate() != nil {
 		return projectfiles.Page{}, ErrInvalid
 	}
+	path, cursor, limit := query.Path, query.Cursor, query.Limit
 	r, readctx, _, done, paused, err := w.pausedVolume(ctx, scope)
 	if paused {
 		if err != nil {
 			return projectfiles.Page{}, err
 		}
 		defer done()
-		return w.listPaused(readctx, scope, r, path, cursor, limit)
+		return w.listPaused(readctx, scope, r, query)
 	}
 	if cursor != "" {
 		var token struct{ ID string }
@@ -382,7 +386,7 @@ func (w *WorkspaceReader) List(ctx context.Context, scope Scope, path, cursor st
 		}
 	}
 	var page projectfiles.Page
-	err = entry.client.Call(ctx, projectfiles.ReadRequest{Operation: "list", Path: path, Cursor: token.Cursor, Limit: limit}, func(frame projectfiles.ReadFrame) error {
+	err = entry.client.Call(ctx, projectfiles.ReadRequest{Operation: "list", Path: path, Cursor: token.Cursor, Limit: limit, Name: query.Name, Seek: query.Seek}, func(frame projectfiles.ReadFrame) error {
 		if frame.Kind != "complete" || frame.Page == nil || len(frame.Page.Entries) > limit {
 			return ErrInvalid
 		}
@@ -398,6 +402,10 @@ func (w *WorkspaceReader) List(ctx context.Context, scope Scope, path, cursor st
 	if page.Next != "" {
 		raw, _ := json.Marshal(workspaceCursor{Project: scope.ProjectID, Path: path, Epoch: entry.ref.Epoch, Cursor: page.Next})
 		page.Next = base64.RawURLEncoding.EncodeToString(raw)
+	}
+	if page.Previous != "" {
+		raw, _ := json.Marshal(workspaceCursor{Project: scope.ProjectID, Path: path, Epoch: entry.ref.Epoch, Cursor: page.Previous})
+		page.Previous = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil
 }
@@ -452,6 +460,9 @@ func (c *CapturedFile) Close() error {
 	return err
 }
 func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string) (out *CapturedFile, result error) {
+	return w.CaptureLimited(ctx, scope, path, projectfiles.MaxTransfer)
+}
+func (w *WorkspaceReader) CaptureLimited(ctx context.Context, scope Scope, path string, maxBytes int64) (out *CapturedFile, result error) {
 	if projectfiles.Path(path, false) != nil {
 		return nil, ErrInvalid
 	}
@@ -460,7 +471,7 @@ func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string)
 		if err != nil {
 			return nil, err
 		}
-		return w.capturePaused(readctx, scope, r, path, unlock, done)
+		return w.capturePaused(readctx, scope, r, path, maxBytes, unlock, done)
 	}
 	entry, ctx, release, err := w.acquire(ctx, scope, false)
 	if err != nil {
@@ -492,6 +503,9 @@ func (w *WorkspaceReader) Capture(ctx context.Context, scope Scope, path string)
 		case "metadata":
 			if metadata != nil || frame.Metadata == nil || frame.Metadata.Size < 0 || frame.Metadata.Size > projectfiles.MaxTransfer {
 				return ErrInvalid
+			}
+			if frame.Metadata.Size > maxBytes {
+				return ErrPreviewSourceTooLarge
 			}
 			w.mu.Lock()
 			if w.captures+frame.Metadata.Size > MaxCapturedBytes {

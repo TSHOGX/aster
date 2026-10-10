@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"harness-platform/orchestrator/internal/product"
@@ -49,6 +50,17 @@ func TestPrivateControlSocketUsesTheApplicationWriter(t *testing.T) {
 	other, err := store.Notifications(ctx, "bob", "", 100)
 	if err != nil || len(other) != 0 {
 		t.Fatal(other, err)
+	}
+	if err = store.ConfigureNotificationPolicy(ctx, product.NotificationPolicy{OperatorBroadcast: true}); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err = Control(ctx, socket, "POST", "/notify", map[string]string{"Audience": "alice", "Title": "Blocked", "Body": "Disabled directed notice"}, &output); err == nil || !strings.Contains(err.Error(), "notification disabled") {
+		t.Fatal("disabled operator notification did not fail explicitly", err, output.String())
+	}
+	output.Reset()
+	if err = Control(ctx, socket, "POST", "/notify", map[string]string{"Title": "Broadcast", "Body": "Enabled broadcast notice"}, &output); err != nil {
+		t.Fatal(err)
 	}
 	if err = Control(ctx, socket, "GET", "/status", nil, &output); err != nil || !bytes.Contains(output.Bytes(), []byte("occupied_projects")) {
 		t.Fatal(output.String(), err)

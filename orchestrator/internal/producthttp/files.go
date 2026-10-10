@@ -24,7 +24,7 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	page, err := s.Files.List(r.Context(), s.scope(r), q.Get("path"), q.Get("after"), intParam(q, "limit", 100))
+	page, err := s.Files.List(r.Context(), s.scope(r), projectfiles.DirectoryQuery{Path: q.Get("path"), Cursor: q.Get("after"), Limit: intParam(q, "limit", 100), Name: q.Get("name"), Seek: q.Get("seek")})
 	if err != nil {
 		fail(w, err)
 		return
@@ -124,4 +124,49 @@ func (s *Server) fileOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, o)
+}
+
+func (s *Server) openPreviewSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !s.filesAvailable(w) {
+		return
+	}
+	q := r.URL.Query()
+	descriptor, err := s.Files.PreviewSnapshots().Open(r.Context(), s.scope(r), q.Get("path"), int64(intParam(q, "max_bytes", 20<<20)))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, descriptor)
+}
+func (s *Server) readPreviewSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !s.filesAvailable(w) {
+		return
+	}
+	descriptor, reader, release, err := s.Files.PreviewSnapshots().Acquire(r.Context(), s.scope(r), r.PathValue("snapshot"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer release()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("ETag", `"sha256:`+descriptor.Digest+`"`)
+	// Reject multipart range amplification. Full content has separate source admission.
+	if strings.Contains(r.Header.Get("Range"), ",") {
+		fail(w, product.ErrInvalid)
+		return
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
+	http.ServeContent(w, r, "preview", time.Time{}, reader)
+}
+func (s *Server) releasePreviewSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !s.filesAvailable(w) {
+		return
+	}
+	if err := s.Files.PreviewSnapshots().Release(r.Context(), s.scope(r), r.PathValue("snapshot")); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

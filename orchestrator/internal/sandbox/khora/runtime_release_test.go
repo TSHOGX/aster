@@ -29,7 +29,7 @@ func (f *successfulRuntimeVerifier) Start(_ context.Context, r *connect.Request[
 func TestHostRejectsOldRuntimeEvenWhenItsVerifierWouldSucceed(t *testing.T) {
 	for _, version := range []int{2, 3} {
 		digest := "sha256:" + strings.Repeat("a", 64)
-		manifest := runtimerelease.Manifest{Version: version, NativeProtocol: runtimerelease.NativeProtocol, Platform: "linux/arm64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, ReaderProtocol: 2, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
+		manifest := runtimerelease.Manifest{Version: version, NativeProtocol: runtimerelease.NativeProtocol, Platform: "linux/arm64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, ReaderProtocol: runtimerelease.ReaderProtocol, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
 		if version == 2 {
 			manifest.NativeProtocol = 0
 		}

@@ -118,3 +118,30 @@ func TestCandidateCompatibilityTracksConfigurationAndReviewedBytes(t *testing.T)
 		t.Fatal("candidate inspection accepted a changed guest manifest")
 	}
 }
+
+func TestCandidateCompatibilityIncludesNotificationPolicy(t *testing.T) {
+	cfg, _ := releaseConfiguration(t)
+	original, err := InspectRelease(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*NotificationConfig){
+		func(c *NotificationConfig) { c.AgentRunOutcome = !c.AgentRunOutcome },
+		func(c *NotificationConfig) { c.ConversationShared = !c.ConversationShared },
+		func(c *NotificationConfig) { c.OperatorDirected = !c.OperatorDirected },
+		func(c *NotificationConfig) { c.OperatorBroadcast = !c.OperatorBroadcast },
+	} {
+		candidate := cfg
+		change(&candidate.Notifications)
+		changed, err := InspectRelease(candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed.ConfigurationDigest == original.ConfigurationDigest || changed.CompatibilityDigest == original.CompatibilityDigest {
+			t.Fatal("notification policy omitted from fixed release contract", candidate.Notifications)
+		}
+		if changed.SchemaDigest != original.SchemaDigest {
+			t.Fatal("configuration changed schema identity")
+		}
+	}
+}

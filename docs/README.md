@@ -15,7 +15,7 @@
 - [Delivery](delivery.md): CI, candidate packaging, exact-artifact qualification and deployment handoff.
 - [Queued-prompts acceptance](queued-prompts-acceptance.md) and [release procedure](queued-prompts-release.md): historical reset evidence and format gates.
 - [Interaction architecture](performance.md): implementation progress and performance diagnostics.
-- [Notifications](notifications.md): outcome and operator notifications.
+- [Notifications](notifications.md): configurable Inbox, sharing and operator notifications.
 - [Image build](sandbox-image.md): immutable packaging and release verification.
 - [Development](development.md) and [verification](verification.md): executable gates.
 - [Navigation, scheduling, and network delivery](implementation-plan.md): implementation decisions and qualification.

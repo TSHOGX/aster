@@ -153,6 +153,18 @@ func TestNetworkReloadControlAndAutomaticDetection(t *testing.T) {
 	}
 }
 
+func TestNetworkReloadRejectsNotificationPolicyChanges(t *testing.T) {
+	a, cfg, path := networkReloadFixture(t)
+	cfg.Notifications.AgentRunOutcome = true
+	writeNetworkConfig(t, path, cfg)
+	if _, err := a.ReloadNetworkPolicy(context.Background()); err == nil || !strings.Contains(err.Error(), "unsupported configuration change") {
+		t.Fatal("notification policy was hot reloaded", err)
+	}
+	if a.Config.Notifications.AgentRunOutcome {
+		t.Fatal("running configuration changed")
+	}
+}
+
 func TestNetworkPolicyIsSeparateFromFixedReleaseIdentity(t *testing.T) {
 	cfg, _ := releaseConfiguration(t)
 	before, err := InspectRelease(cfg)

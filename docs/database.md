@@ -2,7 +2,7 @@
 
 The canonical SQLite schema is [schema.sql](../orchestrator/internal/product/schema.sql).
 The current fresh lineage has schema version 3 and exact compiled DDL
-fingerprint `sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a`.
+fingerprint `sha256:1d6d3b1179b9533f70db17b6647a66d3428d414fe7db843dcd64b9c6afec923f`.
 `product.Open` initializes that schema atomically on a new database
 under an exclusive path/alias lock. An existing database must match both its
 version and fingerprint before a writer opens. Application startup has no
@@ -25,7 +25,8 @@ their separate evidence. Derived conversation segments group consumed input and
 following output without changing the native run. Terminals and their incarnations describe retained
 PTYs. Activity rows account for admission and cleanup blockers. Events and bounded
 projections drive browser recovery. Files operations preserve intent and uncertain
-outcomes. Schedules/runs, reader grants, shares/files, notifications, auth sessions
+outcomes. Schedules/runs, reader grants, shares/files, notifications and their
+persisted source policy, auth sessions
 and immutable content publications complete the product state.
 
 Transactions serialize durable intent before remote side effects. Original IDs,
@@ -133,3 +134,10 @@ in durable request JSON. The `network` resume phase commits verified binding
 revision and effective profile together before advancing to `sandbox`, then
 `reachability`; admission remains closed until projection/readiness succeeds.
 An uncertain PATCH is reconciled against the whole original/target binding.
+
+Scheduled metadata uses a separate owner-scoped outbox capped at 2,048 hints.
+Frontiers survive event pruning and Project/Session retirement, so disconnected
+clients can explicitly resync. A counted Session-to-task index maps control
+changes to task hints without scanning all historical runs. These are disposable
+invalidation projections; queue policy, delivery consumption and execution
+outcomes remain authoritative in their existing tables.

@@ -40,11 +40,19 @@ admission reopens. Candidate startup checks the accepted policy revision during
 owner handoff independently of fixed release compatibility.
 
 Frontend Markdown does not enable raw HTML. File responses use restricted preview
-headers and the browser uses bounded fetched blobs. Office previews are separate
-renderers and should be treated as parsing untrusted documents. HTML previews
-use a separate opaque-origin iframe with `sandbox="allow-scripts"` and no
+headers and the browser uses bounded fetched blobs. All Office formats use an
+opaque-origin visual renderer with `sandbox="allow-scripts"`. A cancellable Worker
+checks ZIP CRC, actual expansion, duplicate paths, XML entities/depth, coordinates
+and pixels before engine import. The static viewer has no application bootstrap,
+API credentials or storage access. Its CSP blocks HTTP connections, forms,
+nested frames and objects; blob connections support the pinned Excel engine's
+internal byte loading. Parent/child messages validate window, origin, protocol
+and per-frame token. Public viewer assets expose CORS, never API responses.
+Browser iframe execution is not a hard CPU/RSS isolation boundary.
+HTML previews
+use a separate opaque-origin iframe with an empty `sandbox` and no
 same-origin, popup, form or top-navigation permission. A leading CSP allows only
-inline scripts/styles and embedded image/font data; network connections, nested
+inline styles and embedded image/font data; scripts, network connections, nested
 frames, objects and base URLs are blocked. Source and table cells render as text. The default page
 CSP permits portal framing; operators should restrict `frame-ancestors` at their
 outer edge where embedding is unnecessary. Origin checks do not prevent a user

@@ -9,7 +9,7 @@ The authorized reset, rebuild and restart completed on 2026-09-25. See the
 [acceptance](queued-prompts-acceptance.md). The procedure below applies to future resets.
 
 The current product is a fresh-install contract. It uses schema version 3 with
-compiled fingerprint `sha256:c1115d24305b7c578b237cfa9ee0aba3a0239d4ae180c2d9cb48f9266cb2528a`
+compiled fingerprint `sha256:1d6d3b1179b9533f70db17b6647a66d3428d414fe7db843dcd64b9c6afec923f`
 and native protocol 4. The patched Pi RPC output is pinned at
 `sha256:e533d9e5bbe59991460ca018b123fab699554918ca95ba5c8a860642f19a0952`.
 The old protocol-3 candidate and old product database are retired artifacts;

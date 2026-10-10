@@ -38,6 +38,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/schedules", s.scheduleOverview)
+	mux.HandleFunc("GET /api/schedules/events", s.scheduleEvents)
 	mux.HandleFunc("POST /api/schedules/preview", s.previewSchedule)
 	mux.HandleFunc("GET /api/projects/{project}/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/projects/{project}/schedules", s.createSchedule)
@@ -61,6 +62,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/projects/{project}/shares/{share}", s.revokeShare)
 	mux.HandleFunc("POST /api/projects/{project}/shares/{share}/rotate", s.rotateShare)
 	mux.HandleFunc("GET /api/projects/{project}/files", s.listFiles)
+	mux.HandleFunc("GET /api/projects/{project}/files/snapshots", s.openPreviewSnapshot)
+	mux.HandleFunc("GET /api/projects/{project}/files/snapshots/{snapshot}/content", s.readPreviewSnapshot)
+	mux.HandleFunc("DELETE /api/projects/{project}/files/snapshots/{snapshot}", s.releasePreviewSnapshot)
 	mux.HandleFunc("GET /api/projects/{project}/files/content", s.readFile)
 	mux.HandleFunc("PUT /api/projects/{project}/files/content", s.writeFile)
 	mux.HandleFunc("POST /api/projects/{project}/files", s.mutateFile)

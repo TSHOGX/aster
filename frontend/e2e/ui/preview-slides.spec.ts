@@ -1,0 +1,25 @@
+import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { workspaceFixture } from "./fixture";
+
+for (const count of [41, 200]) {
+  test(`${count} slides can be opened and jumped to the final slide`, async ({ page }) => {
+    const f = await workspaceFixture(page);
+    f.messages.analysis[1].content = `[Deck](/workspace/${count}-slides.pptx)`;
+    const bytes = readFileSync(resolve(process.env.PREVIEW_FIXTURES!, `${count}-slides.pptx`));
+    await page.route("**/files/content?*", route => route.fulfill({ body: bytes }));
+    await page.goto("/?project=battery&session=analysis");
+    await page.getByRole("link", { name: "Deck", exact: true }).click();
+    const frame = page.frameLocator(".office-frame");
+    const navigation = frame.getByRole("navigation", { name: "Slides" });
+    await expect(navigation).toContainText(`/ ${count}`);
+    await navigation.getByRole("spinbutton", { name: "Slide number" }).fill(String(count));
+    await navigation.getByRole("button", { name: "Go to slide" }).click();
+    await expect(navigation.getByRole("spinbutton", { name: "Slide number" })).toHaveValue(String(count));
+    await expect(frame.getByText(`Measured slide ${count - 1}`)).toBeVisible();
+    await expect(navigation.getByRole("button", { name: "Next slide" })).toBeDisabled();
+    await navigation.getByRole("button", { name: "Previous slide" }).press("ArrowLeft");
+    await expect(navigation).toContainText(`/ ${count}`);
+  });
+}

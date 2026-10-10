@@ -52,12 +52,15 @@ It never reads file bodies or starts compute. Each result window holds at most
 silently searching only the loaded tree. First results and Refresh restart it.
 Incomplete or resource-limited searches are distinguished from a complete search
 with no matches. File changes mark the current search for Refresh without clearing its results.
-The active tree retains the root and at most sixteen open directories, one
-100-entry page per directory, within an estimated 8 MiB aggregate budget. Next/
-First controls replace pages; closing a branch cancels its reads and releases its
-rows. Expired snapshots return to the first page with a notice. Deep links read
-bounded ancestor pages without scanning whole directories; the selected file and
-unsaved editor stay owned even when their row is outside the loaded page.
+The tree flattens expanded branches and renders visible rows with overscan.
+Expansion, keyboard focus and selection remain independent of resident data.
+Each directory retains up to five adjacent 100-entry pages within an estimated
+8 MiB aggregate budget. Near-edge loading extends the continuous interval; explicit
+Load more/Load previous controls provide the same navigation. Closing a branch
+cancels its reads and releases its rows. Expired cursors relocate around the visible
+filename with a notice. Deep links seek bounded windows around each ancestor and
+the selected file; they never replay a directory's pages to locate a name. The
+selected file and unsaved editor remain owned when their row leaves the window.
 Directory scans are serialized per Project, with a second slot available for
 selected file content. Temporary 202/429/503 read responses and captures changed
 during a read retry silently with bounded jittered backoff (at most seven attempts).
@@ -67,35 +70,32 @@ missing-file errors are immediate. Writes are never automatically repeated.
 
 Workspace links reveal ancestor directories; on mobile the tree folds away after
 selection. Files support watches, upload, download, mutation, text editing and
-bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG, XLSX,
-DOCX, PPTX and native browser PDF previews. All preview reads allow up to 20 MiB.
-Larger text files (above 256 KiB) use bounded plain-text sections to keep reading
-responsive, with downloads preserving original formatting. Loading states show
+bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG/static GIF, XLSX,
+DOCX, PPTX and native browser PDF previews. Browser source/media reads allow up to
+20 MiB for ordinary local previews; visual Office admits up to 100 MiB with separate structural limits.
+Read-only source uses one continuous CodeMirror viewport with line numbers, find,
+jump-to-line and model-backed selection/copy. XML and YAML use lazy grammars for
+small files and a line-state index with visible-token rendering above 1 MiB;
+the latter retains comment, CDATA, quote and YAML block-scalar context across
+line windows. UTF-8 and BOM-marked UTF-16 are decoded strictly. Markdown and JSON
+above 256 KiB open as labeled Source because their full-document formatting
+is not admitted; HTML keeps its rendered mode across that threshold. Source
+eligibility does not depend on the 1 MiB editing limit. Loading states show
 file details and transfer progress when available, with cancel/retry/download
 actions. Oversized files identify the 20 MB limit separately from content or
 format limitations. Other formats (including legacy XLS and SVG) remain
-downloadable. Unsupported workbook drawings are identified. Office bytes pass
-bounded format validation in a cancellable Worker before rendering. Each Office
-renderer owns a disposable browser document; the old document stays readable
-until its prepared replacement is ready. Cancel, timeout and explicit retry keep
-that displayed version. Frame removal releases the renderer's URLs and global
-handlers. Presentation controls support keyboard navigation, localized labels,
-reading-position restoration, theme updates and Escape back to the workspace.
-Markdown, HTML, CSV/TSV and JSON expose a keyboard-accessible Preview/Source
-control. Switching uses the same captured bytes without fetching again. HTML
-uses an opaque-origin sandbox: self-contained styles and inline scripts work;
-remote dependencies, network APIs, forms and application access are blocked.
-CSV/TSV previews preserve quoted delimiters and multiline cells, show 100 rows
-per page, and bound parsing to 2,000 rows, 256 columns and 20,000 cells. Truncation
-is explicit; Source and Download retain the complete input. JSON Preview formats
-valid JSON; Source retains its original whitespace.
+downloadable. DOCX, XLSX and PPTX use a single visual preview architecture for all
+admitted sizes. A separately built static sandbox hosts format-specific engines;
+there is no self-built reading model or small/large renderer split. Office source
+admission is 100 MiB with independent container and working-set limits. See the
+[preview contract](file-preview/README.md) for engines, deadlines and limitations.
 
-The file menu offers Edit text only after validating a supported UTF-8 text file
+The file menu offers Edit text only after validating a supported text file
 of at most 1 MiB, with no NUL bytes. Binary, unsupported and oversized inputs have
 no misleading edit action. Source remains read-only; editing is an explicit mode
 with the existing Save/Discard protection for unsaved changes.
 
-See [preview budgets and qualification](performance.md#preview-admission-and-validation).
+See [preview contracts and qualification](file-preview/README.md).
 
 Text/code/Markdown previews up to 256 KiB can reopen from the authenticated memory
 cache while fresh bytes are authorized and checked. A validation notice identifies
@@ -147,12 +147,23 @@ Task detail/create/edit and title/Project/status filters are explicit URL state,
 independent of the chat route. Browser history restores context; list position
 is retained in actor-scoped application memory. Reading and editing are distinct.
 
-The server filters and orders the overview before paging. The browser retains
-one 50-row metadata page (including Cron, never prompts), loads only the selected
-task's full instructions, and refreshes after its mutations or explicit Refresh.
-There is no overview polling or per-Project fan-out. Opaque cursors invalidated by
-concurrent changes restart at the first page with an explanation. Filter/detail
-changes cancel obsolete requests. Loading and failure are distinct from emptiness.
+The server filters and orders the overview before paging. Scheduled owns one
+owner-scoped metadata SSE transport, shared across consumers; it never opens
+per-Project file watchers or connections. Healthy connections perform no fixed
+list polling. Revision hints coalesce before authoritative reads; reconnect gaps
+and returning hidden tabs reconcile visible resources. Disconnected visible
+views fall back from five seconds to thirty seconds between reads.
+
+Overview and full run history load continuously in fifty-row batches with
+keyboard-accessible edge controls. Each retains five adjacent pages (at most
+250 rows and five estimated MiB); larger windows render only visible rows with
+overscan. Bidirectional opaque cursors reload evicted pages. Catalog changes
+invalidate continuation; a bounded anchor read reconciles the resident window
+rather than replaying all preceding pages. Transient failures keep readable
+content and expose Retry, while confirmed unavailable resources clear it.
+Selected full instructions never appear in overview or event replies. Background
+reads preserve visible row anchors and do not remount editors. Actor-scoped
+assembled windows share the application's bounded authenticated memory store.
 
 Creation defaults visibly to Daily 09:00 in the detected IANA timezone (UTC with
 an explanation if detection fails), using a new conversation each run. Daily,
@@ -192,8 +203,12 @@ claim to stop already admitted work.
 
 Conversation choices load only when targeting an existing conversation and retain
 at most 100 options plus an authorized selected lookup. History belongs to the
-selected task, retains at most 50 rows, and initially shows five; Next/First
-replace pages with explicit continuation. Scheduled-trigger timestamps are not
+selected task. Details show five recent rows; full history opens an independently
+scrolling panel, or a full-height drawer on narrow layouts. Reading older rows
+buffers authoritative head changes behind a counted Back to latest control,
+without changing scroll position. Escape closes history before navigating away
+from the task and returns keyboard focus. Full history uses the same bounded
+continuous window as the overview. Scheduled-trigger timestamps are not
 actual start times; manual runs have no invented timestamp. Unknown outcomes,
 history failures, empty history and paused/manual-only configurations stay distinct.
 Search, inbox, conversation grants and frozen public sharing remain supported;

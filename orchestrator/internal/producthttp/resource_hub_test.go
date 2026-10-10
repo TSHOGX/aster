@@ -223,3 +223,90 @@ func TestResourceHTTPReplayAuthorityAndCleanup(t *testing.T) {
 		t.Fatal(response.StatusCode)
 	}
 }
+
+func TestScheduleOwnerHubReplaysWithoutProjectFanout(t *testing.T) {
+	h := newHarness(t)
+	server := &Server{Store: h.store, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return "alice", nil })}
+	defer server.Close()
+	scope := product.Scope{Actor: "alice", ProjectID: "p"}
+	_, err := h.store.CreateProject(ctx, scope.Actor, scope.ProjectID, "Project")
+	must(t, err)
+	server.hubsOnce.Do(func() { server.hubs = newResourceHubs(server) })
+	owner := product.Scope{Actor: "alice"}
+	sub, err := server.hubs.attach(owner, "")
+	must(t, err)
+	defer server.hubs.detach(sub)
+	if nextResource(t, sub).event.Kind != "resync" {
+		t.Fatal("initial state must reconcile")
+	}
+	ready := nextResource(t, sub).event
+	_, err = h.store.CreateSchedule(ctx, scope, product.Schedule{ID: "task", Title: "Task", Prompt: "private prompt", Timezone: "UTC", Enabled: true})
+	must(t, err)
+	event := nextResource(t, sub).event
+	if event.Kind != "schedule.created" || event.ID != "task" {
+		t.Fatal(event)
+	}
+	raw, _ := json.Marshal(event)
+	if strings.Contains(string(raw), "private prompt") {
+		t.Fatal("prompt leaked")
+	}
+	replay, err := server.hubs.attach(owner, ready.Cursor)
+	must(t, err)
+	defer server.hubs.detach(replay)
+	if nextResource(t, replay).event.Kind != "schedule.created" {
+		t.Fatal("missing replay")
+	}
+	stats := server.ResourceHubStats()
+	if stats.Hubs != 1 || stats.Watchers != 0 {
+		t.Fatal("owner stream fans out", stats)
+	}
+	foreign := product.Scope{Actor: "bob"}
+	if _, err := server.hubs.attach(foreign, event.Cursor); err != product.ErrInvalid {
+		t.Fatal("foreign cursor accepted", err)
+	}
+}
+
+func TestScheduleHTTPHintsAuthorizationAndForeignCursor(t *testing.T) {
+	h := newHarness(t)
+	scope := product.Scope{Actor: "alice", ProjectID: "p"}
+	_, err := h.store.CreateProject(ctx, scope.Actor, scope.ProjectID, "Project")
+	must(t, err)
+	_, err = h.store.CreateProject(ctx, "bob", "foreign", "Foreign")
+	must(t, err)
+	client := &http.Client{Timeout: 4 * time.Second}
+	response, err := client.Get(h.server.URL + "/api/schedules/events")
+	must(t, err)
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	read := func() ResourceEvent {
+		t.Helper()
+		for {
+			line, err := reader.ReadString('\n')
+			must(t, err)
+			if strings.HasPrefix(line, "data: ") {
+				var e ResourceEvent
+				must(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data: "))), &e))
+				return e
+			}
+		}
+	}
+	if read().Kind != "resync" || read().Kind != "ready" {
+		t.Fatal("missing bootstrap handshake")
+	}
+	_, err = h.store.CreateSchedule(ctx, product.Scope{Actor: "bob", ProjectID: "foreign"}, product.Schedule{ID: "secret", Title: "Secret", Prompt: "secret", Timezone: "UTC", Enabled: true})
+	must(t, err)
+	_, err = h.store.CreateSchedule(ctx, scope, product.Schedule{ID: "task", Title: "Task", Prompt: "private", Timezone: "UTC", Enabled: true})
+	must(t, err)
+	event := read()
+	if event.Kind != "schedule.created" || event.ID != "task" {
+		t.Fatal("foreign hint leaked", event)
+	}
+	response.Body.Close()
+	h.setActor("bob")
+	response, err = client.Get(h.server.URL + "/api/schedules/events?cursor=" + event.Cursor)
+	must(t, err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatal("foreign owner cursor accepted", response.StatusCode)
+	}
+}

@@ -136,12 +136,12 @@ test("browser reading and edit state survive streaming load and gated owner upda
     await page.waitForTimeout(2000);
     const heavyBefore = heavyReads, headsBefore = headReads;
     const initialURLs = await page.evaluate(() => Reflect.get(window, "combinedURLCreates") as number);
-    await page.evaluate(() => Reflect.set(window, "combinedPreviewNode", document.querySelector(".selected-file pre")));
+    await page.evaluate(() => Reflect.set(window, "combinedPreviewNode", document.querySelector(".source-editor")));
     const idleStart = Date.now(), idle: unknown[] = [];
     report.idle = idle;
     for (const seconds of [60, 120]) {
       await page.waitForTimeout(Math.max(0, idleStart + seconds * 1000 - Date.now()));
-      const sameNode = await page.evaluate(() => Reflect.get(window, "combinedPreviewNode") === document.querySelector(".selected-file pre"));
+      const sameNode = await page.evaluate(() => Reflect.get(window, "combinedPreviewNode") === document.querySelector(".source-editor"));
       const urls = await page.evaluate(() => Reflect.get(window, "combinedURLCreates") as number);
       idle.push({ seconds, elapsed_ms: Date.now() - idleStart, heavy_reads: heavyReads - heavyBefore, heads: headReads - headsBefore, new_urls: urls - initialURLs, same_preview_node: sameNode });
       writeFileSync(join(output!, "combined-browser.json"), JSON.stringify(report, null, 2));

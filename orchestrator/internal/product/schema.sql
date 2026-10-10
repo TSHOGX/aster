@@ -261,6 +261,16 @@ CREATE TABLE notification_reads (
  PRIMARY KEY(notification_id,actor)
 );
 
+CREATE TABLE notification_policy (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ agent_run_outcome INTEGER NOT NULL CHECK(agent_run_outcome IN (0,1)),
+ conversation_shared INTEGER NOT NULL CHECK(conversation_shared IN (0,1)),
+ operator_directed INTEGER NOT NULL CHECK(operator_directed IN (0,1)),
+ operator_broadcast INTEGER NOT NULL CHECK(operator_broadcast IN (0,1))
+);
+
+INSERT INTO notification_policy(id,agent_run_outcome,conversation_shared,operator_directed,operator_broadcast) VALUES(1,0,1,1,1);
+
 CREATE TABLE notifications (
  id TEXT PRIMARY KEY,
  audience TEXT,
@@ -821,7 +831,7 @@ CREATE TRIGGER index_message_insert AFTER INSERT ON messages BEGIN
 END;
 
 CREATE TRIGGER notify_run_outcome AFTER UPDATE OF state,outcome ON execution_runs
-WHEN (NEW.state='settled' OR NEW.state IN ('failed','unknown')) AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome)
+WHEN (SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 AND (NEW.state='settled' OR NEW.state IN ('failed','unknown')) AND (NEW.state<>OLD.state OR NEW.outcome<>OLD.outcome)
 BEGIN
  INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
  SELECT 'turn/'||t.id,p.owner_id,NEW.project_id,NEW.session_id,'Agent turn '||CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END,'Open the conversation to inspect the outcome.',coalesce(nullif(NEW.settled_at,''),NEW.started_at)
@@ -1184,3 +1194,86 @@ END;
 CREATE TRIGGER delivery_consumption_immutable BEFORE UPDATE OF state ON input_deliveries
 WHEN OLD.state IN ('consumed','handled') AND NEW.state<>OLD.state
 BEGIN SELECT RAISE(ABORT,'consumption evidence is immutable'); END;
+
+-- A small durable owner-scoped outbox for Scheduled. Independent of Project
+-- retention, it also records deletion so removed resources invalidate clients.
+CREATE TABLE schedule_event_frontiers (
+ owner_id TEXT PRIMARY KEY,
+ head INTEGER NOT NULL DEFAULT 0,
+ retained_after INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE schedule_events (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ owner_id TEXT NOT NULL,
+ project_id TEXT NOT NULL,
+ schedule_id TEXT NOT NULL DEFAULT '',
+ run_id TEXT NOT NULL DEFAULT '',
+ kind TEXT NOT NULL
+);
+CREATE TABLE schedule_run_sessions (
+ session_id TEXT NOT NULL,
+ schedule_id TEXT NOT NULL,
+ project_id TEXT NOT NULL,
+ run_count INTEGER NOT NULL,
+ PRIMARY KEY(session_id,schedule_id)
+);
+CREATE TRIGGER schedule_run_session_insert AFTER INSERT ON schedule_runs BEGIN
+ INSERT INTO schedule_run_sessions(session_id,schedule_id,project_id,run_count) VALUES(NEW.session_id,NEW.schedule_id,NEW.project_id,1)
+ ON CONFLICT(session_id,schedule_id) DO UPDATE SET run_count=run_count+1;
+END;
+CREATE TRIGGER schedule_run_session_delete AFTER DELETE ON schedule_runs BEGIN
+ UPDATE schedule_run_sessions SET run_count=run_count-1 WHERE session_id=OLD.session_id AND schedule_id=OLD.schedule_id;
+ DELETE FROM schedule_run_sessions WHERE session_id=OLD.session_id AND schedule_id=OLD.schedule_id AND run_count=0;
+END;
+CREATE INDEX schedule_events_owner ON schedule_events(owner_id,id);
+CREATE INDEX schedule_runs_session_schedule ON schedule_runs(session_id,schedule_id);
+CREATE INDEX schedule_runs_history ON schedule_runs(project_id,schedule_id,created_at DESC,id DESC);
+CREATE TRIGGER schedule_events_frontier AFTER INSERT ON schedule_events BEGIN
+ INSERT INTO schedule_event_frontiers(owner_id,head) VALUES(NEW.owner_id,NEW.id)
+ ON CONFLICT(owner_id) DO UPDATE SET head=NEW.id;
+ DELETE FROM schedule_events WHERE owner_id=NEW.owner_id AND id<=coalesce(
+  (SELECT id FROM schedule_events WHERE owner_id=NEW.owner_id ORDER BY id DESC LIMIT 1 OFFSET 2048),0);
+END;
+CREATE TRIGGER schedule_events_pruned BEFORE DELETE ON schedule_events BEGIN
+ UPDATE schedule_event_frontiers SET retained_after=max(retained_after,OLD.id) WHERE owner_id=OLD.owner_id;
+END;
+CREATE TRIGGER schedule_hint_insert AFTER INSERT ON schedules BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,schedule_id,run_id,kind)
+ SELECT owner_id,NEW.project_id,NEW.id,'','schedule.created' FROM projects WHERE id=NEW.project_id;
+END;
+CREATE TRIGGER schedule_hint_update AFTER UPDATE ON schedules BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,schedule_id,run_id,kind)
+ SELECT owner_id,NEW.project_id,NEW.id,'',CASE WHEN NEW.deleted=1 AND OLD.deleted=0 THEN 'schedule.deleted' ELSE 'schedule.updated' END FROM projects WHERE id=NEW.project_id;
+END;
+CREATE TRIGGER schedule_hint_delete BEFORE DELETE ON schedules BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,schedule_id,run_id,kind)
+ SELECT owner_id,OLD.project_id,OLD.id,'','schedule.deleted' FROM projects WHERE id=OLD.project_id;
+END;
+CREATE TRIGGER schedule_run_hint_insert AFTER INSERT ON schedule_runs BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,schedule_id,run_id,kind)
+ SELECT owner_id,NEW.project_id,NEW.schedule_id,NEW.id,'run.created' FROM projects WHERE id=NEW.project_id;
+END;
+CREATE TRIGGER schedule_run_hint_delete BEFORE DELETE ON schedule_runs BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,schedule_id,run_id,kind)
+ SELECT owner_id,OLD.project_id,OLD.schedule_id,OLD.id,'run.deleted' FROM projects WHERE id=OLD.project_id;
+END;
+CREATE TRIGGER schedule_run_hint_control AFTER UPDATE OF control_revision ON sessions
+WHEN NEW.control_revision<>OLD.control_revision BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,schedule_id,kind)
+ SELECT p.owner_id,NEW.project_id,r.schedule_id,'run.updated'
+ FROM schedule_run_sessions r JOIN projects p ON p.id=NEW.project_id WHERE r.session_id=NEW.id;
+END;
+CREATE TRIGGER schedule_project_hint_update AFTER UPDATE OF title,state,owner_id ON projects
+WHEN OLD.title<>NEW.title OR OLD.state<>NEW.state OR OLD.owner_id<>NEW.owner_id BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,kind) VALUES(OLD.owner_id,OLD.id,'schedule.updated');
+ INSERT INTO schedule_events(owner_id,project_id,kind)
+ SELECT NEW.owner_id,NEW.id,'schedule.updated' WHERE OLD.owner_id<>NEW.owner_id;
+END;
+CREATE TRIGGER schedule_project_hint_delete BEFORE DELETE ON projects BEGIN
+ INSERT INTO schedule_events(owner_id,project_id,kind) VALUES(OLD.owner_id,OLD.id,'schedule.deleted');
+END;
+
+CREATE TRIGGER schedule_run_outcome_control AFTER UPDATE OF outcome ON execution_runs
+WHEN NEW.outcome<>OLD.outcome AND NEW.state=OLD.state BEGIN
+ UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
+END;
