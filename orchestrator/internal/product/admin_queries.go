@@ -14,9 +14,12 @@ import (
 )
 
 type AdminGroup struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Revision int64  `json:"revision"`
+	Description string `json:"description"`
+	MemberCount int64  `json:"member_count"`
+	PolicyCount int64  `json:"policy_count"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Revision    int64  `json:"revision"`
 }
 type AdminUser struct {
 	Account
@@ -24,8 +27,8 @@ type AdminUser struct {
 	Groups      []AdminGroup `json:"groups"`
 }
 type AdminUserQuery struct {
-	Search, Status, Role, Cursor string
-	Limit                        int
+	Search, Status, Role, Cursor, GroupID string
+	Limit                                 int
 }
 type AdminUserPage struct {
 	Users      []AdminUser `json:"users"`
@@ -125,16 +128,16 @@ func (s *Store) AdminUsers(ctx context.Context, token string, filter AdminUserQu
 	if err != nil {
 		return AdminUserPage{}, err
 	}
-	if !utf8.ValidString(filter.Search) || len(filter.Search) > 512 || strings.ContainsRune(filter.Search, 0) || filter.Status != "" && filter.Status != "active" && filter.Status != "disabled" || filter.Role != "" && filter.Role != "admin" && filter.Role != "user" {
+	if !utf8.ValidString(filter.Search) || len(filter.Search) > 512 || strings.ContainsRune(filter.Search, 0) || filter.Status != "" && filter.Status != "active" && filter.Status != "disabled" || filter.Role != "" && filter.Role != "admin" && filter.Role != "user" || filter.GroupID != "" && !validID(filter.GroupID) {
 		return AdminUserPage{}, ErrInvalid
 	}
 	filter.Search = strings.TrimSpace(filter.Search)
-	scope := cursorScope("users", []string{filter.Search, filter.Status, filter.Role})
+	scope := cursorScope("users", []string{filter.Search, filter.Status, filter.Role, filter.GroupID})
 	after, err := readAdminCursor(filter.Cursor, scope)
 	if err != nil {
 		return AdminUserPage{}, err
 	}
-	rows, err := s.reader.QueryContext(ctx, adminUserSelect+`WHERE a.id>? AND (?='' OR instr(lower(a.username),lower(?))>0 OR instr(lower(a.display_name),lower(?))>0) AND (?='' OR a.status=?) AND (?='' OR a.role=?) GROUP BY a.id ORDER BY a.id LIMIT ?`, after, filter.Search, filter.Search, filter.Search, filter.Status, filter.Status, filter.Role, filter.Role, limit+1)
+	rows, err := s.reader.QueryContext(ctx, adminUserSelect+`WHERE a.id>? AND (?='' OR instr(lower(a.username),lower(?))>0 OR instr(lower(a.display_name),lower(?))>0) AND (?='' OR a.status=?) AND (?='' OR a.role=?) AND (?='' OR EXISTS(SELECT 1 FROM account_memberships selected WHERE selected.account_id=a.id AND selected.group_id=?)) GROUP BY a.id ORDER BY a.id LIMIT ?`, after, filter.Search, filter.Search, filter.Search, filter.Status, filter.Status, filter.Role, filter.Role, filter.GroupID, filter.GroupID, limit+1)
 	if err != nil {
 		return AdminUserPage{}, err
 	}
@@ -169,7 +172,7 @@ func (s *Store) AdminGroups(ctx context.Context, token, cursor string, limit int
 	if err != nil {
 		return AdminGroupPage{}, err
 	}
-	rows, err := s.reader.QueryContext(ctx, `SELECT id,name,revision FROM account_groups WHERE id>? ORDER BY id LIMIT ?`, after, limit+1)
+	rows, err := s.reader.QueryContext(ctx, `SELECT g.id,g.name,g.revision,g.description,(SELECT count(*) FROM account_memberships WHERE group_id=g.id),(SELECT count(*) FROM group_policy_bindings WHERE group_id=g.id) FROM account_groups g WHERE g.id>? ORDER BY g.id LIMIT ?`, after, limit+1)
 	if err != nil {
 		return AdminGroupPage{}, err
 	}
@@ -177,7 +180,7 @@ func (s *Store) AdminGroups(ctx context.Context, token, cursor string, limit int
 	result := AdminGroupPage{Groups: []AdminGroup{}}
 	for rows.Next() {
 		var group AdminGroup
-		if err = rows.Scan(&group.ID, &group.Name, &group.Revision); err != nil {
+		if err = rows.Scan(&group.ID, &group.Name, &group.Revision, &group.Description, &group.MemberCount, &group.PolicyCount); err != nil {
 			return result, err
 		}
 		result.Groups = append(result.Groups, group)

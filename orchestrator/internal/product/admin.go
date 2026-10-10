@@ -78,23 +78,36 @@ func (s *Store) adminSession(ctx context.Context, q queryer, token string) (Acco
 	}
 	return session.Account, nil
 }
-func adminReceipt(ctx context.Context, q queryer, actor string, request adminRequest) (AccountMutation, bool, error) {
+func readAdminReceipt(ctx context.Context, q queryer, actor string, request adminRequest) (json.RawMessage, bool, error) {
 	var action, target, digest, raw string
 	err := q.QueryRowContext(ctx, `SELECT action,target_id,body_digest,result FROM admin_receipts WHERE actor_id=? AND request_id=?`, actor, request.ID).Scan(&action, &target, &digest, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return AccountMutation{}, false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return AccountMutation{}, false, err
+		return nil, false, err
 	}
 	if action != request.Action || target != request.Target || digest != request.Digest {
-		return AccountMutation{}, false, Admission("request_id_conflict", ErrConflict)
+		return nil, false, Admission("request_id_conflict", ErrConflict)
+	}
+	return json.RawMessage(raw), true, nil
+}
+func adminReceipt(ctx context.Context, q queryer, actor string, request adminRequest) (AccountMutation, bool, error) {
+	raw, exists, err := readAdminReceipt(ctx, q, actor, request)
+	if err != nil || !exists {
+		return AccountMutation{}, exists, err
 	}
 	var receipt adminAccountReceipt
-	if err = json.Unmarshal([]byte(raw), &receipt); err != nil {
+	if err = json.Unmarshal(raw, &receipt); err != nil {
 		return AccountMutation{}, false, err
 	}
 	return AccountMutation{adminAccountReceipt: receipt, Replayed: true}, true, nil
+}
+
+// Only explicit non-secret result projections belong in administrative receipts.
+func (s *Store) writeAdminReceipt(ctx context.Context, tx *sql.Tx, actor string, request adminRequest, raw []byte) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO admin_receipts(actor_id,request_id,action,target_id,body_digest,result,created_at) VALUES(?,?,?,?,?,?,?)`, actor, request.ID, request.Action, request.Target, request.Digest, string(raw), s.timestamp())
+	return err
 }
 func (s *Store) checkAdminReplay(ctx context.Context, token string, request adminRequest) (AccountMutation, bool, error) {
 	actor, err := s.adminSession(ctx, s.reader, token)
@@ -135,9 +148,10 @@ func (s *Store) mutateAccount(ctx context.Context, token string, request adminRe
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO admin_receipts(actor_id,request_id,action,target_id,body_digest,result,created_at) VALUES(?,?,?,?,?,?,?)`, actor.ID, request.ID, request.Action, request.Target, request.Digest, string(raw), s.timestamp()); err != nil {
+		if err = s.writeAdminReceipt(ctx, tx, actor.ID, request, raw); err != nil {
 			return err
 		}
+
 		result = AccountMutation{adminAccountReceipt: receipt}
 		return nil
 	})
@@ -233,6 +247,9 @@ func (s *Store) CreateAccount(ctx context.Context, token string, input AccountCr
 			if _, err = tx.ExecContext(ctx, `INSERT INTO account_memberships(account_id,group_id) VALUES(?,?)`, account.ID, id); err != nil {
 				return adminAccountReceipt{}, false, err
 			}
+			if _, err = tx.ExecContext(ctx, `UPDATE account_groups SET revision=revision+1,updated_at=? WHERE id=?`, s.timestamp(), id); err != nil {
+				return adminAccountReceipt{}, false, err
+			}
 		}
 		user, err := adminUser(ctx, tx, account.ID)
 		if err != nil {
@@ -276,7 +293,7 @@ func (s *Store) UpdateAccount(ctx context.Context, token, id string, input Accou
 			return adminAccountReceipt{}, false, err
 		}
 		changed := role != before.Role
-		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET display_name=?,role=?,revision=revision+1,session_revision=session_revision+?,updated_at=? WHERE id=?`, name, role, changed, s.timestamp(), id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET display_name=?,role=?,revision=revision+1,session_revision=session_revision+?,authorization_revision=authorization_revision+?,updated_at=? WHERE id=?`, name, role, changed, changed, s.timestamp(), id); err != nil {
 			return adminAccountReceipt{}, false, err
 		}
 		if changed {
@@ -366,7 +383,7 @@ func (s *Store) changeAccountStatus(ctx context.Context, token, id string, input
 		if err = protectLastAdmin(ctx, tx, before.Account, before.Role, status); err != nil {
 			return adminAccountReceipt{}, false, err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET status=?,revision=revision+1,session_revision=session_revision+1,updated_at=? WHERE id=?`, status, s.timestamp(), id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET status=?,revision=revision+1,session_revision=session_revision+1,authorization_revision=authorization_revision+1,updated_at=? WHERE id=?`, status, s.timestamp(), id); err != nil {
 			return adminAccountReceipt{}, false, err
 		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE account_id=?`, id); err != nil {

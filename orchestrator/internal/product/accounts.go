@@ -149,7 +149,7 @@ func (s *Store) RecoverAdmin(ctx context.Context, username, password string) err
 	})
 }
 func (s *Store) replaceAccountPassword(ctx context.Context, tx *sql.Tx, a Account, hash, role, status string) (Account, error) {
-	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET password_hash=?,must_change_password=1,temporary_consumed=0,temporary_expires_at=?,role=?,status=?,revision=revision+1,session_revision=session_revision+1,updated_at=? WHERE id=?`, hash, sqlitex.FormatTime(s.now().Add(24*time.Hour)), role, status, s.timestamp(), a.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET password_hash=?,must_change_password=1,temporary_consumed=0,temporary_expires_at=?,role=?,status=?,revision=revision+1,session_revision=session_revision+1,authorization_revision=authorization_revision+1,updated_at=? WHERE id=?`, hash, sqlitex.FormatTime(s.now().Add(24*time.Hour)), role, status, s.timestamp(), a.ID); err != nil {
 		return Account{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM auth_sessions WHERE account_id=?`, a.ID); err != nil {

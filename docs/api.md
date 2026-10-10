@@ -361,3 +361,33 @@ resource stop/pause reconciliation is not yet implemented. The operation remains
 `accepted`, never falsely `succeeded`. Enable restores identity only and leaves
 resource/share/schedule reactivation separate. The admin UI currently exposes
 account metadata/security and audit; suspension controls await that reconciler.
+
+## Group and policy management
+
+`GET/POST /api/admin/groups`, `GET/PATCH/DELETE /api/admin/groups/{id}` and
+`GET/POST /api/admin/policies`, `GET/PATCH/DELETE /api/admin/policies/{id}` manage
+named groups and reusable policies. Mutations carry `request_id`; existing objects
+also require `expected_revision`. Group metadata is name/description; policies
+add a `statements` map using the closed product action set and allow/deny/unset.
+Unknown actions and wildcards are rejected. A bound policy must be detached before
+deleting it.
+
+`GET/PATCH /api/admin/groups/{id}/members` lists members or applies bounded
+`add_user_ids`/`remove_user_ids` deltas (up to 100 each). Accounts may belong to at
+most 256 groups. `PUT .../policies` replaces the complete `policy_ids` list (up to
+256); an explicit empty list clears bindings. Omission does not silently clear it.
+Membership/policy mutations advance affected authorization revisions and commit
+audit plus replay receipt atomically.
+
+`GET /api/me/capabilities` returns the current account status, management role,
+authorization revision, effective actions and allow/deny provenance. Administrative
+inspection uses `GET /api/admin/users/{id}/effective-access`. These projections
+never grant resource ownership; service admission still checks stored scope.
+
+Before deleting a populated group, read `GET .../deletion-preview`. Its bounded
+user pages show before/after grants and current numeric entitlements. Delete sends
+the preview's `expected_dependencies`; a changed contributing configuration
+conflicts. Zero-member groups need only revision validation. Deletion detaches
+memberships/bindings without assigning another group or removing admin roles.
+The numeric preview currently covers group/platform values; per-user numeric
+overrides are integrated with the resource-settings implementation.

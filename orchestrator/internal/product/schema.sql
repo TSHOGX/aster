@@ -67,6 +67,7 @@ CREATE TABLE accounts (
  password_hash TEXT NOT NULL,
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
  session_revision INTEGER NOT NULL DEFAULT 1 CHECK(session_revision>0),
+ authorization_revision INTEGER NOT NULL DEFAULT 1 CHECK(authorization_revision>0),
  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
  temporary_expires_at TEXT NOT NULL DEFAULT '',
  temporary_consumed INTEGER NOT NULL DEFAULT 0 CHECK(temporary_consumed IN (0,1)),
