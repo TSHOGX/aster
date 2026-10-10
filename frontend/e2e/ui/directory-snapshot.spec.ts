@@ -46,7 +46,9 @@ test("a deep link reveals a distant filename using bounded seek windows", async 
     const url = new URL(route.request().url());
     requests.push(url);
     const start = url.searchParams.get("seek") === "around" ? 89950 : 0;
-    return route.fulfill({ json: { snapshot: "files", start, total: 100000,
+    // A fresh inventory gets a fresh snapshot ID, as the real reader does.
+    // Reusing one ID for different inventories defeats refresh coalescing.
+    return route.fulfill({ json: { snapshot: `files-${requests.length}`, start, total: 100000,
       entries: Array.from({ length: 100 }, (_, i) => ({ name: `entry-${String(start + i).padStart(5, "0")}.txt`, kind: "file", size: 4 })),
     } });
   });
