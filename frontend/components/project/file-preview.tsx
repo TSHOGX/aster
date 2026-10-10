@@ -24,19 +24,8 @@ import {
 import { PreviewStatus, previewSize } from "./preview-status";
 import { OfficePreview } from "./office-preview";
 import { validatePreview } from "@/lib/preview-preflight-client";
-const OfficeReadingPreview = dynamic(() => import("./office-reading-preview").then(module => module.OfficeReadingPreview), { ssr: false });
+import { OFFICE_LIMITS, officeKind } from "@/office/protocol";
 export function FilePreview({
-  path, href, project, validation = 0, mode = "preview", onCapabilities,
-}: {
-  path: string; href: string; project: string; validation?: number; mode?: "preview" | "source";
-  onCapabilities?: (path: string, readable: boolean, editable: boolean, rendered: boolean) => void;
-}) {
-  const kind = path.toLowerCase().split(".").pop();
-  if (kind === "docx" || kind === "xlsx")
-    return <OfficeReadingPreview key={`${project}:${path}`} project={project} path={path} href={href} kind={kind} validation={validation} />;
-  return <LocalFilePreview path={path} href={href} project={project} validation={validation} mode={mode} onCapabilities={onCapabilities} />;
-}
-function LocalFilePreview({
   path,
   href,
   project,
@@ -52,6 +41,7 @@ function LocalFilePreview({
   onCapabilities?: (path: string, readable: boolean, editable: boolean, rendered: boolean) => void;
 }) {
   const tr = useT();
+  const maxBytes = officeKind(path) ? OFFICE_LIMITS.sourceBytes : PREVIEW_LIMITS.blobBytes;
   const resources = useResources();
   const [loaded, setLoaded] = useState<PreviewRepresentation | null>(null);
   useEffect(() => {
@@ -98,7 +88,7 @@ function LocalFilePreview({
     };
     const key = { project, kind: "file" as const, identity: href };
     const prepare = async (blob: Blob) => {
-      if (blob.size > PREVIEW_LIMITS.blobBytes) throw new PreviewFailure("source_too_large", "download", { actual: blob.size, limit: PREVIEW_LIMITS.blobBytes, metric: "bytes" });
+      if (blob.size > maxBytes) throw new PreviewFailure("source_too_large", "download", { actual: blob.size, limit: maxBytes, metric: "bytes" });
       setProgress({ received: blob.size, total: blob.size });
       setPhase("preparing");
       const digest = await contentDigest(blob);
@@ -123,15 +113,13 @@ function LocalFilePreview({
             : "application/octet-stream";
       if (abort.signal.aborted) return;
       let plan;
-      if (
-        /\.(png|jpe?g|gif|pdf|pptx)$/i.test(path)
-      ) {
+      if (/\.(png|jpe?g|gif|pdf|pptx|xlsx|docx)$/i.test(path)) {
         const releaseParse = await acquirePreviewParse(abort.signal);
         let releaseBuffers = () => {};
         try {
           abort.signal.throwIfAborted();
           releaseBuffers = reservePreview(
-            blob.size + PREVIEW_LIMITS.entryBytes * 8,
+            blob.size + (officeKind(path) ? OFFICE_LIMITS.entryBytes * 2 : PREVIEW_LIMITS.entryBytes * 8),
           );
           plan = await validatePreview(blob, path, abort.signal);
         } finally {
@@ -166,7 +154,7 @@ function LocalFilePreview({
           }
         }
         if (abort.signal.aborted) return;
-        const blob = await resources.read(key, signal => readPreview(href, signal, PREVIEW_LIMITS.blobBytes, (received, total) => {
+        const blob = await resources.read(key, signal => readPreview(href, signal, maxBytes, (received, total) => {
           if (!abort.signal.aborted) setProgress({ received, total });
         }), abort.signal, 0);
         if (abort.signal.aborted) return;
@@ -196,7 +184,7 @@ function LocalFilePreview({
     return () => {
       abort.abort();
     };
-  }, [href, path, validation, resources, project, tr, retry]);
+  }, [href, path, validation, resources, project, tr, retry, maxBytes]);
   const restart = () => {
     userCanceled.current = false;
     setError("");
@@ -205,9 +193,9 @@ function LocalFilePreview({
     setRetry(n => n + 1);
   };
   if (error && !loaded)
-    return <PreviewStatus path={path} href={href} title={errorTitle} description={error} size={progress.total} onRetry={retryable ? restart : undefined} />;
+    return <PreviewStatus maxBytes={maxBytes} path={path} href={href} title={errorTitle} description={error} size={progress.total} onRetry={retryable ? restart : undefined} />;
   if (!loaded)
-    return <PreviewStatus path={path} href={href}
+    return <PreviewStatus maxBytes={maxBytes} path={path} href={href}
       title={tr(phase === "canceled" ? "Preview canceled." : phase === "preparing" ? "Preparing preview…" : "Loading preview…")}
       description={tr(phase === "canceled" ? "You can try again or download the original file." : "Larger files may take a moment. You can keep working while the preview loads.")}
       loading={phase !== "canceled"} size={progress.total} progress={phase === "loading" ? progress : undefined}
@@ -242,6 +230,7 @@ function previewFailureMessage(error: PreviewFailure, tr: ReturnType<typeof useT
     });
     case "resource_busy": return tr("Preview resources are busy. Try again in a moment.");
     case "parse_timeout": return tr("Preparing this preview took too long. Retry or download the file.");
+    case "viewer_load_failed": return tr("The Office viewer could not load. Retry or download the file.");
     case "renderer_failed": return tr("The preview renderer stopped. Retry or download the file.");
   }
 }
@@ -276,11 +265,12 @@ function PreviewContent({
         />
       </div>
     );
-  if (kind.kind === "presentation")
+  const visual = officeKind(path);
+  if (visual && loaded.plan)
     return (
       <OfficePreview
         representation={loaded}
-        kind={kind.kind}
+        kind={visual}
         path={path}
         href={href}
       />

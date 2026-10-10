@@ -1,4 +1,5 @@
 import { PreviewFailure, previewFailureFromWire, reservePreview } from "./preview-budget";
+import { OFFICE_LIMITS, officeKind } from "../office/protocol";
 import type { PreviewPlan } from "./preview-preflight";
 
 /** A single admitted validation transfers its buffer and owns a terminable Worker. */
@@ -34,7 +35,7 @@ export async function validatePreview(
       else reject(error ?? new PreviewFailure("renderer_failed", "parse", { retryable: true }));
     };
     const abort = () => finish(undefined, signal.reason);
-    const timer = setTimeout(() => finish(undefined, new PreviewFailure("parse_timeout", "parse", { retryable: true })), 10_000);
+    const timer = setTimeout(() => finish(undefined, new PreviewFailure("parse_timeout", "parse", { retryable: true })), officeKind(path) ? OFFICE_LIMITS.inspectMs : 10_000);
     signal.addEventListener("abort", abort, { once: true });
     worker.onmessage = (event: MessageEvent<{ plan?: PreviewPlan; failure?: unknown }>) =>
       finish(event.data.plan, event.data.failure ? previewFailureFromWire(event.data.failure) : undefined);

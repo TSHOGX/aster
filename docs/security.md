@@ -40,18 +40,15 @@ admission reopens. Candidate startup checks the accepted policy revision during
 owner handoff independently of fixed release compatibility.
 
 Frontend Markdown does not enable raw HTML. File responses use restricted preview
-headers and the browser uses bounded fetched blobs. DOCX/XLSX parsing runs in a
-private Linux namespace worker with networking disabled, CPU/address-space/file
-limits, bounded scratch storage, and no application/Agent authority. ZIP CRC,
-expanded lengths, entry paths/duplicates, XML entities/depth, model records and
-output bytes are checked before derived content becomes readable. Every derived
-window and public-share access reauthorizes its source scope. Presentations use a
-separate opaque-origin browser renderer with `sandbox="allow-scripts"`. The
-presentation page CSP blocks networking, forms, nested frames, and objects;
-only static application assets and embedded images/fonts are admitted. Parent
-and child exchange validated content, theme and bounded position messages using
-the expected window identity; neither side reads the other's DOM or storage.
-Public static assets expose CORS for the opaque renderer, never API responses.
+headers and the browser uses bounded fetched blobs. All Office formats use an
+opaque-origin visual renderer with `sandbox="allow-scripts"`. A cancellable Worker
+checks ZIP CRC, actual expansion, duplicate paths, XML entities/depth, coordinates
+and pixels before engine import. The static viewer has no application bootstrap,
+API credentials or storage access. Its CSP blocks HTTP connections, forms,
+nested frames and objects; blob connections support the pinned Excel engine's
+internal byte loading. Parent/child messages validate window, origin, protocol
+and per-frame token. Public viewer assets expose CORS, never API responses.
+Browser iframe execution is not a hard CPU/RSS isolation boundary.
 HTML previews
 use a separate opaque-origin iframe with an empty `sandbox` and no
 same-origin, popup, form or top-navigation permission. A leading CSP allows only

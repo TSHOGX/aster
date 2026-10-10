@@ -1,4 +1,5 @@
 import { SaxesParser } from "saxes";
+import { OFFICE_LIMITS, officeKind } from "../office/protocol";
 import { PREVIEW_LIMITS as LIMIT, PreviewFailure } from "./preview-budget";
 
 export type PreviewPlan = {
@@ -9,6 +10,7 @@ export type PreviewPlan = {
   cells: number;
   rows: number;
   slides: number;
+  charts?: number;
 };
 function requireLimit(valid: boolean): asserts valid {
   if (!valid) throw new PreviewFailure("container_invalid", "container");
@@ -139,7 +141,7 @@ function zipEntries(bytes: Uint8Array): Entry[] {
       count > 0 &&
       start + view.getUint32(end + 12, true) === end,
   );
-  requireCapacity(count, LIMIT.entries, "entries");
+  requireCapacity(count, OFFICE_LIMITS.entries, "entries");
   const entries: Entry[] = [],
     names = new Set<string>();
   let offset = start,
@@ -167,7 +169,7 @@ function zipEntries(bytes: Uint8Array): Entry[] {
         [0, 8].includes(method) &&
         local + 30 <= start,
     );
-    requireCapacity(size, LIMIT.entryBytes, "bytes");
+    requireCapacity(size, OFFICE_LIMITS.entryBytes, "bytes");
     const name = decoder.decode(
       bytes.subarray(offset + 46, offset + 46 + nameLength),
     );
@@ -197,7 +199,7 @@ function zipEntries(bytes: Uint8Array): Entry[] {
           view.getUint32(local + 22, true) === size,
       );
     expanded += size;
-    requireCapacity(expanded, LIMIT.expandedBytes, "bytes");
+    requireCapacity(expanded, OFFICE_LIMITS.expandedBytes, "bytes");
     entries.push({
       name,
       size,
@@ -265,8 +267,9 @@ export async function preflightPreview(
   signal: AbortSignal,
   nested = false,
 ): Promise<PreviewPlan> {
-  if (blob.size > LIMIT.blobBytes)
-    throw new PreviewFailure("source_too_large", "download", { actual: blob.size, limit: LIMIT.blobBytes, metric: "bytes" });
+  const maxBytes = officeKind(path) ? OFFICE_LIMITS.sourceBytes : LIMIT.blobBytes;
+  if (blob.size > maxBytes)
+    throw new PreviewFailure("source_too_large", "download", { actual: blob.size, limit: maxBytes, metric: "bytes" });
   return preflightBytes(
     new Uint8Array(await blob.arrayBuffer()),
     path,
@@ -280,8 +283,9 @@ export async function preflightBytes(
   signal: AbortSignal,
   nested = false,
 ): Promise<PreviewPlan> {
-  if (bytes.length > LIMIT.blobBytes)
-    throw new PreviewFailure("source_too_large", "download", { actual: bytes.length, limit: LIMIT.blobBytes, metric: "bytes" });
+  const maxBytes = officeKind(path) ? OFFICE_LIMITS.sourceBytes : LIMIT.blobBytes;
+  if (bytes.length > maxBytes)
+    throw new PreviewFailure("source_too_large", "download", { actual: bytes.length, limit: maxBytes, metric: "bytes" });
   signal.throwIfAborted();
   const ext = path.toLowerCase().split(".").pop();
   if (ext === "pdf") {
@@ -301,16 +305,17 @@ export async function preflightBytes(
       slides: 0,
     };
   }
-  if (ext !== "pptx" && !(nested && ext === "xlsx"))
+  if (!["pptx", "xlsx", "docx"].includes(ext || "") && !(nested && ext === "xlsx"))
     throw new PreviewFailure("unsupported_feature", "parse");
   const entries = zipEntries(bytes);
   requireLimit(
     entries.some(
       (e) =>
-        e.name ===
-        (ext === "xlsx"
+        e.name === (ext === "xlsx"
           ? "xl/workbook.xml"
-          : "ppt/presentation.xml"),
+          : ext === "docx"
+            ? "word/document.xml"
+            : "ppt/presentation.xml"),
     ),
   );
   let nodes = 0,
@@ -318,7 +323,7 @@ export async function preflightBytes(
     expandedBytes = 0,
     cells = 0,
     rows = 0;
-  requireCapacity(entries.filter((e) => /^xl\/worksheets\/[^/]+\.xml$/.test(e.name)).length, LIMIT.sheets, "entries");
+  requireCapacity(entries.filter((e) => /^xl\/worksheets\/[^/]+\.xml$/.test(e.name)).length, 64, "entries");
   const slides = entries.filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.name)).length;
   for (const entry of entries) {
     const data = await expand(bytes, entry, signal);
@@ -339,20 +344,21 @@ export async function preflightBytes(
         throw new PreviewFailure("container_invalid", "parse");
       });
       parser.on("opentag", (element) => {
-        requireCapacity(++nodes, LIMIT.xmlNodes, "nodes");
+        requireCapacity(++nodes, OFFICE_LIMITS.xmlNodes, "nodes");
         requireLimit(++depth <= LIMIT.xmlDepth);
         const tag = element.local;
+        if (["altChunk", "OLEObject"].includes(tag)) throw new PreviewFailure("unsupported_feature", "parse");
         const attr = (name: string) => element.attributes[name]?.value || "";
         if (element.uri === sheet) {
-          if (tag === "c") requireCapacity(++cells, LIMIT.cells, "cells");
+          if (tag === "c") requireCapacity(++cells, OFFICE_LIMITS.cells, "cells");
           if (tag === "row") {
-            requireCapacity(++rows, LIMIT.rows, "rows");
-            requireCapacity(Number(attr("r") || 0), LIMIT.rows, "rows");
+            requireCapacity(++rows, 1_048_576, "rows");
+            requireCapacity(Number(attr("r") || 0), 1_048_576, "rows");
           }
           if (tag === "col") {
             requireLimit(Number(attr("min")) >= 1 && Number.isSafeInteger(Number(attr("max"))) &&
               Number(attr("max")) >= Number(attr("min")) && Number(attr("width") || 0) <= 256);
-            requireCapacity(Number(attr("max")), LIMIT.columns, "columns");
+            requireCapacity(Number(attr("max")), 16_384, "columns");
           }
           if (
             tag === "c" ||
@@ -367,9 +373,8 @@ export async function preflightBytes(
               let column = 0;
               for (const char of match[1])
                 column = column * 26 + char.charCodeAt(0) - 64;
-              requireCapacity(column, LIMIT.columns, "columns");
-              requireCapacity(Number(match[2]), LIMIT.rows, "rows");
-              requireCapacity(column * Number(match[2]), LIMIT.cells, "cells");
+              requireCapacity(column, 16_384, "columns");
+              requireCapacity(Number(match[2]), 1_048_576, "rows");
             }
           }
         }
@@ -384,7 +389,7 @@ export async function preflightBytes(
       });
       parser.write(xml).close();
     } else if (
-      /^(ppt|xl)\/printerSettings\/printerSettings\d+\.bin$/.test(entry.name)
+      /^(ppt|xl|word)\/printerSettings\/printerSettings\d+\.bin$/.test(entry.name)
     ) {
       // Bounded opaque printer metadata is not used by the preview libraries.
       continue;
@@ -395,11 +400,11 @@ export async function preflightBytes(
       expandedBytes += embedded.expandedBytes;
       cells += embedded.cells;
       rows += embedded.rows;
-      requireLimit(cells <= LIMIT.cells && rows <= LIMIT.rows);
+      requireLimit(cells <= OFFICE_LIMITS.cells && rows <= 1_048_576);
       requireLimit(
-        nodes <= LIMIT.xmlNodes &&
+        nodes <= OFFICE_LIMITS.xmlNodes &&
           pixels <= LIMIT.totalPixels &&
-          expandedBytes <= LIMIT.expandedBytes,
+          expandedBytes <= OFFICE_LIMITS.expandedBytes,
       );
     } else if (/\/media\//.test(entry.name)) {
       pixels += imagePixels(data);
@@ -407,13 +412,13 @@ export async function preflightBytes(
     } else {
       // Thumbnails are decoded only after the same pixel checks. Nested archives,
       // OLE objects, macros and fonts need a separately qualified adapter.
-      requireLimit(/\.(png|jpe?g|gif)$/.test(entry.name));
+      if (!/\.(png|jpe?g|gif)$/.test(entry.name)) throw new PreviewFailure("unsupported_feature", "parse");
       pixels += imagePixels(data);
       requireLimit(pixels <= LIMIT.totalPixels);
     }
   }
   const renderBytes =
     expandedBytes * 4 + nodes * 128 + cells * 256 + pixels * 4;
-  requireCapacity(renderBytes, LIMIT.renderBytes, "bytes");
-  return { renderBytes, expandedBytes, nodes, pixels, cells, rows, slides };
+  requireCapacity(renderBytes, OFFICE_LIMITS.renderBytes, "bytes");
+  return { renderBytes, expandedBytes, nodes, pixels, cells, rows, slides, charts: entries.filter(e => /^xl\/charts\/chart\d+\.xml$/.test(e.name)).length };
 }

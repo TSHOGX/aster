@@ -40,35 +40,31 @@ for (const cpuRate of [1, 4]) {
           await expect(link).toBeVisible();
           const cdp = await context.newCDPSession(page);
           await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuRate });
-          await page.evaluate(name => {
+          await page.evaluate(() => {
             Reflect.set(window, "officeUsefulMS", -1);
             Reflect.get(window, "officeLatencyTasks").length = 0;
             document.addEventListener("pointerdown", () => {
               const started = performance.now();
               const inspect = () => {
-                const frame = document.querySelector<HTMLIFrameElement>(".office-frame");
-                const doc = frame?.contentDocument;
-                const content = name.endsWith("pptx") ? doc?.body?.textContent?.includes("Measured slide 0")
-                  : document.querySelector(".office-reading-viewport")?.textContent?.includes(name.endsWith("docx") ? "Paragraph 0" : "Cell 0:0");
+                const content = document.querySelector('.office-preview')?.getAttribute('data-preview-phase') === 'ready';
                 if (content && document.querySelector('[data-preview-phase="ready"]')) {
                   Reflect.set(window, "officeUsefulMS", performance.now() - started);
                 } else if (performance.now() - started < 20000) requestAnimationFrame(inspect);
               };
               requestAnimationFrame(inspect);
             }, { once: true, capture: true });
-          }, name);
+          });
           await link.click();
           await expect.poll(() => page.evaluate(() => Reflect.get(window, "officeUsefulMS") as number), { timeout: 21000 }).toBeGreaterThanOrEqual(0);
           const value = await page.evaluate(() => Reflect.get(window, "officeUsefulMS") as number);
           if (trial >= 0) {
             samples.push(value);
             tasks.push(await page.evaluate(() => {
-              const frame = document.querySelector<HTMLIFrameElement>(".office-frame");
-              return { parent: Reflect.get(window, "officeLatencyTasks"), renderer: frame?.contentWindow ? Reflect.get(frame.contentWindow, "officeLatencyTasks") : [] };
+              return { parent: Reflect.get(window, "officeLatencyTasks"), renderer: "opaque viewer; profile with browser tools" };
             }));
           }
         } catch (error) {
-          failures.push({ trial, error: String(error), observation: await page.evaluate(() => ({ phase: document.querySelector(".office-preview")?.getAttribute("data-preview-phase"), frames: document.querySelectorAll(".office-frame").length, frameTextBytes: document.querySelector<HTMLIFrameElement>(".office-frame")?.contentDocument?.body?.textContent?.length, status: document.querySelector(".selected-file")?.textContent, timing: Reflect.get(window, "officeUsefulMS") })) });
+          failures.push({ trial, error: String(error), observation: await page.evaluate(() => ({ phase: document.querySelector(".office-preview")?.getAttribute("data-preview-phase"), frames: document.querySelectorAll(".office-frame").length, status: document.querySelector(".selected-file")?.textContent, timing: Reflect.get(window, "officeUsefulMS") })) });
           throw error;
         } finally {
           save();

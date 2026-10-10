@@ -36,12 +36,14 @@ volume APIs without activating compute. A warmed Project reader remains reusable
 without turning each read into a mutation ledger.
 
 Preview ranges use immutable snapshot leases so one version is captured/hashed
-once. DOCX/XLSX indexes run in independent constrained processes; browser DOM
-scales with visible records/columns. Admission reserves source/output bytes
-against a 512 MiB aggregate derived-job quota, independent of download and browser
-reservations. Counters and lifecycle tests do not measure actual RSS; inspect
-process/heap trends and cancellation on the target device. HTTP metrics label
-snapshot/job requests as `preview` without paths, tokens, or source bodies.
+once. Office visual engines share one content/inspection/iframe lifecycle for
+small and large files, with separate source, decompression, structure, time and
+working-set admission. The spreadsheet engine paints a canvas and presentations
+mount one slide. The initial Word engine still lays out the whole document;
+large Word DOM/RSS is a limitation rather than a virtualization guarantee.
+See the [preview contract](file-preview/README.md) for measured workloads and
+future engine replacement boundaries. Reservation counters are not actual heap
+measurements. Snapshot HTTP metrics do not include paths, tokens or source bodies.
 
 ## Measurement
 

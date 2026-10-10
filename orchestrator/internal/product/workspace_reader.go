@@ -71,15 +71,8 @@ func (f *Files) Capture(ctx context.Context, scope Scope, path string) (*Capture
 	return f.workspaceReader().Capture(ctx, scope, path)
 }
 func (f *Files) Close() error {
-	if f.previewJobs != nil {
-		f.previewJobs.Close()
-	}
 	f.PreviewSnapshots().Close()
 	return f.workspaceReader().Close()
-}
-func (f *Files) PreviewJobs(worker, directory string) *PreviewJobs {
-	f.previewJobsOnce.Do(func() { f.previewJobs = &PreviewJobs{Files: f, Worker: worker, Directory: directory} })
-	return f.previewJobs
 }
 
 type WorkspaceReadStats struct {

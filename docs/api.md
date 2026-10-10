@@ -22,7 +22,6 @@ Resource paths below use stored Project and child identities.
 | `…/terminals/{terminal}/start`, `/stop`, `/attach` | Start, stop and WebSocket observation |
 | `…/files`, `/files/content`, `/files/operations/{operation}` | Directory pages, mutations, streaming content and outcome inspection |
 | `…/files/snapshots`, `/files/snapshots/{snapshot}/content`, `/files/snapshots/{snapshot}` | Acquire an immutable source lease, read/range its bytes, and release it |
-| `…/files/previews`, `/files/previews/{preview}`, `/window`, `/find` | Acquire a derived reading lease, inspect status, query windows/find, and release with DELETE |
 | `…/schedules`, `/schedules/{schedule}`, `/run`, `/runs` | Project schedules and their run ledger |
 | `…/sessions/{session}/readers` | Grant/revoke conversation readers |
 | `…/sessions/{session}/shares`, `…/shares/{share}`, `…/shares/{share}/rotate` | Freeze, revoke and rotate public shares |
@@ -67,20 +66,8 @@ handles return `410 snapshot_expired` and oversized sources return
 `413 source_too_large`. See [preview contract](file-preview/README.md) for quotas
 and lifecycle behavior.
 
-Office reading uses `GET …/files/previews?path=RELATIVE_PATH&kind=docx|xlsx&max_bytes=N`.
-Status contains `id`, immutable `digest`, `state` (`indexing`, `ready`, `failed`),
-and a complete model manifest or bounded `failure` code. Poll `GET …/files/previews/{id}`;
-read `/window?sheet=0&start=0&limit=100` (optional `from_column` and up to 64
-`columns` for sparse tiles), find `/find?sheet=0&start=0&q=TEXT`, or
-copy `/copy?sheet=0&start=0&end=99&from_column=0&to_column=11`. Window records use
-zero-based model positions, source `digest`, and original worksheet row coordinates.
-`/locate?sheet=0&row=1000` finds a model position for a natural worksheet row.
-Responses cap 2 MiB and retain a reliable total even when the returned range is
-shorter than the requested transport window. Copy caps
-1,000 records, 256 columns and 1 MiB. `DELETE …/files/previews/{id}` releases the
-consumer. Public frozen shares use the same suffixes under `/api/shared/{token}`
-and revalidate that share on every operation. Revocation/rotation denies old job
-handles immediately. No job opens arbitrary paths outside its original source.
+Office visual previews use the existing authorized content endpoint. No Office
+job, window or copy API is required. See the [preview contract](file-preview/README.md).
 
 File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
 Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase

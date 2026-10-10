@@ -55,7 +55,7 @@ const check = (entries: Parameters<typeof zipFixture>[0]) =>
     new AbortController().signal,
     true,
   );
-it("validates actual cells and rejects sparse dimensions that would allocate huge grids", async () => {
+it("validates actual cells and checks spreadsheet coordinates separately from populated-cell budgets", async () => {
   const base = { name: "xl/workbook.xml", text: workbook };
   await expect(
     check([
@@ -68,7 +68,7 @@ it("validates actual cells and rejects sparse dimensions that would allocate hug
       },
     ]),
   ).resolves.toMatchObject({ cells: 1, rows: 1 });
-  for (const reference of ["A1:XFD1048576", "A1:IW1", "A1:A2001"]) {
+  for (const reference of ["A1:XFE1", "A1:A1048577"]) {
     await expect(
       check([
         base,
@@ -111,7 +111,7 @@ it("rejects ambiguous names, excessive entries and external embedded content", a
   await expect(
     check([
       base,
-      ...Array.from({ length: 1024 }, (_, i) => ({
+      ...Array.from({ length: 4096 }, (_, i) => ({
         name: `f${i}.xml`,
         text: "<a/>",
       })),
@@ -142,7 +142,8 @@ it("accepts legal deflate options and UTF-16 embedded workbook XML", async () =>
   ]);
   await expect(preflightBytes(new Uint8Array(archive), "test.xlsx", new AbortController().signal, true))
     .resolves.toMatchObject({ cells: 0 });
-  for(const path of ["test.xlsx","test.docx"])await expect(preflightPreview(new Blob([new Uint8Array(archive)]),path,new AbortController().signal)).rejects.toMatchObject({code:"unsupported_feature"});
+  await expect(preflightPreview(new Blob([new Uint8Array(archive)]), "test.xlsx", new AbortController().signal)).resolves.toMatchObject({ cells: 0 });
+  await expect(preflightPreview(new Blob([new Uint8Array(archive)]), "test.docx", new AbortController().signal)).rejects.toMatchObject({code:"container_invalid"});
 });
 it("admits larger Office XML entries while retaining structural limits", async () => {
   await expect(check([{ name: "xl/workbook.xml", text: workbook.replace("/>", ">" + " ".repeat(5 * 1024 * 1024) + "</workbook>") }])).resolves.toMatchObject({ cells: 0 });

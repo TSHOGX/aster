@@ -48,14 +48,12 @@ UI setup regenerates bounded synthetic Office documents from
 `frontend/e2e/requirements.txt`; accessibility and replacement tests run by
 default. `PYTHON` can select an existing fixture virtualenv interpreter.
 The synthetic corpus includes 41 and 200 slide presentations, 15,599 Word
-paragraphs with a 3,000-by-5 table, and 22,962-by-12 spreadsheets. UI setup builds
-the actual preview worker and derives SQLite fixtures from these documents.
-`office-reading.spec.ts` checks end reachability, find, bounded DOM, mobile fit,
-and lease cleanup. `PREVIEW_TEST_WORKER=/absolute/path/to/preview-worker go test
-./internal/product -run TestPreviewJobs` exercises the real Linux process sandbox,
-deduplication, range windows, share revocation and cleanup; it requires `bwrap`
-and `prlimit` and runs in `scripts/check.sh backend`. Frontend fixture derivation
-requires the Go toolchain as well as Python. The 50-cycle lifecycle profile is
+paragraphs with a 3,000-by-5 table, and 22,962-by-12 spreadsheets.
+`office-visual.spec.ts` exercises real file bytes, visual engines, mobile fit,
+large files and authority revocation. No Go parser or mocked reading index is
+used by the UI fixture. `playwright.office.config.ts` runs the visual corpus in
+Chromium, Firefox and WebKit.
+The 50-cycle lifecycle profile is
 explicitly enabled with `PREVIEW_PROFILE_OUTPUT`; it checks heap/DOM/listener/
 frame/URL trends rather than interpreting reservations as measured memory.
 Run

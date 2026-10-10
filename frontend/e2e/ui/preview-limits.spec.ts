@@ -12,7 +12,7 @@ for (const [name, data] of [
       },
       {
         name: "xl/worksheets/sheet1.xml",
-        text: '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:XFD1048576"/></worksheet>',
+        text: '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:XFE1048577"/></worksheet>',
       },
     ]),
   ],
@@ -34,14 +34,13 @@ for (const [name, data] of [
     await page.route("**/files/content?*", (route) =>
       route.fulfill({ body: data }),
     );
-    if (name.endsWith("docx") || name.endsWith("xlsx")) await page.route("**/files/previews?*",route=>route.fulfill({json:{id:"failed",digest:"fixture",state:"failed",failure:name==="dimensions.xlsx"?"content_limit":"container_invalid"}}));
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/?project=battery&session=analysis");
     await page.getByRole("link", { name: "Document", exact: true }).click();
     const expected = name === "unknown.xls" ? "This format is not supported"
       : name === "malformed.pptx" || name === "expansion.docx" ? "damaged or has an invalid structure"
-      : "supported content limits";
+      : "than this preview can process";
     await expect(page.getByRole("region", { name: `File ${name}`, exact: true }).getByRole("status"))
       .toContainText(expected, { timeout: 5000 });
     await expect(

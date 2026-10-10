@@ -227,7 +227,6 @@ func (a *Application) controlHandler() http.Handler {
 		if a.Files != nil {
 			out["workspace_reads"] = a.Files.ReadStats()
 			out["preview_sources"] = a.Files.PreviewSnapshots().Stats()
-			out["preview_jobs"] = a.Files.PreviewJobs("", "").Stats()
 		}
 		writeControl(w, out)
 	})

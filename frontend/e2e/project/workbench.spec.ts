@@ -262,17 +262,17 @@ test("Project agents, retained terminals and Files through the Go edge", async (
       .getByRole("button", { name: new RegExp(file) })
       .first()
       .click();
-    const preview = page.locator(file.endsWith("pptx") ? ".office-preview" : ".office-reading-preview");
+    const preview = page.locator(".office-preview");
     await expect(preview).toBeVisible();
     await expect(preview).toHaveAttribute("data-preview-phase", "ready", {
       timeout: 15000,
     });
-    const content = file.endsWith("pptx") ? page
+    const content = page
       .frameLocator(".office-frame")
-      .locator(".office-frame-content") : page.locator(".office-reading-viewport");
+      .locator(".office-frame-content");
     if (text) await expect(content).toContainText(text, { timeout: 15000 });
     else {
-      for (const value of ["Sample", "Capacity", "100", "95"]) await expect(content).toContainText(value);
+      await expect(content.locator("canvas").first()).toBeVisible();
     }
     await page
       .getByRole("button", { name: "File actions", exact: true })

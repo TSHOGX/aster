@@ -72,7 +72,7 @@ Workspace links reveal ancestor directories; on mobile the tree folds away after
 selection. Files support watches, upload, download, mutation, text editing and
 bounded Markdown, HTML, CSV/TSV, JSON, code, PNG/JPEG/static GIF, XLSX,
 DOCX, PPTX and native browser PDF previews. Browser source/media reads allow up to
-20 MiB; isolated DOCX/XLSX jobs admit up to 100 MiB with separate structural limits.
+20 MiB for ordinary local previews; visual Office admits up to 100 MiB with separate structural limits.
 Read-only source uses one continuous CodeMirror viewport with line numbers, find,
 jump-to-line and model-backed selection/copy. XML and YAML use lazy grammars for
 small files and a line-state index with visible-token rendering above 1 MiB;
@@ -84,32 +84,11 @@ eligibility does not depend on the 1 MiB editing limit. Loading states show
 file details and transfer progress when available, with cancel/retry/download
 actions. Oversized files identify the 20 MB limit separately from content or
 format limitations. Other formats (including legacy XLS and SVG) remain
-downloadable. DOCX and XLSX use isolated server-derived reading indexes: complete
-text and sparse data, continuous windows, outline/sheet navigation, find, selected
-text, and bounded cross-window copy. Layout, images and drawings are explicitly
-simplified; saved spreadsheet values are shown without recalculation. Jobs admit
-sources through 100 MiB with independent ZIP/XML/model/process limits. Presentation
-bytes pass bounded format validation in a cancellable browser Worker before rendering.
-Its renderer owns a disposable browser document; the old document stays readable
-until its prepared replacement is ready. Cancel, timeout and explicit retry keep
-that displayed version. Frame removal releases the renderer's URLs and global
-handlers. Presentation controls support keyboard navigation, localized labels,
-direct slide jumps, reading-position restoration, theme updates and Escape back
-to the workspace. Simple presentations with 200 slides can reach the final slide;
-ZIP expansion, XML, image and renderer budgets still apply independently of
-the slide count.
-Markdown, HTML, CSV/TSV and JSON expose a keyboard-accessible Preview/Source
-control when both modes are available. Switching uses the same captured bytes
-without fetching again. HTML renders statically in an opaque-origin sandbox:
-self-contained styles and embedded images work; scripts, remote dependencies,
-network APIs, forms and application access are blocked. A Worker inspects the
-structure first. Node-heavy documents use an explicitly simplified text-block
-representation with coverage, while Source retains the entire document. Script
-content has a Download action for interaction outside the browser preview.
-CSV/TSV previews preserve quoted delimiters and multiline cells, show 100 rows
-per page, and bound parsing to 2,000 rows, 256 columns and 20,000 cells. Truncation
-is explicit; Source and Download retain the complete input. JSON Preview formats
-valid JSON; Source retains its original whitespace.
+downloadable. DOCX, XLSX and PPTX use a single visual preview architecture for all
+admitted sizes. A separately built static sandbox hosts format-specific engines;
+there is no self-built reading model or small/large renderer split. Office source
+admission is 100 MiB with independent container and working-set limits. See the
+[preview contract](file-preview/README.md) for engines, deadlines and limitations.
 
 The file menu offers Edit text only after validating a supported text file
 of at most 1 MiB, with no NUL bytes. Binary, unsupported and oversized inputs have

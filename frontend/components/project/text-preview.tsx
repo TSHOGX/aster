@@ -1,6 +1,5 @@
 "use client";
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { classifyArtifact } from "@/lib/mime";
 import { parseDelimited } from "@/lib/file-view";
 import { isNumericText } from "@/lib/table-cells";
@@ -19,32 +18,32 @@ export function TextPreview({path, text, href}: {path: string; text: string; hre
 
 function DelimitedPreview({path, text, delimiter}: {path: string; text: string; delimiter: "," | "\t"}) {
   const tr = useT();
-  const [page, setPage] = useState(0);
+  const [limit, setLimit] = useState(100);
   const parsed = useMemo(() => {
     try { return parseDelimited(text, delimiter); } catch { return null; }
   }, [text, delimiter]);
   if (!parsed) return <p className="notice">{tr("This table could not be formatted. Choose Source to view the original text.")}</p>;
   if (!parsed.rows.length) return <p className="notice">{tr("This file is empty.")}</p>;
   const columns = Math.max(...parsed.rows.map(row => row.length));
-  const pages = Math.ceil(parsed.rows.length / 100);
   return <div className="delimited-preview">
     <div className="table-summary">
+      <span>{tr("Table")}</span>
       <span>{tr("{rows} rows · {columns} columns", {rows:parsed.rows.length, columns})}</span>
-      {pages > 1 && <div className="table-pagination">
-        <button aria-label={tr("Previous rows")} disabled={page === 0} onClick={() => setPage(n => n - 1)}><ChevronLeft size={15} /></button>
-        <span>{page + 1} / {pages}</span>
-        <button aria-label={tr("Next rows")} disabled={page + 1 === pages} onClick={() => setPage(n => n + 1)}><ChevronRight size={15} /></button>
-      </div>}
     </div>
-    {parsed.truncated && <p className="list-hint" role="status">{tr("Showing the first part of this table. Source and Download contain the complete file.")}</p>}
-    <div className="delimited-scroll" tabIndex={0} role="region" aria-label={`${tr("Table")} ${path}`}>
+    {parsed.truncated && <p className="list-hint" role="status">{tr("This table is larger than the in-app preview. Source and Download contain the complete file.")}</p>}
+    <div className="delimited-scroll" tabIndex={0} role="region" aria-label={`${tr("Table")} ${path}`} onScroll={event => {
+      const node = event.currentTarget;
+      if (node.scrollTop + node.clientHeight > node.scrollHeight - 240)
+        setLimit(value => Math.min(parsed.rows.length, value + 100));
+    }}>
       <table><caption className="sr-only">{path}</caption>
         <thead><tr><th aria-label={tr("Row")} />{Array.from({length:columns}, (_, i) => <th key={i} scope="col">{i + 1}</th>)}</tr></thead>
-        <tbody>{parsed.rows.slice(page * 100, (page + 1) * 100).map((row, i) => <tr key={i}>
-          <th scope="row">{page * 100 + i + 1}</th>
+        <tbody>{parsed.rows.slice(0, limit).map((row, i) => <tr key={i}>
+          <th scope="row">{i + 1}</th>
           {Array.from({length:columns}, (_, j) => <td key={j} data-numeric={isNumericText(row[j] ?? "")} title={row[j]}>{row[j] ?? ""}</td>)}
         </tr>)}</tbody>
       </table>
+      {limit < parsed.rows.length && <p className="table-load-status" role="status">{tr("Scroll to load more rows")}</p>}
     </div>
   </div>;
 }

@@ -19,7 +19,7 @@ for (const action of ["cancel", "timeout"]) {
     const gate = new Promise<void>((resolve) => {
       resume = resolve;
     });
-    await page.route("**/preview/office", async (route) => {
+    await page.route("**/office/*/presentation.html", async (route) => {
       if (++loads === 2) await gate;
       await route.continue().catch(() => {});
     });
@@ -52,7 +52,7 @@ for (const action of ["cancel", "timeout"]) {
     await expect(page.locator(".office-preview")).toHaveAttribute(
       "data-preview-phase",
       action === "cancel" ? "canceled" : "failed",
-      { timeout: 20000 },
+      { timeout: 35000 },
     );
     await expect(page.locator(".office-frame[data-original]")).toBeVisible();
     await expect(page.locator(".office-frame")).toHaveCount(1);
@@ -89,7 +89,7 @@ for (const ext of ["pptx"]) {
       reads++;
       return route.fulfill({ body });
     });
-    await page.route("**/preview/office", async (route) => {
+    await page.route("**/office/*/presentation.html", async (route) => {
       if (++frameLoads === 2) await gate;
       await route.continue().catch(() => {});
     });
@@ -191,7 +191,7 @@ test("a superseded frame request cannot replace a later text selection", async (
   const gate = new Promise<void>((resolve) => {
     resume = resolve;
   });
-  await page.route("**/preview/office", async (route) => {
+  await page.route("**/office/*/presentation.html", async (route) => {
     requested = true;
     await gate;
     await route.continue().catch(() => {});

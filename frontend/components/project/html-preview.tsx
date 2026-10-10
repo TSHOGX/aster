@@ -12,6 +12,7 @@ export function HTMLPreview({ text, path, href }: { text: string; path: string; 
   const [model, setModel] = useState<HtmlPreviewModel | null>(null);
   const [failed, setFailed] = useState(false);
   const [admitted, setAdmitted] = useState(false);
+  const [shownBlocks, setShownBlocks] = useState(0);
   useEffect(() => {
     let disposed = false;
     let release = () => {};
@@ -44,6 +45,12 @@ export function HTMLPreview({ text, path, href }: { text: string; path: string; 
     catch { queueMicrotask(() => setFailed(true)); }
     return release;
   }, [model]);
+  useEffect(() => {
+    if (!model?.simplified) return;
+    const initial = window.setTimeout(() => setShownBlocks(Math.min(120, model.blocks.length)), 0);
+    const timer = window.setInterval(() => setShownBlocks(value => Math.min(model.blocks.length, value + 120)), 40);
+    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+  }, [model]);
   if (failed) return <p className="notice">{tr("Preview is busy. Choose Source to read this file.")}</p>;
   if (!model) return <p className="notice">{tr("Preparing preview…")}</p>;
   const scriptNotice = model.scripts > 0 && <p className="preview-reading-hint" role="status">
@@ -51,12 +58,12 @@ export function HTMLPreview({ text, path, href }: { text: string; path: string; 
     <a href={href} download>{tr("Download file")}</a>
   </p>;
   if (model.simplified) return <div className="html-simplified" role="region" aria-label={`${tr("Simplified HTML preview")} ${path}`}>
-    <div className="preview-reading-bar"><strong>{tr("Simplified HTML preview")}</strong><span>{tr("{count} elements inspected", { count: model.nodes })}</span></div>
-    <p className="preview-reading-hint" role="status">{tr("Showing {shown} of {total} text blocks. Choose Source for the complete document.", { shown: model.blocks.length, total: model.blocks.length + model.omittedBlocks })}</p>
+    <div className="preview-reading-bar"><strong>{tr("Simplified HTML preview")}</strong><span>{tr("Large page · content loads as you read")}</span></div>
+    <p className="preview-reading-hint" role="status">{tr("This page is shown in a lighter reading layout. Choose Source for the complete document.")}</p>
     {scriptNotice}
-    <article>{model.blocks.map((block, index) => block.kind === "heading"
+    <article>{model.blocks.slice(0, shownBlocks).map((block, index) => block.kind === "heading"
       ? <h3 key={index} role="heading" aria-level={block.level ?? 3}>{block.text}</h3>
-      : <p key={index} className={block.kind === "row" ? "html-simplified-row" : undefined}>{block.text}</p>)}</article>
+      : <p key={index} className={block.kind === "row" ? "html-simplified-row" : undefined}>{block.text}</p>)}{shownBlocks < model.blocks.length && <p className="preview-reading-hint" role="status">{tr("Loading more…")}</p>}{model.omittedBlocks > 0 && shownBlocks >= model.blocks.length && <p className="preview-reading-hint" role="status">{tr("Some complex content is omitted from this lightweight preview.")}</p>}</article>
   </div>;
   return <div className="html-reader">
     <div className="preview-reading-bar"><strong>{tr("Static HTML preview")}</strong><span>{tr("{count} elements inspected", { count: model.nodes })}</span></div>

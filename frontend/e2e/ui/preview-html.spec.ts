@@ -10,8 +10,8 @@ test("a node-heavy HTML file opens a bounded simplified preview with complete so
   await page.getByRole("link", { name: "Document", exact: true }).click();
   const simplified = page.getByRole("region", { name: "Simplified HTML preview large.html" });
   await expect(simplified).toContainText("Row 0");
-  await expect(simplified).toContainText("Showing 2000 of 40000 text blocks");
-  expect(await simplified.locator("article p").count()).toBe(2_000);
+  await expect(simplified).toContainText("content loads as you read");
+  await expect.poll(() => simplified.locator("article p").count()).toBeGreaterThan(100);
   await expect(page.locator(".html-preview")).toHaveCount(0);
   await page.getByRole("group", { name: "File view" }).getByRole("button", { name: "Source" }).click();
   await page.getByRole("button", { name: "Find in file" }).click();

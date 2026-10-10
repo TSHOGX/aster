@@ -19,7 +19,7 @@ python3 scripts/candidate.py verify /srv/candidates/new-candidate
 The output must be a new directory outside the checkout. The builder exports
 only the committed Git tree into a temporary source directory, runs `npm ci`,
 builds Next standalone output and static/public assets, and compiles the host
-`orchestrator`, `edge-proxy`, and `preview-worker`. Ignored environment files, private deployment
+`orchestrator` and `edge-proxy`. Ignored environment files, private deployment
 inputs and stale frontend output cannot enter through the working directory.
 The build intentionally runs dependency install/build hooks; use reviewed source.
 `NEXT_PUBLIC_PROJECT_BRAND_NAME` is an explicit public build input recorded in
@@ -32,12 +32,8 @@ files fail verification. A local HTTP smoke checks the packaged page, public ass
 and JavaScript chunk. The host package excludes guest images, engine state,
 configuration, credentials, databases and fixture executables.
 
-Office reading jobs require Linux user/mount/PID/network namespaces, `bubblewrap`
-(`bwrap`), and util-linux `prlimit` on the application host. The packaged static
-`preview-worker` must remain beside `orchestrator`. Missing isolation tools fail
-the job; the application never runs the parser without its sandbox. The host
-worker uses Excelize v2.9.1 under the BSD 3-Clause license; its license is included
-in the [third-party notices](third-party-notices.md).
+Office visual assets are built before Next and included under `frontend/public/office`.
+The application and viewer use the same content-addressed asset identity.
 
 Checksums detect changes relative to a trusted manifest; they are not signatures
 or evidence that arbitrary downloaded code is trustworthy. Preserve the workflow

@@ -14,6 +14,7 @@ import {
 } from "@/lib/office-frame";
 import type { PreviewRepresentation } from "@/lib/preview-representation";
 
+import { OFFICE_LIMITS, type OfficeStage } from "@/office/protocol";
 import { PreviewStatus } from "./preview-status";
 
 type Phase = "queued" | "parsing" | "ready" | "failed" | "canceled";
@@ -35,6 +36,7 @@ export function OfficePreview({
   const frames = useRef(new Set<OfficeFrame>());
   const cancel = useRef(() => {});
   const [hasReady, setHasReady] = useState(false);
+  const [stage, setStage] = useState<OfficeStage>("loading-engine");
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ phase: Phase; failure?: PreviewFailure }>({
     phase: "queued",
@@ -90,6 +92,8 @@ export function OfficePreview({
           representation,
           kind,
           frameAbort.signal,
+          { previous: tr("Previous slide"), next: tr("Next slide"), slide: tr("Slide number"), slides: tr("Slides"), go: tr("Go to slide") },
+          setStage,
         );
         candidate = {
           ready: frame.ready,
@@ -126,27 +130,31 @@ export function OfficePreview({
       abort.abort();
       if (!adopted) frameAbort.abort();
     };
-  }, [representation, kind, path, attempt]);
+  }, [representation, kind, path, attempt, tr]);
   return (
     <>
+      {hasReady && kind === "spreadsheet" && !!representation.plan?.charts && (
+        <p className="preview-reading-hint" role="status">{tr("Some drawings are unavailable in this preview. Download the workbook to view them.")}</p>
+      )}
       {(state.phase === "failed" || state.phase === "canceled") && (
-        <PreviewStatus path={path} href={href} size={representation.blob.size}
+        <PreviewStatus maxBytes={OFFICE_LIMITS.sourceBytes} path={path} href={href} size={representation.blob.size}
           title={tr(state.phase === "canceled" ? "Preview canceled." : "Preview unavailable")}
           description={state.phase === "canceled" ? tr("You can try again or download the original file.")
             : state.failure?.code === "resource_busy" ? tr("Preview resources are busy. Try again in a moment.")
+            : state.failure?.code === "viewer_load_failed" ? tr("The Office viewer could not load. Retry or download the file.")
             : state.failure?.code === "parse_timeout" ? tr("Preparing this preview took too long. Retry or download the file.")
             : tr("The preview renderer stopped. Retry or download the file.")}
           onRetry={() => setAttempt(value => value + 1)} />
       )}
       {(state.phase === "queued" || state.phase === "parsing") && (
-        <PreviewStatus path={path} href={href} size={representation.blob.size} loading
-          title={tr("Preparing preview…")}
+        <PreviewStatus maxBytes={OFFICE_LIMITS.sourceBytes} path={path} href={href} size={representation.blob.size} loading
+          title={tr(stage === "loading-engine" ? "Loading Office viewer…" : "Rendering document…")}
           description={tr("Larger files may take a moment. You can keep working while the preview loads.")}
           onCancel={() => cancel.current()} />
       )}
       <div
         className="office-preview"
-        style={!hasReady ? { flex: "0 0 0" } : undefined}
+        style={!hasReady ? { position: "absolute", inset: 0, visibility: "hidden", pointerEvents: "none" } : undefined}
         ref={host}
         data-preview-phase={state.phase}
         aria-busy={state.phase === "queued" || state.phase === "parsing"}

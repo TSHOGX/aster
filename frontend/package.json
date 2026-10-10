@@ -2,8 +2,8 @@
   "name": "agent-runtime-frontend",
   "private": true,
   "scripts": {
-    "predev": "node scripts/patch-office-viewers.mjs",
-    "prebuild": "node scripts/patch-office-viewers.mjs",
+    "predev": "node scripts/build-office.mjs",
+    "prebuild": "node scripts/build-office.mjs",
     "dev": "next dev --webpack --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
@@ -13,7 +13,8 @@
     "test:e2e": "playwright test",
     "test:ui": "npm run build && npm run test:ui:built",
     "test:ui:built": "playwright test --config playwright.ui.config.ts",
-    "test:pickers": "npm run build && playwright test --config playwright.pickers.config.ts"
+    "test:pickers": "npm run build && playwright test --config playwright.pickers.config.ts",
+    "pretypecheck": "node scripts/build-office.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",
@@ -28,17 +29,19 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.6",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@js-preview/excel": "1.7.14",
     "@lezer/highlight": "^1.2.5",
     "@tailwindcss/postcss": "^4.1.14",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
+    "docx-preview": "0.4.0",
     "highlight.js": "^11.10.0",
     "htmlparser2": "^12.0.0",
     "lucide-react": "^0.460.0",
     "next": "^16.2.6",
-    "pptx-preview": "^1.0.7",
+    "pptx-preview": "1.0.7",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
@@ -57,7 +60,8 @@
     "eslint-config-next": "^16.2.6",
     "postcss": "^8.4.47",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "esbuild": "0.28.1"
   },
   "overrides": {
     "pptx-preview": {

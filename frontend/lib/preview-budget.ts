@@ -1,17 +1,10 @@
 /** Tab-wide admission; estimates are working-set reservations, not heap readings. */
 export const PREVIEW_LIMITS = Object.freeze({
   blobBytes: 20 * 1024 * 1024,
-  retainedBytes: 256 * 1024 * 1024,
+  retainedBytes: 768 * 1024 * 1024,
   renderBytes: 96 * 1024 * 1024,
-  expandedBytes: 40 * 1024 * 1024,
   entryBytes: 8 * 1024 * 1024,
-  entries: 1024,
-  xmlNodes: 100_000,
   xmlDepth: 64,
-  cells: 20_000,
-  rows: 2000,
-  columns: 256,
-  sheets: 8,
   imagePixels: 16_000_000,
   totalPixels: 24_000_000,
   renderers: 2,
@@ -20,7 +13,7 @@ export const PREVIEW_LIMITS = Object.freeze({
 
 export type PreviewFailureCode =
   | "source_too_large" | "container_invalid" | "unsupported_feature"
-  | "content_limit" | "resource_busy" | "parse_timeout" | "renderer_failed";
+  | "content_limit" | "resource_busy" | "parse_timeout" | "renderer_failed" | "viewer_load_failed";
 export type PreviewFailureStage = "download" | "container" | "parse" | "render" | "session";
 export type PreviewFailureData = {
   code: PreviewFailureCode;
@@ -57,7 +50,7 @@ export class PreviewFailure extends Error implements PreviewFailureData {
 export function previewFailureFromWire(value: unknown): PreviewFailure {
   if (!value || typeof value !== "object") return new PreviewFailure("renderer_failed", "parse", { retryable: true });
   const data = value as Partial<PreviewFailureData>;
-  const codes: PreviewFailureCode[] = ["source_too_large", "container_invalid", "unsupported_feature", "content_limit", "resource_busy", "parse_timeout", "renderer_failed"];
+  const codes: PreviewFailureCode[] = ["source_too_large", "container_invalid", "unsupported_feature", "content_limit", "resource_busy", "parse_timeout", "renderer_failed", "viewer_load_failed"];
   const stages: PreviewFailureStage[] = ["download", "container", "parse", "render", "session"];
   if (!data.code || !codes.includes(data.code) || !data.stage || !stages.includes(data.stage))
     return new PreviewFailure("renderer_failed", "parse", { retryable: true });

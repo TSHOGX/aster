@@ -1,0 +1,19 @@
+:root { color-scheme: light; font: 14px/1.5 system-ui, sans-serif; color: #20242a; background: #f1f2f4; }
+:root[data-theme=dark] { color-scheme: dark; color: #e4e7ec; background: #202328; }
+* { box-sizing: border-box; }
+body { margin: 0; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+[hidden] { display: none !important; }
+#content { flex: 1; min-height: 0; overflow: auto; }
+#stage { height: 100%; min-height: 100%; }
+#navigation { flex: none; display: flex; gap: 12px; align-items: center; justify-content: center; padding: 6px; }
+#navigation form { display: flex; align-items: center; gap: 8px; }
+#navigation input { width: 68px; }
+#navigation button, #navigation input { font: inherit; color: inherit; background: transparent; border: 1px solid #8886; border-radius: 6px; padding: 5px 10px; min-height: 34px; }
+#navigation button { cursor: pointer; }
+#navigation button:disabled { opacity: .4; cursor: default; }
+#navigation :focus-visible { outline: 2px solid #3786ee; outline-offset: 2px; }
+.document .docx-wrapper { background: transparent; padding: 24px; }
+.document .docx-wrapper > section.docx { margin-bottom: 24px; box-shadow: 0 2px 12px #0002; color-scheme: light; }
+.spreadsheet { color: #20242a; background: #fff; color-scheme: light; }
+.presentation #stage { min-height: 0; }
+@media (max-width:600px) { .document .docx-wrapper { padding: 8px; } }
