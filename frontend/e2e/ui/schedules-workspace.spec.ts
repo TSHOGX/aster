@@ -9,9 +9,10 @@ async function setup(
     lostCreate?: boolean;
     lostRun?: boolean;
     advanced?: boolean;
+    deniedActions?: ("schedules.manage" | "agents.run")[];
   } = {},
 ) {
-  const base = await workspaceFixture(page);
+  const base = await workspaceFixture(page, {deniedActions:options.deniedActions});
   const tasks = new Map<string, Schedule>();
   tasks.set("task", {
     id: "task",
@@ -666,3 +667,17 @@ for (const width of [360, 1280, 1600]) {
     expect(await detail.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 }
+
+
+test("schedule denial blocks new work while retaining pause and cancel", async ({page}) => {
+  await setup(page, {deniedActions:["schedules.manage"]});
+  await page.goto("/?view=schedules&schedule=task&schedule_project=battery");
+  await expect(page.getByRole("button",{name:"Create task",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Edit",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Run now",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Pause",exact:true})).toBeEnabled();
+  await page.getByRole("button",{name:"Pause",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Resume",exact:true})).toBeDisabled();
+  await page.getByLabel("Task actions",{exact:true}).click();
+  await expect(page.getByRole("menuitem",{name:"Cancel task",exact:true})).toBeEnabled();
+});

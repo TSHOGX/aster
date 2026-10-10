@@ -339,6 +339,9 @@ func (s *Store) RunSchedule(ctx context.Context, scope Scope, id, request string
 	return run, err
 }
 func (s *Store) runSchedule(ctx context.Context, tx *sql.Tx, scope Scope, schedule Schedule, request, due string) (ScheduleRun, error) {
+	if err := scheduleDispatchAuthority(ctx, tx, scope.Actor); err != nil {
+		return ScheduleRun{}, err
+	}
 	if schedule.TriggerKind == "at" {
 		request = "scheduled:" + schedule.RunAt
 		due = schedule.RunAt
@@ -435,6 +438,17 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 			if task.NextAt == "" || task.NextAt > now || task.RetryAt > now {
 				return nil
 			}
+			var actor string
+			if e = tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=? AND state NOT IN ('deleting','deleted')`, task.ProjectID).Scan(&actor); e != nil {
+				return missing(e)
+			}
+			if e = scheduleDispatchAuthority(ctx, tx, actor); e != nil {
+				if !errors.Is(e, ErrForbidden) && !errors.Is(e, ErrUnauthorized) {
+					return e
+				}
+				_, e = tx.ExecContext(ctx, `UPDATE schedules SET state='paused',next_at=NULL,retry_at=NULL,last_error='permission_revoked',revision=revision+1,updated_at=? WHERE id=? AND state='active'`, now, id)
+				return e
+			}
 			var outstanding bool
 			e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schedule_runs r JOIN turns t ON t.id=r.turn_id WHERE r.schedule_id=? AND (`+strings.ReplaceAll(promptStatus, "turns.", "t.")+`) IN ('queued','held','claimed','starting','running','stopping','unknown','consumed'))`, id).Scan(&outstanding)
 			if e != nil {
@@ -444,10 +458,6 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 				deferred = true
 				_, e = tx.ExecContext(ctx, `UPDATE schedules SET retry_at=? WHERE id=?`, sqlitex.FormatTime(s.now().Add(30*time.Second)), id)
 				return e
-			}
-			var actor string
-			if e = tx.QueryRowContext(ctx, `SELECT owner_id FROM projects WHERE id=? AND state NOT IN ('deleting','deleted')`, task.ProjectID).Scan(&actor); e != nil {
-				return missing(e)
 			}
 			if _, e = s.runSchedule(ctx, tx, Scope{actor, task.ProjectID}, task, "scheduled:"+task.NextAt, task.NextAt); e != nil {
 				return e
@@ -513,5 +523,12 @@ func (s *Store) Schedule(ctx context.Context, scope Scope, id string) (Schedule,
 	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
 		return Schedule{}, err
 	}
-	return scanSchedule(s.reader.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE id=? AND project_id=?`, id, scope.ProjectID))
+	task, err := scanSchedule(s.reader.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE id=? AND project_id=?`, id, scope.ProjectID))
+	if err != nil {
+		return Schedule{}, err
+	}
+	if err = activeAccount(ctx, s.reader, scope.Actor); err != nil {
+		return Schedule{}, err
+	}
+	return task, nil
 }

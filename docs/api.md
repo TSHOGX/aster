@@ -427,3 +427,11 @@ Public snapshot creation and link rotation require `shares.public.create`.
 Removing that grant leaves existing frozen links valid; explicit revoke remains
 available to the active owner. Disabled owner status denies public content access
 immediately, independently of later suspension reconciliation.
+
+Schedule create/edit/resume and their retries require `schedules.manage`; Run now
+also requires `agents.run`. A pure `{ "state": "paused" }` patch, cancel and delete
+retain active-owner reduction authority. Definition/outcome inspection remains
+available for those controls. Automatic dispatch rechecks both grants and pauses
+a denied due task with `last_error: "permission_revoked"`; no occurrence is created.
+Platform schedule context omits denied create/update operations, and mutations
+reauthorize even through an already-open gateway request.

@@ -127,3 +127,17 @@ for an owner's denied Project read. Reader lists retain reduction authority for
 revocation. Creating or rotating a public frozen share requires
 `shares.public.create`; ordinary grant removal does not invalidate published links.
 Disabled owner status denies public content access at lookup time.
+
+Schedule definition creation/edit/resume requires `schedules.manage`. A pause is
+reduction-only only when its patch contains the paused state and no other field.
+Active owners retain task/outcome inspection and pause/cancel/delete. Automatic
+and manual occurrence admission require both scheduling and Agent grants. A due
+task denied by current authority is paused atomically with `permission_revoked`
+before any child or prompt is created; restoring the grant alone does not resume
+it. Agent platform mutations share these checks, including receipt replay.
+
+New gateway requests check current `agents.run` against the stored Project owner.
+An already attributed request may drain after ordinary group-policy revocation;
+account suspension ends its continuation authority. Grant renewal checks account
+status without treating browser password setup or cookie revocation as suspension.
+Gateway release retains narrowly scoped settlement authority.

@@ -33,12 +33,18 @@ func (s *Store) ScheduleEventBounds(ctx context.Context, actor string) (pruned, 
 	if actor == "" {
 		return 0, 0, ErrNotFound
 	}
+	if err = activeAccount(ctx, s.reader, actor); err != nil {
+		return
+	}
 	err = s.reader.QueryRowContext(ctx, `SELECT coalesce((SELECT retained_after FROM schedule_event_frontiers WHERE owner_id=?),0),coalesce((SELECT head FROM schedule_event_frontiers WHERE owner_id=?),0)`, actor, actor).Scan(&pruned, &head)
 	return
 }
 func (s *Store) ScheduleEvents(ctx context.Context, actor string, after int64, limit int) ([]ScheduleEvent, error) {
 	if actor == "" {
 		return nil, ErrNotFound
+	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,schedule_id,run_id,kind FROM schedule_events WHERE owner_id=? AND id>? ORDER BY id LIMIT ?`, actor, after, pageSize(limit))
 	if err != nil {

@@ -102,6 +102,22 @@ func (s *Store) mutateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	if (input.Operation == "cancel" || input.Operation == "delete" || input.Operation == "finish") && input.Patch != (SchedulePatch{}) {
 		return out, ErrInvalid
 	}
+	var parent string
+	found := tx.QueryRowContext(ctx, `SELECT project_id FROM schedules WHERE id=?`, input.ID).Scan(&parent)
+	if found == nil && parent != scope.ProjectID {
+		return out, ErrNotFound
+	}
+	if found != nil && !errors.Is(found, sql.ErrNoRows) {
+		return out, found
+	}
+	if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+		return out, err
+	}
+	if !scheduleReduction(input) {
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionSchedulesManage); err != nil {
+			return out, err
+		}
+	}
 	for _, field := range []**string{&input.Patch.RunAt, &input.Patch.ExpiresAt, &input.Patch.StartsAt} {
 		if *field != nil && **field != "" {
 			instant, e := time.Parse(time.RFC3339Nano, **field)

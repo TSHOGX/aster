@@ -3,6 +3,7 @@ package product
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -81,6 +82,9 @@ func (s *Store) PlatformSchedules(ctx context.Context, slot ServiceRequest, inpu
 		if e != nil {
 			return e
 		}
+		if e = activeAccount(ctx, tx, scope.Actor); e != nil {
+			return e
+		}
 		source, e := scheduledRunAuthority(ctx, tx, a.RunID)
 		if e != nil {
 			return e
@@ -91,6 +95,19 @@ func (s *Store) PlatformSchedules(ctx context.Context, slot ServiceRequest, inpu
 			if source.Own != nil {
 				operations = append(operations, "finish")
 			}
+		}
+		manageErr := authorizeAction(ctx, tx, scope.Actor, ActionSchedulesManage)
+		if manageErr != nil {
+			if !errors.Is(manageErr, ErrForbidden) {
+				return manageErr
+			}
+			filtered := operations[:0]
+			for _, operation := range operations {
+				if operation != "create" && operation != "update" {
+					filtered = append(filtered, operation)
+				}
+			}
+			operations = filtered
 		}
 		if input.Action == "context" {
 			if input.Timezone != "" {

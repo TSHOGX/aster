@@ -1,4 +1,5 @@
 "use client";
+import { useCapabilities } from "./capability-provider";
 import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, CalendarClock, Pencil } from "lucide-react";
 import { ScheduleStatus } from "./schedule-status";
@@ -23,6 +24,7 @@ export function ScheduleTaskCard({
   project: string;
   id: string;
 }) {
+  const can = useCapabilities();
   const tr = useT(),
     locale = useLocale(),
     realtime = useRealtime(),
@@ -192,10 +194,10 @@ export function ScheduleTaskCard({
         {resultURL && <a href={resultURL}>{tr("Open conversation")}</a>}
         {task && ["active", "paused"].includes(task.state) && (
           <>
-            <a href={taskURL + "&mode=edit"}>
+            {can("schedules.manage") && <a href={taskURL + "&mode=edit"}>
               <Pencil size={14} aria-hidden="true" />
               {tr("Edit")}
-            </a>
+            </a>}
             <button
               className="schedule-card-cancel"
               disabled={busy}
