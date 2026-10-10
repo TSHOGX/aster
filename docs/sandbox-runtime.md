@@ -117,3 +117,43 @@ The pinned engine normalizes whitespace at path boundaries. Root file names with
 leading/trailing spaces are preserved by the adapter; ambiguous parent-directory
 components with leading/trailing whitespace are rejected before engine I/O.
 Ordinary spaces inside directory/file names remain supported.
+
+## Native scheduling tools
+
+Runtime manifest version 4 requires schedule protocol 1 and measures
+`/usr/local/share/project-runtime/platform-schedules.mjs` as a data asset. The
+release builder installs the embedded reviewed source, and generation and guest
+verification compare its bytes with that source. A missing, changed or unsupported
+bundle fails qualification; older retained manifests are refused by this host.
+The extension is not an executable binary and needs no execute permission.
+
+For a Project whose retained manifest qualifies and whose declared Agent audience
+has `schedule_tools: true`, the owner verifies gateway platform protocol support
+before providing the runner a platform endpoint. The endpoint uses the Project's
+immutable synthetic service destination, port and configured TLS mode. No gateway
+or failed qualification means no scheduling tool advertisement; browser scheduling
+remains available. Existing service bindings are not rewritten.
+
+The runner writes a mode-0600 scheduling configuration in the logical Session's
+runtime directory, using its incarnation service credential, then launches Pi
+with an explicit `--extension` path. Automatic extension/skill/template/theme
+discovery stays disabled. Credentials travel through the start environment and
+private configuration, never native commands, tool arguments, receipts or logs.
+The Project remains the Linux trust domain; logical Session files do not isolate
+hostile sibling guest-root processes.
+
+Native tools are `schedules_create`, `schedules_list`, `schedules_get`,
+`schedules_update`, and `schedules_cancel`. A mutation identity hashes the logical
+Session, native Session, persisted assistant-entry ID and provider tool-call ID;
+all are captured before awaiting network activity. Relative one-shot delays use
+one server clock anchor. Bounded retries preserve identical request bytes and the
+expected execution Run. A missing response after sending is an unknown outcome,
+with an instruction to inspect saved tasks before recreating intent. Aborting
+a tool stops retries without retracting a committed task. Native error results
+use bounded messages; successful mutation results retain structured task receipts
+and omit full prompts from their presentation metadata.
+
+Qualification uses the actual pinned Pi loader and AgentSession with deterministic
+model streams. It verifies explicit loading with discovery disabled, structured
+native events, lost-response retries, provider-ID reuse, parallel invocation
+identity and cancellation uncertainty. No provider credentials are required.

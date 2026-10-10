@@ -7,7 +7,7 @@ here. Existing databases and deployments are not changed by this work.
 | --- | --- | --- |
 | Domain and admission | Complete | Explicit lifecycle/triggers, one-shot admission, receipts, coalescing, failure isolation, typed browser writes, retirement |
 | Platform transport | Complete | Reserved gateway prefix, protected owner RPC, live grant/slot/Run/release fences |
-| Native runtime | Pending | Measured explicit extension, immutable request identity/retries, capability gating |
+| Native runtime | Complete | Measured explicit extension, immutable request identity/retries, capability gating |
 | Surfaces and delivery | Pending | One-shot editor, conversation cards/source links, history filters, scheduled inbox projection |
 | Bounded checks | Pending | Count/deadline bounds, exact scheduled Run finish, quiet pending checks |
 | Final qualification | Pending | Cross-layer tests, release/docs audit, legacy removal |
@@ -43,3 +43,14 @@ advance, while existing model stream continuation keeps its original rules.
 
 Platform checks: complete backend tests and vet pass; focused platform/gateway
 race tests and source/documentation checks pass.
+
+Native qualification runs the bundled extension against actual pinned Pi 0.77.0,
+including explicit loader discovery restrictions and ordinary native tool events.
+Independent deterministic tests cover parallel identity capture, identical-byte
+retries, server-anchored relative time and abort uncertainty. The same tests run
+on pinned Node 24.15.0. Manifest version 4 measures the extension as data and
+refuses unsupported retained capability or changed source bytes.
+
+Runtime checks: full backend gate (build, vet, native/product tests, privileged
+suite compilation and selected fixture checks), source gates and pinned-Node
+extension tests pass. No live image or deployment was changed.

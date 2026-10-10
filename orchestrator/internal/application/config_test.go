@@ -15,7 +15,7 @@ func configurationFixture(t *testing.T) (Config, string) {
 	t.Helper()
 	directory := t.TempDir()
 	digest := "sha256:" + strings.Repeat("0", 64)
-	manifest := runtimerelease.Manifest{Version: 3, NativeProtocol: runtimerelease.NativeProtocol, ReaderProtocol: runtimerelease.ReaderProtocol, Platform: "linux/amd64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
+	manifest := runtimerelease.Manifest{Version: 4, ScheduleProtocol: runtimerelease.ScheduleProtocol, NativeProtocol: runtimerelease.NativeProtocol, ReaderProtocol: runtimerelease.ReaderProtocol, Platform: "linux/amd64", EngineModule: runtimerelease.EngineModule, EngineRevision: runtimerelease.EngineRevision, AgentProtocol: 2, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: runtimerelease.PiPackage, PiVersion: runtimerelease.PiVersion, PiIntegrity: runtimerelease.PiIntegrity, NodeVersion: runtimerelease.NodeVersion, NativeTree: digest, Files: map[string]string{}}
 	for _, component := range runtimerelease.Components {
 		manifest.Files[component] = digest
 	}

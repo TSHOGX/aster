@@ -131,6 +131,9 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 	agents := product.NewAgents(ctx, store, lifecycle, backend, profile, cfg.Limits.Agents)
 	agents.MaxPerProject = cfg.Limits.AgentsPerProject
 	agents.ServiceAudience = cfg.AgentAudience
+	agents.PlatformEndpoint = func(ctx context.Context, scope product.Scope) string {
+		return app.platformEndpoint(ctx, scope, prepared.templates)
+	}
 	app.Agents = agents
 	terminals := product.NewTerminals(ctx, store, lifecycle, backend, profile, cfg.Limits.Terminals)
 	terminals.MaxPerProject = cfg.Limits.TerminalsPerProject

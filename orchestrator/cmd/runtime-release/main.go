@@ -19,6 +19,10 @@ func main() {
 		os.Exit(2)
 	}
 	if *patchNative {
+		if err := runtimerelease.InstallPlatformSchedules(*root); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		if err := runtimerelease.PatchNativeRPC(*root); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

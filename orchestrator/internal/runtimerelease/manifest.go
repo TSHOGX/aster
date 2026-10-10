@@ -35,24 +35,25 @@ const ManifestPath = "/etc/project-runtime/manifest.json"
 const NativeRoot = "/usr/local/lib/node_modules"
 
 type Manifest struct {
-	Version        int               `json:"version"`
-	NativeProtocol int               `json:"native_protocol"`
-	Platform       string            `json:"platform"`
-	EngineModule   string            `json:"engine_module"`
-	EngineRevision string            `json:"engine_revision"`
-	AgentProtocol  int               `json:"agent_protocol"`
-	ReaderProtocol int               `json:"reader_protocol"`
-	Workspace      string            `json:"workspace"`
-	RuntimeState   string            `json:"runtime_state"`
-	PiPackage      string            `json:"pi_package"`
-	PiVersion      string            `json:"pi_version"`
-	PiIntegrity    string            `json:"pi_integrity"`
-	NodeVersion    string            `json:"node_version"`
-	NativeTree     string            `json:"native_tree"`
-	Files          map[string]string `json:"files"`
+	ScheduleProtocol int               `json:"schedule_protocol"`
+	Version          int               `json:"version"`
+	NativeProtocol   int               `json:"native_protocol"`
+	Platform         string            `json:"platform"`
+	EngineModule     string            `json:"engine_module"`
+	EngineRevision   string            `json:"engine_revision"`
+	AgentProtocol    int               `json:"agent_protocol"`
+	ReaderProtocol   int               `json:"reader_protocol"`
+	Workspace        string            `json:"workspace"`
+	RuntimeState     string            `json:"runtime_state"`
+	PiPackage        string            `json:"pi_package"`
+	PiVersion        string            `json:"pi_version"`
+	PiIntegrity      string            `json:"pi_integrity"`
+	NodeVersion      string            `json:"node_version"`
+	NativeTree       string            `json:"native_tree"`
+	Files            map[string]string `json:"files"`
 }
 
-var Components = []string{"/usr/sbin/sandboxd", "/usr/local/bin/agent-runner", "/usr/local/bin/workspace-files", "/usr/local/bin/runtime-cleanup", "/usr/local/bin/runtime-verify", "/usr/local/bin/pi", "/opt/node-v" + NodeVersion + "/bin/node", "/usr/local/share/project-runtime/system.md"}
+var Components = []string{PlatformExtensionPath, "/usr/sbin/sandboxd", "/usr/local/bin/agent-runner", "/usr/local/bin/workspace-files", "/usr/local/bin/runtime-cleanup", "/usr/local/bin/runtime-verify", "/usr/local/bin/pi", "/opt/node-v" + NodeVersion + "/bin/node", "/usr/local/share/project-runtime/system.md"}
 
 func ValidDigest(value string) bool {
 	if !strings.HasPrefix(value, "sha256:") {
@@ -95,7 +96,7 @@ func Load(reader io.Reader, expected string) (Manifest, error) {
 	if err != nil || !ValidDigest(expected) || digest != expected {
 		return manifest, errors.New("runtime manifest does not match its release digest")
 	}
-	if manifest.Version != 3 || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
+	if manifest.Version != 4 || manifest.ScheduleProtocol != ScheduleProtocol || manifest.NativeProtocol != NativeProtocol || manifest.ReaderProtocol != ReaderProtocol || manifest.EngineModule != EngineModule || manifest.EngineRevision != EngineRevision || manifest.AgentProtocol != agentwire.Version || manifest.Workspace != "/workspace" || manifest.RuntimeState != "/runtime" || manifest.PiPackage != PiPackage || manifest.PiVersion != PiVersion || manifest.PiIntegrity != PiIntegrity || manifest.NodeVersion != NodeVersion || !ValidDigest(manifest.NativeTree) {
 		return manifest, errors.New("incompatible Project runtime release")
 	}
 	if manifest.Platform != "linux/amd64" && manifest.Platform != "linux/arm64" {
@@ -245,7 +246,7 @@ func Generate(root string) (Manifest, error) {
 	if err := cleanRoot(root); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: 3, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
+	manifest := Manifest{Version: 4, ScheduleProtocol: ScheduleProtocol, NativeProtocol: NativeProtocol, ReaderProtocol: ReaderProtocol, EngineModule: EngineModule, EngineRevision: EngineRevision, AgentProtocol: agentwire.Version, Workspace: "/workspace", RuntimeState: "/runtime", PiPackage: PiPackage, PiVersion: PiVersion, PiIntegrity: PiIntegrity, NodeVersion: NodeVersion, Files: map[string]string{}}
 	packagePath, err := resolve(root, NativeRoot+"/"+PiPackage+"/package.json")
 	if err != nil {
 		return manifest, err
@@ -277,7 +278,7 @@ func Generate(root string) (Manifest, error) {
 		if err != nil {
 			return manifest, err
 		}
-		if component != "/usr/local/share/project-runtime/system.md" {
+		if !dataComponent(component) {
 			info, e := os.Stat(file)
 			if e != nil {
 				return manifest, e
@@ -291,7 +292,7 @@ func Generate(root string) (Manifest, error) {
 			return manifest, err
 		}
 		manifest.Files[component] = digest
-		if component != "/usr/local/bin/pi" && component != "/usr/local/share/project-runtime/system.md" {
+		if component != "/usr/local/bin/pi" && !dataComponent(component) {
 			var platform string
 			binary, err := elf.Open(file)
 			if err != nil {
@@ -313,6 +314,9 @@ func Generate(root string) (Manifest, error) {
 			manifest.Platform = platform
 		}
 	}
+	if err = verifyPlatformSchedules(root); err != nil {
+		return manifest, err
+	}
 	if err = verifyNativeRPC(root); err != nil {
 		return manifest, err
 	}
@@ -333,6 +337,9 @@ func Verify(root, expected string) error {
 	if err != nil {
 		return err
 	}
+	if err = verifyPlatformSchedules(root); err != nil {
+		return err
+	}
 	if err = verifyNativeRPC(root); err != nil {
 		return err
 	}
@@ -341,7 +348,7 @@ func Verify(root, expected string) error {
 		if err != nil {
 			return err
 		}
-		if component != "/usr/local/share/project-runtime/system.md" {
+		if !dataComponent(component) {
 			info, e := os.Stat(file)
 			if e != nil {
 				return e

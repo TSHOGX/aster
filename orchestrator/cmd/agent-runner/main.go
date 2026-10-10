@@ -45,6 +45,11 @@ func main() {
 	// flag, so it never appears in the guest process table. It is cleared here so
 	// Pi and its tool descendants do not inherit it as an ambient variable.
 	c.ServiceCredential = os.Getenv("PROJECT_SERVICE_CREDENTIAL")
+	c.PlatformEndpoint = os.Getenv("PROJECT_PLATFORM_ENDPOINT")
+	if err := os.Unsetenv("PROJECT_PLATFORM_ENDPOINT"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := os.Unsetenv("PROJECT_SERVICE_CREDENTIAL"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

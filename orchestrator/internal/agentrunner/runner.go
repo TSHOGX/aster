@@ -20,6 +20,7 @@ import (
 
 	"harness-platform/orchestrator/internal/agentjournal"
 	"harness-platform/orchestrator/internal/agentwire"
+	"harness-platform/orchestrator/internal/runtimerelease"
 )
 
 type Config struct {
@@ -33,6 +34,7 @@ type Config struct {
 	// per-turn rewrite races a running turn. It is not isolation from a sibling
 	// Session: guest root can read either Session's configuration.
 	ServiceCredential string
+	PlatformEndpoint  string
 }
 type Runner struct {
 	config        Config
@@ -132,6 +134,10 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 	if err = materializeCredential(root, c.ServiceCredential); err != nil {
 		return err
 	}
+	platformConfig, err := materializePlatform(root, c)
+	if err != nil {
+		return err
+	}
 	nativeFile := filepath.Join(nativeRoot, "session.jsonl")
 	args := c.PiArgs
 	if args == nil {
@@ -149,10 +155,16 @@ func Run(ctx context.Context, c Config, input io.Reader, output, diagnostics io.
 			return e
 		}
 	}
+	if platformConfig != "" {
+		args = append(args, "--extension", runtimerelease.PlatformExtensionPath)
+	}
 	cmd := exec.Command(c.PiBinary, args...)
 	cmd.Dir = c.Workspace
 	cmd.Env = append(os.Environ(), c.Environment...)
 	cmd.Env = append(cmd.Env, "PI_CODING_AGENT_DIR="+root, "PI_CODING_AGENT_SESSION_DIR="+nativeRoot, "PI_OFFLINE=1", "PI_SKIP_VERSION_CHECK=1")
+	if platformConfig != "" {
+		cmd.Env = append(cmd.Env, "PROJECT_PLATFORM_CONFIG="+platformConfig)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

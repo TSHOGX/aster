@@ -22,7 +22,9 @@ func releaseFixture(t *testing.T) (string, Manifest, string) {
 		if err = os.MkdirAll(filepath.Dir(file), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if component == "/usr/local/share/project-runtime/system.md" {
+		if component == PlatformExtensionPath {
+			err = InstallPlatformSchedules(root)
+		} else if component == "/usr/local/share/project-runtime/system.md" {
 			err = os.WriteFile(file, []byte("Project runtime instructions"), 0644)
 		} else {
 			err = os.Link(self, file)
@@ -185,5 +187,40 @@ func TestReleaseRejectsMixedBinaryPlatforms(t *testing.T) {
 func TestReleaseRequiresCurrentReaderProtocol(t *testing.T) {
 	if ReaderProtocol != projectfiles.ReaderProtocol {
 		t.Fatal("release and workspace reader protocol differ")
+	}
+}
+
+func TestScheduleExtensionIsMeasuredDataAndRequiredCapability(t *testing.T) {
+	root, manifest, digest := releaseFixture(t)
+	if manifest.ScheduleProtocol != ScheduleProtocol {
+		t.Fatal(manifest)
+	}
+	info, err := os.Stat(filepath.Join(root, PlatformExtensionPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0111 != 0 {
+		t.Fatal("extension should not require execute permission")
+	}
+	manifest.ScheduleProtocol = 0
+	raw, err := Bytes(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incompatible, err := Digest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Load(bytes.NewReader(raw), incompatible); err == nil {
+		t.Fatal("unsupported retained runtime advertised schedules")
+	}
+	if err = os.WriteFile(filepath.Join(root, PlatformExtensionPath), []byte("throw new Error('broken bundle')"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = Verify(root, digest); err == nil {
+		t.Fatal("changed bundle qualified")
+	}
+	if _, err = Generate(root); err == nil {
+		t.Fatal("unreviewed extension accepted into new manifest")
 	}
 }
