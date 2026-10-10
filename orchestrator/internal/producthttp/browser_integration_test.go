@@ -156,7 +156,7 @@ func TestProjectBrowserOnKhora(t *testing.T) {
 	profile.ReleaseDigest = releaseDigest
 	network, err := product.NewNetworkPolicy(profile.Reachability)
 	must(t, err)
-	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.WorkspaceBytes, Runtime: profile.RuntimeBytes, MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, nil, network)
+	seed, err := product.NewBootstrapSeed(product.ResourceSeed{CPU: profile.CPUMillis, Memory: profile.MemoryBytes, Overlay: profile.DiskBytes, Workspace: profile.CapacityForRole("workspace"), Runtime: profile.CapacityForRole("runtime"), MaxMounts: 8, ProjectSlots: 4, AgentSlots: 8, TerminalSlots: 8}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: "agent-runtime", Version: "v1", Digest: releaseDigest}, StoreID: identity.StoreID, TemplateID: profile.TemplateID, Manifest: manifest}, nil, network)
 	must(t, err)
 
 	lifecycle := &product.Lifecycle{Store: store, Backend: fixture, MaxProjects: 4}

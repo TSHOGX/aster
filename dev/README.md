@@ -12,7 +12,7 @@ normal build user (the script invokes `sudo -n` for the substrate):
 dev/verify-khora.sh --template /srv/build/agent-runtime --manifest /srv/build/agent-runtime.manifest.json --output /srv/qualification/run --suite release
 ```
 
-Suites are `release`, `files`, `network`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
+Suites are `release`, `slots`, `files`, `network`, `gateway`, `native`, `provider`, `mixed`, `combined`, `browser`, `realtime`, `faults` and `all`. The default is the
 actual executable/image release gate. `gateway` isolates native streaming across
 a temporary owner outage, gated gateway replacement and explicit owner handoff.
 The harness builds a second executable with distinct version metadata to exercise
@@ -116,3 +116,10 @@ workspace/runtime volumes survive, undeclared destinations remain denied, remova
 applies at the next resume, and the retained model gateway completes a native
 turn. `network-policy.json` distinguishes this local substrate evidence from
 public Internet/package-index reachability, which it does not test.
+
+The `slots` suite runs `TestProjectVolumeSlotsOnKhora` against a fresh isolated
+engine/store. It verifies eight explicit mount bindings, independent native volume
+copies, guest read-only enforcement, reservation-to-allocation accounting and
+observed cleanup. The `faults`/`all` product suite includes the same case. It is a
+mechanism test; registered multi-version releases and non-default required-role
+paths still require their separate runtime qualification.

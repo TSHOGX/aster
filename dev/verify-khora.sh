@@ -3,7 +3,7 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 usage() {
  cat <<'HELP'
-Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--suite release|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
+Usage: dev/verify-khora.sh --template DIR --manifest FILE --output NEW_DIR [--engine FILE] [--candidate DIR] [--suite release|slots|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all]
 Builds test executables, then uses sudo -n for a disposable namespace/btrfs substrate.
 Default suite: release. Browser/combined/all require both frontend production builds and Chromium.
 Combined is opt-in and adds two real browser tabs, network profiles and gated handoff.
@@ -24,7 +24,7 @@ while (($#)); do
  esac
 done
 [[ -d $template && -f $manifest && -n $output ]] || { usage >&2;exit 2; }
-case "$suite" in release|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
+case "$suite" in release|slots|files|network|gateway|native|provider|mixed|combined|browser|realtime|faults|all) ;; *) usage >&2;exit 2;; esac
 for program in go python3 ip unshare mount mkfs.btrfs btrfs runsc sudo; do command -v "$program" >/dev/null || { echo "missing prerequisite: $program" >&2;exit 2; }; done
 if [[ $suite == provider ]]; then : "${PROJECT_PROVIDER_CONFIG:?explicit host-only provider YAML required}"; fi
 if [[ -n $candidate ]]; then
@@ -63,6 +63,7 @@ done
 CGO_ENABLED=0 go -C "$repo/orchestrator" build -trimpath -ldflags="-X main.version=handoff-fixture-candidate -X main.commit=$build_revision" -o "$output/orchestrator-candidate" ./cmd/orchestrator
 packages=(application)
 case "$suite" in
+ slots) packages=(product);;
  realtime) packages=(producthttp);;
  faults) packages=(product producthttp servicegateway);;
  all) packages=(application product producthttp servicegateway);;
@@ -133,6 +134,7 @@ run() {
  "$repo/dev/project-substrate.sh" "$output/$package.test" -test.v -test.run "$selection" -test.timeout "$timeout" 2>&1 | tee "$output/$name.log"
 }
 if [[ $suite == release || $suite == all ]]; then run application '^(TestReleasedNativeSchedules|TestReleasedExecutableOnKhora|TestReleasedActivationTarget|TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff|TestReleasedNativeRetrySettlement|TestReleasedNativeCompactionSettlement|TestReleasedQueuedSteerConsumption|TestReleasedQueuedSteerStopRemovesUnconsumedInput)$' release 5m;fi
+if [[ $suite == slots ]]; then run product '^TestProjectVolumeSlotsOnKhora$' slots 3m;fi
 if [[ $suite == network || $suite == all ]]; then run application '^TestReleasedNetworkPolicyReload$' network 4m;fi
 if [[ $suite == files || $suite == all ]]; then run application '^TestReleasedPausedVolumeFiles$' files 4m;fi
 if [[ $suite == gateway ]]; then run application '^(TestReleasedGatewaySurvivesOwnerOutage|TestReleasedOwnerHandoff)$' gateway 2m;fi
@@ -143,7 +145,7 @@ if [[ $suite == combined ]]; then run application '^TestReleasedCombinedWorkload
 if [[ $suite == browser || $suite == all ]]; then run application '^(TestReleasedBrowser|TestReleasedQueueBrowser)$' browser 7m;fi
 if [[ $suite == realtime || $suite == all ]]; then run producthttp '^TestResourceHubOnKhora$' resource-hub 3m;fi
 if [[ $suite == faults || $suite == all ]]; then
- run product '^(TestProjectLifecycleOnKhora|TestGoAgentRunnersOnKhora|TestProjectFilesOnKhora|TestProjectTerminalsOnKhora)$' product 12m
+ run product '^(TestProjectLifecycleOnKhora|TestProjectVolumeSlotsOnKhora|TestGoAgentRunnersOnKhora|TestProjectFilesOnKhora|TestProjectTerminalsOnKhora)$' product 12m
  run producthttp '^TestComposedProjectRecoveryOnKhora$' recovery 9m
  run servicegateway '^TestProjectServiceAuthorityOnKhora$' services 6m
 fi

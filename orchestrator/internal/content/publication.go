@@ -214,7 +214,20 @@ func (p Publisher) read(entry Entry) ([]byte, error) {
 
 // verify reconstructs the revision from the engine's own view of the volume. It
 // walks listings and reads bytes rather than trusting what publication wrote.
+type VolumeVerifier interface {
+	sandbox.VolumeListings
+	sandbox.VolumeReads
+}
+type volumeVerifier struct{ Backend VolumeVerifier }
+
 func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference, expected string) error {
+	return VerifyVolume(ctx, p.Backend, reference, expected)
+}
+
+// VerifyVolume reuses bounded publication verification before an owned seed copy
+// becomes visible. A ready, potentially user-modified volume is never reverified.
+func VerifyVolume(ctx context.Context, backend VolumeVerifier, reference sandbox.VolumeReference, expected string) error {
+	p := volumeVerifier{Backend: backend}
 	observed, err := p.walk(ctx, reference, "", 0)
 	if err != nil {
 		return err
@@ -225,7 +238,7 @@ func (p Publisher) verify(ctx context.Context, reference sandbox.VolumeReference
 	return nil
 }
 
-func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, directory string, depth int) ([]Entry, error) {
+func (p volumeVerifier) walk(ctx context.Context, reference sandbox.VolumeReference, directory string, depth int) ([]Entry, error) {
 	if depth > 16 {
 		return nil, fmt.Errorf("published content nests deeper than 16 directories")
 	}
@@ -267,7 +280,7 @@ func (p Publisher) walk(ctx context.Context, reference sandbox.VolumeReference, 
 	return result, nil
 }
 
-func (p Publisher) readVolumeDigest(ctx context.Context, reference sandbox.VolumeReference, name string, size int64) (string, error) {
+func (p volumeVerifier) readVolumeDigest(ctx context.Context, reference sandbox.VolumeReference, name string, size int64) (string, error) {
 	if size < 0 || size > MaxFileBytes {
 		return "", fmt.Errorf("%w: published content file %q has unsupported size %d", ErrContentRefused, name, size)
 	}

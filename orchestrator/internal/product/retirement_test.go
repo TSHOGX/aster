@@ -118,7 +118,7 @@ func TestObservedPlacementLossAndStoreChangeRemainScoped(t *testing.T) {
 	drive(t, l, a.ProjectID)
 	current, err = s.Resources(ctx, a)
 	must(t, err)
-	if current.Reference.SandboxID == r.Reference.SandboxID || current.WorkspaceVolume != r.WorkspaceVolume || current.RuntimeVolume != r.RuntimeVolume {
+	if current.Reference.SandboxID == r.Reference.SandboxID || current.VolumeForRole("workspace") != r.VolumeForRole("workspace") || current.VolumeForRole("runtime") != r.VolumeForRole("runtime") {
 		t.Fatal("replacement did not preserve Project volumes", current, r)
 	}
 	// Changed defaults cannot rewrite or strand a Project's saved profile.

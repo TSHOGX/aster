@@ -68,7 +68,7 @@ func TestFreshProjectCanUploadAndBrowseBeforeFirstComputeStart(t *testing.T) {
 	must(t, err)
 	r, err := f.Store.Resources(ctx, scope)
 	must(t, err)
-	if r.Occupied || r.Reference.SandboxID != "" || r.RuntimeVolume != "" || r.WorkspaceVolume == "" || b.starts != 0 {
+	if r.Occupied || r.Reference.SandboxID != "" || r.VolumeForRole("runtime") != "" || r.VolumeForRole("workspace") == "" || b.starts != 0 {
 		t.Fatal(r)
 	}
 	capture, err := f.Capture(ctx, scope, "new.txt")
@@ -79,13 +79,13 @@ func TestFreshProjectCanUploadAndBrowseBeforeFirstComputeStart(t *testing.T) {
 	if string(data) != "created without compute" {
 		t.Fatal(string(data))
 	}
-	workspace := r.WorkspaceVolume
+	workspace := r.VolumeForRole("workspace")
 	f.Lifecycle.MaxProjects = 4
 	must(t, f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile))
 	drive(t, f.Lifecycle, scope.ProjectID)
 	r, err = f.Store.Resources(ctx, scope)
 	must(t, err)
-	if r.WorkspaceVolume != workspace || r.Reference.SandboxID == "" {
+	if r.VolumeForRole("workspace") != workspace || r.Reference.SandboxID == "" {
 		t.Fatal("first compute replaced workspace", r)
 	}
 }

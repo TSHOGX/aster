@@ -280,9 +280,8 @@ func (a *Application) controlHandler() http.Handler {
 			if e != nil {
 				report["observation_error"] = e.Error()
 			} else {
-				mounts := append([]sandbox.Mount{}, resources.Profile.PublishedMounts...)
-				mounts = append(mounts, sandbox.Mount{VolumeID: resources.WorkspaceVolume, Destination: "/workspace", Access: "exclusive"}, sandbox.Mount{VolumeID: resources.RuntimeVolume, Destination: "/runtime", Access: "exclusive"})
-				report["configuration_matches"] = sandbox.SameConfiguration(observed, resources.Profile.Reachability.Declaration(), mounts)
+				mounts, mountErr := resources.Mounts()
+				report["configuration_matches"] = mountErr == nil && sandbox.SameConfiguration(observed, resources.Profile.Reachability.Declaration(), mounts)
 				report["observation"] = observed
 			}
 		}
@@ -307,7 +306,13 @@ func (a *Application) controlHandler() http.Handler {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		writeControl(w, map[string]any{"published_mounts": profile.PublishedMounts, "default_activation": "on application restart"})
+		published := []product.VolumePlan{}
+		for _, slot := range profile.Volumes {
+			if slot.Storage == "shared_readonly" {
+				published = append(published, slot)
+			}
+		}
+		writeControl(w, map[string]any{"published_volumes": published, "default_activation": "on application restart"})
 	})
 	return mux
 }

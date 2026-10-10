@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -13,30 +12,31 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
 	"harness-platform/orchestrator/internal/projectfiles"
 	"harness-platform/orchestrator/internal/sandbox"
 )
 
-// The resource row is the durable volume-creation intent; storage_key survives
-// a lost reply and is also resolved by deletion. No sandbox capacity is reserved.
-// Callers hold the lifecycle lane until binding or explicit failure.
-func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope) (Resources, error) {
+// First upload saves and reserves every slot, then materializes only workspace.
+// Callers hold the existing Project lifecycle lane through readiness.
+func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope, action ProductAction) (Resources, error) {
 	var r Resources
 	err := f.Store.write(ctx, func(tx *sql.Tx) error {
 		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
+		if err := authorizeAction(ctx, tx, scope.Actor, action); err != nil {
+			return err
+		}
 		if p.State != "created" && p.State != "paused" {
 			return ErrPending
 		}
-		var phase string
-		if err = tx.QueryRowContext(ctx, `SELECT phase FROM application_release WHERE id=1`).Scan(&phase); err != nil {
+		release, err := releaseState(ctx, tx)
+		if err != nil {
 			return err
 		}
-		if phase != "open" {
+		if release.Phase != "open" {
 			return ErrDraining
 		}
 		r, err = resources(ctx, tx, p.ID)
@@ -45,39 +45,24 @@ func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope) (Resour
 			if e != nil {
 				return e
 			}
-			if err = profile.Validate(); err != nil {
-				return err
-			}
-			raw, _ := json.Marshal(profile)
-			_, err = tx.ExecContext(ctx, `INSERT INTO project_resources(project_id,store_id,profile,occupied,storage_key) VALUES(?,?,?,0,?)`, p.ID, f.Profile.StoreID, string(raw), "storage-"+uuid.NewString())
-			if err != nil {
+			if err = f.Store.bindVolumePlan(ctx, tx, p.ID, profile, false); err != nil {
 				return err
 			}
 			r, err = resources(ctx, tx, p.ID)
 		}
 		return err
 	})
-	if err != nil || r.WorkspaceVolume != "" {
-		return r, err
-	}
-	if r.StorageKey == "" {
-		return r, ErrPending
-	}
-	volume, err := f.Lifecycle.Backend.CreateVolume(ctx, r.StorageKey, r.Profile.WorkspaceBytes)
 	if err != nil {
 		return r, err
 	}
-	if volume.StoreID != r.Reference.StoreID || volume.VolumeID == "" || volume.Capacity != r.Profile.WorkspaceBytes {
-		return r, ErrConflict
+	plan, ok := r.Profile.VolumeForRole("workspace")
+	if !ok {
+		return r, ErrInvalid
 	}
-	err = f.Store.write(ctx, func(tx *sql.Tx) error {
-		// Bind even if a concurrent delete/resume was admitted. Its execution waits
-		// on our lane and must account for the volume this original intent created.
-		_, err := tx.ExecContext(ctx, `UPDATE project_resources SET workspace_volume=? WHERE project_id=? AND storage_key=? AND workspace_volume=''`, volume.VolumeID, scope.ProjectID, r.StorageKey)
-		return err
-	})
-	r.WorkspaceVolume = volume.VolumeID
-	return r, err
+	if _, err = f.Lifecycle.materializeSlot(ctx, r, plan.Key); err != nil {
+		return r, err
+	}
+	return resources(ctx, f.Store.reader, scope.ProjectID)
 }
 func volumeParent(ctx context.Context, backend sandbox.VolumeReads, ref sandbox.VolumeReference, name string) error {
 	parent := path.Dir(name)
@@ -113,7 +98,7 @@ func (f *Files) executeVolume(ctx context.Context, scope Scope, id string, actio
 		return FileOperation{}, ErrPending
 	}
 	defer release()
-	r, err := f.ensureWorkspaceStorage(runctx, scope)
+	r, err := f.ensureWorkspaceStorage(runctx, scope, action)
 	if err != nil {
 		return FileOperation{}, err
 	}
@@ -138,7 +123,7 @@ func (f *Files) executeVolume(ctx context.Context, scope Scope, id string, actio
 		return o, fileResult(o)
 	}
 	defer func() { f.mu.Lock(); delete(f.active, id); f.mu.Unlock() }()
-	if o.VolumeID != r.WorkspaceVolume {
+	if o.VolumeID != r.VolumeForRole("workspace") {
 		return o, ErrConflict
 	}
 	ref := volumeReference(r)

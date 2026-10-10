@@ -170,7 +170,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	profile := product.Profile{
 		StoreID: identity.StoreID, TemplateID: "agent-runtime",
 		CPUMillis: 2000, MemoryBytes: 2 << 30, DiskBytes: 256 << 20,
-		WorkspaceBytes: 64 << 20, RuntimeBytes: 64 << 20,
+		Volumes: []product.VolumePlan{{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: 64 << 20}, {Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: 64 << 20}},
 		Reachability: product.Reachability{
 			Services: []product.ServiceRule{{Audience: "model", Destination: synthetic, Port: 443, Gateway: netip.AddrPortFrom(host, gatewayPort)}},
 			Hosts:    map[string]string{"model.internal": "model"},

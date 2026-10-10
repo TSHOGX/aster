@@ -131,8 +131,17 @@ bypass that condition. Completion requires the selected executable. Replacing a
 pinned gateway additionally requires full quiescence before completion.
 
 File mutation rows distinguish volume authority (`volume_id`, `staging_path`)
-from guest process authority. `project_resources.storage_key` records workspace
-creation intent before remote allocation without marking compute occupied.
+from guest process authority. `project_resources` holds the saved Profile and
+compute binding. `project_volume_slots` holds each stable key, original create
+intent, observed Volume ID and reserved/creating/initializing/ready/deleting/deleted
+state. `storage_reservations` records capacity as reserved, allocated or released;
+it is accounting, not another Volume inventory. First binding reserves every owned
+slot; first upload materializes only workspace without marking compute occupied.
+Observed creation converts reservation to allocation before seed verification.
+Uncertain creation/deletion retains its charge; confirmed deletion or proven
+absence releases it. Never-dispatched slots can be abandoned without allocation.
+Shared references have no per-user owned-byte charge and survive Project deletion.
+Creating/initializing/deleting slots also participate in release readiness fences.
 The canonical DDL contains the final admission triggers, indexes and blocker
 views directly. Migration-only read-command retirement state has been removed.
 
@@ -170,5 +179,7 @@ after removal, and their dependency fingerprint includes override authority.
 The resource-change service computes bounded affected-account configuration and
 whole-environment fit previews, checks dependency revisions on commit, and reuses
 administrative receipts/audit. These configuration methods are internal pending
-the full slot-reservation and usage admission integration; they are not currently
-exposed as editable HTTP settings or claimed as enforced allocation quotas.
+database-selected allocation and quota admission integration; they are not
+currently exposed as editable HTTP settings or claimed as enforced allocation
+quotas. The slot reservation ledger records full declared capacities, not measured
+filesystem byte consumption or a promise of available engine capacity.

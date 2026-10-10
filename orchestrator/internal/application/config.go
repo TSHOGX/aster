@@ -77,6 +77,14 @@ type TitleService struct {
 	Model     string `json:"model"`
 	APIKeyEnv string `json:"api_key_env"`
 }
+type ProjectDefaults struct {
+	CPUMillis      int64                `json:"cpu_millis"`
+	MemoryBytes    int64                `json:"memory_bytes"`
+	DiskBytes      int64                `json:"disk_bytes"`
+	WorkspaceBytes int64                `json:"workspace_bytes"`
+	RuntimeBytes   int64                `json:"runtime_bytes"`
+	Reachability   product.Reachability `json:"reachability"`
+}
 type Config struct {
 	HTTPMetrics       bool                    `json:"http_metrics"`
 	Version           int                     `json:"version"`
@@ -88,7 +96,7 @@ type Config struct {
 	ControlSocket     string                  `json:"control_socket"`
 	Engine            engineconfig.Connection `json:"engine"`
 	Template          Template                `json:"template"`
-	Project           product.Profile         `json:"project"`
+	Project           ProjectDefaults         `json:"project"`
 	Content           Content                 `json:"content"`
 	Limits            Limits                  `json:"limits"`
 	Notifications     NotificationConfig      `json:"notifications"`
@@ -169,9 +177,7 @@ func LoadConfig(name string) (Config, error) {
 	return cfg, err
 }
 func (c Config) Validate() error {
-	if c.Project.NetworkPolicyRevision != "" {
-		return errors.New("network policy revision is application-owned")
-	}
+
 	if c.Version != 1 || !filepath.IsAbs(c.StateDirectory) || !filepath.IsAbs(c.ControlSocket) || c.StateDirectory == "/" || c.ControlSocket == "/" {
 		return errors.New("version 1 and explicit state/control paths required")
 	}
@@ -193,18 +199,9 @@ func (c Config) Validate() error {
 	if c.Template.Version == "" || len(c.Template.Version) > 128 || c.Template.ID == "" || strings.ContainsAny(c.Template.ID, "/\\\x00?# ") || !runtimerelease.ValidDigest(c.Template.Digest) || !filepath.IsAbs(c.Template.Manifest) {
 		return errors.New("template identity and pinned runtime manifest required")
 	}
-	if c.Project.StoreID != "" || c.Project.TemplateID != "" || len(c.Project.PublishedMounts) > 0 || c.Project.ReleaseDigest != "" {
-		return errors.New("Project store, template and publication bindings are derived by the application")
-	}
-	p := c.Project
-	p.StoreID = c.Engine.StoreID
-	p.TemplateID = c.Template.ID
-	p.ReleaseDigest = c.Template.Digest
+	p := c.Profile()
 	if err := p.Validate(); err != nil {
-		return fmt.Errorf("Project configuration: %w", err)
-	}
-	if p.CPUMillis <= 0 || p.MemoryBytes <= 0 || p.DiskBytes <= 0 || p.WorkspaceBytes <= 0 || p.RuntimeBytes <= 0 {
-		return errors.New("positive Project resource and storage bounds required")
+		return fmt.Errorf("Project bootstrap configuration: %w", err)
 	}
 	if c.Content.VolumeBytes <= 0 {
 		return errors.New("positive content publication capacity required")
@@ -260,11 +257,10 @@ func (c Config) titleGenerator() product.TitleGenerator {
 }
 
 func (c Config) Profile() product.Profile {
-	p := c.Project
-	p.StoreID = c.Engine.StoreID
-	p.TemplateID = c.Template.ID
-	p.ReleaseDigest = c.Template.Digest
-	return p
+	return product.Profile{StoreID: c.Engine.StoreID, TemplateID: c.Template.ID, ReleaseDigest: c.Template.Digest, CPUMillis: c.Project.CPUMillis, MemoryBytes: c.Project.MemoryBytes, DiskBytes: c.Project.DiskBytes, Reachability: c.Project.Reachability, Volumes: []product.VolumePlan{
+		{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: c.Project.WorkspaceBytes},
+		{Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: c.Project.RuntimeBytes},
+	}}
 }
 func (c Config) DatabasePath() string { return filepath.Join(c.StateDirectory, "product.db") }
 

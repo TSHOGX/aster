@@ -169,7 +169,7 @@ func TestProjectLifecycleOnKhora(t *testing.T) {
 	if _, err = api.Get(runctx, r.Reference.SandboxID); !sdk.IsNotFound(err) {
 		t.Fatalf("sandbox not reclaimed: %v", err)
 	}
-	for _, id := range []string{r.WorkspaceVolume, r.RuntimeVolume} {
+	for _, id := range []string{r.VolumeForRole("workspace"), r.VolumeForRole("runtime")} {
 		if _, err = api.Volume(runctx, id); !sdk.IsNotFound(err) {
 			t.Fatalf("volume %s not reclaimed: %v", id, err)
 		}

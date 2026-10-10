@@ -79,7 +79,7 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	drive(t, l, a.ProjectID)
 	resumed, err := l.ActiveResources(ctx, a)
 	must(t, err)
-	if resumed.Profile.NetworkPolicyRevision != second.Revision || resumed.WorkspaceVolume != original.WorkspaceVolume || resumed.RuntimeVolume != original.RuntimeVolume || resumed.Reference.SandboxID != original.Reference.SandboxID || f.calls["network"] != 1 {
+	if resumed.Profile.NetworkPolicyRevision != second.Revision || resumed.VolumeForRole("workspace") != original.VolumeForRole("workspace") || resumed.VolumeForRole("runtime") != original.VolumeForRole("runtime") || resumed.Reference.SandboxID != original.Reference.SandboxID || f.calls["network"] != 1 {
 		t.Fatal("resume lost original intent", resumed, f.calls)
 	}
 	if f.projections[resumed.Reference.SandboxID]["/etc/resolv.conf"] != "nameserver 198.51.100.53\n" || !strings.Contains(f.projections[resumed.Reference.SandboxID]["/etc/hosts"], "model.internal") {
@@ -272,7 +272,7 @@ func TestNetworkPolicyRecoveryAndRestartSelectLatestDefaults(t *testing.T) {
 	drive(t, l, a.ProjectID)
 	r, err := l.ActiveResources(ctx, a)
 	must(t, err)
-	if r.Profile.NetworkPolicyRevision != second.Revision || r.WorkspaceVolume != original.WorkspaceVolume {
+	if r.Profile.NetworkPolicyRevision != second.Revision || r.VolumeForRole("workspace") != original.VolumeForRole("workspace") {
 		t.Fatal(r)
 	}
 	_, err = l.Store.AcceptNetworkPolicy(ctx, first)
@@ -282,7 +282,7 @@ func TestNetworkPolicyRecoveryAndRestartSelectLatestDefaults(t *testing.T) {
 	drive(t, l, a.ProjectID)
 	r, err = l.ActiveResources(ctx, a)
 	must(t, err)
-	if r.Profile.NetworkPolicyRevision != first.Revision || r.WorkspaceVolume != original.WorkspaceVolume || r.RuntimeVolume != original.RuntimeVolume {
+	if r.Profile.NetworkPolicyRevision != first.Revision || r.VolumeForRole("workspace") != original.VolumeForRole("workspace") || r.VolumeForRole("runtime") != original.VolumeForRole("runtime") {
 		t.Fatal(r)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/runtimerelease"
 )
 
@@ -31,7 +30,7 @@ func configurationFixture(t *testing.T) (Config, string) {
 	cfg.Template = Template{Version: "v1", ID: "test", Manifest: "runtime.json", Digest: digest}
 	cfg.Engine.Endpoint = "http://127.0.0.1:18191"
 	cfg.Engine.StoreID = "store"
-	cfg.Project = product.Profile{CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}
+	cfg.Project = ProjectDefaults{CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 256 << 20, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}
 	return cfg, filepath.Join(directory, "application.json")
 }
 func TestConfigurationHasOneStrictProjectSurface(t *testing.T) {
@@ -57,14 +56,28 @@ func TestConfigurationHasOneStrictProjectSurface(t *testing.T) {
 	}
 }
 func TestConfigurationRefusesUserSelectedBindings(t *testing.T) {
-	for _, change := range []func(*Config){func(c *Config) { c.Project.StoreID = "another" }, func(c *Config) { c.Project.TemplateID = "another" }, func(c *Config) { c.Limits.AgentsPerProject = 1000 }} {
+	for _, field := range []string{"store_id", "template_id", "volumes", "release_digest", "network_policy_revision"} {
 		cfg, path := configurationFixture(t)
-		change(&cfg)
 		raw, _ := json.Marshal(cfg)
-		os.WriteFile(path, raw, 0600)
-		if _, err := LoadConfig(path); err == nil {
-			t.Fatal("invalid configuration accepted", cfg)
+		var document map[string]any
+		if err := json.Unmarshal(raw, &document); err != nil {
+			t.Fatal(err)
 		}
+		document["project"].(map[string]any)[field] = "forged"
+		raw, _ = json.Marshal(document)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatal("user-selected runtime binding accepted", field)
+		}
+	}
+	cfg, path := configurationFixture(t)
+	cfg.Limits.AgentsPerProject = 1000
+	raw, _ := json.Marshal(cfg)
+	os.WriteFile(path, raw, 0600)
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("invalid capacity accepted")
 	}
 }
 

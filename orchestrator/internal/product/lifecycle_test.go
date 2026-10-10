@@ -54,7 +54,10 @@ func (f *fakeLifecycle) CreateVolume(_ context.Context, key string, capacity int
 		f.volumeKeys[key] = id
 		f.volumes[id] = sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: f.store, VolumeID: id}, Capacity: capacity}
 	}
-	v := f.volumes[id]
+	v, found := f.volumes[id]
+	if !found {
+		return sandbox.Volume{VolumeReference: sandbox.VolumeReference{StoreID: f.store, VolumeID: id}, Capacity: capacity}, &sandbox.Error{Class: sandbox.NotFound, Operation: "inspect volume"}
+	}
 	return v, f.lost("volume")
 }
 func (f *fakeLifecycle) Create(_ context.Context, r sandbox.CreateRequest) (sandbox.Observation, error) {
@@ -135,7 +138,7 @@ func (f *fakeLifecycle) WriteProjection(_ context.Context, ref sandbox.Reference
 	return f.lost("projection")
 }
 func testProfile() Profile {
-	return Profile{StoreID: "engine", TemplateID: "test", CPUMillis: 1000, MemoryBytes: 256 << 20, DiskBytes: 128 << 20, WorkspaceBytes: 64 << 20, RuntimeBytes: 32 << 20}
+	return Profile{StoreID: "engine", TemplateID: "test", CPUMillis: 1000, MemoryBytes: 256 << 20, DiskBytes: 128 << 20, Volumes: []VolumePlan{{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: 64 << 20}, {Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: 32 << 20}}}
 }
 func lifecycleFixture(t *testing.T) (*Lifecycle, Scope, *fakeLifecycle) {
 	t.Helper()
@@ -187,13 +190,17 @@ func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {
 	}
 	r, err := l.Store.Resources(ctx, a)
 	must(t, err)
-	if !r.Occupied || r.WorkspaceVolume != "" {
+	if !r.Occupied || r.VolumeForRole("workspace") != "" {
 		t.Fatal(r)
 	}
-	must(t, l.Reconcile(ctx, a.ProjectID))
-	must(t, l.Reconcile(ctx, a.ProjectID))
-	if err := l.Reconcile(ctx, a.ProjectID); err == nil {
-		t.Fatal("expected lost create reply")
+	for attempts := 0; attempts < 10 && f.calls["create"] == 0; attempts++ {
+		err = l.Reconcile(ctx, a.ProjectID)
+		if f.calls["create"] == 0 {
+			must(t, err)
+		}
+	}
+	if err == nil || f.calls["create"] != 1 {
+		t.Fatal("expected lost create reply", err)
 	}
 	drive(t, l, a.ProjectID)
 	r, err = l.ActiveResources(ctx, a)
@@ -202,7 +209,7 @@ func TestConcurrentProjectFirstUseAndOriginalCreateKeys(t *testing.T) {
 		t.Fatal(r, f.creates, f.volumes)
 	}
 	mounts := f.mounts[r.Reference.SandboxID]
-	if len(mounts) != 2 || mounts[0].Destination != "/workspace" || mounts[1].Destination != "/runtime" {
+	if len(mounts) != 2 || !sandbox.SameConfiguration(sandbox.Configuration{Mounts: mounts}, sandbox.Network{}, []sandbox.Mount{{VolumeID: r.VolumeForRole("workspace"), Destination: "/workspace", Access: "exclusive"}, {VolumeID: r.VolumeForRole("runtime"), Destination: "/runtime", Access: "exclusive"}}) {
 		t.Fatal(mounts)
 	}
 	for i := 0; i < 10; i++ {

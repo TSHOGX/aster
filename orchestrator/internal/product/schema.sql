@@ -472,15 +472,38 @@ CREATE TABLE project_resources (
  project_id TEXT PRIMARY KEY REFERENCES projects(id),
  store_id TEXT NOT NULL CHECK(store_id<>''),
  profile TEXT NOT NULL,
- workspace_volume TEXT NOT NULL DEFAULT '',
- runtime_volume TEXT NOT NULL DEFAULT '',
  sandbox_id TEXT NOT NULL DEFAULT '',
  mutation_revision TEXT NOT NULL DEFAULT '',
  epoch INTEGER NOT NULL DEFAULT 0 CHECK(epoch>=0),
  observed_at TEXT NOT NULL DEFAULT '',
  occupied INTEGER NOT NULL CHECK(occupied IN (0,1))
-, storage_key TEXT NOT NULL DEFAULT '');
+);
 
+CREATE TABLE project_volume_slots (
+ project_id TEXT NOT NULL REFERENCES project_resources(project_id),
+ slot_key TEXT NOT NULL,
+ store_id TEXT NOT NULL,
+ storage TEXT NOT NULL CHECK(storage IN ('owned','shared_readonly')),
+ intent_key TEXT NOT NULL UNIQUE,
+ volume_id TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK(state IN ('reserved','creating','initializing','ready','deleting','deleted')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(project_id,slot_key),
+ CHECK(state NOT IN ('initializing','ready') OR volume_id<>'')
+);
+CREATE UNIQUE INDEX project_owned_volume_unique ON project_volume_slots(store_id,volume_id) WHERE storage='owned' AND volume_id<>'';
+CREATE TABLE storage_reservations (
+ project_id TEXT NOT NULL,
+ slot_key TEXT NOT NULL,
+ capacity INTEGER NOT NULL CHECK(capacity>0),
+ state TEXT NOT NULL CHECK(state IN ('reserved','allocated','released')),
+ PRIMARY KEY(project_id,slot_key),
+ FOREIGN KEY(project_id,slot_key) REFERENCES project_volume_slots(project_id,slot_key)
+);
+CREATE TRIGGER storage_reservation_capacity_immutable BEFORE UPDATE OF capacity ON storage_reservations
+WHEN NEW.capacity<>OLD.capacity BEGIN SELECT RAISE(ABORT,'immutable storage reservation'); END;
+CREATE TRIGGER volume_slot_identity_immutable BEFORE UPDATE OF intent_key,slot_key,project_id,store_id,storage ON project_volume_slots
+BEGIN SELECT RAISE(ABORT,'immutable volume slot identity'); END;
 CREATE TABLE projects (
  id TEXT PRIMARY KEY CHECK(id<>''),
  owner_id TEXT NOT NULL REFERENCES accounts(id) CHECK(owner_id<>''),
@@ -843,11 +866,9 @@ CREATE UNIQUE INDEX project_operation_lane ON project_operations(project_id) WHE
 
 CREATE INDEX project_operations_pending ON project_operations(state,attempted_at,project_id);
 
-CREATE UNIQUE INDEX project_runtime_unique ON project_resources(store_id,runtime_volume) WHERE runtime_volume<>'';
 
 CREATE UNIQUE INDEX project_sandbox_unique ON project_resources(store_id,sandbox_id) WHERE sandbox_id<>'';
 
-CREATE UNIQUE INDEX project_workspace_unique ON project_resources(store_id,workspace_volume) WHERE workspace_volume<>'';
 
 CREATE INDEX projects_owner ON projects(owner_id,created_at,id);
 
@@ -858,6 +879,8 @@ CREATE INDEX release_agent_transition_pending ON agent_incarnations(id) WHERE st
 CREATE INDEX release_command_pending ON agent_commands(id) WHERE state IN ('pending','sending','dispatching','unknown');
 
 CREATE INDEX release_content_publication_pending ON content_publications(revision_digest) WHERE stage NOT IN ('published','failed');
+
+CREATE INDEX release_volume_slot_pending ON project_volume_slots(project_id,slot_key) WHERE state IN ('creating','initializing','deleting');
 
 CREATE INDEX release_file_write_pending ON file_operations(id) WHERE settled=0;
 
@@ -945,6 +968,7 @@ WHERE (state IN ('starting','stopping','unknown') OR recovery_state IN ('pending
 UNION ALL SELECT 'terminal_start' AS kind,id AS id FROM terminal_incarnations INDEXED BY release_terminal_start_pending WHERE state='starting'
 UNION ALL SELECT 'project_operation' AS kind,id AS id FROM project_operations INDEXED BY release_project_operation_pending WHERE state<>'succeeded'
 UNION ALL SELECT 'project_transition' AS kind,id AS id FROM projects INDEXED BY release_project_transition_pending WHERE state IN ('provisioning','resuming','pausing','deleting')
+UNION ALL SELECT 'volume_slot',project_id||':'||slot_key FROM project_volume_slots INDEXED BY release_volume_slot_pending WHERE state IN ('creating','initializing','deleting')
 UNION ALL SELECT 'file_write' AS kind,id AS id FROM file_operations INDEXED BY release_file_write_pending WHERE settled=0
 UNION ALL SELECT 'session_cleanup' AS kind,id AS id FROM sessions INDEXED BY release_session_cleanup_pending WHERE deletion_intent=1
 UNION ALL SELECT 'terminal_cleanup' AS kind,id AS id FROM terminals INDEXED BY release_terminal_cleanup_pending WHERE deletion_intent=1
@@ -1209,6 +1233,13 @@ BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',upda
 
 CREATE TRIGGER release_ready_native_capture_update AFTER UPDATE OF state ON native_captures
 WHEN (NEW.state='guest') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
+
+CREATE TRIGGER release_ready_volume_slot_insert AFTER INSERT ON project_volume_slots
+WHEN NEW.state IN ('creating','initializing','deleting') AND (SELECT phase FROM application_release WHERE id=1)='ready'
+BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
+CREATE TRIGGER release_ready_volume_slot_update AFTER UPDATE OF state ON project_volume_slots
+WHEN NEW.state IN ('creating','initializing','deleting') AND (SELECT phase FROM application_release WHERE id=1)='ready'
 BEGIN UPDATE application_release SET phase='draining',reason='work_resumed',updated_at=strftime('%Y-%m-%dT%H:%M:%f000000Z','now') WHERE id=1 AND phase='ready'; END;
 
 CREATE TRIGGER release_ready_project_operation_insert AFTER INSERT ON project_operations

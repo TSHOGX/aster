@@ -9,8 +9,10 @@ import (
 )
 
 func profileConfiguration(actual sandbox.Configuration, p Profile, r Resources) bool {
-	mounts := append([]sandbox.Mount{}, p.PublishedMounts...)
-	mounts = append(mounts, sandbox.Mount{VolumeID: r.WorkspaceVolume, Destination: "/workspace", Access: "exclusive"}, sandbox.Mount{VolumeID: r.RuntimeVolume, Destination: "/runtime", Access: "exclusive"})
+	mounts, err := r.Mounts()
+	if err != nil {
+		return false
+	}
 	return actual.TemplateID == p.TemplateID && actual.CPUMillis == p.CPUMillis && actual.MemoryBytes == p.MemoryBytes && actual.DiskCapacityBytes == p.DiskBytes && sandbox.SameConfiguration(actual, p.Reachability.Declaration(), mounts)
 }
 

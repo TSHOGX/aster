@@ -4,6 +4,7 @@ package producthttp
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"harness-platform/orchestrator/internal/producttest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	sdk "github.com/TSHOGX/khora/pkg/khora"
+	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
@@ -66,7 +68,8 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	must(t, err)
 	sharedVolume, err := api.SnapshotVolume(runctx, sharedBase.VolumeID, 8<<20)
 	must(t, err)
-	profile.PublishedMounts = []sandbox.Mount{{VolumeID: sharedVolume, Destination: "/opt/shared-assets", Access: "shared-ro"}}
+	sharedEntries := []content.Entry{{Path: "sentinel", Size: int64(len("published-shared-asset")), Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("published-shared-asset")))}}
+	profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: "shared", Role: "shared_assets", Destination: "/opt/shared-assets", Storage: "shared_readonly", Access: "read_only", CapacityBytes: 8 << 20, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: "shared", Version: "v1", Digest: content.Digest(sharedEntries)}, VolumeID: sharedVolume, MinimumBytes: 8 << 20}})
 
 	scope := product.Scope{Actor: "owner", ProjectID: "recovery"}
 	_, err = store.CreateProject(runctx, scope.Actor, scope.ProjectID, "Recovery")
@@ -586,7 +589,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		volumes, err := api.Volumes(runctx)
 		must(t, err)
 		for _, volume := range volumes {
-			if volume.VolumeID == r.WorkspaceVolume || volume.VolumeID == r.RuntimeVolume {
+			if volume.VolumeID == r.VolumeForRole("workspace") || volume.VolumeID == r.VolumeForRole("runtime") {
 				t.Fatal("owned volume still listed after completed deletion", volume.VolumeID)
 			}
 		}

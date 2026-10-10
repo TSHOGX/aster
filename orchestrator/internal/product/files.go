@@ -106,10 +106,10 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, act
 			if pending > 0 {
 				return ErrFileOutcomeUnknown
 			}
-			if resources.WorkspaceVolume == "" {
+			if resources.VolumeForRole("workspace") == "" {
 				return ErrPending
 			}
-			o.VolumeID = resources.WorkspaceVolume
+			o.VolumeID = resources.VolumeForRole("workspace")
 			o.Reference = sandbox.ProcessReference{StoreID: resources.Reference.StoreID}
 			if r.Operation == "write" {
 				o.StagingPath = path.Join(path.Dir(r.Path), ".workspace-upload-"+uuid.NewString())

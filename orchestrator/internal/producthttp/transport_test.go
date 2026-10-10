@@ -201,7 +201,7 @@ func (h *harness) currentActor() string {
 }
 
 func testProfile() product.Profile {
-	return product.Profile{StoreID: "engine", TemplateID: "agent-runtime", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30, WorkspaceBytes: 1 << 30, RuntimeBytes: 1 << 29}
+	return product.Profile{StoreID: "engine", TemplateID: "agent-runtime", CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30, Volumes: []product.VolumePlan{{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: 1 << 30}, {Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: 1 << 29}}}
 }
 
 func newHarness(t *testing.T) *harness {

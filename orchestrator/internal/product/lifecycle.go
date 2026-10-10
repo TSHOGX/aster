@@ -19,17 +19,15 @@ var ErrPending = errors.New("project operation pending")
 var ErrCapacity = errors.New("active Project capacity exhausted")
 
 type Profile struct {
-	NetworkPolicyRevision string          `json:"network_policy_revision,omitempty"`
-	ReleaseDigest         string          `json:"release_digest,omitempty"`
-	StoreID               string          `json:"store_id"`
-	TemplateID            string          `json:"template_id"`
-	CPUMillis             int64           `json:"cpu_millis"`
-	MemoryBytes           int64           `json:"memory_bytes"`
-	DiskBytes             int64           `json:"disk_bytes"`
-	WorkspaceBytes        int64           `json:"workspace_bytes"`
-	RuntimeBytes          int64           `json:"runtime_bytes"`
-	Reachability          Reachability    `json:"reachability"`
-	PublishedMounts       []sandbox.Mount `json:"published_mounts"`
+	NetworkPolicyRevision string       `json:"network_policy_revision,omitempty"`
+	ReleaseDigest         string       `json:"release_digest,omitempty"`
+	StoreID               string       `json:"store_id"`
+	TemplateID            string       `json:"template_id"`
+	CPUMillis             int64        `json:"cpu_millis"`
+	MemoryBytes           int64        `json:"memory_bytes"`
+	DiskBytes             int64        `json:"disk_bytes"`
+	Reachability          Reachability `json:"reachability"`
+	Volumes               []VolumePlan `json:"volumes"`
 }
 
 func (p Profile) Validate() error {
@@ -39,32 +37,31 @@ func (p Profile) Validate() error {
 	if p.ReleaseDigest != "" && !content.ValidDigest(p.ReleaseDigest) {
 		return ErrInvalid
 	}
-	if p.StoreID == "" || p.TemplateID == "" || p.CPUMillis <= 0 || p.MemoryBytes <= 0 || p.DiskBytes <= 0 || p.WorkspaceBytes <= 0 || p.RuntimeBytes <= 0 {
+	if p.StoreID == "" || p.TemplateID == "" || p.CPUMillis <= 0 || p.MemoryBytes <= 0 || p.DiskBytes <= 0 {
 		return ErrInvalid
 	}
-	for _, m := range p.PublishedMounts {
-		if m.Access != "shared-ro" || m.VolumeID == "" || (m.Destination != "/opt/agent-config" && m.Destination != "/opt/shared-assets") {
-			return ErrInvalid
-		}
+	if err := validateVolumePlan(p.Volumes); err != nil {
+		return err
 	}
 	return p.Reachability.validate()
 }
 
 type Resources struct {
-	ProjectID       string            `json:"project_id"`
-	Reference       sandbox.Reference `json:"reference"`
-	Profile         Profile           `json:"profile"`
-	StorageKey      string            `json:"-"`
-	WorkspaceVolume string            `json:"workspace_volume"`
-	RuntimeVolume   string            `json:"runtime_volume"`
-	Occupied        bool              `json:"occupied"`
+	ProjectID string            `json:"project_id"`
+	Reference sandbox.Reference `json:"reference"`
+	Profile   Profile           `json:"profile"`
+	Volumes   []VolumeSlot      `json:"volumes"`
+	Occupied  bool              `json:"occupied"`
 }
 
 func resources(ctx context.Context, q queryer, project string) (r Resources, err error) {
 	var raw string
-	err = missing(q.QueryRowContext(ctx, `SELECT project_id,store_id,profile,workspace_volume,runtime_volume,sandbox_id,mutation_revision,epoch,occupied,storage_key FROM project_resources WHERE project_id=?`, project).Scan(&r.ProjectID, &r.Reference.StoreID, &raw, &r.WorkspaceVolume, &r.RuntimeVolume, &r.Reference.SandboxID, &r.Reference.MutationRevision, &r.Reference.Epoch, &r.Occupied, &r.StorageKey))
+	err = missing(q.QueryRowContext(ctx, `SELECT project_id,store_id,profile,sandbox_id,mutation_revision,epoch,occupied FROM project_resources WHERE project_id=?`, project).Scan(&r.ProjectID, &r.Reference.StoreID, &raw, &r.Reference.SandboxID, &r.Reference.MutationRevision, &r.Reference.Epoch, &r.Occupied))
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &r.Profile)
+	}
+	if err == nil {
+		r.Volumes, err = volumeSlots(ctx, q, project)
 	}
 	return
 }
@@ -190,11 +187,8 @@ func (l *Lifecycle) Resume(ctx context.Context, scope Scope, profile Profile) er
 	return l.ensureActive(ctx, scope, profile, true, true)
 }
 func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profile, useSaved, requireManage bool) error {
+	profile = canonicalProfile(profile)
 	if err := profile.Validate(); err != nil {
-		return err
-	}
-	raw, err := json.Marshal(profile)
-	if err != nil {
 		return err
 	}
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
@@ -212,11 +206,15 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 			if err = l.reserve(ctx, tx); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO project_resources(project_id,store_id,profile,occupied) VALUES(?,?,?,1)`, p.ID, profile.StoreID, string(raw)); err != nil {
+			if err = l.Store.bindVolumePlan(ctx, tx, p.ID, profile, true); err != nil {
 				return err
 			}
-			return l.newOperation(ctx, tx, p.ID, "create", "workspace", operationRequest{})
+			return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
 		}
+		if err != nil {
+			return err
+		}
+		raw, err := json.Marshal(profile)
 		if err != nil {
 			return err
 		}
@@ -252,14 +250,7 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 			return err
 		}
 		if r.Reference.SandboxID == "" {
-			phase := "sandbox"
-			if r.RuntimeVolume == "" {
-				phase = "runtime"
-			}
-			if r.WorkspaceVolume == "" {
-				phase = "workspace"
-			}
-			return l.newOperation(ctx, tx, p.ID, "create", phase, operationRequest{})
+			return l.newOperation(ctx, tx, p.ID, "create", "volumes", operationRequest{})
 		}
 		return l.newOperation(ctx, tx, p.ID, "resume", "sandbox", operationRequest{Reference: r.Reference})
 	})
@@ -386,6 +377,24 @@ func (l *Lifecycle) Reconcile(ctx context.Context, project string) error {
 		if err != nil {
 			return err
 		}
+		var deleting bool
+		if err := tx.QueryRowContext(ctx, `SELECT state='deleting' FROM projects WHERE id=?`, project).Scan(&deleting); err != nil {
+			return err
+		}
+		if deleting && o.Kind == "create" && (o.Phase == "volumes" || o.Phase == "reachability" || o.Phase == "sandbox" && o.State == "pending") {
+			// No uncertain sandbox creation is abandoned. Slot-level uncertain
+			// effects retain their original keys and are resolved by deletion.
+			if _, err := tx.ExecContext(ctx, `UPDATE project_operations SET state='succeeded' WHERE id=?`, o.ID); err != nil {
+				return err
+			}
+			if err := l.newOperation(ctx, tx, project, "delete", "sandbox", operationRequest{Reference: r.Reference}); err != nil {
+				return err
+			}
+			o, err = pendingOperation(ctx, tx, project)
+			if err != nil {
+				return err
+			}
+		}
 		if o.Kind == "create" && !r.Occupied {
 			if err = l.reserve(ctx, tx); err != nil {
 				return err
@@ -473,29 +482,20 @@ func (l *Lifecycle) phase(ctx context.Context, o operation, next, column, value 
 }
 func (l *Lifecycle) provision(ctx context.Context, o operation, r Resources) error {
 	switch o.Phase {
-	case "workspace", "runtime":
-		capacity := r.Profile.WorkspaceBytes
-		column, next := "workspace_volume", "runtime"
-		if o.Phase == "runtime" {
-			capacity = r.Profile.RuntimeBytes
-			column, next = "runtime_volume", "sandbox"
+	case "volumes":
+		for _, slot := range r.Volumes {
+			if slot.State != "ready" {
+				_, err := l.materializeSlot(ctx, r, slot.Key)
+				return err
+			}
 		}
-		key := o.ID + "/" + o.Phase
-		if o.Phase == "workspace" && r.StorageKey != "" {
-			key = r.StorageKey
-		}
-		v, err := l.Backend.CreateVolume(ctx, key, capacity)
+		return l.phase(ctx, o, "sandbox", "", "")
+	case "sandbox":
+		p := r.Profile
+		mounts, err := r.Mounts()
 		if err != nil {
 			return err
 		}
-		if v.StoreID != r.Reference.StoreID || v.VolumeID == "" || v.Capacity != capacity {
-			return ErrConflict
-		}
-		return l.phase(ctx, o, next, column, v.VolumeID)
-	case "sandbox":
-		p := r.Profile
-		mounts := append([]sandbox.Mount{}, p.PublishedMounts...)
-		mounts = append(mounts, sandbox.Mount{VolumeID: r.WorkspaceVolume, Destination: "/workspace", Access: "exclusive"}, sandbox.Mount{VolumeID: r.RuntimeVolume, Destination: "/runtime", Access: "exclusive"})
 		observed, err := l.Backend.Create(ctx, sandbox.CreateRequest{IdempotencyKey: o.ID + "/sandbox", TemplateID: p.TemplateID, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes, Network: p.Reachability.Declaration(), Mounts: mounts})
 		if err != nil {
 			return err
@@ -690,30 +690,16 @@ func (l *Lifecycle) destroy(ctx context.Context, o operation, r Resources) error
 			if _, err := tx.ExecContext(ctx, `UPDATE project_resources SET occupied=0 WHERE project_id=?`, o.ProjectID); err != nil {
 				return err
 			}
-			_, err := tx.ExecContext(ctx, `UPDATE project_operations SET phase='workspace',state='pending',error='' WHERE id=?`, o.ID)
+			_, err := tx.ExecContext(ctx, `UPDATE project_operations SET phase='volumes',state='pending',error='' WHERE id=?`, o.ID)
 			return err
 		})
-	case "workspace", "runtime":
-		id, next := r.WorkspaceVolume, "runtime"
-		if o.Phase == "runtime" {
-			id, next = r.RuntimeVolume, "complete"
-		}
-		if id == "" && o.Phase == "workspace" && r.StorageKey != "" {
-			v, err := l.Backend.CreateVolume(ctx, r.StorageKey, r.Profile.WorkspaceBytes)
-			if err != nil {
-				return err
-			}
-			if v.StoreID != r.Reference.StoreID {
-				return ErrConflict
-			}
-			id = v.VolumeID
-		}
-		if id != "" {
-			if err := l.Backend.DeleteVolume(ctx, sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: id}); err != nil {
-				return err
+	case "volumes":
+		for _, slot := range r.Volumes {
+			if slot.State != "deleted" {
+				return l.deleteSlot(ctx, r, slot)
 			}
 		}
-		return l.phase(ctx, o, next, "", "")
+		return l.phase(ctx, o, "complete", "", "")
 	case "complete":
 		if l.Artifacts != nil {
 			if err := l.Artifacts.RemoveProject(ctx, o.ProjectID); err != nil {

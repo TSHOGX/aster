@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -147,11 +148,10 @@ func TestReleasedNetworkPolicyReload(t *testing.T) {
 	if current["effective_network_policy_revision"] != accepted || current["network_policy_pending"] != false || current["configuration_matches"] != true {
 		t.Fatal(current)
 	}
-	for _, name := range []string{"workspace_volume", "runtime_volume"} {
-		if current["resources"].(map[string]any)[name] != original["resources"].(map[string]any)[name] {
-			t.Fatal("volume changed")
-		}
+	if !reflect.DeepEqual(current["resources"].(map[string]any)["volumes"], original["resources"].(map[string]any)["volumes"]) {
+		t.Fatal("saved volume slots changed")
 	}
+
 	code := fmt.Sprintf(`import socket,ssl,urllib.request,base64
 assert open('/workspace/retained').read()=='network-retained'
 assert socket.gethostbyname('example.com')=='192.0.2.1'

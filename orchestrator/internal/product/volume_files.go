@@ -123,7 +123,7 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 }
 
 func volumeReference(r Resources) sandbox.VolumeReference {
-	return sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: r.WorkspaceVolume}
+	return sandbox.VolumeReference{StoreID: r.Reference.StoreID, VolumeID: r.VolumeForRole("workspace")}
 }
 
 // Direct APIs are confined by Khora. While the lifecycle lane holds the guest
@@ -178,7 +178,7 @@ func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Res
 	if err != nil {
 		return err
 	}
-	if current.Reference.StoreID != r.Reference.StoreID || current.WorkspaceVolume != r.WorkspaceVolume {
+	if current.Reference.StoreID != r.Reference.StoreID || current.VolumeForRole("workspace") != r.VolumeForRole("workspace") {
 		return ErrConflict
 	}
 	return nil
@@ -188,7 +188,10 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 		return projectfiles.Page{}, err
 	}
 	path, cursor, limit := query.Path, query.Cursor, query.Limit
-	if r.WorkspaceVolume == "" {
+	if r.VolumeForRole("workspace") == "" {
+		if _, bound := r.Profile.VolumeForRole("workspace"); bound {
+			return projectfiles.Page{}, ErrPending
+		}
 		if path == "" && cursor == "" {
 			return projectfiles.Page{Entries: []projectfiles.Entry{}}, nil
 		}
@@ -213,7 +216,7 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 		if snapshot == nil || time.Now().After(snapshot.expires) || snapshot.epoch != r.Reference.Epoch {
 			return projectfiles.Page{}, ErrResync
 		}
-		if snapshot.project != scope.ProjectID || snapshot.path != path || snapshot.volume != r.WorkspaceVolume {
+		if snapshot.project != scope.ProjectID || snapshot.path != path || snapshot.volume != r.VolumeForRole("workspace") {
 			return projectfiles.Page{}, ErrInvalid
 		}
 	} else {
@@ -224,7 +227,7 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 		if e != nil {
 			return projectfiles.Page{}, volumeFileError(e)
 		}
-		snapshot = &volumePage{project: scope.ProjectID, path: path, volume: r.WorkspaceVolume, epoch: r.Reference.Epoch, expires: time.Now().Add(projectfiles.SnapshotLifetime)}
+		snapshot = &volumePage{project: scope.ProjectID, path: path, volume: r.VolumeForRole("workspace"), epoch: r.Reference.Epoch, expires: time.Now().Add(projectfiles.SnapshotLifetime)}
 		for _, entry := range entries {
 			if entry.Name == "" || strings.ContainsAny(entry.Name, "/\\\x00") || entry.Name == "." || entry.Name == ".." {
 				return projectfiles.Page{}, ErrInvalid
@@ -309,7 +312,10 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
-	if r.WorkspaceVolume == "" {
+	if r.VolumeForRole("workspace") == "" {
+		if _, bound := r.Profile.VolumeForRole("workspace"); bound {
+			return nil, ErrPending
+		}
 		return nil, ErrNotFound
 	}
 	backend := w.Backend

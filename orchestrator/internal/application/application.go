@@ -18,7 +18,6 @@ import (
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/product"
 	"harness-platform/orchestrator/internal/producthttp"
-	"harness-platform/orchestrator/internal/sandbox"
 	"harness-platform/orchestrator/internal/sandbox/khora"
 )
 
@@ -217,7 +216,11 @@ func (a *Application) publishPrepared(ctx context.Context, sources []preparedPub
 		if err != nil {
 			return profile, err
 		}
-		profile.PublishedMounts = append(profile.PublishedMounts, sandbox.Mount{VolumeID: volume, Destination: source.destination, Access: "shared-ro"})
+		role := "shared_assets"
+		if source.purpose == "config" {
+			role = "agent_config"
+		}
+		profile.Volumes = append(profile.Volumes, product.VolumePlan{Key: role, Role: role, Destination: source.destination, Storage: "shared_readonly", Access: "read_only", CapacityBytes: a.Config.Content.VolumeBytes, Source: &product.VolumeSource{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, VolumeID: volume, MinimumBytes: a.Config.Content.VolumeBytes}})
 	}
 	return profile, profile.Validate()
 }

@@ -211,7 +211,7 @@ func TestProjectTerminalsOnKhora(t *testing.T) {
 		// a partially typed multi-byte character, which is a readline behavior rather
 		// than anything the transport did. What is under test is that the application
 		// neither re-chunks nor reinterprets a keystroke stream.
-		g.type_(t, alphaView, "cat > /workspace/utf8.bin")
+		g.type_(t, alphaView, "cat > /workspace/utf8.bin\r")
 		time.Sleep(300 * time.Millisecond)
 		must(t, terminals.Input(runctx, alphaView, []byte{0xe4, 0xb8}))
 		must(t, terminals.Input(runctx, alphaView, []byte{0x96, 0xe7, 0x95, 0x8c, '\n'}))
