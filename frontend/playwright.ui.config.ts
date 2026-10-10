@@ -1,15 +1,33 @@
 import { defineConfig } from "@playwright/test";
 import { resolve } from "node:path";
 process.env.PREVIEW_FIXTURES ||= resolve(__dirname, "test-results/fixtures");
+// Evidence runs measure the application without competing browser workers.
+const profiling = [
+  "ACTIVITY_PROFILE_OUTPUT",
+  "HISTORY_PROFILE_OUTPUT",
+  "HISTORY_WINDOW_OUTPUT",
+  "MARKDOWN_PROFILE_OUTPUT",
+  "MARKDOWN_LATENCY_OUTPUT",
+  "OFFICE_LATENCY_OUTPUT",
+  "PREVIEW_PROFILE_OUTPUT",
+  "READ_LATENCY_OUTPUT",
+  "STARTUP_PROFILE_OUTPUT",
+].some((name) => process.env[name]);
 export default defineConfig({
   globalSetup: "./e2e/ui-setup.ts",
   testDir: "./e2e/ui",
-  workers: 4,
+  workers: profiling ? 1 : 4,
   forbidOnly: !!process.env.CI,
   timeout: 45000,
   expect: { timeout: 10000 },
-  reporter: [["list"]],
+  reporter: [["list"], ["json", { outputFile: "test-results/ui-report.json" }]],
   outputDir: "test-results/ui",
+  // Start the real 120-second observation before the shorter functional files
+  // so its waiting time overlaps their work. Every test still runs once.
+  projects: [
+    { name: "idle", testMatch: "realtime-idle.spec.ts" },
+    { name: "ui", testIgnore: "realtime-idle.spec.ts" },
+  ],
   use: {
     baseURL: "http://127.0.0.1:3107",
     viewport: { width: 1600, height: 1000 },

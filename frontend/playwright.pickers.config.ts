@@ -6,6 +6,7 @@ export default defineConfig({
   globalSetup: undefined,
   testMatch: "schedule-pickers.spec.ts",
   outputDir: "test-results/pickers",
+  reporter: [["list"], ["json", { outputFile: "test-results/pickers-report.json" }]],
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
     { name: "firefox", use: { browserName: "firefox" } },
