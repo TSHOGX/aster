@@ -214,3 +214,23 @@ test("a superseded frame request cannot replace a later text selection", async (
   await expect(page.locator(".file-markdown")).toContainText("Battery research");
   await expect(page.locator(".office-frame")).toHaveCount(0);
 });
+
+test("a render failure after first content preserves recovery and fences stale frames", async ({ page }) => {
+  const f = await workspaceFixture(page);
+  f.messages.analysis[1].content = "[Document](/workspace/small.pptx)";
+  await page.route("**/files/content?*", route => route.fulfill({ body: readFileSync(resolve(fixtures!, "small.pptx")) }));
+  await page.goto("/?project=battery&session=analysis");
+  await page.getByRole("link", { name: "Document", exact: true }).click();
+  const preview = page.locator(".office-preview");
+  await expect(preview).toHaveAttribute("data-preview-phase", "ready");
+  const content = page.frameLocator(".office-frame").locator("#content");
+  await content.evaluate(() => parent.postMessage({ channel: "battery-office-visual-v2", token: "wrong-frame", kind: "failed" }, "*"));
+  await expect(preview).toHaveAttribute("data-preview-phase", "ready");
+  await content.evaluate(() => parent.postMessage({ channel: "battery-office-visual-v2", token: location.hash.slice(1), kind: "failed" }, "*"));
+  await expect(preview).toHaveAttribute("data-preview-phase", "failed");
+  await expect(page.getByText("The preview renderer stopped. Retry or download the file.")).toBeVisible();
+  await expect(page.locator(".office-frame")).toBeVisible();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(preview).toHaveAttribute("data-preview-phase", "ready");
+  await expect(page.locator(".office-frame")).toHaveCount(1);
+});

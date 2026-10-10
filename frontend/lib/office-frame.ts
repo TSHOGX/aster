@@ -20,6 +20,7 @@ export function prepareOfficeFrame(
   signal: AbortSignal,
   labels: ViewerLabels,
   onStage: (stage: OfficeStage) => void,
+  onFailure: (failure: PreviewFailure) => void,
 ): OfficeFrame {
   signal.throwIfAborted();
   const releaseFrame = reservePreview(0, "frames");
@@ -50,7 +51,8 @@ export function prepareOfficeFrame(
   });
   let disposed = false,
     sent = false,
-    settled = false;
+    settled = false,
+    readyReported = false;
   let resolve!: () => void;
   let reject!: (error: unknown) => void;
   const ready = new Promise<void>((yes, no) => {
@@ -110,15 +112,19 @@ export function prepareOfficeFrame(
             );
         })
         .catch((error) => finish(undefined, error));
-    } else if (event.data.kind === "ready") {
+    } else if (event.data.kind === "ready" && sent && !settled) {
+      readyReported = true;
       finish();
     } else if (event.data.kind === "stage" && ["loading-engine", "rendering"].includes(event.data.stage)) {
       onStage(event.data.stage);
     } else if (event.data.kind === "failed") {
-      finish(
-        undefined,
-        new PreviewFailure(event.data.reason === "viewer_load_failed" ? "viewer_load_failed" : "renderer_failed", "render", { retryable: true }),
+      const failure = new PreviewFailure(
+        !readyReported && event.data.reason === "viewer_load_failed" ? "viewer_load_failed" : "renderer_failed",
+        "render", { retryable: true },
       );
+      // ready is a one-shot promise, but slide changes can fail after adoption.
+      if (readyReported) onFailure(failure);
+      else finish(undefined, failure);
     } else if (event.data.kind === "position" && event.data.position) {
       const p = event.data.position as OfficePosition;
       if (validPosition(p))

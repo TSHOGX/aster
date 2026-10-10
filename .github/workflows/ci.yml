@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       cross_browser:
-        description: Include Firefox and WebKit scheduling controls
+        description: Include Firefox and WebKit scheduling and Office controls
         type: boolean
         default: false
   workflow_call:
@@ -98,6 +98,10 @@ jobs:
         if: inputs.cross_browser
         run: npx --no-install playwright test --config playwright.pickers.config.ts
         working-directory: frontend
+      - name: Cross-browser Office previews (reuse build)
+        if: inputs.cross_browser
+        run: npx --no-install playwright test --config playwright.office.config.ts
+        working-directory: frontend
       - name: Failed browser evidence
         if: failure()
         uses: actions/upload-artifact@v7
@@ -106,5 +110,6 @@ jobs:
           path: |
             frontend/test-results/ui
             frontend/test-results/pickers
+            frontend/test-results/office-browsers
           retention-days: 7
           if-no-files-found: ignore

@@ -22,6 +22,9 @@ The scripts target Safari 16.4 and later and avoid dynamic module loading inside
 the opaque iframe. A small bootstrap reports script-load failures immediately
 instead of leaving a loading spinner until timeout. Playwright WebKit checks are
 engine tests; they do not replace testing the user’s installed macOS Safari.
+A user-reported macOS Safari startup failure remains unresolved despite passing
+Playwright WebKit tests. Further Safari diagnosis is deferred; Chrome is the
+currently confirmed working browser for that installation.
 
 The parent transfers file bytes once. Messages check the sending window, origin,
 protocol version and per-frame random token. The iframe has `sandbox=allow-scripts`

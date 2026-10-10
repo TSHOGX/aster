@@ -78,6 +78,7 @@ export function OfficePreview({
       try {
         await Promise.resolve();
         abort.signal.throwIfAborted();
+        setStage("loading-engine");
         setState((old) => ({ ...old, phase: "queued" }));
         unlock = await acquirePreviewParse(abort.signal);
         abort.signal.throwIfAborted();
@@ -94,6 +95,10 @@ export function OfficePreview({
           frameAbort.signal,
           { previous: tr("Previous slide"), next: tr("Next slide"), slide: tr("Slide number"), slides: tr("Slides"), go: tr("Go to slide") },
           setStage,
+          failure => {
+            if (adopted && active.current === candidate && !abort.signal.aborted)
+              setState({ phase: "failed", failure });
+          },
         );
         candidate = {
           ready: frame.ready,

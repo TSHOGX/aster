@@ -47,9 +47,15 @@ export function HTMLPreview({ text, path, href }: { text: string; path: string; 
   }, [model]);
   useEffect(() => {
     if (!model?.simplified) return;
-    const initial = window.setTimeout(() => setShownBlocks(Math.min(120, model.blocks.length)), 0);
-    const timer = window.setInterval(() => setShownBlocks(value => Math.min(model.blocks.length, value + 120)), 40);
-    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+    let shown = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const append = () => {
+      shown = Math.min(model.blocks.length, shown + 120);
+      setShownBlocks(shown);
+      if (shown < model.blocks.length) timer = setTimeout(append, 40);
+    };
+    timer = setTimeout(append, 0);
+    return () => clearTimeout(timer);
   }, [model]);
   if (failed) return <p className="notice">{tr("Preview is busy. Choose Source to read this file.")}</p>;
   if (!model) return <p className="notice">{tr("Preparing preview…")}</p>;
