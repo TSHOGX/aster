@@ -1,4 +1,15 @@
 export const EN = {
+"Check until an event is confirmed": "Check until an event is confirmed",
+"Maximum checks": "Maximum checks",
+"Deadline with UTC offset": "Deadline with UTC offset",
+"First check with UTC offset (optional)": "First check with UTC offset (optional)",
+"Result notifications": "Result notifications",
+"Only when finished or attention is needed": "Only when finished or attention is needed",
+"Every run": "Every run",
+"Describe what confirms the event and tell the agent to finish the check when confirmed.": "Describe what confirms the event and tell the agent to finish the check when confirmed.",
+"Checks admitted": "Checks admitted",
+"Deadline": "Deadline",
+
   "Once": "Once",
   "Date and time": "Date and time",
   "Choose a UTC offset": "Choose a UTC offset",

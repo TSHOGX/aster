@@ -69,6 +69,11 @@ export function ScheduleEditor({
     parseRecurrence(schedule?.cron ?? "0 9 * * *",schedule?.run_at,schedule?.timezone),
   );
   const [notify,setNotify]=useState(schedule?.notify ?? true);
+ const [bounded,setBounded]=useState(!!schedule?.max_occurrences);
+ const [maximum,setMaximum]=useState(String(schedule?.max_occurrences||12));
+ const [deadline,setDeadline]=useState(schedule?.expires_at||"");
+ const [starts,setStarts]=useState(schedule?.starts_at||"");
+ const [policy,setPolicy]=useState<"each_run"|"on_finish">(schedule?.notification_policy||"on_finish");
   const [ruleChanged, setRuleChanged] = useState(false);
   const [existing, setExisting] = useState(!!schedule?.session_id),
     [session, setSession] = useState(schedule?.session_id || "");
@@ -106,7 +111,10 @@ export function ScheduleEditor({
     session_id: existing ? session : "",
     state: baseline?.state ?? "active",
     run_at: runAt,
-    expires_at: baseline?.expires_at,
+    expires_at: bounded ? deadline : baseline?.expires_at,
+ max_occurrences: bounded ? Number(maximum) : undefined,
+ starts_at: bounded ? starts : "",
+ notification_policy: bounded ? policy : "each_run",
     trigger_kind: rule.mode==="once" ? "at" : cron ? (cron.startsWith("@every ") ? "interval" : "cron") : "manual",
     notify,
     revision: baseline?.revision ?? 0,
@@ -131,7 +139,9 @@ export function ScheduleEditor({
     new TextEncoder().encode(title).length <= 256 &&
     !title.includes("\0");
   const promptValid = !!prompt.trim() && !prompt.includes("\0");
-  const valid =
+  const absoluteTime=(value:string)=> /T.*(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isFinite(Date.parse(value));
+  const checkValid=!bounded || rule.mode==="interval" && /^[1-9]\d*$/.test(maximum) && Number(maximum)<=100 && absoluteTime(deadline) && (!starts || absoluteTime(starts)&&Date.parse(starts)<Date.parse(deadline));
+  const valid = checkValid &&
     !!project &&
     titleValid &&
     promptValid &&
@@ -405,6 +415,16 @@ export function ScheduleEditor({
           </p>
         )}
         <label><input type="checkbox" checked={notify} onChange={e=>setNotify(e.target.checked)} />{tr("Notify me when the result is available")}</label>
+        {rule.mode==="interval" && <fieldset className="schedule-settings">
+          <label><input type="checkbox" checked={bounded} onChange={e=>setBounded(e.target.checked)} />{tr("Check until an event is confirmed")}</label>
+          {bounded && <>
+            <label>{tr("Maximum checks")}<input type="number" min={1} max={100} step={1} value={maximum} onChange={e=>setMaximum(e.target.value)} /></label>
+            <label>{tr("Deadline with UTC offset")}<input value={deadline} placeholder="2026-10-10T23:00:00+08:00" onChange={e=>setDeadline(e.target.value)} required /></label>
+            <label>{tr("First check with UTC offset (optional)")}<input value={starts} placeholder="2026-10-10T22:00:00+08:00" onChange={e=>setStarts(e.target.value)} /></label>
+            <SelectPicker label={tr("Result notifications")} value={policy} options={[{value:"on_finish",label:tr("Only when finished or attention is needed")},{value:"each_run",label:tr("Every run")}]} onChange={v=>setPolicy(v as "each_run"|"on_finish")} />
+            <p>{tr("Describe what confirms the event and tell the agent to finish the check when confirmed.")}</p>
+          </>}
+        </fieldset>}
         <RecurrenceFields
           disabled={busy || uncertain}
           rule={rule}
@@ -413,6 +433,7 @@ export function ScheduleEditor({
           nextAt={previewNextAt}
           onRule={(next) => {
             setRule(next);
+            if(next.mode!=="interval")setBounded(false);
             setRuleChanged(true);
           }}
           onTimezone={setTimezone}

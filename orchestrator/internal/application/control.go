@@ -225,6 +225,12 @@ func (a *Application) controlHandler() http.Handler {
 		}
 		out["release"] = release
 		out["writer"] = a.Store.WriterStats()
+		schedules, e := a.Store.ScheduleDiagnostics(r.Context())
+		if e != nil {
+			http.Error(w, "schedule diagnostics unavailable", 500)
+			return
+		}
+		out["schedules"] = schedules
 		out["runtime_work"] = a.Store.RuntimeWorkStats()
 		if a.Agents != nil {
 			out["agent_pressure"] = a.Agents.AgentPressure()

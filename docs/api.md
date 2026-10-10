@@ -285,3 +285,20 @@ updates the same notice and resets unread only for a changed outcome. Scheduled
 queued cancellation/handled disposition can notify without an execution Run;
 queueing or trigger exhaustion alone never reports success. Inbox navigation uses
 the input's materialized message when available and otherwise its Session.
+
+Bounded condition checking uses an interval schedule with `max_occurrences`
+(1–100), mandatory `expires_at`, optional future `starts_at`, and
+`notification_policy` (`each_run` or `on_finish`). The first explicit start must
+precede the deadline; subsequent interval occurrences preserve that phase.
+Admission increments the durable count, including manual invocation, and the
+last permitted occurrence exhausts future admission. PATCH may clear the bounded
+option with `max_occurrences: 0`, empty `starts_at`, and `each_run`; it cannot
+silently rearm an exhausted definition. Already admitted Prompts retain their
+notification policy snapshot.
+
+`on_finish` suppresses ordinary completed pending-check notices, including when
+generic Agent notices are enabled. Failure/unknown remains visible. Count/deadline
+exhaustion posts one `schedule/<id>` attention notice once admitted work settles;
+a still-live final check can complete without a premature exhaustion notice.
+`notify: false` suppresses the task's notices. Finish does not emit success until
+native execution settles; failure after finish remains stopped and notifies.

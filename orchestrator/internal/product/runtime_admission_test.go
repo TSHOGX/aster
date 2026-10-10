@@ -168,7 +168,13 @@ func TestTerminalInputRemainsCountedUntilBackendReturns(t *testing.T) {
 	defer observer.Close()
 	done := make(chan error, 1)
 	go func() { done <- terminals.Input(ctx, observer, []byte("work\r")) }()
-	<-blocked.entered
+	select {
+	case <-blocked.entered:
+	case err := <-done:
+		t.Fatalf("input returned before reaching backend: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("input never reached backend")
+	}
 	_, err = terminals.Store.BeginReleaseDrain(ctx, "input-drain", time.Minute)
 	must(t, err)
 	if terminals.Store.RuntimeWorkStats()["terminal_input"] != 1 {

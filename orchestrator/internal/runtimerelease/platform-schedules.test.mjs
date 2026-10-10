@@ -104,3 +104,24 @@ test('a retry denial cannot turn a lost mutation reply into definite failure', a
   });
   await assert.rejects(tools.get('schedules_create').execute('call', args, undefined, undefined, { sessionManager: { getLeafId: () => 'assistant', getSessionId: () => 'native' } }), /outcome_unknown/);
 });
+
+test('bounded checks use finite defaults and finish identity is supplied by the host', async () => {
+  let execution;
+  const bound = { ...context, schedule_id: 'own-task', schedule_revision: 7, operations: ['get', 'finish'] };
+  const tools = toolsFor(async (_url, options) => {
+    const input = JSON.parse(options.body);
+    if (input.action === 'context') return response({ context: bound });
+    execution = input;
+    return response({ receipt: { request_id: input.request_id, schedule: { id: input.id, project_id: 'project', title: 'Finished check', state: 'exhausted', timezone: 'UTC' } } });
+  });
+  const ctx = { sessionManager: { getLeafId: () => 'assistant', getSessionId: () => 'native' } };
+  const finished = await tools.get('schedules_finish').execute('finish-call', {}, undefined, undefined, ctx);
+  assert.equal(execution.id, 'own-task'); assert.equal(execution.revision, 7); assert.equal(execution.expected_run_id, 'original-run');
+  assert.equal(finished.details.kind, 'schedule_receipt');
+  await assert.rejects(tools.get('schedules_create').execute('recursive', args, undefined, undefined, ctx), /conflict/);
+  const foreground = toolsFor(async (_url, options) => {
+    const input = JSON.parse(options.body); if (input.action === 'context') return response({ context }); execution = input; return response(receipt(input));
+  });
+  await foreground.get('schedules_create').execute('create-check', { ...args, trigger: {kind: 'interval', minutes: 5, timezone: 'UTC'}, check: {expires_at:'2026-10-11T10:00:00Z',starts_at:'2026-10-10T12:00:00Z'} }, undefined, undefined, ctx);
+  assert.equal(execution.patch.max_occurrences, 12);assert.equal(execution.patch.notification_policy, 'on_finish');assert.equal(execution.patch.starts_at,'2026-10-10T12:00:00.000Z');
+});

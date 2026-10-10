@@ -359,6 +359,7 @@ CREATE TABLE schedule_runs (
  request_id TEXT NOT NULL,
  due_at TEXT NOT NULL,
  schedule_revision INTEGER NOT NULL CHECK(schedule_revision>0),
+ notification_policy TEXT NOT NULL DEFAULT 'each_run' CHECK(notification_policy IN ('each_run','on_finish')),
  notify INTEGER NOT NULL CHECK(notify IN (0,1)),
  created_at TEXT NOT NULL,
  UNIQUE(schedule_id,request_id),
@@ -385,6 +386,11 @@ CREATE TABLE schedules (
  origin_session_id TEXT,
  origin_run_id TEXT,
  origin_tool_call_id TEXT,
+ max_occurrences INTEGER CHECK(max_occurrences IS NULL OR max_occurrences BETWEEN 1 AND 100),
+ admitted_count INTEGER NOT NULL DEFAULT 0 CHECK(admitted_count>=0),
+ starts_at TEXT,
+ completed_by_run_id TEXT,
+ notification_policy TEXT NOT NULL DEFAULT 'each_run' CHECK(notification_policy IN ('each_run','on_finish')),
  next_at TEXT,
  revision INTEGER NOT NULL DEFAULT 1,
  creation_digest TEXT NOT NULL,
@@ -392,6 +398,9 @@ CREATE TABLE schedules (
  updated_at TEXT NOT NULL,
  CHECK((trigger_kind='at' AND run_at IS NOT NULL AND cron='') OR (trigger_kind IN ('cron','interval') AND run_at IS NULL AND cron<>'') OR (trigger_kind='manual' AND run_at IS NULL AND cron='')),
  CHECK(state='active' OR next_at IS NULL),
+ CHECK(max_occurrences IS NULL OR (trigger_kind='interval' AND expires_at IS NOT NULL AND (starts_at IS NULL OR starts_at<expires_at))),
+ CHECK(starts_at IS NULL OR (max_occurrences IS NOT NULL AND starts_at<>'')),
+ CHECK(notification_policy='each_run' OR max_occurrences IS NOT NULL),
  FOREIGN KEY(project_id,session_id) REFERENCES sessions(project_id,id),
  FOREIGN KEY(project_id,origin_session_id) REFERENCES sessions(project_id,id)
 );
@@ -715,6 +724,8 @@ CREATE INDEX release_terminal_start_pending ON terminal_incarnations(id) WHERE s
 CREATE INDEX release_run_pending ON execution_runs(prompt_id) WHERE state IN ('starting','running','stopping','unknown');
 
 CREATE INDEX schedule_runs_project ON schedule_runs(project_id,created_at,id);
+CREATE UNIQUE INDEX schedule_runs_prompt ON schedule_runs(turn_id);
+CREATE INDEX scheduled_input_authority ON input_deliveries(run_id,state,prompt_id);
 CREATE INDEX schedule_runs_latest ON schedule_runs(schedule_id,created_at DESC,id DESC);
 
 CREATE INDEX schedules_due ON schedules(state,retry_at,next_at,expires_at,project_id);
@@ -866,13 +877,21 @@ BEGIN
  DELETE FROM notification_reads WHERE notification_id IN
   (SELECT n.id FROM notifications n JOIN turns t ON n.id='turn/'||t.id
    WHERE (t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed'))
-   AND ((SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 OR EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notify=1))
+   AND (
+ (NOT EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notification_policy='on_finish')
+  AND ((SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 OR EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notify=1)))
+ OR EXISTS(SELECT 1 FROM schedule_runs sr JOIN schedules task ON task.id=sr.schedule_id WHERE sr.turn_id=t.id AND sr.notification_policy='on_finish' AND sr.notify=1
+ AND (NEW.state IN ('failed','unknown') OR NEW.outcome IN ('failed','unknown','canceled') OR task.completed_by_run_id=NEW.id OR EXISTS(SELECT 1 FROM notifications existing WHERE existing.id='turn/'||t.id))))
    AND n.title<>'Agent turn '||CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END);
  INSERT INTO notifications(id,audience,project_id,session_id,title,body,created_at)
  SELECT 'turn/'||t.id,p.owner_id,NEW.project_id,NEW.session_id,'Agent turn '||CASE NEW.state WHEN 'settled' THEN NEW.outcome ELSE NEW.state END,'Open the conversation to inspect the outcome.',coalesce(nullif(NEW.settled_at,''),NEW.started_at)
  FROM turns t JOIN projects p ON p.id=NEW.project_id AND p.state NOT IN ('deleting','deleted')
  WHERE (t.id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=t.id AND d.run_id=NEW.id AND d.state='consumed'))
- AND ((SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 OR EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notify=1))
+ AND (
+ (NOT EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notification_policy='on_finish')
+  AND ((SELECT agent_run_outcome FROM notification_policy WHERE id=1)=1 OR EXISTS(SELECT 1 FROM schedule_runs sr WHERE sr.turn_id=t.id AND sr.notify=1)))
+ OR EXISTS(SELECT 1 FROM schedule_runs sr JOIN schedules task ON task.id=sr.schedule_id WHERE sr.turn_id=t.id AND sr.notification_policy='on_finish' AND sr.notify=1
+ AND (NEW.state IN ('failed','unknown') OR NEW.outcome IN ('failed','unknown','canceled') OR task.completed_by_run_id=NEW.id OR EXISTS(SELECT 1 FROM notifications existing WHERE existing.id='turn/'||t.id))))
  ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,created_at=excluded.created_at WHERE notifications.title<>excluded.title;
 END;
 
@@ -1321,4 +1340,35 @@ END;
 CREATE TRIGGER schedule_run_outcome_control AFTER UPDATE OF outcome ON execution_runs
 WHEN NEW.outcome<>OLD.outcome AND NEW.state=OLD.state BEGIN
  UPDATE sessions SET control_revision=control_revision+1 WHERE id=NEW.session_id;
+END;
+
+CREATE VIEW schedule_check_attention AS
+ SELECT 'schedule/'||s.id AS id,p.owner_id AS audience,s.project_id,
+ coalesce((SELECT r.session_id FROM schedule_runs r WHERE r.schedule_id=s.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1),s.session_id) AS session_id,
+ 'Scheduled check stopped: '||s.end_reason AS title,
+ 'No confirmed result before the check budget ended. Inspect the task and its runs.' AS body,s.updated_at AS created_at
+ FROM schedules s JOIN projects p ON p.id=s.project_id
+ WHERE p.state NOT IN ('deleting','deleted') AND s.state='exhausted' AND s.end_reason IN ('count','deadline') AND s.completed_by_run_id IS NULL AND s.max_occurrences IS NOT NULL AND s.notify=1
+ AND NOT EXISTS(SELECT 1 FROM schedule_runs r JOIN turns t ON t.id=r.turn_id WHERE r.schedule_id=s.id AND (CASE t.disposition
+ WHEN 'pending' THEN CASE t.queue_policy WHEN 'held' THEN 'held' ELSE 'queued' END
+ WHEN 'claimed' THEN coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
+  FROM execution_runs r WHERE r.prompt_id=t.id ORDER BY r.started_at DESC,r.id DESC LIMIT 1),'claimed')
+ WHEN 'canceled' THEN 'canceled'
+ WHEN 'handled' THEN 'handled'
+ ELSE coalesce((SELECT CASE r.state WHEN 'settled' THEN r.outcome ELSE r.state END
+  FROM input_deliveries d JOIN execution_runs r ON r.id=d.run_id
+  WHERE d.prompt_id=t.id AND d.state='consumed' ORDER BY d.acceptance_sequence DESC LIMIT 1),'consumed') END) IN ('queued','held','claimed','starting','running','stopping','unknown','consumed'));
+CREATE TRIGGER schedule_check_attention_definition AFTER UPDATE OF state ON schedules BEGIN
+ INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
+ SELECT * FROM schedule_check_attention WHERE id='schedule/'||NEW.id;
+END;
+CREATE TRIGGER schedule_check_attention_execution AFTER UPDATE OF state,outcome ON execution_runs
+WHEN NEW.state IN ('settled','failed') BEGIN
+ INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
+ SELECT * FROM schedule_check_attention WHERE id IN (SELECT 'schedule/'||sr.schedule_id FROM schedule_runs sr WHERE sr.turn_id=NEW.prompt_id OR EXISTS(SELECT 1 FROM input_deliveries d WHERE d.prompt_id=sr.turn_id AND d.run_id=NEW.id AND d.state='consumed'));
+END;
+CREATE TRIGGER schedule_check_attention_disposition AFTER UPDATE OF disposition ON turns
+WHEN NEW.disposition IN ('handled','canceled') BEGIN
+ INSERT OR IGNORE INTO notifications(id,audience,project_id,session_id,title,body,created_at)
+ SELECT * FROM schedule_check_attention WHERE id IN (SELECT 'schedule/'||schedule_id FROM schedule_runs WHERE turn_id=NEW.id);
 END;

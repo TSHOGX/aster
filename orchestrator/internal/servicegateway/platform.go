@@ -136,6 +136,12 @@ func (g *Gateway) servePlatform(w http.ResponseWriter, r *http.Request, a produc
 		return
 	}
 	result, err := g.config.Platform.PlatformSchedules(r.Context(), *a.Request, input)
+	if err != nil && errors.Is(err, ErrAuthorityUnavailable) && input.Action == "execute" && input.Operation != "get" && input.Operation != "list" {
+		g.platformUnknown.Add(1)
+	}
+	if err == nil {
+		g.platformSuccess.Add(1)
+	}
 	if err != nil {
 		platformError(w, err)
 		return

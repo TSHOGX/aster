@@ -12,16 +12,19 @@ import (
 // SchedulePatch exposes only authored definition fields. Operational state and
 // attribution cannot be supplied by a browser or model.
 type SchedulePatch struct {
-	SessionID   *string `json:"session_id,omitempty"`
-	Title       *string `json:"title,omitempty"`
-	Prompt      *string `json:"prompt,omitempty"`
-	TriggerKind *string `json:"trigger_kind,omitempty"`
-	Cron        *string `json:"cron,omitempty"`
-	Timezone    *string `json:"timezone,omitempty"`
-	RunAt       *string `json:"run_at,omitempty"`
-	ExpiresAt   *string `json:"expires_at,omitempty"`
-	State       *string `json:"state,omitempty"`
-	Notify      *bool   `json:"notify,omitempty"`
+	SessionID      *string `json:"session_id,omitempty"`
+	Title          *string `json:"title,omitempty"`
+	Prompt         *string `json:"prompt,omitempty"`
+	TriggerKind    *string `json:"trigger_kind,omitempty"`
+	Cron           *string `json:"cron,omitempty"`
+	Timezone       *string `json:"timezone,omitempty"`
+	RunAt          *string `json:"run_at,omitempty"`
+	ExpiresAt      *string `json:"expires_at,omitempty"`
+	State          *string `json:"state,omitempty"`
+	Notify         *bool   `json:"notify,omitempty"`
+	MaxOccurrences *int    `json:"max_occurrences,omitempty"`
+	StartsAt       *string `json:"starts_at,omitempty"`
+	NotifyPolicy   *string `json:"notification_policy,omitempty"`
 }
 type ScheduleMutation struct {
 	RequestID string        `json:"request_id"`
@@ -56,10 +59,22 @@ func (p SchedulePatch) apply(s Schedule) Schedule {
 	if p.Notify != nil {
 		s.Notify = *p.Notify
 	}
+	if p.MaxOccurrences != nil {
+		s.MaxOccurrences = p.MaxOccurrences
+		if *p.MaxOccurrences == 0 {
+			s.MaxOccurrences = nil
+		}
+	}
+	if p.StartsAt != nil {
+		s.StartsAt = *p.StartsAt
+	}
+	if p.NotifyPolicy != nil {
+		s.NotifyPolicy = *p.NotifyPolicy
+	}
 	return s
 }
 func (s Schedule) definitionPatch() SchedulePatch {
-	return SchedulePatch{SessionID: &s.SessionID, Title: &s.Title, Prompt: &s.Prompt, TriggerKind: &s.TriggerKind, Cron: &s.Cron, Timezone: &s.Timezone, RunAt: &s.RunAt, ExpiresAt: &s.ExpiresAt, State: &s.State, Notify: &s.Notify}
+	return SchedulePatch{SessionID: &s.SessionID, Title: &s.Title, Prompt: &s.Prompt, TriggerKind: &s.TriggerKind, Cron: &s.Cron, Timezone: &s.Timezone, RunAt: &s.RunAt, ExpiresAt: &s.ExpiresAt, State: &s.State, Notify: &s.Notify, MaxOccurrences: s.MaxOccurrences, StartsAt: &s.StartsAt, NotifyPolicy: &s.NotifyPolicy}
 }
 func (s *Store) MutateSchedule(ctx context.Context, scope Scope, input ScheduleMutation) (ScheduleReceipt, error) {
 	var out ScheduleReceipt
@@ -81,13 +96,13 @@ func (s *Store) mutateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	if !validText(input.RequestID, 128) || !validID(input.ID) {
 		return out, ErrInvalid
 	}
-	if input.Operation != "create" && input.Operation != "update" && input.Operation != "cancel" && input.Operation != "delete" {
+	if input.Operation != "create" && input.Operation != "update" && input.Operation != "cancel" && input.Operation != "delete" && input.Operation != "finish" {
 		return out, ErrInvalid
 	}
-	if (input.Operation == "cancel" || input.Operation == "delete") && input.Patch != (SchedulePatch{}) {
+	if (input.Operation == "cancel" || input.Operation == "delete" || input.Operation == "finish") && input.Patch != (SchedulePatch{}) {
 		return out, ErrInvalid
 	}
-	for _, field := range []**string{&input.Patch.RunAt, &input.Patch.ExpiresAt} {
+	for _, field := range []**string{&input.Patch.RunAt, &input.Patch.ExpiresAt, &input.Patch.StartsAt} {
 		if *field != nil && **field != "" {
 			instant, e := time.Parse(time.RFC3339Nano, **field)
 			if e != nil {
@@ -140,6 +155,8 @@ func (s *Store) mutateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 			task.Revision = input.Revision
 			err = s.updateSchedule(ctx, tx, scope, task, input.Operation == "delete")
 		}
+	case "finish":
+		err = s.finishSchedule(ctx, tx, scope, input, origin)
 	case "cancel":
 		err = s.cancelSchedule(ctx, tx, scope, input.ID, input.Revision)
 	}

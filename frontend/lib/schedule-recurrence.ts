@@ -133,7 +133,7 @@ export function scheduleConfiguration(s: Schedule) {
     s.cron,
     s.timezone,
     s.session_id || "",
-    s.state, s.trigger_kind, s.run_at || "", s.expires_at || "", s.notify,
+    s.state, s.trigger_kind, s.run_at || "", s.expires_at || "", s.notify, s.max_occurrences || 0, s.starts_at || "", s.notification_policy || "each_run",
   ]);
 }
 export function scheduleTime(value: string, zone: string, locale: string) {
@@ -159,7 +159,7 @@ export function scheduleWrite(s: Schedule, requestId: string) {
  return {request_id: requestId, id:s.id, revision:s.revision, title:s.title,
  prompt:s.prompt, session_id:s.session_id||"", state:s.state,
  trigger_kind:s.trigger_kind, cron:s.cron, timezone:s.timezone,
- run_at:s.run_at||"", expires_at:s.expires_at||"", notify:s.notify};
+ run_at:s.run_at||"", expires_at:s.expires_at||"", notify:s.notify,max_occurrences:s.max_occurrences||0,starts_at:s.starts_at||"",notification_policy:s.notification_policy||"each_run"};
 }
 
 export function localScheduleTime(at: string, zone: string) {

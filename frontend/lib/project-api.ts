@@ -113,6 +113,11 @@ export type Schedule = {
   trigger_kind: "at" | "cron" | "interval" | "manual";
   run_at?: string;
   expires_at?: string;
+ max_occurrences?: number;
+ admitted_count?: number;
+ starts_at?: string;
+ completed_by_run_id?: string;
+ notification_policy?: "each_run" | "on_finish";
   end_reason?: string;
   notify: boolean;
   origin_session_id?: string;
@@ -130,6 +135,7 @@ export type ScheduleRun = {
   due_at: string;
 };
 export type Notice = {
+ schedule_id?: string;
  message_id?: string;
   id: string;
   project_id?: string;

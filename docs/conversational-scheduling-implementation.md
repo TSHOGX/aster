@@ -9,7 +9,7 @@ here. Existing databases and deployments are not changed by this work.
 | Platform transport | Complete | Reserved gateway prefix, protected owner RPC, live grant/slot/Run/release fences |
 | Native runtime | Complete | Measured explicit extension, immutable request identity/retries, capability gating |
 | Surfaces and delivery | Complete | One-shot editor, conversation cards/source links, history filters, scheduled inbox projection |
-| Bounded checks | Pending | Count/deadline bounds, exact scheduled Run finish, quiet pending checks |
+| Bounded checks | Complete | Count/deadline bounds, exact scheduled Run finish, quiet pending checks |
 | Final qualification | Pending | Cross-layer tests, release/docs audit, legacy removal |
 
 The foundation removes schedule `enabled`/`deleted` booleans, tick-driven edit
@@ -66,3 +66,20 @@ its next request; a retry denial after a lost mutation reply remains uncertain.
 Surface checks: product/HTTP tests, focused race tests, frontend lint/typecheck,
 233 unit tests (one pre-existing skip), production build, 31 schedule browser
 cases and the live native-card browser case pass. Native retry tests also pass.
+
+Bounded checks reuse ordinary interval admission with a finite count/deadline,
+optional first-check anchor and snapshotted delivery policy. Finish uses the
+shared receipt transaction and exact native execution attribution, including
+consumed Steers. Any scheduled input restricts management; mixed inputs cannot
+finish. Tests cover quiet pending checks with global notices enabled, the final
+count-limited occurrence, deadline while running, failure after finish, user
+pause/cancel/edit fences, mixed input, recursive creation denial, exhaustion
+attention, unknown overlap suppression and delayed first admission.
+
+Bounded-stage qualification: full backend gate passes, including privileged-suite
+compilation; focused race checks pass; frontend lint/typecheck/unit/build and 33
+schedule browser cases pass. The existing terminal input fixture had a readiness
+race that could hang before entering its backend; it now waits for the live
+attachment and reports early input failure instead of waiting indefinitely.
+Operational counters/gauges are exposed through existing owner/gateway diagnostic
+surfaces, with a 200-task due-batch test exercising reserved urgent/ingest writers.

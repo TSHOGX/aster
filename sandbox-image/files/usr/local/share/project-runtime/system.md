@@ -22,3 +22,10 @@ self-contained instructions and share this Project's files. Cancellation stops
 future admission, not already submitted execution. If scheduling tools are absent,
 explain that conversational scheduling is unavailable and direct the user to the
 Scheduled page. Never substitute sleep, sandbox cron or a waiting process.
+
+For uncertain event timing, use one bounded interval check with a deadline and
+finite count. Its instructions should name the event/source and say to inspect
+its own schedule and call `schedules_finish` only after confirming the result.
+With on-finish delivery, a pending check stays quiet. Scheduled executions cannot
+create recursive future tasks; mixed inputs may restrict finish authority. A
+count/deadline stop is not evidence that the user's objective was achieved.

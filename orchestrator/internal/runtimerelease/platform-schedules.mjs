@@ -11,13 +11,15 @@ const trigger = object({
 const target = object({ kind: { enum: ['current', 'new', 'session'] }, session_id: string() }, ['kind']);
 const editable = {
   title: string(256), prompt: string(1048576), trigger, target,
-  notify: { type: 'boolean' }, expires_at: string(), state: { enum: ['active', 'paused'] },
+  notify: { type: 'boolean' }, expires_at: string(),
+  check: object({ max_occurrences: { type: 'integer', minimum: 1, maximum: 100 }, expires_at: string(), starts_at: string(), notification_policy: { enum: ['each_run', 'on_finish'] } }, ['expires_at']), state: { enum: ['active', 'paused'] },
 };
 const definitions = {
-  create: { description: 'Persist future work. Default target is this conversation; a new conversation needs self-contained instructions. Use an explicit timezone and offset for absolute times, or after_minutes for a delay anchored to server time. Success confirms saved intent, not execution. Inspect existing tasks before recreating an uncertain request. No sleep, cron process, or external event subscription.', parameters: object(editable, ['title', 'prompt', 'trigger']) },
+  create: { description: 'Persist future work. Default target is this conversation; a new conversation needs self-contained instructions. Use an explicit timezone and offset for absolute times, or after_minutes for a delay anchored to server time. Success confirms saved intent, not execution. Inspect existing tasks before recreating an uncertain request. For uncertain event timing use an interval plus check with a mandatory deadline and at most 100 checks (default 12); on_finish keeps pending checks quiet. The prompt must say what to inspect and when to call schedules_finish. No sleep, cron process, or external event subscription.', parameters: object(editable, ['title', 'prompt', 'trigger']) },
   list: { description: 'List this Project’s saved task metadata to inspect existing intent, including canceled and exhausted tasks. Does not fetch prompts.', parameters: object({ after: string(), limit: { type: 'integer', minimum: 1, maximum: 50 } }) },
-  get: { description: 'Inspect one task and up to 20 recent occurrences. Exhausted means its trigger was consumed, not that execution succeeded.', parameters: object({ id: string(), history_limit: { type: 'integer', minimum: 0, maximum: 20 } }, ['id']) },
+  get: { description: 'Inspect one task and up to 20 recent occurrences. Exhausted means its trigger was consumed, not that execution succeeded.', parameters: object({ id: string(), history_limit: { type: 'integer', minimum: 0, maximum: 20 } }) },
   update: { description: 'Edit future task instructions, trigger, target, notification or pause state using its current definition revision. Already admitted work is unchanged. Canceled or exhausted tasks cannot be revived.', parameters: object({ id: string(), revision: { type: 'integer', minimum: 1 }, ...editable }, ['id', 'revision']) },
+  finish: { description: 'Finish this execution’s own bounded condition check only after confirming the external result. Identity and revision come from the host. Stops future checks; delivery waits for actual execution completion. Never finish when the result remains pending.', parameters: object({}) },
   cancel: { description: 'Cancel future task admissions using the current definition revision. Already queued or running work is unaffected; use its conversation controls to stop it.', parameters: object({ id: string(), revision: { type: 'integer', minimum: 1 } }, ['id', 'revision']) },
 };
 
@@ -29,6 +31,12 @@ function patch(args, context) {
   const result = {};
   for (const key of ['title', 'prompt', 'notify', 'state']) if (args[key] !== undefined) result[key] = args[key];
   if (args.expires_at !== undefined) result.expires_at = instant(args.expires_at);
+  if (args.check) {
+    result.max_occurrences = args.check.max_occurrences ?? 12;
+    result.expires_at = instant(args.check.expires_at);
+    result.starts_at = args.check.starts_at ? instant(args.check.starts_at) : '';
+    result.notification_policy = args.check.notification_policy ?? 'on_finish';
+  }
   if (args.trigger) {
     const t = args.trigger;
     result.trigger_kind = t.kind; result.timezone = t.timezone; result.cron = ''; result.run_at = '';
@@ -83,12 +91,15 @@ export function registerScheduleTools(pi, config, transport = fetch) {
         try {
           const binding = (await post(JSON.stringify({ action: 'context', timezone: args.trigger?.timezone || '' }), signal)).context;
           if (!binding?.run_id || binding.session_id !== config.session_id) return failure('unavailable');
-          const mutation = ['create', 'update', 'cancel'].includes(operation);
+          if (binding.operations && !binding.operations.includes(operation)) return failure('conflict');
+          const selectedID = operation === 'finish' ? binding.schedule_id : args.id || binding.schedule_id;
+          if ((operation === 'finish' || operation === 'get') && !selectedID) return failure('invalid');
+          const mutation = ['create', 'update', 'cancel', 'finish'].includes(operation);
           const request = {
             action: 'execute', operation, expected_run_id: binding.run_id,
             ...(mutation ? { request_id: requestId, tool_call_id: toolCallId } : {}),
-            ...(operation === 'create' ? { id: `schedule-${requestId}` } : args.id ? { id: args.id } : {}),
-            ...(args.revision ? { revision: args.revision } : {}),
+            ...(operation === 'create' ? { id: `schedule-${requestId}` } : selectedID ? { id: selectedID } : {}),
+            ...(operation === 'finish' ? { revision: binding.schedule_revision } : args.revision ? { revision: args.revision } : {}),
             ...(operation === 'create' || operation === 'update' ? { patch: patch(args, binding), ...(args.target ? { target: args.target } : {}) } : {}),
             ...(operation === 'list' ? { after: args.after || '', limit: args.limit || 20 } : {}),
             ...(operation === 'get' ? { history_limit: args.history_limit ?? 5 } : {}),

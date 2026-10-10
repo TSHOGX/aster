@@ -157,3 +157,20 @@ Qualification uses the actual pinned Pi loader and AgentSession with determinist
 model streams. It verifies explicit loading with discovery disabled, structured
 native events, lost-response retries, provider-ID reuse, parallel invocation
 identity and cancellation uncertainty. No provider credentials are required.
+
+`schedules_create`/`update` accept a `check` option with a mandatory deadline,
+optional first check time, finite count (default 12, maximum 100), and notification
+policy (default `on_finish`). Use this with an interval trigger to poll uncertain
+events. The Agent performs the external check itself; there is no condition DSL,
+workflow engine, event subscription, or recursive task tree.
+
+`schedules_finish` takes no model-authored identity. Context supplies the sole
+scheduled input's schedule/revision and current execution Run. The host checks
+that attribution again in the receipt transaction. Initial Prompts and consumed
+Steers both count toward authority: any scheduled input removes create/update/
+cancel/list authority, and a mixed Run cannot finish an arbitrarily chosen task.
+A scheduled Run can inspect its own associated task; only an unambiguous check
+can finish. Pause/cancel/edits fence late finish. Automatic count/deadline exhaustion
+preserves the admitted definition revision so its live final check may still
+finish. Finish stops admission, records the execution Run, and awaits its real
+outcome for delivery.

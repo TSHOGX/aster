@@ -628,3 +628,16 @@ test("one-shot creation saves the resolved instant and delivery preference",asyn
  expect(f.saves[0].trigger_kind).toBe("at");expect(f.saves[0].run_at).toMatch(/^2099-01-0[12]T/);expect(f.saves[0].notify).toBe(false);
  await expect(page.locator(".schedule-reading")).toContainText("Run now consumes this one-shot task.");
 });
+
+test("bounded interval editor requires a deadline and preserves the finite budget",async({page})=>{
+ const f=await setup(page);const editor=await createDraft(page);
+ await chooseOption(page,"Repeat","Interval");
+ await editor.getByLabel("Check until an event is confirmed",{exact:true}).check();
+ await expect(editor.getByRole("button",{name:"Create task",exact:true})).toBeDisabled();
+ await editor.getByLabel("Deadline with UTC offset",{exact:true}).fill("2099-01-02T23:00:00+08:00");
+ await editor.getByLabel("Maximum checks",{exact:true}).fill("6");
+ await editor.getByRole("button",{name:"Create task",exact:true}).click();
+ await expect(page.locator(".schedule-reading h2")).toHaveText("Daily checks");
+ expect(f.saves[0].max_occurrences).toBe(6);expect(f.saves[0].notification_policy).toBe("on_finish");
+ await expect(page.locator(".schedule-reading")).toContainText("Checks admitted");
+});

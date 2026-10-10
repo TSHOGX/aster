@@ -32,12 +32,14 @@ type PlatformScheduleRequest struct {
 	HistoryLimit  int             `json:"history_limit,omitempty"`
 }
 type PlatformScheduleContext struct {
-	ReferenceTime string   `json:"reference_time"`
-	ProjectID     string   `json:"project_id"`
-	SessionID     string   `json:"session_id"`
-	RunID         string   `json:"run_id"`
-	Timezone      string   `json:"timezone,omitempty"`
-	Operations    []string `json:"operations"`
+	ScheduleID       string   `json:"schedule_id,omitempty"`
+	ScheduleRevision int64    `json:"schedule_revision,omitempty"`
+	ReferenceTime    string   `json:"reference_time"`
+	ProjectID        string   `json:"project_id"`
+	SessionID        string   `json:"session_id"`
+	RunID            string   `json:"run_id"`
+	Timezone         string   `json:"timezone,omitempty"`
+	Operations       []string `json:"operations"`
 }
 type PlatformScheduleResult struct {
 	Context   *PlatformScheduleContext `json:"context,omitempty"`
@@ -67,10 +69,28 @@ func platformScheduleAuthority(ctx context.Context, tx *sql.Tx, slot ServiceRequ
 	return
 }
 func (s *Store) PlatformSchedules(ctx context.Context, slot ServiceRequest, input PlatformScheduleRequest) (out PlatformScheduleResult, err error) {
+	defer func() {
+		if err == nil {
+			s.scheduleMetrics.platformSuccess.Add(1)
+		} else {
+			s.scheduleMetrics.platformErrors.Add(1)
+		}
+	}()
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		scope, a, e := platformScheduleAuthority(ctx, tx, slot, s.timestamp())
 		if e != nil {
 			return e
+		}
+		source, e := scheduledRunAuthority(ctx, tx, a.RunID)
+		if e != nil {
+			return e
+		}
+		operations := []string{"create", "list", "get", "update", "cancel"}
+		if source.Restricted {
+			operations = []string{"get"}
+			if source.Own != nil {
+				operations = append(operations, "finish")
+			}
 		}
 		if input.Action == "context" {
 			if input.Timezone != "" {
@@ -81,14 +101,24 @@ func (s *Store) PlatformSchedules(ctx context.Context, slot ServiceRequest, inpu
 					return ErrInvalid
 				}
 			}
-			out.Context = &PlatformScheduleContext{ReferenceTime: s.timestamp(), ProjectID: scope.ProjectID, SessionID: a.Grant.SessionID, RunID: a.RunID, Timezone: input.Timezone, Operations: []string{"create", "list", "get", "update", "cancel"}}
+			out.Context = &PlatformScheduleContext{ReferenceTime: s.timestamp(), ProjectID: scope.ProjectID, SessionID: a.Grant.SessionID, RunID: a.RunID, Timezone: input.Timezone, Operations: operations}
+			if source.Own != nil {
+				out.Context.ScheduleID = source.Own.ScheduleID
+				out.Context.ScheduleRevision = source.Own.Revision
+			}
 			return nil
 		}
 		if input.Action != "execute" || input.ExpectedRunID != a.RunID {
 			return ErrConflict
 		}
+		if source.Restricted && !(input.Operation == "get" && source.Schedules[input.ID] || input.Operation == "finish" && source.Own != nil && source.Own.ScheduleID == input.ID) {
+			return ErrConflict
+		}
+		if !source.Restricted && input.Operation == "finish" {
+			return ErrConflict
+		}
 		switch input.Operation {
-		case "create", "update", "cancel":
+		case "create", "update", "cancel", "finish":
 			if !validText(input.ToolCallID, 256) {
 				return ErrInvalid
 			}

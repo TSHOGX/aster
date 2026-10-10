@@ -81,6 +81,7 @@ func (c *ChildRetirement) Step(ctx context.Context, child Child) error {
 			`DELETE FROM agent_records WHERE incarnation_id IN (SELECT id FROM agent_incarnations WHERE session_id=?)`,
 			`DELETE FROM control_receipts WHERE session_id=?`,
 			`DELETE FROM input_deliveries WHERE session_id=?`,
+			`UPDATE schedules SET completed_by_run_id=NULL WHERE completed_by_run_id IN (SELECT id FROM execution_runs WHERE session_id=?)`,
 			`DELETE FROM execution_runs WHERE session_id=?`,
 			`DELETE FROM agent_commands WHERE session_id=?`,
 			`DELETE FROM messages WHERE session_id=?`,

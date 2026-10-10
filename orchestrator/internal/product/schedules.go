@@ -32,15 +32,20 @@ type Schedule struct {
 	OriginSessionID  string `json:"origin_session_id,omitempty"`
 	OriginRunID      string `json:"origin_run_id,omitempty"`
 	OriginToolCallID string `json:"origin_tool_call_id,omitempty"`
+	MaxOccurrences   *int   `json:"max_occurrences,omitempty"`
+	AdmittedCount    int    `json:"admitted_count"`
+	StartsAt         string `json:"starts_at,omitempty"`
+	CompletedByRunID string `json:"completed_by_run_id,omitempty"`
+	NotifyPolicy     string `json:"notification_policy,omitempty"`
 	NextAt           string `json:"next_at,omitempty"`
 	Revision         int64  `json:"revision"`
 	CreatedAt        string `json:"created_at"`
 }
 
-const scheduleColumns = `id,project_id,coalesce(session_id,''),title,prompt,cron,timezone,state,trigger_kind,coalesce(run_at,''),coalesce(expires_at,''),coalesce(end_reason,''),notify,coalesce(retry_at,''),last_error,coalesce(origin_session_id,''),coalesce(origin_run_id,''),coalesce(origin_tool_call_id,''),coalesce(next_at,''),revision,created_at`
+const scheduleColumns = `id,project_id,coalesce(session_id,''),title,prompt,cron,timezone,state,trigger_kind,coalesce(run_at,''),coalesce(expires_at,''),coalesce(end_reason,''),notify,coalesce(retry_at,''),last_error,coalesce(origin_session_id,''),coalesce(origin_run_id,''),coalesce(origin_tool_call_id,''),max_occurrences,admitted_count,coalesce(starts_at,''),coalesce(completed_by_run_id,''),notification_policy,coalesce(next_at,''),revision,created_at`
 
 func scanSchedule(row scanner) (s Schedule, err error) {
-	err = missing(row.Scan(&s.ID, &s.ProjectID, &s.SessionID, &s.Title, &s.Prompt, &s.Cron, &s.Timezone, &s.State, &s.TriggerKind, &s.RunAt, &s.ExpiresAt, &s.EndReason, &s.Notify, &s.RetryAt, &s.LastError, &s.OriginSessionID, &s.OriginRunID, &s.OriginToolCallID, &s.NextAt, &s.Revision, &s.CreatedAt))
+	err = missing(row.Scan(&s.ID, &s.ProjectID, &s.SessionID, &s.Title, &s.Prompt, &s.Cron, &s.Timezone, &s.State, &s.TriggerKind, &s.RunAt, &s.ExpiresAt, &s.EndReason, &s.Notify, &s.RetryAt, &s.LastError, &s.OriginSessionID, &s.OriginRunID, &s.OriginToolCallID, &s.MaxOccurrences, &s.AdmittedCount, &s.StartsAt, &s.CompletedByRunID, &s.NotifyPolicy, &s.NextAt, &s.Revision, &s.CreatedAt))
 	return
 }
 func parseRecurrence(expression, zone string) (cron.Schedule, string, error) {
@@ -103,7 +108,7 @@ func normalizeSchedule(input Schedule) (Schedule, error) {
 	default:
 		return input, ErrInvalid
 	}
-	for _, field := range []*string{&input.RunAt, &input.ExpiresAt} {
+	for _, field := range []*string{&input.RunAt, &input.ExpiresAt, &input.StartsAt} {
 		if *field != "" {
 			t, e := time.Parse(time.RFC3339Nano, *field)
 			if e != nil {
@@ -113,6 +118,22 @@ func normalizeSchedule(input Schedule) (Schedule, error) {
 		}
 	}
 	if input.ExpiresAt != "" && input.RunAt != "" && input.ExpiresAt <= input.RunAt {
+		return input, ErrInvalid
+	}
+	if input.NotifyPolicy == "" {
+		input.NotifyPolicy = "each_run"
+	}
+	if input.NotifyPolicy != "each_run" && input.NotifyPolicy != "on_finish" {
+		return input, ErrInvalid
+	}
+	if input.MaxOccurrences != nil {
+		if *input.MaxOccurrences < 1 || *input.MaxOccurrences > 100 || input.ExpiresAt == "" || input.TriggerKind != "interval" {
+			return input, ErrInvalid
+		}
+		if input.StartsAt != "" && input.StartsAt >= input.ExpiresAt {
+			return input, ErrInvalid
+		}
+	} else if input.StartsAt != "" || input.NotifyPolicy == "on_finish" {
 		return input, ErrInvalid
 	}
 	if input.State != "active" && input.State != "paused" {
@@ -135,6 +156,15 @@ func scheduleNext(task Schedule, now time.Time) (string, error) {
 		return "", nil
 	}
 	next := parsed.Next(now)
+	if task.StartsAt != "" && task.NextAt == "" {
+		st, e := time.Parse(time.RFC3339Nano, task.StartsAt)
+		if e != nil {
+			return "", ErrInvalid
+		}
+		if st.After(now) {
+			return task.StartsAt, nil
+		}
+	}
 	if interval, ok := parsed.(minuteInterval); ok && task.NextAt != "" {
 		anchor, e := time.Parse(time.RFC3339Nano, task.NextAt)
 		if e != nil {
@@ -159,8 +189,8 @@ func (s *Store) createSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	if err != nil {
 		return Schedule{}, err
 	}
-	digest := creationDigest(input.SessionID, input.Title, input.Prompt, input.TriggerKind, input.Cron, input.Timezone, input.State, input.RunAt, input.ExpiresAt, input.Notify)
-	if input.RunAt != "" && input.RunAt <= s.timestamp() || input.ExpiresAt != "" && input.ExpiresAt <= s.timestamp() {
+	digest := creationDigest(input.SessionID, input.Title, input.Prompt, input.TriggerKind, input.Cron, input.Timezone, input.State, input.RunAt, input.ExpiresAt, input.Notify, input.MaxOccurrences, input.StartsAt, input.NotifyPolicy)
+	if input.RunAt != "" && input.RunAt <= s.timestamp() || input.ExpiresAt != "" && input.ExpiresAt <= s.timestamp() || input.StartsAt != "" && input.StartsAt <= s.timestamp() {
 		return Schedule{}, ErrInvalid
 	}
 	var count int
@@ -179,7 +209,7 @@ func (s *Store) createSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 		return Schedule{}, err
 	}
 	now := s.timestamp()
-	_, err = tx.ExecContext(ctx, `INSERT INTO schedules(id,project_id,session_id,title,prompt,cron,timezone,state,trigger_kind,run_at,expires_at,notify,next_at,creation_digest,created_at,updated_at,origin_session_id,origin_run_id,origin_tool_call_id) VALUES(?,?,nullif(?,''),?,?,?,?,?,?,nullif(?,''),nullif(?,''),?,nullif(?,''),?,?,?,nullif(?,''),nullif(?,''),nullif(?,''))`, input.ID, scope.ProjectID, input.SessionID, input.Title, input.Prompt, input.Cron, input.Timezone, input.State, input.TriggerKind, input.RunAt, input.ExpiresAt, input.Notify, next, digest, now, now, input.OriginSessionID, input.OriginRunID, input.OriginToolCallID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO schedules(id,project_id,session_id,title,prompt,cron,timezone,state,trigger_kind,run_at,expires_at,notify,next_at,creation_digest,created_at,updated_at,origin_session_id,origin_run_id,origin_tool_call_id,max_occurrences,admitted_count,starts_at,notification_policy) VALUES(?,?,nullif(?,''),?,?,?,?,?,?,nullif(?,''),nullif(?,''),?,nullif(?,''),?,?,?,nullif(?,''),nullif(?,''),nullif(?,''),?,0,nullif(?,''),?)`, input.ID, scope.ProjectID, input.SessionID, input.Title, input.Prompt, input.Cron, input.Timezone, input.State, input.TriggerKind, input.RunAt, input.ExpiresAt, input.Notify, next, digest, now, now, input.OriginSessionID, input.OriginRunID, input.OriginToolCallID, input.MaxOccurrences, input.StartsAt, input.NotifyPolicy)
 	if err != nil {
 		return Schedule{}, err
 	}
@@ -240,7 +270,7 @@ func (s *Store) updateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	if err != nil {
 		return err
 	}
-	sameTrigger := input.TriggerKind == old.TriggerKind && input.Cron == old.Cron && input.RunAt == old.RunAt && (input.Timezone == old.Timezone || input.TriggerKind == "interval" || input.TriggerKind == "at")
+	sameTrigger := input.TriggerKind == old.TriggerKind && input.Cron == old.Cron && input.RunAt == old.RunAt && input.StartsAt == old.StartsAt && (input.Timezone == old.Timezone || input.TriggerKind == "interval" || input.TriggerKind == "at")
 	if sameTrigger && input.State == old.State {
 		next = old.NextAt
 	} else if input.RunAt != "" && input.RunAt <= s.timestamp() {
@@ -249,7 +279,13 @@ func (s *Store) updateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	if input.ExpiresAt != "" && input.ExpiresAt <= s.timestamp() {
 		return ErrInvalid
 	}
-	return changed(tx.ExecContext(ctx, `UPDATE schedules SET session_id=nullif(?,''),title=?,prompt=?,cron=?,timezone=?,state=?,trigger_kind=?,run_at=nullif(?,''),expires_at=nullif(?,''),notify=?,next_at=nullif(?,''),retry_at=NULL,retry_count=0,last_error='',end_reason=NULL,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, input.SessionID, input.Title, input.Prompt, input.Cron, input.Timezone, input.State, input.TriggerKind, input.RunAt, input.ExpiresAt, input.Notify, next, s.timestamp(), input.ID, input.Revision))
+	if input.StartsAt != old.StartsAt && input.StartsAt != "" && input.StartsAt <= s.timestamp() {
+		return ErrInvalid
+	}
+	if input.MaxOccurrences != nil && *input.MaxOccurrences <= old.AdmittedCount {
+		return ErrInvalid
+	}
+	return changed(tx.ExecContext(ctx, `UPDATE schedules SET session_id=nullif(?,''),title=?,prompt=?,cron=?,timezone=?,state=?,trigger_kind=?,run_at=nullif(?,''),expires_at=nullif(?,''),notify=?,max_occurrences=?,starts_at=nullif(?,''),notification_policy=?,next_at=nullif(?,''),retry_at=NULL,retry_count=0,last_error='',end_reason=NULL,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, input.SessionID, input.Title, input.Prompt, input.Cron, input.Timezone, input.State, input.TriggerKind, input.RunAt, input.ExpiresAt, input.Notify, input.MaxOccurrences, input.StartsAt, input.NotifyPolicy, next, s.timestamp(), input.ID, input.Revision))
 }
 func (s *Store) cancelSchedule(ctx context.Context, tx *sql.Tx, scope Scope, id string, revision int64) error {
 	if _, err := writableProject(ctx, tx, scope); err != nil {
@@ -273,14 +309,15 @@ type ScheduleRun struct {
 	State            string `json:"state"`
 	ScheduleRevision int64  `json:"schedule_revision"`
 	Notify           bool   `json:"notify"`
+	NotifyPolicy     string `json:"notification_policy"`
 }
 
 // Schedule runs display the same authoritative prompt status as the queue and
 // conversation controls, including claims before a delivery is consumed.
-var runColumns = `r.id,r.schedule_id,r.project_id,r.session_id,r.turn_id,r.request_id,r.due_at,r.schedule_revision,r.notify,` + strings.ReplaceAll(promptStatus, "turns.", "t.")
+var runColumns = `r.id,r.schedule_id,r.project_id,r.session_id,r.turn_id,r.request_id,r.due_at,r.schedule_revision,r.notify,r.notification_policy,` + strings.ReplaceAll(promptStatus, "turns.", "t.")
 
 func scanScheduleRun(row scanner) (r ScheduleRun, err error) {
-	err = missing(row.Scan(&r.ID, &r.ScheduleID, &r.ProjectID, &r.SessionID, &r.TurnID, &r.RequestID, &r.DueAt, &r.ScheduleRevision, &r.Notify, &r.State))
+	err = missing(row.Scan(&r.ID, &r.ScheduleID, &r.ProjectID, &r.SessionID, &r.TurnID, &r.RequestID, &r.DueAt, &r.ScheduleRevision, &r.Notify, &r.NotifyPolicy, &r.State))
 	return
 }
 func (s *Store) RunSchedule(ctx context.Context, scope Scope, id, request string) (ScheduleRun, error) {
@@ -316,7 +353,7 @@ func (s *Store) runSchedule(ctx context.Context, tx *sql.Tx, scope Scope, schedu
 	if schedule.State == "deleted" {
 		return ScheduleRun{}, ErrDeleting
 	}
-	if schedule.State != "active" || schedule.ExpiresAt != "" && schedule.ExpiresAt <= s.timestamp() {
+	if schedule.State != "active" || schedule.ExpiresAt != "" && schedule.ExpiresAt <= s.timestamp() || schedule.MaxOccurrences != nil && schedule.AdmittedCount >= *schedule.MaxOccurrences {
 		return ScheduleRun{}, ErrConflict
 	}
 	id := uuid.NewString()
@@ -331,7 +368,7 @@ func (s *Store) runSchedule(ctx context.Context, tx *sql.Tx, scope Scope, schedu
 	if err != nil {
 		return ScheduleRun{}, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO schedule_runs(id,schedule_id,project_id,session_id,turn_id,request_id,due_at,created_at,schedule_revision,notify) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, schedule.ID, scope.ProjectID, session, turn.ID, request, due, s.timestamp(), schedule.Revision, schedule.Notify); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO schedule_runs(id,schedule_id,project_id,session_id,turn_id,request_id,due_at,created_at,schedule_revision,notify,notification_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, schedule.ID, scope.ProjectID, session, turn.ID, request, due, s.timestamp(), schedule.Revision, schedule.Notify, schedule.NotifyPolicy); err != nil {
 		return ScheduleRun{}, err
 	}
 	if schedule.TriggerKind == "at" {
@@ -339,7 +376,17 @@ func (s *Store) runSchedule(ctx context.Context, tx *sql.Tx, scope Scope, schedu
 			return ScheduleRun{}, err
 		}
 	}
-	return ScheduleRun{ID: id, ScheduleID: schedule.ID, ProjectID: scope.ProjectID, SessionID: session, TurnID: turn.ID, RequestID: request, DueAt: due, State: turn.State, ScheduleRevision: schedule.Revision, Notify: schedule.Notify}, nil
+	if schedule.MaxOccurrences != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE schedules SET admitted_count=admitted_count+1 WHERE id=?`, schedule.ID); err != nil {
+			return ScheduleRun{}, err
+		}
+		if schedule.AdmittedCount+1 >= *schedule.MaxOccurrences {
+			if _, err = tx.ExecContext(ctx, `UPDATE schedules SET state='exhausted',end_reason='count',next_at=NULL,retry_at=NULL,updated_at=? WHERE id=?`, s.timestamp(), schedule.ID); err != nil {
+				return ScheduleRun{}, err
+			}
+		}
+	}
+	return ScheduleRun{ID: id, ScheduleID: schedule.ID, ProjectID: scope.ProjectID, SessionID: session, TurnID: turn.ID, RequestID: request, DueAt: due, State: turn.State, ScheduleRevision: schedule.Revision, Notify: schedule.Notify, NotifyPolicy: schedule.NotifyPolicy}, nil
 }
 func (s *Store) ScheduleRuns(ctx context.Context, scope Scope, id, after string, limit int) ([]ScheduleRun, error) {
 	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
@@ -365,7 +412,7 @@ func (s *Store) ScheduleRuns(ctx context.Context, scope Scope, id, after string,
 // rows from eligibility without changing their original occurrence identity.
 func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 	now := s.timestamp()
-	rows, err := s.reader.QueryContext(ctx, `SELECT id FROM schedules WHERE state='active' AND (next_at<=? OR expires_at<=?) AND (retry_at IS NULL OR retry_at<=?) ORDER BY coalesce(next_at,expires_at),id LIMIT ?`, now, now, now, pageSize(limit))
+	rows, err := s.reader.QueryContext(ctx, `SELECT id FROM schedules WHERE state='active' AND ((next_at<=? AND (retry_at IS NULL OR retry_at<=?)) OR expires_at<=?) ORDER BY coalesce(next_at,expires_at),id LIMIT ?`, now, now, now, pageSize(limit))
 	if err != nil {
 		return 0, err
 	}
@@ -386,19 +433,21 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 	count := 0
 	for _, id := range ids {
 		admitted := false
+		admittedDue := ""
+		deferred := false
 		err = s.write(ctx, func(tx *sql.Tx) error {
 			task, e := scanSchedule(tx.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE id=?`, id))
 			if e != nil {
 				return e
 			}
-			if task.State != "active" || task.RetryAt > now {
+			if task.State != "active" {
 				return nil
 			}
 			if task.ExpiresAt != "" && task.ExpiresAt <= now {
 				_, e = tx.ExecContext(ctx, `UPDATE schedules SET state='exhausted',end_reason='deadline',next_at=NULL,retry_at=NULL,updated_at=? WHERE id=?`, now, id)
 				return e
 			}
-			if task.NextAt == "" || task.NextAt > now {
+			if task.NextAt == "" || task.NextAt > now || task.RetryAt > now {
 				return nil
 			}
 			var outstanding bool
@@ -407,6 +456,7 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 				return e
 			}
 			if outstanding {
+				deferred = true
 				_, e = tx.ExecContext(ctx, `UPDATE schedules SET retry_at=? WHERE id=?`, sqlitex.FormatTime(s.now().Add(30*time.Second)), id)
 				return e
 			}
@@ -422,14 +472,16 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 				if e != nil {
 					return e
 				}
-				if _, e = tx.ExecContext(ctx, `UPDATE schedules SET next_at=nullif(?,''),retry_at=NULL,retry_count=0,last_error='',updated_at=? WHERE id=?`, next, now, id); e != nil {
+				if _, e = tx.ExecContext(ctx, `UPDATE schedules SET next_at=nullif(?,''),retry_at=NULL,retry_count=0,last_error='',updated_at=? WHERE id=? AND state='active'`, next, now, id); e != nil {
 					return e
 				}
 			}
 			admitted = true
+			admittedDue = task.NextAt
 			return nil
 		})
 		if err != nil {
+			s.scheduleMetrics.failures.Add(1)
 			if ctx.Err() != nil {
 				return count, ctx.Err()
 			}
@@ -461,7 +513,11 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 			}
 			continue
 		}
+		if deferred {
+			s.scheduleMetrics.deferred.Add(1)
+		}
 		if admitted {
+			s.recordScheduleAdmission(admittedDue)
 			count++
 		}
 	}

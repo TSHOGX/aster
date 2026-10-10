@@ -27,16 +27,17 @@ var schema string
 // and independent bounded readers. Only the exact current schema can reopen;
 // a fresh database is initialized atomically under the exclusive lifetime lock.
 type Store struct {
-	release    func()
-	closeOnce  sync.Once
-	closeError error
-	db, reader *sql.DB
-	now        func() time.Time
-	retention  retentionCursor
-	writer     writeAdmission
-	runtime    runtimeAdmission
-	instance   string
-	identity   ApplicationIdentity
+	scheduleMetrics scheduleMetrics
+	release         func()
+	closeOnce       sync.Once
+	closeError      error
+	db, reader      *sql.DB
+	now             func() time.Time
+	retention       retentionCursor
+	writer          writeAdmission
+	runtime         runtimeAdmission
+	instance        string
+	identity        ApplicationIdentity
 }
 
 func Open(ctx context.Context, path string) (result *Store, resultErr error) {

@@ -1,5 +1,16 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+"Check until an event is confirmed": "检查直到事件确认",
+"Maximum checks": "最多检查次数",
+"Deadline with UTC offset": "截止时间（含 UTC 偏移）",
+"First check with UTC offset (optional)": "首次检查时间（含 UTC 偏移，可选）",
+"Result notifications": "结果通知",
+"Only when finished or attention is needed": "仅在完成或需要关注时",
+"Every run": "每次运行",
+"Describe what confirms the event and tell the agent to finish the check when confirmed.": "描述事件确认条件，并告知智能体确认后结束检查。",
+"Checks admitted": "已提交检查",
+"Deadline": "截止时间",
+
   "Once": "仅一次",
   "Date and time": "日期和时间",
   "Choose a UTC offset": "选择 UTC 偏移",

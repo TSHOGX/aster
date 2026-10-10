@@ -12,14 +12,15 @@ import (
 )
 
 type Notification struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	MessageID string `json:"message_id,omitempty"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	CreatedAt string `json:"created_at"`
-	Read      bool   `json:"read"`
+	ID         string `json:"id"`
+	ProjectID  string `json:"project_id,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	MessageID  string `json:"message_id,omitempty"`
+	ScheduleID string `json:"schedule_id,omitempty"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	CreatedAt  string `json:"created_at"`
+	Read       bool   `json:"read"`
 }
 
 type NotificationPolicy struct {
@@ -71,6 +72,9 @@ func (s *Store) Notifications(ctx context.Context, actor, after string, limit in
 		if err = rows.Scan(&n.ID, &n.ProjectID, &n.SessionID, &n.MessageID, &n.Title, &n.Body, &n.CreatedAt, &n.Read); err != nil {
 			return nil, err
 		}
+		if strings.HasPrefix(n.ID, "schedule/") {
+			n.ScheduleID = strings.TrimPrefix(n.ID, "schedule/")
+		}
 		out = append(out, n)
 	}
 	return out, rows.Err()
@@ -90,12 +94,13 @@ func (s *Store) ReadNotification(ctx context.Context, actor, id string) error {
 }
 
 type SearchResult struct {
-	ProjectID string `json:"project_id"`
-	SessionID string `json:"session_id"`
-	MessageID string `json:"message_id,omitempty"`
-	Title     string `json:"title"`
-	Snippet   string `json:"snippet"`
-	Key       string `json:"key"`
+	ProjectID  string `json:"project_id"`
+	SessionID  string `json:"session_id"`
+	MessageID  string `json:"message_id,omitempty"`
+	ScheduleID string `json:"schedule_id,omitempty"`
+	Title      string `json:"title"`
+	Snippet    string `json:"snippet"`
+	Key        string `json:"key"`
 }
 
 func (s *Store) Search(ctx context.Context, actor, query, after string, limit int) ([]SearchResult, error) {

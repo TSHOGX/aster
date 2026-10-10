@@ -803,6 +803,7 @@ function SelectedSchedule({
           <h2>{schedule.title}</h2>
           <Instructions text={schedule.prompt} />
           {schedule.origin_session_id && <button onClick={()=>onOpen(schedule.project_id,schedule.origin_session_id!)}>{tr("Source conversation")}</button>}
+          {schedule.max_occurrences && <p>{tr("Checks admitted")}: {schedule.admitted_count||0} / {schedule.max_occurrences} · {tr("Deadline")}: {scheduleTime(schedule.expires_at!,schedule.timezone,locale)}</p>}
           {schedule.last_error && <p className="notice warning">{schedule.last_error}</p>}
           <section className="schedule-settings">
             <h3>{tr("Runs in")}</h3>
