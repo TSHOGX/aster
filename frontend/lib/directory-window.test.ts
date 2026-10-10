@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   openDirectories,
+  directoryReadingAnchor,
   replaceDirectoryWindow,
   retainDirectoryWindows,
   MAX_DIRECTORY_TREE_BYTES,
@@ -81,4 +82,13 @@ it("refuses an oversized page without changing the current window", () => {
     ),
   ).toThrow("budget");
   expect(original[""].entries[0].name).toBe("selected");
+});
+
+it("keeps a deep-link selection centered until a real scroll anchor is recorded", () => {
+  const page = { entries: ["entry-89950.txt", "entry-90000.txt"].map(name => ({ name, kind: "file", size: 4, modified: 0 })) };
+  expect(directoryReadingAnchor(page, "", "entry-90000.txt")).toBe("entry-90000.txt");
+  expect(directoryReadingAnchor(page, "reports", "reports/entry-90000.txt")).toBe("entry-90000.txt");
+  expect(directoryReadingAnchor(page, "reports", "reports/entry-90000.txt", "entry-89950.txt")).toBe("entry-89950.txt");
+  expect(directoryReadingAnchor(page, "reports", "other/entry-90000.txt")).toBe("entry-89950.txt");
+  expect(directoryReadingAnchor(undefined, "reports", "reports/entry-90000.txt")).toBeUndefined();
 });

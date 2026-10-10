@@ -20,6 +20,21 @@ export type DirectoryWindow = FilePage & {
 };
 export type DirectoryTree = Record<string, DirectoryWindow>;
 
+/** Preserve explicit scrolling; before the first scroll, retain a revealed selection. */
+export function directoryReadingAnchor(
+  page: DirectoryWindow | undefined,
+  directory: string,
+  selected: string,
+  visible?: string,
+): string | undefined {
+  if (visible) return visible;
+  const relative = directory
+    ? selected.startsWith(`${directory}/`) ? selected.slice(directory.length + 1) : ""
+    : selected;
+  const child = relative.split("/")[0];
+  return page?.entries.find(entry => entry.name === child)?.name ?? page?.entries[0]?.name;
+}
+
 export function openDirectories(paths: readonly string[]) {
   return [...new Set(paths.filter(path => path && path.length <= 4096 && path.split("/").length <= 64))];
 }

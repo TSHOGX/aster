@@ -54,6 +54,7 @@ const CodeEditor = dynamic(
 );
 import {
   DirectoryWindowLimitError,
+  directoryReadingAnchor,
   flattenDirectoryTree,
   openDirectories,
   retainDirectoryWindows,
@@ -270,7 +271,7 @@ export function FilesPanel({
           let cursor = after;
           let relocation = seek;
           if (!cursor && !relocation && (treeRef.current[path]?.start ?? 0) > 0) {
-            const name = directoryAnchors.current.get(path) ?? treeRef.current[path]?.entries[0]?.name;
+            const name = directoryReadingAnchor(treeRef.current[path], path, selectedRef.current, directoryAnchors.current.get(path));
             if (name) relocation = { name, mode: "around" };
           }
           const requestURL = () => `${base}?path=${encode(path)}&after=${encode(cursor)}&limit=100${relocation ? `&seek=${relocation.mode}&name=${encode(relocation.name)}` : ""}`;
@@ -288,7 +289,7 @@ export function FilesPanel({
               throw error;
             cursor = "";
             const resident = treeRef.current[path];
-            const name = directoryAnchors.current.get(path) ?? resident?.entries[0]?.name;
+            const name = directoryReadingAnchor(resident, path, selectedRef.current, directoryAnchors.current.get(path));
             relocation = name ? { name, mode: "around" } : undefined;
             notice = tr("Directory changed. Restored the reading position.");
             page = await readDirectory(
