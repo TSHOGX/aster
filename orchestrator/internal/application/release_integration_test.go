@@ -239,7 +239,7 @@ func newReleasedApp(t *testing.T) *releaseApp {
 		"template": map[string]any{"id": "battery", "manifest": "manifest.json", "digest": digest},
 		"auth":     map[string]any{"users_file": "users.yaml"}, "content": map[string]any{"agent_config": "content", "shared_assets": "assets"},
 		"project":  map[string]any{"cpu_millis": 2000, "memory_bytes": 2 << 30, "disk_bytes": 256 << 20, "workspace_bytes": 128 << 20, "runtime_bytes": 128 << 20, "reachability": map[string]any{"services": []any{map[string]any{"audience": "model", "destination": "10.80.0.1", "port": 443, "gateway": "192.0.2.1:18891"}}, "hosts": map[string]string{"model.internal": "model"}}},
-		"gateways": []any{map[string]any{"audience": "model", "listen": "192.0.2.1:18891", "upstream": "http://192.0.2.1:18890", "api_key_env": "PROJECT_RELEASE_SECRET", "max_requests": 8}}, "agent_audience": "model",
+		"gateways": []any{map[string]any{"audience": "model", "listen": "192.0.2.1:18891", "upstream": "http://192.0.2.1:18890", "api_key_env": "PROJECT_RELEASE_SECRET", "max_requests": 8, "schedule_tools": os.Getenv("PROJECT_RELEASE_SCHEDULE_TOOLS") == "1"}}, "agent_audience": "model",
 		"limits": map[string]any{"idle_after": "10s", "idle_agent_after": "5s", "interval": "100ms"},
 	}
 	raw, err = json.Marshal(cfg)

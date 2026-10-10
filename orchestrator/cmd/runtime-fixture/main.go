@@ -269,6 +269,20 @@ func model(coordinated bool) {
 			blocks, _ := last["content"].([]any)
 			if len(blocks) == 1 {
 				block, _ := blocks[0].(map[string]any)
+				// Deterministic tool selection still traverses Pi and the real guest route.
+				if text, ok := block["text"].(string); ok && strings.HasPrefix(text, "schedule-tool-fixture ") {
+					var call struct {
+						Name      string          `json:"name"`
+						Arguments json.RawMessage `json:"arguments"`
+					}
+					if err := json.Unmarshal([]byte(strings.TrimPrefix(text, "schedule-tool-fixture ")), &call); err != nil || !strings.HasPrefix(call.Name, "schedules_") {
+						http.Error(w, "invalid schedule fixture", 400)
+						return
+					}
+					start, _ := json.Marshal(map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "tool_use", "id": "schedule-call", "name": call.Name, "input": map[string]any{}}})
+					delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "input_json_delta", "partial_json": string(call.Arguments)}})
+					records = []string{records[0], string(start), string(delta), records[3], `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":4}}`, records[5]}
+				}
 				switch block["text"] {
 				case "native-compaction-seed":
 					delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": strings.Repeat("retained context ", 400)}})
