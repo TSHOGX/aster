@@ -131,3 +131,16 @@ test("effective access explains each policy source",async({page})=>{
   await expect(access.getByRole("row").filter({has:page.getByRole("cell",{name:"admin.content.read",exact:true})})).toContainText("No grant");
   await expect(access.getByRole("link",{name:"Standard operations"}).first()).toHaveAttribute("href","/admin/policies/standard-policy");
 });
+
+test("revoked inspection cannot display a late content response",async({page})=>{
+  await adminFixture(page);
+  await page.route("**/api/me/capabilities",route=>route.fulfill({json:{account_id:"admin-id",account_status:"active",management_role:"admin",revision:1,actions:{"admin.content.read":{allowed:true}}}}));
+  let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});let waiting=false;
+  await page.route("**/conversations/private-session/inspect",async route=>{waiting=true;await held;await route.fulfill({json:{account_id:"user-id",project_id:"private-project",session_id:"private-session",title:"Secret title",audit_id:1,messages:[{id:"one",role:"user",content:"Late private content",sequence:1,created_at:"2026-10-11",truncated:false}]}});});
+  await page.goto("/admin/users/user-id");const panel=page.getByRole("region",{name:"Private conversation inspection"});
+  await panel.getByRole("textbox",{name:"Conversation ID",exact:true}).fill("private-session");await panel.getByRole("textbox",{name:"Inspection purpose",exact:true}).fill("Case 99");await panel.getByRole("button",{name:"Inspect conversation",exact:true}).click();
+  await expect.poll(()=>waiting).toBe(true);
+  await page.evaluate(()=>window.dispatchEvent(new Event("admin-authority-denied")));
+  release();
+  await expect(panel).toContainText("An explicit admin.content.read grant is required");await expect(panel).not.toContainText("Late private content");
+});

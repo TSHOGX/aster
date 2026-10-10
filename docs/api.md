@@ -435,3 +435,13 @@ available for those controls. Automatic dispatch rechecks both grants and pauses
 a denied due task with `last_error: "permission_revoked"`; no occurrence is created.
 Platform schedule context omits denied create/update operations, and mutations
 reauthorize even through an already-open gateway request.
+
+`POST /api/admin/users/{id}/conversations/{session}/inspect` is explicit private
+conversation inspection. It requires a current normal administrator session plus
+`admin.content.read`; the supplied account must own the stored conversation. Body:
+`{ "purpose": "Case reference and reason", "after_sequence": 0, "limit": 20 }`.
+Purpose is required (up to 512 characters); limit is 1–50. Each successful page
+returns an audit ID and commits its target/purpose/bounds audit before exposing
+content. Native records, credentials, live workspace and arbitrary paths are not
+part of this API. Messages are limited to 16,384 characters each and 256 KiB per
+page, with explicit truncation and continuation. Audit failure returns no content.

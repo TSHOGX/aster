@@ -146,3 +146,11 @@ Explicit Project pause, blocker inspection, recovery retry and unknown-outcome
 acknowledgment require a current active owner but no functional grant. Restart and
 force-restart also require `projects.manage`, since they admit renewed compute.
 Idle reconciliation and internal recovery retain their service authority.
+
+Administrative conversation inspection is separate from owner and reader routes.
+The current administrator role and explicit `admin.content.read` grant are checked
+inside the same writer transaction as the bounded stored-message read and audit.
+Each successful page records purpose, account/Project/Session IDs and sequence
+bounds, without copying message bodies into audit. No content is returned if audit
+or commit fails. This grants no owner impersonation, native journal, guest secret,
+live workspace or arbitrary host-path access. Inspection responses are not cached.

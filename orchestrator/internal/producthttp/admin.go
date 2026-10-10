@@ -50,6 +50,7 @@ func adminPageLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 func (a *Authentication) adminRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/admin/users/{id}/conversations/{session}/inspect", a.adminConversation)
 	mux.HandleFunc("GET /api/admin/users", a.adminUsers)
 	mux.HandleFunc("POST /api/admin/users", a.adminCreateUser)
 	mux.HandleFunc("GET /api/admin/users/{id}", a.adminUser)

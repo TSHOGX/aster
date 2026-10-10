@@ -124,3 +124,28 @@ test("real group and policy UI resolves provenance and fences deletion impact", 
   const user=await(await page.request.get(`/api/admin/users/${account.id}`)).json();expect(user.groups).toEqual([]);
   const audit=await(await page.request.get(`/api/admin/audit-events?target=${group.id}`)).json();expect(audit.events.some((e:{action:string})=>e.action==="group.delete")).toBe(true);
 });
+
+test("private inspection requires an explicit grant and records its purpose",async({page})=>{
+  await page.goto("/admin/users");await page.getByLabel("Username",{exact:true}).fill("administrator");await page.getByLabel("Password",{exact:true}).fill("web-test-permanent-password");await page.getByRole("button",{name:"Sign in",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Users",exact:true})).toBeVisible();
+  const actor=await(await page.request.get("/api/auth/session")).json();
+  expect((await page.request.post("/api/projects",{data:{id:"inspection-project",title:"Inspection project"}})).ok()).toBe(true);
+  expect((await page.request.post("/api/projects/inspection-project/sessions",{data:{id:"inspection-session",title:"Inspection conversation"}})).ok()).toBe(true);
+  const path=`/api/admin/users/${actor.id}/conversations/inspection-session/inspect`;
+  expect((await page.request.post(path,{data:{purpose:"Case 7",after_sequence:0,limit:20}})).status()).toBe(403);
+  await page.goto(`/admin/users/${actor.id}`);
+  const panel=page.getByRole("region",{name:"Private conversation inspection"});
+  await expect(panel).toContainText("An explicit admin.content.read grant is required");await expect(panel.getByRole("button",{name:"Inspect conversation"})).toHaveCount(0);
+  const policy=await(await page.request.post("/api/admin/policies",{data:{request_id:crypto.randomUUID(),name:"Content inspection",statements:{"admin.content.read":"allow"}}})).json();
+  const group=await(await page.request.post("/api/admin/groups",{data:{request_id:crypto.randomUUID(),name:"Content inspectors"}})).json();
+  const binding=await(await page.request.put(`/api/admin/groups/${group.group.id}/policies`,{data:{request_id:crypto.randomUUID(),expected_revision:group.group.revision,policy_ids:[policy.policy.id]}})).json();
+  expect((await page.request.patch(`/api/admin/groups/${group.group.id}/members`,{data:{request_id:crypto.randomUUID(),expected_revision:binding.group.revision,add_user_ids:[actor.id],remove_user_ids:[]}})).ok()).toBe(true);
+  await page.reload();
+  await panel.getByRole("textbox",{name:"Conversation ID",exact:true}).fill("inspection-session");
+  await panel.getByRole("textbox",{name:"Inspection purpose",exact:true}).fill("Case 7: verify conversation state");
+  await panel.getByRole("button",{name:"Inspect conversation",exact:true}).click();
+  await expect(panel.getByRole("heading",{name:"Inspection conversation",exact:true})).toBeVisible();
+  const audit=await(await page.request.get("/api/admin/audit-events?action=admin.content.read&target=inspection-session")).json();
+  expect(audit.events).toHaveLength(1);expect(audit.events[0].details.purpose).toBe("Case 7: verify conversation state");expect(audit.events[0].details.message_count).toBe(0);
+  await panel.getByRole("button",{name:"Clear inspected content",exact:true}).click();await expect(panel.getByRole("heading",{name:"Inspection conversation",exact:true})).toHaveCount(0);
+});

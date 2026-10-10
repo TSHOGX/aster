@@ -19,6 +19,7 @@ export async function adminFixture(page: Page, role: "admin" | "user" = "admin")
     let body: Record<string, unknown> | null = null; try { body = request.postDataJSON(); } catch {}
     calls.push({ path, method, body });
     if (path === "/api/auth/session") return route.fulfill({ json: identity });
+    if (path === "/api/me/capabilities") return route.fulfill({json:{account_id:identity.id,account_status:"active",management_role:identity.role,revision:1,actions:{"admin.content.read":{allowed:false}}}});
     if (path === "/api/me/preferences") return route.fulfill({ json: { revision: 1, theme_mode: "system", accent: "neutral" } });
     if (path === "/api/auth/logout") return route.fulfill({ status: 204 });
     if (path.startsWith("/api/admin/") && role !== "admin") return route.fulfill({ status: 403, json: { code: "action_denied", error: "administrator role required" } });
