@@ -330,7 +330,7 @@ func TestLostPauseResumeAndAdmissionDuringPause(t *testing.T) {
 
 func TestRestartRecoversDeadlineAndActivities(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "product.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	f := fakeBackend()
 	l := &Lifecycle{Store: s, Backend: f, MaxProjects: 1}
@@ -342,7 +342,7 @@ func TestRestartRecoversDeadlineAndActivities(t *testing.T) {
 	timer, err := s.ArmIdle(ctx, a, time.Second)
 	must(t, err)
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	l = &Lifecycle{Store: s, Backend: f, MaxProjects: 1}

@@ -90,7 +90,7 @@ func (s *Store) MutateSchedule(ctx context.Context, scope Scope, input ScheduleM
 // live gateway authority inside this same transaction.
 func (s *Store) mutateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, input ScheduleMutation, origin ScheduleOrigin) (ScheduleReceipt, error) {
 	var out ScheduleReceipt
-	if _, err := writableProject(ctx, tx, scope); err != nil {
+	if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 		return out, err
 	}
 	if !validText(input.RequestID, 128) || !validID(input.ID) {

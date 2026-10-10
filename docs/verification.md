@@ -161,3 +161,11 @@ Both builds use the repository as their tracing root; the exact standalone
 project subdirectory is packaged, with its own dependencies and static assets.
 The real-edge gate requires Go and the pinned module dependencies in addition to
 Node; CI provisions both toolchains for this gate.
+
+Service fixtures create explicit current-model account/group/policy rows with
+supported credential hashes. Fixture IDs are distinct from login names, and the
+fixture policy enumerates the operations under test, including explicit public
+sharing where needed. There is no production missing-account/permission fallback.
+External package fixtures author data offline under the same exclusive store lock;
+reopening never rewrites fixture identities or grants. Test helper packages are
+absent from the application executable dependency graph.

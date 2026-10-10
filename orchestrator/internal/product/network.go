@@ -57,7 +57,7 @@ func (s *Store) GrantService(ctx context.Context, scope Scope, session, incarnat
 	var grant ServiceGrant
 	var token string
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -149,7 +149,7 @@ func holdsAttribution(ctx context.Context, q queryer, now string, a Attribution)
 }
 func (s *Store) RevokeService(ctx context.Context, scope Scope, grant string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := authorizedProject(ctx, tx, scope); err != nil {
+		if _, err := ownedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		var id string
@@ -164,7 +164,7 @@ func (s *Store) RevokeService(ctx context.Context, scope Scope, grant string) er
 // ServiceGrants lists a Project's live grants for operator diagnostics. Digests
 // are never returned: a leaked listing must not become a usable credential.
 func (s *Store) ServiceGrants(ctx context.Context, scope Scope) ([]ServiceGrant, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,session_id,incarnation_id,audience,expires_at,state FROM service_grants WHERE project_id=? AND state='active' ORDER BY created_at,id LIMIT 500`, scope.ProjectID)

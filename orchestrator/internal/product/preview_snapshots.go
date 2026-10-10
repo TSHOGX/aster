@@ -67,7 +67,7 @@ func (f *Files) PreviewSnapshots() *PreviewSnapshots {
 	return f.previews
 }
 func (s *PreviewSnapshots) authorize(ctx context.Context, scope Scope) error {
-	p, err := s.files.Store.Project(ctx, scope)
+	p, err := ownedProject(ctx, s.files.Store.reader, scope)
 	if err != nil {
 		return err
 	}

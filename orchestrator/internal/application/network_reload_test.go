@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/producttest"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,7 +24,7 @@ func networkReloadFixture(t *testing.T) (*Application, Config, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := product.Open(context.Background(), loaded.DatabasePath())
+	s, err := producttest.Open(context.Background(), loaded.DatabasePath())
 	if err != nil {
 		t.Fatal(err)
 	}

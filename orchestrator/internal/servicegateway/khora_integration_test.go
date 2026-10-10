@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/producttest"
 	"net"
 	"net/http"
 	"net/netip"
@@ -158,7 +159,7 @@ func TestProjectServiceAuthorityOnKhora(t *testing.T) {
 	must(t, err)
 	gatewayPort := uint16(gatewayListener.Addr().(*net.TCPAddr).Port)
 
-	store, err := product.Open(runctx, filepath.Join(t.TempDir(), "product.db"))
+	store, err := producttest.Open(runctx, filepath.Join(t.TempDir(), "product.db"))
 	must(t, err)
 	t.Cleanup(func() { store.Close() })
 	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: 1}

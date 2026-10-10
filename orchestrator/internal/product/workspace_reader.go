@@ -170,7 +170,7 @@ func (w *WorkspaceReader) start(entry *readerCarrier) {
 		return
 	}
 	entry.err = w.Store.write(attempt, func(tx *sql.Tx) error {
-		p, err := writableProject(attempt, tx, entry.scope)
+		p, err := mutableOwnedProject(attempt, tx, entry.scope)
 		if err != nil {
 			return err
 		}

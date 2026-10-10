@@ -34,7 +34,7 @@ type volumePage struct {
 // No reader starts compute or adds a durable activity row. The lane is released
 // once a capture is complete, independently of its HTTP consumer's lifetime.
 func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resources, context.Context, func(), func(), bool, error) {
-	p, err := w.Store.Project(ctx, scope)
+	p, err := ownedProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return Resources{}, nil, nil, nil, true, err
 	}
@@ -68,7 +68,7 @@ func (w *WorkspaceReader) pausedVolume(ctx context.Context, scope Scope) (Resour
 		releaseWork()
 		return Resources{}, nil, nil, nil, true, err
 	}
-	p, err = w.Store.Project(ctx, scope)
+	p, err = ownedProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return fail(err)
 	}
@@ -167,7 +167,7 @@ func volumeFileError(err error) error {
 	return err
 }
 func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Resources) error {
-	p, err := w.Store.Project(ctx, scope)
+	p, err := ownedProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return err
 	}

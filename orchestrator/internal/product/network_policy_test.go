@@ -72,7 +72,7 @@ func TestNetworkPolicyResumeSnapshotSurvivesLostReplyAndRestart(t *testing.T) {
 	var name, path string
 	must(t, l.Store.reader.QueryRowContext(ctx, `PRAGMA database_list`).Scan(&seq, &name, &path))
 	must(t, l.Store.Close())
-	reopened, err := Open(ctx, path)
+	reopened, err := openFixtureStore(ctx, path)
 	must(t, err)
 	defer reopened.Close()
 	l.Store = reopened

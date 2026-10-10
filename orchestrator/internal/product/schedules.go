@@ -182,7 +182,7 @@ func (s *Store) CreateSchedule(ctx context.Context, scope Scope, input Schedule)
 	return receipt.Schedule, err
 }
 func (s *Store) createSchedule(ctx context.Context, tx *sql.Tx, scope Scope, input Schedule) (Schedule, error) {
-	if _, err := writableProject(ctx, tx, scope); err != nil {
+	if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 		return Schedule{}, err
 	}
 	input, err := normalizeSchedule(input)
@@ -242,7 +242,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, scope Scope, input Schedule,
 	return err
 }
 func (s *Store) updateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, input Schedule, remove bool) error {
-	if _, err := writableProject(ctx, tx, scope); err != nil {
+	if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 		return err
 	}
 	old, err := scanSchedule(tx.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE id=? AND project_id=?`, input.ID, scope.ProjectID))
@@ -288,7 +288,7 @@ func (s *Store) updateSchedule(ctx context.Context, tx *sql.Tx, scope Scope, inp
 	return changed(tx.ExecContext(ctx, `UPDATE schedules SET session_id=nullif(?,''),title=?,prompt=?,cron=?,timezone=?,state=?,trigger_kind=?,run_at=nullif(?,''),expires_at=nullif(?,''),notify=?,max_occurrences=?,starts_at=nullif(?,''),notification_policy=?,next_at=nullif(?,''),retry_at=NULL,retry_count=0,last_error='',end_reason=NULL,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, input.SessionID, input.Title, input.Prompt, input.Cron, input.Timezone, input.State, input.TriggerKind, input.RunAt, input.ExpiresAt, input.Notify, input.MaxOccurrences, input.StartsAt, input.NotifyPolicy, next, s.timestamp(), input.ID, input.Revision))
 }
 func (s *Store) cancelSchedule(ctx context.Context, tx *sql.Tx, scope Scope, id string, revision int64) error {
-	if _, err := writableProject(ctx, tx, scope); err != nil {
+	if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 		return err
 	}
 	if _, err := scanSchedule(tx.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE id=? AND project_id=?`, id, scope.ProjectID)); err != nil {
@@ -326,7 +326,7 @@ func (s *Store) RunSchedule(ctx context.Context, scope Scope, id, request string
 	}
 	var run ScheduleRun
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		schedule, err := scanSchedule(tx.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE id=? AND project_id=?`, id, scope.ProjectID))
@@ -510,7 +510,7 @@ func (s *Store) TickSchedules(ctx context.Context, limit int) (int, error) {
 }
 
 func (s *Store) Schedule(ctx context.Context, scope Scope, id string) (Schedule, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
 		return Schedule{}, err
 	}
 	return scanSchedule(s.reader.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE id=? AND project_id=?`, id, scope.ProjectID))

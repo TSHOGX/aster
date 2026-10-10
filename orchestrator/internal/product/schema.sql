@@ -471,7 +471,7 @@ CREATE TABLE project_resources (
 
 CREATE TABLE projects (
  id TEXT PRIMARY KEY CHECK(id<>''),
- owner_id TEXT NOT NULL CHECK(owner_id<>''),
+ owner_id TEXT NOT NULL REFERENCES accounts(id) CHECK(owner_id<>''),
  title TEXT NOT NULL,
  creation_digest TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'created' CHECK(state IN ('created','provisioning','active','pausing','paused','resuming','blocked','deleting','deleted')),

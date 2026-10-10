@@ -33,7 +33,7 @@ func liveIncarnation(ctx context.Context, q queryer, session string) (Incarnatio
 }
 func (s *Store) reserveAgent(ctx context.Context, scope Scope, session string) (i Incarnation, err error) {
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -555,7 +555,7 @@ type Message struct {
 }
 
 func (s *Store) Messages(ctx context.Context, scope Scope, session string, after int64, limit int) ([]Message, error) {
-	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
+	if _, err := readableSession(ctx, s.reader, scope, session); err != nil {
 		return nil, err
 	}
 	return s.messages(ctx, scope.ProjectID, session, after, limit)

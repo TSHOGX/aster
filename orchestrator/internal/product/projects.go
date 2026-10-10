@@ -28,14 +28,38 @@ func scanTerminal(row scanner) (p Terminal, err error) {
 	return
 }
 
-func authorizedProject(ctx context.Context, q queryer, scope Scope) (Project, error) {
+func ownedProject(ctx context.Context, q queryer, scope Scope) (Project, error) {
 	if scope.Actor == "" || scope.ProjectID == "" {
 		return Project{}, ErrNotFound
 	}
 	return scanProject(q.QueryRowContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE id=? AND owner_id=?`, scope.ProjectID, scope.Actor))
 }
-func writableProject(ctx context.Context, q queryer, scope Scope) (Project, error) {
-	p, err := authorizedProject(ctx, q, scope)
+
+// projectAction combines stored ownership with a current named grant. It must
+// run in the admission transaction for writes. Ownership-only helpers are for
+// already-admitted settlement and explicitly scoped resource operations.
+func projectAction(ctx context.Context, q queryer, scope Scope, action ProductAction) (Project, error) {
+	p, err := ownedProject(ctx, q, scope)
+	if err != nil {
+		return p, err
+	}
+	if err = authorizeAction(ctx, q, scope.Actor, action); err != nil {
+		return Project{}, err
+	}
+	return p, nil
+}
+func activeOwnedProject(ctx context.Context, q queryer, scope Scope) (Project, error) {
+	p, err := ownedProject(ctx, q, scope)
+	if err != nil {
+		return p, err
+	}
+	if err = activeAccount(ctx, q, scope.Actor); err != nil {
+		return Project{}, err
+	}
+	return p, nil
+}
+func mutableOwnedProject(ctx context.Context, q queryer, scope Scope) (Project, error) {
+	p, err := ownedProject(ctx, q, scope)
 	if err != nil {
 		return p, err
 	}
@@ -45,13 +69,23 @@ func writableProject(ctx context.Context, q queryer, scope Scope) (Project, erro
 	return p, nil
 }
 func sessionIn(ctx context.Context, q queryer, scope Scope, id string) (Session, error) {
-	if _, err := authorizedProject(ctx, q, scope); err != nil {
+	if _, err := ownedProject(ctx, q, scope); err != nil {
 		return Session{}, err
 	}
 	return scanSession(q.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE project_id=? AND id=?`, scope.ProjectID, id))
 }
+func readableSession(ctx context.Context, q queryer, scope Scope, id string) (Session, error) {
+	child, err := sessionIn(ctx, q, scope, id)
+	if err != nil {
+		return child, err
+	}
+	if err = authorizeAction(ctx, q, scope.Actor, ActionProjectsRead); err != nil {
+		return Session{}, err
+	}
+	return child, nil
+}
 func terminalIn(ctx context.Context, q queryer, scope Scope, id string) (Terminal, error) {
-	if _, err := authorizedProject(ctx, q, scope); err != nil {
+	if _, err := ownedProject(ctx, q, scope); err != nil {
 		return Terminal{}, err
 	}
 	return scanTerminal(q.QueryRowContext(ctx, `SELECT `+terminalColumns+` FROM terminals WHERE project_id=? AND id=?`, scope.ProjectID, id))
@@ -85,6 +119,9 @@ func (s *Store) CreateProject(ctx context.Context, actor, id, title string) (Pro
 			if existing.OwnerID != actor {
 				return ErrNotFound
 			}
+			if err := authorizeAction(ctx, tx, actor, ActionProjectsCreate); err != nil {
+				return err
+			}
 			if !creationMatches(ctx, tx, "projects", id, title) {
 				return ErrConflict
 			}
@@ -94,6 +131,9 @@ func (s *Store) CreateProject(ctx context.Context, actor, id, title string) (Pro
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		if err := authorizeAction(ctx, tx, actor, ActionProjectsCreate); err != nil {
+			return err
+		}
 		now := s.timestamp()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,owner_id,title,creation_digest,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, actor, title, creationDigest(title), now, now); err != nil {
 			return err
@@ -101,23 +141,33 @@ func (s *Store) CreateProject(ctx context.Context, actor, id, title string) (Pro
 		if err := s.event(ctx, tx, id, "", "", "project.created", 1); err != nil {
 			return err
 		}
-		p, err = authorizedProject(ctx, tx, Scope{actor, id})
+		p, err = ownedProject(ctx, tx, Scope{actor, id})
 		return err
 	})
 	return p, err
 }
 func (s *Store) Project(ctx context.Context, scope Scope) (Project, error) {
-	return authorizedProject(ctx, s.reader, scope)
+	return projectAction(ctx, s.reader, scope, ActionProjectsRead)
 }
 func (s *Store) Session(ctx context.Context, scope Scope, id string) (Session, error) {
-	return sessionIn(ctx, s.reader, scope, id)
+	return readableSession(ctx, s.reader, scope, id)
 }
 func (s *Store) Terminal(ctx context.Context, scope Scope, id string) (Terminal, error) {
-	return terminalIn(ctx, s.reader, scope, id)
+	child, err := terminalIn(ctx, s.reader, scope, id)
+	if err != nil {
+		return child, err
+	}
+	if err = authorizeAction(ctx, s.reader, scope.Actor, ActionProjectsRead); err != nil {
+		return Terminal{}, err
+	}
+	return child, nil
 }
 func (s *Store) Projects(ctx context.Context, actor, after string, limit int) ([]Project, error) {
 	if actor == "" {
 		return nil, ErrNotFound
+	}
+	if err := authorizeAction(ctx, s.reader, actor, ActionProjectsRead); err != nil {
+		return nil, err
 	}
 	limit = pageSize(limit)
 	rows, err := s.reader.QueryContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE owner_id=? AND id>? AND state<>'deleted' ORDER BY id LIMIT ?`, actor, after, limit)
@@ -136,7 +186,7 @@ func (s *Store) Projects(ctx context.Context, actor, after string, limit int) ([
 	return out, rows.Err()
 }
 func (s *Store) Sessions(ctx context.Context, scope Scope, after string, limit int) ([]Session, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE project_id=? AND id>? AND deletion_intent<2 ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
@@ -155,7 +205,7 @@ func (s *Store) Sessions(ctx context.Context, scope Scope, after string, limit i
 	return out, rows.Err()
 }
 func (s *Store) Terminals(ctx context.Context, scope Scope, after string, limit int) ([]Terminal, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT `+terminalColumns+` FROM terminals WHERE project_id=? AND id>? AND deletion_intent<2 ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
@@ -184,7 +234,10 @@ func (s *Store) CreateSession(ctx context.Context, scope Scope, id, title string
 func (s *Store) createSession(ctx context.Context, tx *sql.Tx, scope Scope, id, title string) (Session, error) {
 	var p Session
 	err := func() error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := projectAction(ctx, tx, scope, ActionAgentsRun); err != nil {
+			return err
+		}
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		existing, err := scanSession(tx.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id=?`, id))
@@ -226,7 +279,10 @@ func (s *Store) CreateTerminal(ctx context.Context, scope Scope, id, title strin
 	}
 	var p Terminal
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := projectAction(ctx, tx, scope, ActionTerminalsUse); err != nil {
+			return err
+		}
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		existing, err := scanTerminal(tx.QueryRowContext(ctx, `SELECT `+terminalColumns+` FROM terminals WHERE id=?`, id))
@@ -274,7 +330,10 @@ func (s *Store) RenameProject(ctx context.Context, scope Scope, revision int64, 
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := projectAction(ctx, tx, scope, ActionProjectsManage); err != nil {
+			return err
+		}
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE projects SET title=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, title, s.timestamp(), scope.ProjectID, revision)); err != nil {
@@ -300,7 +359,7 @@ func (s *Store) editChild(ctx context.Context, scope Scope, id, kind string, rev
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		var deletion Deletion
@@ -317,6 +376,14 @@ func (s *Store) editChild(ctx context.Context, scope Scope, id, kind string, rev
 				return err
 			}
 			deletion, rev = p.Deletion, p.Revision
+		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+			return err
+		}
+		if !deleting {
+			if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+				return err
+			}
 		}
 		if deletion != Live {
 			return ErrDeleting
@@ -356,7 +423,10 @@ func (s *Store) editChild(ctx context.Context, scope Scope, id, kind string, rev
 }
 func (s *Store) DeleteProject(ctx context.Context, scope Scope, revision int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := activeOwnedProject(ctx, tx, scope); err != nil {
+			return err
+		}
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE projects SET state='deleting',revision=revision+1,activity_revision=activity_revision+1,idle_deadline=NULL,updated_at=? WHERE id=? AND revision=?`, s.timestamp(), scope.ProjectID, revision)); err != nil {

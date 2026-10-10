@@ -45,7 +45,7 @@ func (s *Store) BeginActivity(ctx context.Context, scope Scope, a Activity) erro
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		if a.SessionID != "" {
@@ -139,7 +139,7 @@ func blockers(ctx context.Context, q queryer, project string) ([]Blocker, error)
 	return out, rows.Err()
 }
 func (s *Store) Blockers(ctx context.Context, scope Scope) ([]Blocker, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
 		return nil, err
 	}
 	return blockers(ctx, s.reader, scope.ProjectID)
@@ -151,7 +151,7 @@ func (s *Store) ArmIdle(ctx context.Context, scope Scope, delay time.Duration) (
 	var p Project
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var err error
-		p, err = writableProject(ctx, tx, scope)
+		p, err = mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}

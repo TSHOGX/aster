@@ -151,7 +151,9 @@ func TestRestrictedLoginOnlyAuthorizesSetupSessionAndLogout(t *testing.T) {
 func TestDatabaseSessionRevocationClosesLiveStreamsAndTerminal(t *testing.T) {
 	for _, change := range []string{"password", "all-sessions"} {
 		t.Run(change, func(t *testing.T) {
-			h := newHarness(t)
+			store, err := product.Open(ctx, filepath.Join(t.TempDir(), "session-revocation.db"))
+			must(t, err)
+			h := harnessForStore(t, store)
 			account, err := h.store.BootstrapAccount(ctx, "owner", "owner-password-before", identitySeed(t))
 			must(t, err)
 			h.setActor(account.ID)

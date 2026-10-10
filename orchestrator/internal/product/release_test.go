@@ -95,7 +95,7 @@ func TestReleaseFenceStopsQueuedAndPreexistingPendingDispatch(t *testing.T) {
 
 func TestReleaseDeadlineAndStaleCoordinatorSurviveReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "release.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	state, err := s.BeginReleaseDrain(ctx, "first", time.Second)
 	must(t, err)
@@ -105,7 +105,7 @@ func TestReleaseDeadlineAndStaleCoordinatorSurviveReopen(t *testing.T) {
 		t.Fatal("retry extended drain", same, state)
 	}
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	restored, err := s.ReleaseState(ctx)

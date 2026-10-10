@@ -26,6 +26,13 @@ passwords expire after 24 hours and grant only a 15-minute password-setup sessio
 Restricted sessions cannot access product data. Credential hashes and session
 secrets are excluded from identity responses and security audit records.
 
+Project ownership references a canonical account ID in the database. Project
+creation, metadata reads and edits check current named group grants in product
+services; a guessed foreign parent/child remains not found before action denial.
+Owned reduction operations retain their narrowly scoped cleanup authority after
+functional grants are removed. Internal ownership-only helpers are distinct from
+user authorization and remain available to already-admitted settlement.
+
 Every child lookup authorizes its stored Project parent in the same operation.
 A child ID alone conveys no permission. Foreign and missing resources use the same
 not-found response. Conversation reader grants do not expose live Files or PTYs.

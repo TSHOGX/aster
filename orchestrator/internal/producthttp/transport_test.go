@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/producttest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -205,8 +206,12 @@ func testProfile() product.Profile {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	store, err := producttest.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
 	must(t, err)
+	return harnessForStore(t, store)
+}
+func harnessForStore(t *testing.T, store *product.Store) *harness {
+	t.Helper()
 	t.Cleanup(func() { store.Close() })
 	lifecycle := &product.Lifecycle{Store: store, Backend: &fakeLifecycleBackend{}, MaxProjects: 4}
 	backend := newPTYBackend()

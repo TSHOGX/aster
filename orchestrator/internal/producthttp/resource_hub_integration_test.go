@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"harness-platform/orchestrator/internal/producttest"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,7 +34,7 @@ func TestResourceHubOnKhora(t *testing.T) {
 	must(t, err)
 	identity, err := backend.Identity(runctx)
 	must(t, err)
-	store, err := product.Open(runctx, filepath.Join(t.TempDir(), "product.db"))
+	store, err := producttest.Open(runctx, filepath.Join(t.TempDir(), "product.db"))
 	must(t, err)
 	defer store.Close()
 	profile := testProfile()

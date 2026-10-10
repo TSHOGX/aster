@@ -48,7 +48,7 @@ func (s *Store) admitTurn(ctx context.Context, tx *sql.Tx, scope Scope, session,
 	}
 	var t Turn
 	err := func() error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
@@ -114,7 +114,7 @@ func (s *Store) bumpSession(ctx context.Context, tx *sql.Tx, project, session, k
 	return s.event(ctx, tx, project, session, "", kind, rev)
 }
 func (s *Store) Turns(ctx context.Context, scope Scope, session string, after int64, limit int) ([]Turn, error) {
-	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
+	if _, err := readableSession(ctx, s.reader, scope, session); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT `+turnColumns+` FROM turns WHERE project_id=? AND session_id=? AND sequence>? ORDER BY sequence LIMIT ?`, scope.ProjectID, session, after, pageSize(limit))
@@ -146,7 +146,7 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 		return PromptQueuePage{}, err
 	}
 	defer tx.Rollback()
-	child, err := sessionIn(ctx, tx, scope, session)
+	child, err := readableSession(ctx, tx, scope, session)
 	if err != nil {
 		return PromptQueuePage{}, err
 	}
@@ -196,7 +196,7 @@ func (s *Store) PromptQueue(ctx context.Context, scope Scope, session string, af
 	hasMore := false
 	for rows.Next() {
 		var t Turn
-			if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState, &t.DeliveryError); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.SessionID, &t.RequestID, &t.Content, &t.InitiallyHeld, &t.PromptRevision, &t.QueuePolicy, &t.Disposition, &t.State, &t.Sequence, &t.CreatedAt, &t.UpdatedAt, &t.DeliveryID, &t.DeliveryState, &t.DeliveryError); err != nil {
 			return PromptQueuePage{}, err
 		}
 		if len(items) == limit {

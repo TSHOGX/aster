@@ -75,7 +75,7 @@ func (s *Store) resourcesFor(ctx context.Context, project string) (Resources, er
 	return resources(ctx, s.reader, project)
 }
 func (s *Store) Resources(ctx context.Context, scope Scope) (Resources, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
 		return Resources{}, err
 	}
 	return resources(ctx, s.reader, scope.ProjectID)
@@ -192,7 +192,7 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 		return err
 	}
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -254,7 +254,7 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 	})
 }
 func (l *Lifecycle) ActiveResources(ctx context.Context, scope Scope) (Resources, error) {
-	p, err := l.Store.Project(ctx, scope)
+	p, err := ownedProject(ctx, l.Store.reader, scope)
 	if err != nil {
 		return Resources{}, err
 	}
@@ -280,7 +280,7 @@ func (l *Lifecycle) PauseIdle(ctx context.Context, scope Scope, snapshot Project
 }
 func (l *Lifecycle) requestPause(ctx context.Context, scope Scope, revision int64, idle *Project, restart bool) error {
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}

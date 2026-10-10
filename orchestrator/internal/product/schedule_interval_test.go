@@ -57,7 +57,7 @@ func TestMinuteIntervalCadenceSurvivesEditsDelayAndRestart(t *testing.T) {
 	var name, path string
 	must(t, s.reader.QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &path))
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	s.now = func() time.Time { return now }

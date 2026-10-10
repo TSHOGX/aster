@@ -8,7 +8,7 @@ import (
 // Events returns bounded projection invalidations. The transport reauthorizes
 // each subsequent batch rather than granting perpetual rights at subscription.
 func (s *Store) Events(ctx context.Context, scope Scope, after int64, limit int) ([]Event, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT id,project_id,coalesce(session_id,''),coalesce(terminal_id,''),revision,kind,created_at FROM events WHERE project_id=? AND id>? ORDER BY id LIMIT ?`, scope.ProjectID, after, pageSize(limit))
@@ -60,7 +60,7 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		return ErrInvalid
 	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
@@ -96,12 +96,20 @@ func (s *Store) CanReadConversation(ctx context.Context, actor, session string) 
 	if actor == "" {
 		return ErrNotFound
 	}
-	var id string
-	return missing(s.reader.QueryRowContext(ctx, `SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, session, actor, actor).Scan(&id))
+	var owner string
+	var granted bool
+	err := missing(s.reader.QueryRowContext(ctx, `SELECT p.owner_id,EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0) FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, actor, session, actor, actor).Scan(&owner, &granted))
+	if err != nil {
+		return err
+	}
+	if granted {
+		return activeAccount(ctx, s.reader, actor)
+	}
+	return authorizeAction(ctx, s.reader, actor, ActionProjectsRead)
 }
 
 func (s *Store) EventBounds(ctx context.Context, scope Scope) (first, last int64, err error) {
-	if _, err = authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err = projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return
 	}
 	err = s.reader.QueryRowContext(ctx, `SELECT coalesce(min(id),0),coalesce(max(id),0) FROM events WHERE project_id=?`, scope.ProjectID).Scan(&first, &last)
@@ -109,7 +117,7 @@ func (s *Store) EventBounds(ctx context.Context, scope Scope) (first, last int64
 }
 
 func (s *Store) EventRetentionFrontier(ctx context.Context, scope Scope) (int64, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := projectAction(ctx, s.reader, scope, ActionProjectsRead); err != nil {
 		return 0, err
 	}
 	var frontier int64

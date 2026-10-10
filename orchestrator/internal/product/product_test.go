@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"harness-platform/orchestrator/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ var ctx = context.Background()
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	s, err := openFixtureStore(ctx, filepath.Join(t.TempDir(), "product.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestIndependentRevisionsAndAtomicOutbox(t *testing.T) {
 
 func TestHeldAdmissionAndIdempotencyAcrossRestartAndRename(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "product.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	a := Scope{"alice", "a"}
 	_, err = s.CreateProject(ctx, a.Actor, a.ProjectID, "A")
@@ -177,7 +178,7 @@ func TestHeldAdmissionAndIdempotencyAcrossRestartAndRename(t *testing.T) {
 	must(t, err)
 	must(t, s.RenameSession(ctx, a, child.ID, child.Revision, "Renamed"))
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	duplicate, err := s.AdmitTurn(ctx, a, child.ID, "request", "hello", true)
@@ -339,7 +340,7 @@ func TestRejectForeignSchemaAndDriftWithoutModification(t *testing.T) {
 	must(t, db.Close())
 	original, err := os.ReadFile(path)
 	must(t, err)
-	if st, err := Open(ctx, path); err == nil {
+	if st, err := openFixtureStore(ctx, path); err == nil {
 		st.Close()
 		t.Fatal("foreign database accepted")
 	}
@@ -354,12 +355,12 @@ func TestRejectForeignSchemaAndDriftWithoutModification(t *testing.T) {
 		}
 	}
 	path = filepath.Join(t.TempDir(), "current.db")
-	st, err := Open(ctx, path)
+	st, err := openFixtureStore(ctx, path)
 	must(t, err)
 	_, err = st.db.Exec(`DROP TRIGGER sessions_parent_immutable`)
 	must(t, err)
 	must(t, st.Close())
-	if st, err := Open(ctx, path); err == nil {
+	if st, err := openFixtureStore(ctx, path); err == nil {
 		st.Close()
 		t.Fatal("schema drift repaired silently")
 	}
@@ -368,21 +369,39 @@ func TestRejectForeignSchemaAndDriftWithoutModification(t *testing.T) {
 func TestProductDatabaseHasOneApplicationOwnerAcrossPathAliases(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "product.db")
-	first, err := Open(ctx, path)
+	first, err := openFixtureStore(ctx, path)
 	must(t, err)
-	if second, err := Open(ctx, path); err == nil {
+	if second, err := openFixtureStore(ctx, path); err == nil {
 		second.Close()
 		t.Fatal("second application owner accepted")
 	}
 	alias := filepath.Join(t.TempDir(), "alias")
 	must(t, os.Symlink(directory, alias))
-	if second, err := Open(ctx, filepath.Join(alias, "product.db")); err == nil {
+	if second, err := openFixtureStore(ctx, filepath.Join(alias, "product.db")); err == nil {
 		second.Close()
 		t.Fatal("path alias bypassed owner lock")
 	}
 	must(t, first.Close())
 	must(t, first.Close())
-	second, err := Open(ctx, path)
+	second, err := openFixtureStore(ctx, path)
 	must(t, err)
 	must(t, second.Close())
+}
+
+func openFixtureStore(ctx context.Context, path string) (*Store, error) {
+	fresh := false
+	if info, err := os.Stat(path); os.IsNotExist(err) || err == nil && info.Size() == 0 {
+		fresh = true
+	}
+	store, err := Open(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if fresh {
+		if err = store.write(ctx, func(tx *sql.Tx) error { return testfixture.SeedIdentities(ctx, tx) }); err != nil {
+			store.Close()
+			return nil, err
+		}
+	}
+	return store, nil
 }

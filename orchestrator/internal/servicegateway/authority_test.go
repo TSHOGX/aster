@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"harness-platform/orchestrator/internal/producttest"
 	"io"
 	"net"
 	"net/http"
@@ -242,7 +243,7 @@ func TestRemoteAuthorityRetainsSlotsThroughLostRepliesAndCleanup(t *testing.T) {
 }
 
 func TestAuthorityProtocolRejectsUndeclaredAudienceAndUnknownVersion(t *testing.T) {
-	store, err := product.Open(context.Background(), filepath.Join(t.TempDir(), "product.db"))
+	store, err := producttest.Open(context.Background(), filepath.Join(t.TempDir(), "product.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +274,7 @@ func TestAuthorityProtocolRejectsUndeclaredAudienceAndUnknownVersion(t *testing.
 
 func TestRemovedAudienceCanSettleOnlyItsOriginalRegistration(t *testing.T) {
 	ctx := context.Background()
-	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	store, err := producttest.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

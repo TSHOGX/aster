@@ -41,7 +41,7 @@ func (s *Store) ControlRun(ctx context.Context, scope Scope, session string, req
 		class = urgentWrite
 	}
 	err := s.writeClass(ctx, class, scope.ProjectID, 1<<20, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)

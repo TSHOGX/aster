@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/producttest"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ import (
 func TestActivationFinishesControlResponseBeforeRetiring(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	store, err := producttest.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

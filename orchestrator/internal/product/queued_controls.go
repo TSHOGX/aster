@@ -27,7 +27,7 @@ func (s *Store) MutatePrompt(ctx context.Context, scope Scope, session, prompt, 
 	digest := intentDigest(action, request, prompt, revision)
 	var result PromptMutationReceipt
 	err := s.writeClass(ctx, controlWrite, scope.ProjectID, 1<<20, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)

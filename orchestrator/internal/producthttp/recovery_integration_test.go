@@ -5,6 +5,7 @@ package producthttp
 import (
 	"context"
 	"fmt"
+	"harness-platform/orchestrator/internal/producttest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,7 +51,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	fixture := &browserSubstrate{Backend: backend, api: api, binaries: os.Getenv("PROJECT_TEST_BIN_DIR"), initialized: map[string]bool{}, modelMode: "model-independent", loseDeleteReplies: true, destroyed: make(chan struct{}, 1)}
 	directory := t.TempDir()
 	dbPath := filepath.Join(directory, "product.db")
-	store, err := product.Open(runctx, dbPath)
+	store, err := producttest.Open(runctx, dbPath)
 	must(t, err)
 	reader, err := sqlitex.OpenReader(runctx, dbPath, 1)
 	must(t, err)
@@ -167,7 +168,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 	})
 	t.Run("application-restart-adopts-original-runners-and-PTY", func(t *testing.T) {
 		shutdown()
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "PTY adoption", func() bool {
@@ -208,7 +209,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		view.Close()
 		shutdown()
 		time.Sleep(2 * time.Second)
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "retained terminal exit evidence", func() bool {
@@ -233,7 +234,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		})
 		shutdown()
 		time.Sleep(2500 * time.Millisecond)
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "durable replay after owner disconnect", func() bool {
@@ -368,7 +369,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		agents.Close()
 		terminals.Close()
 		must(t, store.Close())
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 
@@ -400,7 +401,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 		agents.Close()
 		terminals.Close()
 		must(t, store.Close())
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		start()
 		await(t, "explicit failed journal recovery", func() bool {
@@ -569,7 +570,7 @@ func TestComposedProjectRecoveryOnKhora(t *testing.T) {
 			t.Fatal("sandbox destroy effect not observed")
 		}
 		shutdown()
-		store, err = product.Open(runctx, dbPath)
+		store, err = producttest.Open(runctx, dbPath)
 		must(t, err)
 		retained, err := store.Resources(runctx, scope)
 		must(t, err)

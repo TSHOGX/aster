@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"harness-platform/orchestrator/internal/producttest"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 func TestPrivateControlSocketUsesTheApplicationWriter(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
-	store, err := product.Open(ctx, filepath.Join(directory, "product.db"))
+	store, err := producttest.Open(ctx, filepath.Join(directory, "product.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

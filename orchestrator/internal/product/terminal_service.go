@@ -196,7 +196,7 @@ func (t *Terminals) Close() {
 // rather than starting a second one. It reports ErrPending while the Project
 // placement or the process start is still converging.
 func (t *Terminals) Start(ctx context.Context, scope Scope, terminal string, rows, cols int) (TerminalIncarnation, error) {
-	child, err := t.Store.Terminal(ctx, scope, terminal)
+	child, err := terminalIn(ctx, t.Store.reader, scope, terminal)
 	if err != nil {
 		return TerminalIncarnation{}, err
 	}
@@ -312,7 +312,7 @@ func (t *Terminals) ensure(ctx context.Context, scope Scope, terminal string, ro
 // input claim; when another observer already holds it, the attachment succeeds
 // read-only rather than stealing the keyboard.
 func (t *Terminals) Attach(ctx context.Context, scope Scope, terminal string, input bool) (*TerminalObserver, error) {
-	child, err := t.Store.Terminal(ctx, scope, terminal)
+	child, err := terminalIn(ctx, t.Store.reader, scope, terminal)
 	if err != nil {
 		return nil, err
 	}

@@ -177,7 +177,7 @@ func (s *Store) settleLostActivities(ctx context.Context, tx *sql.Tx, project st
 }
 func (l *Lifecycle) ForceRestart(ctx context.Context, scope Scope, revision int64) error {
 	return l.Store.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}

@@ -103,7 +103,7 @@ func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths
 	sh.mu.Unlock()
 	defer func() { sh.mu.Lock(); delete(sh.active, id); sh.mu.Unlock() }()
 	err = sh.Store.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
@@ -163,7 +163,7 @@ func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths
 		out.Files = append(out.Files, SharedFile{Path: name, Digest: digest, Size: n})
 	}
 	err = sh.Store.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
@@ -210,7 +210,7 @@ func (s *Store) Shares(ctx context.Context, scope Scope, session, after string, 
 }
 func (s *Store) RevokeShare(ctx context.Context, scope Scope, id string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := authorizedProject(ctx, tx, scope); err != nil {
+		if _, err := ownedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE shares SET state='revoked' WHERE id=? AND project_id=?`, id, scope.ProjectID)); err != nil {
@@ -225,7 +225,7 @@ func (s *Store) RotateShare(ctx context.Context, scope Scope, id string) (string
 		return "", err
 	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		return changed(tx.ExecContext(ctx, `UPDATE shares SET token_digest=? WHERE id=? AND project_id=? AND state='published' AND expires_at>?`, tokenDigest(token), id, scope.ProjectID, s.timestamp()))

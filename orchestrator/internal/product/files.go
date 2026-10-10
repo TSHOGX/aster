@@ -42,7 +42,7 @@ func fileOperation(ctx context.Context, q queryer, id string) (o FileOperation, 
 	return
 }
 func (s *Store) FileOperation(ctx context.Context, scope Scope, id string) (FileOperation, error) {
-	if _, err := authorizedProject(ctx, s.reader, scope); err != nil {
+	if _, err := ownedProject(ctx, s.reader, scope); err != nil {
 		return FileOperation{}, err
 	}
 	o, err := fileOperation(ctx, s.reader, id)
@@ -60,7 +60,7 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, r p
 	}
 	raw, _ := json.Marshal(r)
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		p, e := writableProject(ctx, tx, scope)
+		p, e := mutableOwnedProject(ctx, tx, scope)
 		if e != nil {
 			return e
 		}
@@ -188,7 +188,7 @@ func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfi
 	if r.Validate() != nil || !validID(id) {
 		return FileOperation{}, ErrInvalid
 	}
-	if _, err := f.Store.Project(ctx, scope); err != nil {
+	if _, err := ownedProject(ctx, f.Store.reader, scope); err != nil {
 		return FileOperation{}, err
 	}
 	// Return an old outcome without waking a paused Project or dispatching again.
@@ -202,7 +202,7 @@ func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfi
 	} else if !errors.Is(err, ErrNotFound) {
 		return FileOperation{}, err
 	}
-	if p, e := f.Store.Project(ctx, scope); e != nil {
+	if p, e := ownedProject(ctx, f.Store.reader, scope); e != nil {
 		return FileOperation{}, e
 	} else if p.State == "paused" || p.State == "created" {
 		return f.executeVolume(ctx, scope, id, r, input)

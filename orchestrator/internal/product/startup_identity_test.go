@@ -12,7 +12,7 @@ import (
 func activationDatabase(t *testing.T, source, target string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "product.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	_, err = s.db.Exec(`UPDATE application_release SET phase='activating',current_instance='unchanged-source',activation_instance=?,target_digest=? WHERE id=1`, source, target)
 	must(t, err)

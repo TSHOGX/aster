@@ -3,6 +3,7 @@ package producthttp
 import (
 	"context"
 	"errors"
+	"harness-platform/orchestrator/internal/producttest"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -42,7 +43,7 @@ func (b *rejectFileBackend) WatchWorkspace(context.Context, sandbox.Reference, u
 }
 
 func TestFileHTTPBoundaryAndUnknownOutcome(t *testing.T) {
-	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "files.db"))
+	store, err := producttest.Open(ctx, filepath.Join(t.TempDir(), "files.db"))
 	must(t, err)
 	defer store.Close()
 	scope := product.Scope{Actor: "alice", ProjectID: "files"}

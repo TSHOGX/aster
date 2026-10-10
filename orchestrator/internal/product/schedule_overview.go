@@ -193,7 +193,7 @@ func (s *Store) ScheduleList(ctx context.Context, scope Scope, after string, lim
 }
 func scheduleList(ctx context.Context, q queryer, scope Scope, after string, limit int) (out SchedulePage, err error) {
 	out.Schedules = []ScheduleOverview{}
-	if _, err = authorizedProject(ctx, q, scope); err != nil {
+	if _, err = ownedProject(ctx, q, scope); err != nil {
 		return
 	}
 	if len(after) > 128 || limit < 0 || limit > 50 {

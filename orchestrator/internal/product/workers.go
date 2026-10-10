@@ -235,7 +235,7 @@ func (w *Workers) project(ctx context.Context, p Project) error {
 	if w.Agents != nil {
 		w.report("idle Agent quiescence", w.Agents.QuiesceIdle(ctx, p.ID, w.IdleAgentAfter))
 	}
-	p, err = w.Store.Project(ctx, scope)
+	p, err = ownedProject(ctx, w.Store.reader, scope)
 	if err != nil {
 		return err
 	}

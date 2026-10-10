@@ -25,7 +25,7 @@ import (
 func (f *Files) ensureWorkspaceStorage(ctx context.Context, scope Scope) (Resources, error) {
 	var r Resources
 	err := f.Store.write(ctx, func(tx *sql.Tx) error {
-		p, err := writableProject(ctx, tx, scope)
+		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
 		}

@@ -233,7 +233,7 @@ func (r *AgentRecovery) finish(ctx context.Context, i Incarnation) error {
 // It never changes that turn to success/failure and never reissues its command.
 func (s *Store) ContinueSession(ctx context.Context, scope Scope, session string, revision int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)
@@ -265,7 +265,7 @@ func (s *Store) ContinueSession(ctx context.Context, scope Scope, session string
 
 func (s *Store) RetryRecovery(ctx context.Context, scope Scope, session string, revision int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := writableProject(ctx, tx, scope); err != nil {
+		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
 		child, err := sessionIn(ctx, tx, scope, session)

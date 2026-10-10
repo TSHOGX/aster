@@ -60,14 +60,14 @@ func TestReleaseReadyChecksRuntimeAndDurableWorkAtomically(t *testing.T) {
 
 func TestReleaseReadySurvivesRestartAndDeadlineAbortsIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ready.db")
-	s, err := Open(ctx, path)
+	s, err := openFixtureStore(ctx, path)
 	must(t, err)
 	drain, err := s.BeginReleaseDrain(ctx, "ready-restart", time.Minute)
 	must(t, err)
 	ready, err := s.TryReleaseReady(ctx, drain.Owner, drain.Generation)
 	must(t, err)
 	must(t, s.Close())
-	s, err = Open(ctx, path)
+	s, err = openFixtureStore(ctx, path)
 	must(t, err)
 	defer s.Close()
 	restored, err := s.ReleaseState(ctx)
