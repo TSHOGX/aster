@@ -1,4 +1,5 @@
 "use client";
+import { useCapabilities } from "./capability-provider";
 import { ProjectPicker } from "./project-picker";
 import { ComposerInput } from "./composer-input";
 import { useEffect, useRef, useState } from "react";
@@ -33,6 +34,7 @@ export function NewChat({
   onProject: (id: string) => void;
   onCreated: (session: AgentSession) => void;
 }) {
+  const canRun = useCapabilities()("agents.run");
   const tr = useT(),
     key = `project-view:${actor}:${project.id}:draft:new`;
   const [draft, setDraft] = useState(() => recalled<string>(key, ""));
@@ -53,7 +55,7 @@ export function NewChat({
     remember(key, draft);
   }, [key, draft]);
   const send = async () => {
-    if (lock.current || (!draft.trim() && !pending)) return;
+    if (!canRun || lock.current || (!draft.trim() && !pending)) return;
     lock.current = true;
     setBusy(true);
     setError("");
@@ -127,6 +129,7 @@ export function NewChat({
           )}
         </p>
       )}
+      {!canRun && <p role="status" className="notice">{tr("Permission to run agents is required. Your draft is retained.")}</p>}
       <form
         className="agent-composer"
         onSubmit={(e) => {
@@ -153,7 +156,7 @@ export function NewChat({
             aria-label={pending ? tr("Retry") : tr("Send")}
             title={pending ? tr("Retry") : tr("Send")}
             disabled={
-              busy ||
+              busy || !canRun ||
               (!draft.trim() && !pending) ||
               ["deleting", "deleted"].includes(project.state)
             }

@@ -552,6 +552,18 @@ func (t *Terminals) EOF(ctx context.Context, scope Scope, terminal string) error
 	return t.Backend.CloseProcessInput(ctx, i.Reference)
 }
 
+// StopOwned is the explicit active-owner reduction boundary. Functional read/use
+// grants are irrelevant to terminating an already-owned Terminal.
+func (t *Terminals) StopOwned(ctx context.Context, scope Scope, terminal string) error {
+	if _, err := terminalIn(ctx, t.Store.reader, scope, terminal); err != nil {
+		return err
+	}
+	if err := activeAccount(ctx, t.Store.reader, scope.Actor); err != nil {
+		return err
+	}
+	return t.Stop(ctx, scope.ProjectID, terminal)
+}
+
 // Stop requests termination of a Terminal's PTY. It is what an explicit close and
 // child cleanup use. The attachment is deliberately left in place so its own
 // stream observes the terminal exit frame: that frame is the only evidence that

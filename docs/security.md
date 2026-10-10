@@ -154,3 +154,9 @@ Each successful page records purpose, account/Project/Session IDs and sequence
 bounds, without copying message bodies into audit. No content is returned if audit
 or commit fails. This grants no owner impersonation, native journal, guest secret,
 live workspace or arbitrary host-path access. Inspection responses are not cached.
+
+Explicit Project resume checks `projects.manage` in the lifecycle reservation
+transaction, including idempotent active/pending cases. Internal action services
+enter the shared lifecycle only after their own named admission. The Terminal
+stop endpoint uses active-owner reduction authority directly; it does not require
+Project metadata read or interactive Terminal permission.

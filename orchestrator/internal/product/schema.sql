@@ -401,7 +401,7 @@ CREATE TABLE network_defaults (
 
 CREATE TABLE notification_reads (
  notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
- actor TEXT NOT NULL,
+ actor TEXT NOT NULL REFERENCES accounts(id),
  PRIMARY KEY(notification_id,actor)
 );
 
@@ -417,7 +417,7 @@ INSERT INTO notification_policy(id,agent_run_outcome,conversation_shared,operato
 
 CREATE TABLE notifications (
  id TEXT PRIMARY KEY,
- audience TEXT,
+ audience TEXT REFERENCES accounts(id),
  project_id TEXT REFERENCES projects(id),
  session_id TEXT REFERENCES sessions(id),
  title TEXT NOT NULL,

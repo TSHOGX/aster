@@ -1,4 +1,5 @@
 "use client";
+import { useCapabilities } from "./capability-provider";
 import dynamic from "next/dynamic";
 import { useRef, useState } from "react";
 import { Plus, TerminalSquare, X } from "lucide-react";
@@ -40,6 +41,8 @@ export function TerminalDock({
   onRefresh: () => Promise<void>;
   onError: (e: string) => void;
 }) {
+  const can = useCapabilities();
+  const canUse = can("terminals.use"), canManage = can("projects.manage");
   const tr = useT(),
     ask = useDialog(),
     [busy, setBusy] = useState(false),
@@ -65,6 +68,7 @@ export function TerminalDock({
     }
   };
   const start = async (t: ProjectTerminal) => {
+    if (!canUse) return;
     onChange([...new Set([...open, t.id])], t.id);
     for (let attempt = 0; attempt < 100; attempt++) {
       const result = await command<{ state?: string }>(
@@ -111,7 +115,7 @@ export function TerminalDock({
         </div>
         <IconButton
           label={tr("New terminal")}
-          disabled={busy || ["deleting", "deleted"].includes(project.state)}
+          disabled={busy || !canUse || ["deleting", "deleted"].includes(project.state)}
           onClick={() =>
             void act(async () => {
               const t = await command<ProjectTerminal>(base, {
@@ -140,6 +144,7 @@ export function TerminalDock({
               ? [
                   {
                     label: tr("Rename"),
+                    disabled: !canManage,
                     action: () =>
                       void (async () => {
                         const title = await ask({
@@ -161,7 +166,7 @@ export function TerminalDock({
                   {
                     label: tr("Restart terminal"),
                     disabled:
-                      busy || ["running", "starting"].includes(selected.state),
+                      busy || !canUse || ["running", "starting"].includes(selected.state),
                     action: () => void act(() => start(selected)),
                   },
                   {
@@ -214,7 +219,7 @@ export function TerminalDock({
           <X size={18} />
         </IconButton>
       </header>
-      {selected ? (
+      {selected && !canUse ? <p className="notice" role="status">{tr("Terminal permission is required. You can still terminate or delete this terminal.")}</p> : selected ? (
         <TerminalPanel
           key={`${selected.id}:${selected.incarnation || "created"}`}
           projectId={project.id}

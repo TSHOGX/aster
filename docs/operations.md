@@ -79,7 +79,7 @@ orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock
 orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock --project PROJECT_ID
 orchestrator publish --socket /var/lib/agent-workbench/control.sock
 orchestrator network-reload --socket /var/lib/agent-workbench/control.sock
-orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience researcher --title Notice --body 'Maintenance is scheduled.'
+orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience ACCOUNT_ID --title Notice --body 'Maintenance is scheduled.'
 ```
 
 Diagnostics report resource counts, occupied Projects, pending work and database

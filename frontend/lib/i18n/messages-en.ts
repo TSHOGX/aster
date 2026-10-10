@@ -1,4 +1,6 @@
 export const EN = {
+  "Permission to run agents is required. Your draft is retained.": "Permission to run agents is required. Your draft is retained.",
+  "Terminal permission is required. You can still terminate or delete this terminal.": "Terminal permission is required. You can still terminate or delete this terminal.",
   "Find a reader": "Find a reader",
   "Reader account": "Reader account",
   "Choose an account": "Choose an account",

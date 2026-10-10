@@ -1,5 +1,7 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Permission to run agents is required. Your draft is retained.": "需要智能体运行权限。草稿已保留。",
+  "Terminal permission is required. You can still terminate or delete this terminal.": "需要终端使用权限。你仍可终止或删除此终端。",
   "Find a reader": "查找读者",
   "Reader account": "读者账户",
   "Choose an account": "选择账户",

@@ -164,7 +164,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		project := flags.String("project", "", "optional Project diagnostic scope")
 		title := flags.String("title", "", "notification title")
 		body := flags.String("body", "", "notification body")
-		audience := flags.String("audience", "", "optional notification recipient; empty broadcasts")
+		audience := flags.String("audience", "", "optional recipient account ID; empty broadcasts")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}

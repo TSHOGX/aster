@@ -348,3 +348,9 @@ User details include effective access with group/policy provenance and account/r
 constraints. Editors retain the original request body after an uncertain response,
 replay the durable receipt, and preserve changed fields when explicitly reloading
 stale data. Unsaved edits guard navigation across admin screens and the workbench.
+
+Workbench capabilities also gate Project creation/rename/resume/restart, Agent
+submission/release/steer, and Terminal start/attachment. Denied Agent submission
+retains editable drafts. Terminal capability loss removes the live view while
+retaining its owned termination/delete controls. Pause, stop, cancel, delete and
+recovery remain available through their separate reduction authority.

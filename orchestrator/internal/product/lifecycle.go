@@ -181,9 +181,15 @@ func (l *Lifecycle) newOperation(ctx context.Context, tx *sql.Tx, project, kind,
 // EnsureActive records original provisioning/resume intent. It does not issue
 // remote work or tie its lifetime to an HTTP request. Workers call Reconcile.
 func (l *Lifecycle) EnsureActive(ctx context.Context, scope Scope, profile Profile) error {
-	return l.ensureActive(ctx, scope, profile, false)
+	return l.ensureActive(ctx, scope, profile, false, false)
 }
-func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profile, useSaved bool) error {
+
+// Resume is the explicit owner operation. Internal action services admit their
+// own Agent/Terminal/file work before entering the shared lifecycle helper.
+func (l *Lifecycle) Resume(ctx context.Context, scope Scope, profile Profile) error {
+	return l.ensureActive(ctx, scope, profile, true, true)
+}
+func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profile, useSaved, requireManage bool) error {
 	if err := profile.Validate(); err != nil {
 		return err
 	}
@@ -195,6 +201,11 @@ func (l *Lifecycle) ensureActive(ctx context.Context, scope Scope, profile Profi
 		p, err := mutableOwnedProject(ctx, tx, scope)
 		if err != nil {
 			return err
+		}
+		if requireManage {
+			if err := authorizeAction(ctx, tx, scope.Actor, ActionProjectsManage); err != nil {
+				return err
+			}
 		}
 		r, err := resources(ctx, tx, p.ID)
 		if errors.Is(err, ErrNotFound) {

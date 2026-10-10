@@ -1,5 +1,5 @@
 "use client";
-import { CapabilityProvider } from "./capability-provider";
+import { CapabilityProvider, useCapabilities } from "./capability-provider";
 import type { Identity } from "@web/identity";
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
@@ -241,6 +241,8 @@ function Application({
   onProfile: (value: Pick<Identity, "id" | "username" | "display_name" | "revision">) => void;
   onLogout: () => void;
 }) {
+  const can = useCapabilities();
+  const canManage = can("projects.manage"), canCreate = can("projects.create"), canRun = can("agents.run");
   const tr = useT(),
     ask = useDialog(),
     actor = identity.id;
@@ -432,6 +434,7 @@ function Application({
     }
   };
   const createProject = async () => {
+    if (!canCreate) return;
     const title = await ask({
       title: tr("Project name"),
       initial: "",
@@ -452,6 +455,7 @@ function Application({
     });
   };
   const newChat = (project = nav.project) => {
+    if (!canRun) return;
     void navigate({
       view: "project",
       project,
@@ -464,6 +468,7 @@ function Application({
   const projectActions = (p: Project) => [
     {
       label: tr("Rename"),
+      disabled: !canManage,
       action: () =>
         void (async () => {
           const title = await ask({
@@ -484,7 +489,7 @@ function Application({
     },
     {
       label: p.state === "active" ? tr("Pause") : tr("Resume Project"),
-      disabled: ["deleting", "deleted"].includes(p.state),
+      disabled: ["deleting", "deleted"].includes(p.state) || (p.state !== "active" && !canManage),
       action: () =>
         void act(() =>
           command(
@@ -495,7 +500,7 @@ function Application({
     ...[false, true].map((force) => ({
       label: force ? tr("Force restart") : tr("Restart"),
       danger: force,
-      disabled: p.state !== "active",
+      disabled: p.state !== "active" || !canManage,
       action: () =>
         void (async () => {
           if (
@@ -555,6 +560,7 @@ function Application({
   const sessionActions = (s: AgentSession) => [
     {
       label: tr("Rename"),
+      disabled: !canManage,
       action: () =>
         void (async () => {
           const title = await ask({
@@ -702,6 +708,7 @@ function Application({
           <span>{tr("Projects")}</span>
           <IconButton
             label={tr("New Project")}
+            disabled={!canCreate}
             onClick={() => void createProject()}
           >
             <Plus size={16} />
@@ -739,7 +746,7 @@ function Application({
                   <IconButton
                     className="icon-button project-new-chat"
                     label={tr("New chat in {project}", { project: p.title })}
-                    disabled={["deleting", "deleted"].includes(p.state)}
+                    disabled={!canRun || ["deleting", "deleted"].includes(p.state)}
                     onClick={() => newChat(p.id)}
                   >
                     <Plus size={16} />
@@ -938,7 +945,7 @@ function Application({
                 onChange={(id) => newChat(id)}
               />
             )}
-            <button onClick={() => void createProject()}>
+            <button disabled={!canCreate} onClick={() => void createProject()}>
               <Plus size={17} />
               {tr("Create a Project")}
             </button>

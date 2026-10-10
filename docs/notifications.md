@@ -11,7 +11,12 @@ resolved updates the existing notice to reflect the evidence. Disabling a source
 does not remove notifications already stored.
 
 Operator notices go through the running application's protected Unix socket:
-`orchestrator notify --socket PATH --audience USER --title TITLE --body BODY`.
+`orchestrator notify --socket PATH --audience ACCOUNT_ID --title TITLE --body BODY`.
 An omitted audience is an explicit broadcast. The command does not open a second
 product writer. Notifications do not grant access to the Project or conversation
 they reference; opening a target performs its normal authorization check.
+
+Directed recipients and read acknowledgments use immutable database account IDs.
+Usernames are labels, not notification authority. Inbox reads and acknowledgments
+require a current active account; operator delivery may retain notices for a
+disabled account, but cannot address a nonexistent recipient.

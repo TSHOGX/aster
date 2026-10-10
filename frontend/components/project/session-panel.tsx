@@ -1,4 +1,5 @@
 "use client";
+import { useCapabilities } from "./capability-provider";
 import { ComposerInput } from "./composer-input";
 import { useT } from "@/lib/i18n";
 import {
@@ -55,6 +56,7 @@ export function SessionPanel({
   showHistory?: boolean;
 }) {
   const tr = useT();
+  const canRun = useCapabilities()("agents.run");
   const ask = useDialog();
   const resources = useResources();
   const realtime = useRealtime();
@@ -594,7 +596,7 @@ export function SessionPanel({
     }
   };
   const send = (held: boolean) => {
-    if (sendLock.current || busy || (!draft.trim() && !pendingSend)) return;
+    if (!canRun || sendLock.current || busy || (!draft.trim() && !pendingSend)) return;
     sendLock.current = true;
     const intent = pendingSend || {
       id: newID(),
@@ -761,7 +763,7 @@ export function SessionPanel({
       }),
     );
   const activeRun = view.head?.active_run;
-  const canSteer = !!activeRun && ["starting", "running"].includes(activeRun.state);
+  const canSteer = canRun && !!activeRun && ["starting", "running"].includes(activeRun.state);
   const canStop = !!activeRun && (["starting", "running"].includes(activeRun.state) ||
     (activeRun.state === "unknown" && view.head?.recovery?.some(r => r.id === activeRun.incarnation_id && r.state === "running")));
   const stopping = stopPending || activeRun?.state === "stopping";
@@ -1078,7 +1080,7 @@ export function SessionPanel({
               <pre>{turn.content.slice(0, 8000)}</pre>
               {turn.state === "held" && (
                 <button
-                  disabled={busy}
+                  disabled={busy || !canRun}
                   onClick={() => control(turn, "release")}
                 >
                   {tr("Release prompt")}
@@ -1124,7 +1126,7 @@ export function SessionPanel({
                   : turn.state === "held" ? tr("Held") : tr("Queued")}: {turn.content.slice(0, 120)}
               </span>
               <div className="row-actions">
-                <button type="button" disabled={pendingRows.has(turn.id) || deliveryBusy(turn)} onClick={() => control(turn, turn.state === "held" ? "release" : "hold")}
+                <button type="button" disabled={pendingRows.has(turn.id) || deliveryBusy(turn) || (turn.state === "held" && !canRun)} onClick={() => control(turn, turn.state === "held" ? "release" : "hold")}
                   aria-label={`${turn.state === "held" ? tr("Release") : tr("Hold")}: ${turn.content.slice(0, 80)}`}>
                   {turn.state === "held" ? <Play size={16} /> : <Pause size={16} />}
                   {turn.state === "held" ? tr("Release") : tr("Hold")}
@@ -1150,6 +1152,7 @@ export function SessionPanel({
           )}
         </details>
       )}
+      {!canRun && <p role="status" className="notice">{tr("Permission to run agents is required. Your draft is retained.")}</p>}
       <form
         className="agent-composer"
         onSubmit={(event) => {
@@ -1174,10 +1177,10 @@ export function SessionPanel({
             label={tr("Conversation actions")}
             items={[
               { label: tr("Turn history"), action: () => void loadTurns() },
-              ...(active ? [{ label: tr("Add to queue"), disabled: busy || !draft.trim() || hasPending, action: () => send(false) }] : []),
+              ...(active ? [{ label: tr("Add to queue"), disabled: busy || !canRun || !draft.trim() || hasPending, action: () => send(false) }] : []),
               {
                 label: tr("Hold prompt"),
-                disabled: busy || !draft.trim() || hasPending,
+                disabled: busy || !canRun || !draft.trim() || hasPending,
                 action: () => send(true),
               },
             ]}
@@ -1202,7 +1205,7 @@ export function SessionPanel({
                 className="send-button"
                 aria-label={hasPending ? tr("Retry") : tr("Send")}
                 title={hasPending ? tr("Retry") : tr("Send")}
-                disabled={busy || (!draft.trim() && !hasPending) || current.state === "blocked"}
+                disabled={busy || !canRun || (!draft.trim() && !hasPending) || current.state === "blocked"}
               >
                 <ArrowUp size={18} />
               </button>

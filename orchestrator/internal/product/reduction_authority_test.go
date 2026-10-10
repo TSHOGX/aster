@@ -19,6 +19,7 @@ func TestProjectPauseAndRecoveryRetainOnlyActiveOwnerReduction(t *testing.T) {
 	p, err := s.Project(ctx, scope)
 	must(t, err)
 	fixtureFileGrants(t, s, map[ProductAction]PolicyEffect{ActionProjectsManage: PolicyDeny, ActionAgentsRun: PolicyDeny, ActionProjectsRead: PolicyDeny})
+	wantError(t, l.Resume(ctx, scope, testProfile()), ErrForbidden)
 	wantError(t, l.Restart(ctx, scope, p.Revision), ErrForbidden)
 	wantError(t, l.ForceRestart(ctx, scope, p.Revision), ErrForbidden)
 	must(t, s.RetryRecovery(ctx, scope, child.ID, child.Revision))
@@ -43,4 +44,39 @@ func TestProjectPauseAndRecoveryRetainOnlyActiveOwnerReduction(t *testing.T) {
 	foreign := Scope{Actor: "bob", ProjectID: scope.ProjectID}
 	wantError(t, l.Pause(ctx, foreign, p.Revision), ErrNotFound)
 	wantError(t, s.RetryRecovery(ctx, foreign, child.ID, child.Revision), ErrNotFound)
+}
+
+func TestExplicitResumeChecksGrantBeforeProvisioning(t *testing.T) {
+	l, scope, _ := lifecycleFixture(t)
+	fixtureFileGrants(t, l.Store, map[ProductAction]PolicyEffect{ActionProjectsManage: PolicyDeny})
+	wantError(t, l.Resume(ctx, scope, testProfile()), ErrForbidden)
+	var count int
+	must(t, l.Store.reader.QueryRow(`SELECT count(*) FROM project_resources`).Scan(&count))
+	if count != 0 {
+		t.Fatal("denied resume allocated resources", count)
+	}
+	fixtureFileGrants(t, l.Store, map[ProductAction]PolicyEffect{ActionProjectsManage: PolicyAllow})
+	must(t, l.Resume(ctx, scope, testProfile()))
+}
+
+func TestNotificationScopeUsesCurrentCanonicalAccount(t *testing.T) {
+	s, scope, _ := fixture(t)
+	must(t, s.Notify(ctx, scope.Actor, "Notice", "body"))
+	wantError(t, s.Notify(ctx, "fixture-"+scope.Actor, "Wrong identity", "body"), ErrNotFound)
+	notices, err := s.Notifications(ctx, scope.Actor, "", 10)
+	must(t, err)
+	if len(notices) != 1 {
+		t.Fatal(notices)
+	}
+	_, err = s.Notifications(ctx, "missing-account", "", 10)
+	wantError(t, err, ErrUnauthorized)
+	must(t, s.writeIdentity(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE accounts SET status='disabled' WHERE id=?`, scope.Actor)
+		return err
+	}))
+	_, err = s.Notifications(ctx, scope.Actor, "", 10)
+	wantError(t, err, ErrForbidden)
+	_, err = s.UnreadNotifications(ctx, scope.Actor)
+	wantError(t, err, ErrForbidden)
+	wantError(t, s.ReadNotification(ctx, scope.Actor, notices[0].ID), ErrForbidden)
 }

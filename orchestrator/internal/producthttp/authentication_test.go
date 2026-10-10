@@ -330,4 +330,15 @@ func TestTerminalSocketUsesCurrentTerminalGrant(t *testing.T) {
 	if signals != 0 {
 		t.Fatal("policy revocation signaled PTY", signals)
 	}
+	h.terminals.TerminationGrace = time.Millisecond
+	stop, err := http.NewRequest("POST", server.URL+"/api/projects/policy-project/terminals/shell/stop", nil)
+	must(t, err)
+	stop.Header.Set("Origin", server.URL)
+	stop.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+	response, err = server.Client().Do(stop)
+	must(t, err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatal("read/use denial blocked owned stop", response.StatusCode)
+	}
 }

@@ -53,6 +53,12 @@ func (s *Store) Notify(ctx context.Context, audience, title, body string) error 
 		if !enabled {
 			return ErrNotificationDisabled
 		}
+		if audience != "" {
+			var recipient string
+			if err := missing(tx.QueryRowContext(ctx, `SELECT id FROM accounts WHERE id=?`, audience).Scan(&recipient)); err != nil {
+				return err
+			}
+		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO notifications(id,audience,title,body,created_at) VALUES(?,nullif(?,''),?,?,?)`, uuid.NewString(), audience, title, body, s.timestamp())
 		return err
 	})
@@ -60,6 +66,9 @@ func (s *Store) Notify(ctx context.Context, audience, title, body string) error 
 func (s *Store) Notifications(ctx context.Context, actor, after string, limit int) ([]Notification, error) {
 	if actor == "" {
 		return nil, ErrNotFound
+	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT n.id,coalesce(n.project_id,''),coalesce(n.session_id,''),coalesce((SELECT m.id FROM messages m WHERE substr(n.id,1,5)='turn/' AND m.turn_id=substr(n.id,6) AND m.role='user' ORDER BY m.sequence LIMIT 1),''),n.title,n.body,n.created_at,EXISTS(SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id AND r.actor=?) FROM notifications n WHERE (n.audience IS NULL OR n.audience=?) AND (?='' OR (n.created_at,n.id)<(SELECT created_at,id FROM notifications WHERE id=? AND (audience IS NULL OR audience=?))) ORDER BY n.created_at DESC,n.id DESC LIMIT ?`, actor, actor, after, after, actor, pageSize(limit))
 	if err != nil {
@@ -87,6 +96,9 @@ func (s *Store) ReadNotification(ctx context.Context, actor, id string) error {
 		var found string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM notifications WHERE id=? AND (audience IS NULL OR audience=?)`, id, actor).Scan(&found); err != nil {
 			return missing(err)
+		}
+		if err := activeAccount(ctx, tx, actor); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_reads(notification_id,actor) VALUES(?,?)`, id, actor)
 		return err
@@ -283,6 +295,9 @@ func (s *Store) GenerateTitles(ctx context.Context, generator TitleGenerator, li
 func (s *Store) UnreadNotifications(ctx context.Context, actor string) (int, error) {
 	if actor == "" {
 		return 0, ErrNotFound
+	}
+	if err := activeAccount(ctx, s.reader, actor); err != nil {
+		return 0, err
 	}
 	var count int
 	err := s.reader.QueryRowContext(ctx, `SELECT count(*) FROM notifications n WHERE (n.audience IS NULL OR n.audience=?) AND NOT EXISTS(SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id AND r.actor=?)`, actor, actor).Scan(&count)

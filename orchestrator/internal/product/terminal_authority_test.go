@@ -106,3 +106,23 @@ func TestTerminalGrantIsIndependentOfProjectRead(t *testing.T) {
 	_, err = terminals.Attach(ctx, foreign, "shell", false)
 	wantError(t, err, ErrNotFound)
 }
+
+func TestOwnedTerminalStopDoesNotRequireReadOrUse(t *testing.T) {
+	terminals, backend, scope := terminalFixture(t)
+	terminals.TerminationGrace = time.Millisecond
+	i := startTerminal(t, terminals, backend, scope, "shell", 24, 80)
+	fixtureFileGrants(t, terminals.Store, map[ProductAction]PolicyEffect{ActionProjectsRead: PolicyDeny, ActionTerminalsUse: PolicyDeny})
+	must(t, terminals.StopOwned(ctx, scope, "shell"))
+	backend.mu.Lock()
+	signals := append([]int32(nil), backend.signals[i.Reference.Handle]...)
+	backend.mu.Unlock()
+	if len(signals) != 2 || signals[0] != 15 || signals[1] != 9 {
+		t.Fatal("owned stop lost reduction authority", signals)
+	}
+	wantError(t, terminals.StopOwned(ctx, Scope{Actor: "bob", ProjectID: scope.ProjectID}, "shell"), ErrNotFound)
+	must(t, terminals.Store.writeIdentity(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE accounts SET status='disabled' WHERE id=?`, scope.Actor)
+		return err
+	}))
+	wantError(t, terminals.StopOwned(ctx, scope, "shell"), ErrForbidden)
+}

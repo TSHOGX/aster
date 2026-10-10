@@ -438,11 +438,7 @@ func (s *Server) startTerminal(w http.ResponseWriter, r *http.Request) {
 // process's exit frame establishes that it ended, and with what code.
 func (s *Server) stopTerminal(w http.ResponseWriter, r *http.Request) {
 	scope := s.scope(r)
-	if _, err := s.Store.Terminal(r.Context(), scope, r.PathValue("terminal")); err != nil {
-		fail(w, err)
-		return
-	}
-	if err := s.Terminals.Stop(r.Context(), scope.ProjectID, r.PathValue("terminal")); err != nil {
+	if err := s.Terminals.StopOwned(r.Context(), scope, r.PathValue("terminal")); err != nil {
 		fail(w, err)
 		return
 	}
