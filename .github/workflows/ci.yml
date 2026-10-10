@@ -70,15 +70,18 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: orchestrator/go.mod
-          cache-dependency-path: orchestrator/go.sum
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Restore Next build cache
+        uses: actions/cache@v6
+        with:
+          path: frontend/.next/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-next-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-next-${{ hashFiles('.node-version', 'frontend/package-lock.json', 'frontend/next.config.mjs', 'frontend/tsconfig.json') }}-
       - run: npm ci
         working-directory: frontend
       - uses: actions/setup-python@v7
@@ -89,7 +92,14 @@ jobs:
       - run: python -m pip install -r frontend/e2e/requirements.txt
       - run: npx --no-install playwright install --with-deps chromium
         working-directory: frontend
-      - run: scripts/check.sh frontend
+      - name: Frontend lint
+        run: scripts/check.sh frontend-lint
+      - name: Frontend unit tests
+        run: scripts/check.sh frontend-unit
+      - name: Frontend production build and types
+        run: scripts/check.sh frontend-build
+      - name: Frontend browser tests
+        run: scripts/check.sh frontend-ui
       - name: Install additional release browsers
         if: inputs.cross_browser
         run: npx --no-install playwright install --with-deps firefox webkit
@@ -111,5 +121,16 @@ jobs:
             frontend/test-results/ui
             frontend/test-results/pickers
             frontend/test-results/office-browsers
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Browser timing reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-timings-${{ github.run_attempt }}
+          path: |
+            frontend/test-results/ui-report.json
+            frontend/test-results/pickers-report.json
+            frontend/test-results/office-report.json
           retention-days: 7
           if-no-files-found: ignore
