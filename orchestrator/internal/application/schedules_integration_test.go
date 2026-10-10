@@ -30,9 +30,9 @@ func TestReleasedNativeSchedules(t *testing.T) {
 	call := func(key, name string, args any) {
 		turn := a.request("POST", base+"/turns", map[string]string{"request_id": key, "content": prompt(name, args)}, 201)
 		a.await(30*time.Second, "native tool "+name, func() bool {
-			var state string
-			require(t, db.QueryRow(`SELECT state FROM turns WHERE id=?`, turn["id"]).Scan(&state))
-			return state == "completed"
+			var completed int
+			require(t, db.QueryRow(`SELECT count(*) FROM execution_runs WHERE prompt_id=? AND outcome='completed'`, turn["id"]).Scan(&completed))
+			return completed == 1
 		})
 		var failures, results int
 		require(t, db.QueryRow(`SELECT count(*),coalesce(sum(json_extract(payload,'$.isError')=1),0) FROM agent_records WHERE turn_id=? AND kind='native' AND json_extract(payload,'$.type')='tool_execution_end'`, turn["id"]).Scan(&results, &failures))
@@ -54,7 +54,7 @@ func TestReleasedNativeSchedules(t *testing.T) {
 	call("inspect", "get", map[string]any{"id": once["id"]})
 	a.await(35*time.Second, "one-shot admission and result notice", func() bool {
 		var n int
-		require(t, db.QueryRow(`SELECT count(*) FROM schedule_runs r JOIN turns t ON t.id=r.turn_id JOIN notifications n ON n.id='turn/'||r.turn_id WHERE r.schedule_id=? AND t.state='completed'`, once["id"]).Scan(&n))
+		require(t, db.QueryRow(`SELECT count(*) FROM schedule_runs r JOIN execution_runs t ON t.prompt_id=r.turn_id JOIN notifications n ON n.id='turn/'||r.turn_id WHERE r.schedule_id=? AND t.outcome='completed'`, once["id"]).Scan(&n))
 		return n == 1
 	})
 	once = task("Once")
@@ -76,7 +76,7 @@ func TestReleasedNativeSchedules(t *testing.T) {
 	bounded := task("Bounded")
 	a.await(35*time.Second, "host-bound finish and durable delivery", func() bool {
 		var n int
-		require(t, db.QueryRow(`SELECT count(*) FROM schedules s JOIN schedule_runs r ON r.schedule_id=s.id JOIN turns t ON t.id=r.turn_id JOIN notifications n ON n.id='turn/'||r.turn_id WHERE s.id=? AND s.end_reason='agent_finished' AND s.completed_by_run_id IS NOT NULL AND t.state='completed'`, bounded["id"]).Scan(&n))
+		require(t, db.QueryRow(`SELECT count(*) FROM schedules s JOIN schedule_runs r ON r.schedule_id=s.id JOIN execution_runs t ON t.prompt_id=r.turn_id JOIN notifications n ON n.id='turn/'||r.turn_id WHERE s.id=? AND s.end_reason='agent_finished' AND s.completed_by_run_id IS NOT NULL AND t.outcome='completed'`, bounded["id"]).Scan(&n))
 		return n == 1
 	})
 	p := a.request("GET", "/api/projects/"+project, nil, 200)
