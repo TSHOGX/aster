@@ -12,6 +12,8 @@ import {
   type SearchResult,
   type Share,
 } from "@/lib/project-api";
+import { useCapabilities } from "./capability-provider";
+type ReaderAccount = { id: string; username: string; display_name: string; status: string };
 export function SharePanel({
   project,
   sessions,
@@ -25,7 +27,13 @@ export function SharePanel({
   const [session, setSession] = useState(
     initialSession || sessions[0]?.id || "",
   );
+  const can = useCapabilities();
+  const canShare = can("conversations.share"), canPublish = can("shares.public.create");
   const [reader, setReader] = useState("");
+  const [query, setQuery] = useState("");
+  const [candidates, setCandidates] = useState<ReaderAccount[]>([]);
+  const [readers, setReaders] = useState<ReaderAccount[]>([]);
+  const [readerAfter, setReaderAfter] = useState("");
   const [paths, setPaths] = useState("");
   const [shares, setShares] = useState<Share[]>([]);
   const [link, setLink] = useState("");
@@ -33,20 +41,29 @@ export function SharePanel({
   const refresh = useCallback(async () => {
     if (!session) return;
     try {
-      setShares(
-        (
-          await api<{
-            shares: Share[];
-          }>(`${sessionURL(project, session)}/shares`)
-        ).shares,
-      );
+      const [snapshots, granted] = await Promise.all([
+        api<{ shares: Share[] }>(`${sessionURL(project, session)}/shares`),
+        api<{ readers: ReaderAccount[] }>(`${sessionURL(project, session)}/readers?after=${encode(readerAfter)}&limit=50`),
+      ]);
+      setShares(snapshots.shares);
+      setReaders(granted.readers);
     } catch (e) {
       setError(String(e));
     }
-  }, [project, session]);
+  }, [project, session, readerAfter]);
   useEffect(() => {
     void Promise.resolve().then(refresh);
   }, [refresh]);
+  useEffect(() => {
+    let gone = false;
+    const timer = setTimeout(() => {
+      if (!session || !canShare) { setCandidates([]); return; }
+      void api<{readers:ReaderAccount[]}>(`${sessionURL(project, session)}/reader-candidates?q=${encode(query)}&limit=50`)
+        .then(result => { if (!gone) setCandidates(result.readers); })
+        .catch(error => { if (!gone) { setCandidates([]); setError(String(error)); } });
+    }, 200);
+    return () => { gone = true; clearTimeout(timer); };
+  }, [project, session, query, canShare]);
   const act = async (fn: () => Promise<unknown>) => {
     setError("");
     try {
@@ -71,7 +88,7 @@ export function SharePanel({
       )}
       <label>
         {tr("Agent Session")}
-        <select value={session} onChange={(e) => setSession(e.target.value)}>
+        <select value={session} onChange={(e) => { setSession(e.target.value); setReader(""); setReaderAfter(""); setLink(""); }}>
           <option value="">{tr("Choose a Session")}</option>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
@@ -80,41 +97,30 @@ export function SharePanel({
           ))}
         </select>
       </label>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void act(() =>
-            command(`${sessionURL(project, session)}/readers`, { reader }),
-          );
-        }}
-      >
-        <label>
-          {tr("Read-only reader username")}
-          <input
-            value={reader}
-            onChange={(e) => setReader(e.target.value)}
-            required
-          />
+      <form onSubmit={event => {
+        event.preventDefault();
+        if (!canShare || !candidates.some(account => account.id === reader)) return;
+        void act(() => command(`${sessionURL(project, session)}/readers`, { reader_id: reader }));
+      }}>
+        <label>{tr("Find a reader")}
+          <input value={query} maxLength={128} disabled={!canShare} onChange={event => { setQuery(event.target.value); setReader(""); }} />
         </label>
-        <div className="row-actions">
-          <button disabled={!session}>{tr("Grant conversation access")}</button>
-          <button
-            type="button"
-            disabled={!session || !reader}
-            onClick={() =>
-              void act(() =>
-                command(
-                  `${sessionURL(project, session)}/readers/${encode(reader)}`,
-                  undefined,
-                  "DELETE",
-                ),
-              )
-            }
-          >
-            {tr("Revoke reader")}
-          </button>
-        </div>
+        <label>{tr("Reader account")}
+          <select value={reader} required disabled={!canShare} onChange={event => setReader(event.target.value)}>
+            <option value="">{tr("Choose an account")}</option>
+            {candidates.map(account => <option key={account.id} value={account.id}>{account.display_name} (@{account.username})</option>)}
+          </select>
+        </label>
+        <button disabled={!session || !canShare || !reader}>{tr("Grant conversation access")}</button>
       </form>
+      {readers.map(account => <article className="schedule-card" key={account.id}>
+        <strong>{account.display_name}</strong><small>@{account.username} · {account.status}</small>
+        <button type="button" onClick={() => void act(() => command(`${sessionURL(project, session)}/readers/${encode(account.id)}`, undefined, "DELETE"))}>{tr("Revoke reader")}</button>
+      </article>)}
+      <div className="row-actions">
+        {readerAfter && <button onClick={() => setReaderAfter("")}>{tr("Latest")}</button>}
+        {readers.length === 50 && <button onClick={() => setReaderAfter(readers.at(-1)!.id)}>{tr("More readers")}</button>}
+      </div>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -139,7 +145,7 @@ export function SharePanel({
             placeholder="results/report.md"
           />
         </label>
-        <button disabled={!session} className="primary">
+        <button disabled={!session || !canPublish} className="primary">
           {tr("Create public snapshot \u00B7 7 days")}
         </button>
       </form>
@@ -162,7 +168,7 @@ export function SharePanel({
           </small>
           <div className="row-actions">
             {share.state === "published" && (
-              <button
+              <button disabled={!canPublish}
                 onClick={() =>
                   void act(async () => {
                     const result = await command<{

@@ -159,12 +159,12 @@ func (s *Server) sharedConversation(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) grantConversation(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Reader string `json:"reader"`
+		ReaderID string `json:"reader_id"`
 	}
 	if !decode(w, r, s.Config.bodyLimit(), &body) {
 		return
 	}
-	if err := s.Store.GrantConversation(r.Context(), s.scope(r), r.PathValue("session"), body.Reader); err != nil {
+	if err := s.Store.GrantConversation(r.Context(), s.scope(r), r.PathValue("session"), body.ReaderID); err != nil {
 		fail(w, err)
 		return
 	}
@@ -399,4 +399,23 @@ func (s *Server) scheduleMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, item)
+}
+
+func (s *Server) conversationReaders(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	readers, err := s.Store.ConversationReaders(r.Context(), s.scope(r), r.PathValue("session"), q.Get("after"), intParam(q, "limit", 50))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"readers": readers})
+}
+func (s *Server) conversationRecipients(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	readers, err := s.Store.ConversationRecipients(r.Context(), s.scope(r), r.PathValue("session"), q.Get("q"), q.Get("after"), intParam(q, "limit", 50))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"readers": readers})
 }

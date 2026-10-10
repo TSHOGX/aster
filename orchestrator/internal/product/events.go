@@ -70,6 +70,13 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionConversationsShare); err != nil {
+			return err
+		}
+		var recipient string
+		if err := missing(tx.QueryRowContext(ctx, `SELECT id FROM accounts WHERE id=? AND id<>? AND status='active'`, reader, scope.Actor).Scan(&recipient)); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_grants(session_id,reader_id) VALUES(?,?) ON CONFLICT(session_id,reader_id) DO UPDATE SET revoked=0`, session, reader); err != nil {
 			return err
 		}
@@ -82,6 +89,9 @@ func (s *Store) GrantConversation(ctx context.Context, scope Scope, session, rea
 func (s *Store) RevokeConversation(ctx context.Context, scope Scope, session, reader string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		if _, err := sessionIn(ctx, tx, scope, session); err != nil {
+			return err
+		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE conversation_grants SET revoked=1 WHERE session_id=? AND reader_id=?`, session, reader); err != nil {
@@ -97,15 +107,14 @@ func (s *Store) CanReadConversation(ctx context.Context, actor, session string) 
 		return ErrNotFound
 	}
 	var owner string
-	var granted bool
-	err := missing(s.reader.QueryRowContext(ctx, `SELECT p.owner_id,EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0) FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, actor, session, actor, actor).Scan(&owner, &granted))
+	err := missing(s.reader.QueryRowContext(ctx, `SELECT p.owner_id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM conversation_grants g WHERE g.session_id=s.id AND g.reader_id=? AND g.revoked=0))`, session, actor, actor).Scan(&owner))
 	if err != nil {
 		return err
 	}
-	if granted {
-		return activeAccount(ctx, s.reader, actor)
+	if owner == actor {
+		return authorizeAction(ctx, s.reader, actor, ActionProjectsRead)
 	}
-	return authorizeAction(ctx, s.reader, actor, ActionProjectsRead)
+	return activeAccount(ctx, s.reader, actor)
 }
 
 func (s *Store) EventBounds(ctx context.Context, scope Scope) (first, last int64, err error) {

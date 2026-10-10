@@ -1,4 +1,8 @@
 export const EN = {
+  "Find a reader": "Find a reader",
+  "Reader account": "Reader account",
+  "Choose an account": "Choose an account",
+  "More readers": "More readers",
   "Administration": "Administration",
   "Opening administration…": "Opening administration…",
   "Settings": "Settings",
@@ -406,7 +410,6 @@ export const EN = {
   "Project Files": "Project Files",
   "Project deleted": "Project deleted",
   "Project schedules": "Project schedules",
-  "Read-only reader username": "Read-only reader username",
   "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.":
     "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.",
   "Recent activity (": "Recent activity (",

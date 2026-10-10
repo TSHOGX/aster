@@ -113,6 +113,9 @@ func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionPublicSharesCreate); err != nil {
+			return err
+		}
 		var frontier int64
 		if err = tx.QueryRowContext(ctx, `SELECT coalesce(max(sequence),0) FROM messages WHERE session_id=?`, session).Scan(&frontier); err != nil {
 			return err
@@ -173,6 +176,9 @@ func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths
 		if child.Deletion != Live {
 			return ErrDeleting
 		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionPublicSharesCreate); err != nil {
+			return err
+		}
 		if err = changed(tx.ExecContext(ctx, `UPDATE shares SET state='published' WHERE id=? AND state='pending' AND expires_at>?`, id, sh.Store.timestamp())); err != nil {
 			return err
 		}
@@ -191,6 +197,9 @@ func (sh *Shares) Create(ctx context.Context, scope Scope, session string, paths
 }
 func (s *Store) Shares(ctx context.Context, scope Scope, session, after string, limit int) ([]Share, error) {
 	if _, err := sessionIn(ctx, s.reader, scope, session); err != nil {
+		return nil, err
+	}
+	if err := activeAccount(ctx, s.reader, scope.Actor); err != nil {
 		return nil, err
 	}
 	rows, err := s.reader.QueryContext(ctx, `SELECT `+shareColumns+` FROM shares WHERE session_id=? AND id>? ORDER BY id LIMIT ?`, session, after, pageSize(limit))
@@ -213,6 +222,9 @@ func (s *Store) RevokeShare(ctx context.Context, scope Scope, id string) error {
 		if _, err := ownedProject(ctx, tx, scope); err != nil {
 			return err
 		}
+		if err := activeAccount(ctx, tx, scope.Actor); err != nil {
+			return err
+		}
 		if err := changed(tx.ExecContext(ctx, `UPDATE shares SET state='revoked' WHERE id=? AND project_id=?`, id, scope.ProjectID)); err != nil {
 			return err
 		}
@@ -228,6 +240,13 @@ func (s *Store) RotateShare(ctx context.Context, scope Scope, id string) (string
 		if _, err := mutableOwnedProject(ctx, tx, scope); err != nil {
 			return err
 		}
+		var project string
+		if err := missing(tx.QueryRowContext(ctx, `SELECT project_id FROM shares WHERE id=? AND project_id=?`, id, scope.ProjectID).Scan(&project)); err != nil {
+			return err
+		}
+		if err := authorizeAction(ctx, tx, scope.Actor, ActionPublicSharesCreate); err != nil {
+			return err
+		}
 		return changed(tx.ExecContext(ctx, `UPDATE shares SET token_digest=? WHERE id=? AND project_id=? AND state='published' AND expires_at>?`, tokenDigest(token), id, scope.ProjectID, s.timestamp()))
 	})
 	return token, err
@@ -237,7 +256,7 @@ func (s *Store) PublicShare(ctx context.Context, token string) (Share, error) {
 		return Share{}, ErrNotFound
 	}
 	// Parent state is checked even though revocation triggers also enforce it.
-	share, err := scanShare(s.reader.QueryRowContext(ctx, `SELECT `+shareColumns+` FROM shares WHERE token_digest=? AND state='published' AND expires_at>? AND EXISTS(SELECT 1 FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=shares.session_id AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted'))`, tokenDigest(token), s.timestamp()))
+	share, err := scanShare(s.reader.QueryRowContext(ctx, `SELECT `+shareColumns+` FROM shares WHERE token_digest=? AND state='published' AND expires_at>? AND EXISTS(SELECT 1 FROM sessions s JOIN projects p ON p.id=s.project_id JOIN accounts a ON a.id=p.owner_id AND a.status='active' WHERE s.id=shares.session_id AND s.deletion_intent=0 AND p.state NOT IN ('deleting','deleted'))`, tokenDigest(token), s.timestamp()))
 	if err != nil {
 		return share, err
 	}

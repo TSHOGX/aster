@@ -1,5 +1,9 @@
 import type { MessageKey } from "./messages-en";
 export const ZH: Record<MessageKey, string> = {
+  "Find a reader": "查找读者",
+  "Reader account": "读者账户",
+  "Choose an account": "选择账户",
+  "More readers": "更多读者",
   "Administration": "管理后台",
   "Opening administration…": "正在打开管理后台…",
   "Settings": "设置",
@@ -401,7 +405,6 @@ export const ZH: Record<MessageKey, string> = {
   "Project Files": "项目文件",
   "Project deleted": "项目已删除",
   "Project schedules": "项目计划任务",
-  "Read-only reader username": "只读用户名称",
   "Readers receive the conversation and explicitly frozen files. Live Project resources stay private.":
     "读者只能查看会话和明确选定的文件快照，不能访问项目的运行资源。",
   "Recent activity (": "最近活动 (",

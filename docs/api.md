@@ -414,3 +414,16 @@ and transfer bounds as preview. Preview bytes remain copyable when export is
 denied. Frozen public shares retain their separate resource grant. Releasing an
 owned preview lease and inspecting a file-operation outcome remain available to
 an active owner after functional grants disappear.
+
+Conversation reader grants use immutable account IDs: POST
+`…/sessions/{session}/readers` accepts `{ "reader_id": "ACCOUNT_ID" }` and requires
+`conversations.share`. GET `…/reader-candidates?q=QUERY&after=ID&limit=50` provides
+bounded active-account choices under that same grant. GET `…/readers?after=ID&limit=50`
+lists current recipients so the active owner can revoke them even after losing the
+grant. Self-grants and nonexistent/disabled recipients are refused. Account names
+are display/search labels, never authorization identifiers.
+
+Public snapshot creation and link rotation require `shares.public.create`.
+Removing that grant leaves existing frozen links valid; explicit revoke remains
+available to the active owner. Disabled owner status denies public content access
+immediately, independently of later suspension reconciliation.

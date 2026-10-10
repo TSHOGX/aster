@@ -58,6 +58,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversations/{session}/head", s.sharedConversationHead)
 	mux.HandleFunc("GET /api/conversations/{session}/events", s.conversationEvents)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/readers", s.grantConversation)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/readers", s.conversationReaders)
+	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/reader-candidates", s.conversationRecipients)
 	mux.HandleFunc("DELETE /api/projects/{project}/sessions/{session}/readers/{reader}", s.revokeConversation)
 	mux.HandleFunc("POST /api/projects/{project}/sessions/{session}/shares", s.createShare)
 	mux.HandleFunc("GET /api/projects/{project}/sessions/{session}/shares", s.listShares)

@@ -10,6 +10,8 @@ export async function workspaceFixture(
   const identity = { id: "researcher", username: "researcher", display_name: "researcher", status: "active", role: "user", revision: 1, session_revision: 1, must_change_password: false };
   let preferences = { revision: 1, theme_mode: "system", accent: "neutral" };
   let signedIn = true;
+  const recipient = {id:"account-bob",username:"bob",display_name:"Bob Reader",status:"active"};
+  const conversationReaders = new Map<string, typeof recipient[]>();
   const views = new Map<string, ConversationFixture>();
   await page.addInitScript(() => {
     let offline = false;
@@ -307,6 +309,13 @@ export async function workspaceFixture(
       const s = sessions.find((s) => s.id === id && s.project_id === project);
       if (!s) return json({ error: "Not found" }, 404);
       if (!action) return json(s);
+      if (action === "reader-candidates") return json({readers:[recipient]});
+      if (action === "readers") {
+        if (method === "POST") conversationReaders.set(id, body?.reader_id === recipient.id ? [recipient] : []);
+        if (method === "DELETE") conversationReaders.set(id, []);
+        return json({readers:conversationReaders.get(id) || []});
+      }
+      if (action === "shares") return json({shares:[]});
       if (action === "view") {
         let view = views.get(id);
         if (!view) {

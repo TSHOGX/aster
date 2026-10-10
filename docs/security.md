@@ -120,3 +120,10 @@ I/O and workspace confinement. Current grants apply to paused-volume access,
 cached preview acquisition, file-watch events and mutation replay as well as live
 helpers. Durable mutation identity includes its action. The workbench retrieves
 current capabilities for affordances; cached browser state never grants authority.
+
+Conversation sharing requires `conversations.share` and a selected active account
+ID. Self-grants are refused, and explicit reader queries/search cannot substitute
+for an owner's denied Project read. Reader lists retain reduction authority for
+revocation. Creating or rotating a public frozen share requires
+`shares.public.create`; ordinary grant removal does not invalidate published links.
+Disabled owner status denies public content access at lookup time.

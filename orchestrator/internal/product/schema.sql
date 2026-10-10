@@ -275,7 +275,7 @@ CREATE TABLE conversation_dirty_turns (
 
 CREATE TABLE conversation_grants (
  session_id TEXT NOT NULL REFERENCES sessions(id),
- reader_id TEXT NOT NULL CHECK(reader_id<>''),
+ reader_id TEXT NOT NULL REFERENCES accounts(id) CHECK(reader_id<>''),
  revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
  PRIMARY KEY(session_id,reader_id)
 );
