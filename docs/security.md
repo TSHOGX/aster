@@ -111,3 +111,12 @@ fallback and close when interactive authority ends. A closed view does not signa
 the PTY. Active owners retain explicit termination (SIGTERM/SIGKILL), EOF, deletion,
 and remaining-life inspection after functional grant loss; settlement uses internal
 incarnation authority. Arbitrary signals are not a reduction-only capability.
+
+File permissions are separate feature controls: list, read, export, upload, edit
+and manage. Export additionally requires read. Preview bytes are intentionally
+copyable; these grants do not implement DRM or an egress restriction. Browser
+upload and editor routes select their own fixed action and reuse the same bounded
+I/O and workspace confinement. Current grants apply to paused-volume access,
+cached preview acquisition, file-watch events and mutation replay as well as live
+helpers. Durable mutation identity includes its action. The workbench retrieves
+current capabilities for affordances; cached browser state never grants authority.

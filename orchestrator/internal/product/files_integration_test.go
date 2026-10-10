@@ -278,7 +278,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		}
 		data := bytes.Repeat([]byte("streamed-世界\x00"), 1<<19)
 		request := projectfiles.Request{Operation: "write", Path: "large", Size: int64(len(data)), Digest: fmt.Sprintf("%x", sha256.Sum256(data))}
-		_, err = files.Execute(runctx, scope, "large-write", request, bytes.NewReader(data))
+		_, err = files.Upload(runctx, scope, "large-write", request, bytes.NewReader(data))
 		must(t, err)
 		hash := sha256.New()
 		capture, err = files.Capture(runctx, scope, "large")
@@ -307,10 +307,10 @@ func TestProjectFilesOnKhora(t *testing.T) {
 	t.Run("lost-write-reply-and-sibling-overwrite", func(t *testing.T) {
 		wrapped.lose = true
 		request := writeRequest("contended", "original")
-		o, err := files.Execute(runctx, scope, "lost-write", request, strings.NewReader("original"))
+		o, err := files.Upload(runctx, scope, "lost-write", request, strings.NewReader("original"))
 		wantError(t, err, ErrFileOutcomeUnknown)
 		shell(t, "printf newer > /workspace/contended")
-		_, err = files.Execute(runctx, scope, "lost-write", request, strings.NewReader("original"))
+		_, err = files.Upload(runctx, scope, "lost-write", request, strings.NewReader("original"))
 		wantError(t, err, ErrFileOutcomeUnknown)
 		must(t, files.Reconcile(runctx, 32))
 		o, err = s.FileOperation(runctx, scope, o.ID)
@@ -329,7 +329,7 @@ func TestProjectFilesOnKhora(t *testing.T) {
 		request := writeRequest("canceled", strings.Repeat("x", 1<<20))
 		result := make(chan error, 1)
 		go func() {
-			_, err := files.Execute(uploadctx, scope, "canceled-write", request, reader)
+			_, err := files.Upload(uploadctx, scope, "canceled-write", request, reader)
 			result <- err
 		}()
 		_, err := writer.Write(bytes.Repeat([]byte("x"), 32<<10))

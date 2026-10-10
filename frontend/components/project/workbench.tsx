@@ -1,4 +1,5 @@
 "use client";
+import { CapabilityProvider } from "./capability-provider";
 import type { Identity } from "@web/identity";
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
@@ -213,6 +214,7 @@ export function ProjectWorkbench() {
   return (
     <DialogProvider key={identity.id}>
       <ResourceProvider actor={identity.id}>
+      <CapabilityProvider accountId={identity.id}>
         <Application
           identity={identity}
           onIdentity={acceptIdentity}
@@ -223,6 +225,7 @@ export function ProjectWorkbench() {
             acceptIdentity(null);
           }}
         />
+      </CapabilityProvider>
       </ResourceProvider>
     </DialogProvider>
   );

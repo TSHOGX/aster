@@ -346,6 +346,7 @@ CREATE TABLE events (
 );
 
 CREATE TABLE file_operations (
+ action TEXT NOT NULL CHECK(action IN ('files.upload','files.edit','files.manage')),
  id TEXT PRIMARY KEY,
  project_id TEXT NOT NULL REFERENCES projects(id),
  request TEXT NOT NULL,

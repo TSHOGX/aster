@@ -128,6 +128,7 @@ export const EN = {
   "The Office viewer could not load. Retry or download the file.": "The Office viewer could not load. Retry or download the file.",
   "Preview unavailable": "Preview unavailable",
   "This preview expired. Retry to read the current file.": "This preview expired. Retry to read the current file.",
+  "File read permission is required.": "File read permission is required.",
   "Download file": "Download file",
   "Preview files up to {size}": "Preview files up to {size}",
   "File too large to preview": "File too large to preview",

@@ -140,16 +140,16 @@ func TestFilesLostReplyNeverReplaysOverSibling(t *testing.T) {
 	f, a, b := fileFixture(t)
 	b.loseEnd = true
 	request := writeRequest("same", "first")
-	o, err := f.Execute(ctx, a, "lost", request, strings.NewReader("first"))
+	o, err := f.Upload(ctx, a, "lost", request, strings.NewReader("first"))
 	wantError(t, err, ErrFileOutcomeUnknown)
 	if o.State != "unknown" || o.Settled {
 		t.Fatal(o)
 	}
 	must(t, os.WriteFile(filepath.Join(b.root, "same"), []byte("sibling"), 0600))
 	// A different operation can proceed; there is no workspace lock.
-	_, err = f.Execute(ctx, a, "other", writeRequest("other", "ok"), strings.NewReader("ok"))
+	_, err = f.Upload(ctx, a, "other", writeRequest("other", "ok"), strings.NewReader("ok"))
 	must(t, err)
-	_, err = f.Execute(ctx, a, "lost", request, strings.NewReader("first"))
+	_, err = f.Upload(ctx, a, "lost", request, strings.NewReader("first"))
 	wantError(t, err, ErrFileOutcomeUnknown)
 	must(t, f.Reconcile(ctx, 32))
 	got, err := os.ReadFile(filepath.Join(b.root, "same"))
@@ -175,14 +175,14 @@ func TestFilesAdmissionOwnershipAndConcurrentTurns(t *testing.T) {
 	_, err = f.Store.AdmitTurn(ctx, a, "agent", "turn", "work", false)
 	must(t, err)
 	request := writeRequest("data", "content")
-	_, err = f.Execute(ctx, Scope{"bob", a.ProjectID}, "foreign", request, strings.NewReader("content"))
+	_, err = f.Upload(ctx, Scope{"bob", a.ProjectID}, "foreign", request, strings.NewReader("content"))
 	wantError(t, err, ErrNotFound)
 	if b.starts != 0 {
 		t.Fatal("unauthorized process")
 	}
-	_, err = f.Execute(ctx, a, "valid", request, strings.NewReader("content"))
+	_, err = f.Upload(ctx, a, "valid", request, strings.NewReader("content"))
 	must(t, err)
-	_, err = f.Execute(ctx, a, "valid", writeRequest("data", "changed"), strings.NewReader("changed"))
+	_, err = f.Upload(ctx, a, "valid", writeRequest("data", "changed"), strings.NewReader("changed"))
 	wantError(t, err, ErrConflict)
 	var out bytes.Buffer
 	capture, err := f.Capture(ctx, a, "data")
@@ -198,7 +198,7 @@ func TestFilesActivityRejectsStalePauseAndDoesNotWakeFromWatch(t *testing.T) {
 	f, a, _ := fileFixture(t)
 	snapshot, err := f.Store.ArmIdle(ctx, a, time.Nanosecond)
 	must(t, err)
-	o, fresh, err := f.Store.reserveFile(ctx, a, "crashed-before-start", writeRequest("x", "hello"))
+	o, fresh, err := f.Store.reserveFile(ctx, a, "crashed-before-start", ActionFilesUpload, writeRequest("x", "hello"))
 	must(t, err)
 	if !fresh {
 		t.Fatal("not admitted")

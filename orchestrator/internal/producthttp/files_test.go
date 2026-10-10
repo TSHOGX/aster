@@ -2,7 +2,9 @@ package producthttp
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"harness-platform/orchestrator/internal/producttest"
 	"net/http"
 	"net/http/httptest"
@@ -105,5 +107,59 @@ func TestFileHTTPBoundaryAndUnknownOutcome(t *testing.T) {
 	actor = "bob"
 	if got = request("GET", "/api/projects/files/files/operations/mkdir", "", "http://app"); got.Code != 404 {
 		t.Fatal(got.Code)
+	}
+}
+
+func TestFileHTTPActionsIgnoreForgedHeaders(t *testing.T) {
+	store, err := product.Open(ctx, filepath.Join(t.TempDir(), "file-authority.db"))
+	must(t, err)
+	h := harnessForStore(t, store)
+	owner, err := store.BootstrapAccount(ctx, "owner", "owner-password-before", identitySeed(t))
+	must(t, err)
+	h.setActor(owner.ID)
+	h.terminal(t, "files", "shell")
+	_, token, err := store.Authenticate(ctx, "owner", "owner-password-before")
+	must(t, err)
+	policies, err := store.Policies(ctx, token, "", 50)
+	must(t, err)
+	policy := policies.Policies[0]
+	for _, action := range []product.ProductAction{product.ActionFilesUpload, product.ActionFilesExport, product.ActionFilesManage} {
+		policy.Statements[action] = product.PolicyDeny
+	}
+	_, err = store.SavePolicy(ctx, token, policy.ID, product.PolicyChange{RequestID: "deny-file-actions", ExpectedRevision: policy.Revision, Statements: &policy.Statements})
+	must(t, err)
+	backend := &rejectFileBackend{}
+	files := &product.Files{Store: store, Lifecycle: h.lifecycle, Backend: backend, Profile: testProfile()}
+	defer files.Close()
+	api := &Server{Store: store, Files: files, Lifecycle: h.lifecycle, Auth: AuthenticatorFunc(func(*http.Request) (string, error) { return owner.ID, nil })}
+	defer api.Close()
+	handler := api.Handler()
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://app/api/projects/files/files"+path, strings.NewReader(body))
+		req.Header.Set("Origin", "http://app")
+		req.Header.Set("Idempotency-Key", "write")
+		req.Header.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256.Sum256([]byte(body))))
+		req.Header.Set("X-File-Action", "files.edit")
+		req.Header.Set("X-Product-Action", "files.read")
+		result := httptest.NewRecorder()
+		handler.ServeHTTP(result, req)
+		return result
+	}
+	for _, test := range []struct{ method, path, body string }{
+		{"PUT", "/content?path=file.txt", "bytes"},
+		{"GET", "/download?path=file.txt", ""},
+		{"POST", "", `{"id":"mkdir","operation":"mkdir","path":"folder"}`},
+	} {
+		result := request(test.method, test.path, test.body)
+		if result.Code != 403 {
+			t.Fatal(test, result.Code, result.Body.String())
+		}
+	}
+	if backend.calls != 0 {
+		t.Fatal("denied operation reached substrate", backend.calls)
+	}
+	result := request("PUT", "/editor-content?path=file.txt", "bytes")
+	if result.Code != 409 || !strings.Contains(result.Body.String(), `"state":"unknown"`) || backend.calls != 1 {
+		t.Fatal("editor grant did not admit bounded mutation", result.Code, result.Body.String(), backend.calls)
 	}
 }

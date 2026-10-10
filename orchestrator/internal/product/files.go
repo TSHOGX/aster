@@ -22,6 +22,7 @@ var ErrFileOperationFailed = errors.New("file operation failed")
 var ErrFileOutcomeUnknown = errors.New("file operation outcome unknown; inspect workspace before a new operation")
 
 type FileOperation struct {
+	Action      ProductAction            `json:"action"`
 	ID          string                   `json:"id"`
 	ProjectID   string                   `json:"project_id"`
 	Request     projectfiles.Request     `json:"request"`
@@ -35,7 +36,7 @@ type FileOperation struct {
 
 func fileOperation(ctx context.Context, q queryer, id string) (o FileOperation, err error) {
 	var raw string
-	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error,volume_id,staging_path FROM file_operations WHERE id=?`, id).Scan(&o.ID, &o.ProjectID, &raw, &o.Reference.StoreID, &o.Reference.SandboxID, &o.Reference.Epoch, &o.Reference.Handle, &o.State, &o.Settled, &o.Error, &o.VolumeID, &o.StagingPath))
+	err = missing(q.QueryRowContext(ctx, `SELECT id,project_id,request,store_id,sandbox_id,epoch,handle,state,settled,error,volume_id,staging_path,action FROM file_operations WHERE id=?`, id).Scan(&o.ID, &o.ProjectID, &raw, &o.Reference.StoreID, &o.Reference.SandboxID, &o.Reference.Epoch, &o.Reference.Handle, &o.State, &o.Settled, &o.Error, &o.VolumeID, &o.StagingPath, &o.Action))
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &o.Request)
 	}
@@ -49,13 +50,16 @@ func (s *Store) FileOperation(ctx context.Context, scope Scope, id string) (File
 	if err == nil && o.ProjectID != scope.ProjectID {
 		err = ErrNotFound
 	}
+	if err == nil {
+		err = activeAccount(ctx, s.reader, scope.Actor)
+	}
 	return o, err
 }
-func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, r projectfiles.Request) (FileOperation, bool, error) {
-	return s.reserveFileKind(ctx, scope, id, r, false)
+func (s *Store) reserveFile(ctx context.Context, scope Scope, id string, action ProductAction, r projectfiles.Request) (FileOperation, bool, error) {
+	return s.reserveFileKind(ctx, scope, id, action, r, false)
 }
-func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, r projectfiles.Request, volume bool) (o FileOperation, fresh bool, err error) {
-	if !validID(id) || r.Validate() != nil {
+func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, action ProductAction, r projectfiles.Request, volume bool) (o FileOperation, fresh bool, err error) {
+	if !validID(id) || !validFileMutation(action, r) {
 		return o, false, ErrInvalid
 	}
 	raw, _ := json.Marshal(r)
@@ -65,12 +69,18 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, r p
 			return e
 		}
 		old, e := fileOperation(ctx, tx, id)
+		if e == nil && old.ProjectID != scope.ProjectID {
+			return ErrNotFound
+		}
+		if e != nil && !errors.Is(e, ErrNotFound) {
+			return e
+		}
+		if err := authorizeAction(ctx, tx, scope.Actor, action); err != nil {
+			return err
+		}
 		if e == nil {
-			if old.ProjectID != scope.ProjectID {
-				return ErrNotFound
-			}
 			saved, _ := json.Marshal(old.Request)
-			if string(saved) != string(raw) {
+			if old.Action != action || string(saved) != string(raw) {
 				return ErrConflict
 			}
 			o = old
@@ -86,7 +96,7 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, r p
 		if e != nil {
 			return e
 		}
-		o = FileOperation{ID: id, ProjectID: scope.ProjectID, Request: r, State: "running", Reference: sandbox.ProcessReference{StoreID: resources.Reference.StoreID, SandboxID: resources.Reference.SandboxID, Epoch: resources.Reference.Epoch, Handle: "file-" + uuid.NewString()}}
+		o = FileOperation{Action: action, ID: id, ProjectID: scope.ProjectID, Request: r, State: "running", Reference: sandbox.ProcessReference{StoreID: resources.Reference.StoreID, SandboxID: resources.Reference.SandboxID, Epoch: resources.Reference.Epoch, Handle: "file-" + uuid.NewString()}}
 		kind := "files"
 		if p.State != "active" {
 			var pending int
@@ -107,7 +117,7 @@ func (s *Store) reserveFileKind(ctx context.Context, scope Scope, id string, r p
 			kind = "files"
 		}
 		now := s.timestamp()
-		if _, e = tx.ExecContext(ctx, `INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,created_at,updated_at,volume_id,staging_path) VALUES(?,?,?,?,?,?,?,'running',?,?,?,?)`, id, scope.ProjectID, string(raw), o.Reference.StoreID, o.Reference.SandboxID, o.Reference.Epoch, o.Reference.Handle, now, now, o.VolumeID, o.StagingPath); e != nil {
+		if _, e = tx.ExecContext(ctx, `INSERT INTO file_operations(id,project_id,request,store_id,sandbox_id,epoch,handle,state,created_at,updated_at,volume_id,staging_path,action) VALUES(?,?,?,?,?,?,?,'running',?,?,?,?,?)`, id, scope.ProjectID, string(raw), o.Reference.StoreID, o.Reference.SandboxID, o.Reference.Epoch, o.Reference.Handle, now, now, o.VolumeID, o.StagingPath, action); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, `INSERT INTO project_activity(id,project_id,kind,state,detail,created_at,updated_at) VALUES(?,?,?,'active',?,?,?)`, "file:"+id, scope.ProjectID, kind, r.Operation+" "+r.Path, now, now); e != nil {
@@ -184,18 +194,28 @@ type Files struct {
 	previews         *PreviewSnapshots
 }
 
-func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfiles.Request, input io.Reader) (FileOperation, error) {
-	if r.Validate() != nil || !validID(id) {
+func (f *Files) execute(ctx context.Context, scope Scope, id string, action ProductAction, r projectfiles.Request, input io.Reader) (FileOperation, error) {
+	if !validFileMutation(action, r) || !validID(id) {
 		return FileOperation{}, ErrInvalid
 	}
 	if _, err := ownedProject(ctx, f.Store.reader, scope); err != nil {
 		return FileOperation{}, err
 	}
 	// Return an old outcome without waking a paused Project or dispatching again.
-	if old, err := f.Store.FileOperation(ctx, scope, id); err == nil {
+	old, err := fileOperation(ctx, f.Store.reader, id)
+	if err == nil && old.ProjectID != scope.ProjectID {
+		return FileOperation{}, ErrNotFound
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return FileOperation{}, err
+	}
+	if err := authorizeAction(ctx, f.Store.reader, scope.Actor, action); err != nil {
+		return FileOperation{}, err
+	}
+	if err == nil {
 		a, _ := json.Marshal(old.Request)
 		b, _ := json.Marshal(r)
-		if string(a) != string(b) {
+		if old.Action != action || string(a) != string(b) {
 			return old, ErrConflict
 		}
 		return old, fileResult(old)
@@ -205,7 +225,7 @@ func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfi
 	if p, e := ownedProject(ctx, f.Store.reader, scope); e != nil {
 		return FileOperation{}, e
 	} else if p.State == "paused" || p.State == "created" {
-		return f.executeVolume(ctx, scope, id, r, input)
+		return f.executeVolume(ctx, scope, id, action, r, input)
 	}
 	if err := f.Lifecycle.EnsureConfiguredActive(ctx, scope, f.Profile); err != nil {
 		return FileOperation{}, err
@@ -215,7 +235,7 @@ func (f *Files) Execute(ctx context.Context, scope Scope, id string, r projectfi
 		f.mu.Unlock()
 		return FileOperation{}, ErrCapacity
 	}
-	o, fresh, err := f.Store.reserveFile(ctx, scope, id, r)
+	o, fresh, err := f.Store.reserveFile(ctx, scope, id, action, r)
 	if err == nil && fresh {
 		if f.active == nil {
 			f.active = map[string]bool{}
@@ -478,9 +498,16 @@ func (f *Files) recover(ctx context.Context, o FileOperation) error {
 // bounded inventory on any event, gap, reset or disconnect. A paused Project is
 // returned as pending and is never resumed by an observer.
 func (f *Files) Watch(ctx context.Context, scope Scope, after uint64) (sandbox.FileWatch, error) {
+	if _, err := projectAction(ctx, f.Store.reader, scope, ActionFilesList); err != nil {
+		return nil, err
+	}
 	r, err := f.Lifecycle.ActiveResources(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
-	return f.Backend.WatchWorkspace(ctx, r.Reference, after)
+	watch, err := f.Backend.WatchWorkspace(ctx, r.Reference, after)
+	if err != nil {
+		return nil, err
+	}
+	return &authorizedFileWatch{FileWatch: watch, ctx: ctx, store: f.Store, scope: scope}, nil
 }

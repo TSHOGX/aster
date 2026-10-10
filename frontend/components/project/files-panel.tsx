@@ -31,6 +31,8 @@ import {
   command,
   encode,
   fileURL,
+  fileDownloadURL,
+  saveEditorFile,
   newID,
   projectURL,
   readPreview,
@@ -62,6 +64,7 @@ import {
   type DirectoryWindow as Directory,
   type TreeRow,
 } from "@/lib/directory-window";
+import { useCapabilities } from "./capability-provider";
 export function FilesPanel({
   project,
   selected,
@@ -95,6 +98,8 @@ export function FilesPanel({
     () => openDirectories(savedDirectories),
     [savedDirectories],
   );
+  const can = useCapabilities();
+  const canList = can("files.list"), canRead = can("files.read"), canExport = canRead && can("files.export"), canUpload = can("files.upload"), canEdit = can("files.edit"), canManage = can("files.manage");
   const filesAvailable = ["created", "active", "paused"].includes(project.state);
   const resources = useResources();
   const realtime = useRealtime();
@@ -208,7 +213,7 @@ export function FilesPanel({
     } finally { run.busy = false; }
   }, [resources, project.id]);
   useEffect(() => {
-    if (!query || !visible || !filesAvailable) return;
+    if (!query || !visible || !filesAvailable || !canList) return;
     const abort = new AbortController();
     const run = {
       job: new WorkspaceFileSearch(query, (path, after, signal) => readDirectory(`${base}?path=${encode(path)}&after=${encode(after)}&limit=100`, signal)),
@@ -222,7 +227,7 @@ export function FilesPanel({
       run.job.dispose();
       if (searchRun.current === run) searchRun.current = null;
     };
-  }, [query, visible, filesAvailable, base, readDirectory, nextSearchPage, searchRevision]);
+  }, [query, visible, filesAvailable, canList, base, readDirectory, nextSearchPage, searchRevision]);
   useEffect(() => resources.pin(treeKey), [resources, treeKey]);
   useEffect(() => {
     resources.put(treeKey, tree);
@@ -233,6 +238,7 @@ export function FilesPanel({
       after = "",
       seek?: { name: string; mode: "after" | "around" },
     ): Promise<FilePage | undefined> {
+      if (!canList) return;
       if (seek && treeRef.current[path]?.entries.some(entry => entry.name === seek.name))
         return treeRef.current[path];
       const demand = seek ? `${seek.mode}:${seek.name}` : after;
@@ -350,7 +356,7 @@ export function FilesPanel({
           delete serial.current[path];
       }
     },
-    [base, readDirectory, tr],
+    [base, readDirectory, tr, canList],
   );
   const dirsKey = directories.join("\n");
   useEffect(() => {
@@ -370,10 +376,10 @@ export function FilesPanel({
         delete serial.current[path];
   }, [dirsKey]);
   useEffect(() => {
-    if (!visible || !filesAvailable) return;
+    if (!visible || !filesAvailable || !canList) return;
     for (const d of new Set(["", ...dirsKey.split("\n")]))
       if (!treeRef.current[d]) void load(d);
-  }, [visible, filesAvailable, dirsKey, load]);
+  }, [visible, filesAvailable, canList, dirsKey, load]);
   const validateSelected = useCallback(async () => {
     const path = selectedRef.current;
     if (!path) return true;
@@ -419,7 +425,7 @@ export function FilesPanel({
     }
   }, [resources, project.id, tr]);
   useEffect(() => {
-    if (!visible || !filesAvailable) return;
+    if (!visible || !filesAvailable || !canList) return;
     let live = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let healthTimer: ReturnType<typeof setTimeout> | undefined;
@@ -539,6 +545,7 @@ export function FilesPanel({
     validateSelected,
     visible,
     filesAvailable,
+    canList,
     project.id,
     resources,
     realtime,
@@ -546,7 +553,7 @@ export function FilesPanel({
   // A deep link reads only bounded ancestor pages; it never scans an entire
   // directory to locate a name. The selected file remains independently readable.
   useEffect(() => {
-    if (!selected || !visible || !filesAvailable || query) return;
+    if (!selected || !visible || !filesAvailable || !canList || query) return;
     let gone = false;
     const parts = selected.split("/");
     const parents: string[] = [];
@@ -576,7 +583,7 @@ export function FilesPanel({
     };
     // Layout preference writes do not create another reveal demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, visible, load, filesAvailable, query]);
+  }, [selected, visible, load, filesAvailable, canList, query]);
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -600,7 +607,7 @@ export function FilesPanel({
     let savedCurrentDraft = false;
     const success = await act(async () => {
       const blob = new Blob([submitted]);
-      await upload(project.id, selected, blob);
+      await saveEditorFile(project.id, selected, blob);
       rememberPreview(
         resources,
         {
@@ -702,20 +709,20 @@ export function FilesPanel({
   const treeActions = (dir: string) => [
     {
       label: tr("Upload"),
-      disabled: busy,
+      disabled: busy || !canUpload,
       action: () => {
         uploadDirectory.current = dir;
         fileInput.current?.click();
       },
     },
-    { label: tr("New folder"), disabled: busy, action: () => void mkdir(dir) },
+    { label: tr("New folder"), disabled: busy || !canManage, action: () => void mkdir(dir) },
     { label: tr("Refresh"), action: refresh },
   ];
   const entryActions = (path: string, entry: FileEntry) => [
     ...(entry.kind === "directory" ? treeActions(path) : []),
     {
       label: tr("Move"),
-      disabled: busy,
+      disabled: busy || !canManage,
       action: () =>
         void (async () => {
           if (selected === path && !(await canLeave())) return;
@@ -743,7 +750,7 @@ export function FilesPanel({
     {
       label: tr("Delete"),
       danger: true,
-      disabled: busy,
+      disabled: busy || !canManage,
       action: () =>
         void (async () => {
           if (selected === path && !(await canLeave())) return;
@@ -853,16 +860,17 @@ export function FilesPanel({
               items={[
                 {
                   label: tr("Download"),
+                  disabled: !canExport,
                   action: () => {
                     const a = document.createElement("a");
-                    a.href = fileURL(project.id, selected);
+                    a.href = fileDownloadURL(project.id, selected);
                     a.download = selected.split("/").pop() || "";
                     a.click();
                   },
                 },
                 ...(editable && edit === null ? [{
                   label: tr("Edit text"),
-                  disabled: busy || !filesAvailable,
+                  disabled: busy || !filesAvailable || !canEdit,
                   action: editFile,
                 }] : []),
                 { label: tr("Refresh"), action: refresh },
@@ -976,7 +984,7 @@ export function FilesPanel({
                   </button>
                   <button
                     className="primary"
-                    disabled={busy}
+                    disabled={busy || !canEdit}
                     onClick={() => void save()}
                   >
                     {tr("Save file")}
@@ -993,7 +1001,7 @@ export function FilesPanel({
                   />
                 </div>
               </>
-            ) : (
+            ) : !canRead ? <p role="status">{tr("File read permission is required.")}</p> : (
               <FilePreview
                 key={`${project.id}:${selected}`}
                 project={project.id}
@@ -1002,10 +1010,11 @@ export function FilesPanel({
                 onCapabilities={onCapabilities}
                 path={selected}
                 href={fileURL(project.id, selected)}
+                downloadHref={canExport ? fileDownloadURL(project.id, selected) : undefined}
               />
             )}
           </section>
-          {treeOpen && (
+          {treeOpen && canList && (
             <>
               <Splitter
                 label={tr("Resize file tree")}

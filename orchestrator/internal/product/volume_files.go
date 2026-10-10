@@ -184,6 +184,9 @@ func (w *WorkspaceReader) validateVolume(ctx context.Context, scope Scope, r Res
 	return nil
 }
 func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resources, query projectfiles.DirectoryQuery) (projectfiles.Page, error) {
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesList); err != nil {
+		return projectfiles.Page{}, err
+	}
 	path, cursor, limit := query.Path, query.Cursor, query.Limit
 	if r.WorkspaceVolume == "" {
 		if path == "" && cursor == "" {
@@ -290,6 +293,9 @@ func (w *WorkspaceReader) listPaused(ctx context.Context, scope Scope, r Resourc
 	if err = w.validateVolume(ctx, scope, r); err != nil {
 		return projectfiles.Page{}, err
 	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesList); err != nil {
+		return projectfiles.Page{}, err
+	}
 	return page, nil
 }
 func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Resources, path string, maxBytes int64, unlock, release func()) (out *CapturedFile, result error) {
@@ -300,6 +306,9 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 			free()
 		}
 	}()
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
+		return nil, err
+	}
 	if r.WorkspaceVolume == "" {
 		return nil, ErrNotFound
 	}
@@ -355,6 +364,9 @@ func (w *WorkspaceReader) capturePaused(ctx context.Context, scope Scope, r Reso
 		return nil, projectfiles.ErrChangedDuringRead
 	}
 	if err = w.validateVolume(ctx, scope, r); err != nil {
+		return nil, err
+	}
+	if _, err := projectAction(ctx, w.Store.reader, scope, ActionFilesRead); err != nil {
 		return nil, err
 	}
 	captured, err := os.Open(fmt.Sprintf("/proc/self/fd/%d", file.Fd()))

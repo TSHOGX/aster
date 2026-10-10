@@ -7,7 +7,7 @@ import type { HtmlPreviewModel } from "@/lib/html-preview-model";
 
 const HTML_POLICY = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
-export function HTMLPreview({ text, path, href }: { text: string; path: string; href: string }) {
+export function HTMLPreview({ text, path, href }: { text: string; path: string; href?: string }) {
   const tr = useT();
   const [model, setModel] = useState<HtmlPreviewModel | null>(null);
   const [failed, setFailed] = useState(false);
@@ -61,7 +61,7 @@ export function HTMLPreview({ text, path, href }: { text: string; path: string; 
   if (!model) return <p className="notice">{tr("Preparing preview…")}</p>;
   const scriptNotice = model.scripts > 0 && <p className="preview-reading-hint" role="status">
     {tr("Scripts are disabled in this preview. Download the original HTML to interact with generated charts.")} {" "}
-    <a href={href} download>{tr("Download file")}</a>
+    {href && <a href={href} download>{tr("Download file")}</a>}
   </p>;
   if (model.simplified) return <div className="html-simplified" role="region" aria-label={`${tr("Simplified HTML preview")} ${path}`}>
     <div className="preview-reading-bar"><strong>{tr("Simplified HTML preview")}</strong><span>{tr("Large page · content loads as you read")}</span></div>

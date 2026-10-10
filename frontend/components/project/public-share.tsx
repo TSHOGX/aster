@@ -95,7 +95,7 @@ function ShareContent({ token }: { token: string }) {
             </a>
             <button onClick={() => setSelected("")}>{tr("Close file")}</button>
           </header>
-          <FilePreview key={selected} project={`shared:${token}`} path={selected} href={url} />
+          <FilePreview key={selected} project={`shared:${token}`} path={selected} href={url} downloadHref={url} />
         </section>
       )}
     </main>

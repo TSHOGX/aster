@@ -67,7 +67,7 @@ func (f *Files) PreviewSnapshots() *PreviewSnapshots {
 	return f.previews
 }
 func (s *PreviewSnapshots) authorize(ctx context.Context, scope Scope) error {
-	p, err := ownedProject(ctx, s.files.Store.reader, scope)
+	p, err := projectAction(ctx, s.files.Store.reader, scope, ActionFilesRead)
 	if err != nil {
 		return err
 	}
@@ -207,6 +207,13 @@ func (s *PreviewSnapshots) expire(id string) {
 // Acquire returns a request-local cursor over one immutable inode. Concurrent
 // ranges never share offsets. A request must release its reference, even on abort.
 func (s *PreviewSnapshots) Acquire(ctx context.Context, scope Scope, id string) (PreviewSnapshot, *io.SectionReader, func(), error) {
+	s.mu.Lock()
+	foreign := s.leases[id] != nil && s.leases[id].scope != scope
+	s.mu.Unlock()
+	if foreign {
+		return PreviewSnapshot{}, nil, nil, ErrNotFound
+	}
+
 	if err := s.authorize(ctx, scope); err != nil {
 		return PreviewSnapshot{}, nil, nil, err
 	}
@@ -229,7 +236,7 @@ func (s *PreviewSnapshots) Acquire(ctx context.Context, scope Scope, id string) 
 	return lease.PreviewSnapshot, io.NewSectionReader(c.file, 0, c.size), release, nil
 }
 func (s *PreviewSnapshots) Release(ctx context.Context, scope Scope, id string) error {
-	if err := s.authorize(ctx, scope); err != nil {
+	if _, err := activeOwnedProject(ctx, s.files.Store.reader, scope); err != nil {
 		return err
 	}
 	s.mu.Lock()

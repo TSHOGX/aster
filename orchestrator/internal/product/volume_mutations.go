@@ -103,7 +103,7 @@ func volumeLeaf(ctx context.Context, backend sandbox.VolumeReads, ref sandbox.Vo
 	}
 	return entry, nil
 }
-func (f *Files) executeVolume(ctx context.Context, scope Scope, id string, request projectfiles.Request, input io.Reader) (FileOperation, error) {
+func (f *Files) executeVolume(ctx context.Context, scope Scope, id string, action ProductAction, request projectfiles.Request, input io.Reader) (FileOperation, error) {
 	w := f.workspaceReader()
 	_, runctx, _, release, paused, err := w.pausedVolume(ctx, scope)
 	if err != nil {
@@ -123,7 +123,7 @@ func (f *Files) executeVolume(ctx context.Context, scope Scope, id string, reque
 		f.mu.Unlock()
 		return FileOperation{}, ErrCapacity
 	}
-	o, fresh, err := f.Store.reserveFileKind(runctx, scope, id, request, true)
+	o, fresh, err := f.Store.reserveFileKind(runctx, scope, id, action, request, true)
 	if err == nil && fresh {
 		if f.active == nil {
 			f.active = map[string]bool{}

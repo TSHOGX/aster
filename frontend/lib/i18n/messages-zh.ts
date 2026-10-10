@@ -129,6 +129,7 @@ export const ZH: Record<MessageKey, string> = {
   "The Office viewer could not load. Retry or download the file.": "Office 预览器加载失败。请重试或下载文件。",
   "Preview unavailable": "暂时无法预览",
   "This preview expired. Retry to read the current file.": "此预览已过期。请重试以读取当前文件。",
+  "File read permission is required.": "需要文件读取权限。",
   "Download file": "下载文件",
   "Preview files up to {size}": "支持预览最大 {size} 的文件",
   "File too large to preview": "文件超出预览大小上限",

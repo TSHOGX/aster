@@ -47,12 +47,18 @@ func (b captureBody) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
-func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) readFile(w http.ResponseWriter, r *http.Request)     { s.serveFile(w, r, false) }
+func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) { s.serveFile(w, r, true) }
+func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, download bool) {
 	if !s.filesAvailable(w) {
 		return
 	}
 	name := r.URL.Query().Get("path")
-	capture, err := s.Files.Capture(r.Context(), s.scope(r), name)
+	captureFile := s.Files.Capture
+	if download {
+		captureFile = s.Files.Download
+	}
+	capture, err := captureFile(r.Context(), s.scope(r), name)
 	if err != nil {
 		fail(w, err)
 		return
@@ -73,7 +79,9 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	http.ServeContent(w, r, path.Base(name), time.Time{}, captureBody{CapturedFile: capture, controller: controller})
 }
-func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) { s.putFile(w, r, false) }
+func (s *Server) editFile(w http.ResponseWriter, r *http.Request)  { s.putFile(w, r, true) }
+func (s *Server) putFile(w http.ResponseWriter, r *http.Request, editor bool) {
 	if !s.filesAvailable(w) {
 		return
 	}
@@ -83,7 +91,11 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	}
 	request := projectfiles.Request{Operation: "write", Path: r.URL.Query().Get("path"), Size: r.ContentLength, Digest: r.Header.Get("X-Content-SHA256")}
 	body := http.MaxBytesReader(w, r.Body, projectfiles.MaxTransfer)
-	o, err := s.Files.Execute(r.Context(), s.scope(r), r.Header.Get("Idempotency-Key"), request, body)
+	write := s.Files.Upload
+	if editor {
+		write = s.Files.Edit
+	}
+	o, err := write(r.Context(), s.scope(r), r.Header.Get("Idempotency-Key"), request, body)
 	s.fileResult(w, o, err)
 }
 func (s *Server) mutateFile(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +115,7 @@ func (s *Server) mutateFile(w http.ResponseWriter, r *http.Request) {
 		fail(w, product.ErrInvalid)
 		return
 	}
-	o, err := s.Files.Execute(r.Context(), s.scope(r), body.ID, projectfiles.Request{Operation: body.Operation, Path: body.Path, Destination: body.Destination}, nil)
+	o, err := s.Files.Manage(r.Context(), s.scope(r), body.ID, projectfiles.Request{Operation: body.Operation, Path: body.Path, Destination: body.Destination})
 	s.fileResult(w, o, err)
 }
 func (s *Server) fileResult(w http.ResponseWriter, o product.FileOperation, err error) {

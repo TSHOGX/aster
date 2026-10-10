@@ -38,7 +38,7 @@ func TestReleaseFenceBlocksWorkButPreservesStopAndIngest(t *testing.T) {
 	wantError(t, err, ErrDraining)
 	_, err = s.reserveTerminal(ctx, scope, "new-terminal", 24, 80)
 	wantError(t, err, ErrDraining)
-	_, _, err = s.reserveFile(ctx, scope, "new-file", writeRequest("new.txt", "new"))
+	_, _, err = s.reserveFile(ctx, scope, "new-file", ActionFilesUpload, writeRequest("new.txt", "new"))
 	wantError(t, err, ErrDraining)
 	// Genuine evidence and Stop remain writable while new execution is fenced.
 	_, err = s.IngestAgent(ctx, i, record(i, c, 1, "command.applied", `{"success":true}`))

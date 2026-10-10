@@ -1,8 +1,9 @@
 import { type Page } from "@playwright/test";
+import { productActions, type ProductAction } from "../../../web/capabilities";
 import { ConversationFixture } from "./conversation-fixture";
 export async function workspaceFixture(
   page: Page,
-  options: { lostFirstReply?: boolean; many?: boolean; projectState?: string } = {},
+  options: { lostFirstReply?: boolean; many?: boolean; projectState?: string; deniedActions?: ProductAction[] } = {},
 ) {
   // The standalone UI fixture supplies the metadata normally set by the Go edge.
   await page.setExtraHTTPHeaders({ "X-Project-Account-ID": "researcher" });
@@ -220,6 +221,7 @@ export async function workspaceFixture(
         contentType: "application/json",
         body: JSON.stringify(data),
       });
+    if (path === "/api/me/capabilities") return json({account_id:identity.id, account_status:"active", management_role:identity.role, revision:1, actions:Object.fromEntries(productActions.map(action => [action, {allowed:!options.deniedActions?.includes(action)}]))});
     if (path === "/api/auth/session")
       return signedIn ? json(identity) : json({ error: "login required" }, 401);
     if (path === "/api/auth/logout" || path === "/api/me/sessions") { signedIn = false; return route.fulfill({status:204}); }
@@ -368,7 +370,7 @@ export async function workspaceFixture(
     }
     if (kind === "files") {
       const p = url.searchParams.get("path") || "";
-      if (id === "content") {
+      if (id === "content" || id === "editor-content" || id === "download") {
         if (method === "PUT") {
           files[p] = req.postData() || "";
           return json({ state: "succeeded" });

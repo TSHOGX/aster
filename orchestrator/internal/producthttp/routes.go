@@ -69,6 +69,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/projects/{project}/files/snapshots/{snapshot}", s.releasePreviewSnapshot)
 	mux.HandleFunc("GET /api/projects/{project}/files/content", s.readFile)
 	mux.HandleFunc("PUT /api/projects/{project}/files/content", s.writeFile)
+	mux.HandleFunc("PUT /api/projects/{project}/files/editor-content", s.editFile)
+	mux.HandleFunc("GET /api/projects/{project}/files/download", s.downloadFile)
 	mux.HandleFunc("POST /api/projects/{project}/files", s.mutateFile)
 	mux.HandleFunc("GET /api/projects/{project}/files/operations/{operation}", s.fileOperation)
 	mux.HandleFunc("GET /api/projects", s.listProjects)

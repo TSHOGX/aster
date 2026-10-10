@@ -12,7 +12,7 @@ export function previewSize(bytes: number) {
 
 export function PreviewStatus({ path, href, title, description, loading = false, size, progress, onCancel, onRetry, maxBytes=PREVIEW_LIMITS.blobBytes }: {
   path: string;
-  href: string;
+  href?: string;
   title: string;
   description: string;
   loading?: boolean;
@@ -42,7 +42,7 @@ export function PreviewStatus({ path, href, title, description, loading = false,
         <span>{progress && progress.received > 0 ? `${previewSize(progress.received)}${progress.total ? ` / ${previewSize(progress.total)}` : ""}` : tr("Preparing preview…")}</span>
       </div>}
       <div className="preview-status-actions">
-        <a className={loading ? "" : "preview-action-primary"} href={href} download aria-label={`${tr("Download")} ${path}`}><Download size={16} aria-hidden="true" />{tr("Download file")}</a>
+        {href && <a className={loading ? "" : "preview-action-primary"} href={href} download aria-label={`${tr("Download")} ${path}`}><Download size={16} aria-hidden="true" />{tr("Download file")}</a>}
         {onCancel && <button onClick={onCancel}><X size={16} aria-hidden="true" />{tr("Cancel preview")}</button>}
         {onRetry && <button onClick={onRetry}><RotateCcw size={16} aria-hidden="true" />{tr("Retry")}</button>}
       </div>

@@ -7,7 +7,7 @@ import { useT } from "@/lib/i18n";
 import { CodeView } from "@/components/workbench/viewers/code-view";
 import { HTMLPreview } from "./html-preview";
 
-export function TextPreview({path, text, href}: {path: string; text: string; href: string}) {
+export function TextPreview({path, text, href}: {path: string; text: string; href?: string}) {
   const kind = classifyArtifact(path);
   if (kind.kind === "html") return <HTMLPreview text={text} path={path} href={href} />;
   if (kind.kind === "table") return <DelimitedPreview path={path} text={text} delimiter={kind.delimiter ?? ","} />;

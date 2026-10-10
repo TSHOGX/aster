@@ -1500,7 +1500,7 @@ test("saving a file preserves edits typed while the upload is pending", async ({
     release = resolve;
   });
   let uploading = false;
-  await page.route("**/files/content?*", async (route) => {
+  await page.route("**/files/editor-content?*", async (route) => {
     if (route.request().method() === "PUT") {
       uploading = true;
       await gate;

@@ -48,7 +48,7 @@ settings and an incorrect current password return 422; an expired login returns
 | `…/sessions/{session}/view/*` | Bounded durable conversation views, changes, details and control head |
 | `…/terminals` and `…/terminals/{terminal}` | Retained PTY metadata and retirement |
 | `…/terminals/{terminal}/start`, `/stop`, `/attach` | Start, stop and WebSocket observation |
-| `…/files`, `/files/content`, `/files/operations/{operation}` | Directory pages, mutations, streaming content and outcome inspection |
+| `…/files`, `/files/content`, `/files/editor-content`, `/files/download`, `/files/operations/{operation}` | Directory pages, mutations, preview bytes, explicit export and outcome inspection |
 | `…/files/snapshots`, `/files/snapshots/{snapshot}/content`, `/files/snapshots/{snapshot}` | Acquire an immutable source lease, read/range its bytes, and release it |
 | `…/schedules`, `/schedules/{schedule}`, `/run`, `/runs` | Project schedules and their run ledger |
 | `…/sessions/{session}/readers` | Grant/revoke conversation readers |
@@ -97,9 +97,12 @@ and lifecycle behavior.
 Office visual previews use the existing authorized content endpoint. No Office
 job, window or copy API is required. See the [preview contract](file-preview/README.md).
 
-File content writes use `PUT …/files/content?path=RELATIVE_PATH`, a bounded
-Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase
-hexadecimal characters**. File-operation responses include `id`, `state`,
+File upload uses `PUT …/files/content?path=RELATIVE_PATH` with `files.upload`;
+editor saves use `PUT …/files/editor-content?path=RELATIVE_PATH` with `files.edit`.
+Both require a bounded Content-Length, `Idempotency-Key` and `X-Content-SHA256` containing **64 lowercase
+hexadecimal characters**. Directory mkdir/move/remove requires `files.manage`.
+The server selects the action from the route; headers cannot override it. Durable
+mutation IDs bind both payload and action. File-operation responses include `id`, `action`, `state`,
 `settled` and any error. Directory queries return frozen, bounded metadata pages. Their opaque `next`
 cursor binds Project, path and placement; expired/evicted cursors return 409
 `resync_required`. The browser rebuilds the loaded window on that response. Paths never select private
@@ -403,3 +406,11 @@ Terminal start/attach/input/keyboard-claim/resize require `terminals.use` indepe
 of `projects.read`. Revocation closes an existing attachment within the five-second
 connection target. It leaves the retained PTY alive; explicit owned termination,
 delete and exit settlement remain available through their reduction authority.
+
+Workspace listing requires `files.list`; preview/content and cached preview ranges
+require `files.read`. `GET …/files/download?path=RELATIVE_PATH` requires both
+`files.read` and `files.export`, with the same confinement, captures, byte ranges
+and transfer bounds as preview. Preview bytes remain copyable when export is
+denied. Frozen public shares retain their separate resource grant. Releasing an
+owned preview lease and inspecting a file-operation outcome remain available to
+an active owner after functional grants disappear.
