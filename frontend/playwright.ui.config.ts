@@ -30,11 +30,7 @@ export default defineConfig({
     // Large corpus rendering and CPU-throttled accessibility cases compete
     // heavily on a two-core runner. Run one alongside the lighter UI files.
     { name: "office", testMatch: officeTests, workers: 1 },
-    {
-      name: "ui",
-      testIgnore: ["realtime-idle.spec.ts", ...officeTests],
-      fullyParallel: !profiling,
-    },
+    { name: "ui", testIgnore: ["realtime-idle.spec.ts", ...officeTests] },
   ],
   use: {
     baseURL: "http://127.0.0.1:3107",

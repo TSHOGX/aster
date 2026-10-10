@@ -59,9 +59,6 @@ skipped. The large Office corpus and CPU-throttled accessibility files share a
 one-worker project so they do not compete with each other on two-core runners.
 Cross-browser Office corpus qualification retains one worker; scheduling controls
 can use the four-worker limit.
-Functional UI cases can run in parallel within a file, so a long file does not
-leave the other workers idle at the end of the suite. Their fixtures and browser
-contexts are independent; profiling keeps the original serial case execution.
 Setting any documented browser profiling/latency output variable selects one
 worker to avoid competing measurements. Playwright's `--workers` option can
 override either default for a controlled experiment.
