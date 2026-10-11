@@ -27,7 +27,8 @@ func (a *Application) platformEndpoint(ctx context.Context, scope product.Scope)
 	if err != nil {
 		return ""
 	}
-	if resources.Profile.TemplateID != a.Config.Template.ID || resources.Profile.ReleaseDigest != a.Config.Template.Digest || a.Config.Manifest.ScheduleProtocol != runtimerelease.ScheduleProtocol {
+	contract, err := a.Store.RetainedRuntime(ctx, resources.Profile)
+	if err != nil || contract.TemplateID != resources.Profile.TemplateID || contract.StoreID != resources.Profile.StoreID || contract.Reference.Digest != resources.Profile.ReleaseDigest || contract.Manifest.ScheduleProtocol != runtimerelease.ScheduleProtocol {
 		return ""
 	}
 	route, ok := resources.Profile.Reachability.Audience(gateway.Audience)

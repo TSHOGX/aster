@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	sdk "github.com/TSHOGX/khora/pkg/khora"
 	"harness-platform/orchestrator/internal/content"
 	"harness-platform/orchestrator/internal/edge"
 	"harness-platform/orchestrator/internal/product"
@@ -59,13 +58,11 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 			app.Close()
 		}
 	}()
-	prepared, err := prepareStartupRelease(cfg)
+	identity, err := InspectRelease(cfg)
 	if err != nil {
 		return app, err
 	}
-	cfg = prepared.config
-	app.Config = cfg
-	app.releaseIdentity = prepared.identity
+	app.releaseIdentity = identity
 	startup, done := context.WithTimeout(ctx, 2*time.Minute)
 	defer done()
 
@@ -77,22 +74,6 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		return app, err
 	}
 	app.Store = store
-	// A clean bootstrap has no persisted publication rows yet. In that one case
-	// consume the reviewed source trees once and persist their immutable revisions;
-	// restarts use those rows and do not reread or republish mutable paths.
-	if len(prepared.publications) == 0 && (cfg.Content.AgentConfig != "" || cfg.Content.SharedAssets != "") {
-		publications, listErr := store.ListContentPublications(startup, cfg.Engine.StoreID)
-		if listErr != nil {
-			return app, listErr
-		}
-		if len(publications) == 0 {
-			prepared, err = prepareRelease(cfg)
-			if err != nil {
-				return app, err
-			}
-			app.releaseIdentity = prepared.identity
-		}
-	}
 	if err := store.ConfigureNotificationPolicy(ctx, product.NotificationPolicy{
 		AgentRunOutcome:    cfg.Notifications.AgentRunOutcome,
 		ConversationShared: cfg.Notifications.ConversationShared,
@@ -110,27 +91,10 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 		return app, err
 	}
 	app.Backend = backend
-	client, err := sdk.New(engineConfig.Endpoint, sdk.WithHTTPClient(engineConfig.HTTPClient))
-	if err != nil {
-		return app, err
-	}
-	registered, err := client.Template(startup, cfg.Template.ID)
-	if err != nil {
-		return app, err
-	}
-	if registered.Manifest.Platform != "" && registered.Manifest.Platform != cfg.Manifest.Platform {
-		return app, errors.New("engine template platform differs from runtime release")
-	}
 	if err = store.ValidateReleasedBindings(startup, cfg.Engine.StoreID); err != nil {
 		return app, err
 	}
-	if err = store.RegisterSandbox(startup, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: cfg.Template.ID, Version: cfg.Template.Version, Digest: cfg.Template.Digest}, StoreID: cfg.Engine.StoreID, TemplateID: cfg.Template.ID, Manifest: cfg.Manifest}); err != nil {
-		return app, err
-	}
-	bindings, err := app.publishPrepared(startup, prepared.publications)
-	if err != nil {
-		return app, err
-	}
+	bindings := cfg.RuntimeBindings()
 	lifecycle := &product.Lifecycle{Store: store, Backend: backend, MaxProjects: cfg.Limits.Projects, VerifyRuntime: backend.VerifyRuntime}
 	app.Lifecycle = lifecycle
 	agents := product.NewAgents(ctx, store, lifecycle, backend, bindings, cfg.Limits.Agents)
@@ -211,27 +175,35 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (app *Application
 func (a *Application) server(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return a.ctx }}
 }
-func (a *Application) publish(ctx context.Context) (product.RuntimeBindings, error) {
-	sources, err := readPublications(a.Config)
+func (a *Application) publish(ctx context.Context, input Content) (product.RuntimeBindings, error) {
+	if input.VolumeBytes <= 0 || input.AgentConfig == "" && input.SharedAssets == "" {
+		return a.Config.RuntimeBindings(), product.ErrInvalid
+	}
+	for _, source := range []string{input.AgentConfig, input.SharedAssets} {
+		if source != "" && (!filepath.IsAbs(source) || source == "/") {
+			return a.Config.RuntimeBindings(), product.ErrInvalid
+		}
+	}
+	sources, err := readPublications(Config{Content: input})
 	if err != nil {
 		return a.Config.RuntimeBindings(), err
 	}
-	return a.publishPrepared(ctx, sources)
+	return a.publishPrepared(ctx, sources, input.VolumeBytes)
 }
-func (a *Application) publishPrepared(ctx context.Context, sources []preparedPublication) (product.RuntimeBindings, error) {
+func (a *Application) publishPrepared(ctx context.Context, sources []preparedPublication, capacity int64) (product.RuntimeBindings, error) {
 	a.publication.Lock()
 	defer a.publication.Unlock()
 	bindings := a.Config.RuntimeBindings()
 	publisher := content.Publisher{Repository: a.Store, Backend: a.Backend}
 	for _, source := range sources {
-		if _, err := publisher.Publish(ctx, source.purpose, source.revision, a.Config.Content.VolumeBytes); err != nil {
+		if _, err := publisher.Publish(ctx, source.purpose, source.revision, capacity); err != nil {
 			return bindings, err
 		}
 		role := "shared_assets"
 		if source.purpose == "config" {
 			role = "agent_config"
 		}
-		artifact := product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, StoreID: bindings.StoreID, PublicationPurpose: source.purpose, MinimumBytes: a.Config.Content.VolumeBytes, SourceCapacityBytes: a.Config.Content.VolumeBytes, Roles: []string{role}, Entries: source.revision.Entries}
+		artifact := product.BuiltinVolume{Reference: product.ArtifactReference{ID: role, Version: source.revision.Digest, Digest: source.revision.Digest}, StoreID: bindings.StoreID, PublicationPurpose: source.purpose, MinimumBytes: capacity, SourceCapacityBytes: capacity, Roles: []string{role}, Entries: source.revision.Entries}
 		if err := a.Store.RegisterBuiltinVolume(ctx, artifact); err != nil {
 			return bindings, err
 		}

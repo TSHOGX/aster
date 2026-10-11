@@ -57,10 +57,10 @@ func TestCandidateIdentityIsReadOnlyDeterministicAndContainsNoConfiguration(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.SchemaVersion != version || first.SchemaDigest != digest || first.RuntimeDigest != cfg.Template.Digest {
+	if first.SchemaVersion != version || first.SchemaDigest != digest {
 		t.Fatal(first)
 	}
-	for _, value := range []string{first.ExecutableDigest, first.CompatibilityDigest, first.ConfigurationDigest, first.ContentDigests["assets"]} {
+	for _, value := range []string{first.ExecutableDigest, first.CompatibilityDigest, first.ConfigurationDigest} {
 		if !content.ValidDigest(value) {
 			t.Fatal("identity missing measured digest", first)
 		}
@@ -74,48 +74,41 @@ func TestCandidateIdentityIsReadOnlyDeterministicAndContainsNoConfiguration(t *t
 
 }
 
-func TestCandidateCompatibilityTracksConfigurationAndReviewedBytes(t *testing.T) {
+func TestCandidateCompatibilitySeparatesBootstrapAndPublicationInputs(t *testing.T) {
 	cfg, file := releaseConfiguration(t)
-	prepared, err := prepareRelease(cfg)
+	original, err := InspectRelease(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := prepared.identity
-	cfg.Limits.Agents++
-	changed, err := InspectRelease(cfg)
+	changedCfg := cfg
+	changedCfg.Limits.Agents++
+	changed, err := InspectRelease(changedCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.CompatibilityDigest == original.CompatibilityDigest || changed.ConfigurationDigest == original.ConfigurationDigest {
-		t.Fatal("capacity/configuration change omitted from contract")
+	if changed.CompatibilityDigest == original.CompatibilityDigest {
+		t.Fatal("host bounds omitted")
 	}
-	cfg.Limits.Agents--
-	if err = os.WriteFile(file, []byte("changed reviewed fixture text"), 0600); err != nil {
+	if err = os.WriteFile(file, []byte("changed authored input"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err = os.Remove(cfg.Template.Manifest); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Template = Template{}
+	cfg.Content = Content{}
+	cfg.Project.CPUMillis = 0
+	cfg.Project.WorkspaceBytes = 0
+	cfg.Limits.MaxMountsPerProject = 0
 	changed, err = InspectRelease(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.CompatibilityDigest != original.CompatibilityDigest || changed.ContentDigests["assets"] == original.ContentDigests["assets"] {
-		t.Fatal("reviewed content measurement changed host compatibility")
+	if !reflect.DeepEqual(changed, original) {
+		t.Fatal("bootstrap inputs affected host identity", original, changed)
 	}
-	if changed.ConfigurationDigest != original.ConfigurationDigest {
-		t.Fatal("authored bytes are not separate from configuration")
-	}
-	if len(prepared.publications) != 1 || prepared.publications[0].revision.Digest != original.ContentDigests["assets"] {
-		t.Fatal("startup lost its measured publication revision")
-	}
-	// The publisher validates reads against this original revision. Startup does
-	// not reread and silently replace it with the source tree's newer identity.
-	if prepared.publications[0].revision.Digest == changed.ContentDigests["assets"] {
-		t.Fatal("prepared revision followed mutable source")
-	}
-	if err = os.WriteFile(cfg.Template.Manifest, []byte("invalid manifest"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = InspectRelease(cfg); err == nil {
-		t.Fatal("candidate inspection accepted a changed guest manifest")
+	if _, err = accountSeed(cfg); err == nil {
+		t.Fatal("bootstrap accepted missing operator inputs")
 	}
 }
 
@@ -146,26 +139,26 @@ func TestCandidateCompatibilityIncludesNotificationPolicy(t *testing.T) {
 	}
 }
 
-func TestStartupPreparationDoesNotReadAuthoredPublicationSources(t *testing.T) {
+func TestCandidateInspectionDoesNotReadBootstrapArtifacts(t *testing.T) {
 	cfg, _ := releaseConfiguration(t)
 	candidate, err := InspectRelease(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(cfg.Content.SharedAssets); err != nil {
+	if err = os.RemoveAll(cfg.Content.SharedAssets); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := prepareStartupRelease(cfg)
+	if err = os.Remove(cfg.Template.Manifest); err != nil {
+		t.Fatal(err)
+	}
+	startup, err := InspectRelease(cfg)
 	if err != nil {
-		t.Fatal("startup reopened authored source", err)
+		t.Fatal(err)
 	}
-	if len(prepared.publications) != 0 || prepared.identity.RuntimeDigest != cfg.Template.Digest {
-		t.Fatal(prepared)
+	if !reflect.DeepEqual(startup, candidate) {
+		t.Fatal("authored input changed host identity")
 	}
-	if prepared.identity.CompatibilityDigest != candidate.CompatibilityDigest {
-		t.Fatal("startup and inspection must share host compatibility", prepared.identity, candidate)
-	}
-	if _, err = InspectRelease(cfg); err == nil {
-		t.Fatal("candidate inspection accepted missing authored source")
+	if _, err = accountSeed(cfg); err == nil {
+		t.Fatal("bootstrap accepted missing authored sources")
 	}
 }

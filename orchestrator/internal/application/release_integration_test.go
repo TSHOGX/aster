@@ -272,6 +272,18 @@ func newReleasedApp(t *testing.T) *releaseApp {
 	if !bytes.Equal(candidateJSON, currentJSON) {
 		t.Fatal("startup identity differs from inspected candidate", candidate, current)
 	}
+	a.cli("publish", "--socket", filepath.Join(root, "state/control.sock"), "--config", a.config)
+	// Serving and candidate inspection need no original manifest, source tree,
+	// template, or initial allocation declarations once the database is seeded.
+	delete(cfg, "template")
+	delete(cfg, "content")
+	cfg["project"] = map[string]any{"reachability": cfg["project"].(map[string]any)["reachability"]}
+	raw, err = json.Marshal(cfg)
+	require(t, err)
+	require(t, os.WriteFile(a.config, raw, 0644))
+	require(t, os.Remove(filepath.Join(root, "manifest.json")))
+	require(t, os.RemoveAll(filepath.Join(root, "content")))
+	require(t, os.RemoveAll(filepath.Join(root, "assets")))
 	a.startGateway()
 	a.request("POST", "/api/auth/login", map[string]string{"username": "researcher", "password": "isolated-browser-fixture"}, 200)
 	return a
@@ -282,10 +294,9 @@ func TestReleasedExecutableOnKhora(t *testing.T) {
 	a := newReleasedApp(t)
 	socket := filepath.Join(a.root, "state/control.sock")
 	status := a.cli("diagnostics", "--socket", socket)
-	if status["runtime_digest"] == "" {
+	if status["application_digest"] == "" {
 		t.Fatal("release identity absent")
 	}
-	a.cli("publish", "--socket", socket)
 	var paths []string
 	for p := 0; p < 2; p++ {
 		id := fmt.Sprintf("release-%d", p)

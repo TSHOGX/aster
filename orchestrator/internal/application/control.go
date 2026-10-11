@@ -216,7 +216,7 @@ func (a *Application) controlHandler() http.Handler {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		out := map[string]any{"browser": a.BrowserAddress, "runtime_digest": a.Config.Template.Digest, "state": report}
+		out := map[string]any{"browser": a.BrowserAddress, "state": report}
 		out["application_digest"] = a.releaseIdentity.ExecutableDigest
 		identity := a.releaseIdentity
 		if network, err := a.networkReport(r.Context()); err == nil {
@@ -297,9 +297,13 @@ func (a *Application) controlHandler() http.Handler {
 	mux.HandleFunc("GET /runtime/registry", a.runtimeRegistryState)
 	mux.HandleFunc("PATCH /runtime/registry", a.editRuntimeRegistryState)
 	mux.HandleFunc("POST /publish", func(w http.ResponseWriter, r *http.Request) {
+		var input Content
+		if !decodeControl(w, r, &input) {
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		defer cancel()
-		if _, err := a.publish(ctx); err != nil {
+		if _, err := a.publish(ctx, input); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}

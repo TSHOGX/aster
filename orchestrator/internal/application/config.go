@@ -14,7 +14,6 @@ import (
 
 	"harness-platform/orchestrator/internal/engineconfig"
 	"harness-platform/orchestrator/internal/product"
-	"harness-platform/orchestrator/internal/runtimerelease"
 	"harness-platform/orchestrator/internal/titler"
 )
 
@@ -105,7 +104,6 @@ type Config struct {
 	Titles            TitleService            `json:"titles"`
 	TLSCert           string                  `json:"tls_cert"`
 	TLSKey            string                  `json:"tls_key"`
-	Manifest          runtimerelease.Manifest `json:"-"`
 	base              string
 	source            string
 }
@@ -168,13 +166,7 @@ func LoadConfig(name string) (Config, error) {
 	if err = cfg.Validate(); err != nil {
 		return cfg, err
 	}
-	manifestFile, err := os.Open(cfg.Template.Manifest)
-	if err != nil {
-		return cfg, err
-	}
-	defer manifestFile.Close()
-	cfg.Manifest, err = runtimerelease.Load(manifestFile, cfg.Template.Digest)
-	return cfg, err
+	return cfg, nil
 }
 func (c Config) Validate() error {
 
@@ -196,18 +188,8 @@ func (c Config) Validate() error {
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return errors.New("browser TLS certificate and key must be supplied together")
 	}
-	if c.Template.Version == "" || len(c.Template.Version) > 128 || c.Template.ID == "" || strings.ContainsAny(c.Template.ID, "/\\\x00?# ") || !runtimerelease.ValidDigest(c.Template.Digest) || !filepath.IsAbs(c.Template.Manifest) {
-		return errors.New("template identity and pinned runtime manifest required")
-	}
-	p := c.bootstrapProfile()
-	if err := p.Validate(); err != nil {
-		return fmt.Errorf("Project bootstrap configuration: %w", err)
-	}
-	if c.Content.VolumeBytes <= 0 {
-		return errors.New("positive content publication capacity required")
-	}
 	l := c.Limits
-	if l.MaxMountsPerProject < 2 || l.MaxMountsPerProject > 128 || l.Projects < 1 || l.Projects > 128 || l.Agents < 1 || l.Agents > 256 || l.Terminals < 1 || l.Terminals > 256 || l.AgentsPerProject < 1 || l.AgentsPerProject > l.Agents || l.TerminalsPerProject < 1 || l.TerminalsPerProject > l.Terminals || time.Duration(l.IdleAfter) < time.Second || time.Duration(l.IdleAgentAfter) < time.Second || time.Duration(l.Interval) < 50*time.Millisecond || time.Duration(l.Interval) > 10*time.Second {
+	if (l.MaxMountsPerProject != 0 && (l.MaxMountsPerProject < 2 || l.MaxMountsPerProject > 128)) || l.Projects < 1 || l.Projects > 128 || l.Agents < 1 || l.Agents > 256 || l.Terminals < 1 || l.Terminals > 256 || l.AgentsPerProject < 1 || l.AgentsPerProject > l.Agents || l.TerminalsPerProject < 1 || l.TerminalsPerProject > l.Terminals || time.Duration(l.IdleAfter) < time.Second || time.Duration(l.IdleAgentAfter) < time.Second || time.Duration(l.Interval) < 50*time.Millisecond || time.Duration(l.Interval) > 10*time.Second {
 		return errors.New("invalid runtime capacity or timing bounds")
 	}
 	if len(c.Gateways) > 64 {
@@ -256,12 +238,6 @@ func (c Config) titleGenerator() product.TitleGenerator {
 	return titler.New(titler.Config{BaseURL: c.Titles.BaseURL, Model: c.Titles.Model, APIKey: os.Getenv(c.Titles.APIKeyEnv)})
 }
 
-func (c Config) bootstrapProfile() product.Profile {
-	return product.Profile{StoreID: c.Engine.StoreID, TemplateID: c.Template.ID, ReleaseDigest: c.Template.Digest, CPUMillis: c.Project.CPUMillis, MemoryBytes: c.Project.MemoryBytes, DiskBytes: c.Project.DiskBytes, Reachability: c.Project.Reachability, Volumes: []product.VolumePlan{
-		{Key: "workspace", Role: "workspace", Destination: "/workspace", Storage: "owned", Access: "read_write", CapacityBytes: c.Project.WorkspaceBytes},
-		{Key: "runtime", Role: "runtime", Destination: "/runtime", Storage: "owned", Access: "read_write", CapacityBytes: c.Project.RuntimeBytes},
-	}}
-}
 func (c Config) DatabasePath() string { return filepath.Join(c.StateDirectory, "product.db") }
 
 func gatewayFloorOrigin(origin string) bool {

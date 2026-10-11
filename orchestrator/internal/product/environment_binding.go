@@ -49,6 +49,7 @@ func registeredSandbox(ctx context.Context, q queryer, reference ArtifactReferen
 	}
 	return out, nil
 }
+
 func resolveAllocationProfile(ctx context.Context, q queryer, actor string, bindings RuntimeBindings) (Profile, error) {
 	if err := bindings.validate(); err != nil {
 		return Profile{}, err

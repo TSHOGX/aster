@@ -1,8 +1,10 @@
 # Navigation, scheduling and network implementation
 
-The current implementation uses one canonical schema and one measured runtime
-per installation. Format and runtime changes use a deliberate fresh installation;
-there is no migration chain, old-client adapter or retained-template catalog.
+The current implementation uses one canonical schema and host protocol contract.
+Operator-registered immutable runtime versions may coexist under that contract;
+Projects retain exact releases, mounts and artifacts. Format/protocol changes
+require an explicitly authorized fresh installation. There is no migration chain
+or old-client adapter.
 
 ## Delivered behavior
 

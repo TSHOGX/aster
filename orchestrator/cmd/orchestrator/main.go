@@ -167,6 +167,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		return app.Run(ctx)
 	case "diagnostics", "publish", "notify":
 		socket := flags.String("socket", "", "protected application control socket")
+		publicationConfig := flags.String("config", "", "explicit system publication source configuration")
 		project := flags.String("project", "", "optional Project diagnostic scope")
 		title := flags.String("title", "", "notification title")
 		body := flags.String("body", "", "notification body")
@@ -185,7 +186,14 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			}
 			return application.Control(ctx, *socket, "GET", path, nil, output)
 		case "publish":
-			return application.Control(ctx, *socket, "POST", "/publish", nil, output)
+			if *publicationConfig == "" {
+				return errors.New("publish requires --config FILE with explicit reviewed source declarations")
+			}
+			cfg, err := application.LoadConfig(*publicationConfig)
+			if err != nil {
+				return err
+			}
+			return application.Control(ctx, *socket, "POST", "/publish", cfg.Content, output)
 		default:
 			if *title == "" || *body == "" {
 				return errors.New("notify requires --title and --body")

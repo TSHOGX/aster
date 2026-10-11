@@ -16,10 +16,10 @@ tracked example. The example denies guest egress until reachability is declared.
 | `state_directory` | Product database, native captures and frozen-share files |
 | `application_socket`, `control_socket` | Distinct private Unix sockets; default below state directory |
 | `engine` | Explicit endpoint and persistent store ID; HTTPS requires CA and client certificate/key |
-| `template` | Engine template ID, immutable application version, exported Go runtime manifest and `sha256:` digest |
+| `template` | Bootstrap-only ID/version, trusted runtime manifest and exact digest; optional for serving |
 | `project` | One-time bootstrap CPU/memory/storage/direct/DNS declarations; operator-owned service routes and hosts |
-| `content` | Reviewed Agent configuration/shared-assets source paths and publication capacity |
-| `limits` | Global/per-Project capacities, explicit qualified `max_mounts_per_project`, idle deadlines and worker interval |
+| `content` | Explicit system-publication source paths and capacity; optional for serving |
+| `limits` | Global/per-Project capacities, bootstrap qualified `max_mounts_per_project`, idle deadlines and worker interval |
 | `notifications` | Per-source Inbox notification policy; changes apply after application restart |
 | `gateways`, `agent_audience` | Independent gateway endpoints and upstream credential environment names |
 | `titles` | Optional host-side title model: `base_url`, `model`, `api_key_env` |
@@ -35,8 +35,8 @@ Runtime binding fields cannot be supplied inside `project`.
 Existing Projects retain their exact registered template, capacities and mounts.
 Startup checks retained registrations against the current host protocol and engine
 store; a different selected default does not replace their identities. Missing or
-incompatible metadata fails closed without importing a caller profile. The current
-runtime contract still restricts workspace/runtime roots to its declared paths.
+incompatible metadata fails closed without importing a caller profile. The selected manifest declares qualified configurable role paths and protected
+locations; retained Projects keep their exact saved paths.
 
 `engine.endpoint` permits plain HTTP only on a loopback IP. HTTPS requires
 `ca_file`, `client_cert` and `client_key`; ambient proxy configuration is disabled.
@@ -81,10 +81,13 @@ Resolvers are explicitly declared IPv4 addresses. No DNS default is invented.
 Content publication hashes bounded reviewed source trees and records durable
 publication intent in the product database. Successful publication volumes mount
 read-only at `/opt/agent-config` and `/opt/shared-assets`. Sources are not watched
-for arbitrary live changes. `publish` prepares content through the running owner;
+for arbitrary live changes. `publish --socket PATH --config FILE` prepares explicit
+reviewed sources through the running owner;
 publication registers an immutable version without changing the database default.
 Existing Projects keep their original publication IDs. Selecting another environment
-is a separate configuration operation; restart is not a default-selection action.
+is a separate configuration operation. Startup performs no template registration
+or content publication and requires no original manifest/source file. Candidate
+inspection also measures host configuration independently of bootstrap inputs.
 
 Accounts and hashed credentials live in the product database. There is no authentication
 configuration block. Before starting a fresh owner, use the protected offline
@@ -260,7 +263,7 @@ entries. Source minimum copy capacity and actual published source capacity are
 separate decimal strings. Shared-plan previews use the actual published capacity;
 owned copies use their requested capacity subject to the source minimum.
 Availability reports `available`, `unavailable`, `unknown`, `unchecked`, `disabled`,
-`other_store` or `incompatible`, with a timestamp when observed. The owner checks
+`retired`, `other_store` or `incompatible`, with a timestamp when observed. The owner checks
 public engine template/Volume metadata outside the database transaction, within
 a ten-second page budget; unobserved entries remain explicitly unchecked.
 Availability never reserves resources or bypasses allocation checks.

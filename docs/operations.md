@@ -47,6 +47,13 @@ Bootstrap the first administrator while the owner is stopped:
 orchestrator account bootstrap --config /etc/agent-workbench/application.json --username administrator --password-stdin
 ```
 
+Bootstrap requires the template manifest, initial numeric declarations and
+reviewed system-content inputs in its explicit config. Start the owner, then run
+`publish --socket PATH --config FILE` with those reviewed sources. Publication
+verifies and registers immutable content without changing the database default.
+Serving configuration may subsequently omit `template`, `content`, initial
+Project sizes and `max_mounts_per_project`; keep engine/service/host settings.
+
 The exclusive database lock prevents a second writer. Bootstrap refuses an existing
 account database. Passwords contain 12–128 Unicode characters and at most 512 UTF-8
 bytes. Read passwords from stdin through an appropriate secret mechanism; never
@@ -77,7 +84,7 @@ Use the protected control socket for live operations:
 ```sh
 orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock
 orchestrator diagnostics --socket /var/lib/agent-workbench/control.sock --project PROJECT_ID
-orchestrator publish --socket /var/lib/agent-workbench/control.sock
+orchestrator publish --socket /var/lib/agent-workbench/control.sock --config /srv/reviewed/bootstrap.json
 orchestrator notify --socket /var/lib/agent-workbench/control.sock --audience ACCOUNT_ID --title Notice --body 'Maintenance is scheduled.'
 ```
 
@@ -248,26 +255,24 @@ Inspect a replacement using that executable itself and the intended configuratio
 /path/to/candidate/orchestrator release-identity --config /etc/agent-workbench/application.json
 ```
 
-This command reads the pinned guest manifest and reviewed content trees, hashes
-its running executable inode, and reports schema version/digest, configuration
-and content digests, gateway protocol and a compatibility digest. It does not
-open the product Store, acquire its lock, contact the engine/provider or create
-application state. It can run while the current owner is serving. Raw configuration,
-content and credential values are not returned. `diagnostics.release_identity`
-reports the running owner's corresponding startup identity plus the currently
-accepted database network revision; that live field is absent from candidate
-inspection.
+This command measures the executable inode and fixed host configuration, and
+reports schema version/digest, host protocols and compatibility digest. It reads
+no bootstrap manifest or content tree, opens no product Store, and contacts no
+engine/provider. It can run while the owner serves. Raw configuration and secrets
+are omitted. Live `diagnostics.release_identity` adds the accepted database network
+revision. The owner separately fences and checks exact persisted registry/default/
+Project contracts during startup and handoff.
 
-The compatibility digest excludes executable bytes, so separately built candidates
-can describe the same inputs. Configuration, configuration base directory, reviewed
-content, guest release or schema changes alter it. Clean bootstrap publishes the
-exact measured content revisions once. Later startup uses persisted publication
-records and does not reread mutable source trees; the operator publish path refuses
-files that change after their measured digest. A matching digest describes
-compatibility inputs and does not grant
-permission to bypass admission/drain or prove arbitrary binary compatibility.
-The owner-only workflow below applies an additional transfer predicate and live
-gateway checks. Full updates continue to require quiescence.
+The compatibility digest excludes executable bytes and bootstrap publication/
+runtime inputs. Host configuration, its base directory, schema and host protocols
+alter it. Bootstrap seeds registry/default metadata once; explicitly publish its
+reviewed system content through the owner before allocating Projects. Later
+startup uses retained registry/publication records and does not register templates,
+read source files, or initialize storage. Removing original authoring paths is
+safe after verified publication. Operator publication still verifies exact digests.
+A matching digest never bypasses admission/drain or proves arbitrary binary
+compatibility. Owner handoff adds its transfer predicate and live gateway checks;
+full updates require quiescence.
 
 ## Compatible owner handoff
 

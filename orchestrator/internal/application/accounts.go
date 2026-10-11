@@ -2,7 +2,12 @@ package application
 
 import (
 	"context"
+	"errors"
 	"harness-platform/orchestrator/internal/product"
+	"harness-platform/orchestrator/internal/runtimerelease"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // AccountOperation opens an offline writer. A running owner holds the same
@@ -32,6 +37,18 @@ func accountSeed(cfg Config) (product.BootstrapSeed, error) {
 	if err := cfg.Validate(); err != nil {
 		return product.BootstrapSeed{}, err
 	}
+	if cfg.Template.Version == "" || len(cfg.Template.Version) > 128 || cfg.Template.ID == "" || strings.ContainsAny(cfg.Template.ID, "/\\\x00?# ") || !runtimerelease.ValidDigest(cfg.Template.Digest) || !filepath.IsAbs(cfg.Template.Manifest) || cfg.Content.VolumeBytes <= 0 {
+		return product.BootstrapSeed{}, product.ErrInvalid
+	}
+	file, err := os.Open(cfg.Template.Manifest)
+	if err != nil {
+		return product.BootstrapSeed{}, err
+	}
+	manifest, err := runtimerelease.Load(file, cfg.Template.Digest)
+	err = errors.Join(err, file.Close())
+	if err != nil {
+		return product.BootstrapSeed{}, err
+	}
 	publications, err := readPublications(cfg)
 	if err != nil {
 		return product.BootstrapSeed{}, err
@@ -50,5 +67,5 @@ func accountSeed(cfg Config) (product.BootstrapSeed, error) {
 	if err != nil {
 		return product.BootstrapSeed{}, err
 	}
-	return product.NewBootstrapSeed(product.ResourceSeed{CPU: p.CPUMillis, Memory: p.MemoryBytes, Overlay: p.DiskBytes, Workspace: p.WorkspaceBytes, Runtime: p.RuntimeBytes, MaxMounts: int64(cfg.Limits.MaxMountsPerProject), ProjectSlots: int64(cfg.Limits.Projects), AgentSlots: int64(cfg.Limits.Agents), TerminalSlots: int64(cfg.Limits.Terminals)}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: cfg.Template.ID, Version: cfg.Template.Version, Digest: cfg.Template.Digest}, StoreID: cfg.Engine.StoreID, TemplateID: cfg.Template.ID, Manifest: cfg.Manifest}, volumes, network)
+	return product.NewBootstrapSeed(product.ResourceSeed{CPU: p.CPUMillis, Memory: p.MemoryBytes, Overlay: p.DiskBytes, Workspace: p.WorkspaceBytes, Runtime: p.RuntimeBytes, MaxMounts: int64(cfg.Limits.MaxMountsPerProject), ProjectSlots: int64(cfg.Limits.Projects), AgentSlots: int64(cfg.Limits.Agents), TerminalSlots: int64(cfg.Limits.Terminals)}, product.RegisteredSandbox{Reference: product.ArtifactReference{ID: cfg.Template.ID, Version: cfg.Template.Version, Digest: cfg.Template.Digest}, StoreID: cfg.Engine.StoreID, TemplateID: cfg.Template.ID, Manifest: manifest}, volumes, network)
 }
