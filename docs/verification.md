@@ -1,9 +1,11 @@
 # Verification
 
-Install Go from `orchestrator/go.mod`, Node from `.node-version`, Python 3 and the
+Install the Go toolchain pinned in `orchestrator/go.mod` (currently Go 1.24.13), Node from `.node-version`, Python 3 and the
 locked frontend dependencies. Node is also required by the Go native RPC tests. Their isolated npm package and
 lockfile live in `orchestrator/internal/runtimerelease`; no local guest rootfs
-or privileged image build is needed. Installation scripts are disabled because
+or privileged image build is needed.
+The SQLite driver pin includes cancellation cleanup required for current login and
+revocation visibility in pooled readers; do not downgrade it. Installation scripts are disabled because
 these tests use controlled model streams, not the optional native tools.
 
 ```sh

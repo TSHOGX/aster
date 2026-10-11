@@ -17,7 +17,12 @@ func TestCanceledReadersCannotRetainLoginAuthority(t *testing.T) {
 	s.reader.SetMaxIdleConns(1)
 	token := adminTestToken(t, s, account)
 	query := `SELECT ` + strings.TrimSuffix(strings.Repeat("token_digest,", 256), ",") + ` FROM auth_sessions WHERE account_id=?`
-	for iteration := 0; iteration < 5000; iteration++ {
+	cancellations := 0
+	iterations := 5000
+	if testing.Short() {
+		iterations = 50
+	}
+	for iteration := 0; iteration < iterations; iteration++ {
 		readCtx, cancel := context.WithCancel(context.Background())
 		timer := time.AfterFunc(time.Duration(iteration%300+1)*time.Microsecond, cancel)
 		rows, err := s.reader.QueryContext(readCtx, query, account.ID)
@@ -25,6 +30,8 @@ func TestCanceledReadersCannotRetainLoginAuthority(t *testing.T) {
 			rows.Close()
 		} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatal(err)
+		} else {
+			cancellations++
 		}
 		timer.Stop()
 		cancel()
@@ -43,5 +50,8 @@ func TestCanceledReadersCannotRetainLoginAuthority(t *testing.T) {
 			t.Fatalf("iteration %d: committed login not visible: %v", iteration, err)
 		}
 		token = replacement
+	}
+	if cancellations == 0 {
+		t.Fatal("test did not exercise reader cancellation")
 	}
 }
