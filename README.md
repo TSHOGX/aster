@@ -1,9 +1,10 @@
 # Aster
 
 Aster is a Project workbench for concurrent Agent conversations, retained
-Terminals and shared workspace files. A Project owns one Khora sandbox, one
-workspace volume and one runtime volume. Sessions and Terminals are independent
-children of that Project. Closing a browser view leaves its work running.
+Terminals and shared workspace files. A Project binds one Khora sandbox and an
+immutable Volume plan with workspace/runtime roles, optional owned data and shared
+read-only publications. Sessions and Terminals are independent children of that
+Project. Closing a browser view leaves its work running.
 
 Source: [TSHOGX/aster](https://github.com/TSHOGX/aster).
 Enterprise deployments can set their own [frontend display name](docs/configuration.md#frontend-display-name).
@@ -11,6 +12,11 @@ Packages, protocols and operational identifiers use functional, brand-neutral na
 
 The Go application owns authentication, the product database, HTTP/SSE/WebSocket,
 runtime workers and the browser edge. Independent Next.js builds serve the workbench and `/admin`, with separate assets.
+Administrators manage database accounts, groups, permission policies, per-user
+resource entitlements, runtime defaults, network settings and tracked suspension.
+Operator-registered compatible runtime and built-in Volume versions remain pinned
+by each Project's saved plan; default changes affect future first allocations.
+
 Native Pi runs under the Go Agent guardian inside the Project. Khora is the only
 execution backend, accessed through its pinned public SDK and Connect APIs.
 

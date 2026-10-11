@@ -9,7 +9,7 @@ For a deliberate destructive reset, close browser ingress and stop the owner,
 gateway, frontend, engine proxy and engine under their supervisors. Confirm the
 old processes and sandbox descendants have stopped before deleting resources.
 Use an explicit reviewed inventory for the installation's application database
-and sidecars, captures/shares, engine state, owned workspace/runtime volumes and
+and sidecars, captures/shares, engine state, all owned Volume slots and
 overlays. Preserve a consistent offline backup when the reset scope requires it;
 backup retention and removal are separate decisions. Delete only the selected
 state and superseded artifacts. Do not infer targets from unrelated paths, another
@@ -18,8 +18,14 @@ engine store or historical reset records.
 Keep the deployment's provider credentials, TLS material and
 reviewed configuration unless those are explicitly part of the reset. Install
 fresh artifacts, register the new immutable template, and update configuration to
-the new engine store ID and initial registered runtime manifest. Bootstrap the first database administrator before starting the owner. Start the engine/proxy, frontend, owner and gateway,
-then verify readiness before reopening browser ingress.
+the new engine store ID and initial registered runtime manifest. Bootstrap the
+first database administrator before starting the owner. Start the engine/proxy,
+workbench/admin frontends and owner. Explicitly publish the reviewed bootstrap
+system content through `orchestrator publish --socket PATH --config FILE`, then
+start the independent gateway and verify readiness before reopening ingress.
+Startup performs no registration/publication or implicit storage initialization.
+Serving config may drop bootstrap template/content/size inputs once publication
+is verified; retained database registrations and saved Project plans are authority.
 
 Validate the running executable and frontend build against the prepared artifacts.
 Check authentication, new Project provisioning, workspace access,
